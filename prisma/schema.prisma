@@ -223,6 +223,8 @@ model Payment {
   amountCents            Int
   stripePaymentIntentId  String?       @unique
   stripePaymentMethodId  String?
+  stripeSetupIntentId    String?       @unique
+  stripeCustomerId       String?
   xeroInvoiceId          String?       @unique
   status                 PaymentStatus @default(PENDING)
   refundedAmountCents    Int           @default(0)
