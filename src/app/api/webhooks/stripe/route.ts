@@ -141,7 +141,7 @@ async function handlePaymentIntentSucceeded(
   try {
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { member: true, guests: true },
+      include: { member: true, guests: true, promoRedemption: { include: { promoCode: true } } },
     });
     if (booking) {
       await sendBookingConfirmedEmail(
@@ -151,7 +151,9 @@ async function handlePaymentIntentSucceeded(
         booking.checkOut,
         booking.guests.length,
         booking.finalPriceCents,
-        booking.discountCents
+        booking.discountCents > 0
+          ? { discountCents: booking.discountCents, promoCode: booking.promoRedemption?.promoCode?.code }
+          : undefined
       );
     }
   } catch (emailErr) {

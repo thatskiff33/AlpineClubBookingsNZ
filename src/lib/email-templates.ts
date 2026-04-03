@@ -152,26 +152,29 @@ export function bookingConfirmedTemplate(
   checkOut: Date,
   guestCount: number,
   totalCents: number,
-  discountCents: number = 0
+  options?: { discountCents?: number; promoCode?: string }
 ): string {
-  const priceRows = discountCents > 0
-    ? [
-        { label: "Subtotal", value: formatCents(totalCents + discountCents) },
-        { label: "Discount", value: "-" + formatCents(discountCents) },
-        { label: "Total Paid", value: formatCents(totalCents) },
-      ]
-    : [
-        { label: "Total Paid", value: formatCents(totalCents) },
-      ];
+  const rows: Array<{ label: string; value: string }> = [
+    { label: "Check-in", value: formatNZDate(checkIn) },
+    { label: "Check-out", value: formatNZDate(checkOut) },
+    { label: "Guests", value: String(guestCount) },
+  ];
+
+  if (options?.discountCents && options.discountCents > 0) {
+    const subtotalCents = totalCents + options.discountCents;
+    rows.push({ label: "Subtotal", value: formatCents(subtotalCents) });
+    const discountLabel = options.promoCode
+      ? `Discount (${options.promoCode})`
+      : "Discount";
+    rows.push({ label: discountLabel, value: `-${formatCents(options.discountCents)}` });
+  }
+
+  rows.push({ label: "Total Paid", value: formatCents(totalCents) });
+
   return layout(`
     ${heading("Booking Confirmed")}
     ${paragraph("Hi " + firstName + ", your lodge booking has been confirmed!")}
-    ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
-      { label: "Guests", value: String(guestCount) },
-      ...priceRows,
-    ])}
+    ${infoTable(rows)}
     ${alertBox("Payment has been processed successfully.", "success")}
     ${paragraph("You can view your booking details and manage your stay from your account.")}
     ${button("View Booking", BASE_URL + "/bookings")}

@@ -74,6 +74,7 @@ function makePendingBooking(
     discountCents: 0,
     nonMemberHoldUntil: new Date(holdUntil),
     hasNonMembers: true,
+    promoRedemption: null,
     createdAt: new Date("2026-03-01"),
     member: {
       id: `member_${id}`,
@@ -149,7 +150,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       booking.checkOut,
       2,
       10000,
-      0
+      undefined
     );
   });
 

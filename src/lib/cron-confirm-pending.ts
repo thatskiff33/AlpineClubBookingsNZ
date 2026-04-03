@@ -40,6 +40,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       member: true,
       guests: true,
       payment: true,
+      promoRedemption: { include: { promoCode: true } },
     },
     orderBy: { createdAt: "asc" }, // Process oldest first
   });
@@ -140,7 +141,9 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             booking.checkOut,
             booking.guests.length,
             booking.finalPriceCents,
-            booking.discountCents
+            booking.discountCents > 0
+              ? { discountCents: booking.discountCents, promoCode: booking.promoRedemption?.promoCode?.code }
+              : undefined
           );
         } catch (emailErr) {
           console.error(`Failed to send confirmation email for booking ${booking.id}:`, emailErr);

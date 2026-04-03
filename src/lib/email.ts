@@ -65,12 +65,12 @@ export async function sendBookingConfirmedEmail(
   checkOut: Date,
   guestCount: number,
   totalCents: number,
-  discountCents: number = 0
+  options?: { discountCents?: number; promoCode?: string }
 ) {
   await sendEmail({
     to: email,
     subject: "Booking Confirmed - TAC Lodge",
-    html: bookingConfirmedTemplate(firstName, checkIn, checkOut, guestCount, totalCents, discountCents),
+    html: bookingConfirmedTemplate(firstName, checkIn, checkOut, guestCount, totalCents, options),
   });
 }
 

@@ -16,6 +16,7 @@ import {
 } from "@/lib/promo";
 import { calculatePromoDiscount } from "@/lib/pricing";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { sendBookingPendingEmail } from "@/lib/email";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -281,6 +282,21 @@ export async function POST(request: NextRequest) {
       sendBumpedNotifications(bumpedBookingIds).catch((err) =>
         console.error("Failed to send bump notifications:", err)
       );
+    }
+
+    // Send pending booking email if applicable
+    if (booking.status === BookingStatus.PENDING && booking.nonMemberHoldUntil) {
+      const member = await prisma.member.findUnique({ where: { id: session.user.id } });
+      if (member) {
+        sendBookingPendingEmail(
+          member.email,
+          member.firstName,
+          booking.checkIn,
+          booking.checkOut,
+          booking.guests.length,
+          booking.nonMemberHoldUntil
+        ).catch((err) => console.error("Failed to send pending booking email:", err));
+      }
     }
 
     return NextResponse.json(booking, { status: 201 });
