@@ -8,7 +8,7 @@
 import { XeroClient, Contact, Invoice, LineItem, LineAmountTypes, CreditNote, Payment as XeroPayment, Phone } from "xero-node";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { prisma } from "./prisma";
-import { getSeasonYear } from "./pricing";
+import { getSeasonYear, getStayNights } from "./pricing";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -257,20 +257,25 @@ export async function getAuthenticatedXeroClient(): Promise<{
       token_type: "Bearer",
     });
     const config = getXeroConfig();
-    const newTokenSet = await xero.refreshWithRefreshToken(
-      config.clientId,
-      config.clientSecret,
-      tokens.refreshToken
-    );
+    try {
+      const newTokenSet = await xero.refreshWithRefreshToken(
+        config.clientId,
+        config.clientSecret,
+        tokens.refreshToken
+      );
 
-    await saveXeroTokens({
-      accessToken: newTokenSet.access_token!,
-      refreshToken: newTokenSet.refresh_token!,
-      expiresAt: new Date(Date.now() + (newTokenSet.expires_in ?? 1800) * 1000),
-      tenantId: tokens.tenantId,
-    });
+      await saveXeroTokens({
+        accessToken: newTokenSet.access_token!,
+        refreshToken: newTokenSet.refresh_token!,
+        expiresAt: new Date(Date.now() + (newTokenSet.expires_in ?? 1800) * 1000),
+        tenantId: tokens.tenantId,
+      });
 
-    return { xero, tenantId: tokens.tenantId };
+      return { xero, tenantId: tokens.tenantId };
+    } catch (err) {
+      console.error("[Xero] Token refresh failed:", err);
+      throw new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
+    }
   }
 
   // Token still valid
@@ -512,14 +517,14 @@ export function findSubscriptionInvoice(
 ): Invoice | null {
   const keywords = ["subscription", "membership", "annual sub", "club sub"];
   const seasonStart = new Date(seasonYear, 3, 1); // April 1
-  const seasonEnd = new Date(seasonYear + 1, 2, 31); // March 31
+  const seasonEndExclusive = new Date(seasonYear + 1, 3, 1); // April 1 next year (exclusive)
 
   for (const invoice of invoices) {
-    // Check if invoice date falls within the season year
+    // Check if invoice date falls within the season year [seasonStart, seasonEndExclusive)
     const invoiceDate = invoice.date ? new Date(invoice.date) : null;
     if (!invoiceDate) continue;
 
-    if (invoiceDate < seasonStart || invoiceDate > seasonEnd) continue;
+    if (invoiceDate < seasonStart || invoiceDate >= seasonEndExclusive) continue;
 
     // Check if any line item references a subscription
     const hasSubscriptionRef = invoice.lineItems?.some((li) => {
@@ -683,10 +688,10 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
   // Ensure the member has a Xero contact
   const contactId = await findOrCreateXeroContact(booking.memberId);
 
-  // Calculate nights
+  // Calculate nights using the same logic as the pricing engine
   const checkIn = new Date(booking.checkIn);
   const checkOut = new Date(booking.checkOut);
-  const nights = Math.round((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
+  const nights = getStayNights(checkIn, checkOut).length;
 
   // Build line items
   const lineItems = buildInvoiceLineItems(
