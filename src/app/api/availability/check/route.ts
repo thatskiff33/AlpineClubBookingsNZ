@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkCapacity } from "@/lib/capacity";
+import { auth } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const checkInStr = searchParams.get("checkIn");
   const checkOutStr = searchParams.get("checkOut");

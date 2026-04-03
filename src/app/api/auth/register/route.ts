@@ -3,6 +3,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { sendWelcomeEmail } from "@/lib/email";
+import { computeAgeTier } from "@/lib/age-tier";
 import { AgeTier } from "@prisma/client";
 
 const registerSchema = z.object({
@@ -13,19 +14,6 @@ const registerSchema = z.object({
   dateOfBirth: z.string().optional(),
   phone: z.string().optional(),
 });
-
-function computeAgeTier(dateOfBirth: string): AgeTier {
-  const today = new Date();
-  const dob = new Date(dateOfBirth);
-  let age = today.getFullYear() - dob.getFullYear();
-  const monthDiff = today.getMonth() - dob.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
-    age--;
-  }
-  if (age < 13) return AgeTier.CHILD;
-  if (age < 18) return AgeTier.YOUTH;
-  return AgeTier.ADULT;
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -54,7 +42,7 @@ export async function POST(req: NextRequest) {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
-    const ageTier = dateOfBirth ? computeAgeTier(dateOfBirth) : AgeTier.ADULT;
+    const ageTier = dateOfBirth ? computeAgeTier(new Date(dateOfBirth)) : AgeTier.ADULT;
 
     const member = await prisma.member.create({
       data: {

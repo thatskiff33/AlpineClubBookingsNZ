@@ -5,7 +5,6 @@ import {
   getNightlyRate,
   calculateBookingPrice,
   calculatePromoDiscount,
-  calculateRefund,
   formatCents,
   getSeasonYear,
   type SeasonRateData,
@@ -257,84 +256,6 @@ describe("calculatePromoDiscount", () => {
     const promo: PromoCodeInput = { type: "PERCENTAGE", percentOff: null }
     const discount = calculatePromoDiscount(promo, totalPrice)
     expect(discount).toBe(0)
-  })
-})
-
-describe("calculateRefund", () => {
-  const defaultPolicy = [
-    { daysBeforeStay: 14, refundPercentage: 100 },
-    { daysBeforeStay: 7, refundPercentage: 50 },
-    { daysBeforeStay: 0, refundPercentage: 0 },
-  ]
-
-  it("full refund when cancelling 14+ days before", () => {
-    const refund = calculateRefund(
-      10000,
-      new Date("2026-08-01"),
-      new Date("2026-07-15"),
-      defaultPolicy
-    )
-    expect(refund).toBe(10000) // 17 days before -> 100%
-  })
-
-  it("full refund when cancelling exactly 14 days before", () => {
-    const refund = calculateRefund(
-      10000,
-      new Date("2026-08-01"),
-      new Date("2026-07-18"),
-      defaultPolicy
-    )
-    expect(refund).toBe(10000) // exactly 14 days -> 100%
-  })
-
-  it("50% refund when cancelling 7-13 days before", () => {
-    const refund = calculateRefund(
-      10000,
-      new Date("2026-08-01"),
-      new Date("2026-07-20"),
-      defaultPolicy
-    )
-    expect(refund).toBe(5000) // 12 days before -> 50%
-  })
-
-  it("50% refund when cancelling exactly 7 days before", () => {
-    const refund = calculateRefund(
-      10000,
-      new Date("2026-08-01"),
-      new Date("2026-07-25"),
-      defaultPolicy
-    )
-    expect(refund).toBe(5000) // 7 days -> 50%
-  })
-
-  it("no refund when cancelling less than 7 days before", () => {
-    const refund = calculateRefund(
-      10000,
-      new Date("2026-08-01"),
-      new Date("2026-07-28"),
-      defaultPolicy
-    )
-    expect(refund).toBe(0) // 4 days -> 0%
-  })
-
-  it("no refund on day of check-in", () => {
-    const refund = calculateRefund(
-      10000,
-      new Date("2026-08-01"),
-      new Date("2026-08-01"),
-      defaultPolicy
-    )
-    expect(refund).toBe(0) // 0 days -> 0%
-  })
-
-  it("handles odd amounts with rounding", () => {
-    const refund = calculateRefund(
-      9999,
-      new Date("2026-08-01"),
-      new Date("2026-07-20"),
-      defaultPolicy
-    )
-    expect(refund).toBe(5000) // Math.round(9999 * 50 / 100) = 5000
   })
 })
 

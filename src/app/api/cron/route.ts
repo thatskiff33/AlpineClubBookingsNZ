@@ -8,7 +8,7 @@ import { confirmPendingBookings } from "@/lib/cron-confirm-pending";
 export async function POST(request: NextRequest) {
   const cronSecret = request.headers.get("x-cron-secret");
   if (!cronSecret || cronSecret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
   try {

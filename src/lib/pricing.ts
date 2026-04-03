@@ -224,54 +224,5 @@ export function applyPromoDiscount(
   }
 }
 
-/**
- * Calculate the refund amount based on cancellation policy.
- * Policy rules are sorted by daysBeforeStay DESC.
- * Find the first rule where daysBeforeStay <= actual days before stay.
- */
-export function calculateRefund(
-  paidAmountCents: number,
-  checkIn: Date,
-  cancellationDate: Date,
-  policyRules: { daysBeforeStay: number; refundPercentage: number }[]
-): number {
-  const checkInDate = new Date(checkIn);
-  const cancelDate = new Date(cancellationDate);
-  checkInDate.setHours(0, 0, 0, 0);
-  cancelDate.setHours(0, 0, 0, 0);
-
-  const diffMs = checkInDate.getTime() - cancelDate.getTime();
-  const daysBeforeStay = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  // Sort rules by days descending
-  const sortedRules = [...policyRules].sort(
-    (a, b) => b.daysBeforeStay - a.daysBeforeStay
-  );
-
-  // Find the applicable rule (first rule where our days >= rule's days threshold)
-  for (const rule of sortedRules) {
-    if (daysBeforeStay >= rule.daysBeforeStay) {
-      return Math.round((paidAmountCents * rule.refundPercentage) / 100);
-    }
-  }
-
-  // If no rule matches (shouldn't happen if policy includes 0 days), no refund
-  return 0;
-}
-
-/**
- * Format cents to display as dollars (e.g., 4550 -> "$45.50")
- */
-export function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
-
-/**
- * Get the current season year based on the April-March cycle.
- * If current month >= April, seasonYear = currentYear; else currentYear - 1
- */
-export function getSeasonYear(date: Date = new Date()): number {
-  const month = date.getMonth(); // 0-indexed (0=Jan, 3=April)
-  const year = date.getFullYear();
-  return month >= 3 ? year : year - 1;
-}
+// Re-export from canonical locations for backwards compatibility
+export { formatCents, getSeasonYear } from "./utils";

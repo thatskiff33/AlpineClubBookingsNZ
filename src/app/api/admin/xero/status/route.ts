@@ -9,7 +9,7 @@ import { getXeroConnectionStatus } from "@/lib/xero";
 export async function GET() {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
   try {

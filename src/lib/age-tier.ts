@@ -19,8 +19,5 @@ export function computeAgeTier(
   return "ADULT";
 }
 
-export function computeSeasonYear(date: Date = new Date()): number {
-  const month = date.getMonth(); // 0-indexed: April = 3
-  const year = date.getFullYear();
-  return month >= 3 ? year : year - 1;
-}
+// Re-export from canonical location for backwards compatibility
+export { getSeasonYear as computeSeasonYear } from "./utils";

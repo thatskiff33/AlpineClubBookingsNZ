@@ -7,14 +7,9 @@ import { refreshAllMembershipStatuses, isXeroConnected } from "@/lib/xero";
  * Secured with CRON_SECRET to prevent unauthorized access.
  */
 export async function POST(request: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 500 });
-  }
-
-  const authorization = request.headers.get("authorization");
-  if (authorization !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const cronSecret = request.headers.get("x-cron-secret");
+  if (!cronSecret || cronSecret !== process.env.CRON_SECRET) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
   // Skip if Xero is not connected

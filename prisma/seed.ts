@@ -6,27 +6,6 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("Seeding database...");
 
-  // Seed rooms: 6 rooms x 4 beds + 1 room x 5 beds = 29 beds
-  const rooms = [
-    { name: "Room 1", capacity: 4, sortOrder: 1, description: "4-bed bunk room" },
-    { name: "Room 2", capacity: 4, sortOrder: 2, description: "4-bed bunk room" },
-    { name: "Room 3", capacity: 4, sortOrder: 3, description: "4-bed bunk room" },
-    { name: "Room 4", capacity: 4, sortOrder: 4, description: "4-bed bunk room" },
-    { name: "Room 5", capacity: 4, sortOrder: 5, description: "4-bed bunk room" },
-    { name: "Room 6", capacity: 4, sortOrder: 6, description: "4-bed bunk room" },
-    { name: "Room 7", capacity: 5, sortOrder: 7, description: "5-bed bunk room" },
-  ];
-
-  for (const room of rooms) {
-    await prisma.room.upsert({
-      where: { id: room.name },
-      update: room,
-      create: room,
-    });
-  }
-
-  console.log("Rooms seeded: 7 rooms, 29 beds total");
-
   // Seed default cancellation policy
   const policies = [
     { daysBeforeStay: 14, refundPercentage: 100 },

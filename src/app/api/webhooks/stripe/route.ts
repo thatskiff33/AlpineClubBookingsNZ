@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { isXeroConnected, createXeroInvoiceForBooking, createXeroCreditNote } from "@/lib/xero";
+import { sendBookingConfirmedEmail } from "@/lib/email";
 import Stripe from "stripe";
 
 /**
@@ -136,7 +137,25 @@ async function handlePaymentIntentSucceeded(
 
   console.log(`Booking ${bookingId} confirmed via PaymentIntent ${paymentIntent.id}`);
 
-  // TODO: Send confirmation email (Phase 1 email service)
+  // Send confirmation email
+  try {
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { member: true, guests: true },
+    });
+    if (booking) {
+      await sendBookingConfirmedEmail(
+        booking.member.email,
+        booking.member.firstName,
+        booking.checkIn,
+        booking.checkOut,
+        booking.guests.length,
+        booking.finalPriceCents
+      );
+    }
+  } catch (emailErr) {
+    console.error(`Failed to send confirmation email for booking ${bookingId}:`, emailErr);
+  }
 
   // Create Xero invoice if connected
   try {

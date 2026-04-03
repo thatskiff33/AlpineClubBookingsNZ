@@ -3,8 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { LODGE_CAPACITY } from "@/lib/capacity";
+import { auth } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(request.url);
   const year = parseInt(searchParams.get("year") || "");
   const month = parseInt(searchParams.get("month") || "");

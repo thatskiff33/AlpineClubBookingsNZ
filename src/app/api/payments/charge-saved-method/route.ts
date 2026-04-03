@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
     const isAdmin = session?.user?.role === "ADMIN";
 
     if (!isAuthorizedCron && !isAdmin) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
     }
 
     const body = await request.json();
