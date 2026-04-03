@@ -2,15 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createSetupIntent, findOrCreateCustomer } from "@/lib/stripe";
 import { CreateSetupIntentSchema } from "@/types/payments";
-// import { auth } from "@/lib/auth";  // Will be available after Phase 1
+import { auth } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
-    // TODO: Uncomment when auth is available from Phase 1
-    // const session = await auth();
-    // if (!session?.user?.id) {
-    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    // }
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const body = await request.json();
     const parsed = CreateSetupIntentSchema.safeParse(body);

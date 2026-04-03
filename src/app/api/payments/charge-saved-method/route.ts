@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { chargePaymentMethod } from "@/lib/stripe";
+import { auth } from "@/lib/auth";
 import { z } from "zod";
 
 const ChargeSavedMethodSchema = z.object({
@@ -14,12 +15,14 @@ const ChargeSavedMethodSchema = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
-    // This endpoint is called by internal cron or admin - verify with cron secret or admin auth
+    // This endpoint is called by internal cron or admin
     const cronSecret = request.headers.get("x-cron-secret");
     const isAuthorizedCron = cronSecret === process.env.CRON_SECRET;
 
-    // TODO: Also check for admin auth session when Phase 1 auth is available
-    if (!isAuthorizedCron) {
+    const session = await auth();
+    const isAdmin = session?.user?.role === "ADMIN";
+
+    if (!isAuthorizedCron && !isAdmin) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

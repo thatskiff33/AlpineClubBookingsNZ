@@ -6,6 +6,10 @@ import { LODGE_CAPACITY } from "@/lib/capacity";
 import { BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { z } from "zod";
+import {
+  bumpPendingBookings,
+  sendBumpedNotifications,
+} from "@/lib/bumping";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -51,11 +55,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
   }
 
-  // Use a Prisma transaction with advisory lock for concurrency control
+  const hasNonMembers = guests.some((g) => !g.isMember);
+  const allMembers = !hasNonMembers;
+  const daysUntilCheckIn = Math.ceil(
+    (checkIn.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+  );
+  const shouldBePending = hasNonMembers && daysUntilCheckIn > 7;
+  const status = shouldBePending ? BookingStatus.PENDING : BookingStatus.CONFIRMED;
+
+  let bumpedBookingIds: string[] = [];
+
   try {
     const booking = await prisma.$transaction(async (tx) => {
       // Advisory lock based on date range to prevent double-booking
-      // Use a hash of the date range as the lock key
       const lockKey =
         checkIn.getFullYear() * 10000 +
         (checkIn.getMonth() + 1) * 100 +
@@ -79,6 +91,8 @@ export async function POST(request: NextRequest) {
         include: { guests: true },
       });
 
+      // Calculate current max occupancy across all nights
+      let capacityExceeded = false;
       for (const night of nights) {
         const nightTime = night.getTime();
         let occupiedBeds = 0;
@@ -92,8 +106,40 @@ export async function POST(request: NextRequest) {
         }
 
         if (occupiedBeds + guests.length > LODGE_CAPACITY) {
+          capacityExceeded = true;
+          break;
+        }
+      }
+
+      if (capacityExceeded) {
+        // If this is a member-only booking (CONFIRMED), try bumping PENDING non-member bookings
+        if (allMembers || daysUntilCheckIn <= 7) {
+          // Only member-only bookings can trigger bumping
+          if (!allMembers) {
+            // Non-member booking within 7 days can't bump anyone
+            throw new Error(
+              "Not enough beds available for your dates. Non-member bookings cannot bump other bookings."
+            );
+          }
+
+          const bumpResult = await bumpPendingBookings(
+            checkIn,
+            checkOut,
+            guests.length,
+            tx
+          );
+
+          if (!bumpResult.capacityRestored) {
+            throw new Error(
+              "Not enough beds available even after checking pending bookings. The lodge is fully booked by members for your selected dates."
+            );
+          }
+
+          bumpedBookingIds = bumpResult.bumpedBookingIds;
+        } else {
+          // This is a PENDING (non-member) booking and capacity is full
           throw new Error(
-            `Not enough beds on ${night.toISOString().split("T")[0]}. Available: ${LODGE_CAPACITY - occupiedBeds}, Requested: ${guests.length}`
+            "Not enough beds available for your dates."
           );
         }
       }
@@ -119,7 +165,6 @@ export async function POST(request: NextRequest) {
         })),
       }));
 
-      // Calculate price server-side (never trust client)
       const guestInputs = guests.map((g) => ({
         ageTier: g.ageTier,
         isMember: g.isMember,
@@ -127,22 +172,10 @@ export async function POST(request: NextRequest) {
 
       const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData);
 
-      const hasNonMembers = guests.some((g) => !g.isMember);
-
-      // Determine booking status
-      // If all members OR check-in <= 7 days: CONFIRMED
-      // If non-members AND check-in > 7 days: PENDING
-      const daysUntilCheckIn = Math.ceil(
-        (checkIn.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-      );
-      const shouldBePending = hasNonMembers && daysUntilCheckIn > 7;
-      const status = shouldBePending ? BookingStatus.PENDING : BookingStatus.CONFIRMED;
-
       const nonMemberHoldUntil = shouldBePending
         ? new Date(checkIn.getTime() - 7 * 24 * 60 * 60 * 1000)
         : null;
 
-      // Create booking with guests
       const newBooking = await tx.booking.create({
         data: {
           memberId: session.user.id,
@@ -170,6 +203,13 @@ export async function POST(request: NextRequest) {
 
       return newBooking;
     });
+
+    // Send bumped notification emails AFTER transaction commits
+    if (bumpedBookingIds.length > 0) {
+      sendBumpedNotifications(bumpedBookingIds).catch((err) =>
+        console.error("Failed to send bump notifications:", err)
+      );
+    }
 
     return NextResponse.json(booking, { status: 201 });
   } catch (err) {
