@@ -108,6 +108,40 @@ npm test              # 292 tests pass (14 test files)
 npm run build         # builds successfully
 ```
 
+### Cross-Phase Integration Review #3 (Wave 2 Merge) - COMPLETED
+
+**Date:** 2026-04-03
+
+**Scope:** Focused review of Phases 7 (Promo Codes) and 9 (Polish & Production Hardening) integration with the rest of the codebase after Wave 2 merge. Build, type check, 292 tests all pass.
+
+**5 issues found (2 Critical, 3 High). All fixed:**
+
+1. **CRITICAL: Promo redemption not cleaned up on bumping** - `bumpPendingBookings()` in `bumping.ts` set booking status to BUMPED but never deleted the PromoRedemption record or decremented `currentRedemptions` on PromoCode. This inflated the usage counter, preventing valid future redemptions. Added cleanup within the existing transaction.
+
+2. **CRITICAL: Promo redemption not cleaned up on cancellation** - Both `/api/bookings/cancel` and `/api/bookings/[id]/cancel` cancelled bookings without cleaning up PromoRedemption records. The promo code usage counter remained inflated. Added `cleanupPromoRedemption()` helper to both routes, called on all cancellation paths (PENDING, CONFIRMED with no payment, CONFIRMED with refund, CONFIRMED with no refund).
+
+3. **HIGH: Login route not rate limited** - `rateLimiters.login` was defined (10 attempts per 15 minutes) but never applied. The `[...nextauth]/route.ts` directly re-exported NextAuth handlers. Wrapped the POST handler with `applyRateLimit(rateLimiters.login, request)` before delegating to NextAuth.
+
+4. **HIGH: Promo code PUT route missing type-specific validation** - Admin promo code update endpoint (`/api/admin/promo-codes/[id]`) accepted updates without validating type-specific fields. Could set `percentOff: 0` on a PERCENTAGE code, creating a useless discount. Added validation matching the POST route, using effective values (new value or existing) for the resolved type.
+
+5. **HIGH: Promo code expiry boundary off-by-one** - `validatePromoCodeRules()` in `promo.ts` used `now > validUntil` (strictly greater), allowing redemption at the exact expiry timestamp. Changed to `now >= validUntil` for correct exclusive upper bound.
+
+**Remaining Medium/Low issues (not fixed, documented for future):**
+- `rateLimiters.login` defined but cron auth patterns still inconsistent (`x-cron-secret` vs `Authorization: Bearer`)
+- `cron-confirm-pending.ts` line 115 overwrites `payment.amountCents` with Stripe's `paymentIntent.amount` (should always match `finalPriceCents`, but fragile)
+- 14 admin routes still use `(session.user as any).role` instead of `session.user.role`
+- Duplicate cancel routes (`/api/bookings/cancel` + `/api/bookings/[id]/cancel`) with duplicated promo cleanup logic
+- Missing test for exact `validUntil` boundary in promo tests
+
+**Files modified:**
+- `src/lib/bumping.ts` - Added PromoRedemption cleanup in bump loop
+- `src/lib/__tests__/bumping.test.ts` - Added promoRedemption/promoCode mocks to txMock objects
+- `src/app/api/bookings/cancel/route.ts` - Added cleanupPromoRedemption helper and calls
+- `src/app/api/bookings/[id]/cancel/route.ts` - Added cleanupPromoRedemption helper and calls
+- `src/app/api/auth/[...nextauth]/route.ts` - Wrapped POST with login rate limiter
+- `src/app/api/admin/promo-codes/[id]/route.ts` - Added type-specific field validation to PUT
+- `src/lib/promo.ts` - Fixed validUntil boundary from `>` to `>=`
+
 ### Cross-Phase Integration Review #2 - COMPLETED
 
 **Date:** 2026-04-03

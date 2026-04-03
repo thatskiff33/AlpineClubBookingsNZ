@@ -164,6 +164,20 @@ export async function bumpPendingBookings(
       data: { status: BookingStatus.BUMPED },
     });
 
+    // Clean up PromoRedemption if this booking used a promo code
+    const promoRedemption = await tx.promoRedemption.findUnique({
+      where: { bookingId: candidate.id },
+    });
+    if (promoRedemption) {
+      await tx.promoRedemption.delete({
+        where: { id: promoRedemption.id },
+      });
+      await tx.promoCode.update({
+        where: { id: promoRedemption.promoCodeId },
+        data: { currentRedemptions: { decrement: 1 } },
+      });
+    }
+
     bumpedBookingIds.push(candidate.id);
 
     // Remove this booking's guests from occupancy count

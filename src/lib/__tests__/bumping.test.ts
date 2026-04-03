@@ -34,6 +34,15 @@ import {
 import { sendBookingBumpedEmail } from "../email";
 import { LODGE_CAPACITY } from "../capacity";
 
+// Helper mock for promoRedemption (returns null = no promo used)
+const mockPromoRedemption = {
+  findUnique: vi.fn().mockResolvedValue(null),
+  delete: vi.fn().mockResolvedValue({}),
+};
+const mockPromoCode = {
+  update: vi.fn().mockResolvedValue({}),
+};
+
 // Helper to create a fake booking with guests
 function makeBooking(
   id: string,
@@ -214,6 +223,8 @@ describe("Bumping Algorithm", () => {
           findMany: vi.fn().mockResolvedValue([]),
           update: vi.fn(),
         },
+        promoRedemption: mockPromoRedemption,
+        promoCode: mockPromoCode,
       };
 
       const result = await bumpPendingBookings(
@@ -252,6 +263,8 @@ describe("Bumping Algorithm", () => {
           }),
           update: vi.fn().mockResolvedValue({}),
         },
+        promoRedemption: mockPromoRedemption,
+        promoCode: mockPromoCode,
       };
 
       const result = await bumpPendingBookings(
@@ -296,6 +309,8 @@ describe("Bumping Algorithm", () => {
           }),
           update: vi.fn().mockResolvedValue({}),
         },
+        promoRedemption: mockPromoRedemption,
+        promoCode: mockPromoCode,
       };
 
       const result = await bumpPendingBookings(
@@ -335,6 +350,8 @@ describe("Bumping Algorithm", () => {
           }),
           update: vi.fn().mockResolvedValue({}),
         },
+        promoRedemption: mockPromoRedemption,
+        promoCode: mockPromoCode,
       };
 
       const result = await bumpPendingBookings(
@@ -368,6 +385,8 @@ describe("Bumping Algorithm", () => {
           }),
           update: vi.fn(),
         },
+        promoRedemption: mockPromoRedemption,
+        promoCode: mockPromoCode,
       };
 
       const result = await bumpPendingBookings(
@@ -402,6 +421,8 @@ describe("Bumping Algorithm", () => {
           }),
           update: vi.fn().mockResolvedValue({}),
         },
+        promoRedemption: mockPromoRedemption,
+        promoCode: mockPromoCode,
       };
 
       const result = await bumpPendingBookings(
@@ -442,6 +463,8 @@ describe("Bumping Algorithm", () => {
           }),
           update: vi.fn().mockResolvedValue({}),
         },
+        promoRedemption: mockPromoRedemption,
+        promoCode: mockPromoCode,
       };
 
       const result = await bumpPendingBookings(

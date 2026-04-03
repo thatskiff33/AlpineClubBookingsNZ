@@ -43,12 +43,29 @@ export async function POST(
     );
   }
 
+  // Helper: clean up promo redemption if booking used a promo code
+  async function cleanupPromoRedemption(bookingId: string) {
+    const redemption = await prisma.promoRedemption.findUnique({
+      where: { bookingId },
+    });
+    if (redemption) {
+      await prisma.$transaction([
+        prisma.promoRedemption.delete({ where: { id: redemption.id } }),
+        prisma.promoCode.update({
+          where: { id: redemption.promoCodeId },
+          data: { currentRedemptions: { decrement: 1 } },
+        }),
+      ]);
+    }
+  }
+
   // Handle PENDING bookings (no payment taken yet)
   if (booking.status === BookingStatus.PENDING) {
     await prisma.booking.update({
       where: { id },
       data: { status: BookingStatus.CANCELLED },
     });
+    await cleanupPromoRedemption(id);
 
     return NextResponse.json({
       success: true,
@@ -64,6 +81,7 @@ export async function POST(
       where: { id },
       data: { status: BookingStatus.CANCELLED },
     });
+    await cleanupPromoRedemption(id);
 
     return NextResponse.json({
       success: true,
@@ -129,6 +147,8 @@ export async function POST(
       );
     }
 
+    await cleanupPromoRedemption(id);
+
     return NextResponse.json({
       success: true,
       refundAmountCents,
@@ -143,6 +163,7 @@ export async function POST(
     where: { id },
     data: { status: BookingStatus.CANCELLED },
   });
+  await cleanupPromoRedemption(id);
 
   return NextResponse.json({
     success: true,

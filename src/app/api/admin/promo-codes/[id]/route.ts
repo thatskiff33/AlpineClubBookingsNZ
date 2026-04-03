@@ -89,6 +89,30 @@ export async function PUT(
 
   const type = data.type || existing.type;
 
+  // Validate type-specific fields (using effective type after potential update)
+  const effectivePercentOff = data.percentOff !== undefined ? data.percentOff : existing.percentOff;
+  const effectiveValueCents = data.valueCents !== undefined ? data.valueCents : existing.valueCents;
+  const effectiveFreeNights = data.freeNights !== undefined ? data.freeNights : existing.freeNights;
+
+  if (type === "PERCENTAGE" && (effectivePercentOff == null || effectivePercentOff <= 0)) {
+    return NextResponse.json(
+      { error: "Percentage discount requires a percentOff value greater than 0" },
+      { status: 400 }
+    );
+  }
+  if (type === "FIXED_AMOUNT" && (effectiveValueCents == null || effectiveValueCents <= 0)) {
+    return NextResponse.json(
+      { error: "Fixed amount discount requires a valueCents value greater than 0" },
+      { status: 400 }
+    );
+  }
+  if (type === "FREE_NIGHTS" && (effectiveFreeNights == null || effectiveFreeNights <= 0)) {
+    return NextResponse.json(
+      { error: "Free nights discount requires a freeNights value greater than 0" },
+      { status: 400 }
+    );
+  }
+
   if (data.validFrom && data.validUntil && new Date(data.validUntil) <= new Date(data.validFrom)) {
     return NextResponse.json(
       { error: "Valid until must be after valid from" },

@@ -98,7 +98,7 @@ export function validatePromoCodeRules(
     return "This promo code is not yet valid";
   }
 
-  if (promoCode.validUntil && now > promoCode.validUntil) {
+  if (promoCode.validUntil && now >= promoCode.validUntil) {
     return "This promo code has expired";
   }
 
