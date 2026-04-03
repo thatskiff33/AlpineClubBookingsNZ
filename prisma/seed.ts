@@ -84,6 +84,76 @@ async function main() {
     console.log("Admin user seeded: admin@tac.org.nz / admin123");
   }
 
+  // Seed test member
+  const existingMember = await prisma.member.findUnique({
+    where: { email: "member@tac.org.nz" },
+  });
+
+  if (!existingMember) {
+    const memberPasswordHash = await bcrypt.hash("member123", 12);
+    await prisma.member.create({
+      data: {
+        email: "member@tac.org.nz",
+        passwordHash: memberPasswordHash,
+        firstName: "Test",
+        lastName: "Member",
+        role: "MEMBER",
+        ageTier: "ADULT",
+      },
+    });
+    console.log("Test member seeded: member@tac.org.nz / member123");
+  }
+
+  // Seed Winter 2026 season (June - September) with rates
+  const winter2026 = await prisma.season.upsert({
+    where: { id: "seed-winter-2026" },
+    update: {},
+    create: {
+      id: "seed-winter-2026",
+      name: "Winter 2026",
+      type: "WINTER",
+      startDate: new Date("2026-06-01"),
+      endDate: new Date("2026-09-30"),
+      active: true,
+      rates: {
+        create: [
+          { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
+          { ageTier: "ADULT", isMember: false, pricePerNightCents: 6500 },
+          { ageTier: "YOUTH", isMember: true, pricePerNightCents: 3000 },
+          { ageTier: "YOUTH", isMember: false, pricePerNightCents: 4500 },
+          { ageTier: "CHILD", isMember: true, pricePerNightCents: 1500 },
+          { ageTier: "CHILD", isMember: false, pricePerNightCents: 2500 },
+        ],
+      },
+    },
+  });
+  console.log(`Season seeded: ${winter2026.name}`);
+
+  // Seed Summer 2026-27 season (November - March) with rates
+  const summer2026 = await prisma.season.upsert({
+    where: { id: "seed-summer-2026" },
+    update: {},
+    create: {
+      id: "seed-summer-2026",
+      name: "Summer 2026-27",
+      type: "SUMMER",
+      startDate: new Date("2026-11-01"),
+      endDate: new Date("2027-03-31"),
+      active: true,
+      rates: {
+        create: [
+          { ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
+          { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
+          { ageTier: "YOUTH", isMember: true, pricePerNightCents: 2500 },
+          { ageTier: "YOUTH", isMember: false, pricePerNightCents: 3500 },
+          { ageTier: "CHILD", isMember: true, pricePerNightCents: 1000 },
+          { ageTier: "CHILD", isMember: false, pricePerNightCents: 2000 },
+        ],
+      },
+    },
+  });
+  console.log(`Season seeded: ${summer2026.name}`);
+
   console.log("Seeding complete!");
 }
 

@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "db:generate": "prisma generate",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:migrate": "npx prisma migrate deploy",
     "db:push": "npx prisma db push"
@@ -26,6 +27,7 @@
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
     "dotenv": "^17.4.0",
     "lucide-react": "^1.7.0",
     "next": "16.2.2",

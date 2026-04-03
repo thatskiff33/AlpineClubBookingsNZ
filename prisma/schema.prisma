@@ -92,6 +92,7 @@ model Member {
   promoRedemptions    PromoRedemption[]
 
   @@index([email])
+  @@index([xeroContactId])
 }
 
 model PasswordResetToken {
@@ -124,6 +125,7 @@ model MemberSubscription {
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@unique([memberId, seasonYear])
+  @@index([memberId])
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +136,8 @@ model Season {
   id        String     @id @default(cuid())
   name      String
   type      SeasonType
-  startDate DateTime
-  endDate   DateTime
+  startDate DateTime   @db.Date
+  endDate   DateTime   @db.Date
   active    Boolean    @default(true)
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
@@ -143,8 +145,7 @@ model Season {
   // Relations
   rates SeasonRate[]
 
-  @@index([startDate])
-  @@index([endDate])
+  @@index([startDate, endDate])
 }
 
 model SeasonRate {
@@ -158,6 +159,7 @@ model SeasonRate {
   season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
 
   @@unique([seasonId, ageTier, isMember])
+  @@index([seasonId])
 }
 
 // ---------------------------------------------------------------------------
@@ -167,8 +169,8 @@ model SeasonRate {
 model Booking {
   id                 String        @id @default(cuid())
   memberId           String
-  checkIn            DateTime
-  checkOut           DateTime
+  checkIn            DateTime      @db.Date
+  checkOut           DateTime      @db.Date
   status             BookingStatus @default(PENDING)
   totalPriceCents    Int
   discountCents      Int           @default(0)
@@ -187,18 +189,17 @@ model Booking {
   promoRedemption  PromoRedemption?
 
   @@index([memberId])
-  @@index([checkIn])
-  @@index([checkOut])
+  @@index([checkIn, checkOut])
   @@index([status])
 }
 
 model BookingGuest {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   bookingId String
   firstName String
   lastName  String
   ageTier   AgeTier
-  isMember  Boolean  @default(false)
+  isMember  Boolean @default(false)
   memberId  String?
   priceCents Int
   createdAt DateTime @default(now())
@@ -259,6 +260,8 @@ model PromoCode {
 
   // Relations
   redemptions PromoRedemption[]
+
+  @@index([code])
 }
 
 model PromoRedemption {
@@ -273,6 +276,9 @@ model PromoRedemption {
   promoCode PromoCode @relation(fields: [promoCodeId], references: [id])
   booking   Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   member    Member    @relation(fields: [memberId], references: [id])
+
+  @@index([promoCodeId])
+  @@index([memberId])
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +305,7 @@ model ChoreAssignment {
   choreTemplateId  String
   bookingId        String
   bookingGuestId   String?
-  date             DateTime
+  date             DateTime    @db.Date
   status           ChoreStatus @default(SUGGESTED)
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
@@ -310,6 +316,7 @@ model ChoreAssignment {
   bookingGuest  BookingGuest? @relation(fields: [bookingGuestId], references: [id])
 
   @@index([date])
+  @@index([bookingId])
 }
 
 // ---------------------------------------------------------------------------
@@ -331,13 +338,13 @@ model CancellationPolicy {
 // ---------------------------------------------------------------------------
 
 model XeroToken {
-  id           String    @id @default(cuid())
+  id           String   @id @default(cuid())
   accessToken  String
   refreshToken String
   expiresAt    DateTime
   tenantId     String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------
