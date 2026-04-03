@@ -2,9 +2,9 @@
 
 ## Build Status
 
-### Phases 1-4: MERGED INTO MAIN
+### Phases 1-5: MERGED INTO MAIN
 
-All four build phases have been merged into `main` in sequence, with all conflicts resolved.
+All five build phases have been merged into `main` in sequence, with all conflicts resolved.
 
 **What has been built:**
 
@@ -12,12 +12,13 @@ All four build phases have been merged into `main` in sequence, with all conflic
 2. **Phase 2: Seasons & Pricing** - Admin seasons CRUD (`/admin/seasons`), cancellation policy management (`/admin/cancellation-policy`), pricing engine with full test coverage (getStayNights, findSeasonForDate, getNightlyRate, calculateBookingPrice, calculatePromoDiscount, calculateRefund, formatCents, getSeasonYear)
 3. **Phase 3: Core Booking** - Availability calculator (29-bed capacity), booking wizard (`/book`), guest forms, booking API routes (create, quote, cancel, availability), my bookings list + detail pages, admin bookings page with filters
 4. **Phase 4: Stripe Payments** - PaymentIntents for confirmed bookings, SetupIntents for pending bookings (save card, charge later), Stripe webhook handler, cancellation with policy-based refunds, Stripe React components (PaymentForm, SetupForm, StripeProvider)
+5. **Phase 5: Non-Member Guests & Bumping** - FIFO bumping algorithm (`src/lib/bumping.ts`), cron job for auto-confirming pending bookings (`src/instrumentation.ts` + `src/lib/cron-confirm-pending.ts`), booking API integration with bumping for member bookings, email notifications (confirmed, pending, bumped), payment routes now use NextAuth auth, manual cron trigger API (`/api/cron`)
 
 **How to run:**
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 121 tests pass (7 test files)
+npm test              # 149 tests pass (9 test files)
 npm run build         # builds successfully
 ```
 
@@ -38,13 +39,46 @@ npm run db:seed
 - Season year: April-March cycle
 - No migrations committed yet - run `prisma migrate dev` to create initial migration from merged schema
 
-### What's Next: Phase 5 - Non-Member Guests & Bumping
-1. Non-member guest flow in booking wizard
-2. PENDING status for non-member bookings >7 days out
-3. Cron job to auto-confirm pending bookings at 7-day mark
-4. FIFO bumping algorithm when members fill lodge
-5. Charge saved PaymentMethod on confirmation
-6. Bumped booking notification emails
+### Phase 5 Details: Non-Member Guests & Bumping
+
+**Key files:**
+- `src/lib/bumping.ts` - FIFO bumping algorithm: finds PENDING non-member bookings overlapping date range, bumps most-recent-first until capacity restored
+- `src/lib/cron-confirm-pending.ts` - Cron processing: finds PENDING bookings past hold deadline, checks capacity, charges saved PaymentMethod or bumps
+- `src/instrumentation.ts` - Next.js instrumentation hook: schedules node-cron job every 3 hours
+- `src/app/api/cron/route.ts` - Manual cron trigger endpoint (secured by CRON_SECRET header)
+- `src/app/api/bookings/route.ts` - Updated to integrate bumping when member bookings exceed capacity
+
+**Booking flow logic:**
+- **All-member guests OR check-in <= 7 days**: status = CONFIRMED, collect Stripe payment immediately
+- **Has non-member guests AND check-in > 7 days**: status = PENDING, collect card via SetupIntent, set `nonMemberHoldUntil = checkIn - 7 days`
+- **Member booking exceeds capacity**: triggers FIFO bumping of PENDING bookings (most recent first)
+- **Non-member booking exceeds capacity**: rejected (cannot bump other bookings)
+
+**Cron job behavior (every 3 hours):**
+1. Finds PENDING bookings where `nonMemberHoldUntil <= now()`
+2. For each: re-checks bed availability
+3. If beds available + payment method saved: charges card, confirms booking, sends email
+4. If beds not available: bumps booking, sends notification email
+5. Continues processing remaining bookings even if one fails
+
+**Edge cases handled:**
+- Stops bumping as soon as capacity is restored (doesn't over-bump)
+- Returns capacityRestored=false if bumping all PENDING bookings isn't enough
+- Booking API rejects new booking if capacity can't be restored
+- Cron handles missing payment methods gracefully (marks as failed)
+- Cron handles Stripe charge failures gracefully
+- Bumped notification emails sent after transaction commits (no emails on rollback)
+- Advisory locks prevent concurrent double-booking
+
+### What's Next: Phase 6 - Xero Integration
+1. OAuth2 connect flow in admin panel
+2. Token storage (encrypted) and auto-refresh
+3. Membership subscription check
+4. Invoice creation on confirmed booking
+5. Payment recording against Xero invoice
+6. Credit note on refund
+7. Contact sync
+8. Daily cron for membership status refresh
 
 ## Context
 
