@@ -4,8 +4,12 @@ import { BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { auth } from "@/lib/auth";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 export async function GET(request: NextRequest) {
+  const rateLimited = applyRateLimit(rateLimiters.bookingQuery, request);
+  if (rateLimited) return rateLimited;
+
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });

@@ -159,6 +159,8 @@ export const rateLimiters = {
   api: { id: "api", limit: 100, windowSeconds: 60 } as RateLimitConfig,
   /** Booking creation: 20 per hour */
   bookingCreate: { id: "booking-create", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Booking quote / availability / promo validate: 60 per minute */
+  bookingQuery: { id: "booking-query", limit: 60, windowSeconds: 60 } as RateLimitConfig,
 } as const;
 
 // Export for testing

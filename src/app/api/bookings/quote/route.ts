@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { calculateBookingPrice, type SeasonRateData } from "@/lib/pricing";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
 
 const quoteSchema = z.object({
@@ -16,6 +17,9 @@ const quoteSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const rateLimited = applyRateLimit(rateLimiters.bookingQuery, request);
+  if (rateLimited) return rateLimited;
+
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });

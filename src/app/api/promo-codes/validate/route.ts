@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { calculateBookingPrice, calculatePromoDiscount, type SeasonRateData } from "@/lib/pricing";
 import { validatePromoCodeRules } from "@/lib/promo";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
 
 const validateSchema = z.object({
@@ -20,6 +21,9 @@ const validateSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const rateLimited = applyRateLimit(rateLimiters.bookingQuery, req);
+  if (rateLimited) return rateLimited;
+
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
