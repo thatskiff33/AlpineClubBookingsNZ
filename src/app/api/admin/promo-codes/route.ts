@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { logAudit } from "@/lib/audit";
 
 const promoCodeSchema = z.object({
   code: z.string().min(1, "Code is required").transform((s) => s.toUpperCase().trim()),
@@ -107,6 +108,13 @@ export async function POST(req: NextRequest) {
       singleUse: data.singleUse,
       active: data.active,
     },
+  });
+
+  logAudit({
+    action: "promo.create",
+    memberId: session.user.id,
+    targetId: promoCode.id,
+    details: `Created promo code: ${data.code}`,
   });
 
   return NextResponse.json(promoCode, { status: 201 });

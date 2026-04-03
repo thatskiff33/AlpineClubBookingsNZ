@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { logAudit } from "@/lib/audit";
 
 const updatePromoCodeSchema = z.object({
   code: z.string().min(1).transform((s) => s.toUpperCase().trim()).optional(),
@@ -148,6 +149,13 @@ export async function PUT(
     },
   });
 
+  logAudit({
+    action: "promo.update",
+    memberId: session.user.id,
+    targetId: id,
+    details: `Updated promo code: ${existing.code}`,
+  });
+
   return NextResponse.json(updated);
 }
 
@@ -180,6 +188,13 @@ export async function DELETE(
   }
 
   await prisma.promoCode.delete({ where: { id } });
+
+  logAudit({
+    action: "promo.delete",
+    memberId: session.user.id,
+    targetId: id,
+    details: `Deleted promo code: ${existing.code}`,
+  });
 
   return NextResponse.json({ success: true });
 }

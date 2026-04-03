@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
+import { logAudit } from "@/lib/audit"
 
 const policySchema = z.object({
   rules: z.array(
@@ -65,6 +66,12 @@ export async function PUT(req: NextRequest) {
     return tx.cancellationPolicy.findMany({
       orderBy: { daysBeforeStay: "desc" },
     })
+  })
+
+  logAudit({
+    action: "cancellation-policy.update",
+    memberId: session.user.id,
+    details: `Updated to ${sortedRules.length} rules`,
   })
 
   return NextResponse.json(policies)

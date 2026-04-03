@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
+import { logAudit } from "@/lib/audit"
 
 const seasonSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -91,6 +92,13 @@ export async function POST(req: NextRequest) {
     },
     include: { rates: true },
   })
+
+  logAudit({
+    action: "season.create",
+    memberId: session.user.id,
+    targetId: season.id,
+    details: `Created season: ${name}`,
+  });
 
   return NextResponse.json(season, { status: 201 })
 }

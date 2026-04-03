@@ -10,6 +10,8 @@ import {
   loadCancellationPolicy,
 } from "@/lib/cancellation";
 import { sendBookingCancelledEmail } from "@/lib/email";
+import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit";
 
 export async function POST(
   request: NextRequest,
@@ -67,6 +69,14 @@ export async function POST(
       data: { status: BookingStatus.CANCELLED },
     });
     await cleanupPromoRedemption(id);
+
+    logAudit({
+      action: "booking.cancel",
+      memberId: session.user.id,
+      targetId: id,
+      details: "Pending booking cancelled, no payment taken",
+      ipAddress: getClientIp(request),
+    });
 
     sendBookingCancelledEmail(
       booking.member.email,

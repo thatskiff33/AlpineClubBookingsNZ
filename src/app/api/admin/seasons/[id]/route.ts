@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
+import { logAudit } from "@/lib/audit"
 
 const updateSeasonSchema = z.object({
   name: z.string().min(1).optional(),
@@ -128,6 +129,13 @@ export async function PUT(
     })
   })
 
+  logAudit({
+    action: "season.update",
+    memberId: session.user.id,
+    targetId: id,
+    details: `Updated season: ${existing.name}`,
+  })
+
   return NextResponse.json(season)
 }
 
@@ -148,6 +156,13 @@ export async function DELETE(
   }
 
   await prisma.season.delete({ where: { id } })
+
+  logAudit({
+    action: "season.delete",
+    memberId: session.user.id,
+    targetId: id,
+    details: `Deleted season: ${existing.name}`,
+  })
 
   return NextResponse.json({ success: true })
 }

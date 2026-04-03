@@ -6,6 +6,8 @@ import { calculateRefundAmount, daysUntilDate, loadCancellationPolicy } from "@/
 import { CancelBookingSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import { sendBookingCancelledEmail } from "@/lib/email";
+import { logAudit } from "@/lib/audit";
+import { getClientIp } from "@/lib/rate-limit";
 
 export async function POST(request: NextRequest) {
   try {
@@ -67,6 +69,14 @@ export async function POST(request: NextRequest) {
       });
       await cleanupPromoRedemption(bookingId);
 
+      logAudit({
+        action: "booking.cancel",
+        memberId: session.user.id,
+        targetId: bookingId,
+        details: "Pending booking cancelled, no payment taken",
+        ipAddress: getClientIp(request),
+      });
+
       sendBookingCancelledEmail(
         booking.member.email,
         booking.member.firstName,
@@ -98,6 +108,14 @@ export async function POST(request: NextRequest) {
         data: { status: "CANCELLED" },
       });
       await cleanupPromoRedemption(bookingId);
+
+      logAudit({
+        action: "booking.cancel",
+        memberId: session.user.id,
+        targetId: bookingId,
+        details: "Confirmed booking cancelled, no payment to refund",
+        ipAddress: getClientIp(request),
+      });
 
       sendBookingCancelledEmail(
         booking.member.email,
@@ -172,6 +190,14 @@ export async function POST(request: NextRequest) {
 
       await cleanupPromoRedemption(bookingId);
 
+      logAudit({
+        action: "booking.cancel",
+        memberId: session.user.id,
+        targetId: bookingId,
+        details: `Refund ${refundPercentage}% = ${refundAmountCents} cents`,
+        ipAddress: getClientIp(request),
+      });
+
       sendBookingCancelledEmail(
         booking.member.email,
         booking.member.firstName,
@@ -195,6 +221,14 @@ export async function POST(request: NextRequest) {
       data: { status: "CANCELLED" },
     });
     await cleanupPromoRedemption(bookingId);
+
+    logAudit({
+      action: "booking.cancel",
+      memberId: session.user.id,
+      targetId: bookingId,
+      details: "No refund per cancellation policy",
+      ipAddress: getClientIp(request),
+    });
 
     sendBookingCancelledEmail(
       booking.member.email,
