@@ -5,6 +5,16 @@
 
 const BASE_URL = process.env.NEXTAUTH_URL || "http://localhost:3000";
 
+/** Escape HTML special characters to prevent injection in email templates. */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 const BRAND_COLOR = "#1e40af"; // Blue-800
 const BRAND_LIGHT = "#dbeafe"; // Blue-100
 const TEXT_COLOR = "#1f2937"; // Gray-800
@@ -127,8 +137,9 @@ function formatCents(cents: number): string {
 }
 
 export function welcomeTemplate(firstName: string): string {
+  const name = escapeHtml(firstName);
   return layout(`
-    ${heading("Welcome, " + firstName + "!")}
+    ${heading("Welcome, " + name + "!")}
     ${paragraph("Your Tokoroa Alpine Club booking account has been created successfully.")}
     ${paragraph("You can now log in to book stays at the lodge, manage your bookings, and view your upcoming trips.")}
     ${button("Log In to Your Account", BASE_URL + "/login")}
@@ -164,7 +175,7 @@ export function bookingConfirmedTemplate(
     const subtotalCents = totalCents + options.discountCents;
     rows.push({ label: "Subtotal", value: formatCents(subtotalCents) });
     const discountLabel = options.promoCode
-      ? `Discount (${options.promoCode})`
+      ? `Discount (${escapeHtml(options.promoCode)})`
       : "Discount";
     rows.push({ label: discountLabel, value: `-${formatCents(options.discountCents)}` });
   }
@@ -173,7 +184,7 @@ export function bookingConfirmedTemplate(
 
   return layout(`
     ${heading("Booking Confirmed")}
-    ${paragraph("Hi " + firstName + ", your lodge booking has been confirmed!")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been confirmed!")}
     ${infoTable(rows)}
     ${alertBox("Payment has been processed successfully.", "success")}
     ${paragraph("You can view your booking details and manage your stay from your account.")}
@@ -190,7 +201,7 @@ export function bookingPendingTemplate(
 ): string {
   return layout(`
     ${heading("Booking Pending")}
-    ${paragraph("Hi " + firstName + ", your lodge booking has been received and is currently pending.")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been received and is currently pending.")}
     ${infoTable([
       { label: "Check-in", value: formatNZDate(checkIn) },
       { label: "Check-out", value: formatNZDate(checkOut) },
@@ -211,7 +222,7 @@ export function bookingBumpedTemplate(
 ): string {
   return layout(`
     ${heading("Booking Update")}
-    ${paragraph("Hi " + firstName + ", unfortunately your pending lodge booking has been bumped due to member demand.")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", unfortunately your pending lodge booking has been bumped due to member demand.")}
     ${infoTable([
       { label: "Check-in", value: formatNZDate(checkIn) },
       { label: "Check-out", value: formatNZDate(checkOut) },
@@ -237,7 +248,7 @@ export function bookingCancelledTemplate(
 
   return layout(`
     ${heading("Booking Cancelled")}
-    ${paragraph("Hi " + firstName + ", your lodge booking has been cancelled.")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been cancelled.")}
     ${infoTable([
       { label: "Check-in", value: formatNZDate(checkIn) },
       { label: "Check-out", value: formatNZDate(checkOut) },
@@ -259,14 +270,14 @@ export function choreRosterTemplate(
   );
 
   const choreRows = chores.map((c) => ({
-    label: c.name,
-    value: c.description || "",
+    label: escapeHtml(c.name),
+    value: c.description ? escapeHtml(c.description) : "",
   }));
 
   return layout(`
     ${heading("Chore Roster")}
-    ${paragraph("Hi " + guestName + ",")}
-    ${paragraph("Here are your assigned chores for <strong>" + formattedDate + "</strong> at the lodge:")}
+    ${paragraph("Hi " + escapeHtml(guestName) + ",")}
+    ${paragraph("Here are your assigned chores for <strong>" + escapeHtml(formattedDate) + "</strong> at the lodge:")}
     ${infoTable(choreRows)}
     ${alertBox("Last person to bed: Check heaters and fire are safe and doors are secure.", "warning")}
     ${muted("Thanks for helping keep the lodge running smoothly!")}
