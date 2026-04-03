@@ -8,8 +8,17 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const cron = await import("node-cron");
 
+    // Overlap guards: prevent concurrent execution of the same cron job
+    let isPendingCronRunning = false;
+    let isXeroCronRunning = false;
+
     // Run every 3 hours to check for pending bookings past their hold deadline
     cron.default.schedule("0 */3 * * *", async () => {
+      if (isPendingCronRunning) {
+        console.log("[CRON] Pending booking confirmation already running, skipping");
+        return;
+      }
+      isPendingCronRunning = true;
       console.log("[CRON] Checking pending bookings for auto-confirmation...");
       try {
         const { confirmPendingBookings } = await import(
@@ -23,6 +32,8 @@ export async function register() {
         });
       } catch (err) {
         console.error("[CRON] Error in pending booking confirmation:", err);
+      } finally {
+        isPendingCronRunning = false;
       }
     });
 
@@ -30,6 +41,11 @@ export async function register() {
 
     // Run daily at 2 AM to refresh Xero membership statuses
     cron.default.schedule("0 2 * * *", async () => {
+      if (isXeroCronRunning) {
+        console.log("[CRON] Xero membership refresh already running, skipping");
+        return;
+      }
+      isXeroCronRunning = true;
       console.log("[CRON] Refreshing Xero membership statuses...");
       try {
         const { isXeroConnected, refreshAllMembershipStatuses } = await import(
@@ -43,6 +59,8 @@ export async function register() {
         console.log("[CRON] Xero membership refresh complete:", result);
       } catch (err) {
         console.error("[CRON] Error refreshing Xero memberships:", err);
+      } finally {
+        isXeroCronRunning = false;
       }
     });
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { chargePaymentMethod } from "@/lib/stripe";
+import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import { auth } from "@/lib/auth";
 import { z } from "zod";
 
@@ -91,6 +92,18 @@ export async function POST(request: NextRequest) {
         },
       }),
     ]);
+
+    // Create Xero invoice if connected and payment succeeded
+    if (paymentIntent.status === "succeeded") {
+      try {
+        if (await isXeroConnected()) {
+          await createXeroInvoiceForBooking(booking.id);
+          console.log(`Xero invoice created for booking ${booking.id}`);
+        }
+      } catch (xeroErr) {
+        console.error(`Failed to create Xero invoice for booking ${booking.id}:`, xeroErr);
+      }
+    }
 
     return NextResponse.json({
       success: true,

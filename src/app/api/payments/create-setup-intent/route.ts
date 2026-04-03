@@ -38,6 +38,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Verify the requesting user owns this booking or is admin
+    if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     // SetupIntent is for pending bookings with non-member guests
     if (booking.status !== "PENDING") {
       return NextResponse.json(

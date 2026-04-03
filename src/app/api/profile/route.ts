@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { computeAgeTier } from "@/lib/age-tier";
 
 const profileSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100),
@@ -14,18 +15,6 @@ const profileSchema = z.object({
     .nullable()
     .or(z.literal("")),
 });
-
-function computeAgeTier(dob: Date): "ADULT" | "YOUTH" | "CHILD" {
-  const today = new Date();
-  let age = today.getFullYear() - dob.getFullYear();
-  const monthDiff = today.getMonth() - dob.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
-    age--;
-  }
-  if (age < 10) return "CHILD";
-  if (age < 18) return "YOUTH";
-  return "ADULT";
-}
 
 export async function PUT(req: NextRequest) {
   const session = await auth();

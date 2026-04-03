@@ -16,6 +16,32 @@ All completed build phases have been merged into `main` in sequence, with all co
 6. **Phase 6: Xero Integration** - OAuth2 connect flow, encrypted token storage, invoice creation on booking confirmation, credit notes on refunds, contact sync, membership verification, daily cron for membership refresh, webhook handler. Wired into Stripe webhook, cancellation route, and cron auto-confirmation (all guarded with `isXeroConnected()` check).
 8. **Phase 8: Chore Roster** - Chore allocator algorithm (round-robin, age-aware), admin chore template management, roster review/edit page, printable A4 roster view, chore roster email notifications. Enhanced ChoreTemplate with ageRestriction enum, recommendedPeopleMin/Max, isEssential, conditionalNote.
 
+### Cross-Phase Integration Review - COMPLETED
+
+**Date:** 2026-04-03
+
+**Scope:** Full codebase review after merging Phases 5, 6, and 8 in parallel. Build, type check, 224 tests all pass. Reviewed cross-phase integration, auth/security, Prisma schema, business logic, error handling, dependencies, and code quality.
+
+**24 issues found (2 Critical, 8 High, 10 Medium, 4 Low). All Critical and High issues fixed:**
+
+1. **CRITICAL: `/api/bookings/cancel` had no auth** - Auth and ownership checks were commented out with TODO. Restored `auth()` call and `memberId` ownership verification.
+2. **HIGH: Payment routes missing ownership checks** - `/api/payments/create-payment-intent` and `/api/payments/create-setup-intent` verified auth but not booking ownership. Added `booking.memberId !== session.user.id` checks.
+3. **HIGH: Missing Xero invoice on manual charge** - `/api/payments/charge-saved-method` confirmed bookings without creating Xero invoices. Added guarded `createXeroInvoiceForBooking()` call.
+4. **HIGH: Duplicate cancellation routes with inconsistent logic** - `/api/bookings/[id]/cancel` just set status without refund/Xero. Rewrote to include full cancellation flow (policy-based refund, Stripe refund, Xero credit note).
+5. **HIGH: Wrong CHILD age threshold in profile** - `/api/profile` had local `computeAgeTier` using `age < 10` instead of canonical `age < 13`. Now imports from `@/lib/age-tier`.
+6. **HIGH: Missing Xero env vars in docker-compose** - `XERO_ENCRYPTION_KEY` and `XERO_WEBHOOK_KEY` not passed to app container. Added both. Also added `DOMAIN` env var for Caddy.
+7. **HIGH: No cron overlap guard** - Both cron jobs in `instrumentation.ts` could run concurrently if a previous execution hadn't finished. Added `isRunning` flags with `finally` cleanup.
+
+**Remaining Medium/Low issues (not fixed, documented for future):**
+- Missing FK indexes on `PasswordResetToken.memberId` and `ChoreAssignment.choreTemplateId`
+- `getSeasonYear` duplicated in 3 files (`utils.ts`, `pricing.ts`, `age-tier.ts`)
+- `formatCents` duplicated in 2 files
+- Inconsistent cron auth patterns (`x-cron-secret` vs `Authorization: Bearer`)
+- `/api/seasons` GET and `/api/availability` have no auth (may be intentionally public)
+- Unused `Room` model in Prisma schema
+- Unused `calculateRefund` function in `pricing.ts` (active version is in `cancellation.ts`)
+- `dotenv` package unused in dependencies
+
 ### Phase 6: Xero Integration - COMPLETED
 
 **Date:** 2026-04-03

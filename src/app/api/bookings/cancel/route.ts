@@ -4,15 +4,14 @@ import { processRefund } from "@/lib/stripe";
 import { isXeroConnected, createXeroCreditNote } from "@/lib/xero";
 import { calculateRefundAmount, daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
 import { CancelBookingSchema } from "@/types/payments";
-// import { auth } from "@/lib/auth";  // Will be available after Phase 1
+import { auth } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
-    // TODO: Uncomment when auth is available
-    // const session = await auth();
-    // if (!session?.user?.id) {
-    //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    // }
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     const body = await request.json();
     const parsed = CancelBookingSchema.safeParse(body);
@@ -38,10 +37,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // TODO: Verify the requesting user owns this booking or is admin
-    // if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
-    //   return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    // }
+    // Verify the requesting user owns this booking or is admin
+    if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     // Handle PENDING bookings (no payment taken yet)
     if (booking.status === "PENDING") {

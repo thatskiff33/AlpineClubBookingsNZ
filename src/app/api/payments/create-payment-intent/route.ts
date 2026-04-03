@@ -38,6 +38,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Verify the requesting user owns this booking or is admin
+    if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     // Don't create a new PaymentIntent if one already exists
     if (booking.payment?.stripePaymentIntentId) {
       return NextResponse.json(

@@ -34,6 +34,8 @@ services:
       XERO_CLIENT_ID: ${XERO_CLIENT_ID}
       XERO_CLIENT_SECRET: ${XERO_CLIENT_SECRET}
       XERO_REDIRECT_URI: ${XERO_REDIRECT_URI}
+      XERO_ENCRYPTION_KEY: ${XERO_ENCRYPTION_KEY}
+      XERO_WEBHOOK_KEY: ${XERO_WEBHOOK_KEY}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
       AWS_SES_ACCESS_KEY_ID: ${AWS_SES_ACCESS_KEY_ID}
@@ -46,6 +48,8 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
     depends_on:
       - app
     ports:
