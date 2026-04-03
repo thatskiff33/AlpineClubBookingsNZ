@@ -151,6 +151,52 @@ export async function sendBookingBumpedEmail(
   });
 }
 
+export async function sendChoreRosterEmail(
+  email: string,
+  guestName: string,
+  date: string,
+  chores: Array<{ name: string; description: string | null }>
+) {
+  const formattedDate = new Date(date + "T00:00:00").toLocaleDateString("en-NZ", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  const choreList = chores
+    .map(
+      (c) =>
+        `<tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${c.name}</td><td style="padding: 8px; border: 1px solid #ddd; color: #555;">${c.description || ""}</td></tr>`
+    )
+    .join("");
+
+  await sendEmail({
+    to: email,
+    subject: `Your chore roster for ${formattedDate} - TAC Lodge`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Chore Roster</h2>
+        <p>Hi ${guestName},</p>
+        <p>Here are your assigned chores for <strong>${formattedDate}</strong> at the Tokoroa Alpine Club lodge:</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+          <thead>
+            <tr style="background: #f5f5f5;">
+              <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Chore</th>
+              <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Description</th>
+            </tr>
+          </thead>
+          <tbody>${choreList}</tbody>
+        </table>
+        <p style="background: #fef3c7; padding: 12px; border-radius: 6px; font-weight: 600;">
+          Last person to bed: Check heaters and fire are safe and doors are secure.
+        </p>
+        <p style="color: #666; font-size: 14px;">Thanks for helping keep the lodge running smoothly!</p>
+      </div>
+    `,
+  });
+}
+
 export async function sendWelcomeEmail(email: string, firstName: string) {
   await sendEmail({
     to: email,

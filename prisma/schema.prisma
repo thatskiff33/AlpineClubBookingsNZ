@@ -65,6 +65,13 @@ enum ChoreStatus {
   COMPLETED
 }
 
+enum AgeRestriction {
+  ANY
+  ADULTS_ONLY
+  MIXED_PREFERRED
+  ADULT_SUPERVISED
+}
+
 // ---------------------------------------------------------------------------
 // Member & Auth
 // ---------------------------------------------------------------------------
@@ -288,15 +295,19 @@ model PromoRedemption {
 // ---------------------------------------------------------------------------
 
 model ChoreTemplate {
-  id                String   @id @default(cuid())
-  name              String
-  description       String?
-  recommendedPeople Int      @default(2)
-  minAge            Int      @default(10)
-  sortOrder         Int      @default(0)
-  active            Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                   String         @id @default(cuid())
+  name                 String
+  description          String?
+  recommendedPeopleMin Int            @default(1)
+  recommendedPeopleMax Int            @default(2)
+  isEssential          Boolean        @default(false)
+  ageRestriction       AgeRestriction @default(ANY)
+  conditionalNote      String?
+  minAge               Int            @default(0)
+  sortOrder            Int            @default(0)
+  active               Boolean        @default(true)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
   // Relations
   assignments ChoreAssignment[]

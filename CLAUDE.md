@@ -55,11 +55,13 @@ All five build phases have been merged into `main` in sequence, with all conflic
 - `XERO_ENCRYPTION_KEY` - 64-char hex string for token encryption (generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`)
 - `XERO_WEBHOOK_KEY` - From Xero webhook subscription config
 
+5. **Phase 8: Chore Roster** - ChoreTemplate schema extended (recommendedPeopleMin/Max, isEssential, ageRestriction enum, conditionalNote), 17 chore templates seeded, auto-suggest allocation algorithm with round-robin/age restrictions/4-day history lookback/occupancy scaling, admin chores CRUD (`/admin/chores`), admin roster review (`/admin/roster`) with date picker/reassignment/confirm, printable A4 roster (`/admin/roster/[date]/print`), roster email to guests, 39 chore allocator tests
+
 **How to run:**
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # tests pass (9+ test files)
+npm test              # tests pass (11+ test files)
 npm run build         # builds successfully
 ```
 
