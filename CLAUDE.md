@@ -13,11 +13,13 @@ All four build phases have been merged into `main` in sequence, with all conflic
 3. **Phase 3: Core Booking** - Availability calculator (29-bed capacity), booking wizard (`/book`), guest forms, booking API routes (create, quote, cancel, availability), my bookings list + detail pages, admin bookings page with filters
 4. **Phase 4: Stripe Payments** - PaymentIntents for confirmed bookings, SetupIntents for pending bookings (save card, charge later), Stripe webhook handler, cancellation with policy-based refunds, Stripe React components (PaymentForm, SetupForm, StripeProvider)
 
+5. **Phase 8: Chore Roster** - ChoreTemplate schema extended (recommendedPeopleMin/Max, isEssential, ageRestriction enum, conditionalNote), 17 chore templates seeded, auto-suggest allocation algorithm with round-robin/age restrictions/4-day history lookback/occupancy scaling, admin chores CRUD (`/admin/chores`), admin roster review (`/admin/roster`) with date picker/reassignment/confirm, printable A4 roster (`/admin/roster/[date]/print`), roster email to guests, 39 chore allocator tests
+
 **How to run:**
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 121 tests pass (7 test files)
+npm test              # 160 tests pass (8 test files)
 npm run build         # builds successfully
 ```
 
