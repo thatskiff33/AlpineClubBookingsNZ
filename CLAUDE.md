@@ -1,5 +1,51 @@
 # TACBookings - Build Plan
 
+## Build Status
+
+### Phases 1-4: MERGED INTO MAIN
+
+All four build phases have been merged into `main` in sequence, with all conflicts resolved.
+
+**What has been built:**
+
+1. **Phase 1: Foundation** - Next.js 15 + TypeScript + Tailwind + shadcn/ui, Prisma schema (all entities), NextAuth v5 credentials auth with JWT sessions, password reset flow, member profile, admin layout with sidebar, Docker Compose + Caddy setup
+2. **Phase 2: Seasons & Pricing** - Admin seasons CRUD (`/admin/seasons`), cancellation policy management (`/admin/cancellation-policy`), pricing engine with full test coverage (getStayNights, findSeasonForDate, getNightlyRate, calculateBookingPrice, calculatePromoDiscount, calculateRefund, formatCents, getSeasonYear)
+3. **Phase 3: Core Booking** - Availability calculator (29-bed capacity), booking wizard (`/book`), guest forms, booking API routes (create, quote, cancel, availability), my bookings list + detail pages, admin bookings page with filters
+4. **Phase 4: Stripe Payments** - PaymentIntents for confirmed bookings, SetupIntents for pending bookings (save card, charge later), Stripe webhook handler, cancellation with policy-based refunds, Stripe React components (PaymentForm, SetupForm, StripeProvider)
+
+**How to run:**
+```bash
+npm install --legacy-peer-deps
+npx prisma generate
+npm test              # 121 tests pass (7 test files)
+npm run build         # builds successfully
+```
+
+**To seed database (requires running PostgreSQL):**
+```bash
+npx prisma migrate dev --name initial
+npm run db:seed
+```
+
+**Test accounts (from seed):**
+- Admin: admin@tac.org.nz / admin123
+- Member: member@tac.org.nz / member123
+
+**Known considerations:**
+- nodemailer v8 has peer dep conflict with next-auth (use `--legacy-peer-deps`)
+- Prisma v6 (not v7) - standard PostgreSQL compatible
+- All prices stored as integer cents
+- Season year: April-March cycle
+- No migrations committed yet - run `prisma migrate dev` to create initial migration from merged schema
+
+### What's Next: Phase 5 - Non-Member Guests & Bumping
+1. Non-member guest flow in booking wizard
+2. PENDING status for non-member bookings >7 days out
+3. Cron job to auto-confirm pending bookings at 7-day mark
+4. FIFO bumping algorithm when members fill lodge
+5. Charge saved PaymentMethod on confirmation
+6. Bumped booking notification emails
+
 ## Context
 
 Tokoroa Alpine Club (TAC) is a not-for-profit operating a 29-bed alpine lodge. They currently use Checkfront for booking management and Xero for accounting/membership. They want to replace Checkfront with a bespoke booking and membership system that integrates deeply with Xero and Stripe. The club has ~410 members (310 adult, 60 youth, 40 child), no developers on the team - building entirely with LLM assistance. Hosted on AWS Lightsail.
