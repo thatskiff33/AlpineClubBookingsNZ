@@ -699,3 +699,73 @@ Add to `.claude/settings.json` to auto-format code after every edit:
   }
 }
 ```
+
+---
+
+## Build Progress
+
+### Phase 1: Foundation - COMPLETE
+Built as part of Phase 3 session. Includes:
+- Next.js 15 (App Router) + TypeScript + Tailwind CSS
+- Prisma schema (full schema with all entities)
+- NextAuth v5 credentials provider (JWT sessions, role-based)
+- Login page, authenticated layout, admin layout
+- shadcn/ui component library (Button, Card, Input, Label, Badge, Select)
+- Database seed script (admin user, test member, seasons, cancellation policies)
+
+### Phase 2: Seasons & Pricing - COMPLETE
+Built as part of Phase 3 session. Includes:
+- Pricing engine (`src/lib/pricing.ts`) with full test coverage
+- Season rate lookup across multiple seasons
+- Cross-season boundary pricing
+- Promo code discount calculation (percentage, fixed amount, free nights)
+- Admin seasons & rates management page (`/admin/seasons`)
+- Season creation API (`/api/seasons`)
+
+### Phase 3: Core Booking - COMPLETE
+- Availability calculator (`src/lib/capacity.ts`) - beds per night query
+- Booking calendar UI with color-coded availability (green/yellow/red)
+- Guest addition form (name, age tier, member/non-member)
+- Real-time price quote API (`/api/bookings/quote`)
+- Booking creation API (`/api/bookings`) with:
+  - PostgreSQL advisory locks for concurrency control
+  - Server-side price recalculation (never trusts client)
+  - Auto status: CONFIRMED for member-only or <=7 days, PENDING for non-member >7 days
+  - Capacity validation per night
+- My bookings list (`/bookings`) + detail page (`/bookings/[id]`)
+- Booking cancellation API + UI
+- Admin bookings page (`/admin/bookings`) with status/date/search filters
+- Admin dashboard with stats (members, bookings, revenue)
+- Admin members list page
+
+### What Works Now
+```bash
+npm install          # Install dependencies
+npx prisma generate  # Generate Prisma client
+npm test             # Run tests (34 passing)
+npm run build        # Build for production
+```
+
+**Test accounts (after seeding):**
+- Admin: admin@tac.co.nz / admin123
+- Member: member@tac.co.nz / member123
+
+**Seeded data:**
+- Winter 2026 season (Jun-Sep) with rates
+- Summer 2025-2026 season (Oct-May) with rates
+- Cancellation policy (14d=100%, 7d=50%, 0d=0%)
+
+### What's Next: Phase 4 - Stripe Payments
+1. Stripe integration: PaymentIntents for confirmed bookings
+2. Stripe Elements card input in booking wizard
+3. Webhook handler for payment events
+4. Booking status tied to payment success
+5. SetupIntents for pending bookings (save card, charge later)
+6. Cancellation with policy-based Stripe refunds
+
+### Known Decisions
+- Using Prisma 6.x (not Prisma 7 which has breaking changes)
+- System fonts instead of Google Fonts (avoidance of external font dependency)
+- Lodge capacity hardcoded at 29 beds in `src/lib/capacity.ts`
+- All prices in integer cents throughout
+- Advisory lock key based on checkIn date for concurrency
