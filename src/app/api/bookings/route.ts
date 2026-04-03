@@ -10,6 +10,11 @@ import {
   bumpPendingBookings,
   sendBumpedNotifications,
 } from "@/lib/bumping";
+import {
+  validatePromoCodeRules,
+  redeemPromoCode,
+} from "@/lib/promo";
+import { calculatePromoDiscount } from "@/lib/pricing";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -25,6 +30,7 @@ const createBookingSchema = z.object({
     )
     .min(1),
   notes: z.string().optional(),
+  promoCode: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -43,7 +49,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { checkIn, checkOut, guests, notes } = parsed.data;
+  const { checkIn, checkOut, guests, notes, promoCode: promoCodeStr } = parsed.data;
 
   if (checkOut <= checkIn) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
@@ -172,6 +178,57 @@ export async function POST(request: NextRequest) {
 
       const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData);
 
+      // Handle promo code if provided
+      let discountCents = 0;
+      let promoCodeRecord: { id: string; type: string; valueCents: number | null; percentOff: number | null; freeNights: number | null } | null = null;
+
+      if (promoCodeStr) {
+        const normalizedCode = promoCodeStr.toUpperCase().trim();
+        const promoCode = await tx.promoCode.findUnique({
+          where: { code: normalizedCode },
+        });
+
+        // Check single-use
+        let memberRedemptionCount = 0;
+        if (promoCode?.singleUse) {
+          memberRedemptionCount = await tx.promoRedemption.count({
+            where: {
+              promoCodeId: promoCode.id,
+              memberId: session.user.id,
+            },
+          });
+        }
+
+        const validationError = validatePromoCodeRules(
+          promoCode,
+          { memberId: session.user.id },
+          new Date(),
+          memberRedemptionCount
+        );
+
+        if (validationError) {
+          throw new Error(validationError);
+        }
+
+        // Collect all per-night rates for FREE_NIGHTS calculation
+        const allPerNightRates = price.guests.flatMap((g) => g.perNightCents);
+
+        discountCents = calculatePromoDiscount(
+          {
+            type: promoCode!.type,
+            valueCents: promoCode!.valueCents,
+            percentOff: promoCode!.percentOff,
+            freeNights: promoCode!.freeNights,
+          },
+          price.totalPriceCents,
+          allPerNightRates
+        );
+
+        promoCodeRecord = promoCode!;
+      }
+
+      const finalPriceCents = price.totalPriceCents - discountCents;
+
       const nonMemberHoldUntil = shouldBePending
         ? new Date(checkIn.getTime() - 7 * 24 * 60 * 60 * 1000)
         : null;
@@ -183,8 +240,8 @@ export async function POST(request: NextRequest) {
           checkOut,
           status,
           totalPriceCents: price.totalPriceCents,
-          discountCents: 0,
-          finalPriceCents: price.totalPriceCents,
+          discountCents,
+          finalPriceCents,
           hasNonMembers,
           nonMemberHoldUntil,
           notes: notes || null,
@@ -200,6 +257,17 @@ export async function POST(request: NextRequest) {
         },
         include: { guests: true },
       });
+
+      // Create promo redemption record
+      if (promoCodeRecord && discountCents > 0) {
+        await redeemPromoCode(
+          tx,
+          promoCodeRecord.id,
+          newBooking.id,
+          session.user.id,
+          discountCents
+        );
+      }
 
       return newBooking;
     });

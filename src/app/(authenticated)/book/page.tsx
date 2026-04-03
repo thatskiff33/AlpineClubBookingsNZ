@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LODGE_CAPACITY } from "@/lib/capacity";
+import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 
 interface PriceQuote {
   guests: {
@@ -32,6 +33,7 @@ export default function BookPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [availableBeds, setAvailableBeds] = useState(LODGE_CAPACITY);
+  const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
 
   async function handleDateSelect(ci: Date, co: Date) {
     setCheckIn(ci);
@@ -105,6 +107,7 @@ export default function BookPage() {
         checkOut: checkOut!.toISOString(),
         guests,
         notes: notes || undefined,
+        promoCode: appliedPromo?.code || undefined,
       }),
     });
 
@@ -245,15 +248,32 @@ export default function BookPage() {
                 ))}
               </div>
 
-              <div className="border-t pt-4 flex justify-between font-bold text-lg">
-                <span>Total</span>
-                <span>{formatCents(priceQuote.totalPriceCents)}</span>
-              </div>
+              {appliedPromo && appliedPromo.discountCents > 0 ? (
+                <>
+                  <div className="border-t pt-4 flex justify-between text-sm">
+                    <span>Subtotal</span>
+                    <span>{formatCents(priceQuote.totalPriceCents)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-green-600">
+                    <span>Discount ({appliedPromo.code})</span>
+                    <span>-{formatCents(appliedPromo.discountCents)}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-lg">
+                    <span>Total</span>
+                    <span>{formatCents(priceQuote.totalPriceCents - appliedPromo.discountCents)}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="border-t pt-4 flex justify-between font-bold text-lg">
+                  <span>Total</span>
+                  <span>{formatCents(priceQuote.totalPriceCents)}</span>
+                </div>
+              )}
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="pt-6 space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="notes">Notes (optional)</Label>
                 <Input
@@ -263,6 +283,13 @@ export default function BookPage() {
                   placeholder="Any special requirements..."
                 />
               </div>
+              <PromoCodeInput
+                checkIn={checkIn!}
+                checkOut={checkOut!}
+                guests={guests}
+                onPromoApplied={setAppliedPromo}
+                appliedPromo={appliedPromo}
+              />
             </CardContent>
           </Card>
 
