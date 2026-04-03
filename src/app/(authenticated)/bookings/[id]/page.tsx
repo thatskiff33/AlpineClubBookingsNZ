@@ -22,6 +22,11 @@ export default async function BookingDetailPage({
     include: {
       guests: true,
       payment: true,
+      promoRedemption: {
+        include: {
+          promoCode: { select: { code: true, type: true, description: true } },
+        },
+      },
     },
   });
 
@@ -132,7 +137,12 @@ export default async function BookingDetailPage({
           </div>
           {booking.discountCents > 0 && (
             <div className="flex justify-between text-green-600">
-              <span>Discount</span>
+              <span>
+                Discount
+                {booking.promoRedemption?.promoCode?.code && (
+                  <span className="ml-1 text-xs">({booking.promoRedemption.promoCode.code})</span>
+                )}
+              </span>
               <span>-{formatCents(booking.discountCents)}</span>
             </div>
           )}

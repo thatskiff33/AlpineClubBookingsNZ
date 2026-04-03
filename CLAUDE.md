@@ -2,7 +2,7 @@
 
 ## Build Status
 
-### Phases 1-6 & 8: MERGED INTO MAIN
+### Phases 1-8: MERGED INTO MAIN
 
 All completed build phases have been merged into `main` in sequence, with all conflicts resolved.
 
@@ -14,6 +14,7 @@ All completed build phases have been merged into `main` in sequence, with all co
 4. **Phase 4: Stripe Payments** - PaymentIntents for confirmed bookings, SetupIntents for pending bookings (save card, charge later), Stripe webhook handler, cancellation with policy-based refunds, Stripe React components (PaymentForm, SetupForm, StripeProvider)
 5. **Phase 5: Non-Member Guests & Bumping** - FIFO bumping algorithm (`src/lib/bumping.ts`), cron job for auto-confirming pending bookings (`src/instrumentation.ts` + `src/lib/cron-confirm-pending.ts`), booking API integration with bumping for member bookings, email notifications (confirmed, pending, bumped), payment routes now use NextAuth auth, manual cron trigger API (`/api/cron`)
 6. **Phase 6: Xero Integration** - OAuth2 connect flow, encrypted token storage, invoice creation on booking confirmation, credit notes on refunds, contact sync, membership verification, daily cron for membership refresh, webhook handler. Wired into Stripe webhook, cancellation route, and cron auto-confirmation (all guarded with `isXeroConnected()` check).
+7. **Phase 7: Promo Codes & Discounts** - Admin promo code CRUD (`/admin/promo-codes`), promo validation library (`src/lib/promo.ts`), validation API (`/api/promo-codes/validate`), promo code input component in booking wizard, booking API integration with promo redemption tracking, discount display in booking details. Supports PERCENTAGE, FIXED_AMOUNT, and FREE_NIGHTS discount types with validation (active, date range, max redemptions, single-use, members-only). 44 new tests.
 8. **Phase 8: Chore Roster** - Chore allocator algorithm (round-robin, age-aware), admin chore template management, roster review/edit page, printable A4 roster view, chore roster email notifications. Enhanced ChoreTemplate with ageRestriction enum, recommendedPeopleMin/Max, isEssential, conditionalNote.
 
 ### Cross-Phase Integration Review #2 - COMPLETED
@@ -104,7 +105,7 @@ All completed build phases have been merged into `main` in sequence, with all co
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 224 tests pass (11 test files)
+npm test              # 268 tests pass (12 test files)
 npm run build         # builds successfully
 ```
 
@@ -157,12 +158,52 @@ npm run db:seed
 - Bumped notification emails sent after transaction commits (no emails on rollback)
 - Advisory locks prevent concurrent double-booking
 
-### What's Next: Phase 7 - Promo Codes & Discounts
-1. Admin UI: create/edit promo codes (type, value, limits, date range)
-2. Promo code entry in booking wizard
-3. Validation (expiry, usage limits, single-use, member-only)
-4. Discount reflected in Stripe charge and Xero invoice
-5. Redemption tracking
+### Phase 7: Promo Codes & Discounts - COMPLETED
+
+**Date:** 2026-04-03
+
+**What was built:**
+- **Admin CRUD:** Full create/edit/delete/toggle-active for promo codes at `/admin/promo-codes` with redemption count display
+- **Promo validation library:** `src/lib/promo.ts` with `validatePromoCodeRules()` (pure logic), `validatePromoCodeFull()` (with DB lookups), `redeemPromoCode()` (transactional redemption)
+- **Validation API:** `POST /api/promo-codes/validate` - validates code and returns discount preview for booking details
+- **Booking wizard integration:** `PromoCodeInput` component (`src/components/promo-code-input.tsx`) with apply/remove, discount preview in price summary
+- **Booking API integration:** `POST /api/bookings` accepts optional `promoCode`, validates within transaction, creates `PromoRedemption` record, increments `currentRedemptions`
+- **Booking detail display:** Shows promo code name and discount amount on booking detail page
+- **Discount types:** PERCENTAGE (% off total), FIXED_AMOUNT ($ off, capped at total), FREE_NIGHTS (cheapest N nights free)
+- **Validation rules:** Code exists, active, within date range, not expired, max redemptions not reached, single-use per member, members-only flag
+- **Tests:** 44 new tests covering all validation rules, all discount type calculations, edge cases (discount exceeds total, zero-value codes, single-night FREE_NIGHTS)
+
+**Key files:**
+- `src/lib/promo.ts` - Promo validation and redemption logic
+- `src/lib/__tests__/promo.test.ts` - 44 tests
+- `src/app/(admin)/admin/promo-codes/page.tsx` - Admin promo codes page
+- `src/app/api/admin/promo-codes/route.ts` - Admin CRUD (list + create)
+- `src/app/api/admin/promo-codes/[id]/route.ts` - Admin CRUD (get, update, delete)
+- `src/app/api/promo-codes/validate/route.ts` - Promo code validation endpoint
+- `src/components/promo-code-input.tsx` - Booking wizard promo code component
+
+**Modified files:**
+- `src/app/api/bookings/route.ts` - Added promo code validation and redemption in booking creation
+- `src/app/(authenticated)/book/page.tsx` - Added PromoCodeInput component and discount display
+- `src/app/(authenticated)/bookings/[id]/page.tsx` - Shows promo code in discount line
+
+**How to test:**
+```bash
+npm install --legacy-peer-deps
+npx prisma generate
+npm test              # 268 tests pass (12 test files)
+npm run build         # builds successfully
+```
+
+### What's Next: Phase 9 - Polish & Production Hardening
+1. Comprehensive error handling and user-friendly error pages
+2. Admin reports (occupancy rates, revenue by period, booking trends)
+3. Email template polish (React Email)
+4. Automated database backup cron to S3
+5. GitHub Actions deploy pipeline (optional)
+6. Security audit (rate limiting, input validation, CSRF)
+7. User acceptance testing with club committee
+8. Member data import from Checkfront/Xero
 
 ## Context
 
