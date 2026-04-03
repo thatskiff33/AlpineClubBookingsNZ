@@ -2,9 +2,9 @@
 
 ## Build Status
 
-### Phases 1-5: MERGED INTO MAIN
+### Phases 1-6 & 8: MERGED INTO MAIN
 
-All five build phases have been merged into `main` in sequence, with all conflicts resolved.
+All completed build phases have been merged into `main` in sequence, with all conflicts resolved.
 
 **What has been built:**
 
@@ -13,6 +13,8 @@ All five build phases have been merged into `main` in sequence, with all conflic
 3. **Phase 3: Core Booking** - Availability calculator (29-bed capacity), booking wizard (`/book`), guest forms, booking API routes (create, quote, cancel, availability), my bookings list + detail pages, admin bookings page with filters
 4. **Phase 4: Stripe Payments** - PaymentIntents for confirmed bookings, SetupIntents for pending bookings (save card, charge later), Stripe webhook handler, cancellation with policy-based refunds, Stripe React components (PaymentForm, SetupForm, StripeProvider)
 5. **Phase 5: Non-Member Guests & Bumping** - FIFO bumping algorithm (`src/lib/bumping.ts`), cron job for auto-confirming pending bookings (`src/instrumentation.ts` + `src/lib/cron-confirm-pending.ts`), booking API integration with bumping for member bookings, email notifications (confirmed, pending, bumped), payment routes now use NextAuth auth, manual cron trigger API (`/api/cron`)
+6. **Phase 6: Xero Integration** - OAuth2 connect flow, encrypted token storage, invoice creation on booking confirmation, credit notes on refunds, contact sync, membership verification, daily cron for membership refresh, webhook handler. Wired into Stripe webhook, cancellation route, and cron auto-confirmation (all guarded with `isXeroConnected()` check).
+8. **Phase 8: Chore Roster** - Chore allocator algorithm (round-robin, age-aware), admin chore template management, roster review/edit page, printable A4 roster view, chore roster email notifications. Enhanced ChoreTemplate with ageRestriction enum, recommendedPeopleMin/Max, isEssential, conditionalNote.
 
 ### Phase 6: Xero Integration - COMPLETED
 
@@ -61,7 +63,7 @@ All five build phases have been merged into `main` in sequence, with all conflic
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # tests pass (11+ test files)
+npm test              # 224 tests pass (11 test files)
 npm run build         # builds successfully
 ```
 
