@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if ((session.user as { role: string }).role !== "ADMIN") {
+  if (session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
