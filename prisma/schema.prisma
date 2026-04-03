@@ -362,3 +362,35 @@ model XeroToken {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
+
+// ---------------------------------------------------------------------------
+// Webhook Idempotency (prevents duplicate event processing)
+// ---------------------------------------------------------------------------
+
+model ProcessedWebhookEvent {
+  id          String   @id @default(cuid())
+  eventId     String   @unique
+  source      String   // "stripe" or "xero"
+  eventType   String
+  processedAt DateTime @default(now())
+
+  @@index([source])
+}
+
+// ---------------------------------------------------------------------------
+// Audit Log (tracks sensitive admin and system actions)
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  memberId  String?
+  targetId  String?
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([memberId])
+  @@index([createdAt])
+}

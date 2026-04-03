@@ -38,12 +38,20 @@ export async function POST(request: NextRequest) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("Webhook signature verification failed:", message);
     return NextResponse.json(
-      { error: `Webhook signature verification failed: ${message}` },
+      { error: "Webhook signature verification failed" },
       { status: 400 }
     );
   }
 
   try {
+    // Idempotency check: skip already-processed events
+    const existing = await prisma.processedWebhookEvent.findUnique({
+      where: { eventId: event.id },
+    });
+    if (existing) {
+      return NextResponse.json({ received: true });
+    }
+
     switch (event.type) {
       case "payment_intent.succeeded":
         await handlePaymentIntentSucceeded(
@@ -77,6 +85,13 @@ export async function POST(request: NextRequest) {
         // Unhandled event type - log but don't error
         console.log(`Unhandled Stripe event type: ${event.type}`);
     }
+
+    // Record event as processed
+    await prisma.processedWebhookEvent.create({
+      data: { eventId: event.id, source: "stripe", eventType: event.type },
+    }).catch(() => {
+      // Ignore unique constraint violation (concurrent request)
+    });
 
     return NextResponse.json({ received: true });
   } catch (error) {
