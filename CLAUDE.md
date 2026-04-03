@@ -8,7 +8,7 @@
 
 **Scope:** Dedicated security audit across authentication, authorization, input validation, payment security, Xero security, data exposure, infrastructure, and rate limiting. Build, type check, 292 tests all pass.
 
-**3 issues fixed (1 Critical, 2 High):**
+**12 issues found and fixed (1 Critical, 2 High, 5 Medium, 4 Low). All fixed:**
 
 1. **CRITICAL: PostgreSQL port exposed to internet** (`docker-compose.yml`) - `ports: "5432:5432"` bound the database to all network interfaces. On a Lightsail instance, this makes the DB reachable from the internet. Combined with `${DB_PASSWORD:-password}` default, an attacker gets full database access. Removed the port mapping entirely — only the app container needs DB access via Docker internal network. (OWASP A05:2021 Security Misconfiguration)
 
@@ -16,17 +16,23 @@
 
 3. **HIGH: CSP allows unsafe-eval** (`src/middleware.ts`) - `'unsafe-eval'` in `script-src` allowed `eval()`, `Function()`, and similar, significantly weakening XSS protection. Not needed for Next.js production builds. Removed from CSP directive. (OWASP A03:2021 Injection)
 
-**Remaining issues (Medium/Low, documented for future):**
+4. **MEDIUM: No Stripe webhook idempotency** - No tracking of processed Stripe event IDs. Replayed events could cause duplicate Xero invoices/emails. Added `ProcessedWebhookEvent` model in Prisma schema. Webhook handler now checks for existing event ID before processing and records it after.
 
-- **MEDIUM: No Stripe webhook idempotency** - No tracking of processed Stripe event IDs. Replayed events could cause duplicate Xero invoices/emails. Recommend adding a ProcessedWebhookEvent table.
-- **MEDIUM: Timing-unsafe cron secret comparison** - `src/app/api/cron/route.ts:10` and `src/app/api/cron/xero/route.ts:11` use `===` instead of `crypto.timingSafeEqual()`. Low practical risk over HTTPS but best practice to fix.
-- **MEDIUM: Timing-unsafe Xero webhook signature comparison** - `src/app/api/webhooks/xero/route.ts` uses `!==` for HMAC comparison. Should use constant-time comparison.
-- **MEDIUM: Webhook error leaks details** - `src/app/api/webhooks/stripe/route.ts:41` includes Stripe verification error message in response body.
-- **MEDIUM: Type assertion in reports route** - `src/app/api/admin/reports/route.ts:19` uses `(session.user as { role: string }).role` instead of `session.user.role` (inconsistent with other routes, not exploitable).
-- **LOW: Password minimum 8 characters** - NIST SP 800-63B recommends minimum 12+ for user-chosen passwords.
-- **LOW: Bcrypt cost factor 12** - Acceptable but 13+ recommended for future-proofing.
-- **LOW: No audit logging** - Admin actions (cancellations, promo changes, season edits) have no audit trail.
-- **LOW: JWT 24h expiry with no revocation** - Acceptable for 410-member club but tokens cannot be invalidated before expiry.
+5. **MEDIUM: Timing-unsafe cron secret comparison** - `src/app/api/cron/route.ts`, `src/app/api/cron/xero/route.ts`, and `src/app/api/payments/charge-saved-method/route.ts` used `===` for CRON_SECRET comparison. Replaced with `crypto.timingSafeEqual()`.
+
+6. **MEDIUM: Timing-unsafe Xero webhook signature comparison** - `src/app/api/webhooks/xero/route.ts` used `!==` for HMAC comparison. Replaced with `crypto.timingSafeEqual()`.
+
+7. **MEDIUM: Webhook error leaks details** - `src/app/api/webhooks/stripe/route.ts` included Stripe verification error message in response body. Changed to generic "Webhook signature verification failed" message (details still logged server-side).
+
+8. **MEDIUM: Type assertion in reports route** - `src/app/api/admin/reports/route.ts` used `(session.user as { role: string }).role`. Replaced with `session.user.role` consistent with all other routes.
+
+9. **LOW: Password minimum 8 characters** - Increased to 12 per NIST SP 800-63B guidance. Updated server-side Zod schemas in register and reset-password routes, plus client-side validation in both form pages.
+
+10. **LOW: Bcrypt cost factor 12** - Increased to 13 in both register and reset-password routes.
+
+11. **LOW: No audit logging** - Added `AuditLog` model and `logAudit()` fire-and-forget helper. Wired into: booking cancellations (all paths, with refund details), season create/update/delete, promo code create/update/delete, cancellation policy updates.
+
+12. **LOW: JWT 24h expiry** - Reduced from 24 hours to 8 hours to limit token compromise window.
 
 **Security controls verified as working correctly:**
 - All 36 API routes check authentication (auth() call)
@@ -34,9 +40,9 @@
 - All inputs validated with Zod schemas
 - No raw SQL injection risk (Prisma parameterized, advisory lock uses no user input)
 - No `dangerouslySetInnerHTML` usage anywhere
-- Stripe webhook signature properly verified
+- Stripe webhook signature properly verified with idempotency protection
 - Xero OAuth tokens encrypted at rest with AES-256-GCM
-- Xero webhook HMAC-SHA256 signature verified
+- Xero webhook HMAC-SHA256 signature verified with timing-safe comparison
 - Stripe secret key never exposed client-side
 - PaymentIntent amounts set server-side from database
 - Booking prices calculated server-side (client cannot manipulate)
@@ -50,6 +56,30 @@
 **Files modified:**
 - `docker-compose.yml` - Removed exposed PostgreSQL and app ports
 - `src/middleware.ts` - Removed `'unsafe-eval'` from CSP script-src
+- `prisma/schema.prisma` - Added ProcessedWebhookEvent and AuditLog models
+- `src/lib/audit.ts` - New audit logging helper
+- `src/app/api/cron/route.ts` - Timing-safe CRON_SECRET comparison
+- `src/app/api/cron/xero/route.ts` - Timing-safe CRON_SECRET comparison
+- `src/app/api/payments/charge-saved-method/route.ts` - Timing-safe CRON_SECRET comparison
+- `src/app/api/webhooks/xero/route.ts` - Timing-safe HMAC comparison
+- `src/app/api/webhooks/stripe/route.ts` - Idempotency check, generic error message
+- `src/app/api/admin/reports/route.ts` - Removed type assertion
+- `src/app/api/auth/register/route.ts` - Password min 12, bcrypt cost 13
+- `src/app/api/auth/reset-password/route.ts` - Password min 12, bcrypt cost 13
+- `src/app/(public)/register/page.tsx` - Client-side password min 12
+- `src/app/(public)/reset-password/page.tsx` - Client-side password min 12
+- `src/lib/auth.ts` - JWT maxAge 24h -> 8h
+- `src/app/api/bookings/cancel/route.ts` - Audit logging on all cancel paths
+- `src/app/api/bookings/[id]/cancel/route.ts` - Audit logging on cancel
+- `src/app/api/admin/seasons/route.ts` - Audit logging on create
+- `src/app/api/admin/seasons/[id]/route.ts` - Audit logging on update/delete
+- `src/app/api/admin/promo-codes/route.ts` - Audit logging on create
+- `src/app/api/admin/promo-codes/[id]/route.ts` - Audit logging on update/delete
+- `src/app/api/admin/cancellation-policy/route.ts` - Audit logging on update
+
+**New Prisma models (require migration):**
+- `ProcessedWebhookEvent` - Tracks processed Stripe/Xero webhook event IDs for idempotency
+- `AuditLog` - Records sensitive actions with actor, target, details, timestamp, IP
 
 ### Full Integration Review #5 (Remaining Issues) - COMPLETED
 
