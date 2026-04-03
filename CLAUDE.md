@@ -699,3 +699,74 @@ Add to `.claude/settings.json` to auto-format code after every edit:
   }
 }
 ```
+
+---
+
+## Build Progress
+
+### Phase 1: Foundation - COMPLETED
+
+**Date:** 2026-04-03
+
+**What was built:**
+- Next.js 15 + TypeScript + Tailwind CSS v4 + shadcn/ui components
+- Full Prisma schema (15 models, all enums, indexes, relations) with Prisma 6
+- Database seed script (7 rooms / 29 beds, cancellation policies, chore templates, admin user)
+- NextAuth v5 (beta) with credentials provider (email + password, JWT sessions)
+- User registration with Zod validation, bcrypt hashing, age tier computation
+- Password reset flow (forgot password -> email token -> reset)
+- Member profile page (view/edit name, phone, DOB)
+- Admin layout with sidebar navigation
+- Admin members list page with search and filtering
+- Member dashboard with placeholder cards
+- Navigation bar with responsive mobile menu
+- Docker Compose (postgres + app + caddy) + Dockerfile + Caddyfile
+- Email utility (AWS SES via nodemailer, dev mode logs to console)
+- Unit tests: age tier computation, season year calculation (11 tests, all passing)
+
+**Key files:**
+- `prisma/schema.prisma` - Full database schema
+- `prisma/seed.ts` - Seed script
+- `src/lib/auth.ts` - NextAuth configuration
+- `src/lib/prisma.ts` - Prisma singleton client
+- `src/lib/email.ts` - Email transport and templates
+- `src/lib/age-tier.ts` - Age tier and season year computation
+- `src/app/(public)/` - Login, register, forgot/reset password pages
+- `src/app/(authenticated)/` - Dashboard, profile (layout with auth guard)
+- `src/app/(admin)/` - Admin dashboard, members list (layout with admin guard)
+- `docker-compose.yml`, `Dockerfile`, `Caddyfile` - Deployment config
+
+**How to run:**
+```bash
+# Install dependencies
+npm install --legacy-peer-deps
+
+# Generate Prisma client
+npx prisma generate
+
+# Run development server
+npm run dev
+
+# Run tests
+npm test
+
+# Build for production
+npm run build
+
+# With Docker (requires Docker Compose):
+docker compose up -d
+
+# Seed database (requires running PostgreSQL):
+npm run db:seed
+```
+
+**Default admin user (from seed):**
+- Email: admin@tac.org.nz
+- Password: admin123
+
+**What's next: Phase 2 - Seasons & Pricing**
+1. Admin UI: create/edit seasons (name, type, start/end dates)
+2. Admin UI: set rates per season (6 rates per season: 3 age tiers x member/non-member)
+3. Admin UI: cancellation policy configuration
+4. Pricing engine with unit tests
+5. Seed initial seasons and rates
