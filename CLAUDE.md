@@ -14,11 +14,52 @@ All five build phases have been merged into `main` in sequence, with all conflic
 4. **Phase 4: Stripe Payments** - PaymentIntents for confirmed bookings, SetupIntents for pending bookings (save card, charge later), Stripe webhook handler, cancellation with policy-based refunds, Stripe React components (PaymentForm, SetupForm, StripeProvider)
 5. **Phase 5: Non-Member Guests & Bumping** - FIFO bumping algorithm (`src/lib/bumping.ts`), cron job for auto-confirming pending bookings (`src/instrumentation.ts` + `src/lib/cron-confirm-pending.ts`), booking API integration with bumping for member bookings, email notifications (confirmed, pending, bumped), payment routes now use NextAuth auth, manual cron trigger API (`/api/cron`)
 
+### Phase 6: Xero Integration - COMPLETED
+
+**Date:** 2026-04-03
+
+**What was built:**
+- **OAuth2 flow:** Admin "Connect Xero" button redirects to Xero authorization, callback stores encrypted tokens
+- **Token management:** AES-256-GCM encrypted at rest, auto-refresh 5 minutes before 30-min expiry
+- **Invoice creation:** `createXeroInvoiceForBooking(bookingId)` - creates Xero invoice with per-guest line items, records payment against invoice, stores `xeroInvoiceId` on Payment record
+- **Credit notes:** `createXeroCreditNote(paymentId, refundAmountCents)` - creates credit note against original invoice for refunds
+- **Contact sync:** Bulk import from Xero (matches by email), find-or-create on invoice creation, links `xeroContactId` on Member
+- **Membership verification:** `checkMembershipStatus(memberId)` - queries Xero invoices for subscription keywords in current season year, updates MemberSubscription status (PAID/UNPAID/OVERDUE)
+- **Daily cron:** `POST /api/cron/xero` (secured with CRON_SECRET) refreshes membership status for all active members with Xero contacts
+- **Xero webhook handler:** HMAC-SHA256 signature verification, intent-to-receive pattern support
+- **Admin page:** `/admin/xero` - connection status, connect/disconnect, contact sync, membership refresh with results display
+- **Tests:** 36 new tests covering encryption, invoice line items, subscription matching, season year boundaries
+
+**Key files:**
+- `src/lib/xero.ts` - Core Xero integration library (all business logic)
+- `src/lib/__tests__/xero.test.ts` - 36 tests
+- `src/app/(admin)/admin/xero/page.tsx` - Admin Xero status page
+- `src/app/api/admin/xero/connect/route.ts` - OAuth2 redirect
+- `src/app/api/admin/xero/callback/route.ts` - OAuth2 callback
+- `src/app/api/admin/xero/disconnect/route.ts` - Disconnect
+- `src/app/api/admin/xero/status/route.ts` - Connection status
+- `src/app/api/admin/xero/sync-contacts/route.ts` - Bulk contact import
+- `src/app/api/admin/xero/sync-memberships/route.ts` - Membership refresh
+- `src/app/api/webhooks/xero/route.ts` - Webhook handler
+- `src/app/api/cron/xero/route.ts` - Daily cron endpoint
+
+**Integration points (for other phases to wire in):**
+- Call `createXeroInvoiceForBooking(bookingId)` after booking confirmation + payment success
+- Call `createXeroCreditNote(paymentId, refundAmountCents)` after Stripe refund processing
+- Call `checkMembershipStatus(memberId)` on login to verify current subscription
+
+**Environment variables required:**
+- `XERO_CLIENT_ID` - From Xero developer app
+- `XERO_CLIENT_SECRET` - From Xero developer app
+- `XERO_REDIRECT_URI` - OAuth2 callback URL
+- `XERO_ENCRYPTION_KEY` - 64-char hex string for token encryption (generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`)
+- `XERO_WEBHOOK_KEY` - From Xero webhook subscription config
+
 **How to run:**
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 149 tests pass (9 test files)
+npm test              # tests pass (9+ test files)
 npm run build         # builds successfully
 ```
 
@@ -38,6 +79,7 @@ npm run db:seed
 - All prices stored as integer cents
 - Season year: April-March cycle
 - No migrations committed yet - run `prisma migrate dev` to create initial migration from merged schema
+- Xero account codes default to "200" (sales) and "090" (bank) - may need configuration for specific Xero orgs
 
 ### Phase 5 Details: Non-Member Guests & Bumping
 
@@ -70,15 +112,12 @@ npm run db:seed
 - Bumped notification emails sent after transaction commits (no emails on rollback)
 - Advisory locks prevent concurrent double-booking
 
-### What's Next: Phase 6 - Xero Integration
-1. OAuth2 connect flow in admin panel
-2. Token storage (encrypted) and auto-refresh
-3. Membership subscription check
-4. Invoice creation on confirmed booking
-5. Payment recording against Xero invoice
-6. Credit note on refund
-7. Contact sync
-8. Daily cron for membership status refresh
+### What's Next: Phase 7 - Promo Codes & Discounts
+1. Admin UI: create/edit promo codes (type, value, limits, date range)
+2. Promo code entry in booking wizard
+3. Validation (expiry, usage limits, single-use, member-only)
+4. Discount reflected in Stripe charge and Xero invoice
+5. Redemption tracking
 
 ## Context
 

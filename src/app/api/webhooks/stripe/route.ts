@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { constructWebhookEvent } from "@/lib/stripe";
+import { isXeroConnected, createXeroInvoiceForBooking, createXeroCreditNote } from "@/lib/xero";
 import Stripe from "stripe";
 
 /**
@@ -136,7 +137,16 @@ async function handlePaymentIntentSucceeded(
   console.log(`Booking ${bookingId} confirmed via PaymentIntent ${paymentIntent.id}`);
 
   // TODO: Send confirmation email (Phase 1 email service)
-  // TODO: Create Xero invoice (Phase 6)
+
+  // Create Xero invoice if connected
+  try {
+    if (await isXeroConnected()) {
+      await createXeroInvoiceForBooking(bookingId);
+      console.log(`Xero invoice created for booking ${bookingId}`);
+    }
+  } catch (xeroErr) {
+    console.error(`Failed to create Xero invoice for booking ${bookingId}:`, xeroErr);
+  }
 }
 
 /**
@@ -246,5 +256,13 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     `Refund processed for payment ${payment.id}: ${refundedAmount} cents (${isFullRefund ? "full" : "partial"})`
   );
 
-  // TODO: Create Xero credit note (Phase 6)
+  // Create Xero credit note if connected
+  try {
+    if (await isXeroConnected()) {
+      await createXeroCreditNote(payment.id, refundedAmount);
+      console.log(`Xero credit note created for payment ${payment.id}`);
+    }
+  } catch (xeroErr) {
+    console.error(`Failed to create Xero credit note for payment ${payment.id}:`, xeroErr);
+  }
 }

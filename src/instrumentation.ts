@@ -27,5 +27,25 @@ export async function register() {
     });
 
     console.log("[CRON] Scheduled pending booking confirmation (every 3 hours)");
+
+    // Run daily at 2 AM to refresh Xero membership statuses
+    cron.default.schedule("0 2 * * *", async () => {
+      console.log("[CRON] Refreshing Xero membership statuses...");
+      try {
+        const { isXeroConnected, refreshAllMembershipStatuses } = await import(
+          "./lib/xero"
+        );
+        if (!(await isXeroConnected())) {
+          console.log("[CRON] Xero not connected, skipping membership refresh");
+          return;
+        }
+        const result = await refreshAllMembershipStatuses();
+        console.log("[CRON] Xero membership refresh complete:", result);
+      } catch (err) {
+        console.error("[CRON] Error refreshing Xero memberships:", err);
+      }
+    });
+
+    console.log("[CRON] Scheduled Xero membership refresh (daily at 2 AM)");
   }
 }

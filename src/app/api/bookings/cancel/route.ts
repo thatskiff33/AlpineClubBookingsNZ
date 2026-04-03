@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { processRefund } from "@/lib/stripe";
+import { isXeroConnected, createXeroCreditNote } from "@/lib/xero";
 import { calculateRefundAmount, daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
 import { CancelBookingSchema } from "@/types/payments";
 // import { auth } from "@/lib/auth";  // Will be available after Phase 1
@@ -124,6 +125,16 @@ export async function POST(request: NextRequest) {
           data: { status: "CANCELLED" },
         }),
       ]);
+
+      // Create Xero credit note if connected
+      try {
+        if (await isXeroConnected()) {
+          await createXeroCreditNote(booking.payment.id, refundAmountCents);
+          console.log(`Xero credit note created for payment ${booking.payment.id}`);
+        }
+      } catch (xeroErr) {
+        console.error(`Failed to create Xero credit note for payment ${booking.payment.id}:`, xeroErr);
+      }
 
       return NextResponse.json({
         success: true,

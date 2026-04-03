@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { checkCapacity, LODGE_CAPACITY } from "./capacity";
 import { chargePaymentMethod } from "./stripe";
+import { isXeroConnected, createXeroInvoiceForBooking } from "./xero";
 import {
   sendBookingConfirmedEmail,
   sendBookingBumpedEmail,
@@ -120,6 +121,16 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         ]);
 
         result.confirmedBookingIds.push(booking.id);
+
+        // Create Xero invoice if connected
+        try {
+          if (await isXeroConnected()) {
+            await createXeroInvoiceForBooking(booking.id);
+            console.log(`[CRON] Xero invoice created for booking ${booking.id}`);
+          }
+        } catch (xeroErr) {
+          console.error(`[CRON] Failed to create Xero invoice for booking ${booking.id}:`, xeroErr);
+        }
 
         try {
           await sendBookingConfirmedEmail(
