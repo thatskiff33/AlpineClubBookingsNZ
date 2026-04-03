@@ -65,5 +65,37 @@ export async function register() {
     });
 
     console.log("[CRON] Scheduled Xero membership refresh (daily at 2 AM)");
+
+    // Database backup - daily at 3 AM (configurable via BACKUP_CRON_SCHEDULE)
+    let isBackupRunning = false;
+    const backupSchedule = process.env.BACKUP_CRON_SCHEDULE || "0 3 * * *";
+
+    cron.default.schedule(backupSchedule, async () => {
+      if (isBackupRunning) {
+        console.log("[CRON] Database backup already running, skipping");
+        return;
+      }
+      isBackupRunning = true;
+      console.log("[CRON] Starting database backup...");
+      try {
+        const { runDatabaseBackup } = await import("./lib/backup");
+        const result = await runDatabaseBackup();
+        if (result.success) {
+          console.log("[CRON] Database backup complete:", {
+            filename: result.filename,
+            sizeBytes: result.sizeBytes,
+            s3: result.uploadedToS3,
+          });
+        } else {
+          console.error("[CRON] Database backup failed:", result.error);
+        }
+      } catch (err) {
+        console.error("[CRON] Error running database backup:", err);
+      } finally {
+        isBackupRunning = false;
+      }
+    });
+
+    console.log(`[CRON] Scheduled database backup (${backupSchedule})`);
   }
 }

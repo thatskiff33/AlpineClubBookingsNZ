@@ -3,6 +3,27 @@ import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { allocateChores, ChoreTemplateInput, GuestInput, ChoreHistoryEntry } from "@/lib/chore-allocator"
 import { sendChoreRosterEmail } from "@/lib/email"
+import { z } from "zod"
+
+const rosterActionSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("reassign"),
+    assignmentId: z.string().min(1),
+    bookingGuestId: z.string().min(1),
+  }),
+  z.object({
+    action: z.literal("add"),
+    choreTemplateId: z.string().min(1),
+    bookingGuestId: z.string().min(1),
+    bookingId: z.string().min(1),
+  }),
+  z.object({
+    action: z.literal("remove"),
+    assignmentId: z.string().min(1),
+  }),
+  z.object({ action: z.literal("confirm") }),
+  z.object({ action: z.literal("email") }),
+])
 
 /**
  * GET /api/admin/roster/[date]
@@ -215,31 +236,38 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid date" }, { status: 400 })
   }
 
-  const body = await req.json()
-  const { action, assignmentId, bookingGuestId, choreTemplateId, bookingId } = body
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 })
+  }
 
-  switch (action) {
+  const parsed = rosterActionSchema.safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    )
+  }
+
+  const data = parsed.data
+
+  try {
+  switch (data.action) {
     case "reassign": {
-      // Reassign a specific assignment to a different guest
-      if (!assignmentId || !bookingGuestId) {
-        return NextResponse.json({ error: "assignmentId and bookingGuestId required" }, { status: 400 })
-      }
       await prisma.choreAssignment.update({
-        where: { id: assignmentId },
-        data: { bookingGuestId },
+        where: { id: data.assignmentId },
+        data: { bookingGuestId: data.bookingGuestId },
       })
       break
     }
     case "add": {
-      // Add a new assignment
-      if (!choreTemplateId || !bookingGuestId || !bookingId) {
-        return NextResponse.json({ error: "choreTemplateId, bookingGuestId, and bookingId required" }, { status: 400 })
-      }
       await prisma.choreAssignment.create({
         data: {
-          choreTemplateId,
-          bookingId,
-          bookingGuestId,
+          choreTemplateId: data.choreTemplateId,
+          bookingId: data.bookingId,
+          bookingGuestId: data.bookingGuestId,
           date,
           status: "SUGGESTED",
         },
@@ -247,15 +275,10 @@ export async function PUT(
       break
     }
     case "remove": {
-      // Remove an assignment
-      if (!assignmentId) {
-        return NextResponse.json({ error: "assignmentId required" }, { status: 400 })
-      }
-      await prisma.choreAssignment.delete({ where: { id: assignmentId } })
+      await prisma.choreAssignment.delete({ where: { id: data.assignmentId } })
       break
     }
     case "confirm": {
-      // Confirm all SUGGESTED assignments for this date
       await prisma.choreAssignment.updateMany({
         where: { date, status: "SUGGESTED" },
         data: { status: "CONFIRMED" },
@@ -316,8 +339,10 @@ export async function PUT(
       await Promise.all(emailPromises)
       break
     }
-    default:
-      return NextResponse.json({ error: "Invalid action" }, { status: 400 })
+  }
+  } catch (err) {
+    console.error("[roster] Error processing action:", err)
+    return NextResponse.json({ error: "Failed to process roster action" }, { status: 500 })
   }
 
   return NextResponse.json({ success: true })

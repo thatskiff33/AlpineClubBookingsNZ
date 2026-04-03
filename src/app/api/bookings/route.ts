@@ -10,6 +10,7 @@ import {
   bumpPendingBookings,
   sendBumpedNotifications,
 } from "@/lib/bumping";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -28,6 +29,9 @@ const createBookingSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const rateLimited = applyRateLimit(rateLimiters.bookingCreate, request);
+  if (rateLimited) return rateLimited;
+
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

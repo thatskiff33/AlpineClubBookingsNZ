@@ -18,17 +18,25 @@ const createSeasonSchema = z.object({
 });
 
 export async function GET() {
-  const seasons = await prisma.season.findMany({
-    include: { rates: true },
-    orderBy: { startDate: "desc" },
-  });
-  return NextResponse.json(seasons);
+  try {
+    const seasons = await prisma.season.findMany({
+      include: { rates: true },
+      orderBy: { startDate: "desc" },
+    });
+    return NextResponse.json(seasons);
+  } catch (err) {
+    console.error("[seasons] Failed to fetch seasons:", err);
+    return NextResponse.json({ error: "Failed to fetch seasons" }, { status: 500 });
+  }
 }
 
 export async function POST(request: NextRequest) {
   const session = await auth();
-  if (!session || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const body = await request.json();
