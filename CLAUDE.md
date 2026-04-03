@@ -95,11 +95,16 @@ All completed build phases have been merged into `main` in sequence, with all co
 - `BACKUP_RETENTION_DAYS` - Days to keep local backups (default: 7)
 - `BACKUP_CRON_SCHEDULE` - Cron expression for backup timing (default: 0 3 * * *)
 
+**Promo code integration verified:**
+- Stripe charges `finalPriceCents` (after discount) in all payment flows
+- Xero invoices include discount as negative line item when `discountCents > 0`
+- Booking confirmation emails show subtotal/discount/total when a promo code was applied
+
 **How to run:**
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 255 tests pass (13 test files)
+npm test              # 292 tests pass (14 test files)
 npm run build         # builds successfully
 ```
 
@@ -126,7 +131,7 @@ npm run build         # builds successfully
 - `/api/seasons` GET and `/api/availability` have no auth (may be intentionally public)
 - Unused `Room` model in Prisma schema
 - Unused `calculateRefund` function in `pricing.ts` (active version is in `cancellation.ts`)
-- `dotenv` package unused in dependencies
+- `dotenv` package required by `prisma.config.ts` (added as devDependency)
 
 ### Cross-Phase Integration Review #1 - COMPLETED
 
