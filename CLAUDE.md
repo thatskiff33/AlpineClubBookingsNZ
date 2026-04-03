@@ -2,6 +2,44 @@
 
 ## Build Status
 
+### Full Integration Review #5 (Remaining Issues) - COMPLETED
+
+**Date:** 2026-04-03
+
+**Scope:** Fix all remaining medium/low issues identified in Review #4 and agent reviews. Build, type check, 292 tests all pass.
+
+**6 issues fixed:**
+
+1. **MEDIUM: Advisory lock only covered check-in date** - Booking creation used a date-derived lock key, so overlapping bookings with different check-in dates bypassed the lock. Changed to a fixed lock key (`pg_advisory_xact_lock(1)`) to serialize all booking creation.
+
+2. **MEDIUM: `(session.user as any).role` type assertions** - 19 occurrences across 9 admin routes used unsafe `as any` cast, despite `session.user.role` being properly typed in `src/types/next-auth.d.ts`. Replaced all with `session.user.role`.
+
+3. **MEDIUM: Missing rate limiting on query endpoints** - `/api/bookings/quote`, `/api/availability`, and `/api/promo-codes/validate` had no rate limiting, enabling abuse. Added `bookingQuery` rate limiter (60 req/min) to all three.
+
+4. **MEDIUM: Non-deterministic chore allocator sorting** - Round-robin tie-breaking returned 0 for equal guests, making assignment order depend on array order. Added stable tie-breaker using `a.id.localeCompare(b.id)`.
+
+5. **MEDIUM: HTML injection in email templates** - User-provided values (firstName, guestName, promoCode, chore names/descriptions) were interpolated directly into HTML without escaping. Added `escapeHtml()` helper and applied it to all user-provided values across all 7 email templates.
+
+6. **LOW: FK indexes already existed** - PasswordResetToken.memberId (`@@index([memberId])`) and ChoreAssignment.choreTemplateId (`@@index([choreTemplateId])`) were already indexed. No change needed.
+
+**Files modified:**
+- `src/app/api/bookings/route.ts` - Fixed advisory lock to use fixed key
+- `src/app/api/admin/seasons/route.ts` - Removed `as any` cast (2 occurrences)
+- `src/app/api/admin/seasons/[id]/route.ts` - Removed `as any` cast (3 occurrences)
+- `src/app/api/admin/promo-codes/route.ts` - Removed `as any` cast (2 occurrences)
+- `src/app/api/admin/promo-codes/[id]/route.ts` - Removed `as any` cast (3 occurrences)
+- `src/app/api/admin/chores/route.ts` - Removed `as any` cast (2 occurrences)
+- `src/app/api/admin/chores/[id]/route.ts` - Removed `as any` cast (2 occurrences)
+- `src/app/api/admin/cancellation-policy/route.ts` - Removed `as any` cast (2 occurrences)
+- `src/app/api/admin/roster/[date]/route.ts` - Removed `as any` cast (2 occurrences)
+- `src/app/api/chores/roster/[date]/print/route.ts` - Removed `as any` cast (1 occurrence)
+- `src/app/api/bookings/quote/route.ts` - Added rate limiting
+- `src/app/api/availability/route.ts` - Added rate limiting
+- `src/app/api/promo-codes/validate/route.ts` - Added rate limiting
+- `src/lib/rate-limit.ts` - Added `bookingQuery` rate limiter config
+- `src/lib/chore-allocator.ts` - Added stable tie-breaker
+- `src/lib/email-templates.ts` - Added `escapeHtml()` and applied to all user values
+
 ### Full Integration Review #4 (Complete Codebase) - COMPLETED
 
 **Date:** 2026-04-03
@@ -22,12 +60,9 @@
 
 6. **HIGH: Promo code max-redemptions race condition** - Two concurrent bookings could both pass the `currentRedemptions >= maxRedemptions` check and both redeem. Added `SELECT ... FOR UPDATE` row lock on the promo code inside the booking transaction.
 
-**Remaining Medium/Low issues (not fixed, documented for future):**
-- Advisory lock only covers check-in date, not full date range
-- `(session.user as any).role` type assertions in 14 admin routes
-- Duplicate cancel routes (`/api/bookings/cancel` + `/api/bookings/[id]/cancel`)
-- Missing rate limiting on `/api/bookings/quote`, `/api/availability`, `/api/promo-codes/validate`
-- Missing FK indexes on `PasswordResetToken.memberId` and `ChoreAssignment.choreTemplateId`
+**Remaining issues (not fixed, documented for future):**
+- Duplicate cancel routes (`/api/bookings/cancel` + `/api/bookings/[id]/cancel`) with duplicated logic
+- All other medium/low issues from this review have been fixed in Review #5
 
 **Files modified:**
 - `src/app/(authenticated)/bookings/[id]/page.tsx` - Added BookingPaymentSection for payment collection
