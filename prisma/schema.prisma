@@ -1,0 +1,296 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  MEMBER
+  ADMIN
+}
+
+enum AgeTier {
+  ADULT
+  YOUTH
+  CHILD
+}
+
+enum SeasonType {
+  WINTER
+  SUMMER
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  BUMPED
+  CANCELLED
+  COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PromoType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_NIGHTS
+}
+
+enum ChoreStatus {
+  SUGGESTED
+  CONFIRMED
+  COMPLETED
+}
+
+enum SubscriptionStatus {
+  UNPAID
+  PAID
+  OVERDUE
+}
+
+model Member {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  dateOfBirth  DateTime
+  phone        String?
+  role         Role     @default(MEMBER)
+  active       Boolean  @default(true)
+
+  xeroContactId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bookings         Booking[]
+  subscriptions    MemberSubscription[]
+  promoRedemptions PromoRedemption[]
+  bookingGuests    BookingGuest[]
+
+  @@index([email])
+  @@index([xeroContactId])
+}
+
+model MemberSubscription {
+  id            String             @id @default(cuid())
+  memberId      String
+  seasonYear    Int
+  status        SubscriptionStatus @default(UNPAID)
+  xeroInvoiceId String?
+  paidAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, seasonYear])
+  @@index([memberId])
+}
+
+model Season {
+  id        String     @id @default(cuid())
+  name      String
+  type      SeasonType
+  startDate DateTime
+  endDate   DateTime
+  active    Boolean    @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rates SeasonRate[]
+
+  @@index([startDate, endDate])
+}
+
+model SeasonRate {
+  id                 String  @id @default(cuid())
+  seasonId           String
+  ageTier            AgeTier
+  isMember           Boolean
+  pricePerNightCents Int
+
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonId, ageTier, isMember])
+  @@index([seasonId])
+}
+
+model Booking {
+  id                 String        @id @default(cuid())
+  memberId           String
+  checkIn            DateTime
+  checkOut           DateTime
+  status             BookingStatus @default(PENDING)
+  totalPriceCents    Int
+  discountCents      Int           @default(0)
+  finalPriceCents    Int
+  hasNonMembers      Boolean       @default(false)
+  nonMemberHoldUntil DateTime?
+  notes              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  member          Member           @relation(fields: [memberId], references: [id])
+  guests          BookingGuest[]
+  payment         Payment?
+  chores          ChoreAssignment[]
+  promoRedemption PromoRedemption?
+
+  @@index([memberId])
+  @@index([checkIn, checkOut])
+  @@index([status])
+  @@index([nonMemberHoldUntil])
+}
+
+model BookingGuest {
+  id        String  @id @default(cuid())
+  bookingId String
+  firstName String
+  lastName  String
+  ageTier   AgeTier
+  isMember  Boolean @default(false)
+  memberId  String?
+  priceCents Int
+
+  booking Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  member  Member?  @relation(fields: [memberId], references: [id])
+  chores  ChoreAssignment[]
+
+  @@index([bookingId])
+  @@index([memberId])
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  bookingId             String        @unique
+  amountCents           Int
+  stripePaymentIntentId String?       @unique
+  stripeSetupIntentId   String?       @unique
+  stripePaymentMethodId String?
+  stripeCustomerId      String?
+  xeroInvoiceId         String?       @unique
+  status                PaymentStatus @default(PENDING)
+  refundedAmountCents   Int           @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([stripePaymentIntentId])
+  @@index([stripeSetupIntentId])
+}
+
+model PromoCode {
+  id                 String    @id @default(cuid())
+  code               String    @unique
+  description        String?
+  type               PromoType
+  valueCents         Int?
+  percentOff         Int?
+  freeNights         Int?
+  maxRedemptions     Int?
+  currentRedemptions Int       @default(0)
+  validFrom          DateTime?
+  validUntil         DateTime?
+  membersOnly        Boolean   @default(false)
+  singleUse          Boolean   @default(false)
+  active             Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  redemptions PromoRedemption[]
+
+  @@index([code])
+}
+
+model PromoRedemption {
+  id          String @id @default(cuid())
+  promoCodeId String
+  bookingId   String @unique
+  memberId    String
+  discountCents Int
+
+  createdAt DateTime @default(now())
+
+  promoCode PromoCode @relation(fields: [promoCodeId], references: [id])
+  booking   Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  member    Member    @relation(fields: [memberId], references: [id])
+
+  @@index([promoCodeId])
+  @@index([memberId])
+}
+
+model ChoreTemplate {
+  id                String  @id @default(cuid())
+  name              String
+  description       String?
+  recommendedPeople Int     @default(2)
+  minAge            Int     @default(10)
+  sortOrder         Int     @default(0)
+  active            Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments ChoreAssignment[]
+}
+
+model ChoreAssignment {
+  id              String      @id @default(cuid())
+  choreTemplateId String
+  bookingId       String
+  bookingGuestId  String?
+  date            DateTime
+  status          ChoreStatus @default(SUGGESTED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  choreTemplate ChoreTemplate @relation(fields: [choreTemplateId], references: [id])
+  booking       Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingGuest  BookingGuest? @relation(fields: [bookingGuestId], references: [id])
+
+  @@index([choreTemplateId])
+  @@index([bookingId])
+  @@index([date])
+}
+
+model CancellationPolicy {
+  id               String @id @default(cuid())
+  daysBeforeStay   Int
+  refundPercentage Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([daysBeforeStay])
+}
+
+model XeroToken {
+  id           String   @id @default(cuid())
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  tenantId     String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
