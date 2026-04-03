@@ -252,7 +252,8 @@ export function allocateChores(
         return aDate.getTime() - bDate.getTime(); // earlier date = preferred
       }
 
-      return 0;
+      // Stable tie-breaker by guest ID for deterministic ordering
+      return a.id.localeCompare(b.id);
     });
 
     // For MIXED_PREFERRED, try to interleave adults and children/youth
