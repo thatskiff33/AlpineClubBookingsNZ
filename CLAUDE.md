@@ -468,3 +468,234 @@ CRON_SECRET=<random-32-char>
 - **UAT**: Club committee tests before go-live with real member data
 - **Stripe test mode**: Use Stripe test keys throughout development, switch to live keys at go-live
 - **Xero demo company**: Test against Xero demo org before connecting production
+
+## Development Workflow: How to Build This with Claude
+
+### Overview
+
+The build uses a **session-per-phase** approach. Each session focuses on one build phase, runs autonomously with minimal interruption, and hands off cleanly to the next session via CLAUDE.md. Within each session, Claude uses sub-agents in parallel where modules are independent.
+
+### Step 1: Configure Claude Code for Autonomous Work
+
+Create `.claude/settings.json` in the project root to pre-approve safe commands so Claude doesn't ask permission for every npm/git/prisma operation:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm *)",
+      "Bash(npx *)",
+      "Bash(node *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(docker compose *)",
+      "Bash(mkdir *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(rm -rf node_modules)",
+      "Bash(rm -rf .next)",
+      "Read(*)",
+      "Edit(*)",
+      "Write(*)",
+      "Glob(*)",
+      "Grep(*)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)*",
+      "Bash(rm -rf .git)*"
+    ]
+  }
+}
+```
+
+This eliminates ~90% of permission prompts. Claude can freely create files, install packages, run builds/tests, commit, and push without stopping to ask.
+
+### Step 2: Structure CLAUDE.md for Session Handoff
+
+The CLAUDE.md in the repo root is the **single source of truth** that any new Claude session reads first. It must always contain:
+
+1. **What the project is** (context, requirements) - already written
+2. **What has been built so far** - updated at end of each session
+3. **What to build next** - the next phase's scope
+4. **How to run/test it** - commands that work right now
+5. **Known issues / decisions made** - so Claude doesn't re-litigate settled decisions
+
+At the end of each build session, tell Claude: **"Update CLAUDE.md with what was built, what works, and what's next. Commit and push."**
+
+### Step 3: Add Path-Scoped Rules for Focused Context
+
+Create `.claude/rules/` directory with files that only load when Claude touches files in matching paths:
+
+**`.claude/rules/database.md`** (loads when touching `prisma/**`):
+```
+- All prices stored as integer cents (e.g. $45.50 = 4550)
+- Use Prisma transactions for any multi-table writes
+- Always add indexes on foreign keys and commonly queried fields
+- Season year: if month >= April, year = currentYear; else year = currentYear - 1
+```
+
+**`.claude/rules/api.md`** (loads when touching `src/app/api/**`):
+```
+- Validate all inputs with Zod schemas
+- Return consistent error shape: { error: string, details?: any }
+- Always check auth via auth() helper before processing
+- Admin routes must verify role === ADMIN
+```
+
+**`.claude/rules/stripe.md`** (loads when touching `src/lib/stripe*`):
+```
+- Always verify Stripe webhook signatures
+- Use PaymentIntents for confirmed bookings, SetupIntents for pending
+- Store all Stripe IDs for reconciliation
+- Handle idempotency - webhooks may fire multiple times
+```
+
+**`.claude/rules/testing.md`** (loads when touching `**/*.test.*`):
+```
+- Use Vitest for all tests
+- Test business logic (pricing, availability, bumping) thoroughly
+- Mock Stripe and Xero API calls in tests
+- Every new lib/ function should have tests before the session ends
+```
+
+### Step 4: Session-per-Phase Execution
+
+Each phase = one Claude Code session. Here's how to run each:
+
+**Starting a session (your prompt to Claude):**
+```
+Read CLAUDE.md. Build Phase [N]: [Phase Name].
+
+Build everything in this phase autonomously. Write tests for all
+business logic. Commit after each major milestone. When done, update
+CLAUDE.md with what was built, commands to run/test, and what's next.
+Push all commits.
+```
+
+That's it. Claude reads the plan, knows the full context, builds the phase, tests it, commits, and updates the handoff doc. You review the output at the end.
+
+**What Claude does autonomously within a session:**
+- Reads CLAUDE.md and the phase requirements
+- Creates files, installs dependencies
+- Writes implementation code
+- Writes tests and runs them
+- Fixes failing tests
+- Commits at milestones (e.g. "Add Prisma schema and seed", "Add auth with NextAuth")
+- Updates CLAUDE.md at the end
+- Pushes to the branch
+
+**When Claude SHOULD interrupt you:**
+- Ambiguous requirements (e.g. "should promo codes stack?")
+- Architecture decisions not covered in the plan
+- External service setup needed (e.g. "I need your Stripe test API key")
+- A persistent bug it can't resolve after 2-3 attempts
+
+### Step 5: Security & Quality Checkpoints
+
+After each phase is built, run a dedicated **review session** before moving to the next phase:
+
+```
+Read CLAUDE.md. Review Phase [N] code for:
+1. Security vulnerabilities (OWASP top 10, input validation, auth bypass)
+2. Business logic correctness (edge cases in pricing, bumping, availability)
+3. Error handling (what happens when Stripe/Xero is down?)
+4. Test coverage gaps
+5. Code quality (duplication, unnecessary complexity)
+
+Fix any issues found. Do NOT add features or refactor beyond what's needed.
+Commit fixes and push.
+```
+
+### Step 6: Parallel Sub-Agents Within Sessions
+
+Claude automatically uses sub-agents for independent work within a session. For example, during Phase 3 (Core Booking), Claude might:
+- **Agent 1**: Build the availability calculator + tests
+- **Agent 2**: Build the booking calendar UI component
+- **Agent 3**: Research the best date-range picker library for the stack
+
+These run in parallel, then Claude integrates the results. You don't need to orchestrate this - Claude decides when parallelism helps.
+
+### Recommended Session Sequence
+
+| Session | Phase | Prompt | Duration |
+|---------|-------|--------|----------|
+| 1 | Foundation | "Build Phase 1: Foundation" | ~30-45 min |
+| 1R | Review | "Review Phase 1 for security and correctness" | ~15 min |
+| 2 | Seasons & Pricing | "Build Phase 2: Seasons & Pricing" | ~20 min |
+| 3 | Core Booking | "Build Phase 3: Core Booking" | ~45 min |
+| 3R | Review | "Review Phases 2-3 for security and correctness" | ~15 min |
+| 4 | Payments | "Build Phase 4: Stripe Payments" | ~30 min |
+| 4R | Review | "Review Phase 4 - payment security is critical" | ~15 min |
+| 5 | Non-Member + Bumping | "Build Phase 5: Non-Member Guests & Bumping" | ~30 min |
+| 5R | Review | "Review Phase 5 bumping logic edge cases" | ~15 min |
+| 6 | Xero Integration | "Build Phase 6: Xero Integration" | ~30 min |
+| 7 | Promo Codes | "Build Phase 7: Promo Codes & Discounts" | ~20 min |
+| 8 | Chore Roster | "Build Phase 8: Chore Roster" | ~30 min |
+| 8R | Review | "Full security and integration review of all phases" | ~20 min |
+| 9 | Polish | "Build Phase 9: Polish & Production Hardening" | ~30 min |
+
+**Total: ~15 sessions, mostly hands-off.** You review output between sessions and provide any missing info (API keys, domain name, etc).
+
+### What You Need to Provide (Once, Before Starting)
+
+Before Phase 1, gather these. Claude will ask for them when needed but having them ready avoids interruptions:
+
+1. **Domain name** for the booking system
+2. **Stripe account** - sign up at stripe.com, get test API keys from dashboard
+3. **Xero app** - register at developer.xero.com, get client ID and secret
+4. **AWS SES** - verify your sending domain in SES console (or use Resend as alternative - simpler setup)
+5. **Lightsail instance** - provision a 2GB Ubuntu 24.04 instance, attach a static IP, note the IP address
+6. **Club logo** (optional) - PNG/SVG for the booking site header
+
+### Recovery: When Things Go Wrong
+
+If a session produces broken code:
+```
+Read CLAUDE.md. The last session left the build in a broken state.
+Run `npm run build` and `npm test` to see what's failing.
+Fix all errors without changing working functionality.
+Commit and push when green.
+```
+
+If you want to restart a phase from scratch:
+```
+Read CLAUDE.md. Revert Phase [N] commits and rebuild Phase [N]
+from the beginning using a different approach for [specific issue].
+```
+
+### Hooks for Auto-Formatting (Optional)
+
+Add to `.claude/settings.json` to auto-format code after every edit:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx prettier --write \"$CLAUDE_FILE_PATH\" 2>/dev/null || true"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx prettier --write \"$CLAUDE_FILE_PATH\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
