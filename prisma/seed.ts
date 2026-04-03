@@ -175,7 +175,7 @@ async function main() {
     const passwordHash = await bcrypt.hash("admin123", 12);
     await prisma.member.create({
       data: {
-        email: "admin@tac.org.nz",
+        email: "support@tokoroa.org.nz",
         passwordHash,
         firstName: "Admin",
         lastName: "User",
@@ -183,7 +183,7 @@ async function main() {
         ageTier: "ADULT",
       },
     });
-    console.log("Admin user seeded: admin@tac.org.nz / admin123");
+    console.log("Admin user seeded: support@tokoroa.org.nz / admin123");
   }
 
   // Seed test member
