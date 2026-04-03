@@ -65,8 +65,8 @@ function ResetPasswordForm() {
 
     let valid = true;
 
-    if (password.length < 8) {
-      setPasswordError("Password must be at least 8 characters");
+    if (password.length < 12) {
+      setPasswordError("Password must be at least 12 characters");
       valid = false;
     }
 

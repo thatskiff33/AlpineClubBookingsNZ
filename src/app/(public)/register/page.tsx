@@ -51,7 +51,7 @@ export default function RegisterPage() {
       errors.email = "Please enter a valid email address";
     }
     if (!form.password) errors.password = "Password is required";
-    else if (form.password.length < 8) errors.password = "Password must be at least 8 characters";
+    else if (form.password.length < 12) errors.password = "Password must be at least 12 characters";
     if (!form.confirmPassword) errors.confirmPassword = "Please confirm your password";
     else if (form.password !== form.confirmPassword) errors.confirmPassword = "Passwords do not match";
 

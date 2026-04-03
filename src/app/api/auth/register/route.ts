@@ -9,7 +9,7 @@ import { AgeTier } from "@prisma/client";
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: z.string().min(12, "Password must be at least 12 characters"),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
   dateOfBirth: z.string().optional(),
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(password, 13);
 
     const ageTier = dateOfBirth ? computeAgeTier(new Date(dateOfBirth)) : AgeTier.ADULT;
 
