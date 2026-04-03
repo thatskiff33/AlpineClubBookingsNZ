@@ -139,7 +139,8 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             booking.checkIn,
             booking.checkOut,
             booking.guests.length,
-            booking.finalPriceCents
+            booking.finalPriceCents,
+            booking.discountCents
           );
         } catch (emailErr) {
           console.error(`Failed to send confirmation email for booking ${booking.id}:`, emailErr);

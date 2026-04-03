@@ -15,6 +15,7 @@ import {
   redeemPromoCode,
 } from "@/lib/promo";
 import { calculatePromoDiscount } from "@/lib/pricing";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -34,6 +35,9 @@ const createBookingSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const rateLimited = applyRateLimit(rateLimiters.bookingCreate, request);
+  if (rateLimited) return rateLimited;
+
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });

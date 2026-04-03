@@ -23,11 +23,16 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
-  const seasons = await prisma.season.findMany({
-    include: { rates: true },
-    orderBy: { startDate: "desc" },
-  });
-  return NextResponse.json(seasons);
+  try {
+    const seasons = await prisma.season.findMany({
+      include: { rates: true },
+      orderBy: { startDate: "desc" },
+    });
+    return NextResponse.json(seasons);
+  } catch (err) {
+    console.error("[seasons] Failed to fetch seasons:", err);
+    return NextResponse.json({ error: "Failed to fetch seasons" }, { status: 500 });
+  }
 }
 
 export async function POST(request: NextRequest) {

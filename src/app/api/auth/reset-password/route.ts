@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 const resetPasswordSchema = z.object({
   token: z.string().min(1, "Token is required"),
@@ -9,6 +10,9 @@ const resetPasswordSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const rateLimited = applyRateLimit(rateLimiters.resetPassword, req);
+  if (rateLimited) return rateLimited;
+
   try {
     const body = await req.json();
     const parsed = resetPasswordSchema.safeParse(body);

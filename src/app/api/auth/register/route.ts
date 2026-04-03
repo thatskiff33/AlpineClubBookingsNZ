@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { sendWelcomeEmail } from "@/lib/email";
 import { computeAgeTier } from "@/lib/age-tier";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { AgeTier } from "@prisma/client";
 
 const registerSchema = z.object({
@@ -16,6 +17,9 @@ const registerSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const rateLimited = applyRateLimit(rateLimiters.register, req);
+  if (rateLimited) return rateLimited;
+
   try {
     const body = await req.json();
     const parsed = registerSchema.safeParse(body);

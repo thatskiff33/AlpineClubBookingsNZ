@@ -2,7 +2,7 @@
 
 ## Build Status
 
-### Phases 1-8: MERGED INTO MAIN
+### Phases 1-9: MERGED INTO MAIN
 
 All completed build phases have been merged into `main` in sequence, with all conflicts resolved.
 
@@ -16,6 +16,92 @@ All completed build phases have been merged into `main` in sequence, with all co
 6. **Phase 6: Xero Integration** - OAuth2 connect flow, encrypted token storage, invoice creation on booking confirmation, credit notes on refunds, contact sync, membership verification, daily cron for membership refresh, webhook handler. Wired into Stripe webhook, cancellation route, and cron auto-confirmation (all guarded with `isXeroConnected()` check).
 7. **Phase 7: Promo Codes & Discounts** - Admin promo code CRUD (`/admin/promo-codes`), promo validation library (`src/lib/promo.ts`), validation API (`/api/promo-codes/validate`), promo code input component in booking wizard, booking API integration with promo redemption tracking, discount display in booking details. Supports PERCENTAGE, FIXED_AMOUNT, and FREE_NIGHTS discount types with validation (active, date range, max redemptions, single-use, members-only). 44 new tests.
 8. **Phase 8: Chore Roster** - Chore allocator algorithm (round-robin, age-aware), admin chore template management, roster review/edit page, printable A4 roster view, chore roster email notifications. Enhanced ChoreTemplate with ageRestriction enum, recommendedPeopleMin/Max, isEssential, conditionalNote.
+9. **Phase 9: Polish & Production Hardening** - Error pages (404/500/global), security headers middleware (CSP, HSTS, X-Frame-Options), rate limiting on auth/booking routes, API validation review, admin reports dashboard with recharts, polished HTML email templates, automated pg_dump backup cron with S3 upload, 31 new tests (255 total).
+
+### Phase 9: Polish & Production Hardening - COMPLETED
+
+**Date:** 2026-04-03
+
+**What was built:**
+
+1. **Error Pages** - Custom 404 (`src/app/not-found.tsx`), 500 error boundary (`src/app/error.tsx`), and global error boundary (`src/app/global-error.tsx`) with user-friendly messages and navigation links.
+
+2. **Security Headers** - New `src/middleware.ts` adds security headers to all responses: `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security`, and `Content-Security-Policy` (configured for Stripe iframes and inline styles).
+
+3. **Rate Limiting** - In-memory rate limiter (`src/lib/rate-limit.ts`) with automatic cleanup. Applied to:
+   - Login: 10 attempts per 15 minutes
+   - Register: 5 per hour
+   - Forgot password: 5 per hour
+   - Reset password: 10 per hour
+   - Booking creation: 20 per hour
+   - Returns 429 with `Retry-After` header when exceeded
+
+4. **API Route Validation Review** - Fixed across multiple routes:
+   - Added Zod discriminated union schema to roster PUT endpoint (`/api/admin/roster/[date]`)
+   - Added try-catch error handling to roster PUT and seasons GET
+   - Fixed 401/403 status codes in seasons POST (was returning 403 for unauthenticated)
+   - Fixed inconsistent "Unauthorised" spelling in profile route
+   - All auth routes now have rate limiting
+
+5. **Admin Reports Page** - Full analytics dashboard at `/admin/reports`:
+   - Summary cards: total bookings, revenue, guests, avg occupancy
+   - Occupancy rate area chart (daily, with downsampling for large ranges)
+   - Revenue by month bar chart
+   - Booking trends line chart (weekly: total, confirmed, cancelled)
+   - Member vs non-member pie chart
+   - Booking status breakdown pie chart
+   - Configurable date range picker
+   - API: `/api/admin/reports?from=YYYY-MM-DD&to=YYYY-MM-DD`
+   - Uses recharts for all visualizations
+
+6. **Email Template Polish** - All email templates converted from inline HTML to structured, branded templates (`src/lib/email-templates.ts`):
+   - Consistent TAC branding header with mountain icon
+   - Responsive table layout (600px max-width)
+   - Styled CTAs (buttons), info tables, alert boxes
+   - Templates: welcome, password reset, booking confirmed, booking pending, booking bumped, booking cancelled, chore roster
+   - Added `sendBookingCancelledEmail` function
+
+7. **Automated Database Backup** - Cron-based pg_dump backup system (`src/lib/backup.ts`):
+   - Runs daily at 3 AM (configurable via `BACKUP_CRON_SCHEDULE` env var)
+   - Gzip compression, stored in `/tmp/tacbookings-backups/`
+   - Optional S3 upload (configurable via `BACKUP_S3_BUCKET`)
+   - Automatic cleanup of old backups (configurable retention days)
+   - Overlap guard prevents concurrent backups
+   - Environment variables added to docker-compose.yml and .env.example
+
+8. **Tests** - 31 new tests (total: 255):
+   - Rate limiter: 14 tests (limit enforcement, IP tracking, window expiry, 429 responses)
+   - Email templates: 17 tests (content verification, branding, links, HTML structure)
+
+**Key new files:**
+- `src/app/not-found.tsx` - 404 page
+- `src/app/error.tsx` - Error boundary
+- `src/app/global-error.tsx` - Global error boundary
+- `src/middleware.ts` - Security headers
+- `src/lib/rate-limit.ts` - Rate limiter
+- `src/lib/email-templates.ts` - HTML email templates
+- `src/lib/backup.ts` - Database backup
+- `src/app/(admin)/admin/reports/page.tsx` - Reports dashboard
+- `src/app/api/admin/reports/route.ts` - Reports API
+- `src/lib/__tests__/rate-limit.test.ts` - Rate limiter tests
+- `src/lib/__tests__/email-templates.test.ts` - Email template tests
+
+**New environment variables:**
+- `BACKUP_ENABLED` - Enable/disable automated backups (default: false)
+- `BACKUP_S3_BUCKET` - S3 bucket for backup uploads (optional)
+- `BACKUP_S3_REGION` - AWS region for S3 (default: ap-southeast-2)
+- `BACKUP_S3_ACCESS_KEY_ID` - AWS access key for S3
+- `BACKUP_S3_SECRET_ACCESS_KEY` - AWS secret key for S3
+- `BACKUP_RETENTION_DAYS` - Days to keep local backups (default: 7)
+- `BACKUP_CRON_SCHEDULE` - Cron expression for backup timing (default: 0 3 * * *)
+
+**How to run:**
+```bash
+npm install --legacy-peer-deps
+npx prisma generate
+npm test              # 255 tests pass (13 test files)
+npm run build         # builds successfully
+```
 
 ### Cross-Phase Integration Review #2 - COMPLETED
 
@@ -105,7 +191,7 @@ All completed build phases have been merged into `main` in sequence, with all co
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 268 tests pass (12 test files)
+npm test              # 268+ tests pass (13+ test files)
 npm run build         # builds successfully
 ```
 
@@ -187,23 +273,10 @@ npm run db:seed
 - `src/app/(authenticated)/book/page.tsx` - Added PromoCodeInput component and discount display
 - `src/app/(authenticated)/bookings/[id]/page.tsx` - Shows promo code in discount line
 
-**How to test:**
-```bash
-npm install --legacy-peer-deps
-npx prisma generate
-npm test              # 268 tests pass (12 test files)
-npm run build         # builds successfully
-```
-
-### What's Next: Phase 9 - Polish & Production Hardening
-1. Comprehensive error handling and user-friendly error pages
-2. Admin reports (occupancy rates, revenue by period, booking trends)
-3. Email template polish (React Email)
-4. Automated database backup cron to S3
-5. GitHub Actions deploy pipeline (optional)
-6. Security audit (rate limiting, input validation, CSRF)
-7. User acceptance testing with club committee
-8. Member data import from Checkfront/Xero
+### Remaining Post-Build Tasks
+- GitHub Actions deploy pipeline
+- Member data import from Checkfront/Xero
+- User acceptance testing with club committee
 
 ## Context
 

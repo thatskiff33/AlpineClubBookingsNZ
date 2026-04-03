@@ -150,7 +150,8 @@ async function handlePaymentIntentSucceeded(
         booking.checkIn,
         booking.checkOut,
         booking.guests.length,
-        booking.finalPriceCents
+        booking.finalPriceCents,
+        booking.discountCents
       );
     }
   } catch (emailErr) {

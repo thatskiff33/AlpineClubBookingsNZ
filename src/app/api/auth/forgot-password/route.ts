@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail } from "@/lib/email";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 const forgotPasswordSchema = z.object({
   email: z.string().email("Invalid email address"),
 });
 
 export async function POST(req: NextRequest) {
+  const rateLimited = applyRateLimit(rateLimiters.forgotPassword, req);
+  if (rateLimited) return rateLimited;
+
   try {
     const body = await req.json();
     const parsed = forgotPasswordSchema.safeParse(body);
