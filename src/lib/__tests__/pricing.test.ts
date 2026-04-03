@@ -3,57 +3,52 @@ import {
   getStayNights,
   findSeasonForDate,
   getNightlyRate,
-  calculateGuestPrice,
   calculateBookingPrice,
   calculatePromoDiscount,
   calculateRefund,
   formatCents,
   getSeasonYear,
-  type SeasonData,
+  type SeasonRateData,
   type GuestInput,
   type PromoCodeInput,
 } from "../pricing"
 
 // --- Test fixtures ---
 
-function makeSeason(overrides: Partial<SeasonData> = {}): SeasonData {
+function makeSeason(overrides: Partial<SeasonRateData> = {}): SeasonRateData {
   return {
-    id: "season-winter-2026",
-    name: "Winter 2026",
+    seasonId: "season-winter-2026",
     startDate: new Date("2026-06-01"),
     endDate: new Date("2026-09-30"),
-    active: true,
     rates: [
-      { seasonId: "season-winter-2026", ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
-      { seasonId: "season-winter-2026", ageTier: "ADULT", isMember: false, pricePerNightCents: 6500 },
-      { seasonId: "season-winter-2026", ageTier: "YOUTH", isMember: true, pricePerNightCents: 3000 },
-      { seasonId: "season-winter-2026", ageTier: "YOUTH", isMember: false, pricePerNightCents: 4500 },
-      { seasonId: "season-winter-2026", ageTier: "CHILD", isMember: true, pricePerNightCents: 1500 },
-      { seasonId: "season-winter-2026", ageTier: "CHILD", isMember: false, pricePerNightCents: 2500 },
+      { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
+      { ageTier: "ADULT", isMember: false, pricePerNightCents: 6500 },
+      { ageTier: "YOUTH", isMember: true, pricePerNightCents: 3000 },
+      { ageTier: "YOUTH", isMember: false, pricePerNightCents: 4500 },
+      { ageTier: "CHILD", isMember: true, pricePerNightCents: 1500 },
+      { ageTier: "CHILD", isMember: false, pricePerNightCents: 2500 },
     ],
     ...overrides,
   }
 }
 
-function makeSummerSeason(): SeasonData {
+function makeSummerSeason(): SeasonRateData {
   return {
-    id: "season-summer-2026",
-    name: "Summer 2026-27",
+    seasonId: "season-summer-2026",
     startDate: new Date("2026-11-01"),
     endDate: new Date("2027-03-31"),
-    active: true,
     rates: [
-      { seasonId: "season-summer-2026", ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
-      { seasonId: "season-summer-2026", ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
-      { seasonId: "season-summer-2026", ageTier: "YOUTH", isMember: true, pricePerNightCents: 2500 },
-      { seasonId: "season-summer-2026", ageTier: "YOUTH", isMember: false, pricePerNightCents: 3500 },
-      { seasonId: "season-summer-2026", ageTier: "CHILD", isMember: true, pricePerNightCents: 1000 },
-      { seasonId: "season-summer-2026", ageTier: "CHILD", isMember: false, pricePerNightCents: 2000 },
+      { ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
+      { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
+      { ageTier: "YOUTH", isMember: true, pricePerNightCents: 2500 },
+      { ageTier: "YOUTH", isMember: false, pricePerNightCents: 3500 },
+      { ageTier: "CHILD", isMember: true, pricePerNightCents: 1000 },
+      { ageTier: "CHILD", isMember: false, pricePerNightCents: 2000 },
     ],
   }
 }
 
-const allSeasons: SeasonData[] = [makeSeason(), makeSummerSeason()]
+const allSeasons: SeasonRateData[] = [makeSeason(), makeSummerSeason()]
 
 // --- Tests ---
 
@@ -88,12 +83,12 @@ describe("getStayNights", () => {
 describe("findSeasonForDate", () => {
   it("finds winter season for a July date", () => {
     const season = findSeasonForDate(new Date("2026-07-15"), allSeasons)
-    expect(season?.id).toBe("season-winter-2026")
+    expect(season?.seasonId).toBe("season-winter-2026")
   })
 
   it("finds summer season for a December date", () => {
     const season = findSeasonForDate(new Date("2026-12-15"), allSeasons)
-    expect(season?.id).toBe("season-summer-2026")
+    expect(season?.seasonId).toBe("season-summer-2026")
   })
 
   it("returns null for a date not in any season", () => {
@@ -103,17 +98,16 @@ describe("findSeasonForDate", () => {
 
   it("includes start date of season", () => {
     const season = findSeasonForDate(new Date("2026-06-01"), allSeasons)
-    expect(season?.id).toBe("season-winter-2026")
+    expect(season?.seasonId).toBe("season-winter-2026")
   })
 
   it("includes end date of season", () => {
     const season = findSeasonForDate(new Date("2026-09-30"), allSeasons)
-    expect(season?.id).toBe("season-winter-2026")
+    expect(season?.seasonId).toBe("season-winter-2026")
   })
 
-  it("ignores inactive seasons", () => {
-    const inactiveSeasons = [makeSeason({ active: false })]
-    const season = findSeasonForDate(new Date("2026-07-15"), inactiveSeasons)
+  it("returns null for date in gap between seasons", () => {
+    const season = findSeasonForDate(new Date("2026-10-15"), allSeasons)
     expect(season).toBeNull()
   })
 })
@@ -122,7 +116,7 @@ describe("getNightlyRate", () => {
   it("returns adult member rate", () => {
     const result = getNightlyRate(new Date("2026-07-15"), "ADULT", true, allSeasons)
     expect(result?.priceCents).toBe(4500)
-    expect(result?.seasonName).toBe("Winter 2026")
+    expect(result?.seasonId).toBe("season-winter-2026")
   })
 
   it("returns adult non-member rate", () => {
@@ -141,44 +135,45 @@ describe("getNightlyRate", () => {
   })
 })
 
-describe("calculateGuestPrice", () => {
+describe("calculateBookingPrice - single guest", () => {
   it("calculates 3-night adult member stay", () => {
-    const { totalCents, nightlyBreakdown } = calculateGuestPrice(
+    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true }]
+    const result = calculateBookingPrice(
       new Date("2026-07-10"),
       new Date("2026-07-13"),
-      "ADULT",
-      true,
+      guests,
       allSeasons
     )
-    expect(totalCents).toBe(4500 * 3) // $45/night x 3 nights
-    expect(nightlyBreakdown).toHaveLength(3)
+    expect(result.totalPriceCents).toBe(4500 * 3) // $45/night x 3 nights
+    expect(result.guests).toHaveLength(1)
+    expect(result.guests[0].nights).toBe(3)
   })
 
   it("calculates youth non-member price", () => {
-    const { totalCents } = calculateGuestPrice(
+    const guests: GuestInput[] = [{ ageTier: "YOUTH", isMember: false }]
+    const result = calculateBookingPrice(
       new Date("2026-07-10"),
       new Date("2026-07-12"),
-      "YOUTH",
-      false,
+      guests,
       allSeasons
     )
-    expect(totalCents).toBe(4500 * 2) // $45/night x 2 nights
+    expect(result.totalPriceCents).toBe(4500 * 2) // $45/night x 2 nights
   })
 
   it("throws error for date outside any season", () => {
+    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true }]
     expect(() =>
-      calculateGuestPrice(
+      calculateBookingPrice(
         new Date("2026-10-10"),
         new Date("2026-10-12"),
-        "ADULT",
-        true,
+        guests,
         allSeasons
       )
     ).toThrow("No rate found")
   })
 })
 
-describe("calculateBookingPrice", () => {
+describe("calculateBookingPrice - multiple guests", () => {
   it("calculates total for multiple guests", () => {
     const guests: GuestInput[] = [
       { ageTier: "ADULT", isMember: true },
@@ -186,7 +181,7 @@ describe("calculateBookingPrice", () => {
       { ageTier: "CHILD", isMember: true },
     ]
 
-    const { totalPriceCents, guestPrices } = calculateBookingPrice(
+    const result = calculateBookingPrice(
       new Date("2026-07-10"),
       new Date("2026-07-12"),
       guests,
@@ -195,11 +190,11 @@ describe("calculateBookingPrice", () => {
 
     // 2 nights: adult member $45, adult non-member $65, child member $15
     // = (4500 + 6500 + 1500) * 2 = 25000
-    expect(totalPriceCents).toBe(25000)
-    expect(guestPrices).toHaveLength(3)
-    expect(guestPrices[0].totalCents).toBe(9000)
-    expect(guestPrices[1].totalCents).toBe(13000)
-    expect(guestPrices[2].totalCents).toBe(3000)
+    expect(result.totalPriceCents).toBe(25000)
+    expect(result.guests).toHaveLength(3)
+    expect(result.guests[0].priceCents).toBe(9000)
+    expect(result.guests[1].priceCents).toBe(13000)
+    expect(result.guests[2].priceCents).toBe(3000)
   })
 
   it("handles single guest single night", () => {
@@ -215,71 +210,52 @@ describe("calculateBookingPrice", () => {
 })
 
 describe("calculatePromoDiscount", () => {
-  const guests: GuestInput[] = [
-    { ageTier: "ADULT", isMember: true },
-    { ageTier: "CHILD", isMember: true },
-  ]
   // 2 nights: adult $45/night = $90, child $15/night = $30 = $120 total
   const totalPrice = 12000
-  const checkIn = new Date("2026-07-10")
-  const checkOut = new Date("2026-07-12")
 
   it("applies percentage discount", () => {
     const promo: PromoCodeInput = { type: "PERCENTAGE", percentOff: 20 }
-    const discount = calculatePromoDiscount(
-      promo, totalPrice, checkIn, checkOut, guests, allSeasons
-    )
+    const discount = calculatePromoDiscount(promo, totalPrice)
     expect(discount).toBe(2400) // 20% of $120 = $24
   })
 
   it("applies fixed amount discount", () => {
     const promo: PromoCodeInput = { type: "FIXED_AMOUNT", valueCents: 5000 }
-    const discount = calculatePromoDiscount(
-      promo, totalPrice, checkIn, checkOut, guests, allSeasons
-    )
+    const discount = calculatePromoDiscount(promo, totalPrice)
     expect(discount).toBe(5000) // $50 off
   })
 
   it("caps fixed amount at total price", () => {
     const promo: PromoCodeInput = { type: "FIXED_AMOUNT", valueCents: 99999 }
-    const discount = calculatePromoDiscount(
-      promo, totalPrice, checkIn, checkOut, guests, allSeasons
-    )
+    const discount = calculatePromoDiscount(promo, totalPrice)
     expect(discount).toBe(12000) // capped at total
   })
 
   it("applies free nights discount - cheapest nights first", () => {
     const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNights: 2 }
-    const discount = calculatePromoDiscount(
-      promo, totalPrice, checkIn, checkOut, guests, allSeasons
-    )
-    // 4 guest-nights: [1500, 1500, 4500, 4500] sorted asc
+    const perNightRates = [1500, 1500, 4500, 4500]
+    const discount = calculatePromoDiscount(promo, totalPrice, perNightRates)
     // 2 cheapest = 1500 + 1500 = 3000
     expect(discount).toBe(3000)
   })
 
   it("handles free nights exceeding total nights", () => {
     const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNights: 100 }
-    const discount = calculatePromoDiscount(
-      promo, totalPrice, checkIn, checkOut, guests, allSeasons
-    )
+    const perNightRates = [1500, 1500, 4500, 4500]
+    const discount = calculatePromoDiscount(promo, totalPrice, perNightRates)
     // All 4 guest-nights free = 1500+1500+4500+4500 = 12000
     expect(discount).toBe(12000)
   })
 
   it("returns 0 for zero percentage", () => {
     const promo: PromoCodeInput = { type: "PERCENTAGE", percentOff: 0 }
-    const discount = calculatePromoDiscount(
-      promo, totalPrice, checkIn, checkOut, guests, allSeasons
-    )
+    const discount = calculatePromoDiscount(promo, totalPrice)
     expect(discount).toBe(0)
   })
 
   it("returns 0 for null values", () => {
     const promo: PromoCodeInput = { type: "PERCENTAGE", percentOff: null }
-    const discount = calculatePromoDiscount(
-      promo, totalPrice, checkIn, checkOut, guests, allSeasons
-    )
+    const discount = calculatePromoDiscount(promo, totalPrice)
     expect(discount).toBe(0)
   })
 })
