@@ -65,6 +65,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Atomically claim the booking to prevent double-charge with cron
+    const claimed = await prisma.booking.updateMany({
+      where: { id: bookingId, status: "PENDING" },
+      data: { status: "CONFIRMED" },
+    });
+    if (claimed.count === 0) {
+      return NextResponse.json(
+        { error: "Booking is already being processed" },
+        { status: 409 }
+      );
+    }
+
     // Charge the saved payment method
     const paymentIntent = await chargePaymentMethod({
       amountCents: booking.finalPriceCents,
@@ -76,22 +88,30 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Update payment and booking records
-    await prisma.$transaction([
-      prisma.payment.update({
+    // Update payment record and revert booking status if payment not yet succeeded
+    if (paymentIntent.status === "succeeded") {
+      await prisma.payment.update({
         where: { bookingId: booking.id },
         data: {
           stripePaymentIntentId: paymentIntent.id,
-          status: paymentIntent.status === "succeeded" ? "SUCCEEDED" : "PROCESSING",
+          status: "SUCCEEDED",
         },
-      }),
-      prisma.booking.update({
-        where: { id: booking.id },
-        data: {
-          status: paymentIntent.status === "succeeded" ? "CONFIRMED" : "PENDING",
-        },
-      }),
-    ]);
+      });
+    } else {
+      await prisma.$transaction([
+        prisma.payment.update({
+          where: { bookingId: booking.id },
+          data: {
+            stripePaymentIntentId: paymentIntent.id,
+            status: "PROCESSING",
+          },
+        }),
+        prisma.booking.update({
+          where: { id: booking.id },
+          data: { status: "PENDING" },
+        }),
+      ]);
+    }
 
     // Create Xero invoice if connected and payment succeeded
     if (paymentIntent.status === "succeeded") {

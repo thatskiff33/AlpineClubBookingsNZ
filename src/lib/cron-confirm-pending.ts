@@ -94,6 +94,17 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         continue;
       }
 
+      // Atomically claim the booking to prevent double-charge with manual confirm
+      const claimed = await prisma.booking.updateMany({
+        where: { id: booking.id, status: BookingStatus.PENDING },
+        data: { status: BookingStatus.CONFIRMED },
+      });
+      if (claimed.count === 0) {
+        // Another process already changed the status - skip
+        console.log(`Booking ${booking.id} already processed by another handler`);
+        continue;
+      }
+
       // Charge the saved card
       const paymentIntent = await chargePaymentMethod({
         amountCents: booking.finalPriceCents,
@@ -106,20 +117,14 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       });
 
       if (paymentIntent.status === "succeeded") {
-        await prisma.$transaction([
-          prisma.payment.update({
-            where: { bookingId: booking.id },
-            data: {
-              stripePaymentIntentId: paymentIntent.id,
-              status: "SUCCEEDED",
-              amountCents: paymentIntent.amount,
-            },
-          }),
-          prisma.booking.update({
-            where: { id: booking.id },
-            data: { status: BookingStatus.CONFIRMED },
-          }),
-        ]);
+        await prisma.payment.update({
+          where: { bookingId: booking.id },
+          data: {
+            stripePaymentIntentId: paymentIntent.id,
+            status: "SUCCEEDED",
+            amountCents: paymentIntent.amount,
+          },
+        });
 
         result.confirmedBookingIds.push(booking.id);
 
@@ -149,14 +154,20 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           console.error(`Failed to send confirmation email for booking ${booking.id}:`, emailErr);
         }
       } else {
-        // Payment is processing (requires_action, etc.)
-        await prisma.payment.update({
-          where: { bookingId: booking.id },
-          data: {
-            stripePaymentIntentId: paymentIntent.id,
-            status: "PROCESSING",
-          },
-        });
+        // Payment is processing (requires_action, etc.) - revert to PENDING for webhook to handle
+        await prisma.$transaction([
+          prisma.payment.update({
+            where: { bookingId: booking.id },
+            data: {
+              stripePaymentIntentId: paymentIntent.id,
+              status: "PROCESSING",
+            },
+          }),
+          prisma.booking.update({
+            where: { id: booking.id },
+            data: { status: BookingStatus.PENDING },
+          }),
+        ]);
 
         // Will be resolved by Stripe webhook
         console.log(
@@ -165,6 +176,11 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       }
     } catch (err) {
       console.error(`Error processing pending booking ${booking.id}:`, err);
+      // Revert status if we claimed it but the charge failed
+      await prisma.booking.updateMany({
+        where: { id: booking.id, status: BookingStatus.CONFIRMED },
+        data: { status: BookingStatus.PENDING },
+      }).catch((revertErr) => console.error(`Failed to revert booking ${booking.id}:`, revertErr));
       result.failedBookingIds.push(booking.id);
     }
   }

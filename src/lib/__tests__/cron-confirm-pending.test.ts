@@ -26,6 +26,7 @@ vi.mock("../capacity", () => ({
 // Mock Prisma
 const mockBookingFindMany = vi.fn();
 const mockBookingUpdate = vi.fn();
+const mockBookingUpdateMany = vi.fn();
 const mockPaymentUpdate = vi.fn();
 const mockPrismaTransaction = vi.fn();
 
@@ -34,6 +35,7 @@ vi.mock("../prisma", () => ({
     booking: {
       findMany: (...args: unknown[]) => mockBookingFindMany(...args),
       update: (...args: unknown[]) => mockBookingUpdate(...args),
+      updateMany: (...args: unknown[]) => mockBookingUpdateMany(...args),
     },
     payment: {
       update: (...args: unknown[]) => mockPaymentUpdate(...args),
@@ -108,6 +110,7 @@ function makePendingBooking(
 describe("Cron: Confirm Pending Bookings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBookingUpdateMany.mockResolvedValue({ count: 1 });
     mockPrismaTransaction.mockImplementation(async (actions: unknown[]) => {
       // Execute all Prisma actions in the transaction array
       return Promise.all(actions as Promise<unknown>[]);

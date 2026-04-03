@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { formatCents } from "@/lib/utils";
 import { CancelBookingButton } from "@/components/cancel-booking-button";
+import { BookingPaymentSection } from "@/components/booking-payment-section";
 
 export default async function BookingDetailPage({
   params,
@@ -152,6 +153,49 @@ export default async function BookingDetailPage({
           </div>
         </CardContent>
       </Card>
+
+      {/* Show payment form if payment hasn't been completed */}
+      {(booking.status === "CONFIRMED" && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Complete Payment</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <BookingPaymentSection
+              bookingId={booking.id}
+              amountCents={booking.finalPriceCents}
+              hasNonMembers={booking.hasNonMembers}
+              checkInDaysAway={Math.ceil(
+                (new Date(booking.checkIn).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+              )}
+              returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {(booking.status === "PENDING" && (!booking.payment || !booking.payment.stripeSetupIntentId)) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Save Payment Method</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600 mb-4">
+              Please save a payment method. Your card will be charged when your booking is confirmed
+              (7 days before check-in).
+            </p>
+            <BookingPaymentSection
+              bookingId={booking.id}
+              amountCents={booking.finalPriceCents}
+              hasNonMembers={booking.hasNonMembers}
+              checkInDaysAway={Math.ceil(
+                (new Date(booking.checkIn).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+              )}
+              returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {canCancel && (
         <CancelBookingButton bookingId={booking.id} />

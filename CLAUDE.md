@@ -2,6 +2,45 @@
 
 ## Build Status
 
+### Full Integration Review #4 (Complete Codebase) - COMPLETED
+
+**Date:** 2026-04-03
+
+**Scope:** End-to-end flow verification across all 9 phases, concurrency review, data integrity, deployment config. Build, type check, 292 tests all pass.
+
+**6 issues found (3 Critical, 3 High). All fixed:**
+
+1. **CRITICAL: BookingPaymentWrapper not wired into booking flow** - The `BookingPaymentWrapper` component (PaymentForm/SetupForm) existed but was never rendered. Bookings were created without collecting payment (Flow A) or saving a card (Flow B). Added `BookingPaymentSection` client component and integrated it into the booking detail page (`/bookings/[id]`) - shows payment form for CONFIRMED bookings without payment, and SetupForm for PENDING bookings without a saved card.
+
+2. **CRITICAL: Cancellation emails never sent** - `sendBookingCancelledEmail` was defined in `email.ts` but never called from either cancel route. Members received no notification of cancellation or refund. Added email sends to all cancellation paths in both `/api/bookings/cancel` and `/api/bookings/[id]/cancel`.
+
+3. **CRITICAL: Stripe publishable key env var mismatch** - `docker-compose.yml` passed `STRIPE_PUBLISHABLE_KEY` but client code reads `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`. Stripe would be completely broken in Docker deployment. Fixed env var name in docker-compose and .env.example.
+
+4. **HIGH: Missing env vars in .env.example** - `DB_PASSWORD` and `DOMAIN` used in docker-compose.yml but not documented. Added both to .env.example.
+
+5. **HIGH: Cron double-charge race condition** - `confirmPendingBookings()` and `/api/payments/charge-saved-method` could both charge a pending booking simultaneously. Added atomic `updateMany` claim (WHERE status=PENDING) before charging in both paths, with rollback on failure.
+
+6. **HIGH: Promo code max-redemptions race condition** - Two concurrent bookings could both pass the `currentRedemptions >= maxRedemptions` check and both redeem. Added `SELECT ... FOR UPDATE` row lock on the promo code inside the booking transaction.
+
+**Remaining Medium/Low issues (not fixed, documented for future):**
+- Advisory lock only covers check-in date, not full date range
+- `(session.user as any).role` type assertions in 14 admin routes
+- Duplicate cancel routes (`/api/bookings/cancel` + `/api/bookings/[id]/cancel`)
+- Missing rate limiting on `/api/bookings/quote`, `/api/availability`, `/api/promo-codes/validate`
+- Missing FK indexes on `PasswordResetToken.memberId` and `ChoreAssignment.choreTemplateId`
+
+**Files modified:**
+- `src/app/(authenticated)/bookings/[id]/page.tsx` - Added BookingPaymentSection for payment collection
+- `src/components/booking-payment-section.tsx` - New client wrapper for BookingPaymentWrapper
+- `src/app/api/bookings/cancel/route.ts` - Added sendBookingCancelledEmail calls
+- `src/app/api/bookings/[id]/cancel/route.ts` - Added sendBookingCancelledEmail calls
+- `docker-compose.yml` - Fixed NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+- `.env.example` - Added DB_PASSWORD, DOMAIN, fixed Stripe key name
+- `src/lib/cron-confirm-pending.ts` - Atomic claim before charging, rollback on failure
+- `src/app/api/payments/charge-saved-method/route.ts` - Atomic claim before charging
+- `src/app/api/bookings/route.ts` - SELECT FOR UPDATE on promo code row
+- `src/lib/__tests__/cron-confirm-pending.test.ts` - Added updateMany mock
+
 ### Phases 1-9: MERGED INTO MAIN
 
 All nine build phases have been merged into `main` in sequence, with all conflicts resolved. 292 tests pass, build succeeds.

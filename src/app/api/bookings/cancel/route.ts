@@ -5,6 +5,7 @@ import { isXeroConnected, createXeroCreditNote } from "@/lib/xero";
 import { calculateRefundAmount, daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
 import { CancelBookingSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
+import { sendBookingCancelledEmail } from "@/lib/email";
 
 export async function POST(request: NextRequest) {
   try {
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { payment: true },
+      include: { payment: true, member: true },
     });
 
     if (!booking) {
@@ -66,6 +67,14 @@ export async function POST(request: NextRequest) {
       });
       await cleanupPromoRedemption(bookingId);
 
+      sendBookingCancelledEmail(
+        booking.member.email,
+        booking.member.firstName,
+        booking.checkIn,
+        booking.checkOut,
+        0
+      ).catch((err) => console.error("Failed to send cancellation email:", err));
+
       return NextResponse.json({
         success: true,
         refundAmountCents: 0,
@@ -89,6 +98,14 @@ export async function POST(request: NextRequest) {
         data: { status: "CANCELLED" },
       });
       await cleanupPromoRedemption(bookingId);
+
+      sendBookingCancelledEmail(
+        booking.member.email,
+        booking.member.firstName,
+        booking.checkIn,
+        booking.checkOut,
+        0
+      ).catch((err) => console.error("Failed to send cancellation email:", err));
 
       return NextResponse.json({
         success: true,
@@ -155,6 +172,14 @@ export async function POST(request: NextRequest) {
 
       await cleanupPromoRedemption(bookingId);
 
+      sendBookingCancelledEmail(
+        booking.member.email,
+        booking.member.firstName,
+        booking.checkIn,
+        booking.checkOut,
+        refundAmountCents
+      ).catch((err) => console.error("Failed to send cancellation email:", err));
+
       return NextResponse.json({
         success: true,
         refundAmountCents,
@@ -170,6 +195,14 @@ export async function POST(request: NextRequest) {
       data: { status: "CANCELLED" },
     });
     await cleanupPromoRedemption(bookingId);
+
+    sendBookingCancelledEmail(
+      booking.member.email,
+      booking.member.firstName,
+      booking.checkIn,
+      booking.checkOut,
+      0
+    ).catch((err) => console.error("Failed to send cancellation email:", err));
 
     return NextResponse.json({
       success: true,

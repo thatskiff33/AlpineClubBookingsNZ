@@ -6,6 +6,7 @@ import { LODGE_CAPACITY } from "@/lib/capacity";
 import { BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { z } from "zod";
+import { PromoCodeType } from "@prisma/client";
 import {
   bumpPendingBookings,
   sendBumpedNotifications,
@@ -189,9 +190,11 @@ export async function POST(request: NextRequest) {
 
       if (promoCodeStr) {
         const normalizedCode = promoCodeStr.toUpperCase().trim();
-        const promoCode = await tx.promoCode.findUnique({
-          where: { code: normalizedCode },
-        });
+        // Lock the promo code row to prevent concurrent over-redemption
+        const lockedRows = await tx.$queryRaw<Array<{ id: string; active: boolean; validFrom: Date | null; validUntil: Date | null; maxRedemptions: number | null; currentRedemptions: number; membersOnly: boolean; singleUse: boolean; type: PromoCodeType; valueCents: number | null; percentOff: number | null; freeNights: number | null; code: string }>>`
+          SELECT * FROM "PromoCode" WHERE "code" = ${normalizedCode} FOR UPDATE
+        `;
+        const promoCode = lockedRows.length > 0 ? lockedRows[0] : null;
 
         // Check single-use
         let memberRedemptionCount = 0;

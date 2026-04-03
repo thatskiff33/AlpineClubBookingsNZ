@@ -9,6 +9,7 @@ import {
   daysUntilDate,
   loadCancellationPolicy,
 } from "@/lib/cancellation";
+import { sendBookingCancelledEmail } from "@/lib/email";
 
 export async function POST(
   request: NextRequest,
@@ -22,7 +23,7 @@ export async function POST(
 
   const booking = await prisma.booking.findUnique({
     where: { id },
-    include: { payment: true },
+    include: { payment: true, member: true },
   });
 
   if (!booking) {
@@ -67,6 +68,14 @@ export async function POST(
     });
     await cleanupPromoRedemption(id);
 
+    sendBookingCancelledEmail(
+      booking.member.email,
+      booking.member.firstName,
+      booking.checkIn,
+      booking.checkOut,
+      0
+    ).catch((err) => console.error("Failed to send cancellation email:", err));
+
     return NextResponse.json({
       success: true,
       refundAmountCents: 0,
@@ -82,6 +91,14 @@ export async function POST(
       data: { status: BookingStatus.CANCELLED },
     });
     await cleanupPromoRedemption(id);
+
+    sendBookingCancelledEmail(
+      booking.member.email,
+      booking.member.firstName,
+      booking.checkIn,
+      booking.checkOut,
+      0
+    ).catch((err) => console.error("Failed to send cancellation email:", err));
 
     return NextResponse.json({
       success: true,
@@ -149,6 +166,14 @@ export async function POST(
 
     await cleanupPromoRedemption(id);
 
+    sendBookingCancelledEmail(
+      booking.member.email,
+      booking.member.firstName,
+      booking.checkIn,
+      booking.checkOut,
+      refundAmountCents
+    ).catch((err) => console.error("Failed to send cancellation email:", err));
+
     return NextResponse.json({
       success: true,
       refundAmountCents,
@@ -164,6 +189,14 @@ export async function POST(
     data: { status: BookingStatus.CANCELLED },
   });
   await cleanupPromoRedemption(id);
+
+  sendBookingCancelledEmail(
+    booking.member.email,
+    booking.member.firstName,
+    booking.checkIn,
+    booking.checkOut,
+    0
+  ).catch((err) => console.error("Failed to send cancellation email:", err));
 
   return NextResponse.json({
     success: true,
