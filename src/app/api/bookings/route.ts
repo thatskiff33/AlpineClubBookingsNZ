@@ -79,13 +79,10 @@ export async function POST(request: NextRequest) {
 
   try {
     const booking = await prisma.$transaction(async (tx) => {
-      // Advisory lock based on date range to prevent double-booking
-      const lockKey =
-        checkIn.getFullYear() * 10000 +
-        (checkIn.getMonth() + 1) * 100 +
-        checkIn.getDate();
+      // Advisory lock to serialize all booking creation and prevent double-booking.
+      // Uses a fixed key so overlapping date ranges are protected.
       await tx.$executeRawUnsafe(
-        `SELECT pg_advisory_xact_lock(${lockKey})`
+        `SELECT pg_advisory_xact_lock(1)`
       );
 
       // Check capacity
