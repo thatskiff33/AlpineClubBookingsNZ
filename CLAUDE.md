@@ -2,6 +2,55 @@
 
 ## Build Status
 
+### Security Audit - COMPLETED
+
+**Date:** 2026-04-03
+
+**Scope:** Dedicated security audit across authentication, authorization, input validation, payment security, Xero security, data exposure, infrastructure, and rate limiting. Build, type check, 292 tests all pass.
+
+**3 issues fixed (1 Critical, 2 High):**
+
+1. **CRITICAL: PostgreSQL port exposed to internet** (`docker-compose.yml`) - `ports: "5432:5432"` bound the database to all network interfaces. On a Lightsail instance, this makes the DB reachable from the internet. Combined with `${DB_PASSWORD:-password}` default, an attacker gets full database access. Removed the port mapping entirely — only the app container needs DB access via Docker internal network. (OWASP A05:2021 Security Misconfiguration)
+
+2. **HIGH: App port bypasses Caddy HTTPS** (`docker-compose.yml`) - `ports: "3000:3000"` allowed direct HTTP access to the app, bypassing Caddy's automatic HTTPS, security headers, and certificate validation. Removed the port mapping — Caddy connects to `app:3000` via Docker network. (OWASP A05:2021 Security Misconfiguration)
+
+3. **HIGH: CSP allows unsafe-eval** (`src/middleware.ts`) - `'unsafe-eval'` in `script-src` allowed `eval()`, `Function()`, and similar, significantly weakening XSS protection. Not needed for Next.js production builds. Removed from CSP directive. (OWASP A03:2021 Injection)
+
+**Remaining issues (Medium/Low, documented for future):**
+
+- **MEDIUM: No Stripe webhook idempotency** - No tracking of processed Stripe event IDs. Replayed events could cause duplicate Xero invoices/emails. Recommend adding a ProcessedWebhookEvent table.
+- **MEDIUM: Timing-unsafe cron secret comparison** - `src/app/api/cron/route.ts:10` and `src/app/api/cron/xero/route.ts:11` use `===` instead of `crypto.timingSafeEqual()`. Low practical risk over HTTPS but best practice to fix.
+- **MEDIUM: Timing-unsafe Xero webhook signature comparison** - `src/app/api/webhooks/xero/route.ts` uses `!==` for HMAC comparison. Should use constant-time comparison.
+- **MEDIUM: Webhook error leaks details** - `src/app/api/webhooks/stripe/route.ts:41` includes Stripe verification error message in response body.
+- **MEDIUM: Type assertion in reports route** - `src/app/api/admin/reports/route.ts:19` uses `(session.user as { role: string }).role` instead of `session.user.role` (inconsistent with other routes, not exploitable).
+- **LOW: Password minimum 8 characters** - NIST SP 800-63B recommends minimum 12+ for user-chosen passwords.
+- **LOW: Bcrypt cost factor 12** - Acceptable but 13+ recommended for future-proofing.
+- **LOW: No audit logging** - Admin actions (cancellations, promo changes, season edits) have no audit trail.
+- **LOW: JWT 24h expiry with no revocation** - Acceptable for 410-member club but tokens cannot be invalidated before expiry.
+
+**Security controls verified as working correctly:**
+- All 36 API routes check authentication (auth() call)
+- All admin routes verify `role === "ADMIN"`
+- All inputs validated with Zod schemas
+- No raw SQL injection risk (Prisma parameterized, advisory lock uses no user input)
+- No `dangerouslySetInnerHTML` usage anywhere
+- Stripe webhook signature properly verified
+- Xero OAuth tokens encrypted at rest with AES-256-GCM
+- Xero webhook HMAC-SHA256 signature verified
+- Stripe secret key never exposed client-side
+- PaymentIntent amounts set server-side from database
+- Booking prices calculated server-side (client cannot manipulate)
+- Password reset tokens are single-use with 1-hour expiry
+- Rate limiting on all auth routes, booking creation, and query endpoints
+- Security headers (HSTS, X-Frame-Options, X-Content-Type-Options, CSP, etc.)
+- .env in .gitignore, .env.example contains no real secrets
+- Dockerfile uses multi-stage build, runs as non-root user
+- No environment variables baked into Docker image
+
+**Files modified:**
+- `docker-compose.yml` - Removed exposed PostgreSQL and app ports
+- `src/middleware.ts` - Removed `'unsafe-eval'` from CSP script-src
+
 ### Full Integration Review #5 (Remaining Issues) - COMPLETED
 
 **Date:** 2026-04-03
