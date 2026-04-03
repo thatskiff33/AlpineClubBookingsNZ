@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { chargePaymentMethod } from "@/lib/stripe";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
@@ -18,7 +19,10 @@ export async function POST(request: NextRequest) {
   try {
     // This endpoint is called by internal cron or admin
     const cronSecret = request.headers.get("x-cron-secret");
-    const isAuthorizedCron = cronSecret === process.env.CRON_SECRET;
+    const expected = process.env.CRON_SECRET;
+    const isAuthorizedCron = !!(cronSecret && expected &&
+      cronSecret.length === expected.length &&
+      timingSafeEqual(Buffer.from(cronSecret), Buffer.from(expected)));
 
     const session = await auth();
     const isAdmin = session?.user?.role === "ADMIN";

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 
 /**
  * POST /api/webhooks/xero
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     .update(body)
     .digest("base64");
 
-  if (signature !== expectedSignature) {
+  if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
     // Xero requires a 401 response for invalid signatures
     return new NextResponse(null, { status: 401 });
   }
