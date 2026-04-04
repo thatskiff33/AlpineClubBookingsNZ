@@ -33,23 +33,43 @@ export default function AboutPage() {
             </h2>
             <div className="prose prose-slate max-w-none space-y-4 text-slate-600">
               <p>
-                The Tokoroa Alpine Club was established in 1969 with a clear
-                purpose: to encourage tramping, mountaineering, climbing, skiing,
-                and alpine activities in New Zealand.
+                The club was formed by a group of Tokoroa people of varied outdoor
+                interests and means of employment at a time when the Tongariro
+                National Park authorities were making building sites available to
+                clubs. The primary objective of the club as stated in its
+                constitution is: to encourage tramping, mountaineering, climbing,
+                skiing, and alpine activities in New Zealand.
               </p>
               <p>
-                The club&apos;s lodge on Mt Ruapehu was built over a single
-                remarkable weekend by club members. The floor was laid on Friday 21
-                March 1969, the lodge walls went up on Saturday, and the roof was
-                completed on Sunday. It has been built, maintained, and improved
-                entirely through member voluntary labour ever since.
+                The initially very small group decided they would put a lodge on
+                Ruapehu and were fortunate enough to have their application accepted
+                and were allocated a site. The first stage of the lodge was built
+                within two years: raising the money occupied half of that time, site
+                preparation and foundation work most of the rest of the available
+                time (when the site was not buried in snow). The actual lodge
+                building was carried out on one weekend &mdash; the floor was put
+                down on Friday 21/3/69, the lodge went up on Saturday, and the roof
+                cladding was completed on Sunday. Two more extensions have since
+                been added to provide reasonably comfortable lodge accommodation for
+                up to twenty-nine people.
               </p>
               <p>
-                Located in the Whakapapa ski area, the lodge accommodates up to 29
-                people and remains one of the most affordable places to stay on the
-                mountain. It serves a wide range of users including winter sports
-                enthusiasts, trampers, photographers, family parties, and school
-                groups.
+                The largest group of club lodge users are winter sports enthusiasts,
+                but there are a significant number of others who make use of the
+                facilities throughout the year: photographers, trampers, family
+                parties, school groups, naturalists, various social clubs, and some
+                who just want to get away for some peace and quiet on the mountain.
+                The club has always encouraged family participation in its
+                activities and family membership charges are currently at a cheaper
+                rate than the equivalent individual memberships.
+              </p>
+              <p>
+                Lodge fees have been kept to a minimum and are probably among the
+                lowest on the mountain. This is achieved by the members doing just
+                about everything they possibly can for themselves. The lodge was
+                almost entirely built with members&apos; voluntary labour and all
+                subsequent maintenance, cooking, cleaning and other tasks are
+                conducted on the same basis.
               </p>
             </div>
           </div>

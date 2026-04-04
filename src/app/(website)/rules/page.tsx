@@ -4,7 +4,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Club Rules & Info",
   description:
-    "Tokoroa Alpine Club membership classes, lodge booking rules, cancellation policy, and general information for members and guests.",
+    "Tokoroa Alpine Club membership classes, lodge booking rules, tramping party rules, hut leader instructions, cancellation policy, and general information for members and guests.",
 };
 
 export default function RulesPage() {
@@ -17,8 +17,8 @@ export default function RulesPage() {
             Club Rules & Info
           </h1>
           <p className="mt-4 text-lg text-slate-300 max-w-2xl">
-            Important information about membership, lodge bookings, and staying at
-            the club lodge.
+            Important information about membership, lodge bookings, tramping
+            parties, and staying at the club lodge.
           </p>
         </div>
       </section>
@@ -47,9 +47,14 @@ export default function RulesPage() {
                 cost. Must be accompanied by a parent or guardian.
               </p>
               <p>
-                <strong className="text-slate-800">Family membership:</strong>{" "}
-                Covers all members of a household. Cheaper than equivalent
-                individual memberships and is the recommended option for families.
+                <strong className="text-slate-800">Family membership:</strong> A
+                family concession is granted to a family group living at the same
+                address which consists of one or two adult members plus any
+                nominated dependent children under the age of 13. Dependent
+                children enjoy the same privileges as members and can transfer to
+                youth membership upon reaching the age of 13. Cheaper than
+                equivalent individual memberships and is the recommended option for
+                families.
               </p>
               <p className="text-sm text-slate-500">
                 Note: &quot;Reserved Membership&quot; was discontinued in May 2000.
@@ -57,18 +62,71 @@ export default function RulesPage() {
             </div>
           </div>
 
-          {/* Lodge booking rules */}
+          {/* Tramping Party Rules */}
           <div>
             <h2 className="text-2xl font-bold text-slate-900 mb-4">
-              Lodge Booking Rules
+              Tramping Party Rules
             </h2>
             <div className="space-y-3 text-slate-600">
               <p>
-                The lodge accommodates up to 29 guests per night. Bookings are
-                capacity-based (not room-based) and managed through the online
-                booking system.
+                The following rules apply to organised club tramping trips:
               </p>
+              <ol className="list-decimal pl-5 space-y-2">
+                <li>
+                  The Party Leader is responsible for the trip. Your co-operation,
+                  good temper, and good manners are essential.
+                </li>
+                <li>
+                  For the safety of all members, keep together at all times.
+                </li>
+                <li>
+                  The Party Leader shall decide if trampers are adequately equipped
+                  for the trip and may refuse to take people who are not. If in
+                  doubt, ask.
+                </li>
+                <li>
+                  Trip leaders will obtain permission, in advance, for access to
+                  properties both private and state.
+                </li>
+                <li>
+                  No dogs or firearms can be taken on trips unless prior permission
+                  is given.
+                </li>
+                <li>
+                  All members must notify the Party Leader in advance if intending
+                  to go on their trip. The leader organises the transport and will
+                  notify you of any variations from the advertised trips or times.
+                  Travelling expenses are to be shared with the driver.
+                </li>
+              </ol>
+              <p className="text-sm text-slate-500">
+                The club is not responsible for accidents, however caused, although
+                all due care and attention will be taken.
+              </p>
+            </div>
+          </div>
+
+          {/* Lodge booking rules */}
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900 mb-4">
+              Waldvogel Lodge Rules
+            </h2>
+            <div className="space-y-3 text-slate-600">
+              <p>
+                The lodge accommodates up to 29 guests per night. All guests must
+                have a formal confirmed paid booking. The only exception is a work
+                party, where the work party leader will make a group booking with
+                the Booking Officer.
+              </p>
+
+              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+                Bookings
+              </h3>
               <ul className="list-disc pl-5 space-y-2">
+                <li>
+                  All bookings must be made via the website and paid for as soon as
+                  they are confirmed.
+                </li>
                 <li>
                   <strong className="text-slate-800">Member bookings</strong> with
                   all-member guests are confirmed immediately upon payment.
@@ -77,8 +135,9 @@ export default function RulesPage() {
                   <strong className="text-slate-800">
                     Bookings with non-member guests
                   </strong>{" "}
-                  made more than 7 days before check-in are held as pending. Card
-                  details are collected but not charged until 7 days before arrival.
+                  can only be confirmed 7 days before the start date of the
+                  booking. Card details are collected but not charged until 7 days
+                  before arrival.
                 </li>
                 <li>
                   <strong className="text-slate-800">Member priority:</strong> If
@@ -86,12 +145,246 @@ export default function RulesPage() {
                   make room for member bookings. Bumped bookings are not charged.
                 </li>
                 <li>
-                  Members can change or cancel bookings up to 14 days before their
-                  stay for a full refund.
+                  It is recommended that you book early, especially for school
+                  holidays, to avoid disappointment.
                 </li>
                 <li>
-                  The Booking Officer reviews non-member bookings and confirms
-                  availability 7 days before the stay.
+                  The Booking Officer&apos;s decision on bookings is final. Any
+                  complaints about bookings are to be made in writing to the
+                  committee.
+                </li>
+              </ul>
+
+              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+                At the Lodge
+              </h3>
+              <ul className="list-disc pl-5 space-y-2">
+                <li>
+                  The Booking Officer shall appoint a senior member as the Hut
+                  Leader for busy weekends. The Hut Leader is responsible for
+                  opening and closing the lodge and overseeing start-up and
+                  shut-down procedures.
+                </li>
+                <li>
+                  Members must assist the Hut Leader by carrying out tasks which
+                  may be assigned to them for the safety and good order of the
+                  lodge.
+                </li>
+                <li>
+                  Members should familiarise themselves with the emergency
+                  evacuation procedures as noted on the notice board at the lodge.
+                  No member shall be allowed to stay on their own until competent
+                  in these procedures.
+                </li>
+                <li>
+                  All members need to familiarise themselves with the lodge
+                  start-up and shut-down procedures and learn how to check the
+                  water tank levels and transfer the water pump to another tank if
+                  needed.
+                </li>
+                <li>
+                  As the lodge is totally dependent on rainwater for its water
+                  supply, please conserve water at all times. Shower times should
+                  be minimised and do not shower at the end of the day when
+                  vacating the lodge.
+                </li>
+                <li>
+                  Members must be prepared to collect any food or provisions that
+                  the Booking Officer or Hut Leader may request them to collect.
+                </li>
+                <li>
+                  Any keys provided shall be returned to the Booking Officer
+                  promptly.
+                </li>
+              </ul>
+
+              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+                General Conduct
+              </h3>
+              <ul className="list-disc pl-5 space-y-2">
+                <li>
+                  Members under 18 are not permitted to stay at the lodge unless
+                  accompanied by an adult member who accepts responsibility for
+                  them.
+                </li>
+                <li>
+                  All members must leave the lodge in a clean and tidy condition.
+                </li>
+                <li>Report any damage to the committee.</li>
+                <li>
+                  Failure to obey the club rules may result in the committee taking
+                  disciplinary action against the member concerned. Serious
+                  offences will result in termination of membership.
+                </li>
+              </ul>
+
+              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+                Working Bees
+              </h3>
+              <ul className="list-disc pl-5 space-y-2">
+                <li>
+                  Members are expected to take part in at least one official
+                  working bee per year to assist with the maintenance of the lodge.
+                </li>
+                <li>
+                  Members are credited with one night&apos;s free accommodation for
+                  each weekend working bee that they attend.
+                </li>
+                <li>
+                  Those members who are unable to attend an annual working bee are
+                  expected to make a financial donation to the club&apos;s funds.
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          {/* Hut Leader Instructions */}
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900 mb-4">
+              Hut Leader Instructions
+            </h2>
+            <div className="space-y-3 text-slate-600">
+              <p>
+                Hut Leaders are appointed by the Booking Officer and committee to
+                look after the lodge. All club members and visitors to the lodge
+                are expected to co-operate with the Hut Leader in carrying out
+                their duties.
+              </p>
+
+              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+                General Responsibilities
+              </h3>
+              <ul className="list-disc pl-5 space-y-2">
+                <li>
+                  Checking that those staying at the lodge are on the list
+                  provided by the Booking Officer.
+                </li>
+                <li>
+                  Supervising the use of the club&apos;s supplies of food to avoid
+                  waste.
+                </li>
+                <li>
+                  Supervising the use of firewood, power, and water to avoid
+                  waste.
+                </li>
+                <li>
+                  Supervising the careful use of the building and club&apos;s
+                  equipment.
+                </li>
+                <li>
+                  Reporting damage and wants of repair to the committee.
+                </li>
+                <li>Allocating bunks if necessary.</li>
+                <li>
+                  Maintaining harmony amongst people staying at the lodge.
+                </li>
+              </ul>
+
+              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+                Specific Duties
+              </h3>
+              <ol className="list-decimal pl-5 space-y-2">
+                <li>
+                  Check incoming people with the Booking Officer&apos;s list.
+                </li>
+                <li>Allocate lodge duties daily.</li>
+                <li>
+                  Organise the collection of any food orders from the RAL store at
+                  the Top of the Bruce.
+                </li>
+                <li>
+                  Bring out food required and keep the storeroom locked.
+                </li>
+                <li>
+                  Take stock of food and notify the Catering Officer before
+                  handing over to the next Leader.
+                </li>
+                <li>Check that the fire alarm is working.</li>
+                <li>
+                  Stress fire danger and remind members to use the drying room and
+                  not bedroom heaters for drying clothes.
+                </li>
+                <li>
+                  Switch off bedroom heaters at the main each morning, and on
+                  again each evening.
+                </li>
+                <li>
+                  Ensure that the last person to bed checks that the building is
+                  secure and electrical appliances are off.
+                </li>
+                <li>
+                  Ensure the outside door of the ski room is locked at all times.
+                </li>
+                <li>
+                  Ensure the water system is operative and check that water tanks
+                  are full. If you are required to change tanks: remove the power
+                  plug from the pump, unscrew the hose coupling, then lift out the
+                  submersible pump. Take the pump to a full tank, hook up the pump
+                  and connect the water hose and power. Make sure the directional
+                  valve is open and the other two valves are closed.
+                </li>
+                <li>
+                  If no members are staying on, ensure the water system is
+                  emptied, doors and windows are locked, power is off, food and
+                  rubbish is removed, and keys are returned to the Booking Officer.
+                </li>
+              </ol>
+              <p className="text-sm text-slate-500 mt-3">
+                Any member can expect to be asked to take on the duties of Hut
+                Leader. Make yourself familiar with these duties so that you can
+                take over when requested.
+              </p>
+            </div>
+          </div>
+
+          {/* Lodge Etiquette */}
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900 mb-4">
+              Lodge Etiquette
+            </h2>
+            <div className="space-y-3 text-slate-600">
+              <p>
+                A few practical reminders to help keep the lodge running smoothly
+                for everyone:
+              </p>
+              <ul className="list-disc pl-5 space-y-2">
+                <li>
+                  If you see the entrance door open, close it.
+                </li>
+                <li>
+                  If you use the drying room, leave the dehumidifier in the open
+                  and close the door.
+                </li>
+                <li>
+                  If you are vacating your bunkroom, turn off the heater, close
+                  the window, and turn off the light.
+                </li>
+                <li>
+                  If you are given a duty, please ensure it is carried out.
+                </li>
+                <li>
+                  If you are leaving the lodge, consider whether you need to
+                  shower &mdash; conserve water where possible.
+                </li>
+                <li>
+                  If water is in short supply, conserve wisely.
+                </li>
+                <li>
+                  If you do not intend to use food leftovers, please dispose of
+                  them.
+                </li>
+                <li>
+                  If you are vacating the lodge, please ensure you have all your
+                  belongings.
+                </li>
+                <li>
+                  Do not store equipment in the battery room &mdash; it will be
+                  removed.
+                </li>
+                <li>
+                  If you find a defect that you cannot easily repair, advise the
+                  committee. If you have a suggestion to improve lodge life, notify
+                  the committee.
                 </li>
               </ul>
             </div>
@@ -136,36 +429,6 @@ export default function RulesPage() {
                 Cancellation policy is configured by the committee and may change.
                 The policy at the time of booking applies.
               </p>
-            </div>
-          </div>
-
-          {/* General conduct */}
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-4">
-              Lodge Conduct
-            </h2>
-            <div className="space-y-3 text-slate-600">
-              <ul className="list-disc pl-5 space-y-2">
-                <li>
-                  All guests are expected to participate in daily chores as
-                  assigned by the roster system.
-                </li>
-                <li>
-                  Leave the lodge clean and tidy for the next guests. Clean up
-                  after yourself in the kitchen and common areas.
-                </li>
-                <li>
-                  Children must be supervised by their parent or guardian at all
-                  times.
-                </li>
-                <li>
-                  Respect other guests &mdash; keep noise to reasonable levels,
-                  especially after 10 PM.
-                </li>
-                <li>
-                  Report any damage or maintenance issues to the committee.
-                </li>
-              </ul>
             </div>
           </div>
 

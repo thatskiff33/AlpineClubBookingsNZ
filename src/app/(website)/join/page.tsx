@@ -129,10 +129,16 @@ export default function JoinPage() {
             <h2 className="text-2xl font-bold text-slate-900 mb-4">
               How to Join
             </h2>
-            <p className="text-slate-600 mb-8">
+            <p className="text-slate-600 mb-4">
               Register for an account online and your membership will be set up
               for the current season. Annual subscriptions run from April to March
               and are managed through Xero.
+            </p>
+            <p className="text-slate-600 mb-8">
+              Members are expected to take part in at least one official working
+              bee per year to assist with lodge maintenance. Members are credited
+              with one night&apos;s free accommodation for each weekend working bee
+              they attend.
             </p>
             <div className="flex flex-wrap gap-4 justify-center">
               <Button size="lg" asChild>
