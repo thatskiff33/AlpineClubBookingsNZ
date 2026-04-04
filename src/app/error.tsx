@@ -32,7 +32,7 @@ export default function Error({
             Try Again
           </button>
           <a
-            href="/dashboard"
+            href="/"
             className="inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
           >
             Go to Dashboard

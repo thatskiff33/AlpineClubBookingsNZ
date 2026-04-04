@@ -4,9 +4,12 @@ import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TAC Bookings - Tokoroa Alpine Club",
+  title: {
+    template: "%s | Tokoroa Alpine Club",
+    default: "Tokoroa Alpine Club — Mt Ruapehu Lodge",
+  },
   description:
-    "Lodge booking and membership management for the Tokoroa Alpine Club.",
+    "Tokoroa Alpine Club — 29-bed lodge on Mt Ruapehu, Whakapapa. Book a stay, join the club, and explore New Zealand's mountains. Est. 1969.",
 };
 
 export default function RootLayout({
