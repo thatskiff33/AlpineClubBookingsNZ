@@ -40,12 +40,15 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    console.log("[import-members] Starting import with", parsed.data.groupMappings.length, "group(s):", parsed.data.groupMappings.map(g => `${g.groupName} (${g.ageTier})`).join(", "));
     const result = await importMembersFromXeroGroups(
       parsed.data.groupMappings,
       parsed.data.sendInvites
     );
+    console.log("[import-members] Result:", JSON.stringify(result));
     return NextResponse.json(result);
   } catch (error) {
+    console.error("[import-members] Error:", error);
     const message =
       error instanceof Error ? error.message : "Member import failed";
     return NextResponse.json({ error: message }, { status: 500 });

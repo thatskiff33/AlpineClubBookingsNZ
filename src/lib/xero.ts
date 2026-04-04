@@ -442,15 +442,33 @@ export async function getXeroContactGroups(): Promise<
 > {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const response = await xero.accountingApi.getContactGroups(tenantId);
-  const groups = response.body.contactGroups ?? [];
+  const groups = (response.body.contactGroups ?? []).filter(
+    (g) => g.contactGroupID && g.name && g.status === ContactGroup.StatusEnum.ACTIVE
+  );
 
-  return groups
-    .filter((g) => g.contactGroupID && g.name && g.status === ContactGroup.StatusEnum.ACTIVE)
-    .map((g) => ({
-      id: g.contactGroupID!,
-      name: g.name!,
-      contactCount: g.contacts?.length ?? 0,
-    }));
+  // The list endpoint doesn't populate contacts, so fetch each group
+  // individually to get the real contact count.
+  const results: Array<{ id: string; name: string; contactCount: number }> = [];
+  for (const g of groups) {
+    try {
+      const detail = await xero.accountingApi.getContactGroup(tenantId, g.contactGroupID!);
+      const contacts = detail.body.contactGroups?.[0]?.contacts ?? [];
+      results.push({
+        id: g.contactGroupID!,
+        name: g.name!,
+        contactCount: contacts.length,
+      });
+    } catch {
+      // If fetching detail fails, still include the group with 0
+      results.push({
+        id: g.contactGroupID!,
+        name: g.name!,
+        contactCount: 0,
+      });
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -482,12 +500,36 @@ export async function importMembersFromXeroGroups(
 
   for (const mapping of groupMappings) {
     try {
+      // Get contact IDs from the group
       const response = await xero.accountingApi.getContactGroup(
         tenantId,
         mapping.groupId
       );
-      const contacts = response.body.contactGroups?.[0]?.contacts ?? [];
+      const groupContacts = response.body.contactGroups?.[0]?.contacts ?? [];
       groupsProcessed.push(mapping.groupName);
+
+      // The group endpoint only returns summary data (IDs/names, no emails).
+      // Fetch full contact details in batches using the IDs filter.
+      const contactIds = groupContacts
+        .map((c) => c.contactID)
+        .filter(Boolean) as string[];
+
+      const contacts: Contact[] = [];
+      // Xero supports filtering by up to ~50 IDs at a time via the IDs param
+      const batchSize = 50;
+      for (let i = 0; i < contactIds.length; i += batchSize) {
+        const batch = contactIds.slice(i, i + batchSize);
+        const fullResponse = await xero.accountingApi.getContacts(
+          tenantId,
+          undefined, // ifModifiedSince
+          undefined, // where
+          undefined, // order
+          batch       // iDs
+        );
+        contacts.push(...(fullResponse.body.contacts ?? []));
+      }
+
+      console.log(`[import-members] Group "${mapping.groupName}": ${groupContacts.length} in group, ${contacts.length} fetched with details`);
 
       for (const contact of contacts) {
         try {
