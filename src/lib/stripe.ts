@@ -1,0 +1,177 @@
+import Stripe from "stripe";
+
+function getStripeClient(): Stripe {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) {
+    throw new Error("STRIPE_SECRET_KEY is not set");
+  }
+  return new Stripe(key, {
+    apiVersion: "2025-03-31.basil",
+    typescript: true,
+  });
+}
+
+// Lazy-initialize to avoid throwing at import time during tests
+let _stripe: Stripe | null = null;
+
+export function getStripe(): Stripe {
+  if (!_stripe) {
+    _stripe = getStripeClient();
+  }
+  return _stripe;
+}
+
+export const stripe = new Proxy({} as Stripe, {
+  get(_, prop) {
+    return (getStripe() as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});
+
+/**
+ * Create a PaymentIntent for confirmed bookings (immediate charge).
+ * Used when all guests are members OR check-in is <= 7 days away.
+ */
+export async function createPaymentIntent({
+  amountCents,
+  currency = "nzd",
+  customerId,
+  metadata,
+}: {
+  amountCents: number;
+  currency?: string;
+  customerId?: string;
+  metadata?: Record<string, string>;
+}): Promise<Stripe.PaymentIntent> {
+  return stripe.paymentIntents.create({
+    amount: amountCents,
+    currency,
+    customer: customerId,
+    metadata: metadata ?? {},
+    automatic_payment_methods: { enabled: true },
+  });
+}
+
+/**
+ * Create a SetupIntent for pending bookings (save card, charge later).
+ * Used when booking has non-member guests AND check-in is > 7 days away.
+ */
+export async function createSetupIntent({
+  customerId,
+  metadata,
+}: {
+  customerId: string;
+  metadata?: Record<string, string>;
+}): Promise<Stripe.SetupIntent> {
+  return stripe.setupIntents.create({
+    customer: customerId,
+    metadata: metadata ?? {},
+    automatic_payment_methods: { enabled: true },
+  });
+}
+
+/**
+ * Charge a saved PaymentMethod (used when pending booking auto-confirms).
+ */
+export async function chargePaymentMethod({
+  amountCents,
+  currency = "nzd",
+  customerId,
+  paymentMethodId,
+  metadata,
+}: {
+  amountCents: number;
+  currency?: string;
+  customerId: string;
+  paymentMethodId: string;
+  metadata?: Record<string, string>;
+}): Promise<Stripe.PaymentIntent> {
+  return stripe.paymentIntents.create({
+    amount: amountCents,
+    currency,
+    customer: customerId,
+    payment_method: paymentMethodId,
+    off_session: true,
+    confirm: true,
+    metadata: metadata ?? {},
+  });
+}
+
+/**
+ * Create or retrieve a Stripe Customer for a member.
+ */
+export async function findOrCreateCustomer({
+  email,
+  name,
+  memberId,
+}: {
+  email: string;
+  name: string;
+  memberId: string;
+}): Promise<Stripe.Customer> {
+  // Search for existing customer by metadata
+  const existing = await stripe.customers.list({
+    email,
+    limit: 1,
+  });
+
+  if (existing.data.length > 0) {
+    return existing.data[0];
+  }
+
+  return stripe.customers.create({
+    email,
+    name,
+    metadata: { memberId },
+  });
+}
+
+/**
+ * Process a refund based on cancellation policy.
+ */
+export async function processRefund({
+  paymentIntentId,
+  amountCents,
+  reason = "requested_by_customer",
+  metadata,
+}: {
+  paymentIntentId: string;
+  amountCents: number;
+  reason?: Stripe.RefundCreateParams.Reason;
+  metadata?: Record<string, string>;
+}): Promise<Stripe.Refund> {
+  return stripe.refunds.create({
+    payment_intent: paymentIntentId,
+    amount: amountCents,
+    reason,
+    metadata: metadata ?? {},
+  });
+}
+
+/**
+ * Retrieve a PaymentIntent by ID.
+ */
+export async function getPaymentIntent(
+  paymentIntentId: string
+): Promise<Stripe.PaymentIntent> {
+  return stripe.paymentIntents.retrieve(paymentIntentId);
+}
+
+/**
+ * Retrieve a SetupIntent by ID.
+ */
+export async function getSetupIntent(
+  setupIntentId: string
+): Promise<Stripe.SetupIntent> {
+  return stripe.setupIntents.retrieve(setupIntentId);
+}
+
+/**
+ * Construct and verify a Stripe webhook event.
+ */
+export function constructWebhookEvent(
+  payload: string | Buffer,
+  signature: string,
+  webhookSecret: string
+): Stripe.Event {
+  return stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+}
