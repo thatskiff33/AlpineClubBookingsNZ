@@ -5,9 +5,12 @@
  * contact sync, and membership subscription verification.
  */
 
-import { XeroClient, Contact, Invoice, LineItem, LineAmountTypes, CreditNote, Payment as XeroPayment, Phone } from "xero-node";
+import { XeroClient, Contact, ContactGroup, Invoice, LineItem, LineAmountTypes, CreditNote, Payment as XeroPayment, Phone } from "xero-node";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { hash } from "bcryptjs";
 import { prisma } from "./prisma";
+import { sendPasswordResetEmail } from "./email";
+import { AgeTier } from "@prisma/client";
 import { getSeasonYear, getStayNights } from "./pricing";
 
 // ---------------------------------------------------------------------------
@@ -425,6 +428,206 @@ export async function syncContactsFromXero(): Promise<{
   }
 
   return { total, matched, updated };
+}
+
+// ---------------------------------------------------------------------------
+// Contact group import (Xero -> TAC)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch all contact groups from Xero for the admin UI to display.
+ */
+export async function getXeroContactGroups(): Promise<
+  Array<{ id: string; name: string; contactCount: number }>
+> {
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const response = await xero.accountingApi.getContactGroups(tenantId);
+  const groups = response.body.contactGroups ?? [];
+
+  return groups
+    .filter((g) => g.contactGroupID && g.name && g.status === ContactGroup.StatusEnum.ACTIVE)
+    .map((g) => ({
+      id: g.contactGroupID!,
+      name: g.name!,
+      contactCount: g.contacts?.length ?? 0,
+    }));
+}
+
+/**
+ * Import members from Xero contact groups into TACBookings.
+ * Creates new Member records and optionally sends invite emails.
+ */
+export async function importMembersFromXeroGroups(
+  groupMappings: Array<{ groupId: string; groupName: string; ageTier: AgeTier }>,
+  sendInvites: boolean
+): Promise<{
+  created: number;
+  skippedExisting: number;
+  linkedExisting: number;
+  skippedNoEmail: number;
+  errors: number;
+  groupsProcessed: string[];
+}> {
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+
+  let created = 0;
+  let skippedExisting = 0;
+  let linkedExisting = 0;
+  let skippedNoEmail = 0;
+  let errors = 0;
+  const groupsProcessed: string[] = [];
+
+  // Hash a random UUID — unguessable placeholder password
+  const placeholderHash = await hash(randomBytes(32).toString("hex"), 13);
+
+  for (const mapping of groupMappings) {
+    try {
+      const response = await xero.accountingApi.getContactGroup(
+        tenantId,
+        mapping.groupId
+      );
+      const contacts = response.body.contactGroups?.[0]?.contacts ?? [];
+      groupsProcessed.push(mapping.groupName);
+
+      for (const contact of contacts) {
+        try {
+          if (!contact.emailAddress) {
+            skippedNoEmail++;
+            continue;
+          }
+
+          const email = contact.emailAddress.toLowerCase().trim();
+          const existingMember = await prisma.member.findUnique({
+            where: { email },
+          });
+
+          if (existingMember) {
+            skippedExisting++;
+            // Link xeroContactId if missing
+            if (!existingMember.xeroContactId && contact.contactID) {
+              await prisma.member.update({
+                where: { id: existingMember.id },
+                data: { xeroContactId: contact.contactID },
+              });
+              linkedExisting++;
+            }
+            continue;
+          }
+
+          // Parse name — Xero may have firstName/lastName or just name
+          let firstName = contact.firstName || "";
+          let lastName = contact.lastName || "";
+          if (!firstName && !lastName && contact.name) {
+            const parts = contact.name.trim().split(/\s+/);
+            firstName = parts[0] || "Unknown";
+            lastName = parts.slice(1).join(" ") || "Unknown";
+          }
+          if (!firstName) firstName = "Unknown";
+          if (!lastName) lastName = "Unknown";
+
+          // Create member
+          const member = await prisma.member.create({
+            data: {
+              email,
+              firstName,
+              lastName,
+              passwordHash: placeholderHash,
+              ageTier: mapping.ageTier,
+              xeroContactId: contact.contactID || null,
+              phone:
+                contact.phones?.find(
+                  (p) => p.phoneNumber && p.phoneType === Phone.PhoneTypeEnum.MOBILE
+                )?.phoneNumber ||
+                contact.phones?.find((p) => p.phoneNumber)?.phoneNumber ||
+                null,
+              active: true,
+            },
+          });
+
+          created++;
+
+          // Optionally send invite email
+          if (sendInvites) {
+            try {
+              const token = randomBytes(32).toString("hex");
+              const expiresAt = new Date(
+                Date.now() + 7 * 24 * 60 * 60 * 1000
+              ); // 7 days
+
+              await prisma.passwordResetToken.create({
+                data: {
+                  token,
+                  memberId: member.id,
+                  expiresAt,
+                },
+              });
+
+              // Fire-and-forget
+              sendPasswordResetEmail(member.email, token).catch((err) => {
+                console.error(
+                  `[import-members] Failed to send invite to ${member.email}:`,
+                  err
+                );
+              });
+            } catch (emailErr) {
+              console.error(
+                `[import-members] Failed to create invite token for ${member.email}:`,
+                emailErr
+              );
+            }
+          }
+        } catch (contactErr) {
+          console.error(
+            `[import-members] Error processing contact ${contact.emailAddress}:`,
+            contactErr
+          );
+          errors++;
+        }
+      }
+    } catch (groupErr) {
+      console.error(
+        `[import-members] Error fetching group ${mapping.groupName}:`,
+        groupErr
+      );
+      errors++;
+    }
+  }
+
+  return {
+    created,
+    skippedExisting,
+    linkedExisting,
+    skippedNoEmail,
+    errors,
+    groupsProcessed,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Contact update (TAC -> Xero)
+// ---------------------------------------------------------------------------
+
+/**
+ * Update a Xero contact's details when a member is edited in TACBookings.
+ */
+export async function updateXeroContact(
+  xeroContactId: string,
+  data: { firstName: string; lastName: string; email: string; phone?: string | null }
+): Promise<void> {
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+
+  const contact: Contact = {
+    contactID: xeroContactId,
+    name: `${data.firstName} ${data.lastName}`,
+    firstName: data.firstName,
+    lastName: data.lastName,
+    emailAddress: data.email,
+    phones: data.phone
+      ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneNumber: data.phone }]
+      : [],
+  };
+
+  await xero.accountingApi.updateContact(tenantId, xeroContactId, { contacts: [contact] });
 }
 
 // ---------------------------------------------------------------------------
