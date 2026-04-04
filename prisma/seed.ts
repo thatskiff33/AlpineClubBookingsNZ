@@ -181,9 +181,10 @@ async function main() {
         lastName: "User",
         role: "ADMIN",
         ageTier: "ADULT",
+        forcePasswordChange: true,
       },
     });
-    console.log("Admin user seeded: support@tokoroa.org.nz / admin123");
+    console.log("Admin user seeded: support@tokoroa.org.nz / admin123 (password change required on first login)");
   }
 
   // Seed test member

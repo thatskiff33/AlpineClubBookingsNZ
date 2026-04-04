@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { AdminSidebar } from "@/components/admin-sidebar";
 
 export default async function AdminLayout({
@@ -13,9 +14,18 @@ export default async function AdminLayout({
     redirect("/login");
   }
 
-  const role = (session.user as { role?: string }).role;
-  if (role !== "ADMIN") {
+  if (session.user.role !== "ADMIN") {
     redirect("/dashboard");
+  }
+
+  // Check DB directly for force password change
+  const member = await prisma.member.findUnique({
+    where: { id: session.user.id },
+    select: { forcePasswordChange: true },
+  });
+
+  if (member?.forcePasswordChange) {
+    redirect("/change-password");
   }
 
   return (

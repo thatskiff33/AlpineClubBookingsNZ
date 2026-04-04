@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { NavBar } from "@/components/nav-bar";
 
 export default async function AuthenticatedLayout({
@@ -11,6 +12,16 @@ export default async function AuthenticatedLayout({
 
   if (!session?.user) {
     redirect("/login");
+  }
+
+  // Check DB directly for force password change (JWT may be stale)
+  const member = await prisma.member.findUnique({
+    where: { id: session.user.id },
+    select: { forcePasswordChange: true },
+  });
+
+  if (member?.forcePasswordChange) {
+    redirect("/change-password");
   }
 
   const user = {

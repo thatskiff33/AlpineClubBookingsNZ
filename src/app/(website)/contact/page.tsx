@@ -8,6 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 
+const CONTACT_EMAIL =
+  process.env.NEXT_PUBLIC_CONTACT_EMAIL || "bookings@tacbookings.co.nz";
+
 export default function ContactPage() {
   const [form, setForm] = useState({ name: "", email: "", message: "" });
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">(
@@ -153,10 +156,10 @@ export default function ContactPage() {
                     <div>
                       <p className="font-medium text-slate-900 text-sm">Email</p>
                       <a
-                        href="mailto:bookings@tacbookings.co.nz"
+                        href={`mailto:${CONTACT_EMAIL}`}
                         className="text-sm text-blue-600 hover:underline"
                       >
-                        bookings@tacbookings.co.nz
+                        {CONTACT_EMAIL}
                       </a>
                     </div>
                   </div>

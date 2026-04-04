@@ -79,9 +79,10 @@ enum AgeRestriction {
 model Member {
   id            String   @id @default(cuid())
   email         String   @unique
-  passwordHash  String
-  firstName     String
-  lastName      String
+  passwordHash        String
+  forcePasswordChange Boolean  @default(false)
+  firstName           String
+  lastName            String
   dateOfBirth   DateTime?
   phone         String?
   role          Role     @default(MEMBER)
