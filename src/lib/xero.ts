@@ -18,9 +18,10 @@ const XERO_SCOPES = [
   "openid",
   "profile",
   "email",
-  "accounting.transactions",
   "accounting.contacts",
-  "accounting.settings",
+  "accounting.invoices",
+  "accounting.payments",
+  "accounting.settings.read",
   "offline_access",
 ];
 
