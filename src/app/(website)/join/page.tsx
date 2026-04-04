@@ -3,6 +3,8 @@ import Link from "next/link";
 import { Users, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { prisma } from "@/lib/prisma";
+import { formatCents } from "@/lib/utils";
 
 export const metadata: Metadata = {
   title: "Join the Club",
@@ -54,7 +56,23 @@ const membershipTypes = [
   },
 ];
 
-export default function JoinPage() {
+function getRate(
+  rates: { ageTier: string; isMember: boolean; pricePerNightCents: number }[],
+  ageTier: string,
+  isMember: boolean
+): string {
+  const rate = rates.find(
+    (r) => r.ageTier === ageTier && r.isMember === isMember
+  );
+  return rate ? `${formatCents(rate.pricePerNightCents)}/night` : "—";
+}
+
+export default async function JoinPage() {
+  const seasons = await prisma.season.findMany({
+    where: { active: true },
+    include: { rates: true },
+    orderBy: { startDate: "asc" },
+  });
   return (
     <>
       {/* Header */}
@@ -102,7 +120,6 @@ export default function JoinPage() {
                   <p className="text-sm text-slate-500">{type.description}</p>
                 </CardHeader>
                 <CardContent>
-                  {/* TODO: Add actual fee amounts once confirmed with committee */}
                   <ul className="space-y-2">
                     {type.features.map((feature) => (
                       <li
@@ -120,6 +137,97 @@ export default function JoinPage() {
           </div>
         </div>
       </section>
+
+      {/* Lodge Rates */}
+      {seasons.length > 0 && (
+        <section className="bg-slate-50 py-16 sm:py-20">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="text-center mb-12">
+              <h2 className="text-2xl font-bold text-slate-900">
+                Lodge Rates
+              </h2>
+              <p className="mt-3 text-slate-600 max-w-2xl mx-auto">
+                Nightly rates per person. Members enjoy significantly lower rates
+                than non-members.
+              </p>
+            </div>
+            <div className="space-y-8">
+              {seasons.map((season) => (
+                <div key={season.id}>
+                  <h3 className="text-lg font-semibold text-slate-800 mb-3">
+                    {season.name}
+                    <span className="text-sm font-normal text-slate-500 ml-2">
+                      {new Date(season.startDate).toLocaleDateString("en-NZ", {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                      {" – "}
+                      {new Date(season.endDate).toLocaleDateString("en-NZ", {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </span>
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
+                      <thead className="bg-white">
+                        <tr>
+                          <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                            Age Group
+                          </th>
+                          <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                            Member Rate
+                          </th>
+                          <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                            Non-Member Rate
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-t border-slate-200">
+                          <td className="px-4 py-2 font-medium text-slate-800">
+                            Adult (18+)
+                          </td>
+                          <td className="px-4 py-2 text-blue-700 font-medium">
+                            {getRate(season.rates, "ADULT", true)}
+                          </td>
+                          <td className="px-4 py-2">
+                            {getRate(season.rates, "ADULT", false)}
+                          </td>
+                        </tr>
+                        <tr className="border-t border-slate-200">
+                          <td className="px-4 py-2 font-medium text-slate-800">
+                            Youth (13–17)
+                          </td>
+                          <td className="px-4 py-2 text-blue-700 font-medium">
+                            {getRate(season.rates, "YOUTH", true)}
+                          </td>
+                          <td className="px-4 py-2">
+                            {getRate(season.rates, "YOUTH", false)}
+                          </td>
+                        </tr>
+                        <tr className="border-t border-slate-200">
+                          <td className="px-4 py-2 font-medium text-slate-800">
+                            Child (under 13)
+                          </td>
+                          <td className="px-4 py-2 text-blue-700 font-medium">
+                            {getRate(season.rates, "CHILD", true)}
+                          </td>
+                          <td className="px-4 py-2">
+                            {getRate(season.rates, "CHILD", false)}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* How to join */}
       <section className="bg-slate-50 py-16 sm:py-20">

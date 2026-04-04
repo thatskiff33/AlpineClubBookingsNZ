@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { prisma } from "@/lib/prisma";
 
 export const metadata: Metadata = {
   title: "Club Rules & Info",
@@ -7,7 +8,35 @@ export const metadata: Metadata = {
     "Tokoroa Alpine Club membership classes, lodge booking rules, tramping party rules, hut leader instructions, cancellation policy, and general information for members and guests.",
 };
 
-export default function RulesPage() {
+function formatPolicyRow(
+  policy: { daysBeforeStay: number; refundPercentage: number },
+  index: number,
+  all: { daysBeforeStay: number; refundPercentage: number }[]
+) {
+  const days = policy.daysBeforeStay;
+  const refund = policy.refundPercentage;
+  const nextPolicy = all[index + 1];
+
+  let noticePeriod: string;
+  if (index === 0) {
+    noticePeriod = `${days} or more days before stay`;
+  } else if (days === 0) {
+    const prevDays = all[index - 1]?.daysBeforeStay ?? 0;
+    noticePeriod = `Less than ${prevDays} days before stay`;
+  } else {
+    const prevDays = all[index - 1]?.daysBeforeStay ?? days + 1;
+    noticePeriod = `${days} to ${prevDays - 1} days before stay`;
+  }
+
+  const refundText = refund === 0 ? "No refund" : `${refund}% refund`;
+
+  return { noticePeriod, refundText };
+}
+
+export default async function RulesPage() {
+  const cancellationPolicies = await prisma.cancellationPolicy.findMany({
+    orderBy: { daysBeforeStay: "desc" },
+  });
   return (
     <>
       {/* Header */}
@@ -397,34 +426,44 @@ export default function RulesPage() {
             </h2>
             <div className="space-y-3 text-slate-600">
               <p>Refunds for confirmed bookings are based on notice given:</p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="text-left px-4 py-2 font-semibold text-slate-700">
-                        Notice Period
-                      </th>
-                      <th className="text-left px-4 py-2 font-semibold text-slate-700">
-                        Refund
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border-t border-slate-200">
-                      <td className="px-4 py-2">14 or more days before stay</td>
-                      <td className="px-4 py-2">100% refund</td>
-                    </tr>
-                    <tr className="border-t border-slate-200">
-                      <td className="px-4 py-2">7 to 13 days before stay</td>
-                      <td className="px-4 py-2">50% refund</td>
-                    </tr>
-                    <tr className="border-t border-slate-200">
-                      <td className="px-4 py-2">Less than 7 days before stay</td>
-                      <td className="px-4 py-2">No refund</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+              {cancellationPolicies.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                          Notice Period
+                        </th>
+                        <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                          Refund
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cancellationPolicies.map((policy, index) => {
+                        const { noticePeriod, refundText } = formatPolicyRow(
+                          policy,
+                          index,
+                          cancellationPolicies
+                        );
+                        return (
+                          <tr
+                            key={policy.id}
+                            className="border-t border-slate-200"
+                          >
+                            <td className="px-4 py-2">{noticePeriod}</td>
+                            <td className="px-4 py-2">{refundText}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-slate-500 italic">
+                  Contact the club for current cancellation policy details.
+                </p>
+              )}
               <p className="text-sm text-slate-500">
                 Cancellation policy is configured by the committee and may change.
                 The policy at the time of booking applies.
