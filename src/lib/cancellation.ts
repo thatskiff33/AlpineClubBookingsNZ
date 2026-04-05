@@ -36,10 +36,38 @@ export async function getNonMemberHoldDays(checkIn: Date): Promise<number> {
 }
 
 /**
- * Calculate refund amount based on cancellation policy.
+ * Determine which cancellation tier applies for a given number of days before check-in.
+ * Returns the matching tier's refund percentage and days threshold.
  *
  * Policy rules are sorted by daysBeforeStay descending.
  * The first rule where daysUntilCheckIn >= daysBeforeStay applies.
+ */
+export function getRefundTier(
+  daysUntilCheckIn: number,
+  policyRules: CancellationRule[]
+): { refundPercentage: number; daysBeforeStay: number } {
+  if (policyRules.length === 0) {
+    return { refundPercentage: 0, daysBeforeStay: 0 };
+  }
+
+  const sortedRules = [...policyRules].sort(
+    (a, b) => b.daysBeforeStay - a.daysBeforeStay
+  );
+
+  for (const rule of sortedRules) {
+    if (daysUntilCheckIn >= rule.daysBeforeStay) {
+      return {
+        refundPercentage: rule.refundPercentage,
+        daysBeforeStay: rule.daysBeforeStay,
+      };
+    }
+  }
+
+  return { refundPercentage: 0, daysBeforeStay: 0 };
+}
+
+/**
+ * Calculate refund amount based on cancellation policy.
  *
  * Example policy:
  *   [{days: 14, refund: 100}, {days: 7, refund: 50}, {days: 0, refund: 0}]
@@ -53,27 +81,11 @@ export function calculateRefundAmount(
   daysUntilCheckIn: number,
   policyRules: CancellationRule[]
 ): { refundAmountCents: number; refundPercentage: number } {
-  if (policyRules.length === 0) {
-    return { refundAmountCents: 0, refundPercentage: 0 };
-  }
-
-  // Sort rules by daysBeforeStay descending (most generous first)
-  const sortedRules = [...policyRules].sort(
-    (a, b) => b.daysBeforeStay - a.daysBeforeStay
+  const { refundPercentage } = getRefundTier(daysUntilCheckIn, policyRules);
+  const refundAmountCents = Math.round(
+    (paidAmountCents * refundPercentage) / 100
   );
-
-  // Find the first rule where the cancellation qualifies
-  for (const rule of sortedRules) {
-    if (daysUntilCheckIn >= rule.daysBeforeStay) {
-      const refundAmountCents = Math.round(
-        (paidAmountCents * rule.refundPercentage) / 100
-      );
-      return { refundAmountCents, refundPercentage: rule.refundPercentage };
-    }
-  }
-
-  // If no rule matched (shouldn't happen if 0-day rule exists), no refund
-  return { refundAmountCents: 0, refundPercentage: 0 };
+  return { refundAmountCents, refundPercentage };
 }
 
 /**
@@ -95,7 +107,7 @@ export async function loadCancellationPolicy(
   if (checkIn) {
     const period = await getBookingPeriodForDate(checkIn);
     if (period) {
-      const rules = period.cancellationRules as CancellationRule[];
+      const rules = period.cancellationRules as unknown as CancellationRule[];
       return [...rules].sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
     }
   }
