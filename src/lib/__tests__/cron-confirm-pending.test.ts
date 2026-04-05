@@ -11,9 +11,11 @@ vi.mock("../stripe", () => ({
 // Mock email
 const mockSendConfirmedEmail = vi.fn();
 const mockSendBumpedEmail = vi.fn();
+const mockSendAdminPaymentFailureAlert = vi.fn().mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
+  sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
 }));
 
 // Mock capacity

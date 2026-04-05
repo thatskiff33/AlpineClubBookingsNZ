@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { isXeroConnected, createXeroInvoiceForBooking, createXeroCreditNote } from "@/lib/xero";
-import { sendBookingConfirmedEmail } from "@/lib/email";
+import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert } from "@/lib/email";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
@@ -229,7 +229,28 @@ async function handlePaymentIntentFailed(
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Payment failed for booking");
 
-  // TODO: Send payment failure notification email
+  // N-04: Send admin alert for payment failure
+  try {
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { member: true },
+    });
+    if (booking) {
+      const errorMsg = paymentIntent.last_payment_error?.message || "Unknown payment error";
+      sendAdminPaymentFailureAlert({
+        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        amountCents: paymentIntent.amount,
+        errorMessage: errorMsg,
+        paymentIntentId: paymentIntent.id,
+      }).catch((err) =>
+        logger.error({ err, bookingId }, "Failed to send admin payment failure alert")
+      );
+    }
+  } catch (err) {
+    logger.error({ err, bookingId }, "Error fetching booking for payment failure alert");
+  }
 }
 
 /**

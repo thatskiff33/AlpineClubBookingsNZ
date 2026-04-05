@@ -206,6 +206,62 @@ export async function register() {
     });
 
     logger.info({ job: "backup", schedule: backupSchedule }, "Scheduled database backup");
+
+    // N-06: Cron job - Pending deadline alerts (daily at 8:00 AM NZST)
+    let isPendingDeadlineRunning = false;
+    cron.default.schedule("0 8 * * *", async () => {
+      if (isPendingDeadlineRunning) {
+        logger.info({ job: "pending-deadline-alerts" }, "Already running, skipping");
+        return;
+      }
+      isPendingDeadlineRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "pending-deadline-alerts" }, "Checking for pending bookings approaching deadline");
+
+      try {
+        const { checkPendingDeadlines } = await import("./lib/cron-pending-deadline-alerts");
+        const result = await checkPendingDeadlines();
+        logger.info({ job: "pending-deadline-alerts", ...result }, "Pending deadline alerts complete");
+        await recordCronRun("pending-deadline-alerts", startedAt, "SUCCESS", result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "pending-deadline-alerts" }, "Error in pending deadline alerts");
+        Sentry.captureException(err);
+        await recordCronRun("pending-deadline-alerts", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isPendingDeadlineRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "pending-deadline-alerts" }, "Scheduled pending deadline alerts (daily at 8:00 AM NZST)");
+
+    // N-01: Cron job - Check-in reminders (daily at 9:00 AM NZST)
+    let isCheckinReminderRunning = false;
+    cron.default.schedule("0 9 * * *", async () => {
+      if (isCheckinReminderRunning) {
+        logger.info({ job: "checkin-reminders" }, "Already running, skipping");
+        return;
+      }
+      isCheckinReminderRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "checkin-reminders" }, "Sending check-in reminders");
+
+      try {
+        const { sendCheckinReminders } = await import("./lib/cron-checkin-reminders");
+        const result = await sendCheckinReminders();
+        logger.info({ job: "checkin-reminders", ...result }, "Check-in reminders complete");
+        await recordCronRun("checkin-reminders", startedAt, "SUCCESS", result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "checkin-reminders" }, "Error in check-in reminders");
+        Sentry.captureException(err);
+        await recordCronRun("checkin-reminders", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isCheckinReminderRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "checkin-reminders" }, "Scheduled check-in reminders (daily at 9:00 AM NZST)");
   }
 }
 

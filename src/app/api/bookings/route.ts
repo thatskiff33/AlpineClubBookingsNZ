@@ -18,7 +18,7 @@ import {
 } from "@/lib/promo";
 import { calculatePromoDiscount } from "@/lib/pricing";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { sendBookingPendingEmail } from "@/lib/email";
+import { sendBookingPendingEmail, sendAdminNewBookingAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 
 const createBookingSchema = z.object({
@@ -291,7 +291,11 @@ export async function POST(request: NextRequest) {
 
     // Send bumped notification emails AFTER transaction commits
     if (bumpedBookingIds.length > 0) {
-      sendBumpedNotifications(bumpedBookingIds).catch((err) =>
+      const triggeringMember = await prisma.member.findUnique({ where: { id: session.user.id } });
+      const triggeringName = triggeringMember
+        ? `${triggeringMember.firstName} ${triggeringMember.lastName}`
+        : "Unknown";
+      sendBumpedNotifications(bumpedBookingIds, triggeringName).catch((err) =>
         logger.error({ err }, "Failed to send bump notifications")
       );
     }
@@ -309,6 +313,19 @@ export async function POST(request: NextRequest) {
           booking.nonMemberHoldUntil
         ).catch((err) => logger.error({ err }, "Failed to send pending booking email"));
       }
+    }
+
+    // N-02: Send admin alert for new booking (fire-and-forget)
+    const bookingMember = await prisma.member.findUnique({ where: { id: session.user.id } });
+    if (bookingMember) {
+      sendAdminNewBookingAlert({
+        memberName: `${bookingMember.firstName} ${bookingMember.lastName}`,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        guestCount: booking.guests.length,
+        totalCents: booking.finalPriceCents,
+        status: booking.status,
+      }).catch((err) => logger.error({ err }, "Failed to send admin new booking alert"));
     }
 
     return NextResponse.json(booking, { status: 201 });

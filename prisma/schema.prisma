@@ -499,6 +499,36 @@ model BookingModification {
 }
 
 // ---------------------------------------------------------------------------
+// Email Delivery Tracking (N-10)
+// ---------------------------------------------------------------------------
+
+enum EmailLogStatus {
+  QUEUED
+  SENT
+  FAILED
+  BOUNCED
+}
+
+model EmailLog {
+  id            String         @id @default(cuid())
+  to            String
+  subject       String
+  templateName  String
+  status        EmailLogStatus @default(QUEUED)
+  errorMessage  String?
+  attempts      Int            @default(1)
+  lastAttemptAt DateTime       @default(now())
+  sentAt        DateTime?
+  messageId     String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([to])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
 // Cron Job Run Tracking (OBS-09)
 // ---------------------------------------------------------------------------
 

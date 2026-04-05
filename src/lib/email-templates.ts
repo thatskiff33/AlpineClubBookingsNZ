@@ -313,3 +313,150 @@ export function choreRosterTemplate(
     ${muted("Thanks for helping keep the lodge running smoothly!")}
   `);
 }
+
+// ---- N-01: Check-in Reminder ----
+
+export function checkinReminderTemplate(
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date,
+  guests: Array<{ firstName: string; lastName: string }>,
+  chores: Array<{ name: string; description: string | null }>
+): string {
+  const guestListHtml = guests
+    .map((g) => `<li style="padding: 4px 0; color: ${TEXT_COLOR}; font-size: 14px;">${escapeHtml(g.firstName)} ${escapeHtml(g.lastName)}</li>`)
+    .join("");
+
+  const choreSection = chores.length > 0
+    ? `${paragraph("<strong>Your arrival day chores:</strong>")}${infoTable(chores.map((c) => ({ label: escapeHtml(c.name), value: c.description ? escapeHtml(c.description) : "" })))}`
+    : "";
+
+  return layout(`
+    ${heading("Check-in Reminder")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge stay begins <strong>tomorrow</strong>!")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(checkIn) },
+      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Guests", value: String(guests.length) },
+    ])}
+    ${paragraph("<strong>Guest list:</strong>")}
+    <ul style="margin: 0 0 16px 0; padding-left: 20px;">${guestListHtml}</ul>
+    ${choreSection}
+    ${alertBox("Please ensure you arrive prepared for alpine conditions. Check the weather forecast before departing.", "info")}
+    ${paragraph("The lodge is located at Mt Pureora, Tokoroa. Please allow adequate travel time.")}
+    ${button("View Booking", BASE_URL + "/bookings")}
+  `);
+}
+
+// ---- N-02: Admin Alert — New Booking ----
+
+export function adminNewBookingTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  status: string;
+}): string {
+  return layout(`
+    ${heading("New Booking Created")}
+    ${paragraph("A new booking has been created.")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Total", value: formatCents(data.totalCents) },
+      { label: "Status", value: escapeHtml(data.status) },
+    ])}
+    ${button("View Bookings", BASE_URL + "/admin/bookings")}
+  `);
+}
+
+// ---- N-04: Admin Alert — Payment Failure ----
+
+export function adminPaymentFailureTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  amountCents: number;
+  errorMessage: string;
+  paymentIntentId: string;
+}): string {
+  return layout(`
+    ${heading("Payment Failed")}
+    ${alertBox("A payment has failed and may require manual attention.", "warning")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Amount", value: formatCents(data.amountCents) },
+      { label: "Error", value: escapeHtml(data.errorMessage) },
+      { label: "Stripe PI", value: escapeHtml(data.paymentIntentId) },
+    ])}
+    ${button("View Payments", BASE_URL + "/admin/payments")}
+  `);
+}
+
+// ---- N-06: Admin Alert — Pending Approaching Deadline ----
+
+export function adminPendingDeadlineTemplate(bookings: Array<{
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  deadline: Date;
+  hoursRemaining: number;
+}>): string {
+  const tableRowsHtml = bookings
+    .map(
+      (b) => `
+    <tr>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(b.memberName)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDate(b.checkIn)} – ${formatNZDate(b.checkOut)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${b.guestCount}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDate(b.deadline)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${b.hoursRemaining <= 24 ? "#dc2626" : TEXT_COLOR}; font-weight: ${b.hoursRemaining <= 24 ? "700" : "400"};">${Math.round(b.hoursRemaining)}h</td>
+    </tr>`
+    )
+    .join("");
+
+  return layout(`
+    ${heading("Pending Bookings Approaching Deadline")}
+    ${alertBox(bookings.length + " pending booking" + (bookings.length > 1 ? "s" : "") + " will reach their hold deadline within 48 hours.", "warning")}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+      <tr>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Member</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Dates</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Guests</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Deadline</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Remaining</th>
+      </tr>
+      ${tableRowsHtml}
+    </table>
+    ${button("View Bookings", BASE_URL + "/admin/bookings")}
+  `);
+}
+
+// ---- N-07: Admin Alert — Booking Bumped ----
+
+export function adminBookingBumpedTemplate(data: {
+  bumpedMemberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  triggeringMemberName: string;
+}): string {
+  return layout(`
+    ${heading("Booking Bumped")}
+    ${alertBox("A pending booking has been bumped due to a member booking.", "warning")}
+    ${infoTable([
+      { label: "Bumped Member", value: escapeHtml(data.bumpedMemberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Triggered By", value: escapeHtml(data.triggeringMemberName) },
+    ])}
+    ${button("View Bookings", BASE_URL + "/admin/bookings")}
+  `);
+}
