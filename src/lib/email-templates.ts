@@ -259,6 +259,36 @@ export function bookingCancelledTemplate(
   `);
 }
 
+export function emailVerificationTemplate(firstName: string, verifyUrl: string): string {
+  const name = escapeHtml(firstName);
+  return layout(`
+    ${heading("Verify Your Email")}
+    ${paragraph("Hi " + name + ", thanks for creating your Tokoroa Alpine Club booking account!")}
+    ${paragraph("Please verify your email address by clicking the button below.")}
+    ${button("Verify Email", verifyUrl)}
+    ${muted("This link expires in 24 hours. If you did not create this account, please ignore this email.")}
+  `);
+}
+
+export function emailChangeVerificationTemplate(newEmail: string, verifyUrl: string): string {
+  return layout(`
+    ${heading("Confirm Your New Email")}
+    ${paragraph("You requested to change your TAC Bookings email to <strong>" + escapeHtml(newEmail) + "</strong>.")}
+    ${paragraph("Click the button below to confirm this change.")}
+    ${button("Confirm Email Change", verifyUrl)}
+    ${muted("This link expires in 1 hour. If you did not request this change, please ignore this email.")}
+  `);
+}
+
+export function emailChangeNotificationTemplate(newEmail: string): string {
+  return layout(`
+    ${heading("Email Change Requested")}
+    ${paragraph("Someone requested to change the email address on your TAC Bookings account to <strong>" + escapeHtml(newEmail) + "</strong>.")}
+    ${alertBox("If this wasn't you, please contact the club immediately.", "warning")}
+    ${muted("If you made this request, you can safely ignore this email. The change will only take effect after verification.")}
+  `);
+}
+
 export function choreRosterTemplate(
   guestName: string,
   date: string,

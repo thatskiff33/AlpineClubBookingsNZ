@@ -7,6 +7,9 @@ import {
   bookingBumpedTemplate,
   bookingCancelledTemplate,
   choreRosterTemplate,
+  emailVerificationTemplate,
+  emailChangeVerificationTemplate,
+  emailChangeNotificationTemplate,
 } from "./email-templates";
 import logger from "@/lib/logger";
 
@@ -143,5 +146,35 @@ export async function sendWelcomeEmail(email: string, firstName: string) {
     to: email,
     subject: "Welcome to TAC Bookings",
     html: welcomeTemplate(firstName),
+  });
+}
+
+export async function sendVerificationEmail(email: string, firstName: string, token: string) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const verifyUrl = `${baseUrl}/verify-email?token=${token}`;
+
+  await sendEmail({
+    to: email,
+    subject: "Verify your email — TAC Bookings",
+    html: emailVerificationTemplate(firstName, verifyUrl),
+  });
+}
+
+export async function sendEmailChangeVerification(newEmail: string, token: string) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const verifyUrl = `${baseUrl}/confirm-email-change?token=${token}`;
+
+  await sendEmail({
+    to: newEmail,
+    subject: "Confirm your new email — TAC Bookings",
+    html: emailChangeVerificationTemplate(newEmail, verifyUrl),
+  });
+}
+
+export async function sendEmailChangeNotification(oldEmail: string, newEmail: string) {
+  await sendEmail({
+    to: oldEmail,
+    subject: "Email change requested — TAC Bookings",
+    html: emailChangeNotificationTemplate(newEmail),
   });
 }

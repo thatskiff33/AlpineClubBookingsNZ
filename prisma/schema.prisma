@@ -82,6 +82,9 @@ model Member {
   email         String   @unique
   passwordHash        String
   forcePasswordChange Boolean  @default(false)
+  // Email verification: new registrations start as false.
+  // Existing members should be bulk-updated: UPDATE "Member" SET "emailVerified" = true;
+  emailVerified       Boolean  @default(false)
   firstName           String
   lastName            String
   dateOfBirth   DateTime?
@@ -94,11 +97,13 @@ model Member {
   updatedAt     DateTime @updatedAt
 
   // Relations
-  passwordResetTokens PasswordResetToken[]
-  subscriptions       MemberSubscription[]
-  bookings            Booking[]
-  guestAppearances    BookingGuest[]
-  promoRedemptions    PromoRedemption[]
+  passwordResetTokens      PasswordResetToken[]
+  emailVerificationTokens  EmailVerificationToken[]
+  emailChangeTokens        EmailChangeToken[]
+  subscriptions            MemberSubscription[]
+  bookings                 Booking[]
+  guestAppearances         BookingGuest[]
+  promoRedemptions         PromoRedemption[]
 
   @@index([email])
   @@index([xeroContactId])
@@ -115,6 +120,33 @@ model PasswordResetToken {
   // Relations
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
+  @@index([memberId])
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(cuid())
+  memberId  String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([memberId])
+}
+
+model EmailChangeToken {
+  id        String   @id @default(cuid())
+  memberId  String
+  newEmail  String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([token])
   @@index([memberId])
 }
 

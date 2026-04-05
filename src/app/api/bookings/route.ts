@@ -47,6 +47,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
+  // Gate: email must be verified before booking
+  const member = await prisma.member.findUnique({
+    where: { id: session.user.id },
+    select: { emailVerified: true },
+  });
+  if (!member?.emailVerified) {
+    return NextResponse.json({ error: "Email not verified" }, { status: 403 });
+  }
+
   const body = await request.json();
   const parsed = createBookingSchema.safeParse(body);
 

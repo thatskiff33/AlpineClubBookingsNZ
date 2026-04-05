@@ -11,11 +11,13 @@ declare module "next-auth" {
       name: string;
       role: "MEMBER" | "ADMIN";
       forcePasswordChange: boolean;
+      isEmailVerified: boolean;
     };
   }
   interface User {
     role: "MEMBER" | "ADMIN";
     forcePasswordChange: boolean;
+    isEmailVerified: boolean;
   }
 }
 
@@ -48,12 +50,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return null;
         }
 
+        // Block unverified members from creating a session
+        if (!member.emailVerified) {
+          throw new Error("EMAIL_NOT_VERIFIED");
+        }
+
         return {
           id: member.id,
           email: member.email,
           name: `${member.firstName} ${member.lastName}`,
           role: member.role,
           forcePasswordChange: member.forcePasswordChange,
+          isEmailVerified: member.emailVerified,
         };
       },
     }),
@@ -64,6 +72,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.role = user.role;
         token.id = user.id as string;
         token.forcePasswordChange = user.forcePasswordChange;
+        token.isEmailVerified = user.isEmailVerified;
       }
       return token;
     },
@@ -71,6 +80,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       session.user.role = token.role as "MEMBER" | "ADMIN";
       session.user.id = token.id as string;
       session.user.forcePasswordChange = token.forcePasswordChange as boolean;
+      session.user.isEmailVerified = token.isEmailVerified as boolean;
       return session;
     },
   },

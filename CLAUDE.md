@@ -5,7 +5,7 @@
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 327 tests pass (16 test files)
+npm test              # 342 tests pass (17 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -25,10 +25,10 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + Delivery Phase 1 + Phase 4 complete. Security audit + 5 integration reviews done. 327 tests pass, build succeeds.
+All 9 build phases + Delivery Phases 1, 4, 5 complete. Security audit + 5 integration reviews done. 342 tests pass, build succeeds.
 
 **What works today:**
-- Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard
+- Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
 - Booking: availability calendar, booking wizard, guest forms, pricing engine, advisory lock concurrency
 - Payments: Stripe PaymentIntents (confirmed), SetupIntents (pending), webhook handler, policy-based refunds
 - Non-member flow: PENDING status, 7-day hold, cron auto-confirm, FIFO bumping algorithm
@@ -102,9 +102,45 @@ All 9 build phases + Delivery Phase 1 + Phase 4 complete. Security audit + 5 int
 - src/components/admin-sidebar.tsx - Added 3 new nav entries
 - src/app/(admin)/admin/reports/page.tsx - Added CSV/PDF export buttons
 - src/app/globals.css - Added @media print styles
+### Delivery Phase 5: Member Auth Enhancements - COMPLETED
+
+**Date:** 2026-04-06
+**Branch:** phase-5-auth
+**Tests:** 342 (was 327, +15 new)
+
+**Features built:**
+1. **B3 - Email Verification on Registration**: `emailVerified` field on Member (default false), `EmailVerificationToken` model (24h expiry, crypto.randomBytes), registration sends verification email, `GET /api/auth/verify-email` validates token and sets emailVerified=true, `POST /api/auth/resend-verification` (rate-limited 3/hr), unverified members blocked from login (EMAIL_NOT_VERIFIED error), login page shows verification prompt with resend button, booking creation gated on emailVerified (403), existing members grandfathered via SQL comment.
+2. **B2 - Email Change with Verification**: `EmailChangeToken` model (1h expiry), `POST /api/auth/request-email-change` validates new email/sends verification to new address/notification to old, `GET /api/auth/confirm-email-change` updates email/deletes token/updates Xero contact (fire-and-forget), ChangeEmailForm on profile page, audit log entries for request and confirmation, rate-limited 3/hr.
+
+**New files:**
+- `src/lib/verification-tokens.ts` - Token generation (crypto.randomBytes) and creation helpers
+- `src/app/api/auth/verify-email/route.ts` - Email verification endpoint
+- `src/app/api/auth/resend-verification/route.ts` - Resend verification endpoint
+- `src/app/api/auth/request-email-change/route.ts` - Request email change endpoint
+- `src/app/api/auth/confirm-email-change/route.ts` - Confirm email change endpoint
+- `src/app/(public)/verify-email/page.tsx` - Verify email page
+- `src/app/(public)/confirm-email-change/page.tsx` - Confirm email change page
+- `src/app/(authenticated)/profile/change-email-form.tsx` - Change email form component
+- `src/lib/__tests__/email-verification.test.ts` - 15 tests for verification flows
+
+**New Prisma models (require migration):**
+- `EmailVerificationToken` - Email verification tokens with 24h expiry
+- `EmailChangeToken` - Email change tokens with 1h expiry
+
+**Modified files:**
+- `prisma/schema.prisma` - Added emailVerified field, EmailVerificationToken, EmailChangeToken models
+- `src/lib/auth.ts` - Added isEmailVerified to session, block unverified login
+- `src/lib/email.ts` - Added verification/change email sending functions
+- `src/lib/email-templates.ts` - Added 3 new email templates
+- `src/lib/rate-limit.ts` - Added resendVerification and requestEmailChange limiters
+- `src/app/api/auth/register/route.ts` - Send verification email on registration
+- `src/app/api/bookings/route.ts` - Gate booking on emailVerified
+- `src/app/(public)/login/page.tsx` - Handle EMAIL_NOT_VERIFIED, show resend button
+- `src/app/(authenticated)/profile/page.tsx` - Added ChangeEmailForm section
+
 ## What's Next
 
-Phases 1 and 4 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
+Phases 1, 4, and 5 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
 
 ## Context
 
