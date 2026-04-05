@@ -5,7 +5,7 @@
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 342 tests pass (17 test files)
+npm test              # 359 tests pass (18 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -25,7 +25,7 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + Delivery Phases 1, 4, 5 complete. Security audit + 5 integration reviews done. 342 tests pass, build succeeds.
+All 9 build phases + Delivery Phases 1, 4, 5, 9 complete. Security audit + 5 integration reviews done. 359 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
@@ -44,6 +44,8 @@ All 9 build phases + Delivery Phases 1, 4, 5 complete. Security audit + 5 integr
 - Schema: `BookingModification` model, `Payment.changeFeeCents` field (for future booking mods)
 - Refunds: `getRefundTier()` extracted from cancellation logic with full test coverage
 - Docker: log rotation (json-file, 10m x 5) on all services
+- Sentry: server-side + client-side error tracking, cron monitoring, performance tracing
+- Observability: API request logging middleware, webhook delivery monitoring (`WebhookLog`), admin health dashboard
 
 ### Delivery Phase 1: Foundational Infrastructure - COMPLETED
 
@@ -138,9 +140,60 @@ All 9 build phases + Delivery Phases 1, 4, 5 complete. Security audit + 5 integr
 - `src/app/(public)/login/page.tsx` - Handle EMAIL_NOT_VERIFIED, show resend button
 - `src/app/(authenticated)/profile/page.tsx` - Added ChangeEmailForm section
 
+### Delivery Phase 9: Observability - COMPLETED
+
+**Date:** 2026-04-06
+**Branch:** phase-9-observability
+**Tests:** 359 (was 342, +17 new)
+
+**Features built:**
+1. **OBS-01**: Sentry server-side integration (`@sentry/nextjs`), `sentry.server.config.ts` with sensitive data scrubbing (`beforeSend`), source map support
+2. **OBS-02**: Sentry client-side error boundaries - `error.tsx` and `global-error.tsx` call `Sentry.captureException()` with digest tag correlation, breadcrumbs enabled
+3. **OBS-03**: Sentry cron monitoring for 3 jobs (`confirm-pending-bookings`, `xero-membership-refresh`, `database-backup`) with check-in/check-out signals and schedule config
+4. **OBS-05**: API request logging middleware (`src/lib/api-logger.ts`) - `withRequestLogging()` wrapper logs method, path, status, durationMs, IP at appropriate log levels
+5. **OBS-08**: `WebhookLog` Prisma model for webhook delivery monitoring, `recordWebhookLog()` + `getWebhookStats()` helpers, Stripe and Xero handlers instrumented, 30-day auto-prune
+6. **OBS-10**: Sentry performance tracing (0.2 sample rate in production, 1.0 in development)
+7. **OBS-11**: Sentry alerting rules documented in `docs/SENTRY_ALERTS.md` (4 alert rules with triage steps)
+8. **OBS-12**: External uptime monitoring config in `docs/UPTIME_MONITORING.md` (UptimeRobot, Sentry Uptime, Route 53 options)
+9. **OBS-07**: Admin health dashboard `/admin/health` with service checks, cron job history, webhook stats, system info, Sentry link, auto-refresh every 60s
+
+**New files:**
+- `sentry.server.config.ts` - Sentry server-side initialization
+- `sentry.client.config.ts` - Sentry client-side initialization
+- `sentry.edge.config.ts` - Sentry edge runtime initialization
+- `src/lib/api-logger.ts` - API request logging middleware
+- `src/lib/webhook-log.ts` - Webhook delivery monitoring helpers
+- `src/app/api/admin/health/route.ts` - Admin health data API
+- `src/app/(admin)/admin/health/page.tsx` - Admin health dashboard page
+- `src/lib/__tests__/observability.test.ts` - 17 tests for observability features
+- `docs/SENTRY_ALERTS.md` - Sentry alerting rules documentation
+- `docs/UPTIME_MONITORING.md` - External uptime monitoring documentation
+
+**New Prisma models (require migration):**
+- `WebhookLog` - Webhook delivery tracking with source, eventType, status, duration
+
+**New env vars:**
+- `SENTRY_DSN` - Sentry DSN for server-side error tracking
+- `NEXT_PUBLIC_SENTRY_DSN` - Sentry DSN for client-side error tracking
+- `SENTRY_ORG` - Sentry organization slug (for source map uploads)
+- `SENTRY_PROJECT` - Sentry project slug (for source map uploads)
+- `SENTRY_AUTH_TOKEN` - Sentry auth token (for source map uploads during build)
+
+**Modified files:**
+- `next.config.ts` - Wrapped with `withSentryConfig`
+- `src/instrumentation.ts` - Added Sentry init + cron monitoring
+- `src/app/error.tsx` - Added Sentry error capture
+- `src/app/global-error.tsx` - Added Sentry error capture
+- `src/middleware.ts` - Added Sentry ingest to CSP connect-src
+- `src/app/api/webhooks/stripe/route.ts` - Added webhook logging
+- `src/app/api/webhooks/xero/route.ts` - Added webhook logging
+- `src/components/admin-sidebar.tsx` - Added System Health nav entry
+- `prisma/schema.prisma` - Added WebhookLog model
+- `.env.example` - Added Sentry env vars
+
 ## What's Next
 
-Phases 1, 4, and 5 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
+Phases 1, 4, 5, and 9 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
 
 ## Context
 
@@ -227,6 +280,7 @@ TACBookings/
 │   │   │   ├── admin/subscriptions/route.ts
 │   │   │   ├── admin/payments/route.ts
 │   │   │   ├── admin/audit-log/route.ts
+│   │   │   ├── admin/health/route.ts
 │   │   │   ├── admin/reports/route.ts
 │   │   │   ├── admin/xero/connect/route.ts
 │   │   │   ├── admin/xero/callback/route.ts
@@ -262,7 +316,8 @@ TACBookings/
 │   │       ├── admin/payments/page.tsx
 │   │       ├── admin/audit-log/page.tsx
 │   │       ├── admin/xero/page.tsx
-│   │       └── admin/reports/page.tsx
+│   │       ├── admin/reports/page.tsx
+│   │       └── admin/health/page.tsx
 │   ├── lib/
 │   │   ├── prisma.ts              # Singleton Prisma client
 │   │   ├── auth.ts                # NextAuth config
@@ -279,7 +334,9 @@ TACBookings/
 │   │   ├── age-tier.ts            # Age tier & season year computation
 │   │   ├── rate-limit.ts          # In-memory rate limiter
 │   │   ├── audit.ts               # Audit logging helper
-│   │   └── backup.ts              # Automated pg_dump to S3
+│   │   ├── backup.ts              # Automated pg_dump to S3
+│   │   ├── api-logger.ts          # API request logging middleware
+│   │   └── webhook-log.ts         # Webhook delivery monitoring
 │   ├── middleware.ts              # Security headers (CSP, HSTS, etc.)
 │   ├── instrumentation.ts        # Cron job scheduling
 │   └── components/
@@ -458,4 +515,4 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 
 ## Build History Summary
 
-9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1 and 4 completed 2026-04-06. 327 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
+9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1, 4, 5, and 9 completed 2026-04-06. 359 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.

@@ -25,7 +25,7 @@ export function middleware(request: NextRequest) {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self' data:",
-    "connect-src 'self' https://api.stripe.com https://js.stripe.com",
+    "connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io",
     "frame-src https://js.stripe.com https://hooks.stripe.com",
     "base-uri 'self'",
     "form-action 'self'",

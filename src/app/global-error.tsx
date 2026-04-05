@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 
 export default function GlobalError({
   error,
@@ -10,6 +11,10 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
+    // OBS-02: Report to Sentry with error digest for correlation
+    Sentry.captureException(error, {
+      tags: { digest: error.digest },
+    });
     console.error("Global error:", error);
   }, [error]);
 

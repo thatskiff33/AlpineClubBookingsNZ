@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { isXeroConnected, createXeroInvoiceForBooking, createXeroCreditNote } from "@/lib/xero";
 import { sendBookingConfirmedEmail } from "@/lib/email";
+import { recordWebhookLog } from "@/lib/webhook-log";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
 
@@ -43,6 +44,8 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+
+  const webhookStart = Date.now();
 
   try {
     // Idempotency check: skip already-processed events
@@ -94,9 +97,29 @@ export async function POST(request: NextRequest) {
       // Ignore unique constraint violation (concurrent request)
     });
 
+    // OBS-08: Record successful webhook processing
+    await recordWebhookLog({
+      source: "stripe",
+      eventType: event.type,
+      eventId: event.id,
+      status: "success",
+      durationMs: Date.now() - webhookStart,
+    });
+
     return NextResponse.json({ received: true });
   } catch (error) {
     logger.error({ err: error, eventType: event.type }, "Error processing webhook event");
+
+    // OBS-08: Record failed webhook processing
+    await recordWebhookLog({
+      source: "stripe",
+      eventType: event.type,
+      eventId: event.id,
+      status: "failure",
+      durationMs: Date.now() - webhookStart,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
     return NextResponse.json(
       { error: "Webhook handler failed" },
       { status: 500 }

@@ -441,6 +441,25 @@ model ProcessedWebhookEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Webhook Delivery Monitoring (OBS-08)
+// ---------------------------------------------------------------------------
+
+model WebhookLog {
+  id        String   @id @default(cuid())
+  source    String   // "stripe" or "xero"
+  eventType String
+  eventId   String
+  status    String   // "success" or "failure"
+  durationMs Int
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@index([source])
+  @@index([createdAt])
+  @@index([source, createdAt])
+}
+
+// ---------------------------------------------------------------------------
 // Audit Log (tracks sensitive admin and system actions)
 // ---------------------------------------------------------------------------
 

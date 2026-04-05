@@ -1,12 +1,22 @@
 /**
  * Next.js instrumentation hook.
  * Runs once when the server starts.
- * Used to schedule cron jobs for auto-confirming pending bookings.
+ * Initializes Sentry and schedules cron jobs.
  */
 export async function register() {
+  // OBS-01: Initialize Sentry for the Node.js runtime
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    await import("../sentry.server.config");
+  }
+
+  if (process.env.NEXT_RUNTIME === "edge") {
+    await import("../sentry.edge.config");
+  }
+
   // Only run cron in the Node.js runtime (not Edge)
   if (process.env.NEXT_RUNTIME === "nodejs") {
     const cron = await import("node-cron");
+    const Sentry = await import("@sentry/nextjs");
     const { default: logger } = await import("./lib/logger");
     const { prisma } = await import("./lib/prisma");
 
@@ -57,7 +67,7 @@ export async function register() {
       }
     }
 
-    // Run every 3 hours to check for pending bookings past their hold deadline
+    // OBS-03: Cron job 1 - Pending booking confirmation (every 3 hours)
     cron.default.schedule("0 */3 * * *", async () => {
       if (isPendingCronRunning) {
         logger.info({ job: "confirm-pending" }, "Already running, skipping");
@@ -66,6 +76,12 @@ export async function register() {
       isPendingCronRunning = true;
       const startedAt = new Date();
       logger.info({ job: "confirm-pending" }, "Checking pending bookings for auto-confirmation");
+
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "confirm-pending-bookings", status: "in_progress" },
+        { schedule: { type: "crontab", value: "0 */3 * * *" }, checkinMargin: 10, maxRuntime: 30 }
+      );
+
       try {
         const { confirmPendingBookings } = await import(
           "./lib/cron-confirm-pending"
@@ -78,10 +94,13 @@ export async function register() {
         };
         logger.info({ job: "confirm-pending", ...summary }, "Pending booking confirmation complete");
         await recordCronRun("confirm-pending", startedAt, "SUCCESS", summary);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "confirm-pending-bookings", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "confirm-pending" }, "Error in pending booking confirmation");
+        Sentry.captureException(err);
         await recordCronRun("confirm-pending", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "confirm-pending-bookings", status: "error" });
       } finally {
         isPendingCronRunning = false;
       }
@@ -89,7 +108,7 @@ export async function register() {
 
     logger.info({ job: "confirm-pending" }, "Scheduled pending booking confirmation (every 3 hours)");
 
-    // Run daily at 2 AM to refresh Xero membership statuses
+    // OBS-03: Cron job 2 - Xero membership refresh (daily at 2 AM)
     cron.default.schedule("0 2 * * *", async () => {
       if (isXeroCronRunning) {
         logger.info({ job: "xero-membership-refresh" }, "Already running, skipping");
@@ -98,6 +117,12 @@ export async function register() {
       isXeroCronRunning = true;
       const startedAt = new Date();
       logger.info({ job: "xero-membership-refresh" }, "Refreshing Xero membership statuses");
+
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "xero-membership-refresh", status: "in_progress" },
+        { schedule: { type: "crontab", value: "0 2 * * *" }, checkinMargin: 10, maxRuntime: 60 }
+      );
+
       try {
         const { isXeroConnected, refreshAllMembershipStatuses } = await import(
           "./lib/xero"
@@ -105,15 +130,19 @@ export async function register() {
         if (!(await isXeroConnected())) {
           logger.info({ job: "xero-membership-refresh" }, "Xero not connected, skipping");
           await recordCronRun("xero-membership-refresh", startedAt, "SKIPPED", { reason: "Xero not connected" });
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
           return;
         }
         const result = await refreshAllMembershipStatuses();
         logger.info({ job: "xero-membership-refresh", ...result }, "Xero membership refresh complete");
         await recordCronRun("xero-membership-refresh", startedAt, "SUCCESS", result as Record<string, unknown>);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "xero-membership-refresh" }, "Error refreshing Xero memberships");
+        Sentry.captureException(err);
         await recordCronRun("xero-membership-refresh", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "error" });
       } finally {
         isXeroCronRunning = false;
       }
@@ -121,7 +150,7 @@ export async function register() {
 
     logger.info({ job: "xero-membership-refresh" }, "Scheduled Xero membership refresh (daily at 2 AM)");
 
-    // Database backup - daily at 3 AM (configurable via BACKUP_CRON_SCHEDULE)
+    // OBS-03: Cron job 3 - Database backup (daily at 3 AM)
     let isBackupRunning = false;
     const backupSchedule = process.env.BACKUP_CRON_SCHEDULE || "0 3 * * *";
 
@@ -133,6 +162,12 @@ export async function register() {
       isBackupRunning = true;
       const startedAt = new Date();
       logger.info({ job: "backup" }, "Starting database backup");
+
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "database-backup", status: "in_progress" },
+        { schedule: { type: "crontab", value: backupSchedule }, checkinMargin: 10, maxRuntime: 30 }
+      );
+
       try {
         const { runDatabaseBackup } = await import("./lib/backup");
         const result = await runDatabaseBackup();
@@ -144,22 +179,53 @@ export async function register() {
           };
           logger.info({ job: "backup", ...summary }, "Database backup complete");
           await recordCronRun("backup", startedAt, "SUCCESS", summary);
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "database-backup", status: "ok" });
         } else {
           logger.error({ job: "backup", error: result.error }, "Database backup failed");
           await recordCronRun("backup", startedAt, "FAILURE", undefined, result.error);
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "database-backup", status: "error" });
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "backup" }, "Error running database backup");
+        Sentry.captureException(err);
         await recordCronRun("backup", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "database-backup", status: "error" });
       } finally {
         isBackupRunning = false;
       }
 
-      // Prune old cron runs after backup
+      // Prune old cron runs and webhook logs after backup
       await pruneCronRuns();
+      try {
+        const { pruneWebhookLogs } = await import("./lib/webhook-log");
+        await pruneWebhookLogs();
+      } catch (err) {
+        logger.error({ err }, "Failed to prune webhook logs");
+      }
     });
 
     logger.info({ job: "backup", schedule: backupSchedule }, "Scheduled database backup");
   }
 }
+
+// OBS-02: Sentry onRequestError handler for server-side errors
+export const onRequestError = async (
+  err: unknown,
+  request: { method: string; url: string; headers: Record<string, string> },
+  context: { routerKind: string; routePath: string; routeType: string; renderSource: string }
+) => {
+  const Sentry = await import("@sentry/nextjs");
+  Sentry.captureException(err, {
+    tags: {
+      routerKind: context.routerKind,
+      routePath: context.routePath,
+      routeType: context.routeType,
+      renderSource: context.renderSource,
+    },
+    extra: {
+      method: request.method,
+      url: request.url,
+    },
+  });
+};
