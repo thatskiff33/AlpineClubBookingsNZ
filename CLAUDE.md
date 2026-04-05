@@ -5,7 +5,7 @@
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 312 tests pass (15 test files)
+npm test              # 327 tests pass (16 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -25,7 +25,7 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + Delivery Phase 1 complete. Security audit + 5 integration reviews done. 312 tests pass, build succeeds.
+All 9 build phases + Delivery Phase 1 + Phase 4 complete. Security audit + 5 integration reviews done. 327 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard
@@ -75,9 +75,36 @@ All 9 build phases + Delivery Phase 1 complete. Security audit + 5 integration r
 **New env vars:**
 - `LOG_LEVEL` - Logging level (default: info in production, debug in development)
 
+
+### Delivery Phase 4: Admin Operations & Tooling - COMPLETED
+
+**Date:** 2026-04-06
+**Branch:** phase-4-admin-ops
+**Tests:** 327 (was 312, +15 new)
+
+**Features built:**
+1. **Subscription Tracking**: GET /api/admin/subscriptions with season year selector, status filter, pagination, summary counts. Admin page with summary cards and filterable table.
+2. **Payments List**: GET /api/admin/payments with status/date range filters, pagination, revenue aggregates. Admin page with summary cards and table with copyable Stripe PI IDs.
+3. **Audit Log Viewer**: GET /api/admin/audit-log with action/actor/date filters, pagination, distinct action list. Admin page with expandable detail rows showing formatted JSON.
+4. **Report Export**: CSV download button generates tac-report-YYYY-MM-DD.csv. PDF print button with @media print stylesheet hides sidebar/nav/filters, sizes charts to A4.
+5. **Sidebar Nav**: Added Subscriptions, Payments, Audit Log entries to admin sidebar.
+
+**New files:**
+- src/app/api/admin/subscriptions/route.ts - Subscription tracking API
+- src/app/api/admin/payments/route.ts - Payments list API
+- src/app/api/admin/audit-log/route.ts - Audit log API
+- src/app/(admin)/admin/subscriptions/page.tsx - Subscriptions admin page
+- src/app/(admin)/admin/payments/page.tsx - Payments admin page
+- src/app/(admin)/admin/audit-log/page.tsx - Audit log admin page
+- src/lib/__tests__/admin-api.test.ts - 15 tests for all 3 new APIs
+
+**Modified files:**
+- src/components/admin-sidebar.tsx - Added 3 new nav entries
+- src/app/(admin)/admin/reports/page.tsx - Added CSV/PDF export buttons
+- src/app/globals.css - Added @media print styles
 ## What's Next
 
-Phase 1 (Foundational Infrastructure) complete. See `docs/DELIVERY_PLAN.md` for remaining phases 2-10.
+Phases 1 and 4 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
 
 ## Context
 
@@ -161,6 +188,9 @@ TACBookings/
 │   │   │   ├── admin/chores/[id]/route.ts
 │   │   │   ├── admin/roster/[date]/route.ts
 │   │   │   ├── admin/cancellation-policy/route.ts
+│   │   │   ├── admin/subscriptions/route.ts
+│   │   │   ├── admin/payments/route.ts
+│   │   │   ├── admin/audit-log/route.ts
 │   │   │   ├── admin/reports/route.ts
 │   │   │   ├── admin/xero/connect/route.ts
 │   │   │   ├── admin/xero/callback/route.ts
@@ -192,6 +222,9 @@ TACBookings/
 │   │       ├── admin/roster/page.tsx
 │   │       ├── admin/roster/[date]/print/page.tsx
 │   │       ├── admin/cancellation-policy/page.tsx
+│   │       ├── admin/subscriptions/page.tsx
+│   │       ├── admin/payments/page.tsx
+│   │       ├── admin/audit-log/page.tsx
 │   │       ├── admin/xero/page.tsx
 │   │       └── admin/reports/page.tsx
 │   ├── lib/
@@ -389,4 +422,4 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 
 ## Build History Summary
 
-9 build phases + security audit + 5 integration reviews completed 2026-04-03. 292 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
+9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1 and 4 completed 2026-04-06. 327 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
