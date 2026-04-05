@@ -193,11 +193,12 @@ model Booking {
   updatedAt          DateTime      @updatedAt
 
   // Relations
-  member           Member           @relation(fields: [memberId], references: [id])
+  member           Member               @relation(fields: [memberId], references: [id])
   guests           BookingGuest[]
   payment          Payment?
   choreAssignments ChoreAssignment[]
   promoRedemption  PromoRedemption?
+  modifications    BookingModification[]
 
   @@index([memberId])
   @@index([checkIn, checkOut])
@@ -239,6 +240,7 @@ model Payment {
   xeroInvoiceId          String?       @unique
   status                 PaymentStatus @default(PENDING)
   refundedAmountCents    Int           @default(0)
+  changeFeeCents         Int           @default(0)
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
 
@@ -422,4 +424,44 @@ model AuditLog {
   @@index([action])
   @@index([memberId])
   @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Booking Modifications (history of changes to bookings)
+// ---------------------------------------------------------------------------
+
+model BookingModification {
+  id               String   @id @default(cuid())
+  bookingId        String
+  memberId         String
+  modificationType String   // DATE_CHANGE | GUEST_ADD | GUEST_REMOVE | EXTEND_STAY
+  previousData     Json     // snapshot of changed fields before
+  newData          Json     // snapshot of changed fields after
+  priceDiffCents   Int      @default(0) // positive = owes more, negative = refund
+  changeFeeCents   Int      @default(0) // late-notice fee charged
+  createdAt        DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Cron Job Run Tracking (OBS-09)
+// ---------------------------------------------------------------------------
+
+model CronJobRun {
+  id            String    @id @default(cuid())
+  jobName       String
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  durationMs    Int?
+  status        String    // SUCCESS | FAILURE | SKIPPED
+  resultSummary Json?
+  error         String?
+  createdAt     DateTime  @default(now())
+
+  @@index([jobName])
+  @@index([startedAt])
 }
