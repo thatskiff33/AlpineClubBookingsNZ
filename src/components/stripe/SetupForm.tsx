@@ -66,7 +66,7 @@ export default function SetupForm({
         <p className="font-medium">Card will not be charged now</p>
         <p className="mt-1">
           Your card details will be saved securely. Payment will only be
-          processed 7 days before check-in if your booking is confirmed.
+          processed closer to check-in if your booking is confirmed.
           If your booking is bumped by a member, no charge will be made.
         </p>
       </div>

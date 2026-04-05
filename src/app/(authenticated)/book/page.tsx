@@ -296,9 +296,7 @@ export default function BookPage() {
           {guests.some((g) => !g.isMember) && (
             <div className="rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
               <strong>Note:</strong> This booking includes non-member guests.
-              {nights > 7
-                ? " Your booking will be held as PENDING until 7 days before check-in. Members have priority - your booking may be bumped if the lodge fills up."
-                : " Your booking will be confirmed immediately."}
+              {" Your booking may be held as PENDING until closer to check-in. Members have priority \u2014 your booking may be bumped if the lodge fills up."}
             </div>
           )}
 

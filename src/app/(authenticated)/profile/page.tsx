@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getSeasonYear } from "@/lib/utils";
 import { ProfileForm } from "./profile-form";
 import {
   Card,
@@ -16,6 +17,8 @@ export default async function ProfilePage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
 
+  const currentSeasonYear = getSeasonYear(new Date());
+
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
     select: {
@@ -29,10 +32,18 @@ export default async function ProfilePage() {
       ageTier: true,
       active: true,
       createdAt: true,
+      subscriptions: {
+        where: { seasonYear: currentSeasonYear },
+        select: { status: true, seasonYear: true },
+        take: 1,
+      },
     },
   });
 
   if (!member) redirect("/login");
+
+  const subscriptionStatus = member.subscriptions[0]?.status ?? null;
+  const seasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -83,6 +94,29 @@ export default async function ProfilePage() {
                 year: "numeric",
               })}
             </span>
+          </div>
+          <Separator />
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">
+              Subscription ({seasonLabel})
+            </span>
+            {subscriptionStatus === "PAID" ? (
+              <Badge className="bg-green-100 text-green-800 border-green-200">
+                Paid
+              </Badge>
+            ) : subscriptionStatus === "UNPAID" ? (
+              <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">
+                Unpaid
+              </Badge>
+            ) : subscriptionStatus === "OVERDUE" ? (
+              <Badge className="bg-red-100 text-red-800 border-red-200">
+                Overdue
+              </Badge>
+            ) : (
+              <Badge variant="secondary" className="bg-slate-100 text-slate-600">
+                Not Invoiced
+              </Badge>
+            )}
           </div>
         </CardContent>
       </Card>

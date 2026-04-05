@@ -20,11 +20,13 @@ export async function GET(request: NextRequest) {
     // resolves to the container's internal address like 0.0.0.0:3000).
     const incomingUrl = new URL(request.url);
     const publicCallbackUrl = new URL(incomingUrl.pathname + incomingUrl.search, baseUrl).toString();
+    console.log("[Xero callback] request.url:", request.url);
+    console.log("[Xero callback] publicCallbackUrl:", publicCallbackUrl);
     await handleXeroCallback(publicCallbackUrl);
     return NextResponse.redirect(new URL("/admin/xero?connected=true", baseUrl));
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Xero connection failed";
-    console.error("Xero callback error:", message);
+    console.error("Xero callback error (full):", error);
+    const message = error instanceof Error ? error.message : String(error ?? "Xero connection failed");
     return NextResponse.redirect(
       new URL(`/admin/xero?error=${encodeURIComponent(message)}`, baseUrl)
     );

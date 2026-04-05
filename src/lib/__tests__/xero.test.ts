@@ -70,13 +70,13 @@ describe("findSubscriptionInvoice", () => {
       date: "2026-05-15",
       status: Invoice.StatusEnum.PAID,
       lineItems: [
-        { description: "Annual Membership Subscription 2026/2027", quantity: 1, unitAmount: 150 },
+        { description: "Annual Membership Subscription 2026/2027", accountCode: "203", quantity: 1, unitAmount: 150 },
       ],
       ...overrides,
     } as Invoice
   }
 
-  it("finds a subscription invoice by line item description", () => {
+  it("finds a subscription invoice by account code 203", () => {
     const invoices = [makeInvoice()]
     const result = findSubscriptionInvoice(invoices, 2026)
     expect(result).not.toBeNull()
@@ -87,7 +87,7 @@ describe("findSubscriptionInvoice", () => {
     const invoices = [
       makeInvoice({
         invoiceID: "inv-002",
-        reference: "Club Subscription 2026",
+        reference: "Annual Member Subscription 2026",
         lineItems: [{ description: "Payment", quantity: 1, unitAmount: 150 }],
       }),
     ]
@@ -96,19 +96,20 @@ describe("findSubscriptionInvoice", () => {
     expect(result!.invoiceID).toBe("inv-002")
   })
 
-  it("matches 'membership' keyword", () => {
+  it("matches invoice with account code 203", () => {
     const invoices = [
       makeInvoice({
-        lineItems: [{ description: "Club Membership Fee 2026-2027", quantity: 1, unitAmount: 100 }],
+        lineItems: [{ description: "Club Membership Fee 2026-2027", accountCode: "203", quantity: 1, unitAmount: 100 }],
       }),
     ]
     expect(findSubscriptionInvoice(invoices, 2026)).not.toBeNull()
   })
 
-  it("matches 'annual sub' keyword", () => {
+  it("matches 'annual member subscription' in reference", () => {
     const invoices = [
       makeInvoice({
-        lineItems: [{ description: "Annual Sub - Adult", quantity: 1, unitAmount: 100 }],
+        reference: "Annual Member Subscription - Adult",
+        lineItems: [{ description: "Sub", quantity: 1, unitAmount: 100 }],
       }),
     ]
     expect(findSubscriptionInvoice(invoices, 2026)).not.toBeNull()
@@ -124,10 +125,10 @@ describe("findSubscriptionInvoice", () => {
     expect(result).toBeNull()
   })
 
-  it("returns null when no matching keywords", () => {
+  it("returns null when no matching account code or reference", () => {
     const invoices = [
       makeInvoice({
-        lineItems: [{ description: "Lodge Booking - 3 nights", quantity: 1, unitAmount: 200 }],
+        lineItems: [{ description: "Lodge Booking - 3 nights", accountCode: "200", quantity: 1, unitAmount: 200 }],
         reference: undefined,
       }),
     ]

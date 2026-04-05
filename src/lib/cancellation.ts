@@ -6,6 +6,36 @@ export interface CancellationRule {
 }
 
 /**
+ * Find the active BookingPeriod that covers a given check-in date, if any.
+ */
+export async function getBookingPeriodForDate(checkIn: Date) {
+  return prisma.bookingPeriod.findFirst({
+    where: {
+      active: true,
+      startDate: { lte: checkIn },
+      endDate: { gte: checkIn },
+    },
+  });
+}
+
+/**
+ * Get the non-member hold days for a given check-in date.
+ * Uses period-specific value if check-in falls in a BookingPeriod,
+ * otherwise uses the global default from BookingDefaults.
+ */
+export async function getNonMemberHoldDays(checkIn: Date): Promise<number> {
+  const period = await getBookingPeriodForDate(checkIn);
+  if (period) {
+    return period.nonMemberHoldDays;
+  }
+
+  const defaults = await prisma.bookingDefaults.findUnique({
+    where: { id: "default" },
+  });
+  return defaults?.nonMemberHoldDays ?? 7;
+}
+
+/**
  * Calculate refund amount based on cancellation policy.
  *
  * Policy rules are sorted by daysBeforeStay descending.
@@ -55,9 +85,21 @@ export function daysUntilDate(checkIn: Date, now: Date = new Date()): number {
 }
 
 /**
- * Load the cancellation policy from the database.
+ * Load the cancellation policy for a given check-in date.
+ * If the check-in falls within an active BookingPeriod, uses that period's rules.
+ * Otherwise falls back to the default CancellationPolicy table.
  */
-export async function loadCancellationPolicy(): Promise<CancellationRule[]> {
+export async function loadCancellationPolicy(
+  checkIn?: Date
+): Promise<CancellationRule[]> {
+  if (checkIn) {
+    const period = await getBookingPeriodForDate(checkIn);
+    if (period) {
+      const rules = period.cancellationRules as CancellationRule[];
+      return [...rules].sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
+    }
+  }
+
   const rules = await prisma.cancellationPolicy.findMany({
     orderBy: { daysBeforeStay: "desc" },
   });
@@ -99,7 +141,7 @@ export async function calculateBookingRefund(
   const paidAmountCents =
     booking.payment.amountCents - booking.payment.refundedAmountCents;
   const days = daysUntilDate(booking.checkIn);
-  const policy = await loadCancellationPolicy();
+  const policy = await loadCancellationPolicy(booking.checkIn);
   const { refundAmountCents, refundPercentage } = calculateRefundAmount(
     paidAmountCents,
     days,

@@ -122,7 +122,7 @@ export async function POST(
   const paidAmountCents =
     booking.payment.amountCents - booking.payment.refundedAmountCents;
   const days = daysUntilDate(booking.checkIn);
-  const policy = await loadCancellationPolicy();
+  const policy = await loadCancellationPolicy(booking.checkIn);
   const { refundAmountCents, refundPercentage } = calculateRefundAmount(
     paidAmountCents,
     days,

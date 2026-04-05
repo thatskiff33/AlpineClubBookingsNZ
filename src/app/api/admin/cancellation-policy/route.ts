@@ -11,6 +11,7 @@ const policySchema = z.object({
       refundPercentage: z.number().int().min(0).max(100),
     })
   ).min(1, "At least one rule is required"),
+  nonMemberHoldDays: z.number().int().min(1).max(30).optional(),
 })
 
 export async function GET() {
@@ -23,7 +24,14 @@ export async function GET() {
     orderBy: { daysBeforeStay: "desc" },
   })
 
-  return NextResponse.json(policies)
+  const defaults = await prisma.bookingDefaults.findUnique({
+    where: { id: "default" },
+  })
+
+  return NextResponse.json({
+    rules: policies,
+    nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
+  })
 }
 
 export async function PUT(req: NextRequest) {
@@ -42,9 +50,9 @@ export async function PUT(req: NextRequest) {
     )
   }
 
-  const { rules } = parsed.data
+  const { rules, nonMemberHoldDays } = parsed.data
 
-  // Validate: days must be unique and refund % should decrease as days decrease
+  // Validate: days must be unique
   const sortedRules = [...rules].sort((a, b) => b.daysBeforeStay - a.daysBeforeStay)
   const dayValues = sortedRules.map((r) => r.daysBeforeStay)
   if (new Set(dayValues).size !== dayValues.length) {
@@ -54,8 +62,8 @@ export async function PUT(req: NextRequest) {
     )
   }
 
-  // Replace all rules atomically
-  const policies = await prisma.$transaction(async (tx) => {
+  // Replace all rules atomically and update defaults
+  const result = await prisma.$transaction(async (tx) => {
     await tx.cancellationPolicy.deleteMany()
     await tx.cancellationPolicy.createMany({
       data: sortedRules.map((rule) => ({
@@ -63,16 +71,34 @@ export async function PUT(req: NextRequest) {
         refundPercentage: rule.refundPercentage,
       })),
     })
-    return tx.cancellationPolicy.findMany({
+
+    if (nonMemberHoldDays !== undefined) {
+      await tx.bookingDefaults.upsert({
+        where: { id: "default" },
+        update: { nonMemberHoldDays },
+        create: { id: "default", nonMemberHoldDays },
+      })
+    }
+
+    const policies = await tx.cancellationPolicy.findMany({
       orderBy: { daysBeforeStay: "desc" },
     })
+
+    const defaults = await tx.bookingDefaults.findUnique({
+      where: { id: "default" },
+    })
+
+    return {
+      rules: policies,
+      nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
+    }
   })
 
   logAudit({
     action: "cancellation-policy.update",
     memberId: session.user.id,
-    details: `Updated to ${sortedRules.length} rules`,
+    details: `Updated to ${sortedRules.length} rules, holdDays=${nonMemberHoldDays ?? "unchanged"}`,
   })
 
-  return NextResponse.json(policies)
+  return NextResponse.json(result)
 }

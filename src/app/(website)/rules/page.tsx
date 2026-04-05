@@ -37,6 +37,16 @@ export default async function RulesPage() {
   const cancellationPolicies = await prisma.cancellationPolicy.findMany({
     orderBy: { daysBeforeStay: "desc" },
   });
+
+  const defaults = await prisma.bookingDefaults.findUnique({
+    where: { id: "default" },
+  });
+  const defaultHoldDays = defaults?.nonMemberHoldDays ?? 7;
+
+  const bookingPeriods = await prisma.bookingPeriod.findMany({
+    where: { active: true },
+    orderBy: { startDate: "asc" },
+  });
   return (
     <>
       {/* Header */}
@@ -66,12 +76,12 @@ export default async function RulesPage() {
                 years and over. Full voting rights at the AGM.
               </p>
               <p>
-                <strong className="text-slate-800">Youth members:</strong> Aged 13
+                <strong className="text-slate-800">Youth members:</strong> Aged 10
                 to 17 years. Reduced membership fee. Must be accompanied by an
                 adult member when staying at the lodge.
               </p>
               <p>
-                <strong className="text-slate-800">Child members:</strong> Under 13
+                <strong className="text-slate-800">Child members:</strong> Under 10
                 years. Included as part of a family membership at no additional
                 cost. Must be accompanied by a parent or guardian.
               </p>
@@ -79,9 +89,9 @@ export default async function RulesPage() {
                 <strong className="text-slate-800">Family membership:</strong> A
                 family concession is granted to a family group living at the same
                 address which consists of one or two adult members plus any
-                nominated dependent children under the age of 13. Dependent
+                nominated dependent children under the age of 10. Dependent
                 children enjoy the same privileges as members and can transfer to
-                youth membership upon reaching the age of 13. Cheaper than
+                youth membership upon reaching the age of 10. Cheaper than
                 equivalent individual memberships and is the recommended option for
                 families.
               </p>
@@ -149,6 +159,24 @@ export default async function RulesPage() {
               </p>
 
               <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+                Non-Member Guests
+              </h3>
+              <ul className="list-disc pl-5 space-y-2">
+                <li>
+                  Non-members may only stay at the lodge as the guest of a
+                  current member. The member must accompany their guest for the
+                  duration of the stay.
+                </li>
+                <li>
+                  The booking member is responsible for their non-member guests
+                  and must ensure they follow all lodge rules and procedures.
+                </li>
+                <li>
+                  Non-member guests pay the non-member lodge rate.
+                </li>
+              </ul>
+
+              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
                 Bookings
               </h3>
               <ul className="list-disc pl-5 space-y-2">
@@ -164,9 +192,9 @@ export default async function RulesPage() {
                   <strong className="text-slate-800">
                     Bookings with non-member guests
                   </strong>{" "}
-                  can only be confirmed 7 days before the start date of the
-                  booking. Card details are collected but not charged until 7 days
-                  before arrival.
+                  can only be confirmed {defaultHoldDays} days before the start date of the
+                  booking. Card details are collected but not charged until {defaultHoldDays} days
+                  before arrival.{bookingPeriods.length > 0 && " Different thresholds may apply for certain date ranges — see below."}
                 </li>
                 <li>
                   <strong className="text-slate-800">Member priority:</strong> If
@@ -248,12 +276,38 @@ export default async function RulesPage() {
               </ul>
 
               <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+                New Members
+              </h3>
+              <ul className="list-disc pl-5 space-y-2">
+                <li>
+                  New members must be nominated by two existing club members.
+                </li>
+                <li>
+                  The sponsoring members must accompany the new member on their
+                  first stay and ensure they are inducted and signed off on all
+                  lodge procedures.
+                </li>
+                <li>
+                  New members are expected to attend at least two working bees
+                  during their first three years of membership.
+                </li>
+                <li>
+                  An entrance fee and first year&apos;s subscription are payable
+                  upon acceptance.
+                </li>
+              </ul>
+
+              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
                 Working Bees
               </h3>
               <ul className="list-disc pl-5 space-y-2">
                 <li>
                   Members are expected to take part in at least one official
                   working bee per year to assist with the maintenance of the lodge.
+                </li>
+                <li>
+                  New members are expected to attend at least two working bees
+                  during their first three years of membership.
                 </li>
                 <li>
                   Members are credited with one night&apos;s free accommodation for
@@ -470,6 +524,93 @@ export default async function RulesPage() {
               </p>
             </div>
           </div>
+
+          {/* Date-specific booking periods */}
+          {bookingPeriods.length > 0 && (
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900 mb-4">
+                Date-Specific Booking Policies
+              </h2>
+              <div className="space-y-3 text-slate-600">
+                <p>
+                  The following date ranges have specific cancellation policies
+                  and non-member booking thresholds that differ from the standard
+                  policy above.
+                </p>
+                {bookingPeriods.map((period) => {
+                  const rules = (
+                    period.cancellationRules as Array<{
+                      daysBeforeStay: number;
+                      refundPercentage: number;
+                    }>
+                  ).sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
+
+                  return (
+                    <div
+                      key={period.id}
+                      className="border border-slate-200 rounded-lg p-4 space-y-3"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                        <h3 className="text-lg font-semibold text-slate-800">
+                          {period.name}
+                        </h3>
+                        <span className="text-sm text-slate-500">
+                          {new Date(period.startDate).toLocaleDateString(
+                            "en-NZ",
+                            { day: "numeric", month: "short", year: "numeric" }
+                          )}
+                          {" \u2013 "}
+                          {new Date(period.endDate).toLocaleDateString(
+                            "en-NZ",
+                            { day: "numeric", month: "short", year: "numeric" }
+                          )}
+                        </span>
+                      </div>
+                      <p className="text-sm">
+                        <strong className="text-slate-800">
+                          Non-member booking threshold:
+                        </strong>{" "}
+                        {period.nonMemberHoldDays} days before check-in
+                      </p>
+                      {rules.length > 0 && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
+                            <thead className="bg-slate-50">
+                              <tr>
+                                <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                                  Notice Period
+                                </th>
+                                <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                                  Refund
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {rules.map((rule, index) => {
+                                const { noticePeriod, refundText } =
+                                  formatPolicyRow(rule, index, rules);
+                                return (
+                                  <tr
+                                    key={index}
+                                    className="border-t border-slate-200"
+                                  >
+                                    <td className="px-4 py-2">
+                                      {noticePeriod}
+                                    </td>
+                                    <td className="px-4 py-2">{refundText}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Subscriptions */}
           <div>

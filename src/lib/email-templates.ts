@@ -208,7 +208,7 @@ export function bookingPendingTemplate(
       { label: "Guests", value: String(guestCount) },
       { label: "Hold Until", value: formatNZDate(holdUntil) },
     ])}
-    ${alertBox("Your booking includes non-member guests and will be held as pending until " + formatNZDate(holdUntil) + " (7 days before check-in).", "warning")}
+    ${alertBox("Your booking includes non-member guests and will be held as pending until " + formatNZDate(holdUntil) + ".", "warning")}
     ${paragraph("During this time, club members have priority. If the lodge fills up with member bookings, your booking may be bumped. <strong>Your card will only be charged when the booking is confirmed.</strong>")}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);

@@ -31,14 +31,14 @@ import {
 const navItems = [
   { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/members", label: "Members", icon: Users },
-  { href: "/admin/seasons", label: "Seasons", icon: CalendarRange },
+  { href: "/admin/seasons", label: "Hut Fees & Seasons", icon: CalendarRange },
   { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
   { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
   { href: "/admin/chores", label: "Chores", icon: CheckSquare },
   { href: "/admin/roster", label: "Roster", icon: ClipboardList },
   {
     href: "/admin/cancellation-policy",
-    label: "Cancellation Policy",
+    label: "Booking Policies",
     icon: XCircle,
   },
   { href: "/admin/xero", label: "Xero", icon: RefreshCw },

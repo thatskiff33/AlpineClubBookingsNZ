@@ -42,6 +42,30 @@ interface GroupMapping {
   ageTier: string // "ADULT" | "YOUTH" | "CHILD" | "SKIP"
 }
 
+interface DuplicateContact {
+  contactID: string
+  name: string
+  firstName?: string
+  lastName?: string
+  emailAddress: string
+  hasInvoices: boolean
+  invoiceCount: number
+  contactStatus: string
+  updatedDateUTC?: string
+  xeroLink: string
+}
+
+interface DuplicateGroup {
+  email: string
+  contacts: DuplicateContact[]
+}
+
+interface DuplicateResult {
+  duplicateGroups: DuplicateGroup[]
+  totalContacts: number
+  totalDuplicateEmails: number
+}
+
 export default function XeroPage() {
   const searchParams = useSearchParams()
   const [status, setStatus] = useState<XeroStatus | null>(null)
@@ -55,6 +79,10 @@ export default function XeroPage() {
   const [groupMappings, setGroupMappings] = useState<GroupMapping[]>([])
   const [loadingGroups, setLoadingGroups] = useState(false)
   const [sendInvites, setSendInvites] = useState(false)
+
+  // Duplicate detection state
+  const [duplicates, setDuplicates] = useState<DuplicateResult | null>(null)
+  const [scanningDuplicates, setScanningDuplicates] = useState(false)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -215,6 +243,25 @@ export default function XeroPage() {
     setGroupMappings((prev) =>
       prev.map((m) => (m.groupId === groupId ? { ...m, ageTier } : m))
     )
+  }
+
+  const handleScanDuplicates = async () => {
+    setScanningDuplicates(true)
+    setDuplicates(null)
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/duplicate-contacts")
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Duplicate scan failed")
+      }
+      const data: DuplicateResult = await res.json()
+      setDuplicates(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Duplicate scan failed")
+    } finally {
+      setScanningDuplicates(false)
+    }
   }
 
   if (loading) {
@@ -383,6 +430,94 @@ export default function XeroPage() {
                     </Button>
                   </div>
                 </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Duplicate Contact Detection */}
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Duplicate Contact Detection</CardTitle>
+              <CardDescription>
+                Scan Xero contacts for duplicate email addresses. Duplicates are shown with
+                invoice counts so you can identify which contact to keep, then merge them
+                directly in Xero.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button
+                onClick={handleScanDuplicates}
+                disabled={scanningDuplicates || syncing !== null}
+              >
+                {scanningDuplicates ? "Scanning..." : "Scan for Duplicates"}
+              </Button>
+
+              {duplicates && (
+                <div className="space-y-4">
+                  <div className="flex gap-4 text-sm">
+                    <span className="text-muted-foreground">
+                      Total contacts scanned:{" "}
+                      <span className="font-medium text-foreground">{duplicates.totalContacts}</span>
+                    </span>
+                    <span className="text-muted-foreground">
+                      Duplicate emails found:{" "}
+                      <span className="font-medium text-foreground">{duplicates.totalDuplicateEmails}</span>
+                    </span>
+                  </div>
+
+                  {duplicates.duplicateGroups.length === 0 ? (
+                    <p className="text-sm text-green-700">No duplicate contacts found.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {duplicates.duplicateGroups.map((group) => (
+                        <div key={group.email} className="border rounded-md p-4 space-y-2">
+                          <p className="font-medium text-sm">
+                            {group.email}
+                            <span className="ml-2 text-xs text-muted-foreground font-normal">
+                              ({group.contacts.length} contacts)
+                            </span>
+                          </p>
+                          <div className="space-y-1">
+                            {group.contacts.map((contact) => (
+                              <div
+                                key={contact.contactID}
+                                className="flex items-center gap-3 text-sm pl-2 py-1 border-l-2 border-muted"
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <span className="font-medium">{contact.name}</span>
+                                  {contact.invoiceCount > 0 ? (
+                                    <Badge variant="default" className="ml-2 bg-blue-600 text-xs">
+                                      {contact.invoiceCount} invoice{contact.invoiceCount !== 1 ? "s" : ""}
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="secondary" className="ml-2 text-xs">
+                                      No invoices
+                                    </Badge>
+                                  )}
+                                  <span className="ml-2 text-xs text-muted-foreground">
+                                    {contact.contactStatus}
+                                  </span>
+                                </div>
+                                <a
+                                  href={contact.xeroLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 hover:underline whitespace-nowrap"
+                                >
+                                  Open in Xero
+                                </a>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Merge into the contact with invoices. Open each in Xero, then use
+                            Xero&apos;s &quot;Merge&quot; option from the contact with no invoices.
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>

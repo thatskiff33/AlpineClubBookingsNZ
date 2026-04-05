@@ -99,7 +99,7 @@ export default async function BookingDetailPage({
           {booking.status === "PENDING" && booking.nonMemberHoldUntil && (
             <div className="rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
               This booking includes non-members. It will be auto-confirmed on{" "}
-              {new Date(booking.nonMemberHoldUntil).toLocaleDateString("en-NZ")} (7 days before check-in),
+              {new Date(booking.nonMemberHoldUntil).toLocaleDateString("en-NZ")},
               subject to availability. Members have priority.
             </div>
           )}
@@ -182,7 +182,7 @@ export default async function BookingDetailPage({
           <CardContent>
             <p className="text-sm text-gray-600 mb-4">
               Please save a payment method. Your card will be charged when your booking is confirmed
-              (7 days before check-in).
+              closer to check-in.
             </p>
             <BookingPaymentSection
               bookingId={booking.id}

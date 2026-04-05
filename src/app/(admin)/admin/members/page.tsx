@@ -29,7 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Users } from "lucide-react"
+import { Users, ExternalLink } from "lucide-react"
 
 interface Member {
   id: string
@@ -42,6 +42,8 @@ interface Member {
   ageTier: "ADULT" | "YOUTH" | "CHILD"
   active: boolean
   xeroContactId: string | null
+  subscriptionStatus: "NOT_INVOICED" | "UNPAID" | "PAID" | "OVERDUE" | null
+  subscriptionXeroInvoiceId: string | null
   createdAt: string
 }
 
@@ -324,6 +326,7 @@ export default function MembersPage() {
                     <TableHead>Role</TableHead>
                     <TableHead>Age Tier</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Subscription</TableHead>
                     <TableHead>Xero</TableHead>
                     <TableHead>Joined</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
@@ -371,13 +374,55 @@ export default function MembersPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>
+                        {member.subscriptionStatus ? (
+                          (() => {
+                            const statusConfig: Record<string, { className: string; label: string }> = {
+                              PAID: { className: "bg-green-100 text-green-800 border-green-200 hover:bg-green-200", label: "Paid" },
+                              UNPAID: { className: "bg-yellow-100 text-yellow-800 border-yellow-200 hover:bg-yellow-200", label: "Unpaid" },
+                              OVERDUE: { className: "bg-red-100 text-red-800 border-red-200 hover:bg-red-200", label: "Overdue" },
+                              NOT_INVOICED: { className: "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200", label: "Not Invoiced" },
+                            };
+                            const config = statusConfig[member.subscriptionStatus] || statusConfig.NOT_INVOICED;
+                            const badge = (
+                              <Badge
+                                variant="secondary"
+                                className={`${config.className} ${member.subscriptionXeroInvoiceId ? "cursor-pointer inline-flex items-center gap-1" : ""}`}
+                              >
+                                {config.label}
+                                {member.subscriptionXeroInvoiceId && (
+                                  <ExternalLink className="h-3 w-3" />
+                                )}
+                              </Badge>
+                            );
+                            return member.subscriptionXeroInvoiceId ? (
+                              <a
+                                href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${member.subscriptionXeroInvoiceId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {badge}
+                              </a>
+                            ) : badge;
+                          })()
+                        ) : (
+                          <span className="text-xs text-slate-400">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         {member.xeroContactId ? (
-                          <Badge
-                            variant="secondary"
-                            className="bg-blue-50 text-blue-700 border-blue-200"
+                          <a
+                            href={`https://go.xero.com/app/contacts/contact/${member.xeroContactId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
                           >
-                            Linked
-                          </Badge>
+                            <Badge
+                              variant="secondary"
+                              className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer inline-flex items-center gap-1"
+                            >
+                              Linked
+                              <ExternalLink className="h-3 w-3" />
+                            </Badge>
+                          </a>
                         ) : (
                           <span className="text-xs text-slate-400">-</span>
                         )}

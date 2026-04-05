@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { computeAgeTier } from "@/lib/age-tier";
 import { isXeroConnected, findOrCreateXeroContact } from "@/lib/xero";
 import { sendPasswordResetEmail } from "@/lib/email";
+import { getSeasonYear } from "@/lib/utils";
 
 const createMemberSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -36,6 +37,8 @@ export async function GET(req: NextRequest) {
 
   const q = req.nextUrl.searchParams.get("q") || undefined;
 
+  const currentSeasonYear = getSeasonYear(new Date());
+
   const members = await prisma.member.findMany({
     where: q
       ? {
@@ -59,10 +62,22 @@ export async function GET(req: NextRequest) {
       active: true,
       xeroContactId: true,
       createdAt: true,
+      subscriptions: {
+        where: { seasonYear: currentSeasonYear },
+        select: { status: true, seasonYear: true, xeroInvoiceId: true },
+        take: 1,
+      },
     },
   });
 
-  return NextResponse.json({ members });
+  const membersWithSub = members.map((m) => ({
+    ...m,
+    subscriptionStatus: m.subscriptions[0]?.status ?? null,
+    subscriptionXeroInvoiceId: m.subscriptions[0]?.xeroInvoiceId ?? null,
+    subscriptions: undefined,
+  }));
+
+  return NextResponse.json({ members: membersWithSub });
 }
 
 /**

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest"
+import { format } from "date-fns"
 import {
   getStayNights,
   findSeasonForDate,
@@ -17,8 +18,8 @@ import {
 function makeSeason(overrides: Partial<SeasonRateData> = {}): SeasonRateData {
   return {
     seasonId: "season-winter-2026",
-    startDate: new Date("2026-06-01"),
-    endDate: new Date("2026-09-30"),
+    startDate: new Date(2026, 5, 1),  // June 1
+    endDate: new Date(2026, 8, 30),   // Sep 30
     rates: [
       { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
       { ageTier: "ADULT", isMember: false, pricePerNightCents: 6500 },
@@ -34,8 +35,8 @@ function makeSeason(overrides: Partial<SeasonRateData> = {}): SeasonRateData {
 function makeSummerSeason(): SeasonRateData {
   return {
     seasonId: "season-summer-2026",
-    startDate: new Date("2026-11-01"),
-    endDate: new Date("2027-03-31"),
+    startDate: new Date(2026, 10, 1),  // Nov 1
+    endDate: new Date(2027, 2, 31),    // Mar 31
     rates: [
       { ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
       { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
@@ -55,9 +56,9 @@ describe("getStayNights", () => {
   it("returns correct nights for a 3-night stay", () => {
     const nights = getStayNights(new Date("2026-07-10"), new Date("2026-07-13"))
     expect(nights).toHaveLength(3)
-    expect(nights[0].toISOString().split("T")[0]).toBe("2026-07-10")
-    expect(nights[1].toISOString().split("T")[0]).toBe("2026-07-11")
-    expect(nights[2].toISOString().split("T")[0]).toBe("2026-07-12")
+    expect(nights[0].toLocaleDateString("en-CA")).toBe("2026-07-10")
+    expect(nights[1].toLocaleDateString("en-CA")).toBe("2026-07-11")
+    expect(nights[2].toLocaleDateString("en-CA")).toBe("2026-07-12")
   })
 
   it("returns 1 night for consecutive dates", () => {
@@ -73,9 +74,9 @@ describe("getStayNights", () => {
   it("handles month boundaries", () => {
     const nights = getStayNights(new Date("2026-07-30"), new Date("2026-08-02"))
     expect(nights).toHaveLength(3)
-    expect(nights[0].toISOString().split("T")[0]).toBe("2026-07-30")
-    expect(nights[1].toISOString().split("T")[0]).toBe("2026-07-31")
-    expect(nights[2].toISOString().split("T")[0]).toBe("2026-08-01")
+    expect(nights[0].toLocaleDateString("en-CA")).toBe("2026-07-30")
+    expect(nights[1].toLocaleDateString("en-CA")).toBe("2026-07-31")
+    expect(nights[2].toLocaleDateString("en-CA")).toBe("2026-08-01")
   })
 })
 
@@ -96,12 +97,12 @@ describe("findSeasonForDate", () => {
   })
 
   it("includes start date of season", () => {
-    const season = findSeasonForDate(new Date("2026-06-01"), allSeasons)
+    const season = findSeasonForDate(new Date(2026, 5, 1), allSeasons)
     expect(season?.seasonId).toBe("season-winter-2026")
   })
 
   it("includes end date of season", () => {
-    const season = findSeasonForDate(new Date("2026-09-30"), allSeasons)
+    const season = findSeasonForDate(new Date(2026, 8, 30), allSeasons)
     expect(season?.seasonId).toBe("season-winter-2026")
   })
 

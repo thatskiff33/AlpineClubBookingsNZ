@@ -472,6 +472,32 @@ export async function getXeroContactGroups(): Promise<
 }
 
 /**
+ * Assemble a full phone number from Xero's split fields (countryCode, areaCode, number).
+ * e.g. countryCode="64", areaCode="27", number="4224115" → "+64 27 4224115"
+ */
+function formatXeroPhone(phone: { phoneCountryCode?: string; phoneAreaCode?: string; phoneNumber?: string }): string | null {
+  if (!phone.phoneNumber) return null;
+  const parts: string[] = [];
+  if (phone.phoneCountryCode) parts.push(`+${phone.phoneCountryCode.replace(/^\+/, '')}`);
+  if (phone.phoneAreaCode) parts.push(phone.phoneAreaCode);
+  parts.push(phone.phoneNumber);
+  return parts.join(' ');
+}
+
+/**
+ * Find the best phone number from a Xero contact's phones array.
+ * Prefers MOBILE, falls back to any phone with a number.
+ */
+function getXeroContactPhone(phones?: Array<{ phoneType?: Phone.PhoneTypeEnum; phoneCountryCode?: string; phoneAreaCode?: string; phoneNumber?: string }>): string | null {
+  if (!phones) return null;
+  const mobile = phones.find((p) => p.phoneNumber && p.phoneType === Phone.PhoneTypeEnum.MOBILE);
+  if (mobile) return formatXeroPhone(mobile);
+  const any = phones.find((p) => p.phoneNumber);
+  if (any) return formatXeroPhone(any);
+  return null;
+}
+
+/**
  * Import members from Xero contact groups into TACBookings.
  * Creates new Member records and optionally sends invite emails.
  */
@@ -545,13 +571,30 @@ export async function importMembersFromXeroGroups(
 
           if (existingMember) {
             skippedExisting++;
-            // Link xeroContactId if missing
+            // Link xeroContactId and backfill DOB/phone if missing
+            const updates: Record<string, unknown> = {};
             if (!existingMember.xeroContactId && contact.contactID) {
+              updates.xeroContactId = contact.contactID;
+            }
+            if (!existingMember.dateOfBirth && contact.companyNumber) {
+              const dobMatch = contact.companyNumber.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+              if (dobMatch) {
+                const parsed = new Date(`${dobMatch[3]}-${dobMatch[2]}-${dobMatch[1]}T00:00:00`);
+                if (!isNaN(parsed.getTime())) {
+                  updates.dateOfBirth = parsed;
+                }
+              }
+            }
+            if (!existingMember.phone) {
+              const phone = getXeroContactPhone(contact.phones);
+              if (phone) updates.phone = phone;
+            }
+            if (Object.keys(updates).length > 0) {
               await prisma.member.update({
                 where: { id: existingMember.id },
-                data: { xeroContactId: contact.contactID },
+                data: updates,
               });
-              linkedExisting++;
+              if (updates.xeroContactId) linkedExisting++;
             }
             continue;
           }
@@ -567,6 +610,19 @@ export async function importMembersFromXeroGroups(
           if (!firstName) firstName = "Unknown";
           if (!lastName) lastName = "Unknown";
 
+          // Parse DOB from Xero's companyNumber (NZBN) field — format dd/mm/yyyy
+          let dateOfBirth: Date | null = null;
+          if (contact.companyNumber) {
+            const match = contact.companyNumber.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+            if (match) {
+              const [, dd, mm, yyyy] = match;
+              const parsed = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
+              if (!isNaN(parsed.getTime())) {
+                dateOfBirth = parsed;
+              }
+            }
+          }
+
           // Create member
           const member = await prisma.member.create({
             data: {
@@ -575,13 +631,9 @@ export async function importMembersFromXeroGroups(
               lastName,
               passwordHash: placeholderHash,
               ageTier: mapping.ageTier,
+              dateOfBirth,
               xeroContactId: contact.contactID || null,
-              phone:
-                contact.phones?.find(
-                  (p) => p.phoneNumber && p.phoneType === Phone.PhoneTypeEnum.MOBILE
-                )?.phoneNumber ||
-                contact.phones?.find((p) => p.phoneNumber)?.phoneNumber ||
-                null,
+              phone: getXeroContactPhone(contact.phones),
               active: true,
             },
           });
@@ -687,7 +739,7 @@ export async function checkMembershipStatus(
   memberId: string,
   seasonYear?: number
 ): Promise<{
-  status: "PAID" | "UNPAID" | "OVERDUE";
+  status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED";
   xeroInvoiceId?: string;
   paidAt?: Date;
 }> {
@@ -696,7 +748,7 @@ export async function checkMembershipStatus(
   });
   if (!member) throw new Error(`Member not found: ${memberId}`);
   if (!member.xeroContactId) {
-    return { status: "UNPAID" };
+    return { status: "NOT_INVOICED" };
   }
 
   const year = seasonYear ?? getSeasonYear(new Date());
@@ -722,7 +774,7 @@ export async function checkMembershipStatus(
   const subscriptionInvoice = findSubscriptionInvoice(invoices, year);
 
   if (!subscriptionInvoice) {
-    return { status: "UNPAID" };
+    return { status: "NOT_INVOICED" };
   }
 
   const status = determineSubscriptionStatus(subscriptionInvoice);
@@ -761,7 +813,7 @@ export function findSubscriptionInvoice(
   invoices: Invoice[],
   seasonYear: number
 ): Invoice | null {
-  const keywords = ["subscription", "membership", "annual sub", "club sub"];
+  const SUBSCRIPTION_ACCOUNT_CODE = "203";
   const seasonStart = new Date(seasonYear, 3, 1); // April 1
   const seasonEndExclusive = new Date(seasonYear + 1, 3, 1); // April 1 next year (exclusive)
 
@@ -772,17 +824,16 @@ export function findSubscriptionInvoice(
 
     if (invoiceDate < seasonStart || invoiceDate >= seasonEndExclusive) continue;
 
-    // Check if any line item references a subscription
-    const hasSubscriptionRef = invoice.lineItems?.some((li) => {
-      const desc = (li.description ?? "").toLowerCase();
-      return keywords.some((kw) => desc.includes(kw));
-    });
+    // Check if any line item uses account code 203 (Annual Subs)
+    const hasSubsAccountCode = invoice.lineItems?.some(
+      (li) => li.accountCode === SUBSCRIPTION_ACCOUNT_CODE
+    );
 
-    // Also check invoice reference field
+    // Also check invoice reference for "Annual Member Subscription"
     const ref = (invoice.reference ?? "").toLowerCase();
-    const hasRefMatch = keywords.some((kw) => ref.includes(kw));
+    const hasRefMatch = ref.includes("annual member subscription");
 
-    if (hasSubscriptionRef || hasRefMatch) {
+    if (hasSubsAccountCode || hasRefMatch) {
       return invoice;
     }
   }
@@ -822,6 +873,7 @@ export function determineSubscriptionStatus(invoice: Invoice): {
     return { status: "UNPAID" };
   }
 
+  // Draft or voided invoices — treat as not yet properly invoiced
   return { status: "UNPAID" };
 }
 
@@ -1084,4 +1136,179 @@ export async function createXeroCreditNote(
   );
 
   return createdNote.creditNoteID;
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate Contact Detection
+// ---------------------------------------------------------------------------
+
+export interface DuplicateContact {
+  contactID: string;
+  name: string;
+  firstName?: string;
+  lastName?: string;
+  emailAddress: string;
+  hasInvoices: boolean;
+  invoiceCount: number;
+  contactStatus: string;
+  updatedDateUTC?: string;
+  xeroLink: string;
+}
+
+export interface DuplicateGroup {
+  email: string;
+  contacts: DuplicateContact[];
+}
+
+/**
+ * Scan all Xero contacts, find duplicate emails, and return grouped results
+ * with invoice counts and deep links so the admin can merge in Xero UI.
+ */
+export async function findDuplicateContacts(): Promise<{
+  duplicateGroups: DuplicateGroup[];
+  totalContacts: number;
+  totalDuplicateEmails: number;
+}> {
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+
+  // Get org shortCode for deep links
+  let shortCode = "";
+  try {
+    const orgResponse = await xero.accountingApi.getOrganisations(tenantId);
+    shortCode = orgResponse.body.organisations?.[0]?.shortCode || "";
+  } catch {
+    // If we can't get shortCode, links will fall back to generic URL
+  }
+
+  function xeroContactLink(contactID: string): string {
+    if (shortCode) {
+      return `https://go.xero.com/organisationlogin/default.aspx?shortcode=${shortCode}&redirecturl=/Contacts/View/${contactID}`;
+    }
+    return `https://go.xero.com/Contacts/View/${contactID}`;
+  }
+
+  // Fetch all contacts, paginated
+  const allContacts: Contact[] = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore) {
+    const response = await xero.accountingApi.getContacts(
+      tenantId,
+      undefined, // ifModifiedSince
+      undefined, // where
+      undefined, // order
+      undefined, // iDs
+      page,
+      false      // includeArchived
+    );
+
+    const contacts = response.body.contacts ?? [];
+    if (contacts.length === 0) {
+      hasMore = false;
+      break;
+    }
+
+    allContacts.push(...contacts);
+    page++;
+    if (contacts.length < 100) {
+      hasMore = false;
+    }
+  }
+
+  // Group by lowercase email
+  const emailMap = new Map<string, Contact[]>();
+  for (const contact of allContacts) {
+    if (!contact.emailAddress) continue;
+    const email = contact.emailAddress.toLowerCase().trim();
+    const existing = emailMap.get(email) || [];
+    existing.push(contact);
+    emailMap.set(email, existing);
+  }
+
+  // Filter to only duplicates (2+ contacts per email)
+  const duplicateEmails = Array.from(emailMap.entries()).filter(
+    ([, contacts]) => contacts.length > 1
+  );
+
+  // For each duplicate group, get invoice counts
+  const duplicateGroups: DuplicateGroup[] = [];
+
+  for (const [email, contacts] of duplicateEmails) {
+    const groupContacts: DuplicateContact[] = [];
+
+    for (const contact of contacts) {
+      let invoiceCount = 0;
+      try {
+        const invoiceResponse = await xero.accountingApi.getInvoices(
+          tenantId,
+          undefined, // ifModifiedSince
+          undefined, // where
+          undefined, // order
+          undefined, // iDs
+          undefined, // invoiceNumbers
+          [contact.contactID!], // contactIDs
+          undefined, // statuses
+          1,         // page
+          false,     // includeArchived
+          undefined, // createdByMyApp
+          undefined, // unitdp
+          true,      // summaryOnly
+          1          // pageSize — we just need the count
+        );
+        invoiceCount = invoiceResponse.body.invoices?.length ?? 0;
+        // If we got 1 result with pageSize 1, there may be more — fetch count properly
+        if (invoiceCount > 0) {
+          const fullResponse = await xero.accountingApi.getInvoices(
+            tenantId,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [contact.contactID!],
+            undefined,
+            undefined,
+            false,
+            undefined,
+            undefined,
+            true
+          );
+          invoiceCount = fullResponse.body.invoices?.length ?? 0;
+        }
+      } catch {
+        // If invoice fetch fails, just show 0
+      }
+
+      groupContacts.push({
+        contactID: contact.contactID!,
+        name: contact.name || `${contact.firstName || ""} ${contact.lastName || ""}`.trim(),
+        firstName: contact.firstName || undefined,
+        lastName: contact.lastName || undefined,
+        emailAddress: email,
+        hasInvoices: invoiceCount > 0,
+        invoiceCount,
+        contactStatus: contact.contactStatus?.toString() || "ACTIVE",
+        updatedDateUTC: contact.updatedDateUTC?.toString(),
+        xeroLink: xeroContactLink(contact.contactID!),
+      });
+    }
+
+    // Sort: contacts with invoices first, then by invoice count desc
+    groupContacts.sort((a, b) => {
+      if (a.hasInvoices !== b.hasInvoices) return a.hasInvoices ? -1 : 1;
+      return b.invoiceCount - a.invoiceCount;
+    });
+
+    duplicateGroups.push({ email, contacts: groupContacts });
+  }
+
+  // Sort groups by email
+  duplicateGroups.sort((a, b) => a.email.localeCompare(b.email));
+
+  return {
+    duplicateGroups,
+    totalContacts: allContacts.length,
+    totalDuplicateEmails: duplicateEmails.length,
+  };
 }

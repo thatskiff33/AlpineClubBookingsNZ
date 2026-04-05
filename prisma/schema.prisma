@@ -26,6 +26,7 @@ enum AgeTier {
 }
 
 enum SubscriptionStatus {
+  NOT_INVOICED
   UNPAID
   PAID
   OVERDUE
@@ -125,7 +126,7 @@ model MemberSubscription {
   id             String             @id @default(cuid())
   memberId       String
   seasonYear     Int
-  status         SubscriptionStatus @default(UNPAID)
+  status         SubscriptionStatus @default(NOT_INVOICED)
   xeroInvoiceId  String?
   paidAt         DateTime?
   createdAt      DateTime           @default(now())
@@ -348,6 +349,33 @@ model CancellationPolicy {
   updatedAt        DateTime @updatedAt
 
   @@unique([daysBeforeStay])
+}
+
+// ---------------------------------------------------------------------------
+// Booking Periods (date-specific policy overrides, e.g. school holidays)
+// ---------------------------------------------------------------------------
+
+model BookingPeriod {
+  id                String   @id @default(cuid())
+  name              String   // e.g. "School Holidays Jul 2026"
+  startDate         DateTime @db.Date
+  endDate           DateTime @db.Date
+  nonMemberHoldDays Int      @default(7)
+  cancellationRules Json     // Array of {daysBeforeStay: number, refundPercentage: number}
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([startDate, endDate])
+}
+
+// ---------------------------------------------------------------------------
+// Booking Defaults (global settings, single row)
+// ---------------------------------------------------------------------------
+
+model BookingDefaults {
+  id                String @id @default("default")
+  nonMemberHoldDays Int    @default(7)
 }
 
 // ---------------------------------------------------------------------------

@@ -136,7 +136,7 @@ export function calculateBookingPrice(
       const rate = findRateForNight(night, guest.ageTier, guest.isMember, seasons);
       if (rate === null) {
         throw new Error(
-          `No rate found for ${guest.ageTier} (member: ${guest.isMember}) on ${night.toISOString().split("T")[0]}`
+          `No rate found for ${guest.ageTier} (member: ${guest.isMember}) on ${night.toLocaleDateString("en-CA")}`
         );
       }
       perNightCents.push(rate);

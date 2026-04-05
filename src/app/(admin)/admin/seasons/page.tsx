@@ -28,12 +28,12 @@ interface Season {
 
 const AGE_TIERS = ["ADULT", "YOUTH", "CHILD"] as const
 const RATE_LABELS: Record<string, string> = {
-  "ADULT-true": "Adult Member",
-  "ADULT-false": "Adult Non-Member",
-  "YOUTH-true": "Youth Member",
-  "YOUTH-false": "Youth Non-Member",
-  "CHILD-true": "Child Member",
-  "CHILD-false": "Child Non-Member",
+  "ADULT-true": "Adult Member (18+)",
+  "ADULT-false": "Adult Non-Member (18+)",
+  "YOUTH-true": "Youth Member (10\u201317)",
+  "YOUTH-false": "Youth Non-Member (10\u201317)",
+  "CHILD-true": "Child Member (under 10)",
+  "CHILD-false": "Child Non-Member (under 10)",
 }
 
 function emptyRates(): Record<string, number> {
@@ -202,9 +202,9 @@ export default function SeasonsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Seasons & Rates</h1>
+          <h1 className="text-3xl font-bold">Hut Fees & Seasons</h1>
           <p className="text-muted-foreground mt-1">
-            Configure seasonal pricing periods and nightly rates
+            Configure seasonal pricing periods and nightly hut fee rates
           </p>
         </div>
         {!showForm && (

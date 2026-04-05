@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { calculateBookingPrice, type SeasonRateData } from "@/lib/pricing";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { BookingStatus } from "@prisma/client";
@@ -69,10 +70,11 @@ export async function POST(request: NextRequest) {
 
   const hasNonMembers = guests.some((g) => !g.isMember);
   const allMembers = !hasNonMembers;
+  const holdDays = hasNonMembers ? await getNonMemberHoldDays(checkIn) : 7;
   const daysUntilCheckIn = Math.ceil(
     (checkIn.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
   );
-  const shouldBePending = hasNonMembers && daysUntilCheckIn > 7;
+  const shouldBePending = hasNonMembers && daysUntilCheckIn > holdDays;
   const status = shouldBePending ? BookingStatus.PENDING : BookingStatus.CONFIRMED;
 
   let bumpedBookingIds: string[] = [];
@@ -235,7 +237,7 @@ export async function POST(request: NextRequest) {
       const finalPriceCents = price.totalPriceCents - discountCents;
 
       const nonMemberHoldUntil = shouldBePending
-        ? new Date(checkIn.getTime() - 7 * 24 * 60 * 60 * 1000)
+        ? new Date(checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000)
         : null;
 
       const newBooking = await tx.booking.create({
