@@ -5,6 +5,7 @@ import { z } from "zod";
 import { BookingStatus } from "@prisma/client";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { eachDayOfInterval, subDays, startOfMonth, endOfMonth, format } from "date-fns";
+import logger from "@/lib/logger";
 
 const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -187,7 +188,7 @@ export async function GET(request: NextRequest) {
       trends: trendData,
     });
   } catch (err) {
-    console.error("[reports] Error generating reports:", err);
+    logger.error({ err }, "Error generating reports");
     return NextResponse.json({ error: "Failed to generate reports" }, { status: 500 });
   }
 }

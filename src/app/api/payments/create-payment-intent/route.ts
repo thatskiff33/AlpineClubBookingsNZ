@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
+import logger from "@/lib/logger";
 
 export async function POST(request: NextRequest) {
   try {
@@ -98,7 +99,7 @@ export async function POST(request: NextRequest) {
       paymentIntentId: paymentIntent.id,
     });
   } catch (error) {
-    console.error("Error creating payment intent:", error);
+    logger.error({ err: error }, "Error creating payment intent");
     return NextResponse.json(
       { error: "Failed to create payment intent" },
       { status: 500 }

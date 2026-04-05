@@ -8,6 +8,7 @@ import {
   bookingCancelledTemplate,
   choreRosterTemplate,
 } from "./email-templates";
+import logger from "@/lib/logger";
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "email-smtp.ap-southeast-2.amazonaws.com",
@@ -31,8 +32,8 @@ export async function sendEmail({
   html: string;
 }) {
   if (process.env.NODE_ENV === "development") {
-    console.log(`[EMAIL] To: ${to} | Subject: ${subject}`);
-    console.log(html);
+    logger.info({ to, subject }, "Email sent (dev mode)");
+    logger.debug({ html }, "Email HTML content");
     return;
   }
 

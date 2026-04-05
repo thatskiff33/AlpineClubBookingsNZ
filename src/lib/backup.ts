@@ -15,6 +15,7 @@
 import { execSync } from "child_process";
 import { existsSync, mkdirSync, readdirSync, unlinkSync, statSync } from "fs";
 import path from "path";
+import logger from "@/lib/logger";
 
 const BACKUP_DIR = "/tmp/tacbookings-backups";
 const DEFAULT_RETENTION_DAYS = 7;
@@ -99,7 +100,7 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
         );
         uploadedToS3 = true;
       } catch (s3Err) {
-        console.error("[BACKUP] S3 upload failed:", s3Err);
+        logger.error({ err: s3Err, job: "backup" }, "S3 upload failed");
         // Don't fail the backup if S3 upload fails - local backup is still valid
       }
     }
@@ -116,7 +117,7 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[BACKUP] pg_dump failed:", message);
+    logger.error({ err, job: "backup" }, "pg_dump failed");
     return { success: false, error: `pg_dump failed: ${message}` };
   }
 }
@@ -138,10 +139,10 @@ function cleanupOldBackups() {
       const stats = statSync(filepath);
       if (stats.mtimeMs < cutoff) {
         unlinkSync(filepath);
-        console.log(`[BACKUP] Cleaned up old backup: ${file}`);
+        logger.info({ file, job: "backup" }, "Cleaned up old backup");
       }
     }
   } catch (err) {
-    console.error("[BACKUP] Cleanup error:", err);
+    logger.error({ err, job: "backup" }, "Backup cleanup error");
   }
 }

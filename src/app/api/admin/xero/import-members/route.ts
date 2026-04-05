@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { importMembersFromXeroGroups } from "@/lib/xero";
+import logger from "@/lib/logger";
 
 const importSchema = z.object({
   groupMappings: z.array(
@@ -40,15 +41,15 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    console.log("[import-members] Starting import with", parsed.data.groupMappings.length, "group(s):", parsed.data.groupMappings.map(g => `${g.groupName} (${g.ageTier})`).join(", "));
+    logger.info({ groupCount: parsed.data.groupMappings.length, groups: parsed.data.groupMappings.map(g => `${g.groupName} (${g.ageTier})`).join(", ") }, "Starting member import from Xero");
     const result = await importMembersFromXeroGroups(
       parsed.data.groupMappings,
       parsed.data.sendInvites
     );
-    console.log("[import-members] Result:", JSON.stringify(result));
+    logger.info({ result }, "Member import from Xero completed");
     return NextResponse.json(result);
   } catch (error) {
-    console.error("[import-members] Error:", error);
+    logger.error({ err: error }, "Member import from Xero failed");
     const message =
       error instanceof Error ? error.message : "Member import failed";
     return NextResponse.json({ error: message }, { status: 500 });

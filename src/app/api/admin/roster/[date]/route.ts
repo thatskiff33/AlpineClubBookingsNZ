@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { allocateChores, ChoreTemplateInput, GuestInput, ChoreHistoryEntry } from "@/lib/chore-allocator"
 import { sendChoreRosterEmail } from "@/lib/email"
 import { z } from "zod"
+import logger from "@/lib/logger"
 
 const rosterActionSchema = z.discriminatedUnion("action", [
   z.object({
@@ -341,7 +342,7 @@ export async function PUT(
     }
   }
   } catch (err) {
-    console.error("[roster] Error processing action:", err)
+    logger.error({ err }, "Error processing roster action")
     return NextResponse.json({ error: "Failed to process roster action" }, { status: 500 })
   }
 

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createSetupIntent, findOrCreateCustomer } from "@/lib/stripe";
 import { CreateSetupIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
+import logger from "@/lib/logger";
 
 export async function POST(request: NextRequest) {
   try {
@@ -103,7 +104,7 @@ export async function POST(request: NextRequest) {
       setupIntentId: setupIntent.id,
     });
   } catch (error) {
-    console.error("Error creating setup intent:", error);
+    logger.error({ err: error }, "Error creating setup intent");
     return NextResponse.json(
       { error: "Failed to create setup intent" },
       { status: 500 }

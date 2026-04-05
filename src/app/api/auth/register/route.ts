@@ -6,6 +6,7 @@ import { sendWelcomeEmail } from "@/lib/email";
 import { computeAgeTier } from "@/lib/age-tier";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { AgeTier } from "@prisma/client";
+import logger from "@/lib/logger";
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -62,12 +63,12 @@ export async function POST(req: NextRequest) {
 
     // Fire-and-forget — don't fail registration if email errors
     sendWelcomeEmail(member.email, member.firstName).catch((err) => {
-      console.error("[register] Failed to send welcome email:", err);
+      logger.error({ err }, "Failed to send welcome email");
     });
 
     return NextResponse.json({ success: true, memberId: member.id }, { status: 201 });
   } catch (err) {
-    console.error("[register] Unexpected error:", err);
+    logger.error({ err }, "Unexpected error in register");
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

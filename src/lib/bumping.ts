@@ -3,6 +3,7 @@ import { LODGE_CAPACITY } from "./capacity";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { eachDayOfInterval, subDays, format, startOfDay } from "date-fns";
 import { sendBookingBumpedEmail } from "./email";
+import logger from "@/lib/logger";
 
 export interface BumpResult {
   bumpedBookingIds: string[];
@@ -219,7 +220,7 @@ export async function sendBumpedNotifications(
         booking.guests.length
       );
     } catch (err) {
-      console.error(`Failed to send bumped email for booking ${bookingId}:`, err);
+      logger.error({ err, bookingId }, "Failed to send bumped email");
     }
   }
 }

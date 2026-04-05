@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { handleXeroCallback } from "@/lib/xero";
+import logger from "@/lib/logger";
 
 /**
  * GET /api/admin/xero/callback
@@ -20,12 +21,11 @@ export async function GET(request: NextRequest) {
     // resolves to the container's internal address like 0.0.0.0:3000).
     const incomingUrl = new URL(request.url);
     const publicCallbackUrl = new URL(incomingUrl.pathname + incomingUrl.search, baseUrl).toString();
-    console.log("[Xero callback] request.url:", request.url);
-    console.log("[Xero callback] publicCallbackUrl:", publicCallbackUrl);
+    logger.info({ publicCallbackUrl }, "Processing Xero OAuth callback");
     await handleXeroCallback(publicCallbackUrl);
     return NextResponse.redirect(new URL("/admin/xero?connected=true", baseUrl));
   } catch (error) {
-    console.error("Xero callback error (full):", error);
+    logger.error({ err: error }, "Xero callback error");
     const message = error instanceof Error ? error.message : String(error ?? "Xero connection failed");
     return NextResponse.redirect(
       new URL(`/admin/xero?error=${encodeURIComponent(message)}`, baseUrl)

@@ -8,6 +8,7 @@ import {
 } from "./cancellation";
 import { sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
+import logger from "@/lib/logger";
 
 export interface CancelBookingResult {
   success: boolean;
@@ -76,7 +77,7 @@ export async function cancelBooking(
       booking.checkIn,
       booking.checkOut,
       0
-    ).catch(() => {});
+    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     return {
       status: 200,
@@ -111,7 +112,7 @@ export async function cancelBooking(
       booking.checkIn,
       booking.checkOut,
       0
-    ).catch(() => {});
+    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     return {
       status: 200,
@@ -173,8 +174,8 @@ export async function cancelBooking(
       if (await isXeroConnected()) {
         await createXeroCreditNote(booking.payment.id, refundAmountCents);
       }
-    } catch {
-      // Xero credit note failure is non-fatal
+    } catch (xeroErr) {
+      logger.error({ err: xeroErr, bookingId, paymentId: booking.payment.id }, "Failed to create Xero credit note");
     }
 
     await cleanupPromoRedemption(bookingId);
@@ -193,7 +194,7 @@ export async function cancelBooking(
       booking.checkIn,
       booking.checkOut,
       refundAmountCents
-    ).catch(() => {});
+    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     return {
       status: 200,
@@ -228,7 +229,7 @@ export async function cancelBooking(
     booking.checkIn,
     booking.checkOut,
     0
-  ).catch(() => {});
+  ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
   return {
     status: 200,

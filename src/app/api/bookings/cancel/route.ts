@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { CancelBookingSchema } from "@/types/payments";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { getClientIp } from "@/lib/rate-limit";
+import logger from "@/lib/logger";
 
 /**
  * @deprecated Use POST /api/bookings/[id]/cancel instead.
@@ -10,9 +11,7 @@ import { getClientIp } from "@/lib/rate-limit";
  */
 export async function POST(request: NextRequest) {
   try {
-    console.warn(
-      "[DEPRECATION] POST /api/bookings/cancel with body { bookingId } is deprecated. Use POST /api/bookings/{id}/cancel instead."
-    );
+    logger.warn("[DEPRECATION] POST /api/bookings/cancel with body { bookingId } is deprecated. Use POST /api/bookings/{id}/cancel instead.");
 
     const session = await auth();
     if (!session?.user?.id) {
@@ -44,7 +43,7 @@ export async function POST(request: NextRequest) {
       { status: result.status }
     );
   } catch (error) {
-    console.error("Error cancelling booking:", error);
+    logger.error({ err: error }, "Error cancelling booking");
     return NextResponse.json(
       { error: "Failed to cancel booking" },
       { status: 500 }

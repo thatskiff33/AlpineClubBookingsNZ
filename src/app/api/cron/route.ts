@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { confirmPendingBookings } from "@/lib/cron-confirm-pending";
+import logger from "@/lib/logger";
 
 /**
  * Manual trigger for the pending booking confirmation cron job.
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest) {
       failed: result.failedBookingIds,
     });
   } catch (err) {
-    console.error("Cron endpoint error:", err);
+    logger.error({ err }, "Cron endpoint error");
     return NextResponse.json(
       { error: "Failed to process pending bookings" },
       { status: 500 }

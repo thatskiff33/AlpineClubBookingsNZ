@@ -19,6 +19,7 @@ import {
 import { calculatePromoDiscount } from "@/lib/pricing";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { sendBookingPendingEmail } from "@/lib/email";
+import logger from "@/lib/logger";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -282,7 +283,7 @@ export async function POST(request: NextRequest) {
     // Send bumped notification emails AFTER transaction commits
     if (bumpedBookingIds.length > 0) {
       sendBumpedNotifications(bumpedBookingIds).catch((err) =>
-        console.error("Failed to send bump notifications:", err)
+        logger.error({ err }, "Failed to send bump notifications")
       );
     }
 
@@ -297,7 +298,7 @@ export async function POST(request: NextRequest) {
           booking.checkOut,
           booking.guests.length,
           booking.nonMemberHoldUntil
-        ).catch((err) => console.error("Failed to send pending booking email:", err));
+        ).catch((err) => logger.error({ err }, "Failed to send pending booking email"));
       }
     }
 

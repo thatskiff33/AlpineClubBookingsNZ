@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { getClientIp } from "@/lib/rate-limit";
+import logger from "@/lib/logger";
 
 export async function POST(
   request: NextRequest,
@@ -29,7 +30,7 @@ export async function POST(
       { status: result.status }
     );
   } catch (error) {
-    console.error("Error cancelling booking:", error);
+    logger.error({ err: error }, "Error cancelling booking");
     return NextResponse.json(
       { error: "Failed to cancel booking" },
       { status: 500 }

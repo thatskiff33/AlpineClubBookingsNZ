@@ -3,6 +3,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import logger from "@/lib/logger";
 
 const resetPasswordSchema = z.object({
   token: z.string().min(1, "Token is required"),
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("[reset-password] Unexpected error:", err);
+    logger.error({ err }, "Unexpected error in reset-password");
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -7,6 +7,7 @@ import {
   sendBookingConfirmedEmail,
   sendBookingBumpedEmail,
 } from "./email";
+import logger from "@/lib/logger";
 
 export interface CronConfirmResult {
   confirmedBookingIds: string[];
@@ -79,7 +80,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             booking.guests.length
           );
         } catch (emailErr) {
-          console.error(`Failed to send bumped email for booking ${booking.id}:`, emailErr);
+          logger.error({ err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send bumped email");
         }
 
         continue;
@@ -87,9 +88,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
       // Beds available - try to charge saved payment method
       if (!booking.payment?.stripePaymentMethodId || !booking.payment?.stripeCustomerId) {
-        console.error(
-          `Booking ${booking.id} has no saved payment method - cannot auto-confirm`
-        );
+        logger.error({ bookingId: booking.id, job: "confirmPendingBookings" }, "Booking has no saved payment method - cannot auto-confirm");
         result.failedBookingIds.push(booking.id);
         continue;
       }
@@ -101,7 +100,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       });
       if (claimed.count === 0) {
         // Another process already changed the status - skip
-        console.log(`Booking ${booking.id} already processed by another handler`);
+        logger.info({ bookingId: booking.id, job: "confirmPendingBookings" }, "Booking already processed by another handler");
         continue;
       }
 
@@ -132,10 +131,10 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         try {
           if (await isXeroConnected()) {
             await createXeroInvoiceForBooking(booking.id);
-            console.log(`[CRON] Xero invoice created for booking ${booking.id}`);
+            logger.info({ bookingId: booking.id, job: "confirmPendingBookings" }, "Xero invoice created");
           }
         } catch (xeroErr) {
-          console.error(`[CRON] Failed to create Xero invoice for booking ${booking.id}:`, xeroErr);
+          logger.error({ err: xeroErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to create Xero invoice");
         }
 
         try {
@@ -151,7 +150,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               : undefined
           );
         } catch (emailErr) {
-          console.error(`Failed to send confirmation email for booking ${booking.id}:`, emailErr);
+          logger.error({ err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send confirmation email");
         }
       } else {
         // Payment is processing (requires_action, etc.) - revert to PENDING for webhook to handle
@@ -170,17 +169,15 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         ]);
 
         // Will be resolved by Stripe webhook
-        console.log(
-          `Booking ${booking.id} payment processing (status: ${paymentIntent.status})`
-        );
+        logger.info({ bookingId: booking.id, paymentStatus: paymentIntent.status, job: "confirmPendingBookings" }, "Booking payment processing");
       }
     } catch (err) {
-      console.error(`Error processing pending booking ${booking.id}:`, err);
+      logger.error({ err, bookingId: booking.id, job: "confirmPendingBookings" }, "Error processing pending booking");
       // Revert status if we claimed it but the charge failed
       await prisma.booking.updateMany({
         where: { id: booking.id, status: BookingStatus.CONFIRMED },
         data: { status: BookingStatus.PENDING },
-      }).catch((revertErr) => console.error(`Failed to revert booking ${booking.id}:`, revertErr));
+      }).catch((revertErr) => logger.error({ err: revertErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to revert booking status"));
       result.failedBookingIds.push(booking.id);
     }
   }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
+import logger from "@/lib/logger";
 
 /**
  * POST /api/webhooks/xero
@@ -51,21 +52,17 @@ export async function POST(request: NextRequest) {
     const { eventType, eventCategory, resourceId } = event;
 
     // Log for now - specific handlers can be added as needed
-    console.log(
-      `[Xero Webhook] ${eventCategory}.${eventType}: ${resourceId}`
-    );
+    logger.info({ eventCategory, eventType, resourceId }, "Xero webhook event received");
 
     // Handle contact updates (membership changes)
     if (eventCategory === "CONTACT" && eventType === "UPDATE") {
       // Could trigger membership re-check here
-      console.log(`[Xero Webhook] Contact updated: ${resourceId}`);
+      logger.info({ resourceId }, "Xero contact updated");
     }
 
     // Handle invoice status changes
     if (eventCategory === "INVOICE") {
-      console.log(
-        `[Xero Webhook] Invoice ${eventType}: ${resourceId}`
-      );
+      logger.info({ eventType, resourceId }, "Xero invoice event");
     }
   }
 

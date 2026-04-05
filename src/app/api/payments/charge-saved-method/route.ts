@@ -5,6 +5,7 @@ import { chargePaymentMethod } from "@/lib/stripe";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import { auth } from "@/lib/auth";
 import { z } from "zod";
+import logger from "@/lib/logger";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -122,10 +123,10 @@ export async function POST(request: NextRequest) {
       try {
         if (await isXeroConnected()) {
           await createXeroInvoiceForBooking(booking.id);
-          console.log(`Xero invoice created for booking ${booking.id}`);
+          logger.info({ bookingId: booking.id }, "Xero invoice created for booking");
         }
       } catch (xeroErr) {
-        console.error(`Failed to create Xero invoice for booking ${booking.id}:`, xeroErr);
+        logger.error({ err: xeroErr, bookingId: booking.id }, "Failed to create Xero invoice for booking");
       }
     }
 
@@ -135,7 +136,7 @@ export async function POST(request: NextRequest) {
       status: paymentIntent.status,
     });
   } catch (error) {
-    console.error("Error charging saved method:", error);
+    logger.error({ err: error }, "Error charging saved method");
     return NextResponse.json(
       { error: "Failed to charge saved payment method" },
       { status: 500 }

@@ -4,6 +4,7 @@ import { constructWebhookEvent } from "@/lib/stripe";
 import { isXeroConnected, createXeroInvoiceForBooking, createXeroCreditNote } from "@/lib/xero";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import Stripe from "stripe";
+import logger from "@/lib/logger";
 
 /**
  * Stripe webhook handler.
@@ -14,7 +15,7 @@ import Stripe from "stripe";
 export async function POST(request: NextRequest) {
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
-    console.error("STRIPE_WEBHOOK_SECRET is not set");
+    logger.error("STRIPE_WEBHOOK_SECRET is not set");
     return NextResponse.json(
       { error: "Webhook secret not configured" },
       { status: 500 }
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
     event = constructWebhookEvent(body, signature, webhookSecret);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("Webhook signature verification failed:", message);
+    logger.error({ err: message }, "Webhook signature verification failed");
     return NextResponse.json(
       { error: "Webhook signature verification failed" },
       { status: 400 }
@@ -83,7 +84,7 @@ export async function POST(request: NextRequest) {
 
       default:
         // Unhandled event type - log but don't error
-        console.log(`Unhandled Stripe event type: ${event.type}`);
+        logger.info({ eventType: event.type }, "Unhandled Stripe event type");
     }
 
     // Record event as processed
@@ -95,7 +96,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ received: true });
   } catch (error) {
-    console.error(`Error processing webhook event ${event.type}:`, error);
+    logger.error({ err: error, eventType: event.type }, "Error processing webhook event");
     return NextResponse.json(
       { error: "Webhook handler failed" },
       { status: 500 }
@@ -111,7 +112,7 @@ async function handlePaymentIntentSucceeded(
 ) {
   const bookingId = paymentIntent.metadata?.bookingId;
   if (!bookingId) {
-    console.warn("PaymentIntent succeeded but no bookingId in metadata:", paymentIntent.id);
+    logger.warn({ paymentIntentId: paymentIntent.id }, "PaymentIntent succeeded but no bookingId in metadata");
     return;
   }
 
@@ -126,7 +127,7 @@ async function handlePaymentIntentSucceeded(
     });
 
     if (!paymentByBooking) {
-      console.warn("No payment record found for PaymentIntent:", paymentIntent.id);
+      logger.warn({ paymentIntentId: paymentIntent.id, bookingId }, "No payment record found for PaymentIntent");
       return;
     }
   }
@@ -150,7 +151,7 @@ async function handlePaymentIntentSucceeded(
     }),
   ]);
 
-  console.log(`Booking ${bookingId} confirmed via PaymentIntent ${paymentIntent.id}`);
+  logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Booking confirmed via PaymentIntent");
 
   // Send confirmation email
   try {
@@ -172,17 +173,17 @@ async function handlePaymentIntentSucceeded(
       );
     }
   } catch (emailErr) {
-    console.error(`Failed to send confirmation email for booking ${bookingId}:`, emailErr);
+    logger.error({ err: emailErr, bookingId }, "Failed to send confirmation email");
   }
 
   // Create Xero invoice if connected
   try {
     if (await isXeroConnected()) {
       await createXeroInvoiceForBooking(bookingId);
-      console.log(`Xero invoice created for booking ${bookingId}`);
+      logger.info({ bookingId }, "Xero invoice created for booking");
     }
   } catch (xeroErr) {
-    console.error(`Failed to create Xero invoice for booking ${bookingId}:`, xeroErr);
+    logger.error({ err: xeroErr, bookingId }, "Failed to create Xero invoice for booking");
   }
 }
 
@@ -200,10 +201,10 @@ async function handlePaymentIntentFailed(
     data: { status: "FAILED" },
   }).catch(() => {
     // Payment record may not exist yet
-    console.warn("Could not update payment for failed intent:", paymentIntent.id);
+    logger.warn({ paymentIntentId: paymentIntent.id, bookingId }, "Could not update payment for failed intent");
   });
 
-  console.log(`Payment failed for booking ${bookingId}: ${paymentIntent.id}`);
+  logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Payment failed for booking");
 
   // TODO: Send payment failure notification email
 }
@@ -217,7 +218,7 @@ async function handleSetupIntentSucceeded(
 ) {
   const bookingId = setupIntent.metadata?.bookingId;
   if (!bookingId) {
-    console.warn("SetupIntent succeeded but no bookingId in metadata:", setupIntent.id);
+    logger.warn({ setupIntentId: setupIntent.id }, "SetupIntent succeeded but no bookingId in metadata");
     return;
   }
 
@@ -227,7 +228,7 @@ async function handleSetupIntentSucceeded(
       : setupIntent.payment_method?.id ?? null;
 
   if (!paymentMethodId) {
-    console.warn("SetupIntent succeeded but no payment_method:", setupIntent.id);
+    logger.warn({ setupIntentId: setupIntent.id, bookingId }, "SetupIntent succeeded but no payment_method");
     return;
   }
 
@@ -239,9 +240,7 @@ async function handleSetupIntentSucceeded(
     },
   });
 
-  console.log(
-    `Payment method ${paymentMethodId} saved for booking ${bookingId} via SetupIntent ${setupIntent.id}`
-  );
+  logger.info({ bookingId, setupIntentId: setupIntent.id }, "Payment method saved for booking via SetupIntent");
 }
 
 /**
@@ -253,7 +252,7 @@ async function handleSetupIntentFailed(
   const bookingId = setupIntent.metadata?.bookingId;
   if (!bookingId) return;
 
-  console.log(`SetupIntent failed for booking ${bookingId}: ${setupIntent.id}`);
+  logger.info({ bookingId, setupIntentId: setupIntent.id }, "SetupIntent failed for booking");
 
   // TODO: Notify member that card setup failed
 }
@@ -274,7 +273,7 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
   });
 
   if (!payment) {
-    console.warn("No payment record found for refunded charge PI:", paymentIntentId);
+    logger.warn({ paymentIntentId }, "No payment record found for refunded charge");
     return;
   }
 
@@ -289,17 +288,15 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     },
   });
 
-  console.log(
-    `Refund processed for payment ${payment.id}: ${refundedAmount} cents (${isFullRefund ? "full" : "partial"})`
-  );
+  logger.info({ paymentId: payment.id, refundedAmount, isFullRefund }, "Refund processed for payment");
 
   // Create Xero credit note if connected
   try {
     if (await isXeroConnected()) {
       await createXeroCreditNote(payment.id, refundedAmount);
-      console.log(`Xero credit note created for payment ${payment.id}`);
+      logger.info({ paymentId: payment.id }, "Xero credit note created for payment");
     }
   } catch (xeroErr) {
-    console.error(`Failed to create Xero credit note for payment ${payment.id}:`, xeroErr);
+    logger.error({ err: xeroErr, paymentId: payment.id }, "Failed to create Xero credit note for payment");
   }
 }
