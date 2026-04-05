@@ -17,6 +17,9 @@ import {
   Menu,
   Mountain,
   X,
+  CreditCard,
+  FileText,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -32,6 +35,7 @@ const navItems = [
   { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/members", label: "Members", icon: Users },
   { href: "/admin/seasons", label: "Hut Fees & Seasons", icon: CalendarRange },
+  { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
   { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
   { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
   { href: "/admin/chores", label: "Chores", icon: CheckSquare },
@@ -41,6 +45,8 @@ const navItems = [
     label: "Booking Policies",
     icon: XCircle,
   },
+  { href: "/admin/payments", label: "Payments", icon: CreditCard },
+  { href: "/admin/audit-log", label: "Audit Log", icon: Shield },
   { href: "/admin/xero", label: "Xero", icon: RefreshCw },
   { href: "/admin/reports", label: "Reports", icon: BarChart2 },
 ];
