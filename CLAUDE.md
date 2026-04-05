@@ -5,7 +5,7 @@
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 292 tests pass (14 test files)
+npm test              # 312 tests pass (15 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -25,7 +25,7 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases complete. Security audit + 5 integration reviews done. 292 tests pass, build succeeds.
+All 9 build phases + Delivery Phase 1 complete. Security audit + 5 integration reviews done. 312 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard
@@ -37,10 +37,47 @@ All 9 build phases complete. Security audit + 5 integration reviews done. 292 te
 - Chore roster: round-robin allocator, admin review/edit, printable A4 view, email notifications
 - Admin: seasons CRUD, cancellation policy, members list, bookings with filters, reports dashboard (recharts)
 - Infrastructure: security headers (CSP, HSTS), rate limiting, audit logging, automated pg_dump backups, error pages
+- Cancellation: shared service in `src/lib/booking-cancel.ts`, both routes delegate to it
+- Logging: structured JSON logging via pino (`src/lib/logger.ts`), LOG_LEVEL env var
+- Health: `GET /api/health` checks DB, Stripe, Xero, SMTP with latency and status
+- Cron tracking: `CronJobRun` model records execution metadata, auto-prunes after 90 days
+- Schema: `BookingModification` model, `Payment.changeFeeCents` field (for future booking mods)
+- Refunds: `getRefundTier()` extracted from cancellation logic with full test coverage
+- Docker: log rotation (json-file, 10m x 5) on all services
+
+### Delivery Phase 1: Foundational Infrastructure - COMPLETED
+
+**Date:** 2026-04-05
+**Branch:** phase-1-infra
+**Tests:** 312 (was 292, +20 new)
+
+**Features built:**
+1. **CAN-01**: Shared cancellation service (`src/lib/booking-cancel.ts`) - both cancel routes delegate
+2. **CAN-02**: CancelBookingButton uses path-based route, body-based route logs deprecation
+3. **SCH-01**: `BookingModification` Prisma model with indexes
+4. **SCH-02**: `Payment.changeFeeCents` field (default 0)
+5. **FEE-01**: `getRefundTier()` extracted from cancellation.ts, 12 new tests
+6. **OBS-04**: Structured pino logger, all ~85 console.* calls replaced in src/lib/ and src/app/api/
+7. **OBS-06**: `GET /api/health` endpoint with DB/Stripe/Xero/SMTP checks, 8 new tests
+8. **OBS-09**: `CronJobRun` model, instrumentation.ts persists run metadata, 90-day auto-prune
+9. **OBS-13**: Docker Compose log rotation (json-file, max-size 10m, max-file 5) on all 3 services
+
+**New files:**
+- `src/lib/booking-cancel.ts` - Shared cancellation service
+- `src/lib/logger.ts` - Pino structured logger
+- `src/app/api/health/route.ts` - Health check endpoint
+- `src/lib/__tests__/health.test.ts` - Health endpoint tests
+
+**New Prisma models (require migration):**
+- `BookingModification` - Booking change history with before/after snapshots
+- `CronJobRun` - Cron execution tracking
+
+**New env vars:**
+- `LOG_LEVEL` - Logging level (default: info in production, debug in development)
 
 ## What's Next
 
-See `docs/DELIVERY_PLAN.md` for the next wave of ~75 features grouped into 10 dependency-ordered phases.
+Phase 1 (Foundational Infrastructure) complete. See `docs/DELIVERY_PLAN.md` for remaining phases 2-10.
 
 ## Context
 
