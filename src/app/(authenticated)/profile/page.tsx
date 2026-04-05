@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
 import { ProfileForm } from "./profile-form";
+import { ChangeEmailForm } from "./change-email-form";
 import {
   Card,
   CardContent,
@@ -118,6 +119,19 @@ export default async function ProfilePage() {
               </Badge>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Change Email */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Change Email</CardTitle>
+          <CardDescription>
+            Update your email address. You will need to verify the new address.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ChangeEmailForm currentEmail={member.email} />
         </CardContent>
       </Card>
 
