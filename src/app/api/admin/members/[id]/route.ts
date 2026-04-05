@@ -24,7 +24,7 @@ const updateMemberSchema = z.object({
 
 /**
  * GET /api/admin/members/[id]
- * Get a single member with subscription details.
+ * Get full member detail including subscriptions, bookings, audit logs, and stats.
  */
 export async function GET(
   _req: NextRequest,
@@ -36,32 +36,71 @@ export async function GET(
   }
 
   const { id } = await params;
-  const member = await prisma.member.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      email: true,
-      phone: true,
-      dateOfBirth: true,
-      role: true,
-      ageTier: true,
-      active: true,
-      xeroContactId: true,
-      createdAt: true,
-      subscriptions: {
-        orderBy: { seasonYear: "desc" },
-        take: 3,
+
+  const [member, bookings, auditLogs, stats] = await Promise.all([
+    prisma.member.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        dateOfBirth: true,
+        role: true,
+        ageTier: true,
+        active: true,
+        xeroContactId: true,
+        createdAt: true,
+        subscriptions: {
+          orderBy: { seasonYear: "desc" },
+        },
       },
-    },
-  });
+    }),
+    prisma.booking.findMany({
+      where: { memberId: id },
+      orderBy: { checkIn: "desc" },
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        status: true,
+        finalPriceCents: true,
+        _count: { select: { guests: true } },
+      },
+    }),
+    prisma.auditLog.findMany({
+      where: {
+        OR: [{ memberId: id }, { targetId: id }],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    }),
+    prisma.booking.aggregate({
+      where: {
+        memberId: id,
+        status: { in: ["CONFIRMED", "COMPLETED"] },
+      },
+      _sum: { finalPriceCents: true },
+      _count: true,
+      _max: { checkOut: true },
+    }),
+  ]);
 
   if (!member) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  return NextResponse.json(member);
+  return NextResponse.json({
+    ...member,
+    bookings,
+    auditLogs,
+    stats: {
+      totalBookings: stats._count,
+      totalSpendCents: stats._sum.finalPriceCents || 0,
+      lastStay: stats._max.checkOut || null,
+    },
+  });
 }
 
 /**

@@ -26,9 +26,11 @@ const createMemberSchema = z.object({
   sendInvite: z.boolean().default(false),
 });
 
+const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
+
 /**
  * GET /api/admin/members
- * List members with optional search query.
+ * List members with search, filtering, sorting, and pagination.
  */
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -36,40 +38,139 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
-  const q = req.nextUrl.searchParams.get("q") || undefined;
+  const sp = req.nextUrl.searchParams;
+  const q = sp.get("q") || undefined;
+
+  // Pagination
+  const page = Math.max(1, parseInt(sp.get("page") || "1", 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, parseInt(sp.get("pageSize") || "25", 10) || 25));
+
+  // Sorting
+  const sortByRaw = sp.get("sortBy") || "name";
+  const sortBy = (SORT_BY_WHITELIST as readonly string[]).includes(sortByRaw) ? sortByRaw : "name";
+  const sortDir = sp.get("sortDir") === "desc" ? "desc" : "asc";
+
+  // Build orderBy
+  let orderBy: Record<string, string>[] | Record<string, string>;
+  switch (sortBy) {
+    case "name":
+      orderBy = [{ lastName: sortDir }, { firstName: sortDir }];
+      break;
+    case "email":
+      orderBy = { email: sortDir };
+      break;
+    case "role":
+      orderBy = { role: sortDir };
+      break;
+    case "ageTier":
+      orderBy = { ageTier: sortDir };
+      break;
+    case "active":
+      orderBy = { active: sortDir };
+      break;
+    case "createdAt":
+      orderBy = { createdAt: sortDir };
+      break;
+    default:
+      orderBy = [{ lastName: "asc" }, { firstName: "asc" }];
+  }
 
   const currentSeasonYear = getSeasonYear(new Date());
 
-  const members = await prisma.member.findMany({
-    where: q
-      ? {
-          OR: [
-            { firstName: { contains: q, mode: "insensitive" } },
-            { lastName: { contains: q, mode: "insensitive" } },
-            { email: { contains: q, mode: "insensitive" } },
-          ],
-        }
-      : undefined,
-    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      email: true,
-      phone: true,
-      dateOfBirth: true,
-      role: true,
-      ageTier: true,
-      active: true,
-      xeroContactId: true,
-      createdAt: true,
+  // Build where clause
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const where: Record<string, any> = {};
+  const andConditions: Record<string, unknown>[] = [];
+
+  // Text search
+  if (q) {
+    andConditions.push({
+      OR: [
+        { firstName: { contains: q, mode: "insensitive" } },
+        { lastName: { contains: q, mode: "insensitive" } },
+        { email: { contains: q, mode: "insensitive" } },
+      ],
+    });
+  }
+
+  // Filter: role
+  const roleFilter = sp.get("role");
+  if (roleFilter && (roleFilter === "MEMBER" || roleFilter === "ADMIN")) {
+    andConditions.push({ role: roleFilter });
+  }
+
+  // Filter: active
+  const activeFilter = sp.get("active");
+  if (activeFilter === "true") {
+    andConditions.push({ active: true });
+  } else if (activeFilter === "false") {
+    andConditions.push({ active: false });
+  }
+
+  // Filter: ageTier
+  const ageTierFilter = sp.get("ageTier");
+  if (ageTierFilter && ["ADULT", "YOUTH", "CHILD"].includes(ageTierFilter)) {
+    andConditions.push({ ageTier: ageTierFilter });
+  }
+
+  // Filter: xeroLinked
+  const xeroLinkedFilter = sp.get("xeroLinked");
+  if (xeroLinkedFilter === "true") {
+    andConditions.push({ xeroContactId: { not: null } });
+  } else if (xeroLinkedFilter === "false") {
+    andConditions.push({ xeroContactId: null });
+  }
+
+  // Filter: subscription
+  const subscriptionFilter = sp.get("subscription");
+  if (subscriptionFilter === "NONE") {
+    andConditions.push({
+      subscriptions: { none: { seasonYear: currentSeasonYear } },
+    });
+  } else if (
+    subscriptionFilter &&
+    ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"].includes(subscriptionFilter)
+  ) {
+    andConditions.push({
       subscriptions: {
-        where: { seasonYear: currentSeasonYear },
-        select: { status: true, seasonYear: true, xeroInvoiceId: true },
-        take: 1,
+        some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
       },
+    });
+  }
+
+  if (andConditions.length > 0) {
+    where.AND = andConditions;
+  }
+
+  const select = {
+    id: true,
+    firstName: true,
+    lastName: true,
+    email: true,
+    phone: true,
+    dateOfBirth: true,
+    role: true,
+    ageTier: true,
+    active: true,
+    xeroContactId: true,
+    createdAt: true,
+    subscriptions: {
+      where: { seasonYear: currentSeasonYear },
+      select: { status: true, seasonYear: true, xeroInvoiceId: true },
+      take: 1,
     },
-  });
+  };
+
+  const [members, total] = await Promise.all([
+    prisma.member.findMany({
+      where,
+      orderBy,
+      select,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.member.count({ where }),
+  ]);
 
   const membersWithSub = members.map((m) => ({
     ...m,
@@ -78,7 +179,13 @@ export async function GET(req: NextRequest) {
     subscriptions: undefined,
   }));
 
-  return NextResponse.json({ members: membersWithSub });
+  return NextResponse.json({
+    members: membersWithSub,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.ceil(total / pageSize),
+  });
 }
 
 /**
