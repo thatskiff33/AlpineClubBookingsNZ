@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { processRefund } from "@/lib/stripe";
-import { isXeroConnected, createXeroCreditNote } from "@/lib/xero";
-import { calculateRefundAmount, daysUntilDate, loadCancellationPolicy } from "@/lib/cancellation";
-import { CancelBookingSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
-import { sendBookingCancelledEmail } from "@/lib/email";
-import { logAudit } from "@/lib/audit";
+import { CancelBookingSchema } from "@/types/payments";
+import { cancelBooking } from "@/lib/booking-cancel";
 import { getClientIp } from "@/lib/rate-limit";
+import logger from "@/lib/logger";
 
+/**
+ * @deprecated Use POST /api/bookings/[id]/cancel instead.
+ * This body-based route is kept for backwards compatibility.
+ */
 export async function POST(request: NextRequest) {
   try {
+    logger.warn("[DEPRECATION] POST /api/bookings/cancel with body { bookingId } is deprecated. Use POST /api/bookings/{id}/cancel instead.");
+
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -26,226 +28,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { bookingId } = parsed.data;
-
-    const booking = await prisma.booking.findUnique({
-      where: { id: bookingId },
-      include: { payment: true, member: true },
-    });
-
-    if (!booking) {
-      return NextResponse.json(
-        { error: "Booking not found" },
-        { status: 404 }
-      );
-    }
-
-    // Verify the requesting user owns this booking or is admin
-    if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    // Helper: clean up promo redemption if booking used a promo code
-    async function cleanupPromoRedemption(bookingId: string) {
-      const redemption = await prisma.promoRedemption.findUnique({
-        where: { bookingId },
-      });
-      if (redemption) {
-        await prisma.$transaction([
-          prisma.promoRedemption.delete({ where: { id: redemption.id } }),
-          prisma.promoCode.update({
-            where: { id: redemption.promoCodeId },
-            data: { currentRedemptions: { decrement: 1 } },
-          }),
-        ]);
-      }
-    }
-
-    // Handle PENDING bookings (no payment taken yet)
-    if (booking.status === "PENDING") {
-      await prisma.booking.update({
-        where: { id: bookingId },
-        data: { status: "CANCELLED" },
-      });
-      await cleanupPromoRedemption(bookingId);
-
-      logAudit({
-        action: "booking.cancel",
-        memberId: session.user.id,
-        targetId: bookingId,
-        details: "Pending booking cancelled, no payment taken",
-        ipAddress: getClientIp(request),
-      });
-
-      sendBookingCancelledEmail(
-        booking.member.email,
-        booking.member.firstName,
-        booking.checkIn,
-        booking.checkOut,
-        0
-      ).catch((err) => console.error("Failed to send cancellation email:", err));
-
-      return NextResponse.json({
-        success: true,
-        refundAmountCents: 0,
-        refundPercentage: 0,
-        message: "Pending booking cancelled. No payment was taken.",
-      });
-    }
-
-    // Handle CONFIRMED bookings (payment was taken, may need refund)
-    if (booking.status !== "CONFIRMED") {
-      return NextResponse.json(
-        { error: "Only PENDING or CONFIRMED bookings can be cancelled" },
-        { status: 400 }
-      );
-    }
-
-    if (!booking.payment || booking.payment.status !== "SUCCEEDED") {
-      // Confirmed but no successful payment - just cancel
-      await prisma.booking.update({
-        where: { id: bookingId },
-        data: { status: "CANCELLED" },
-      });
-      await cleanupPromoRedemption(bookingId);
-
-      logAudit({
-        action: "booking.cancel",
-        memberId: session.user.id,
-        targetId: bookingId,
-        details: "Confirmed booking cancelled, no payment to refund",
-        ipAddress: getClientIp(request),
-      });
-
-      sendBookingCancelledEmail(
-        booking.member.email,
-        booking.member.firstName,
-        booking.checkIn,
-        booking.checkOut,
-        0
-      ).catch((err) => console.error("Failed to send cancellation email:", err));
-
-      return NextResponse.json({
-        success: true,
-        refundAmountCents: 0,
-        refundPercentage: 0,
-        message: "Booking cancelled. No refund applicable.",
-      });
-    }
-
-    // Calculate refund based on cancellation policy
-    const paidAmountCents =
-      booking.payment.amountCents - booking.payment.refundedAmountCents;
-    const days = daysUntilDate(booking.checkIn);
-    const policy = await loadCancellationPolicy(booking.checkIn);
-    const { refundAmountCents, refundPercentage } = calculateRefundAmount(
-      paidAmountCents,
-      days,
-      policy
+    const result = await cancelBooking(
+      parsed.data.bookingId,
+      session.user.id,
+      session.user.role,
+      getClientIp(request)
     );
 
-    // Process Stripe refund if applicable
-    if (refundAmountCents > 0 && booking.payment.stripePaymentIntentId) {
-      const refund = await processRefund({
-        paymentIntentId: booking.payment.stripePaymentIntentId,
-        amountCents: refundAmountCents,
-        metadata: {
-          bookingId: booking.id,
-          reason: "cancellation",
-          refundPercentage: refundPercentage.toString(),
-        },
-      });
-
-      // Update payment record
-      const newRefundedTotal =
-        booking.payment.refundedAmountCents + refundAmountCents;
-      const newStatus =
-        newRefundedTotal >= booking.payment.amountCents
-          ? "REFUNDED"
-          : "PARTIALLY_REFUNDED";
-
-      await prisma.$transaction([
-        prisma.payment.update({
-          where: { bookingId: booking.id },
-          data: {
-            refundedAmountCents: newRefundedTotal,
-            status: newStatus,
-          },
-        }),
-        prisma.booking.update({
-          where: { id: bookingId },
-          data: { status: "CANCELLED" },
-        }),
-      ]);
-
-      // Create Xero credit note if connected
-      try {
-        if (await isXeroConnected()) {
-          await createXeroCreditNote(booking.payment.id, refundAmountCents);
-          console.log(`Xero credit note created for payment ${booking.payment.id}`);
-        }
-      } catch (xeroErr) {
-        console.error(`Failed to create Xero credit note for payment ${booking.payment.id}:`, xeroErr);
-      }
-
-      await cleanupPromoRedemption(bookingId);
-
-      logAudit({
-        action: "booking.cancel",
-        memberId: session.user.id,
-        targetId: bookingId,
-        details: `Refund ${refundPercentage}% = ${refundAmountCents} cents`,
-        ipAddress: getClientIp(request),
-      });
-
-      sendBookingCancelledEmail(
-        booking.member.email,
-        booking.member.firstName,
-        booking.checkIn,
-        booking.checkOut,
-        refundAmountCents
-      ).catch((err) => console.error("Failed to send cancellation email:", err));
-
-      return NextResponse.json({
-        success: true,
-        refundAmountCents,
-        refundPercentage,
-        stripeRefundId: refund.id,
-        message: `Booking cancelled. ${refundPercentage}% refund of $${(refundAmountCents / 100).toFixed(2)} processed.`,
-      });
+    if (result.status === 200) {
+      return NextResponse.json(result.data);
     }
-
-    // No refund (0% policy or no payment intent)
-    await prisma.booking.update({
-      where: { id: bookingId },
-      data: { status: "CANCELLED" },
-    });
-    await cleanupPromoRedemption(bookingId);
-
-    logAudit({
-      action: "booking.cancel",
-      memberId: session.user.id,
-      targetId: bookingId,
-      details: "No refund per cancellation policy",
-      ipAddress: getClientIp(request),
-    });
-
-    sendBookingCancelledEmail(
-      booking.member.email,
-      booking.member.firstName,
-      booking.checkIn,
-      booking.checkOut,
-      0
-    ).catch((err) => console.error("Failed to send cancellation email:", err));
-
-    return NextResponse.json({
-      success: true,
-      refundAmountCents: 0,
-      refundPercentage: 0,
-      message: "Booking cancelled. No refund applicable per cancellation policy.",
-    });
+    return NextResponse.json(
+      { error: result.error },
+      { status: result.status }
+    );
   } catch (error) {
-    console.error("Error cancelling booking:", error);
+    logger.error({ err: error }, "Error cancelling booking");
     return NextResponse.json(
       { error: "Failed to cancel booking" },
       { status: 500 }

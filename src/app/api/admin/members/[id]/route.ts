@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier } from "@/lib/age-tier";
 import { isXeroConnected, updateXeroContact } from "@/lib/xero";
+import logger from "@/lib/logger";
 
 const updateMemberSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100).optional(),
@@ -171,13 +172,13 @@ export async function PUT(
           });
         }
       } catch (xeroErr) {
-        console.error("[admin/members] Xero sync failed for update:", xeroErr);
+        logger.error({ err: xeroErr, memberId: id }, "Xero sync failed for member update");
       }
     }
 
     return NextResponse.json(updated);
   } catch (error) {
-    console.error("[admin/members] Update failed:", error);
+    logger.error({ err: error, memberId: id }, "Failed to update member");
     return NextResponse.json({ error: "Failed to update member" }, { status: 500 });
   }
 }

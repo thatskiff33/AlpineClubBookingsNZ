@@ -8,6 +8,7 @@ import { computeAgeTier } from "@/lib/age-tier";
 import { isXeroConnected, findOrCreateXeroContact } from "@/lib/xero";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
+import logger from "@/lib/logger";
 
 const createMemberSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -165,7 +166,7 @@ export async function POST(req: NextRequest) {
         await findOrCreateXeroContact(member.id);
       }
     } catch (xeroErr) {
-      console.error("[admin/members] Xero sync failed for new member:", xeroErr);
+      logger.error({ err: xeroErr, memberId: member.id }, "Xero sync failed for new member");
     }
 
     // Send invite email if requested
@@ -177,16 +178,16 @@ export async function POST(req: NextRequest) {
           data: { token, memberId: member.id, expiresAt },
         });
         sendPasswordResetEmail(member.email, token).catch((err) => {
-          console.error("[admin/members] Failed to send invite:", err);
+          logger.error({ err, memberId: member.id }, "Failed to send invite email");
         });
       } catch (emailErr) {
-        console.error("[admin/members] Failed to create invite token:", emailErr);
+        logger.error({ err: emailErr, memberId: member.id }, "Failed to create invite token");
       }
     }
 
     return NextResponse.json(member, { status: 201 });
   } catch (error) {
-    console.error("[admin/members] Create failed:", error);
+    logger.error({ err: error }, "Failed to create member");
     return NextResponse.json({ error: "Failed to create member" }, { status: 500 });
   }
 }

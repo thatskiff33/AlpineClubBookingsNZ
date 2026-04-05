@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import logger from "@/lib/logger";
 
 const createSeasonSchema = z.object({
   name: z.string().min(1),
@@ -30,7 +31,7 @@ export async function GET() {
     });
     return NextResponse.json(seasons);
   } catch (err) {
-    console.error("[seasons] Failed to fetch seasons:", err);
+    logger.error({ err }, "Failed to fetch seasons");
     return NextResponse.json({ error: "Failed to fetch seasons" }, { status: 500 });
   }
 }

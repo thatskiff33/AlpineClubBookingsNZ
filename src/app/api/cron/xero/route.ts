@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { refreshAllMembershipStatuses, isXeroConnected } from "@/lib/xero";
+import logger from "@/lib/logger";
 
 /**
  * POST /api/cron/xero
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Cron job failed";
-    console.error("[Xero Cron] Error:", message);
+    logger.error({ err: message }, "Xero cron job error");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

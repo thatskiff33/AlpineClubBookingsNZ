@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import logger from "@/lib/logger";
 
 /**
  * Log a sensitive action for audit trail purposes.
@@ -14,6 +15,6 @@ export function logAudit(params: {
   prisma.auditLog
     .create({ data: params })
     .catch((err) => {
-      console.error("[audit] Failed to write audit log:", err);
+      logger.error({ err }, "Failed to write audit log");
     });
 }

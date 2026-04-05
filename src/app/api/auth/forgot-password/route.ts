@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import logger from "@/lib/logger";
 
 const forgotPasswordSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -44,13 +45,13 @@ export async function POST(req: NextRequest) {
 
       // Fire-and-forget — don't reveal failure to the client
       sendPasswordResetEmail(member.email, token).catch((err) => {
-        console.error("[forgot-password] Failed to send reset email:", err);
+        logger.error({ err }, "Failed to send password reset email");
       });
     }
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("[forgot-password] Unexpected error:", err);
+    logger.error({ err }, "Unexpected error in forgot-password");
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -12,6 +12,7 @@ import { prisma } from "./prisma";
 import { sendPasswordResetEmail } from "./email";
 import { AgeTier } from "@prisma/client";
 import { getSeasonYear, getStayNights } from "./pricing";
+import logger from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -277,7 +278,7 @@ export async function getAuthenticatedXeroClient(): Promise<{
 
       return { xero, tenantId: tokens.tenantId };
     } catch (err) {
-      console.error("[Xero] Token refresh failed:", err);
+      logger.error({ err }, "Xero token refresh failed");
       throw new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
     }
   }
@@ -555,7 +556,7 @@ export async function importMembersFromXeroGroups(
         contacts.push(...(fullResponse.body.contacts ?? []));
       }
 
-      console.log(`[import-members] Group "${mapping.groupName}": ${groupContacts.length} in group, ${contacts.length} fetched with details`);
+      logger.info({ groupName: mapping.groupName, groupContactCount: groupContacts.length, fetchedCount: contacts.length }, "Fetched group contacts for import");
 
       for (const contact of contacts) {
         try {
@@ -658,31 +659,19 @@ export async function importMembersFromXeroGroups(
 
               // Fire-and-forget
               sendPasswordResetEmail(member.email, token).catch((err) => {
-                console.error(
-                  `[import-members] Failed to send invite to ${member.email}:`,
-                  err
-                );
+                logger.error({ err, email: member.email }, "Failed to send invite email during member import");
               });
             } catch (emailErr) {
-              console.error(
-                `[import-members] Failed to create invite token for ${member.email}:`,
-                emailErr
-              );
+              logger.error({ err: emailErr, email: member.email }, "Failed to create invite token during member import");
             }
           }
         } catch (contactErr) {
-          console.error(
-            `[import-members] Error processing contact ${contact.emailAddress}:`,
-            contactErr
-          );
+          logger.error({ err: contactErr, contactEmail: contact.emailAddress }, "Error processing contact during member import");
           errors++;
         }
       }
     } catch (groupErr) {
-      console.error(
-        `[import-members] Error fetching group ${mapping.groupName}:`,
-        groupErr
-      );
+      logger.error({ err: groupErr, groupName: mapping.groupName }, "Error fetching group during member import");
       errors++;
     }
   }

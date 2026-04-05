@@ -1,20 +1,17 @@
 import { describe, it, expect } from "vitest";
 
 // Import only the pure functions (no prisma dependency)
-// We test calculateRefundAmount and daysUntilDate which are pure logic
 import type { CancellationRule } from "../cancellation";
 
 // Re-implement the pure functions here to avoid importing the module
 // which pulls in prisma. In a real setup with a test DB, we'd import directly.
-// For unit tests, we test the algorithm in isolation.
 
-function calculateRefundAmount(
-  paidAmountCents: number,
+function getRefundTier(
   daysUntilCheckIn: number,
   policyRules: CancellationRule[]
-): { refundAmountCents: number; refundPercentage: number } {
+): { refundPercentage: number; daysBeforeStay: number } {
   if (policyRules.length === 0) {
-    return { refundAmountCents: 0, refundPercentage: 0 };
+    return { refundPercentage: 0, daysBeforeStay: 0 };
   }
 
   const sortedRules = [...policyRules].sort(
@@ -23,14 +20,26 @@ function calculateRefundAmount(
 
   for (const rule of sortedRules) {
     if (daysUntilCheckIn >= rule.daysBeforeStay) {
-      const refundAmountCents = Math.round(
-        (paidAmountCents * rule.refundPercentage) / 100
-      );
-      return { refundAmountCents, refundPercentage: rule.refundPercentage };
+      return {
+        refundPercentage: rule.refundPercentage,
+        daysBeforeStay: rule.daysBeforeStay,
+      };
     }
   }
 
-  return { refundAmountCents: 0, refundPercentage: 0 };
+  return { refundPercentage: 0, daysBeforeStay: 0 };
+}
+
+function calculateRefundAmount(
+  paidAmountCents: number,
+  daysUntilCheckIn: number,
+  policyRules: CancellationRule[]
+): { refundAmountCents: number; refundPercentage: number } {
+  const { refundPercentage } = getRefundTier(daysUntilCheckIn, policyRules);
+  const refundAmountCents = Math.round(
+    (paidAmountCents * refundPercentage) / 100
+  );
+  return { refundAmountCents, refundPercentage };
 }
 
 function daysUntilDate(checkIn: Date, now: Date = new Date()): number {
@@ -38,13 +47,102 @@ function daysUntilDate(checkIn: Date, now: Date = new Date()): number {
   return Math.floor(diffMs / (1000 * 60 * 60 * 24));
 }
 
-describe("calculateRefundAmount", () => {
-  const standardPolicy: CancellationRule[] = [
-    { daysBeforeStay: 14, refundPercentage: 100 },
-    { daysBeforeStay: 7, refundPercentage: 50 },
-    { daysBeforeStay: 0, refundPercentage: 0 },
-  ];
+const standardPolicy: CancellationRule[] = [
+  { daysBeforeStay: 14, refundPercentage: 100 },
+  { daysBeforeStay: 7, refundPercentage: 50 },
+  { daysBeforeStay: 0, refundPercentage: 0 },
+];
 
+describe("getRefundTier", () => {
+  it("returns 100% for 15 days before (above highest tier)", () => {
+    expect(getRefundTier(15, standardPolicy)).toEqual({
+      refundPercentage: 100,
+      daysBeforeStay: 14,
+    });
+  });
+
+  it("returns 100% for exactly 14 days (exact boundary)", () => {
+    expect(getRefundTier(14, standardPolicy)).toEqual({
+      refundPercentage: 100,
+      daysBeforeStay: 14,
+    });
+  });
+
+  it("returns 50% for 10 days (between tiers)", () => {
+    expect(getRefundTier(10, standardPolicy)).toEqual({
+      refundPercentage: 50,
+      daysBeforeStay: 7,
+    });
+  });
+
+  it("returns 50% for exactly 7 days (exact boundary)", () => {
+    expect(getRefundTier(7, standardPolicy)).toEqual({
+      refundPercentage: 50,
+      daysBeforeStay: 7,
+    });
+  });
+
+  it("returns 0% for 5 days (below 7-day tier)", () => {
+    expect(getRefundTier(5, standardPolicy)).toEqual({
+      refundPercentage: 0,
+      daysBeforeStay: 0,
+    });
+  });
+
+  it("returns 0% for 0 days (exact lowest boundary)", () => {
+    expect(getRefundTier(0, standardPolicy)).toEqual({
+      refundPercentage: 0,
+      daysBeforeStay: 0,
+    });
+  });
+
+  it("returns 0% for empty policy", () => {
+    expect(getRefundTier(15, [])).toEqual({
+      refundPercentage: 0,
+      daysBeforeStay: 0,
+    });
+  });
+
+  it("handles single-rule policy", () => {
+    expect(
+      getRefundTier(5, [{ daysBeforeStay: 3, refundPercentage: 75 }])
+    ).toEqual({ refundPercentage: 75, daysBeforeStay: 3 });
+  });
+
+  it("returns 0% when below single-rule threshold", () => {
+    expect(
+      getRefundTier(2, [{ daysBeforeStay: 3, refundPercentage: 75 }])
+    ).toEqual({ refundPercentage: 0, daysBeforeStay: 0 });
+  });
+
+  it("handles unsorted policy rules", () => {
+    const unsorted: CancellationRule[] = [
+      { daysBeforeStay: 0, refundPercentage: 0 },
+      { daysBeforeStay: 14, refundPercentage: 100 },
+      { daysBeforeStay: 7, refundPercentage: 50 },
+    ];
+    expect(getRefundTier(10, unsorted)).toEqual({
+      refundPercentage: 50,
+      daysBeforeStay: 7,
+    });
+  });
+
+  it("returns 0% for negative days", () => {
+    expect(getRefundTier(-1, standardPolicy)).toEqual({
+      refundPercentage: 0,
+      daysBeforeStay: 0,
+    });
+  });
+
+  it("returns highest tier for very large days", () => {
+    expect(getRefundTier(365, standardPolicy)).toEqual({
+      refundPercentage: 100,
+      daysBeforeStay: 14,
+    });
+  });
+});
+
+describe("calculateRefundAmount", () => {
   it("returns 100% refund when cancelling 14+ days before", () => {
     const result = calculateRefundAmount(10000, 14, standardPolicy);
     expect(result.refundAmountCents).toBe(10000);
