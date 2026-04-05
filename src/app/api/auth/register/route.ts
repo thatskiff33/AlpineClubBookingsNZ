@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { sendWelcomeEmail } from "@/lib/email";
+import { sendWelcomeEmail, sendVerificationEmail } from "@/lib/email";
 import { computeAgeTier } from "@/lib/age-tier";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { createEmailVerificationToken } from "@/lib/verification-tokens";
 import { AgeTier } from "@prisma/client";
 import logger from "@/lib/logger";
 
@@ -61,7 +62,14 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Fire-and-forget — don't fail registration if email errors
+    // Generate verification token and send verification email
+    createEmailVerificationToken(member.id)
+      .then((token) => sendVerificationEmail(member.email, member.firstName, token))
+      .catch((err) => {
+        logger.error({ err }, "Failed to send verification email");
+      });
+
+    // Also send welcome email (fire-and-forget)
     sendWelcomeEmail(member.email, member.firstName).catch((err) => {
       logger.error({ err }, "Failed to send welcome email");
     });

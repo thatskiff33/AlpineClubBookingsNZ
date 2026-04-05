@@ -163,6 +163,10 @@ export const rateLimiters = {
   bookingQuery: { id: "booking-query", limit: 60, windowSeconds: 60 } as RateLimitConfig,
   /** Contact form: 5 per hour */
   contact: { id: "contact", limit: 5, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Resend verification email: 3 per hour */
+  resendVerification: { id: "resend-verification", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Request email change: 3 per hour */
+  requestEmailChange: { id: "request-email-change", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
 } as const;
 
 // Export for testing

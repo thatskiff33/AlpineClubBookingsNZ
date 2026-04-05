@@ -1,24 +1,34 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { signIn } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [emailNotVerified, setEmailNotVerified] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendSuccess, setResendSuccess] = useState(false);
+
+  const verified = searchParams.get("verified") === "true";
+  const verifyError = searchParams.get("verifyError");
+  const emailChanged = searchParams.get("emailChanged") === "true";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setEmailNotVerified(false);
+    setResendSuccess(false);
     setLoading(true);
 
     try {
@@ -29,7 +39,11 @@ export default function LoginPage() {
       });
 
       if (result?.error) {
-        setError("Invalid email or password. Please try again.");
+        if (result.error.includes("EMAIL_NOT_VERIFIED")) {
+          setEmailNotVerified(true);
+        } else {
+          setError("Invalid email or password. Please try again.");
+        }
       } else {
         router.push("/dashboard");
       }
@@ -37,6 +51,25 @@ export default function LoginPage() {
       setError("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleResendVerification() {
+    setResendLoading(true);
+    setResendSuccess(false);
+    try {
+      const res = await fetch("/api/auth/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (res.ok) {
+        setResendSuccess(true);
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setResendLoading(false);
     }
   }
 
@@ -53,9 +86,53 @@ export default function LoginPage() {
 
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-4">
+          {verified && (
+            <div className="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+              Your email has been verified. You can now sign in.
+            </div>
+          )}
+
+          {emailChanged && (
+            <div className="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800">
+              Your email has been changed successfully.
+            </div>
+          )}
+
+          {verifyError && (
+            <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
+              {verifyError === "expired"
+                ? "Your verification link has expired. Please request a new one."
+                : verifyError === "invalid"
+                ? "Invalid verification link."
+                : "An error occurred during email verification."}
+            </div>
+          )}
+
           {error && (
             <div className="rounded-md bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
               {error}
+            </div>
+          )}
+
+          {emailNotVerified && (
+            <div className="rounded-md bg-yellow-50 border border-yellow-200 px-4 py-3 text-sm space-y-2">
+              <p className="text-yellow-800 font-medium">Please verify your email</p>
+              <p className="text-yellow-700">
+                Check your inbox for a verification email. Click the link to verify your account.
+              </p>
+              {resendSuccess ? (
+                <p className="text-green-700 font-medium">Verification email sent!</p>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleResendVerification}
+                  disabled={resendLoading}
+                >
+                  {resendLoading ? "Sending..." : "Resend verification email"}
+                </Button>
+              )}
             </div>
           )}
 
@@ -95,7 +172,7 @@ export default function LoginPage() {
 
         <CardFooter className="flex flex-col gap-4">
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? "Signing in..." : "Sign in"}
           </Button>
 
           <p className="text-sm text-center text-muted-foreground">
@@ -110,5 +187,21 @@ export default function LoginPage() {
         </CardFooter>
       </form>
     </Card>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <Card className="w-full max-w-md">
+        <CardHeader className="space-y-1">
+          <CardTitle className="text-2xl font-bold text-center">
+            Tokoroa Alpine Club
+          </CardTitle>
+        </CardHeader>
+      </Card>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }
