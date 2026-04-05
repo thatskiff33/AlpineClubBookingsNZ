@@ -29,6 +29,8 @@ import {
   Users,
   TrendingUp,
   BarChart2,
+  Download,
+  Printer,
 } from "lucide-react";
 
 interface ReportData {
@@ -131,6 +133,53 @@ export default function ReportsPage() {
       ? occupancyData.filter((_, i) => i % Math.ceil(occupancyData.length / 60) === 0)
       : occupancyData;
 
+
+  function exportCSV() {
+    if (!data) return;
+    const rows: string[][] = [];
+    rows.push(["TAC Bookings Report", from + " to " + to]);
+    rows.push([]);
+    rows.push(["Summary"]);
+    rows.push(["Total Bookings", String(data.summary.totalBookings)]);
+    rows.push(["Total Revenue", (data.summary.totalRevenueCents / 100).toFixed(2)]);
+    rows.push(["Total Guests", String(data.summary.totalGuests)]);
+    rows.push(["Avg Occupancy Rate", data.summary.avgOccupancyRate + "%"]);
+    rows.push(["Member Guests", String(data.summary.memberGuests)]);
+    rows.push(["Non-Member Guests", String(data.summary.nonMemberGuests)]);
+    rows.push([]);
+    rows.push(["Occupancy by Date"]);
+    rows.push(["Date", "Occupied Beds", "Available Beds", "Occupancy Rate"]);
+    for (const d of data.occupancy) {
+      rows.push([d.date, String(d.occupiedBeds), String(d.availableBeds), d.occupancyRate + "%"]);
+    }
+    rows.push([]);
+    rows.push(["Revenue by Month"]);
+    rows.push(["Month", "Revenue", "Bookings"]);
+    for (const r of data.revenue) {
+      rows.push([r.month, (r.revenueCents / 100).toFixed(2), String(r.bookingCount)]);
+    }
+    rows.push([]);
+    rows.push(["Booking Trends by Week"]);
+    rows.push(["Week", "Total", "Confirmed", "Cancelled", "Bumped", "Pending"]);
+    for (const t of data.trends) {
+      rows.push([t.week, String(t.total), String(t.confirmed), String(t.cancelled), String(t.bumped), String(t.pending)]);
+    }
+    const csvContent = rows.map(row => row.map(cell => {
+      if (cell.includes(",") || cell.includes('"') || cell.includes("\n")) {
+        return '"' + cell.replace(/"/g, '""') + '"';
+      }
+      return cell;
+    }).join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const dateStr = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = "tac-report-" + dateStr + ".csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end gap-4">
@@ -163,6 +212,12 @@ export default function ReportsPage() {
           </div>
           <Button onClick={fetchReports} disabled={loading}>
             {loading ? "Loading..." : "Update"}
+          </Button>
+          <Button variant="outline" onClick={exportCSV} disabled={!data} className="print:hidden">
+            <Download className="h-4 w-4 mr-1" /> CSV
+          </Button>
+          <Button variant="outline" onClick={() => window.print()} disabled={!data} className="print:hidden">
+            <Printer className="h-4 w-4 mr-1" /> Print
           </Button>
         </div>
       </div>

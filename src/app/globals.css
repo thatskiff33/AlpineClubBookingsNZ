@@ -122,3 +122,48 @@
     @apply bg-background text-foreground;
   }
 }
+
+@media print {
+  /* Hide sidebar and nav for print */
+  aside,
+  nav,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Report print layout */
+  .print-report-header::before {
+    content: 'TAC Bookings Report';
+    display: block;
+    font-size: 1.5rem;
+    font-weight: bold;
+    margin-bottom: 1rem;
+    text-align: center;
+  }
+
+  /* Fit charts to A4 */
+  .recharts-responsive-container {
+    max-width: 100% !important;
+    page-break-inside: avoid;
+  }
+
+  /* General print cleanup */
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+  }
+
+  button, select, input[type='date'] {
+    display: none !important;
+  }
+
+  .space-y-6 > * {
+    page-break-inside: avoid;
+  }
+}
