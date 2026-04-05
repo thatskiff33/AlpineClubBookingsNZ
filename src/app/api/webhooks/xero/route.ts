@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
+import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
 
 /**
@@ -47,22 +48,47 @@ export async function POST(request: NextRequest) {
 
   // Handle events
   const events = payload.events ?? [];
+  const webhookStart = Date.now();
 
   for (const event of events) {
     const { eventType, eventCategory, resourceId } = event;
+    const eventStart = Date.now();
 
-    // Log for now - specific handlers can be added as needed
-    logger.info({ eventCategory, eventType, resourceId }, "Xero webhook event received");
+    try {
+      // Log for now - specific handlers can be added as needed
+      logger.info({ eventCategory, eventType, resourceId }, "Xero webhook event received");
 
-    // Handle contact updates (membership changes)
-    if (eventCategory === "CONTACT" && eventType === "UPDATE") {
-      // Could trigger membership re-check here
-      logger.info({ resourceId }, "Xero contact updated");
-    }
+      // Handle contact updates (membership changes)
+      if (eventCategory === "CONTACT" && eventType === "UPDATE") {
+        // Could trigger membership re-check here
+        logger.info({ resourceId }, "Xero contact updated");
+      }
 
-    // Handle invoice status changes
-    if (eventCategory === "INVOICE") {
-      logger.info({ eventType, resourceId }, "Xero invoice event");
+      // Handle invoice status changes
+      if (eventCategory === "INVOICE") {
+        logger.info({ eventType, resourceId }, "Xero invoice event");
+      }
+
+      // OBS-08: Record successful webhook processing
+      await recordWebhookLog({
+        source: "xero",
+        eventType: `${eventCategory}.${eventType}`,
+        eventId: resourceId || "unknown",
+        status: "success",
+        durationMs: Date.now() - eventStart,
+      });
+    } catch (err) {
+      logger.error({ err, eventCategory, eventType, resourceId }, "Error processing Xero webhook event");
+
+      // OBS-08: Record failed webhook processing
+      await recordWebhookLog({
+        source: "xero",
+        eventType: `${eventCategory}.${eventType}`,
+        eventId: resourceId || "unknown",
+        status: "failure",
+        durationMs: Date.now() - eventStart,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

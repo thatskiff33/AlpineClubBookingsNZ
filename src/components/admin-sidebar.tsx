@@ -20,6 +20,7 @@ import {
   CreditCard,
   FileText,
   Shield,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,7 @@ const navItems = [
   { href: "/admin/audit-log", label: "Audit Log", icon: Shield },
   { href: "/admin/xero", label: "Xero", icon: RefreshCw },
   { href: "/admin/reports", label: "Reports", icon: BarChart2 },
+  { href: "/admin/health", label: "System Health", icon: Activity },
 ];
 
 function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
