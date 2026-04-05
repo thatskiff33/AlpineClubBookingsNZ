@@ -32,7 +32,7 @@ export async function register() {
             completedAt,
             durationMs,
             status,
-            resultSummary: resultSummary ?? undefined,
+            resultSummary: resultSummary ? JSON.parse(JSON.stringify(resultSummary)) : undefined,
             error: error ?? undefined,
           },
         });
