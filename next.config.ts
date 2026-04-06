@@ -5,11 +5,15 @@ const nextConfig: NextConfig = {
   output: "standalone",
 };
 
-export default withSentryConfig(nextConfig, {
-  // Suppresses source map uploading logs during build
-  silent: true,
+// Warn at build time if Sentry is partially configured
+if (process.env.SENTRY_DSN && !process.env.SENTRY_AUTH_TOKEN) {
+  console.warn(
+    "\x1b[33m⚠ SENTRY_DSN is set but SENTRY_AUTH_TOKEN is missing — source maps will not be uploaded. Production stack traces will be unreadable.\x1b[0m"
+  );
+}
 
-  // Only upload source maps if SENTRY_AUTH_TOKEN is set
+export default withSentryConfig(nextConfig, {
+  silent: true,
   org: process.env.SENTRY_ORG || "",
   project: process.env.SENTRY_PROJECT || "",
 });
