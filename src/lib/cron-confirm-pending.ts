@@ -87,6 +87,58 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         continue;
       }
 
+      // Zero-dollar booking: skip Stripe, just confirm with a SUCCEEDED Payment
+      if (booking.finalPriceCents === 0) {
+        const claimed = await prisma.booking.updateMany({
+          where: { id: booking.id, status: BookingStatus.PENDING },
+          data: { status: BookingStatus.PAID },
+        });
+        if (claimed.count === 0) {
+          logger.info({ bookingId: booking.id, job: "confirmPendingBookings" }, "Booking already processed by another handler");
+          continue;
+        }
+
+        if (booking.payment) {
+          await prisma.payment.update({
+            where: { bookingId: booking.id },
+            data: { status: "SUCCEEDED", amountCents: 0 },
+          });
+        } else {
+          await prisma.payment.create({
+            data: { bookingId: booking.id, amountCents: 0, status: "SUCCEEDED" },
+          });
+        }
+
+        result.confirmedBookingIds.push(booking.id);
+
+        try {
+          if (await isXeroConnected()) {
+            await createXeroInvoiceForBooking(booking.id);
+            logger.info({ bookingId: booking.id, job: "confirmPendingBookings" }, "Xero invoice created for $0 booking");
+          }
+        } catch (xeroErr) {
+          logger.error({ err: xeroErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to create Xero invoice for $0 booking");
+        }
+
+        try {
+          await sendBookingConfirmedEmail(
+            booking.member.email,
+            booking.member.firstName,
+            booking.checkIn,
+            booking.checkOut,
+            booking.guests.length,
+            booking.finalPriceCents,
+            booking.discountCents > 0
+              ? { discountCents: booking.discountCents, promoCode: booking.promoRedemption?.promoCode?.code }
+              : undefined
+          );
+        } catch (emailErr) {
+          logger.error({ err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send confirmation email for $0 booking");
+        }
+
+        continue;
+      }
+
       // Beds available - try to charge saved payment method
       if (!booking.payment?.stripePaymentMethodId || !booking.payment?.stripeCustomerId) {
         logger.error({ bookingId: booking.id, job: "confirmPendingBookings" }, "Booking has no saved payment method - cannot auto-confirm");

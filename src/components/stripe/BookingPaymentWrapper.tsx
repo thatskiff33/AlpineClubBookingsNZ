@@ -39,6 +39,8 @@ export default function BookingPaymentWrapper({
   const needsSetupIntent = hasNonMembers && checkInDaysAway > 7;
 
   useEffect(() => {
+    if (amountCents === 0) return; // No Stripe initialization needed for zero-dollar bookings
+
     const initializePayment = async () => {
       try {
         setLoading(true);
@@ -71,7 +73,17 @@ export default function BookingPaymentWrapper({
     };
 
     initializePayment();
-  }, [bookingId, needsSetupIntent]);
+  }, [bookingId, needsSetupIntent, amountCents]);
+
+  // Zero-dollar booking: no payment is required
+  if (amountCents === 0) {
+    return (
+      <div className="rounded-md bg-green-50 p-4 text-sm text-green-700">
+        <p className="font-medium">Booking Complete</p>
+        <p className="mt-1">No payment is required for this booking.</p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

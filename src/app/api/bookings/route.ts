@@ -18,7 +18,8 @@ import {
 } from "@/lib/promo";
 import { calculatePromoDiscount } from "@/lib/pricing";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { sendBookingPendingEmail, sendAdminNewBookingAlert } from "@/lib/email";
+import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBookingAlert } from "@/lib/email";
+import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import logger from "@/lib/logger";
 
 const createBookingSchema = z.object({
@@ -89,6 +90,7 @@ export async function POST(request: NextRequest) {
   const status = shouldBePending ? BookingStatus.PENDING : BookingStatus.CONFIRMED;
 
   let bumpedBookingIds: string[] = [];
+  let isZeroDollarConfirmed = false;
 
   try {
     const booking = await prisma.$transaction(async (tx) => {
@@ -288,6 +290,26 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Zero-dollar CONFIRMED booking: create a SUCCEEDED Payment and set status to PAID.
+      // Only applies when the booking would normally be CONFIRMED (all-members or check-in
+      // within hold window). PENDING $0 bookings (non-member, far-future) are handled by the
+      // cron job so the non-member bumping system remains intact.
+      if (finalPriceCents === 0 && status === BookingStatus.CONFIRMED) {
+        isZeroDollarConfirmed = true;
+        await tx.payment.create({
+          data: {
+            bookingId: newBooking.id,
+            amountCents: 0,
+            status: "SUCCEEDED",
+          },
+        });
+        await tx.booking.update({
+          where: { id: newBooking.id },
+          data: { status: BookingStatus.PAID },
+        });
+        newBooking.status = BookingStatus.PAID;
+      }
+
       return newBooking;
     });
 
@@ -300,6 +322,39 @@ export async function POST(request: NextRequest) {
       sendBumpedNotifications(bumpedBookingIds, triggeringName).catch((err) =>
         logger.error({ err }, "Failed to send bump notifications")
       );
+    }
+
+    // Send confirmation email + create Xero invoice for zero-dollar CONFIRMED bookings
+    if (isZeroDollarConfirmed) {
+      try {
+        const fullBooking = await prisma.booking.findUnique({
+          where: { id: booking.id },
+          include: { member: true, guests: true, promoRedemption: { include: { promoCode: true } } },
+        });
+        if (fullBooking) {
+          sendBookingConfirmedEmail(
+            fullBooking.member.email,
+            fullBooking.member.firstName,
+            fullBooking.checkIn,
+            fullBooking.checkOut,
+            fullBooking.guests.length,
+            fullBooking.finalPriceCents,
+            fullBooking.discountCents > 0
+              ? { discountCents: fullBooking.discountCents, promoCode: fullBooking.promoRedemption?.promoCode?.code }
+              : undefined
+          ).catch((err) => logger.error({ err, bookingId: booking.id }, "Failed to send confirmation email for $0 booking"));
+
+          isXeroConnected().then((connected) => {
+            if (connected) {
+              createXeroInvoiceForBooking(booking.id).catch((err) =>
+                logger.error({ err, bookingId: booking.id }, "Failed to create Xero invoice for $0 booking")
+              );
+            }
+          }).catch((err) => logger.error({ err }, "Failed to check Xero connection for $0 booking"));
+        }
+      } catch (err) {
+        logger.error({ err, bookingId: booking.id }, "Error in post-creation handling for $0 booking");
+      }
     }
 
     // Send pending booking email if applicable
