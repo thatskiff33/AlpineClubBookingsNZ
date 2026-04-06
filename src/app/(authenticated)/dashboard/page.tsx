@@ -32,6 +32,7 @@ export default async function DashboardPage() {
         checkIn: { gte: today },
       },
       orderBy: { checkIn: "asc" },
+      take: 20,
       select: {
         id: true,
         checkIn: true,

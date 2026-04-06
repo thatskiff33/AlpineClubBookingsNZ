@@ -11,6 +11,16 @@ services:
       POSTGRES_USER: tac
       POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
       POSTGRES_DB: tacbookings
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=128MB"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "effective_cache_size=256MB"
+      - "-c"
+      - "max_connections=30"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     mem_limit: 512m
@@ -39,7 +49,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://tac:${DB_PASSWORD:-password}@postgres:5432/tacbookings
+      DATABASE_URL: postgresql://tac:${DB_PASSWORD:-password}@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
       AUTH_SECRET: ${AUTH_SECRET:-${NEXTAUTH_SECRET}}

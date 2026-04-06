@@ -288,6 +288,9 @@ model Booking {
   @@index([memberId])
   @@index([checkIn, checkOut])
   @@index([status])
+  @@index([memberId, status])
+  @@index([memberId, status, checkIn])
+  @@index([status, createdAt])
 }
 
 model BookingGuest {
@@ -341,6 +344,7 @@ model Payment {
   @@index([bookingId])
   @@index([stripePaymentIntentId])
   @@index([additionalPaymentIntentId])
+  @@index([status, createdAt])
 }
 
 // ---------------------------------------------------------------------------
