@@ -623,3 +623,104 @@ export function adminDailyDigestTemplate(sections: {
     ${button("Open Admin Dashboard", BASE_URL + "/admin/dashboard")}
   `);
 }
+
+export function bookingModifiedTemplate(params: {
+  firstName: string;
+  modificationType: string;
+  oldCheckIn: Date;
+  oldCheckOut: Date;
+  newCheckIn: Date;
+  newCheckOut: Date;
+  oldGuestCount: number;
+  newGuestCount: number;
+  oldFinalPriceCents: number;
+  newFinalPriceCents: number;
+  changeFeeCents: number;
+  refundAmountCents: number;
+  additionalAmountCents: number;
+}): string {
+  const {
+    firstName,
+    modificationType,
+    oldCheckIn,
+    oldCheckOut,
+    newCheckIn,
+    newCheckOut,
+    oldGuestCount,
+    newGuestCount,
+    oldFinalPriceCents,
+    newFinalPriceCents,
+    changeFeeCents,
+    refundAmountCents,
+    additionalAmountCents,
+  } = params;
+
+  const typeLabel: Record<string, string> = {
+    DATE_CHANGE: "Dates Changed",
+    GUEST_ADD: "Guests Added",
+    GUEST_REMOVE: "Guest Removed",
+  };
+
+  const rows: Array<{ label: string; value: string }> = [];
+
+  const datesChanged =
+    oldCheckIn.getTime() !== newCheckIn.getTime() ||
+    oldCheckOut.getTime() !== newCheckOut.getTime();
+
+  if (datesChanged) {
+    rows.push({
+      label: "Previous Dates",
+      value: `${formatNZDate(oldCheckIn)} &ndash; ${formatNZDate(oldCheckOut)}`,
+    });
+    rows.push({
+      label: "New Dates",
+      value: `${formatNZDate(newCheckIn)} &ndash; ${formatNZDate(newCheckOut)}`,
+    });
+  } else {
+    rows.push({
+      label: "Dates",
+      value: `${formatNZDate(newCheckIn)} &ndash; ${formatNZDate(newCheckOut)}`,
+    });
+  }
+
+  if (oldGuestCount !== newGuestCount) {
+    rows.push({ label: "Previous Guests", value: String(oldGuestCount) });
+    rows.push({ label: "New Guests", value: String(newGuestCount) });
+  } else {
+    rows.push({ label: "Guests", value: String(newGuestCount) });
+  }
+
+  if (oldFinalPriceCents !== newFinalPriceCents) {
+    rows.push({ label: "Previous Total", value: formatCents(oldFinalPriceCents) });
+    rows.push({ label: "New Total", value: formatCents(newFinalPriceCents) });
+  } else {
+    rows.push({ label: "Total", value: formatCents(newFinalPriceCents) });
+  }
+
+  if (changeFeeCents > 0) {
+    rows.push({ label: "Change Fee", value: formatCents(changeFeeCents) });
+  }
+
+  let paymentNote = "";
+  if (refundAmountCents > 0) {
+    paymentNote = alertBox(
+      `A refund of ${formatCents(refundAmountCents)} has been processed to your original payment method.`,
+      "success"
+    );
+  } else if (additionalAmountCents > 0) {
+    paymentNote = alertBox(
+      `An additional payment of ${formatCents(additionalAmountCents)} is required.`,
+      "warning"
+    );
+  }
+
+  return layout(`
+    ${heading("Booking Modified")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", your booking has been updated.")}
+    ${alertBox(typeLabel[modificationType] || modificationType, "info")}
+    ${infoTable(rows)}
+    ${paymentNote}
+    ${paragraph("You can view your updated booking details from your account.")}
+    ${button("View Booking", BASE_URL + "/bookings")}
+  `);
+}

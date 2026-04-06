@@ -29,6 +29,9 @@ export default async function BookingDetailPage({
           promoCode: { select: { code: true, type: true, description: true } },
         },
       },
+      modifications: {
+        orderBy: { createdAt: "desc" },
+      },
     },
   });
 
@@ -214,6 +217,87 @@ export default async function BookingDetailPage({
           />
         </CardContent>
       </Card>
+
+      {booking.modifications.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Modification History</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {booking.modifications.map((mod) => {
+                const prev = mod.previousData as Record<string, unknown>;
+                const next = mod.newData as Record<string, unknown>;
+                const typeLabels: Record<string, string> = {
+                  DATE_CHANGE: "Dates Changed",
+                  GUEST_ADD: "Guests Added",
+                  GUEST_REMOVE: "Guest Removed",
+                  EXTEND_STAY: "Stay Extended",
+                };
+                return (
+                  <div key={mod.id} className="py-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">
+                          {typeLabels[mod.modificationType] || mod.modificationType}
+                        </Badge>
+                        <span className="text-sm text-gray-500">
+                          {new Date(mod.createdAt).toLocaleDateString("en-NZ", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
+                      {mod.priceDiffCents !== 0 && (
+                        <span
+                          className={`text-sm font-medium ${
+                            mod.priceDiffCents > 0
+                              ? "text-red-600"
+                              : "text-green-600"
+                          }`}
+                        >
+                          {mod.priceDiffCents > 0 ? "+" : ""}
+                          {formatCents(mod.priceDiffCents)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      {mod.modificationType === "DATE_CHANGE" && (
+                        <p>
+                          {String(prev.checkIn)} &rarr; {String(next.checkIn)},{" "}
+                          {String(prev.checkOut)} &rarr; {String(next.checkOut)}
+                        </p>
+                      )}
+                      {mod.modificationType === "GUEST_ADD" && (
+                        <p>
+                          {String(prev.guestCount)} &rarr; {String(next.guestCount)} guests
+                        </p>
+                      )}
+                      {mod.modificationType === "GUEST_REMOVE" && (
+                        <p>
+                          Removed{" "}
+                          {(prev.removedGuest as { firstName: string; lastName: string })?.firstName}{" "}
+                          {(prev.removedGuest as { firstName: string; lastName: string })?.lastName}
+                          {" "}&middot;{" "}
+                          {String(prev.guestCount)} &rarr; {String(next.guestCount)} guests
+                        </p>
+                      )}
+                    </div>
+                    {mod.changeFeeCents > 0 && (
+                      <p className="text-xs text-amber-600">
+                        Change fee: {formatCents(mod.changeFeeCents)}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

@@ -21,6 +21,7 @@ import {
   postStayFeedbackTemplate,
   bulkCommunicationTemplate,
   adminPasswordResetTemplate,
+  bookingModifiedTemplate,
 } from "./email-templates";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -462,4 +463,29 @@ export async function shouldSendEmail(
   }
 
   return Boolean(pref[prefField]);
+}
+
+// EML-01: Booking modified email
+export async function sendBookingModifiedEmail(params: {
+  email: string;
+  firstName: string;
+  modificationType: string;
+  oldCheckIn: Date;
+  oldCheckOut: Date;
+  newCheckIn: Date;
+  newCheckOut: Date;
+  oldGuestCount: number;
+  newGuestCount: number;
+  oldFinalPriceCents: number;
+  newFinalPriceCents: number;
+  changeFeeCents: number;
+  refundAmountCents: number;
+  additionalAmountCents: number;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: "Booking Modified - TAC Lodge",
+    html: bookingModifiedTemplate(params),
+    templateName: "booking-modified",
+  });
 }
