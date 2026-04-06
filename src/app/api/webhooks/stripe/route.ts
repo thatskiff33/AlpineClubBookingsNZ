@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Handle successful payment - confirm the booking.
+ * Handle successful payment - confirm the booking or record additional modification payment.
  */
 async function handlePaymentIntentSucceeded(
   paymentIntent: Stripe.PaymentIntent
@@ -136,6 +136,12 @@ async function handlePaymentIntentSucceeded(
   const bookingId = paymentIntent.metadata?.bookingId;
   if (!bookingId) {
     logger.warn({ paymentIntentId: paymentIntent.id }, "PaymentIntent succeeded but no bookingId in metadata");
+    return;
+  }
+
+  // Check if this is an additional modification payment
+  if (paymentIntent.metadata?.type === "modification_additional") {
+    await handleAdditionalModificationPaymentSucceeded(paymentIntent, bookingId);
     return;
   }
 
@@ -251,6 +257,66 @@ async function handlePaymentIntentFailed(
   } catch (err) {
     logger.error({ err, bookingId }, "Error fetching booking for payment failure alert");
   }
+}
+
+/**
+ * Handle successful additional modification payment.
+ * Updates additionalPaymentStatus and adds amount to Payment.amountCents.
+ */
+async function handleAdditionalModificationPaymentSucceeded(
+  paymentIntent: Stripe.PaymentIntent,
+  bookingId: string
+) {
+  const payment = await prisma.payment.findUnique({
+    where: { additionalPaymentIntentId: paymentIntent.id },
+  });
+
+  if (!payment) {
+    // Fallback: look up by bookingId and verify the PI matches
+    const paymentByBooking = await prisma.payment.findUnique({
+      where: { bookingId },
+    });
+    if (!paymentByBooking || paymentByBooking.additionalPaymentIntentId !== paymentIntent.id) {
+      logger.warn(
+        { paymentIntentId: paymentIntent.id, bookingId },
+        "No payment record found for additional modification PaymentIntent"
+      );
+      return;
+    }
+
+    if (paymentByBooking.additionalPaymentStatus === "SUCCEEDED") {
+      logger.info({ paymentIntentId: paymentIntent.id, bookingId }, "Additional modification payment already recorded");
+      return;
+    }
+
+    await prisma.payment.update({
+      where: { id: paymentByBooking.id },
+      data: {
+        additionalPaymentStatus: "SUCCEEDED",
+        amountCents: paymentByBooking.amountCents + paymentByBooking.additionalAmountCents,
+      },
+    });
+    logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Additional modification payment confirmed via webhook (fallback)");
+    return;
+  }
+
+  if (payment.additionalPaymentStatus === "SUCCEEDED") {
+    logger.info({ paymentIntentId: paymentIntent.id, bookingId }, "Additional modification payment already recorded");
+    return;
+  }
+
+  await prisma.payment.update({
+    where: { id: payment.id },
+    data: {
+      additionalPaymentStatus: "SUCCEEDED",
+      amountCents: payment.amountCents + payment.additionalAmountCents,
+    },
+  });
+
+  logger.info(
+    { bookingId, paymentIntentId: paymentIntent.id, additionalAmountCents: payment.additionalAmountCents },
+    "Additional modification payment confirmed via webhook"
+  );
 }
 
 /**

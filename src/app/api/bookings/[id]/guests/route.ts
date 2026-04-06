@@ -11,6 +11,7 @@ import { validatePromoCodeRules } from "@/lib/promo";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { createXeroSupplementaryInvoice } from "@/lib/xero";
+import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import logger from "@/lib/logger";
 import { z } from "zod";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
@@ -252,7 +253,7 @@ export async function POST(
       // Calculate additional amount for confirmed+paid bookings
       let additionalAmountCents = 0;
       const hasSucceededPayment =
-        booking.status === "CONFIRMED" &&
+        ["CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
 
       if (hasSucceededPayment && priceDiffCents > 0) {
@@ -306,8 +307,56 @@ export async function POST(
         additionalAmountCents,
         promoRemoved,
         oldGuestCount: booking.guests.length,
+        hasSucceededPayment,
+        paymentId: booking.payment?.id ?? null,
+        paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
+        memberEmail: booking.member.email,
+        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        memberId: booking.memberId,
       };
     });
+
+    // Create additional PaymentIntent for price increases (outside transaction to avoid holding advisory lock)
+    let additionalPaymentClientSecret: string | undefined;
+    if (result.additionalAmountCents > 0 && result.hasSucceededPayment && result.paymentId) {
+      try {
+        let customerId = result.paymentCustomerId ?? undefined;
+        if (!customerId) {
+          const customer = await findOrCreateCustomer({
+            email: result.memberEmail,
+            name: result.memberName,
+            memberId: result.memberId,
+          });
+          customerId = customer.id;
+        }
+
+        const pi = await createPaymentIntent({
+          amountCents: result.additionalAmountCents,
+          customerId,
+          metadata: {
+            bookingId,
+            type: "modification_additional",
+            reason: "guest_add_price_increase",
+          },
+        });
+
+        await prisma.payment.update({
+          where: { id: result.paymentId },
+          data: {
+            additionalPaymentIntentId: pi.id,
+            additionalAmountCents: result.additionalAmountCents,
+            additionalPaymentStatus: "PENDING",
+            ...(customerId && !result.paymentCustomerId
+              ? { stripeCustomerId: customerId }
+              : {}),
+          },
+        });
+
+        additionalPaymentClientSecret = pi.client_secret ?? undefined;
+      } catch (piErr) {
+        logger.error({ err: piErr, bookingId }, "Failed to create additional PaymentIntent for guest addition");
+      }
+    }
 
     // Audit log
     logAudit({
@@ -362,6 +411,7 @@ export async function POST(
       addedGuests: result.addedGuests,
       priceDiffCents: result.priceDiffCents,
       additionalAmountCents: result.additionalAmountCents,
+      additionalPaymentClientSecret: additionalPaymentClientSecret ?? null,
       promoRemoved: result.promoRemoved,
     });
   } catch (err) {
