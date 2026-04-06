@@ -5,6 +5,8 @@ import {
   findSubscriptionInvoice,
   determineSubscriptionStatus,
   buildInvoiceLineItems,
+  withXeroRetry,
+  XeroDailyLimitError,
 } from "../xero"
 import { Invoice } from "xero-node"
 
@@ -382,5 +384,111 @@ describe("Season year logic for membership", () => {
 
     const invoiceDate = new Date("2027-01-15")
     expect(invoiceDate >= seasonStart && invoiceDate <= seasonEnd).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// withXeroRetry
+// ---------------------------------------------------------------------------
+
+describe("withXeroRetry", () => {
+  it("returns result on successful call", async () => {
+    const result = await withXeroRetry(() => Promise.resolve("ok"))
+    expect(result).toBe("ok")
+  })
+
+  it("passes through non-429 errors immediately", async () => {
+    const error = { response: { statusCode: 500 }, message: "Internal Server Error" }
+    await expect(
+      withXeroRetry(() => Promise.reject(error))
+    ).rejects.toBe(error)
+  })
+
+  it("retries on minute-level 429 and succeeds", async () => {
+    let calls = 0
+    const fn = () => {
+      calls++
+      if (calls === 1) {
+        return Promise.reject({
+          response: {
+            statusCode: 429,
+            headers: { "retry-after": "0", "x-rate-limit-problem": "minute" },
+          },
+        })
+      }
+      return Promise.resolve("success")
+    }
+    const result = await withXeroRetry(fn, { maxRetries: 3, maxWaitSec: 1 })
+    expect(result).toBe("success")
+    expect(calls).toBe(2)
+  })
+
+  it("throws XeroDailyLimitError immediately on daily limit (no retries)", async () => {
+    let calls = 0
+    const fn = () => {
+      calls++
+      return Promise.reject({
+        response: {
+          statusCode: 429,
+          headers: { "retry-after": "34166", "x-rate-limit-problem": "day" },
+        },
+      })
+    }
+    await expect(
+      withXeroRetry(fn, { maxRetries: 3 })
+    ).rejects.toBeInstanceOf(XeroDailyLimitError)
+    expect(calls).toBe(1) // No retries — aborted immediately
+  })
+
+  it("throws after exhausting all retries on minute-level 429", async () => {
+    let calls = 0
+    const fn = () => {
+      calls++
+      return Promise.reject({
+        response: {
+          statusCode: 429,
+          headers: { "retry-after": "0", "x-rate-limit-problem": "minute" },
+        },
+      })
+    }
+    await expect(
+      withXeroRetry(fn, { maxRetries: 2, maxWaitSec: 0 })
+    ).rejects.toMatchObject({ response: { statusCode: 429 } })
+    expect(calls).toBe(3) // initial + 2 retries
+  })
+
+  it("caps wait time to maxWaitSec", async () => {
+    let calls = 0
+    const start = Date.now()
+    const fn = () => {
+      calls++
+      if (calls === 1) {
+        return Promise.reject({
+          response: {
+            statusCode: 429,
+            headers: { "retry-after": "999", "x-rate-limit-problem": "minute" },
+          },
+        })
+      }
+      return Promise.resolve("done")
+    }
+    // maxWaitSec=0 means don't actually wait
+    const result = await withXeroRetry(fn, { maxRetries: 1, maxWaitSec: 0 })
+    expect(result).toBe("done")
+    expect(Date.now() - start).toBeLessThan(2000) // Should not have waited 999 seconds
+  })
+})
+
+// ---------------------------------------------------------------------------
+// XeroDailyLimitError
+// ---------------------------------------------------------------------------
+
+describe("XeroDailyLimitError", () => {
+  it("has correct name and message", () => {
+    const err = new XeroDailyLimitError(34166)
+    expect(err.name).toBe("XeroDailyLimitError")
+    expect(err.message).toContain("daily API limit")
+    expect(err.retryAfterSec).toBe(34166)
+    expect(err).toBeInstanceOf(Error)
   })
 })

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { importMembersFromXeroGroups } from "@/lib/xero";
+import { importMembersFromXeroGroups, XeroDailyLimitError } from "@/lib/xero";
 import logger from "@/lib/logger";
 
 const importSchema = z.object({
@@ -49,6 +49,13 @@ export async function POST(req: NextRequest) {
     logger.info({ result }, "Member import from Xero completed");
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof XeroDailyLimitError) {
+      logger.warn({ err: error }, "Member import hit Xero daily rate limit");
+      return NextResponse.json(
+        { error: "Xero daily API limit reached. Please try again tomorrow." },
+        { status: 429 }
+      );
+    }
     logger.error({ err: error }, "Member import from Xero failed");
     const message =
       error instanceof Error ? error.message : "Member import failed";
