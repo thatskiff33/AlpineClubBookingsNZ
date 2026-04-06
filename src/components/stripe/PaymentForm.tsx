@@ -29,6 +29,7 @@ export default function PaymentForm({
   const stripe = useStripe();
   const elements = useElements();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isPaid, setIsPaid] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -54,14 +55,24 @@ export default function PaymentForm({
       onError(error.message ?? "Payment failed");
       setIsProcessing(false);
     } else if (paymentIntent && paymentIntent.status === "succeeded") {
-      onSuccess(paymentIntent.id);
+      setIsPaid(true);
       setIsProcessing(false);
+      onSuccess(paymentIntent.id);
     } else {
       // Payment requires additional action (3D Secure, etc.)
       // The redirect will handle this
       setIsProcessing(false);
     }
   };
+
+  if (isPaid) {
+    return (
+      <div className="rounded-md bg-green-50 p-4 text-sm text-green-700">
+        <p className="font-medium">Payment successful!</p>
+        <p className="mt-1">Your payment of ${(amountCents / 100).toFixed(2)} NZD has been processed.</p>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
