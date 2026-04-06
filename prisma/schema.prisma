@@ -124,6 +124,12 @@ model Member {
   secondaryParent   Member?  @relation("SecondaryFamily", fields: [secondaryParentId], references: [id])
   secondaryDependents Member[] @relation("SecondaryFamily")
 
+  // Flexible email inheritance: use any adult's email for communications.
+  // Takes precedence over the inheritParentEmail + parentMemberId mechanism.
+  inheritEmailFromId  String?
+  inheritEmailFrom    Member?  @relation("EmailInheritance", fields: [inheritEmailFromId], references: [id])
+  emailInheritanceFor Member[] @relation("EmailInheritance")
+
   // Family group: links primary adult members (e.g. spouses) for shared booking quick-add
   // @deprecated — use FamilyGroupMember join table instead
   familyGroupId     String?
@@ -150,6 +156,7 @@ model Member {
   @@index([parentMemberId])
   @@index([secondaryParentId])
   @@index([familyGroupId])
+  @@index([inheritEmailFromId])
 }
 
 model PasswordResetToken {
