@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import { Mountain, Hammer, Users, Calendar } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -12,12 +13,20 @@ export default function AboutPage() {
   return (
     <>
       {/* Header */}
-      <section className="bg-gradient-to-br from-slate-800 to-slate-900 text-white py-16 sm:py-20">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <section className="relative text-white py-16 sm:py-20 overflow-hidden">
+        <Image
+          src="/images/sunset.jpg"
+          alt="Sunset from Mt Ruapehu"
+          fill
+          className="object-cover"
+          priority
+        />
+        <div className="absolute inset-0 bg-slate-900/70" />
+        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
             About the Club
           </h1>
-          <p className="mt-4 text-lg text-slate-300 max-w-2xl">
+          <p className="mt-4 text-lg text-slate-200 max-w-2xl">
             The Tokoroa Alpine Club has been connecting people with New
             Zealand&apos;s mountains since 1969.
           </p>
@@ -27,7 +36,8 @@ export default function AboutPage() {
       {/* History */}
       <section className="bg-white py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="max-w-3xl">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-10 items-start">
+          <div className="lg:col-span-3">
             <h2 className="text-2xl font-bold text-slate-900 mb-6">
               Our History
             </h2>
@@ -72,6 +82,20 @@ export default function AboutPage() {
                 conducted on the same basis.
               </p>
             </div>
+          </div>
+          <div className="lg:col-span-2">
+            <div className="relative aspect-[4/3] overflow-hidden rounded-xl shadow-lg">
+              <Image
+                src="/images/lodge.jpg"
+                alt="Tokoroa Alpine Club lodge on Mt Ruapehu"
+                fill
+                className="object-cover"
+              />
+            </div>
+            <p className="mt-3 text-sm text-slate-500 text-center">
+              The TAC lodge, Whakapapa ski area, Mt Ruapehu
+            </p>
+          </div>
           </div>
         </div>
       </section>

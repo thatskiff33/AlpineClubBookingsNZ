@@ -3,6 +3,7 @@
 import { Suspense, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,10 +76,15 @@ function LoginForm() {
 
   return (
     <Card className="w-full max-w-md">
-      <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl font-bold text-center">
-          Tokoroa Alpine Club
-        </CardTitle>
+      <CardHeader className="space-y-1 items-center">
+        <Image
+          src="/images/tac-logo.png"
+          alt="Tokoroa Alpine Club"
+          width={180}
+          height={60}
+          className="h-14 w-auto mb-2"
+          priority
+        />
         <CardDescription className="text-center">
           Sign in to your account to manage bookings
         </CardDescription>
@@ -194,10 +200,14 @@ export default function LoginPage() {
   return (
     <Suspense fallback={
       <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">
-            Tokoroa Alpine Club
-          </CardTitle>
+        <CardHeader className="space-y-1 items-center">
+          <Image
+            src="/images/tac-logo.png"
+            alt="Tokoroa Alpine Club"
+            width={180}
+            height={60}
+            className="h-14 w-auto"
+          />
         </CardHeader>
       </Card>
     }>

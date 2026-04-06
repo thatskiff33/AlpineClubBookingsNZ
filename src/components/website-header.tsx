@@ -1,9 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Menu, Mountain, X } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -47,9 +48,14 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
           href="/"
           className="flex items-center gap-2 font-bold text-slate-900 hover:opacity-80 transition-opacity"
         >
-          <Mountain className="h-6 w-6 text-blue-600" />
-          <span className="hidden sm:block">Tokoroa Alpine Club</span>
-          <span className="sm:hidden">TAC</span>
+          <Image
+            src="/images/tac-logo.png"
+            alt="Tokoroa Alpine Club"
+            width={140}
+            height={48}
+            className="h-10 w-auto"
+            priority
+          />
         </Link>
 
         {/* Desktop nav links */}
@@ -108,8 +114,13 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
           <SheetContent side="right" className="w-72">
             <SheetHeader>
               <SheetTitle className="flex items-center gap-2 text-left">
-                <Mountain className="h-5 w-5 text-blue-600" />
-                Tokoroa Alpine Club
+                <Image
+                  src="/images/tac-logo.png"
+                  alt="Tokoroa Alpine Club"
+                  width={120}
+                  height={40}
+                  className="h-8 w-auto"
+                />
               </SheetTitle>
             </SheetHeader>
 

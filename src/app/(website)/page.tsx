@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import {
   Mountain,
@@ -59,19 +60,29 @@ export default function HomePage() {
   return (
     <>
       {/* Hero */}
-      <section className="relative bg-gradient-to-br from-blue-900 via-slate-800 to-slate-900 text-white">
-        <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6 sm:py-32 lg:px-8 lg:py-40">
+      <section className="relative text-white overflow-hidden">
+        <Image
+          src="/images/lodge.jpg"
+          alt="Tokoroa Alpine Club lodge on Mt Ruapehu"
+          fill
+          className="object-cover"
+          priority
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-900/85 via-slate-900/70 to-slate-900/40" />
+        <div className="relative mx-auto max-w-7xl px-4 py-24 sm:px-6 sm:py-32 lg:px-8 lg:py-40">
           <div className="max-w-2xl">
-            <div className="flex items-center gap-3 mb-6">
-              <Mountain className="h-10 w-10 text-blue-300" />
-              <span className="text-blue-300 font-medium tracking-wide uppercase text-sm">
-                Est. 1969
-              </span>
-            </div>
+            <Image
+              src="/images/tac-logo.png"
+              alt="Tokoroa Alpine Club logo"
+              width={200}
+              height={68}
+              className="h-16 w-auto mb-6"
+              priority
+            />
             <h1 className="text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
               Tokoroa Alpine Club
             </h1>
-            <p className="mt-4 text-lg text-slate-300 sm:text-xl max-w-xl">
+            <p className="mt-4 text-lg text-slate-200 sm:text-xl max-w-xl">
               A members&apos; club on Mt Ruapehu. We operate a 29-bed lodge in
               the Whakapapa ski area, open year-round for members and their
               guests.
@@ -121,7 +132,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Activities */}
+      {/* Life on the Mountain — photo gallery */}
       <section className="bg-slate-50 py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-12">
@@ -133,7 +144,42 @@ export default function HomePage() {
               from winter sports to summer tramping and everything in between.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="relative aspect-[4/3] overflow-hidden rounded-xl shadow-md">
+              <Image
+                src="/images/snowboarder.jpg"
+                alt="Snowboarding on Mt Ruapehu with mountain panorama"
+                fill
+                className="object-cover hover:scale-105 transition-transform duration-500"
+              />
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-4">
+                <span className="text-white font-medium text-sm">Skiing & Snowboarding</span>
+              </div>
+            </div>
+            <div className="relative aspect-[4/3] overflow-hidden rounded-xl shadow-md">
+              <Image
+                src="/images/ski-field.jpg"
+                alt="Whakapapa ski field on Mt Ruapehu"
+                fill
+                className="object-cover hover:scale-105 transition-transform duration-500"
+              />
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-4">
+                <span className="text-white font-medium text-sm">Whakapapa Ski Area</span>
+              </div>
+            </div>
+            <div className="relative aspect-[4/3] overflow-hidden rounded-xl shadow-md sm:col-span-2 lg:col-span-1">
+              <Image
+                src="/images/sunset.jpg"
+                alt="Sunset from Mt Ruapehu"
+                fill
+                className="object-cover hover:scale-105 transition-transform duration-500"
+              />
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-4">
+                <span className="text-white font-medium text-sm">Mountain Sunsets</span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
             {activities.map((activity) => (
               <div
                 key={activity.label}

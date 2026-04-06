@@ -1,5 +1,5 @@
+import Image from "next/image";
 import Link from "next/link";
-import { Mountain } from "lucide-react";
 
 export function WebsiteFooter() {
   return (
@@ -8,9 +8,14 @@ export function WebsiteFooter() {
         <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
           {/* Club info */}
           <div>
-            <div className="flex items-center gap-2 text-white font-bold mb-3">
-              <Mountain className="h-5 w-5 text-blue-400" />
-              Tokoroa Alpine Club
+            <div className="mb-3">
+              <Image
+                src="/images/tac-logo.png"
+                alt="Tokoroa Alpine Club"
+                width={140}
+                height={48}
+                className="h-10 w-auto brightness-110"
+              />
             </div>
             <p className="text-sm leading-relaxed">
               Established 1969. Encouraging tramping, mountaineering, climbing,
