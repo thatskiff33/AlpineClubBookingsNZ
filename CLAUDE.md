@@ -350,7 +350,7 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9 complete. Security audi
 
 ## What's Next
 
-Phases 1, 4, 5, 6, 7, 8, and 9 complete. Remaining: Phase 10 (Compliance & Public Content), Phase 11 (Xero Account Mapping). See `docs/DELIVERY_PLAN.md` for details.
+Phases 1, 4, 5, 6, 7, 8, and 9 complete. Remaining: Phase 10 (Compliance & Public Content), Phase 11 (Xero Account Mapping), Phase 12 (Xero Phone Sync). See `docs/DELIVERY_PLAN.md` for details.
 
 ## Context
 

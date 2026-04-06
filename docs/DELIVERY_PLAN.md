@@ -276,6 +276,39 @@ Note: A9 and 5a are the same feature (admin dashboard real data); B4 and 5b are 
 
 ---
 
+## Phase 12: Fix Xero Phone Number Bidirectional Sync
+
+**Features:** XPH-01, XPH-02, XPH-03, XPH-04
+
+**Why needed:** When syncing contacts with Xero, phone numbers are correctly read (Xero's split `phoneCountryCode`/`phoneAreaCode`/`phoneNumber` fields assembled into `"+64 27 4224115"`), but when writing back to Xero the entire formatted string is dumped into just `phoneNumber`, losing the structured country/area code data. Additionally, `syncContactsFromXero()` doesn't backfill phone numbers for already-linked members. This breaks bidirectional phone sync.
+
+- XPH-01: Add exported `parsePhoneForXero()` function in `src/lib/xero.ts` (near existing `formatXeroPhone` at line 562)
+  - Parses formatted phone string back into Xero's split fields: `"+64 27 4224115"` → `{ phoneCountryCode: "64", phoneAreaCode: "27", phoneNumber: "4224115", phoneType: MOBILE }`
+  - Regex pattern: `^\+(\d{1,4})\s+(\d{1,5})\s+(.+)$` for international format
+  - Fallback: unrecognized formats put entire string in `phoneNumber` only (preserves current behavior, no regression)
+- XPH-02: Update `findOrCreateXeroContact()` (line 357-359) and `updateXeroContact()` (line 937-939) to use `parsePhoneForXero()` instead of `{ phoneType: MOBILE, phoneNumber: entireString }`
+  - `findOrCreateXeroContact()`: change `phones: member.phone ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneNumber: member.phone }] : []` to `phones: member.phone ? [parsePhoneForXero(member.phone)] : []`
+  - `updateXeroContact()`: same pattern change for `data.phone`
+- XPH-03: Add phone backfill in `syncContactsFromXero()` for both sync paths
+  - Already-linked branch (lines 461-474): backfill `phone` from Xero via `getXeroContactPhone(contact.phones)` if member's phone is null
+  - Email-match branch (lines 483-504): add `phone` backfill to `updateData` if `!member.phone`
+  - Uses existing `getXeroContactPhone()` helper (line 575) which prefers MOBILE type and calls `formatXeroPhone()`
+- XPH-04: Add tests in `src/lib/__tests__/xero.test.ts`
+  - Add `parsePhoneForXero` to imports
+  - Test cases: NZ mobile (`+64 27 4224115`), international format, numbers with dashes in local part, unrecognized format fallback, whitespace trimming, round-trip consistency with `formatXeroPhone`
+
+**Key files to modify:**
+- `src/lib/xero.ts` -- add `parsePhoneForXero()`, update 2 write locations, add phone backfill in 2 sync branches
+- `src/lib/__tests__/xero.test.ts` -- add import + ~7 test cases
+
+**No schema migration required.** The existing `Member.phone` field (`String?`) is unchanged.
+
+**Dependencies on other phases:** None
+**Can run concurrently with:** All other phases
+**Estimated effort:** S
+
+---
+
 ## Concurrency Map
 
 ```
@@ -293,6 +326,7 @@ Phase 7 (Lodge/Kiosk) ────────┤
                                │
 Phase 10 (Compliance/Content) ─── Can run anytime
 Phase 11 (Xero Account Mapping) ── Can run anytime
+Phase 12 (Xero Phone Sync) ──────── Can run anytime
 ```
 
 **Phases 2, 3, 4, 5, 10** have no inter-phase dependencies and can run in any order or concurrently.
@@ -316,7 +350,8 @@ Phase 11 (Xero Account Mapping) ── Can run anytime
 | 9. Observability | L | 9 |
 | 10. Compliance & Public Content | L | 8 |
 | 11. Xero Account Mapping | M | 5 |
-| **Total** | | **~80 unique features** |
+| 12. Xero Phone Sync | S | 4 |
+| **Total** | | **~84 unique features** |
 
 ---
 
