@@ -3,7 +3,7 @@
 ## How to Run
 
 ```bash
-npm install --legacy-peer-deps
+npm install
 npx prisma generate
 npm test              # 411 tests pass (21 test files)
 npm run build         # builds successfully
@@ -11,6 +11,7 @@ npm run dev           # development server
 
 # Docker deployment:
 docker compose up -d --build
+docker compose run --rm migrate    # run database migrations
 
 # Seed database (requires running PostgreSQL):
 npx prisma migrate dev --name initial
@@ -21,7 +22,7 @@ npm run db:seed
 - Admin: admin@tac.org.nz / admin123
 - Member: member@tac.org.nz / member123
 
-**Note:** nodemailer v8 has peer dep conflict with next-auth (use `--legacy-peer-deps`)
+**Note:** nodemailer pinned to v7 for next-auth peer dep compatibility
 
 ## Current State
 
@@ -546,7 +547,7 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 **Deploy process:**
 1. Push to GitHub
 2. SSH into Lightsail: `git pull && docker compose up -d --build`
-3. On schema changes: `docker compose exec app npx prisma migrate deploy`
+3. On schema changes: `docker compose run --rm migrate`
 
 **Backups:** Lightsail snapshots + daily pg_dump cron to S3 (configurable via env vars).
 

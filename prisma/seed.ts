@@ -181,6 +181,7 @@ async function main() {
         lastName: "User",
         role: "ADMIN",
         ageTier: "ADULT",
+        emailVerified: true,
         forcePasswordChange: true,
       },
     });
@@ -202,6 +203,7 @@ async function main() {
         lastName: "Member",
         role: "MEMBER",
         ageTier: "ADULT",
+        emailVerified: true,
       },
     });
     console.log("Test member seeded: member@tac.org.nz / member123");

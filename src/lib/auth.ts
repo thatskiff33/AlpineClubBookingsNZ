@@ -1,7 +1,11 @@
-import NextAuth from "next-auth";
+import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
+
+class EmailNotVerifiedError extends CredentialsSignin {
+  code = "EMAIL_NOT_VERIFIED";
+}
 
 declare module "next-auth" {
   interface Session {
@@ -52,7 +56,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         // Block unverified members from creating a session
         if (!member.emailVerified) {
-          throw new Error("EMAIL_NOT_VERIFIED");
+          throw new EmailNotVerifiedError();
         }
 
         return {
