@@ -30,9 +30,9 @@ export async function GET() {
         select: {
           id: true,
           name: true,
-          members: {
-            where: { active: true },
-            select: { id: true, firstName: true, lastName: true },
+          memberships: {
+            where: { member: { active: true } },
+            select: { member: { select: { id: true, firstName: true, lastName: true } } },
           },
         },
       },
@@ -40,7 +40,17 @@ export async function GET() {
     orderBy: { createdAt: "asc" },
   });
 
-  return NextResponse.json({ requests });
+  // Flatten memberships to members array for UI compatibility
+  const mapped = requests.map((r) => ({
+    ...r,
+    familyGroup: {
+      ...r.familyGroup,
+      members: r.familyGroup.memberships.map((ms) => ms.member),
+      memberships: undefined,
+    },
+  }));
+
+  return NextResponse.json({ requests: mapped });
 }
 
 /**
@@ -86,18 +96,12 @@ export async function PUT(req: NextRequest) {
   }
 
   if (action === "approve") {
-    // Check requester isn't already in a group (may have joined another since requesting)
-    if (request.requester.familyGroupId) {
-      return NextResponse.json(
-        { error: "Requester is already in a family group. Rejecting automatically." },
-        { status: 422 }
-      );
-    }
-
     await prisma.$transaction(async (tx) => {
-      await tx.member.update({
-        where: { id: request.requesterId },
-        data: { familyGroupId: request.familyGroupId },
+      // Add to join table (multi-group: no restriction on existing memberships)
+      await tx.familyGroupMember.upsert({
+        where: { familyGroupId_memberId: { familyGroupId: request.familyGroupId, memberId: request.requesterId } },
+        create: { familyGroupId: request.familyGroupId, memberId: request.requesterId, role: "MEMBER" },
+        update: {},
       });
       await tx.familyGroupJoinRequest.update({
         where: { id: requestId },

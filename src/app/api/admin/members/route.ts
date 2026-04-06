@@ -150,18 +150,18 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (andConditions.length > 0) {
-    where.AND = andConditions;
-  }
-
-  // Filter: family group
+  // Filter: family group (via join table)
   const familyGroupFilter = sp.get("familyGroup");
   if (familyGroupFilter === "none") {
-    andConditions.push({ familyGroupId: null });
+    andConditions.push({ familyGroupMemberships: { none: {} } });
   } else if (familyGroupFilter === "any") {
-    andConditions.push({ familyGroupId: { not: null } });
+    andConditions.push({ familyGroupMemberships: { some: {} } });
   } else if (familyGroupFilter && familyGroupFilter !== "all") {
-    andConditions.push({ familyGroupId: familyGroupFilter });
+    andConditions.push({ familyGroupMemberships: { some: { familyGroupId: familyGroupFilter } } });
+  }
+
+  if (andConditions.length > 0) {
+    where.AND = andConditions;
   }
 
   const select = {
@@ -191,6 +191,12 @@ export async function GET(req: NextRequest) {
     familyGroup: {
       select: { id: true, name: true },
     },
+    familyGroupMemberships: {
+      select: {
+        familyGroupId: true,
+        familyGroup: { select: { id: true, name: true } },
+      },
+    },
     _count: {
       select: { dependents: true, secondaryDependents: true },
     },
@@ -219,11 +225,18 @@ export async function GET(req: NextRequest) {
     parentName: m.parent ? `${m.parent.firstName} ${m.parent.lastName}` : null,
     secondaryParentName: m.secondaryParent ? `${m.secondaryParent.firstName} ${m.secondaryParent.lastName}` : null,
     dependentCount: m._count.dependents + m._count.secondaryDependents,
+    // Legacy single-group field (kept for backward compat)
     familyGroupName: m.familyGroup?.name ?? null,
+    // All groups from join table
+    familyGroups: m.familyGroupMemberships.map((fg) => ({
+      id: fg.familyGroup.id,
+      name: fg.familyGroup.name,
+    })),
     subscriptions: undefined,
     parent: undefined,
     secondaryParent: undefined,
     familyGroup: undefined,
+    familyGroupMemberships: undefined,
     _count: undefined,
   }));
 

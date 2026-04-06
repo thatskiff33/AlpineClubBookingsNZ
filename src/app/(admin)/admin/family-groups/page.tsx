@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,20 +9,21 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Trash2, Plus, Users, Check, X, Edit2 } from "lucide-react";
 
-interface FamilyGroupMember {
+interface FamilyGroupMemberRow {
   id: string;
   firstName: string;
   lastName: string;
   email: string;
   ageTier: string;
   parentMemberId: string | null;
+  role?: string;
 }
 
 interface FamilyGroup {
   id: string;
   name: string | null;
   createdAt: string;
-  members: FamilyGroupMember[];
+  members: FamilyGroupMemberRow[];
   memberCount: number;
   pendingRequests: number;
 }
@@ -45,6 +47,8 @@ interface MemberOption {
 }
 
 export default function FamilyGroupsPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [groups, setGroups] = useState<FamilyGroup[]>([]);
   const [requests, setRequests] = useState<JoinRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,6 +71,7 @@ export default function FamilyGroupsPage() {
       if (groupsRes.ok) {
         const data = await groupsRes.json();
         setGroups(data.familyGroups);
+        return data.familyGroups as FamilyGroup[];
       }
       if (requestsRes.ok) {
         const data = await requestsRes.json();
@@ -75,11 +80,20 @@ export default function FamilyGroupsPage() {
     } finally {
       setLoading(false);
     }
+    return [] as FamilyGroup[];
   }, []);
 
+  // On mount: fetch data, then auto-open edit dialog if ?edit=GROUP_ID is set
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    const editId = searchParams.get("edit");
+    fetchData().then((fetchedGroups) => {
+      if (editId && fetchedGroups) {
+        const target = fetchedGroups.find((g: FamilyGroup) => g.id === editId);
+        if (target) openEditForm(target);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Debounced member search
   useEffect(() => {
@@ -102,7 +116,7 @@ export default function FamilyGroupsPage() {
           const selectedIds = new Set(selectedMembers.map((m) => m.id));
           setSearchResults(
             data.members
-              .filter((m: MemberOption & { familyGroupId?: string }) => !selectedIds.has(m.id))
+              .filter((m: MemberOption) => !selectedIds.has(m.id))
               .map((m: MemberOption) => ({
                 id: m.id,
                 firstName: m.firstName,
@@ -156,6 +170,17 @@ export default function FamilyGroupsPage() {
     setSelectedMembers((prev) => prev.filter((m) => m.id !== id));
   }
 
+  function closeForm() {
+    setShowForm(false);
+    // Remove ?edit param from URL when closing
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("edit");
+    const newSearch = params.toString();
+    router.replace(newSearch ? `/admin/family-groups?${newSearch}` : "/admin/family-groups", {
+      scroll: false,
+    });
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -189,7 +214,7 @@ export default function FamilyGroupsPage() {
         return;
       }
 
-      setShowForm(false);
+      closeForm();
       fetchData();
     } finally {
       setSubmitting(false);
@@ -383,7 +408,7 @@ export default function FamilyGroupsPage() {
                 <Button type="submit" disabled={submitting || selectedMembers.length < 1}>
                   {submitting ? "Saving..." : editingGroup ? "Update Group" : "Create Group"}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+                <Button type="button" variant="outline" onClick={closeForm}>
                   Cancel
                 </Button>
               </div>

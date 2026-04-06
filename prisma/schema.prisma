@@ -125,8 +125,12 @@ model Member {
   secondaryDependents Member[] @relation("SecondaryFamily")
 
   // Family group: links primary adult members (e.g. spouses) for shared booking quick-add
+  // @deprecated — use FamilyGroupMember join table instead
   familyGroupId     String?
-  familyGroup       FamilyGroup?             @relation(fields: [familyGroupId], references: [id])
+  familyGroup       FamilyGroup?             @relation("FamilyGroupLegacy", fields: [familyGroupId], references: [id])
+
+  // Many-to-many family group memberships via join table
+  familyGroupMemberships FamilyGroupMember[]
 
   // Relations
   passwordResetTokens        PasswordResetToken[]
@@ -667,8 +671,25 @@ model FamilyGroup {
   name         String?
   createdAt    DateTime                @default(now())
   updatedAt    DateTime                @updatedAt
-  members      Member[]
+  // @deprecated — legacy single-group FK; use memberships (FamilyGroupMember) instead
+  legacyMembers Member[]               @relation("FamilyGroupLegacy")
+  memberships  FamilyGroupMember[]
   joinRequests FamilyGroupJoinRequest[]
+}
+
+model FamilyGroupMember {
+  id            String      @id @default(cuid())
+  familyGroupId String
+  memberId      String
+  role          String      @default("MEMBER") // ADMIN or MEMBER (group admin can manage the group)
+  joinedAt      DateTime    @default(now())
+
+  familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  member      Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([familyGroupId, memberId])
+  @@index([memberId])
+  @@index([familyGroupId])
 }
 
 model FamilyGroupJoinRequest {

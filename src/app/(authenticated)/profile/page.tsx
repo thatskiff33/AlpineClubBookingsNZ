@@ -42,14 +42,18 @@ export default async function ProfilePage() {
       createdAt: true,
       passwordChangedAt: true,
       parentMemberId: true,
-      familyGroupId: true,
-      familyGroup: {
+      familyGroupMemberships: {
         select: {
-          id: true,
-          name: true,
-          members: {
-            where: { active: true },
-            select: { id: true, firstName: true, lastName: true },
+          familyGroupId: true,
+          familyGroup: {
+            select: {
+              id: true,
+              name: true,
+              memberships: {
+                where: { member: { active: true } },
+                select: { member: { select: { id: true, firstName: true, lastName: true } } },
+              },
+            },
           },
         },
       },
@@ -259,13 +263,13 @@ export default async function ProfilePage() {
           </CardHeader>
           <CardContent>
             <FamilyGroupSection
-              familyGroupId={member.familyGroupId}
-              familyGroupName={member.familyGroup?.name ?? null}
-              familyGroupMembers={
-                member.familyGroup?.members
-                  .filter((m) => m.id !== member.id)
-                  .map((m) => ({ id: m.id, firstName: m.firstName, lastName: m.lastName })) ?? []
-              }
+              familyGroups={member.familyGroupMemberships.map((ms) => ({
+                id: ms.familyGroup.id,
+                name: ms.familyGroup.name,
+                members: ms.familyGroup.memberships
+                  .map((m) => m.member)
+                  .filter((m) => m.id !== member.id),
+              }))}
             />
           </CardContent>
         </Card>
