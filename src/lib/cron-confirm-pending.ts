@@ -6,6 +6,7 @@ import { isXeroConnected, createXeroInvoiceForBooking } from "./xero";
 import {
   sendBookingConfirmedEmail,
   sendBookingBumpedEmail,
+  sendAdminPaymentFailureAlert,
 } from "./email";
 import logger from "@/lib/logger";
 
@@ -179,6 +180,18 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         data: { status: BookingStatus.PENDING },
       }).catch((revertErr) => logger.error({ err: revertErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to revert booking status"));
       result.failedBookingIds.push(booking.id);
+
+      // N-04: Send admin alert for payment failure from cron
+      sendAdminPaymentFailureAlert({
+        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        amountCents: booking.finalPriceCents,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        paymentIntentId: booking.payment?.stripePaymentIntentId || "N/A",
+      }).catch((alertErr) =>
+        logger.error({ err: alertErr, bookingId: booking.id }, "Failed to send admin payment failure alert")
+      );
     }
   }
 

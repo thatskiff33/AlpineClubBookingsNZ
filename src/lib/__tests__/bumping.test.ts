@@ -22,6 +22,7 @@ vi.mock("../email", () => ({
   sendBookingBumpedEmail: vi.fn(),
   sendBookingConfirmedEmail: vi.fn(),
   sendBookingPendingEmail: vi.fn(),
+  sendAdminBookingBumpedAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 import {

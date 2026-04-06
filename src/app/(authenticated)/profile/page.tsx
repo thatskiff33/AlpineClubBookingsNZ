@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
 import { ProfileForm } from "./profile-form";
 import { ChangeEmailForm } from "./change-email-form";
+import { NotificationPreferences } from "./notification-preferences";
 import {
   Card,
   CardContent,
@@ -132,6 +133,19 @@ export default async function ProfilePage() {
         </CardHeader>
         <CardContent>
           <ChangeEmailForm currentEmail={member.email} />
+        </CardContent>
+      </Card>
+
+      {/* Notification Preferences */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Notification Preferences</CardTitle>
+          <CardDescription>
+            Choose which email notifications you receive
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <NotificationPreferences />
         </CardContent>
       </Card>
 

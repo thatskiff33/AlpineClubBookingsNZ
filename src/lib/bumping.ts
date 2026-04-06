@@ -2,7 +2,7 @@ import { prisma } from "./prisma";
 import { LODGE_CAPACITY } from "./capacity";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { eachDayOfInterval, subDays, format, startOfDay } from "date-fns";
-import { sendBookingBumpedEmail } from "./email";
+import { sendBookingBumpedEmail, sendAdminBookingBumpedAlert } from "./email";
 import logger from "@/lib/logger";
 
 export interface BumpResult {
@@ -199,9 +199,11 @@ export async function bumpPendingBookings(
 /**
  * Send bumped notification emails for a list of booking IDs.
  * Called after the transaction commits so emails aren't sent on rollback.
+ * @param triggeringMemberName - Name of the member whose booking triggered the bump (for admin alerts)
  */
 export async function sendBumpedNotifications(
-  bumpedBookingIds: string[]
+  bumpedBookingIds: string[],
+  triggeringMemberName?: string
 ): Promise<void> {
   for (const bookingId of bumpedBookingIds) {
     const booking = await prisma.booking.findUnique({
@@ -222,5 +224,16 @@ export async function sendBumpedNotifications(
     } catch (err) {
       logger.error({ err, bookingId }, "Failed to send bumped email");
     }
+
+    // N-07: Send admin alert for each bumped booking
+    sendAdminBookingBumpedAlert({
+      bumpedMemberName: `${booking.member.firstName} ${booking.member.lastName}`,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      guestCount: booking.guests.length,
+      triggeringMemberName: triggeringMemberName || "Unknown",
+    }).catch((err) =>
+      logger.error({ err, bookingId }, "Failed to send admin bump alert")
+    );
   }
 }

@@ -5,7 +5,7 @@
 ```bash
 npm install --legacy-peer-deps
 npx prisma generate
-npm test              # 359 tests pass (18 test files)
+npm test              # 411 tests pass (21 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -25,7 +25,7 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + Delivery Phases 1, 4, 5, 9 complete. Security audit + 5 integration reviews done. 359 tests pass, build succeeds.
+All 9 build phases + Delivery Phases 1, 4, 5, 6, 9 complete. Security audit + 5 integration reviews done. 411 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
@@ -46,6 +46,7 @@ All 9 build phases + Delivery Phases 1, 4, 5, 9 complete. Security audit + 5 int
 - Docker: log rotation (json-file, 10m x 5) on all services
 - Sentry: server-side + client-side error tracking, cron monitoring, performance tracing
 - Observability: API request logging middleware, webhook delivery monitoring (`WebhookLog`), admin health dashboard
+- Notifications: EmailLog tracking, check-in reminders, admin alerts (new booking, payment failure, pending deadline, bumped, Xero errors, capacity warnings), notification preferences, email retry with backoff, admin daily digest, bulk member communication (rate-limited, preference-gated), post-stay feedback requests
 
 ### Delivery Phase 1: Foundational Infrastructure - COMPLETED
 
@@ -191,9 +192,65 @@ All 9 build phases + Delivery Phases 1, 4, 5, 9 complete. Security audit + 5 int
 - `prisma/schema.prisma` - Added WebhookLog model
 - `.env.example` - Added Sentry env vars
 
+### Delivery Phase 6: Notifications - COMPLETED
+
+**Date:** 2026-04-06
+**Branch:** phase-6-notifications
+**Tests:** 411 (was 359, +52 new across 3 sub-phases)
+
+**Sub-phase 6a: Core Alerts**
+1. **N-10**: EmailLog Prisma model with delivery tracking (QUEUED/SENT/FAILED/BOUNCED), htmlBody for retry, integrated into sendEmail()
+2. **N-01**: Check-in reminder cron (daily 9AM NZST), queries CONFIRMED bookings with checkIn=tomorrow, includes guest list and chore assignments
+3. **N-02**: Admin alert on new booking creation (fire-and-forget to all admins)
+4. **N-04**: Admin alert on payment failure (Stripe webhook + charge-saved-method failures)
+5. **N-06**: Pending deadline alert cron (daily 8AM NZST), digest of PENDING bookings within 48h of nonMemberHoldUntil
+6. **N-07**: Admin alert when booking bumped, includes triggering member info
+
+**Sub-phase 6b: Preference-Gated Features**
+7. **N-03**: Capacity warning cron (daily 7AM NZST), alerts when any of next 14 days has <=5 beds remaining
+8. **N-05**: Xero sync error alerts with 1-hour deduplication via EmailLog check
+9. **N-08**: NotificationPreference model (per-member toggles), GET/PUT API, profile page UI with toggle switches, shouldSendEmail() helper
+10. **N-11**: Email retry cron (every 30min), retries FAILED emails up to 3 attempts using stored htmlBody
+11. **N-13**: Admin daily digest cron (daily 7:30AM NZST), summarizes past 24h alerts by type with counts
+
+**Sub-phase 6c: Advanced Communication**
+12. **N-09**: Bulk member communication - admin-only POST endpoint, rate limited 1/hr, respects marketingEmails preference, HTML/header injection prevention (escapeHtml + newline stripping), compose UI, send history via audit log
+13. **N-12**: Post-stay feedback request cron (daily 10AM NZST), queries CONFIRMED/COMPLETED bookings where checkOut=yesterday, respects bookingReminder preference
+
+**New files:**
+- `src/lib/cron-checkin-reminders.ts` - Check-in reminder cron logic
+- `src/lib/cron-pending-deadline-alerts.ts` - Pending deadline alert cron
+- `src/lib/cron-capacity-warnings.ts` - Capacity warning cron
+- `src/lib/cron-email-retry.ts` - Email retry with backoff cron
+- `src/lib/cron-admin-digest.ts` - Admin daily digest cron
+- `src/lib/cron-feedback-requests.ts` - Post-stay feedback request cron
+- `src/lib/xero-error-alert.ts` - Xero sync error alert with deduplication
+- `src/app/api/notifications/preferences/route.ts` - Notification preferences API
+- `src/app/api/admin/communications/send/route.ts` - Bulk communication send API
+- `src/app/api/admin/communications/history/route.ts` - Communication history API
+- `src/app/(admin)/admin/communications/page.tsx` - Communications admin page
+- `src/app/(authenticated)/profile/notification-preferences.tsx` - Notification preferences UI
+- `src/lib/__tests__/phase6a-notifications.test.ts` - 18 tests for Phase 6a
+- `src/lib/__tests__/phase6b-notifications.test.ts` - 17 tests for Phase 6b
+- `src/lib/__tests__/phase6c-notifications.test.ts` - 17 tests for Phase 6c
+
+**New Prisma models (require migration):**
+- `EmailLog` - Email delivery tracking with status, attempts, htmlBody for retry
+- `NotificationPreference` - Per-member notification toggle preferences
+
+**Modified files:**
+- `src/lib/email.ts` - EmailLog integration, shouldSendEmail(), admin alert senders, bulk communication support
+- `src/lib/email-templates.ts` - 13 new email templates (check-in reminder, admin alerts, digest, feedback, bulk communication)
+- `src/instrumentation.ts` - 6 new cron jobs registered with overlap guards and timezone config
+- `src/components/admin-sidebar.tsx` - Added Communications nav entry
+- `src/app/api/bookings/route.ts` - Fire-and-forget admin new booking alert
+- `src/app/api/webhooks/stripe/route.ts` - Payment failure admin alert
+- `src/lib/bumping.ts` - Admin alert on booking bump
+- `prisma/schema.prisma` - EmailLog, NotificationPreference models
+
 ## What's Next
 
-Phases 1, 4, 5, and 9 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
+Phases 1, 4, 5, 6, and 9 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
 
 ## Context
 
@@ -515,4 +572,4 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 
 ## Build History Summary
 
-9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1, 4, 5, and 9 completed 2026-04-06. 359 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
+9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1, 4, 5, 6, and 9 completed 2026-04-06. 411 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.

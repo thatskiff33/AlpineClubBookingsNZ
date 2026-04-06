@@ -97,13 +97,14 @@ model Member {
   updatedAt     DateTime @updatedAt
 
   // Relations
-  passwordResetTokens      PasswordResetToken[]
-  emailVerificationTokens  EmailVerificationToken[]
-  emailChangeTokens        EmailChangeToken[]
-  subscriptions            MemberSubscription[]
-  bookings                 Booking[]
-  guestAppearances         BookingGuest[]
-  promoRedemptions         PromoRedemption[]
+  passwordResetTokens        PasswordResetToken[]
+  emailVerificationTokens    EmailVerificationToken[]
+  emailChangeTokens          EmailChangeToken[]
+  subscriptions              MemberSubscription[]
+  bookings                   Booking[]
+  guestAppearances           BookingGuest[]
+  promoRedemptions           PromoRedemption[]
+  notificationPreference     NotificationPreference?
 
   @@index([email])
   @@index([xeroContactId])
@@ -496,6 +497,58 @@ model BookingModification {
 
   @@index([bookingId])
   @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Email Delivery Tracking (N-10)
+// ---------------------------------------------------------------------------
+
+enum EmailLogStatus {
+  QUEUED
+  SENT
+  FAILED
+  BOUNCED
+}
+
+model EmailLog {
+  id            String         @id @default(cuid())
+  to            String
+  subject       String
+  templateName  String
+  htmlBody      String?        // Stored for retry purposes (N-11)
+  status        EmailLogStatus @default(QUEUED)
+  errorMessage  String?
+  attempts      Int            @default(1)
+  lastAttemptAt DateTime       @default(now())
+  sentAt        DateTime?
+  messageId     String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([to])
+  @@index([status])
+  @@index([createdAt])
+  @@index([status, attempts])
+  @@index([templateName, status, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Notification Preferences (N-08)
+// ---------------------------------------------------------------------------
+
+model NotificationPreference {
+  id                   String   @id @default(cuid())
+  memberId             String   @unique
+  bookingConfirmation  Boolean  @default(true)
+  bookingReminder      Boolean  @default(true)
+  bookingBumped        Boolean  @default(true)
+  bookingCancelled     Boolean  @default(true)
+  choreRoster          Boolean  @default(true)
+  marketingEmails      Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 }
 
 // ---------------------------------------------------------------------------
