@@ -5,7 +5,7 @@
 ```bash
 npm install
 npx prisma generate
-npm test              # 575 tests pass (28 test files)
+npm test              # 664 tests pass (32 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -26,7 +26,7 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 9 complete. Security audit + 5 integration reviews done. 575 tests pass, build succeeds.
+All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9 complete. Security audit + 5 integration reviews done. 664 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
@@ -43,7 +43,7 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 9 complete. Security audit +
 - Logging: structured JSON logging via pino (`src/lib/logger.ts`), LOG_LEVEL env var
 - Health: `GET /api/health` checks DB, Stripe, Xero, SMTP with latency and status
 - Cron tracking: `CronJobRun` model records execution metadata, auto-prunes after 90 days
-- Schema: `BookingModification` model, `Payment.changeFeeCents` field (for future booking mods)
+- Booking modifications: date changes, add/remove guests, modification quotes, change fee calculation, chore cleanup, Xero invoice adjustments, modification history
 - Refunds: `getRefundTier()` extracted from cancellation logic with full test coverage
 - Docker: log rotation (json-file, 10m x 5) on all services
 - Sentry: server-side + client-side error tracking, cron monitoring, performance tracing
@@ -301,9 +301,49 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 9 complete. Security audit +
 - `src/lib/email.ts` - sendChoreRosterEmail accepts optional choreLink
 - `src/app/api/admin/roster/[date]/route.ts` - Generates GuestChoreToken per guest on roster email
 
+### Delivery Phase 8: Booking Modifications - COMPLETED
+
+**Date:** 2026-04-06
+**Branch:** phase-8-booking-mods
+**Tests:** 664 (was 575, +89 new across 3 sub-phases)
+
+**Sub-phase 8a: Change Fee Calculation**
+1. **FEE-02**: `calculateChangeFee()` in `src/lib/change-fee.ts` - late-notice fee based on cancellation tier transitions
+2. **FEE-03**: Cancellation service updated to exclude change fees from refundable base
+3. **MOD-05**: `POST /api/bookings/[id]/modify-quote` - read-only modification preview endpoint
+
+**Sub-phase 8b: Booking Modification APIs & UI**
+4. **MOD-01**: `PUT /api/bookings/[id]/modify-dates` - date change with capacity check, advisory lock, repricing, promo recalc, non-member hold update, Stripe refund/charge
+5. **MOD-03**: `POST /api/bookings/[id]/guests` - add guests with capacity check, repricing
+6. **MOD-04**: `DELETE /api/bookings/[id]/guests/[guestId]` - remove guest with repricing, Stripe refund
+7. **UI-03**: Modification history card on booking detail page
+
+**Sub-phase 8c: Integrations**
+8. **CHR-01**: `cleanupChoreAssignmentsForDateChange()` in `src/lib/chore-cleanup.ts` - deletes SUGGESTED assignments for removed dates, warns about CONFIRMED/COMPLETED
+9. **XER-01**: `createXeroSupplementaryInvoice()` and `createXeroCreditNoteForModification()` in `src/lib/xero.ts` - supplementary invoice for price increase, credit note for decrease, fire-and-forget
+10. **EML-01**: `bookingModifiedTemplate` with old/new details, change fee display, `escapeHtml` on user values
+
+**New files:**
+- `src/lib/change-fee.ts` - Late-notice change fee calculation
+- `src/lib/chore-cleanup.ts` - Chore assignment cleanup for date changes
+- `src/app/api/bookings/[id]/modify-dates/route.ts` - Date change API
+- `src/app/api/bookings/[id]/modify-quote/route.ts` - Modification quote API
+- `src/app/api/bookings/[id]/guests/route.ts` - Add guests API
+- `src/app/api/bookings/[id]/guests/[guestId]/route.ts` - Remove guest API
+- `src/lib/__tests__/phase8a-change-fee.test.ts` - Change fee tests
+- `src/lib/__tests__/phase8b-booking-mods.test.ts` - Modification API tests
+- `src/lib/__tests__/phase8c-integrations.test.ts` - Integration tests (CHR-01, XER-01, EML-01)
+
+**Modified files:**
+- `src/lib/xero.ts` - Added `createXeroSupplementaryInvoice`, `createXeroCreditNoteForModification`
+- `src/lib/email-templates.ts` - Added `bookingModifiedTemplate`
+- `src/lib/email.ts` - Added `sendBookingModifiedEmail`
+- `src/lib/cancellation.ts` - Exclude change fees from refund base
+- `src/app/(authenticated)/bookings/[id]/page.tsx` - Modification history UI
+
 ## What's Next
 
-Phases 1, 4, 5, 6, 7, and 9 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
+Phases 1, 4, 5, 6, 7, 8, and 9 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
 
 ## Context
 

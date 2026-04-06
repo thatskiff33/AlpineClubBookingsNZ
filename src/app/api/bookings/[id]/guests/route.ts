@@ -10,6 +10,7 @@ import {
 import { validatePromoCodeRules } from "@/lib/promo";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
+import { createXeroSupplementaryInvoice } from "@/lib/xero";
 import logger from "@/lib/logger";
 import { z } from "zod";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
@@ -319,6 +320,17 @@ export async function POST(
       }),
       ipAddress,
     });
+
+    // XER-01: Xero supplementary invoice for price increase (fire-and-forget)
+    if (result.additionalAmountCents > 0) {
+      createXeroSupplementaryInvoice({
+        bookingId,
+        priceDiffCents: result.priceDiffCents,
+        changeFeeCents: 0,
+      }).catch((err) =>
+        logger.error({ err, bookingId }, "Failed to create Xero supplementary invoice for guest addition")
+      );
+    }
 
     // Send email
     const member = await prisma.member.findUnique({

@@ -17,6 +17,11 @@ import { validatePromoCodeRules } from "@/lib/promo";
 import { processRefund } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
+import { cleanupChoreAssignmentsForDateChange } from "@/lib/chore-cleanup";
+import {
+  createXeroSupplementaryInvoice,
+  createXeroCreditNoteForModification,
+} from "@/lib/xero";
 import logger from "@/lib/logger";
 import { z } from "zod";
 
@@ -319,29 +324,15 @@ export async function PUT(
         });
       }
 
-      // Clean up chore assignments for dates no longer in range
-      const choreWarnings: string[] = [];
+      // CHR-01: Clean up chore assignments for dates no longer in range
       const oldCheckIn = new Date(booking.checkIn);
       const oldCheckOut = new Date(booking.checkOut);
-
-      // Find assignments outside the new date range
-      const outOfRangeAssignments = await tx.choreAssignment.findMany({
-        where: {
-          bookingId,
-          OR: [{ date: { lt: newCheckIn } }, { date: { gte: newCheckOut } }],
-        },
-        include: { choreTemplate: true },
-      });
-
-      for (const assignment of outOfRangeAssignments) {
-        if (assignment.status === "SUGGESTED") {
-          await tx.choreAssignment.delete({ where: { id: assignment.id } });
-        } else {
-          choreWarnings.push(
-            `${assignment.choreTemplate.name} on ${assignment.date.toISOString().split("T")[0]} is ${assignment.status} and was not auto-removed`
-          );
-        }
-      }
+      const { choreWarnings } = await cleanupChoreAssignmentsForDateChange(
+        tx,
+        bookingId,
+        newCheckIn,
+        newCheckOut
+      );
 
       // Update booking
       const updatedBooking = await tx.booking.update({
@@ -414,6 +405,24 @@ export async function PUT(
       }),
       ipAddress,
     });
+
+    // XER-01: Xero invoice adjustment (fire-and-forget)
+    if (result.additionalAmountCents > 0 || result.changeFeeCents > 0) {
+      createXeroSupplementaryInvoice({
+        bookingId,
+        priceDiffCents: Math.max(result.priceDiffCents, 0),
+        changeFeeCents: result.changeFeeCents,
+      }).catch((err) =>
+        logger.error({ err, bookingId }, "Failed to create Xero supplementary invoice for modification")
+      );
+    } else if (result.refundAmountCents > 0) {
+      createXeroCreditNoteForModification({
+        bookingId,
+        refundAmountCents: result.refundAmountCents,
+      }).catch((err) =>
+        logger.error({ err, bookingId }, "Failed to create Xero credit note for modification")
+      );
+    }
 
     // Send email notification (fire-and-forget)
     const member = await prisma.member.findUnique({

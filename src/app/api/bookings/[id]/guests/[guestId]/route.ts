@@ -10,6 +10,7 @@ import { validatePromoCodeRules } from "@/lib/promo";
 import { processRefund } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
+import { createXeroCreditNoteForModification } from "@/lib/xero";
 import logger from "@/lib/logger";
 
 export async function DELETE(
@@ -298,6 +299,16 @@ export async function DELETE(
       }),
       ipAddress,
     });
+
+    // XER-01: Xero credit note for price decrease (fire-and-forget)
+    if (result.refundAmountCents > 0) {
+      createXeroCreditNoteForModification({
+        bookingId,
+        refundAmountCents: result.refundAmountCents,
+      }).catch((err) =>
+        logger.error({ err, bookingId }, "Failed to create Xero credit note for guest removal")
+      );
+    }
 
     // Send email
     const member = await prisma.member.findUnique({
