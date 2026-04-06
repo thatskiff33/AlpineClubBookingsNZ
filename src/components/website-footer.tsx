@@ -66,6 +66,16 @@ export function WebsiteFooter() {
             <ul className="space-y-2 text-sm">
               <li>
                 <a
+                  href="https://tokoroa.org.nz/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-white transition-colors font-medium text-slate-200"
+                >
+                  Visit TAC Website &rarr;
+                </a>
+              </li>
+              <li>
+                <a
                   href="https://www.fmc.org.nz/"
                   target="_blank"
                   rel="noopener noreferrer"

@@ -287,6 +287,17 @@ export default async function JoinPage() {
                         ))}
                       </tbody>
                     </table>
+                    {season.type === "WINTER" ? (
+                      <p className="mt-2 text-sm text-slate-600">
+                        <span className="font-semibold text-slate-800">Catered:</span>{" "}
+                        Winter stays include breakfast and dinner in the nightly rate.
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-sm text-slate-600">
+                        <span className="font-semibold text-slate-800">Self-catered:</span>{" "}
+                        Summer stays have kitchen facilities available; meals are not included.
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}

@@ -93,7 +93,7 @@ export default function AboutPage() {
               />
             </div>
             <p className="mt-3 text-sm text-slate-500 text-center">
-              The TAC lodge, Whakapapa ski area, Mt Ruapehu
+              Waldvogel Lodge, Winter 2022
             </p>
           </div>
           </div>
@@ -119,7 +119,7 @@ export default function AboutPage() {
             <Card>
               <CardContent className="pt-6">
                 <Mountain className="h-7 w-7 text-blue-600 mb-3" />
-                <h3 className="font-semibold text-slate-900">Mt Ruapehu Lodge</h3>
+                <h3 className="font-semibold text-slate-900">Waldvogel Lodge</h3>
                 <p className="text-sm text-slate-600 mt-1">
                   29-bed lodge in the Whakapapa ski area. Open year-round.
                 </p>

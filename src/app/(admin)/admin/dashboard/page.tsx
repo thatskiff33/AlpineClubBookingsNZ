@@ -105,95 +105,107 @@ export default async function AdminDashboardPage() {
 
       {/* Summary stats */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Members</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{stats.totalMembers}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {stats.activeMembers} active, {stats.inactiveMembers} inactive
-            </p>
-          </CardContent>
-        </Card>
+        <Link href="/admin/members" className="group">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Members</CardTitle>
+              <Users className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">{stats.totalMembers}</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {stats.activeMembers} active, {stats.inactiveMembers} inactive
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Total Bookings
-            </CardTitle>
-            <BookOpen className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{stats.totalBookings}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              All-time bookings
-            </p>
-          </CardContent>
-        </Card>
+        <Link href="/admin/bookings" className="group">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Total Bookings
+              </CardTitle>
+              <BookOpen className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">{stats.totalBookings}</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                All-time bookings
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Active Bookings
-            </CardTitle>
-            <CalendarCheck className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{stats.activeBookings}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Confirmed + Pending
-            </p>
-          </CardContent>
-        </Card>
+        <Link href="/admin/bookings?status=CONFIRMED,PAID" className="group">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Active Bookings
+              </CardTitle>
+              <CalendarCheck className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">{stats.activeBookings}</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Confirmed + Pending
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Revenue This Month
-            </CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">
-              {formatCents(stats.revenueThisMonth)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              From succeeded payments
-            </p>
-          </CardContent>
-        </Card>
+        <Link href="/admin/payments" className="group">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Revenue This Month
+              </CardTitle>
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">
+                {formatCents(stats.revenueThisMonth)}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                From succeeded payments
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Upcoming Check-ins
-            </CardTitle>
-            <CalendarRange className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{stats.upcomingCheckIns}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Next 7 days
-            </p>
-          </CardContent>
-        </Card>
+        <Link href="/admin/bookings?upcoming=7" className="group">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Upcoming Check-ins
+              </CardTitle>
+              <CalendarRange className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">{stats.upcomingCheckIns}</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Next 7 days
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Active Members
-            </CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{stats.activeMembers}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Currently active accounts
-            </p>
-          </CardContent>
-        </Card>
+        <Link href="/admin/members?active=true" className="group">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Active Members
+              </CardTitle>
+              <Users className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">{stats.activeMembers}</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Currently active accounts
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
       </div>
 
       {/* Recent Bookings */}

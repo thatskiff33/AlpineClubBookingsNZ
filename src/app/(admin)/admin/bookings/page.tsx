@@ -9,23 +9,38 @@ import { bookingStatusClass } from "@/lib/status-colors";
 export default async function AdminBookingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; from?: string; to?: string; search?: string }>;
+  searchParams: Promise<{ status?: string; from?: string; to?: string; search?: string; upcoming?: string }>;
 }) {
   const params = await searchParams;
   const statusFilter = params.status;
   const fromDate = params.from;
   const toDate = params.to;
   const search = params.search;
+  const upcomingDays = params.upcoming ? parseInt(params.upcoming, 10) : null;
 
   const where: Record<string, unknown> = {};
 
   if (statusFilter === "DRAFT") {
     where.status = "DRAFT";
   } else if (statusFilter && statusFilter !== "all") {
-    where.status = statusFilter;
+    // Support comma-separated statuses (e.g. "CONFIRMED,PAID")
+    const statuses = statusFilter.split(",").map((s) => s.trim()).filter(Boolean);
+    where.status = statuses.length === 1 ? statuses[0] : { in: statuses };
   } else {
     // Exclude DRAFT bookings by default
     where.status = { not: "DRAFT" };
+  }
+
+  if (upcomingDays !== null && !isNaN(upcomingDays)) {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const futureDate = new Date(today);
+    futureDate.setDate(futureDate.getDate() + upcomingDays);
+    where.checkIn = { gte: today, lte: futureDate };
+    // When filtering upcoming, default to active statuses if no status filter set
+    if (!statusFilter) {
+      where.status = { in: ["CONFIRMED", "PAID", "PENDING"] };
+    }
   }
 
   if (fromDate) {
