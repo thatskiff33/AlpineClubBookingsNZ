@@ -5,7 +5,7 @@
 ```bash
 npm install
 npx prisma generate
-npm test              # 664 tests pass (32 test files)
+npm test              # 688 tests pass (33 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -26,7 +26,7 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9 complete. Security audit + 5 integration reviews done. 664 tests pass, build succeeds.
+All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9 complete. Security audit + 5 integration reviews done. 688 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
@@ -305,7 +305,7 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9 complete. Security audi
 
 **Date:** 2026-04-06
 **Branch:** phase-8-booking-mods
-**Tests:** 664 (was 575, +89 new across 3 sub-phases)
+**Tests:** 688 (was 575, +113 new across 4 sub-phases)
 
 **Sub-phase 8a: Change Fee Calculation**
 1. **FEE-02**: `calculateChangeFee()` in `src/lib/change-fee.ts` - late-notice fee based on cancellation tier transitions
@@ -323,6 +323,10 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9 complete. Security audi
 9. **XER-01**: `createXeroSupplementaryInvoice()` and `createXeroCreditNoteForModification()` in `src/lib/xero.ts` - supplementary invoice for price increase, credit note for decrease, fire-and-forget
 10. **EML-01**: `bookingModifiedTemplate` with old/new details, change fee display, `escapeHtml` on user values
 
+**Sub-phase 8d: Modification UI**
+11. **UI-01**: Change Dates dialog on booking detail page - date picker, availability check via modify-quote API, price/change fee preview, confirm calls modify-dates API, only visible for PENDING/CONFIRMED bookings with future check-in
+12. **UI-02**: Manage Guests UI on booking detail page - Add Guest form with price impact preview via modify-quote, Remove Guest with confirmation dialog showing refund amount, only visible for PENDING/CONFIRMED bookings with future check-in
+
 **New files:**
 - `src/lib/change-fee.ts` - Late-notice change fee calculation
 - `src/lib/chore-cleanup.ts` - Chore assignment cleanup for date changes
@@ -330,20 +334,23 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9 complete. Security audi
 - `src/app/api/bookings/[id]/modify-quote/route.ts` - Modification quote API
 - `src/app/api/bookings/[id]/guests/route.ts` - Add guests API
 - `src/app/api/bookings/[id]/guests/[guestId]/route.ts` - Remove guest API
+- `src/components/change-dates-dialog.tsx` - Change Dates dialog component
+- `src/components/manage-guests.tsx` - Manage Guests component (add/remove with quote previews)
 - `src/lib/__tests__/phase8a-change-fee.test.ts` - Change fee tests
 - `src/lib/__tests__/phase8b-booking-mods.test.ts` - Modification API tests
 - `src/lib/__tests__/phase8c-integrations.test.ts` - Integration tests (CHR-01, XER-01, EML-01)
+- `src/lib/__tests__/phase8d-ui.test.ts` - 24 tests for UI logic (canModify, quote handling, API contracts)
 
 **Modified files:**
 - `src/lib/xero.ts` - Added `createXeroSupplementaryInvoice`, `createXeroCreditNoteForModification`
 - `src/lib/email-templates.ts` - Added `bookingModifiedTemplate`
 - `src/lib/email.ts` - Added `sendBookingModifiedEmail`
 - `src/lib/cancellation.ts` - Exclude change fees from refund base
-- `src/app/(authenticated)/bookings/[id]/page.tsx` - Modification history UI
+- `src/app/(authenticated)/bookings/[id]/page.tsx` - Modification history UI, Change Dates button, Manage Guests UI
 
 ## What's Next
 
-Phases 1, 4, 5, 6, 7, 8, and 9 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
+Phases 1, 4, 5, 6, 7, 8, and 9 complete. Remaining: Phase 10 (Compliance & Public Content), Phase 11 (Xero Account Mapping). See `docs/DELIVERY_PLAN.md` for details.
 
 ## Context
 
@@ -665,4 +672,4 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 
 ## Build History Summary
 
-9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1, 4, 5, 6, 7, and 9 completed 2026-04-06. 575 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
+9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1, 4, 5, 6, 7, 8, and 9 completed 2026-04-06. 688 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.

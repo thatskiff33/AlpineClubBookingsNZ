@@ -244,6 +244,38 @@ Note: A9 and 5a are the same feature (admin dashboard real data); B4 and 5b are 
 
 ---
 
+## Phase 11: Xero Account Mapping Configuration
+
+**Features:** XAM-01, XAM-02, XAM-03, XAM-04, XAM-05
+
+**Why needed:** Xero account codes (hut fees income, refund account, Stripe bank account) are currently hardcoded in `src/lib/xero.ts`. Different clubs or chart-of-account restructures require manual code changes. This phase makes them admin-configurable with appropriate filtering.
+
+- XAM-01: `XeroAccountMapping` Prisma model -- key/value store for account code mappings (keys: `hutFeesIncome`, `hutFeeRefunds`, `stripeBankAccount`, `stripeFees`, `subscriptionIncome`), seeded with current defaults (200, 200, 606, null, 203)
+- XAM-02: Xero Chart of Accounts API integration -- `GET /api/admin/xero/chart-of-accounts` fetches accounts from Xero API, cached for 1 hour, returns `{code, name, type, class}` for each account
+- XAM-03: Account mapping admin UI on `/admin/xero` page -- new "Account Mappings" section with dropdown selectors for each mapping, dropdowns filtered by account type:
+  - Stripe Bank Account: filter to BANK type accounts only
+  - Hut Fees Income: filter to REVENUE type accounts only
+  - Hut Fee Refunds: filter to REVENUE type accounts only
+  - Stripe Fees: filter to EXPENSE type accounts only
+  - Subscription Income: filter to REVENUE type accounts only
+- XAM-04: `GET/PUT /api/admin/xero/account-mappings` API -- read and update mappings, admin-only, audit logged
+- XAM-05: Refactor `src/lib/xero.ts` to read account codes from DB via `getAccountMapping(key)` helper instead of hardcoded values, with fallback to current defaults if no mapping configured
+
+**Current hardcoded values (in `src/lib/xero.ts`):**
+| Purpose | Current Code | Variable |
+|---------|-------------|----------|
+| Hut fees (booking line items) | `200` | `hutFeesIncome` |
+| Refunds (credit notes) | `200` | `hutFeeRefunds` |
+| Stripe bank account (payments) | `606` | `stripeBankAccount` |
+| Stripe fees | Not tracked | `stripeFees` |
+| Subscription detection | `203` | `subscriptionIncome` |
+
+**Dependencies on other phases:** None (uses existing Xero OAuth connection)
+**Can run concurrently with:** All other phases
+**Estimated effort:** M
+
+---
+
 ## Concurrency Map
 
 ```
@@ -260,6 +292,7 @@ Phase 6 (Notifications) ──────┤── Independent of each other
 Phase 7 (Lodge/Kiosk) ────────┤
                                │
 Phase 10 (Compliance/Content) ─── Can run anytime
+Phase 11 (Xero Account Mapping) ── Can run anytime
 ```
 
 **Phases 2, 3, 4, 5, 10** have no inter-phase dependencies and can run in any order or concurrently.
@@ -282,7 +315,8 @@ Phase 10 (Compliance/Content) ─── Can run anytime
 | 8. Booking Modifications | XL | 15 |
 | 9. Observability | L | 9 |
 | 10. Compliance & Public Content | L | 8 |
-| **Total** | | **~75 unique features** |
+| 11. Xero Account Mapping | M | 5 |
+| **Total** | | **~80 unique features** |
 
 ---
 

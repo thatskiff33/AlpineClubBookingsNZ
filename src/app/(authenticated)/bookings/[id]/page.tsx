@@ -9,6 +9,8 @@ import { formatCents } from "@/lib/utils";
 import { CancelBookingButton } from "@/components/cancel-booking-button";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { BookingNotesEditor } from "@/components/booking-notes-editor";
+import { ChangeDatesDialog } from "@/components/change-dates-dialog";
+import { ManageGuests } from "@/components/manage-guests";
 
 export default async function BookingDetailPage({
   params,
@@ -55,6 +57,8 @@ export default async function BookingDetailPage({
   );
 
   const canCancel = booking.status === "CONFIRMED" || booking.status === "PENDING";
+  const isFutureCheckIn = new Date(booking.checkIn) > new Date();
+  const canModify = canCancel && isFutureCheckIn;
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -68,7 +72,17 @@ export default async function BookingDetailPage({
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>Stay Details</CardTitle>
+            <div className="flex items-center gap-3">
+              <CardTitle>Stay Details</CardTitle>
+              {canModify && (
+                <ChangeDatesDialog
+                  bookingId={booking.id}
+                  currentCheckIn={new Date(booking.checkIn).toISOString().split("T")[0]}
+                  currentCheckOut={new Date(booking.checkOut).toISOString().split("T")[0]}
+                  currentFinalPriceCents={booking.finalPriceCents}
+                />
+              )}
+            </div>
             <Badge variant={statusColor(booking.status)}>{booking.status}</Badge>
           </div>
         </CardHeader>
@@ -115,19 +129,35 @@ export default async function BookingDetailPage({
           <CardTitle>Guests</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="divide-y">
-            {booking.guests.map((guest) => (
-              <div key={guest.id} className="flex items-center justify-between py-3">
-                <div>
-                  <p className="font-medium">{guest.firstName} {guest.lastName}</p>
-                  <p className="text-sm text-gray-500">
-                    {guest.ageTier} &middot; {guest.isMember ? "Member" : "Non-member"}
-                  </p>
+          {canModify ? (
+            <ManageGuests
+              bookingId={booking.id}
+              guests={booking.guests.map((g) => ({
+                id: g.id,
+                firstName: g.firstName,
+                lastName: g.lastName,
+                ageTier: g.ageTier,
+                isMember: g.isMember,
+                priceCents: g.priceCents,
+              }))}
+              checkIn={new Date(booking.checkIn).toISOString().split("T")[0]}
+              checkOut={new Date(booking.checkOut).toISOString().split("T")[0]}
+            />
+          ) : (
+            <div className="divide-y">
+              {booking.guests.map((guest) => (
+                <div key={guest.id} className="flex items-center justify-between py-3">
+                  <div>
+                    <p className="font-medium">{guest.firstName} {guest.lastName}</p>
+                    <p className="text-sm text-gray-500">
+                      {guest.ageTier} &middot; {guest.isMember ? "Member" : "Non-member"}
+                    </p>
+                  </div>
+                  <p className="font-medium">{formatCents(guest.priceCents)}</p>
                 </div>
-                <p className="font-medium">{formatCents(guest.priceCents)}</p>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
