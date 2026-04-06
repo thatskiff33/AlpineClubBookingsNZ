@@ -7,17 +7,17 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Users } from "lucide-react";
 
-interface FamilyGroupSectionProps {
-  familyGroupId: string | null;
-  familyGroupName: string | null;
-  familyGroupMembers: { id: string; firstName: string; lastName: string }[];
+interface FamilyGroup {
+  id: string;
+  name: string | null;
+  members: { id: string; firstName: string; lastName: string }[];
 }
 
-export function FamilyGroupSection({
-  familyGroupId,
-  familyGroupName,
-  familyGroupMembers,
-}: FamilyGroupSectionProps) {
+interface FamilyGroupSectionProps {
+  familyGroups: FamilyGroup[];
+}
+
+export function FamilyGroupSection({ familyGroups }: FamilyGroupSectionProps) {
   const [showJoinForm, setShowJoinForm] = useState(false);
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -49,28 +49,32 @@ export function FamilyGroupSection({
     }
   }
 
-  if (familyGroupId) {
+  if (familyGroups.length > 0) {
     return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Users className="h-4 w-4 text-indigo-600" />
-          <span className="font-medium">{familyGroupName || "Family Group"}</span>
-        </div>
-        {familyGroupMembers.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {familyGroupMembers.map((m) => (
-              <Badge key={m.id} variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200">
-                {m.firstName} {m.lastName}
-              </Badge>
-            ))}
+      <div className="space-y-4">
+        {familyGroups.map((group) => (
+          <div key={group.id} className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-indigo-600" />
+              <span className="font-medium">{group.name || "Family Group"}</span>
+            </div>
+            {group.members.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {group.members.map((m) => (
+                  <Badge key={m.id} variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200">
+                    {m.firstName} {m.lastName}
+                  </Badge>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No other members in this group yet.
+              </p>
+            )}
           </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            No other members in this group yet.
-          </p>
-        )}
+        ))}
         <p className="text-xs text-muted-foreground">
-          Family group members appear in your booking quick-add list. Contact an admin to change your group.
+          Family group members appear in your booking quick-add list. Contact an admin to change your groups.
         </p>
       </div>
     );

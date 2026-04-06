@@ -150,18 +150,18 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  if (andConditions.length > 0) {
-    where.AND = andConditions;
-  }
-
-  // Filter: family group
+  // Filter: family group (via join table)
   const familyGroupFilter = sp.get("familyGroup");
   if (familyGroupFilter === "none") {
-    andConditions.push({ familyGroupId: null });
+    andConditions.push({ familyGroupMemberships: { none: {} } });
   } else if (familyGroupFilter === "any") {
-    andConditions.push({ familyGroupId: { not: null } });
+    andConditions.push({ familyGroupMemberships: { some: {} } });
   } else if (familyGroupFilter && familyGroupFilter !== "all") {
-    andConditions.push({ familyGroupId: familyGroupFilter });
+    andConditions.push({ familyGroupMemberships: { some: { familyGroupId: familyGroupFilter } } });
+  }
+
+  if (andConditions.length > 0) {
+    where.AND = andConditions;
   }
 
   const select = {
