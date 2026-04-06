@@ -12,7 +12,12 @@ interface MemberDetail {
   id: string; firstName: string; lastName: string; email: string
   phone: string | null; dateOfBirth: string | null
   role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
-  active: boolean; xeroContactId: string | null; createdAt: string
+  active: boolean; xeroContactId: string | null; joinedDate: string | null; createdAt: string
+  parentMemberId: string | null
+  parent: { id: string; firstName: string; lastName: string } | null
+  secondaryParentId: string | null
+  secondaryParent: { id: string; firstName: string; lastName: string } | null
+  _count: { dependents: number; secondaryDependents: number }
   subscriptions: Array<{ id: string; seasonYear: number; status: string; xeroInvoiceId: string | null; paidAt: string | null }>
   bookings: Array<{ id: string; checkIn: string; checkOut: string; status: string; finalPriceCents: number; _count: { guests: number } }>
   auditLogs: Array<{ id: string; action: string; details: string | null; createdAt: string }>
@@ -71,7 +76,12 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         <Card><CardContent className="pt-6"><div className="flex items-center gap-3"><Clock className="h-8 w-8 text-slate-400" /><div><p className="text-xs text-slate-500 uppercase tracking-wide">Last Stay</p><p className="text-lg font-semibold">{member.stats.lastStay ? fmtDate(member.stats.lastStay) : "Never"}</p></div></div></CardContent></Card>
       </div>
 
-      <Card><CardHeader><CardTitle className="text-base font-medium">Member Information</CardTitle></CardHeader><CardContent><dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm"><div><dt className="text-slate-500">Phone</dt><dd className="font-medium">{member.phone || "Not provided"}</dd></div><div><dt className="text-slate-500">Member Since</dt><dd className="font-medium">{fmtDate(member.createdAt)}</dd></div><div><dt className="text-slate-500">Xero Contact ID</dt><dd className="font-medium">{member.xeroContactId || "Not linked"}</dd></div></dl></CardContent></Card>
+      <Card><CardHeader><CardTitle className="text-base font-medium">Member Information</CardTitle></CardHeader><CardContent><dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+        <div><dt className="text-slate-500">Phone</dt><dd className="font-medium">{member.phone || "Not provided"}</dd></div>
+        <div><dt className="text-slate-500">Member Since</dt><dd className="font-medium">{fmtDate(member.joinedDate || member.createdAt)}{member.joinedDate && <span className="text-xs text-slate-400 ml-1">(from Xero)</span>}</dd></div>
+        <div><dt className="text-slate-500">Type</dt><dd className="font-medium">{member.parentMemberId ? <><Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Dependent</Badge>{member.parent && <span className="ml-1 text-xs">of {member.parent.firstName} {member.parent.lastName}</span>}{member.secondaryParent && <span className="ml-1 text-xs">& {member.secondaryParent.firstName} {member.secondaryParent.lastName}</span>}</> : <><Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Primary</Badge>{(member._count.dependents + member._count.secondaryDependents) > 0 && <span className="ml-1 text-xs">{member._count.dependents + member._count.secondaryDependents} dependent(s)</span>}</>}</dd></div>
+        <div><dt className="text-slate-500">Xero Contact ID</dt><dd className="font-medium">{member.xeroContactId || "Not linked"}</dd></div>
+      </dl></CardContent></Card>
 
       <Card><CardHeader><CardTitle className="text-base font-medium">Subscription History</CardTitle></CardHeader><CardContent>
         {member.subscriptions.length === 0 ? <p className="text-sm text-slate-500">No subscription records</p> : (

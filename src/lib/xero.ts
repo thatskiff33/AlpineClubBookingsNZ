@@ -374,6 +374,47 @@ export async function findOrCreateXeroContact(memberId: string): Promise<string>
 }
 
 /**
+ * Fetch the earliest invoice date for a Xero contact.
+ * Used to determine when a member first joined (their first invoice = membership start).
+ */
+async function getContactFirstInvoiceDate(
+  xero: XeroClient,
+  tenantId: string,
+  contactID: string
+): Promise<Date | null> {
+  try {
+    const response = await xero.accountingApi.getInvoices(
+      tenantId,
+      undefined, // ifModifiedSince
+      undefined, // where
+      "Date ASC", // order - earliest first
+      undefined, // iDs
+      undefined, // invoiceNumbers
+      [contactID], // contactIDs
+      undefined, // statuses
+      1, // page
+      false, // includeArchived
+      false, // createdByMyApp
+      undefined, // unitdp
+      false // summaryOnly
+    );
+    const invoices = response.body.invoices ?? [];
+    if (invoices.length > 0 && invoices[0].date) {
+      return new Date(invoices[0].date);
+    }
+    return null;
+  } catch (err) {
+    logger.warn({ err, contactID }, "Failed to fetch first invoice date from Xero");
+    return null;
+  }
+}
+
+/** Throttle helper: wait ms milliseconds */
+function throttle(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * Bulk import contacts from Xero into the system.
  * Matches by email address and links xeroContactId.
  * Returns count of matched and linked contacts.
@@ -419,6 +460,17 @@ export async function syncContactsFromXero(): Promise<{
       });
       if (alreadyLinked) {
         matched++;
+        // Backfill joinedDate if missing
+        if (!alreadyLinked.joinedDate) {
+          const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
+          if (invoiceDate) {
+            await prisma.member.update({
+              where: { id: alreadyLinked.id },
+              data: { joinedDate: invoiceDate },
+            });
+          }
+          await throttle(1000);
+        }
         continue;
       }
 
@@ -430,10 +482,22 @@ export async function syncContactsFromXero(): Promise<{
 
       if (member) {
         matched++;
+        const updateData: Record<string, unknown> = {};
         if (member.xeroContactId !== contact.contactID) {
+          updateData.xeroContactId = contact.contactID;
+        }
+        // Populate joinedDate from first invoice
+        if (!member.joinedDate) {
+          const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
+          if (invoiceDate) {
+            updateData.joinedDate = invoiceDate;
+          }
+          await throttle(1000);
+        }
+        if (Object.keys(updateData).length > 0) {
           await prisma.member.update({
             where: { id: member.id },
-            data: { xeroContactId: contact.contactID },
+            data: updateData,
           });
           updated++;
         }
@@ -649,7 +713,7 @@ export async function importMembersFromXeroGroups(
 
             if (isSamePerson) {
               skippedExisting++;
-              // Link xeroContactId and backfill DOB/phone if missing
+              // Link xeroContactId and backfill DOB/phone/joinedDate if missing
               const updates: Record<string, unknown> = {};
               if (!existingPrimary.xeroContactId && contact.contactID) {
                 updates.xeroContactId = contact.contactID;
@@ -666,6 +730,12 @@ export async function importMembersFromXeroGroups(
               if (!existingPrimary.phone) {
                 const phone = getXeroContactPhone(contact.phones);
                 if (phone) updates.phone = phone;
+              }
+              // Backfill joinedDate from first invoice
+              if (!existingPrimary.joinedDate && contact.contactID) {
+                const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
+                if (invoiceDate) updates.joinedDate = invoiceDate;
+                await throttle(1000);
               }
               if (Object.keys(updates).length > 0) {
                 await prisma.member.update({
@@ -766,6 +836,13 @@ export async function importMembersFromXeroGroups(
             }
           }
 
+          // Fetch joined date from first invoice before creating
+          let memberJoinedDate: Date | null = null;
+          if (contact.contactID) {
+            memberJoinedDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
+            await throttle(1000);
+          }
+
           // Create member
           const member = await prisma.member.create({
             data: {
@@ -778,6 +855,7 @@ export async function importMembersFromXeroGroups(
               xeroContactId: contact.contactID || null,
               phone: getXeroContactPhone(contact.phones),
               active: true,
+              joinedDate: memberJoinedDate,
             },
           });
 

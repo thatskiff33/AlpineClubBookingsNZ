@@ -24,6 +24,8 @@ const createMemberSchema = z.object({
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]).optional(),
   active: z.boolean().default(true),
   sendInvite: z.boolean().default(false),
+  parentMemberId: z.string().optional().nullable(),
+  secondaryParentId: z.string().optional().nullable(),
 });
 
 const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
@@ -161,14 +163,19 @@ export async function GET(req: NextRequest) {
     ageTier: true,
     active: true,
     xeroContactId: true,
+    joinedDate: true,
     createdAt: true,
     forcePasswordChange: true,
     parentMemberId: true,
     parent: {
       select: { id: true, firstName: true, lastName: true },
     },
+    secondaryParentId: true,
+    secondaryParent: {
+      select: { id: true, firstName: true, lastName: true },
+    },
     _count: {
-      select: { dependents: true },
+      select: { dependents: true, secondaryDependents: true },
     },
     subscriptions: {
       where: { seasonYear: currentSeasonYear },
@@ -193,9 +200,11 @@ export async function GET(req: NextRequest) {
     subscriptionStatus: m.subscriptions[0]?.status ?? null,
     subscriptionXeroInvoiceId: m.subscriptions[0]?.xeroInvoiceId ?? null,
     parentName: m.parent ? `${m.parent.firstName} ${m.parent.lastName}` : null,
-    dependentCount: m._count.dependents,
+    secondaryParentName: m.secondaryParent ? `${m.secondaryParent.firstName} ${m.secondaryParent.lastName}` : null,
+    dependentCount: m._count.dependents + m._count.secondaryDependents,
     subscriptions: undefined,
     parent: undefined,
+    secondaryParent: undefined,
     _count: undefined,
   }));
 
@@ -234,15 +243,52 @@ export async function POST(req: NextRequest) {
   }
 
   const data = parsed.data;
-  const email = data.email.toLowerCase().trim();
+  let email = data.email.toLowerCase().trim();
 
-  // Check for existing member
-  const existing = await prisma.member.findFirst({ where: { email, parentMemberId: null } });
-  if (existing) {
-    return NextResponse.json(
-      { error: "A member with this email already exists" },
-      { status: 409 }
-    );
+  // Validate parent assignment
+  if (data.parentMemberId) {
+    const parent = await prisma.member.findUnique({ where: { id: data.parentMemberId } });
+    if (!parent) {
+      return NextResponse.json({ error: "Primary parent not found" }, { status: 404 });
+    }
+    if (!parent.active) {
+      return NextResponse.json({ error: "Primary parent is inactive" }, { status: 422 });
+    }
+    if (parent.parentMemberId) {
+      return NextResponse.json({ error: "Primary parent cannot be a dependent" }, { status: 422 });
+    }
+    // Dependents share parent's email
+    email = parent.email;
+  }
+
+  if (data.secondaryParentId) {
+    if (!data.parentMemberId) {
+      return NextResponse.json({ error: "Primary parent is required when setting a secondary parent" }, { status: 422 });
+    }
+    if (data.secondaryParentId === data.parentMemberId) {
+      return NextResponse.json({ error: "Secondary parent must be different from primary parent" }, { status: 422 });
+    }
+    const secondaryParent = await prisma.member.findUnique({ where: { id: data.secondaryParentId } });
+    if (!secondaryParent) {
+      return NextResponse.json({ error: "Secondary parent not found" }, { status: 404 });
+    }
+    if (!secondaryParent.active) {
+      return NextResponse.json({ error: "Secondary parent is inactive" }, { status: 422 });
+    }
+    if (secondaryParent.parentMemberId) {
+      return NextResponse.json({ error: "Secondary parent cannot be a dependent" }, { status: 422 });
+    }
+  }
+
+  // Check for existing member (only for primary members)
+  if (!data.parentMemberId) {
+    const existing = await prisma.member.findFirst({ where: { email, parentMemberId: null } });
+    if (existing) {
+      return NextResponse.json(
+        { error: "A member with this email already exists" },
+        { status: 409 }
+      );
+    }
   }
 
   // Determine age tier from DOB if provided, otherwise use explicit value or default
@@ -271,6 +317,9 @@ export async function POST(req: NextRequest) {
         ageTier: ageTier as "ADULT" | "YOUTH" | "CHILD",
         active: data.active,
         passwordHash: placeholderHash,
+        parentMemberId: data.parentMemberId || null,
+        secondaryParentId: data.secondaryParentId || null,
+        emailVerified: data.parentMemberId ? true : false, // Dependents don't need verification
       },
       select: {
         id: true,
@@ -283,6 +332,7 @@ export async function POST(req: NextRequest) {
         ageTier: true,
         active: true,
         xeroContactId: true,
+        joinedDate: true,
         createdAt: true,
       },
     });

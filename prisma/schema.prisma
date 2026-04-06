@@ -94,13 +94,19 @@ model Member {
   ageTier       AgeTier  @default(ADULT)
   xeroContactId String?  @unique
   active        Boolean  @default(true)
+  joinedDate    DateTime?  // Membership start date, sourced from Xero first invoice
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   // Family/dependent support: dependents share parent's email but don't log in
-  parentMemberId String?
-  parent         Member?  @relation("FamilyMembers", fields: [parentMemberId], references: [id])
-  dependents     Member[] @relation("FamilyMembers")
+  parentMemberId    String?
+  parent            Member?  @relation("FamilyMembers", fields: [parentMemberId], references: [id])
+  dependents        Member[] @relation("FamilyMembers")
+
+  // Secondary parent for split families (e.g. child with separated parents)
+  secondaryParentId String?
+  secondaryParent   Member?  @relation("SecondaryFamily", fields: [secondaryParentId], references: [id])
+  secondaryDependents Member[] @relation("SecondaryFamily")
 
   // Relations
   passwordResetTokens        PasswordResetToken[]
@@ -115,6 +121,7 @@ model Member {
   @@index([email])
   @@index([xeroContactId])
   @@index([parentMemberId])
+  @@index([secondaryParentId])
 }
 
 model PasswordResetToken {
