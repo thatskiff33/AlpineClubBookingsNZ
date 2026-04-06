@@ -21,6 +21,7 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBookingAlert } from "@/lib/email";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import logger from "@/lib/logger";
+import { getSeasonYear } from "@/lib/utils";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -38,6 +39,7 @@ const createBookingSchema = z.object({
     .min(1),
   notes: z.string().optional(),
   promoCode: z.string().optional(),
+  draft: z.boolean().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -68,7 +70,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { checkIn, checkOut, guests, notes, promoCode: promoCodeStr } = parsed.data;
+  const { checkIn, checkOut, guests, notes, promoCode: promoCodeStr, draft } = parsed.data;
 
   if (checkOut <= checkIn) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
@@ -78,6 +80,137 @@ export async function POST(request: NextRequest) {
   today.setHours(0, 0, 0, 0);
   if (checkIn < today) {
     return NextResponse.json({ error: "Cannot book in the past" }, { status: 400 });
+  }
+
+  // Issue 10: Subscription check — non-admins must have a PAID subscription for the check-in season
+  if (session.user.role !== "ADMIN") {
+    const seasonYear = getSeasonYear(checkIn);
+    const paidSub = await prisma.memberSubscription.findFirst({
+      where: {
+        memberId: session.user.id,
+        seasonYear,
+        status: "PAID",
+      },
+    });
+    if (!paidSub) {
+      const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
+      return NextResponse.json(
+        {
+          error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  // Issue 7: Draft booking — skip capacity, payment, Xero, emails
+  if (draft) {
+    const draftExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
+
+    // Fetch seasons for pricing
+    const seasons = await prisma.season.findMany({
+      where: {
+        active: true,
+        startDate: { lte: checkOut },
+        endDate: { gte: checkIn },
+      },
+      include: { rates: true },
+    });
+
+    const seasonData: SeasonRateData[] = seasons.map((s) => ({
+      seasonId: s.id,
+      startDate: s.startDate,
+      endDate: s.endDate,
+      rates: s.rates.map((r) => ({
+        ageTier: r.ageTier,
+        isMember: r.isMember,
+        pricePerNightCents: r.pricePerNightCents,
+      })),
+    }));
+
+    const guestInputs = guests.map((g) => ({
+      ageTier: g.ageTier,
+      isMember: g.isMember,
+    }));
+
+    const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData);
+
+    let discountCents = 0;
+    let promoCodeRecord: { id: string; type: string; valueCents: number | null; percentOff: number | null; freeNights: number | null } | null = null;
+
+    if (promoCodeStr) {
+      const normalizedCode = promoCodeStr.toUpperCase().trim();
+      const promoCode = await prisma.promoCode.findUnique({ where: { code: normalizedCode } });
+      let memberRedemptionCount = 0;
+      if (promoCode?.singleUse) {
+        memberRedemptionCount = await prisma.promoRedemption.count({
+          where: { promoCodeId: promoCode.id, memberId: session.user.id },
+        });
+      }
+      const validationError = validatePromoCodeRules(
+        promoCode,
+        { memberId: session.user.id },
+        new Date(),
+        memberRedemptionCount
+      );
+      if (validationError) {
+        return NextResponse.json({ error: validationError }, { status: 400 });
+      }
+      const allPerNightRates = price.guests.flatMap((g) => g.perNightCents);
+      discountCents = calculatePromoDiscount(
+        {
+          type: promoCode!.type,
+          valueCents: promoCode!.valueCents,
+          percentOff: promoCode!.percentOff,
+          freeNights: promoCode!.freeNights,
+        },
+        price.totalPriceCents,
+        allPerNightRates
+      );
+      promoCodeRecord = promoCode!;
+    }
+
+    const finalPriceCents = price.totalPriceCents - discountCents;
+    const hasNonMembers = guests.some((g) => !g.isMember);
+
+    const newBooking = await prisma.booking.create({
+      data: {
+        memberId: session.user.id,
+        checkIn,
+        checkOut,
+        status: BookingStatus.DRAFT,
+        totalPriceCents: price.totalPriceCents,
+        discountCents,
+        finalPriceCents,
+        hasNonMembers,
+        nonMemberHoldUntil: null,
+        draftExpiresAt,
+        notes: notes || null,
+        guests: {
+          create: guests.map((g, i) => ({
+            firstName: g.firstName,
+            lastName: g.lastName,
+            ageTier: g.ageTier,
+            isMember: g.isMember,
+            memberId: g.memberId || null,
+            priceCents: price.guests[i].priceCents,
+          })),
+        },
+      },
+      include: { guests: true },
+    });
+
+    if (promoCodeRecord && discountCents > 0) {
+      await redeemPromoCode(
+        prisma,
+        promoCodeRecord.id,
+        newBooking.id,
+        session.user.id,
+        discountCents
+      );
+    }
+
+    return NextResponse.json(newBooking, { status: 201 });
   }
 
   const hasNonMembers = guests.some((g) => !g.isMember);

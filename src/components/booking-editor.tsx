@@ -42,6 +42,7 @@ function statusColor(status: string) {
     case "CONFIRMED":
     case "PAID":
       return "success" as const;
+    case "DRAFT":
     case "PENDING":
       return "warning" as const;
     case "CANCELLED":

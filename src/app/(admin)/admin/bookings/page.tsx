@@ -18,8 +18,13 @@ export default async function AdminBookingsPage({
 
   const where: Record<string, unknown> = {};
 
-  if (statusFilter && statusFilter !== "all") {
+  if (statusFilter === "DRAFT") {
+    where.status = "DRAFT";
+  } else if (statusFilter && statusFilter !== "all") {
     where.status = statusFilter;
+  } else {
+    // Exclude DRAFT bookings by default
+    where.status = { not: "DRAFT" };
   }
 
   if (fromDate) {

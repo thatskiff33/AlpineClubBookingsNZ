@@ -4,6 +4,7 @@ import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/l
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
+import { BookingStatus } from "@prisma/client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -64,11 +65,72 @@ export async function POST(request: NextRequest) {
     }
 
     // Only allow PaymentIntent for bookings that should be immediately confirmed
-    if (booking.status !== "PENDING" && booking.status !== "CONFIRMED") {
+    if (
+      booking.status !== "PENDING" &&
+      booking.status !== "CONFIRMED" &&
+      booking.status !== "DRAFT"
+    ) {
       return NextResponse.json(
         { error: "Booking is not in a payable state" },
         { status: 400 }
       );
+    }
+
+    // For DRAFT bookings: check capacity and transition to CONFIRMED before charging
+    if (booking.status === "DRAFT") {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
+
+        // Re-fetch within transaction to ensure we have latest state
+        const freshBooking = await tx.booking.findUnique({
+          where: { id: bookingId },
+          include: { guests: true },
+        });
+
+        if (!freshBooking || freshBooking.status !== BookingStatus.DRAFT) {
+          throw new Error("Booking is no longer a draft");
+        }
+
+        // Check capacity
+        const overlapping = await tx.booking.findMany({
+          where: {
+            id: { not: bookingId },
+            checkIn: { lt: freshBooking.checkOut },
+            checkOut: { gt: freshBooking.checkIn },
+            status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+          },
+          include: { guests: true },
+        });
+
+        const { eachDayOfInterval, subDays } = await import("date-fns");
+        const nights = eachDayOfInterval({
+          start: new Date(freshBooking.checkIn),
+          end: subDays(new Date(freshBooking.checkOut), 1),
+        });
+
+        const { LODGE_CAPACITY } = await import("@/lib/capacity");
+
+        for (const night of nights) {
+          const nightTime = night.getTime();
+          let occupiedBeds = 0;
+          for (const b of overlapping) {
+            const bIn = new Date(b.checkIn).getTime();
+            const bOut = new Date(b.checkOut).getTime();
+            if (nightTime >= bIn && nightTime < bOut) {
+              occupiedBeds += b.guests.length;
+            }
+          }
+          if (occupiedBeds + freshBooking.guests.length > LODGE_CAPACITY) {
+            throw new Error("Not enough beds available for your dates. Please choose different dates.");
+          }
+        }
+
+        // Transition DRAFT -> CONFIRMED
+        await tx.booking.update({
+          where: { id: bookingId },
+          data: { status: BookingStatus.CONFIRMED, draftExpiresAt: null },
+        });
+      });
     }
 
     // Find or create Stripe customer
@@ -111,9 +173,10 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     logger.error({ err: error }, "Error creating payment intent");
+    const message = error instanceof Error ? error.message : "Failed to create payment intent";
     return NextResponse.json(
-      { error: "Failed to create payment intent" },
-      { status: 500 }
+      { error: message },
+      { status: error instanceof Error && error.message.includes("Not enough beds") ? 409 : 500 }
     );
   }
 }

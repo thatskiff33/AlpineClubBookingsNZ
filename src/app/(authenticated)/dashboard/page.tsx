@@ -15,6 +15,7 @@ import { CalendarDays, BedDouble, PlusCircle, Mountain } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 
 const statusColor: Record<string, string> = {
+  DRAFT: "bg-gray-100 text-gray-700 border-gray-200",
   CONFIRMED: "bg-green-100 text-green-800 border-green-200",
   PAID: "bg-emerald-100 text-emerald-800 border-emerald-200",
   PENDING: "bg-yellow-100 text-yellow-800 border-yellow-200",
@@ -32,7 +33,7 @@ export default async function DashboardPage() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const [upcomingBookings, recentBookings] = await Promise.all([
+  const [upcomingBookings, recentBookings, draftBookings] = await Promise.all([
     prisma.booking.findMany({
       where: {
         memberId,
@@ -50,7 +51,7 @@ export default async function DashboardPage() {
       },
     }),
     prisma.booking.findMany({
-      where: { memberId },
+      where: { memberId, status: { not: "DRAFT" } },
       orderBy: { createdAt: "desc" },
       take: 5,
       select: {
@@ -60,6 +61,22 @@ export default async function DashboardPage() {
         status: true,
         finalPriceCents: true,
         createdAt: true,
+        _count: { select: { guests: true } },
+      },
+    }),
+    prisma.booking.findMany({
+      where: {
+        memberId,
+        status: "DRAFT",
+        draftExpiresAt: { gt: today },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        finalPriceCents: true,
+        draftExpiresAt: true,
         _count: { select: { guests: true } },
       },
     }),
@@ -157,6 +174,53 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Draft bookings */}
+      {draftBookings.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-slate-900">
+              Draft Bookings
+            </h2>
+          </div>
+          <Card>
+            <CardContent className="pt-4">
+              <div className="divide-y">
+                {draftBookings.map((booking) => (
+                  <div key={booking.id} className="flex items-center justify-between py-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm">
+                        {new Date(booking.checkIn).toLocaleDateString("en-NZ", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                        {" — "}
+                        {new Date(booking.checkOut).toLocaleDateString("en-NZ", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {booking._count.guests} guest{booking._count.guests !== 1 ? "s" : ""} · {formatCents(booking.finalPriceCents)}
+                        {booking.draftExpiresAt && (
+                          <span className="text-amber-600 ml-2">
+                            Expires {new Date(booking.draftExpiresAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short" })}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <Button asChild size="sm" variant="outline">
+                      <Link href={`/bookings/${booking.id}`}>Resume</Link>
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Recent bookings */}
       <div>

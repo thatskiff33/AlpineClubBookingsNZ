@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
+import Link from "next/link";
 
 interface FamilyMember {
   id: string;
@@ -29,6 +30,11 @@ interface PriceQuote {
   totalPriceCents: number;
 }
 
+interface SubscriptionStatus {
+  status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED" | "UNKNOWN";
+  seasonDisplay: string;
+}
+
 export default function BookPage() {
   const router = useRouter();
   const [step, setStep] = useState<"dates" | "guests" | "review">("dates");
@@ -40,15 +46,31 @@ export default function BookPage() {
   const [priceLoading, setPriceLoading] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [availableBeds, setAvailableBeds] = useState(LODGE_CAPACITY);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(true);
 
   useEffect(() => {
     fetch("/api/members/family")
       .then((res) => res.ok ? res.json() : { familyMembers: [] })
       .then((data) => setFamilyMembers(data.familyMembers || []))
       .catch(() => {});
+  }, []);
+
+  // Fetch subscription status for the current season
+  useEffect(() => {
+    setSubscriptionLoading(true);
+    fetch("/api/member/subscription-status")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (data) setSubscriptionStatus(data);
+        else setSubscriptionStatus({ status: "UNKNOWN", seasonDisplay: "" });
+      })
+      .catch(() => setSubscriptionStatus({ status: "UNKNOWN", seasonDisplay: "" }))
+      .finally(() => setSubscriptionLoading(false));
   }, []);
 
   function addFamilyMemberAsGuest(fm: FamilyMember) {
@@ -152,6 +174,33 @@ export default function BookPage() {
     }
   }
 
+  async function handleSaveAsDraft() {
+    setSavingDraft(true);
+    setError("");
+
+    const res = await fetch("/api/bookings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        checkIn: checkIn!.toISOString(),
+        checkOut: checkOut!.toISOString(),
+        guests,
+        notes: notes || undefined,
+        promoCode: appliedPromo?.code || undefined,
+        draft: true,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      router.push(`/bookings/${data.id}`);
+    } else {
+      const data = await res.json();
+      setError(data.error || "Failed to save draft");
+      setSavingDraft(false);
+    }
+  }
+
   const nights = checkIn && checkOut
     ? Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24))
     : 0;
@@ -160,9 +209,25 @@ export default function BookPage() {
     return `$${(cents / 100).toFixed(2)}`;
   }
 
+  const subscriptionUnpaid =
+    subscriptionStatus &&
+    (subscriptionStatus.status === "UNPAID" || subscriptionStatus.status === "OVERDUE");
+
   return (
     <div className="max-w-3xl space-y-6">
       <h1 className="text-3xl font-bold">Book a Stay</h1>
+
+      {/* Subscription warning banner */}
+      {!subscriptionLoading && subscriptionUnpaid && (
+        <div className="rounded-md bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
+          <strong>Subscription unpaid:</strong> Your subscription for the{" "}
+          {subscriptionStatus!.seasonDisplay} season is unpaid. Please{" "}
+          <Link href="/profile" className="underline font-medium">
+            contact the club
+          </Link>{" "}
+          before booking.
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
@@ -190,11 +255,17 @@ export default function BookPage() {
             <CardTitle>Select Your Dates</CardTitle>
           </CardHeader>
           <CardContent>
-            <BookingCalendar
-              onDateSelect={handleDateSelect}
-              selectedCheckIn={checkIn}
-              selectedCheckOut={checkOut}
-            />
+            {subscriptionUnpaid ? (
+              <p className="text-sm text-amber-700 py-8 text-center">
+                Booking is disabled until your subscription is paid.
+              </p>
+            ) : (
+              <BookingCalendar
+                onDateSelect={handleDateSelect}
+                selectedCheckIn={checkIn}
+                selectedCheckOut={checkOut}
+              />
+            )}
           </CardContent>
         </Card>
       )}
@@ -361,9 +432,18 @@ export default function BookPage() {
             <Button variant="outline" onClick={() => setStep("guests")}>
               Back
             </Button>
-            <Button onClick={handleSubmit} disabled={submitting} size="lg">
-              {submitting ? "Creating booking..." : "Confirm Booking"}
-            </Button>
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={handleSaveAsDraft}
+                disabled={savingDraft || submitting}
+              >
+                {savingDraft ? "Saving draft..." : "Save as Draft"}
+              </Button>
+              <Button onClick={handleSubmit} disabled={submitting || savingDraft} size="lg">
+                {submitting ? "Creating booking..." : "Confirm Booking"}
+              </Button>
+            </div>
           </div>
         </div>
       )}
