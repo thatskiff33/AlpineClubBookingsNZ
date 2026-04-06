@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { computeAgeTier } from "@/lib/age-tier";
+import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { getSeasonYear } from "@/lib/utils";
 import { isXeroConnected, updateXeroContact } from "@/lib/xero";
 import logger from "@/lib/logger";
 
@@ -338,7 +339,7 @@ export async function PUT(
         return NextResponse.json({ error: "Invalid date of birth" }, { status: 422 });
       }
       updateData.dateOfBirth = dob;
-      updateData.ageTier = computeAgeTier(dob);
+      updateData.ageTier = await computeAgeTier(dob, getSeasonStartDate(getSeasonYear()));
     } else {
       updateData.dateOfBirth = null;
       // Use explicit ageTier if provided, otherwise keep existing

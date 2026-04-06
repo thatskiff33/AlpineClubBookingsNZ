@@ -4,7 +4,7 @@ import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { computeAgeTier } from "@/lib/age-tier";
+import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { isXeroConnected, findOrCreateXeroContact } from "@/lib/xero";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
@@ -331,7 +331,7 @@ export async function POST(req: NextRequest) {
     if (isNaN(dateOfBirth.getTime())) {
       return NextResponse.json({ error: "Invalid date of birth" }, { status: 422 });
     }
-    ageTier = computeAgeTier(dateOfBirth);
+    ageTier = await computeAgeTier(dateOfBirth, getSeasonStartDate(getSeasonYear()));
   }
 
   // Random unguessable password

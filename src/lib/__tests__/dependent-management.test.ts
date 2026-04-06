@@ -34,7 +34,8 @@ vi.mock("@/lib/utils", () => ({
   getSeasonYear: vi.fn().mockReturnValue(2026),
 }));
 vi.mock("@/lib/age-tier", () => ({
-  computeAgeTier: vi.fn().mockReturnValue("CHILD"),
+  computeAgeTier: vi.fn().mockResolvedValue("CHILD"),
+  getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),

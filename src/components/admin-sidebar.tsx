@@ -24,6 +24,7 @@ import {
   Mail,
   UserCheck,
   Trash2,
+  Sliders,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,7 @@ const navItems = [
   },
   { href: "/admin/payments", label: "Payments", icon: CreditCard },
   { href: "/admin/audit-log", label: "Audit Log", icon: Shield },
+  { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
   { href: "/admin/deletion-requests", label: "Deletion Requests", icon: Trash2 },
   { href: "/admin/communications", label: "Communications", icon: Mail },
   { href: "/admin/xero", label: "Xero", icon: RefreshCw },

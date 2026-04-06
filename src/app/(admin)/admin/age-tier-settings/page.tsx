@@ -1,0 +1,182 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
+type AgeTierRow = {
+  tier: "ADULT" | "YOUTH" | "CHILD";
+  minAge: number;
+  maxAge: number | null;
+  label: string;
+  sortOrder: number;
+};
+
+export default function AgeTierSettingsPage() {
+  const [settings, setSettings] = useState<AgeTierRow[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/admin/age-tier-settings")
+      .then((r) => r.json())
+      .then((d) => setSettings(d.settings ?? []))
+      .catch(() => setError("Failed to load settings"));
+  }, []);
+
+  // Sort by sortOrder for display
+  const sorted = [...settings].sort((a, b) => a.sortOrder - b.sortOrder);
+
+  function updateRow(tier: string, field: keyof AgeTierRow, value: string | number | null) {
+    setSettings((prev) =>
+      prev.map((s) => (s.tier === tier ? { ...s, [field]: value } : s))
+    );
+    setSuccess(false);
+    setError(null);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    setSuccess(false);
+
+    // Auto-calculate maxAge for each tier based on the next tier's minAge - 1
+    const bySort = [...settings].sort((a, b) => a.sortOrder - b.sortOrder);
+    const payload = bySort.map((s, i) => {
+      const next = bySort[i + 1];
+      return {
+        ...s,
+        // ADULT (last) has no upper limit; others use next tier's minAge - 1
+        maxAge: next ? next.minAge - 1 : null,
+      };
+    });
+
+    try {
+      const res = await fetch("/api/admin/age-tier-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: payload }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Failed to save");
+      } else {
+        setSettings(data.settings);
+        setSuccess(true);
+      }
+    } catch {
+      setError("Network error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Age Group Settings</h1>
+        <p className="text-slate-600 mt-1">
+          Configure the age boundaries for each membership tier. The ADULT tier has no upper limit.
+          MaxAge for each tier is automatically set to the next tier&apos;s MinAge minus 1.
+        </p>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Age Tier Boundaries</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {sorted.map((s) => (
+            <div key={s.tier} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end border-b pb-4 last:border-0 last:pb-0">
+              <div className="space-y-1">
+                <Label className="text-xs text-slate-500 uppercase tracking-wide">{s.tier}</Label>
+                <div className="space-y-1">
+                  <Label>Label</Label>
+                  <Input
+                    value={s.label}
+                    onChange={(e) => updateRow(s.tier, "label", e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label>Min Age (years)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={s.minAge}
+                  onChange={(e) => updateRow(s.tier, "minAge", parseInt(e.target.value, 10))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Max Age (years)</Label>
+                <Input
+                  type="text"
+                  disabled
+                  value={
+                    s.tier === "ADULT"
+                      ? "No limit"
+                      : String(
+                          (sorted.find((x) => x.sortOrder === s.sortOrder + 1)?.minAge ?? 0) - 1
+                        )
+                  }
+                  className="bg-slate-50 text-slate-500"
+                />
+                {s.tier !== "ADULT" && (
+                  <p className="text-xs text-slate-400">Auto-calculated from next tier&apos;s min age</p>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {error && (
+            <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+          {success && (
+            <div className="rounded-md bg-green-50 border border-green-200 p-3 text-sm text-green-700">
+              Age tier settings saved successfully.
+            </div>
+          )}
+
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? "Saving..." : "Save Changes"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Current Boundaries</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b">
+                <th className="text-left py-2 font-medium text-slate-700">Tier</th>
+                <th className="text-left py-2 font-medium text-slate-700">Label</th>
+                <th className="text-left py-2 font-medium text-slate-700">Age Range</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((s) => (
+                <tr key={s.tier} className="border-b last:border-0">
+                  <td className="py-2 font-medium text-slate-900">{s.tier}</td>
+                  <td className="py-2 text-slate-600">{s.label}</td>
+                  <td className="py-2 text-slate-600">
+                    {s.maxAge !== null
+                      ? `${s.minAge} – ${s.maxAge}`
+                      : `${s.minAge}+`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
