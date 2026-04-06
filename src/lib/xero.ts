@@ -15,6 +15,21 @@ import { getSeasonYear, getStayNights } from "./pricing";
 import logger from "@/lib/logger";
 
 // ---------------------------------------------------------------------------
+// Rate limit error
+// ---------------------------------------------------------------------------
+
+export class XeroDailyLimitError extends Error {
+  retryAfterSec: number;
+  constructor(retryAfterSec: number) {
+    super(
+      `Xero daily API limit reached. Retry after ${retryAfterSec} seconds (~${Math.round(retryAfterSec / 3600)} hours). Please try again tomorrow.`
+    );
+    this.name = "XeroDailyLimitError";
+    this.retryAfterSec = retryAfterSec;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -383,20 +398,23 @@ async function getContactFirstInvoiceDate(
   contactID: string
 ): Promise<Date | null> {
   try {
-    const response = await xero.accountingApi.getInvoices(
-      tenantId,
-      undefined, // ifModifiedSince
-      undefined, // where
-      "Date ASC", // order - earliest first
-      undefined, // iDs
-      undefined, // invoiceNumbers
-      [contactID], // contactIDs
-      undefined, // statuses
-      1, // page
-      false, // includeArchived
-      false, // createdByMyApp
-      undefined, // unitdp
-      false // summaryOnly
+    const response = await withXeroRetry(
+      () => xero.accountingApi.getInvoices(
+        tenantId,
+        undefined, // ifModifiedSince
+        undefined, // where
+        "Date ASC", // order - earliest first
+        undefined, // iDs
+        undefined, // invoiceNumbers
+        [contactID], // contactIDs
+        undefined, // statuses
+        1, // page
+        false, // includeArchived
+        false, // createdByMyApp
+        undefined, // unitdp
+        false // summaryOnly
+      ),
+      { context: `getContactFirstInvoiceDate(${contactID})` }
     );
     const invoices = response.body.invoices ?? [];
     if (invoices.length > 0 && invoices[0].date) {
@@ -404,6 +422,8 @@ async function getContactFirstInvoiceDate(
     }
     return null;
   } catch (err) {
+    // Let daily limit errors propagate so callers can abort
+    if (err instanceof XeroDailyLimitError) throw err;
     logger.warn({ err, contactID }, "Failed to fetch first invoice date from Xero");
     return null;
   }
@@ -412,6 +432,53 @@ async function getContactFirstInvoiceDate(
 /** Throttle helper: wait ms milliseconds */
 function throttle(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Retry wrapper for Xero API calls with 429 rate-limit handling.
+ * - On daily limit: throws XeroDailyLimitError immediately (no point waiting hours).
+ * - On minute/app limit: waits Retry-After seconds (capped at maxWaitSec) and retries.
+ * - Non-429 errors pass through unchanged.
+ */
+export async function withXeroRetry<T>(
+  fn: () => Promise<T>,
+  options?: { maxRetries?: number; maxWaitSec?: number; context?: string }
+): Promise<T> {
+  const maxRetries = options?.maxRetries ?? 3;
+  const maxWaitSec = options?.maxWaitSec ?? 120;
+  const context = options?.context ?? "Xero API call";
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      lastError = err;
+      const statusCode = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+      if (statusCode !== 429) throw err;
+
+      const headers = (err as { response?: { headers?: Record<string, string> } })?.response?.headers;
+      const retryAfter = headers?.["retry-after"];
+      const rateLimitProblem = headers?.["x-rate-limit-problem"];
+
+      // Daily limit — abort immediately, no point retrying for hours
+      if (rateLimitProblem === "day") {
+        const retryAfterSec = parseInt(retryAfter || "86400", 10);
+        throw new XeroDailyLimitError(retryAfterSec);
+      }
+
+      // Minute/app limit — retry if we have attempts left
+      if (attempt < maxRetries) {
+        const waitSec = Math.min(parseInt(retryAfter || "30", 10), maxWaitSec);
+        logger.warn(
+          { context, attempt: attempt + 1, maxRetries, waitSec, rateLimitProblem },
+          "Xero 429 rate limit hit, retrying after backoff"
+        );
+        await throttle(waitSec * 1000);
+      }
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -433,14 +500,17 @@ export async function syncContactsFromXero(): Promise<{
   let hasMore = true;
 
   while (hasMore) {
-    const response = await xero.accountingApi.getContacts(
-      tenantId,
-      undefined, // ifModifiedSince
-      undefined, // where
-      undefined, // order
-      undefined, // iDs
-      page,
-      false // includeArchived
+    const response = await withXeroRetry(
+      () => xero.accountingApi.getContacts(
+        tenantId,
+        undefined, // ifModifiedSince
+        undefined, // where
+        undefined, // order
+        undefined, // iDs
+        page,
+        false // includeArchived
+      ),
+      { context: `syncContacts getContacts(page ${page})` }
     );
 
     const contacts = response.body.contacts ?? [];
@@ -469,7 +539,7 @@ export async function syncContactsFromXero(): Promise<{
               data: { joinedDate: invoiceDate },
             });
           }
-          await throttle(1000);
+          await throttle(1500);
         }
         continue;
       }
@@ -492,7 +562,7 @@ export async function syncContactsFromXero(): Promise<{
           if (invoiceDate) {
             updateData.joinedDate = invoiceDate;
           }
-          await throttle(1000);
+          await throttle(1500);
         }
         if (Object.keys(updateData).length > 0) {
           await prisma.member.update({
@@ -525,7 +595,10 @@ export async function getXeroContactGroups(): Promise<
   Array<{ id: string; name: string; contactCount: number }>
 > {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const response = await xero.accountingApi.getContactGroups(tenantId);
+  const response = await withXeroRetry(
+    () => xero.accountingApi.getContactGroups(tenantId),
+    { context: "getXeroContactGroups" }
+  );
   const groups = (response.body.contactGroups ?? []).filter(
     (g) => g.contactGroupID && g.name && g.status === ContactGroup.StatusEnum.ACTIVE
   );
@@ -535,14 +608,19 @@ export async function getXeroContactGroups(): Promise<
   const results: Array<{ id: string; name: string; contactCount: number }> = [];
   for (const g of groups) {
     try {
-      const detail = await xero.accountingApi.getContactGroup(tenantId, g.contactGroupID!);
+      const detail = await withXeroRetry(
+        () => xero.accountingApi.getContactGroup(tenantId, g.contactGroupID!),
+        { context: `getContactGroup(${g.name})` }
+      );
       const contacts = detail.body.contactGroups?.[0]?.contacts ?? [];
       results.push({
         id: g.contactGroupID!,
         name: g.name!,
         contactCount: contacts.length,
       });
-    } catch {
+    } catch (err) {
+      // Let daily limit errors propagate
+      if (err instanceof XeroDailyLimitError) throw err;
       // If fetching detail fails, still include the group with 0
       results.push({
         id: g.contactGroupID!,
@@ -645,9 +723,9 @@ export async function importMembersFromXeroGroups(
   for (const mapping of groupMappings) {
     try {
       // Get contact IDs from the group
-      const response = await xero.accountingApi.getContactGroup(
-        tenantId,
-        mapping.groupId
+      const response = await withXeroRetry(
+        () => xero.accountingApi.getContactGroup(tenantId, mapping.groupId),
+        { context: `getContactGroup(${mapping.groupName})` }
       );
       const groupContacts = response.body.contactGroups?.[0]?.contacts ?? [];
       groupsProcessed.push(mapping.groupName);
@@ -663,12 +741,15 @@ export async function importMembersFromXeroGroups(
       const batchSize = 50;
       for (let i = 0; i < contactIds.length; i += batchSize) {
         const batch = contactIds.slice(i, i + batchSize);
-        const fullResponse = await xero.accountingApi.getContacts(
-          tenantId,
-          undefined, // ifModifiedSince
-          undefined, // where
-          undefined, // order
-          batch       // iDs
+        const fullResponse = await withXeroRetry(
+          () => xero.accountingApi.getContacts(
+            tenantId,
+            undefined, // ifModifiedSince
+            undefined, // where
+            undefined, // order
+            batch       // iDs
+          ),
+          { context: `getContacts(batch ${Math.floor(i / batchSize) + 1})` }
         );
         contacts.push(...(fullResponse.body.contacts ?? []));
       }
@@ -735,7 +816,7 @@ export async function importMembersFromXeroGroups(
               if (!existingPrimary.joinedDate && contact.contactID) {
                 const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
                 if (invoiceDate) updates.joinedDate = invoiceDate;
-                await throttle(1000);
+                await throttle(1500);
               }
               if (Object.keys(updates).length > 0) {
                 await prisma.member.update({
@@ -840,7 +921,7 @@ export async function importMembersFromXeroGroups(
           let memberJoinedDate: Date | null = null;
           if (contact.contactID) {
             memberJoinedDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
-            await throttle(1000);
+            await throttle(1500);
           }
 
           // Create member
@@ -886,6 +967,8 @@ export async function importMembersFromXeroGroups(
             }
           }
         } catch (contactErr) {
+          // Abort entire import on daily limit — no point continuing
+          if (contactErr instanceof XeroDailyLimitError) throw contactErr;
           logger.error({ err: contactErr, contactEmail: contact.emailAddress }, "Error processing contact during member import");
           errors++;
           const contactLabel = contact.name ||
@@ -897,6 +980,8 @@ export async function importMembersFromXeroGroups(
         }
       }
     } catch (groupErr) {
+      // Abort entire import on daily limit — no point continuing
+      if (groupErr instanceof XeroDailyLimitError) throw groupErr;
       logger.error({ err: groupErr, groupName: mapping.groupName }, "Error fetching group during member import");
       errors++;
       errorDetails.push({ member: `Group: ${mapping.groupName}`, error: parseXeroError(groupErr) });
@@ -973,32 +1058,21 @@ export async function checkMembershipStatus(
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   // Fetch invoices for this contact (with retry on 429 rate limit)
-  const getInvoicesWithRetry = async (retries: number): Promise<{ body: { invoices?: Invoice[] } }> => {
-    try {
-      return await xero.accountingApi.getInvoices(
-        tenantId,
-        undefined, // ifModifiedSince
-        `Contact.ContactID=guid("${member.xeroContactId}")`, // where
-        undefined, // order
-        undefined, // iDs
-        undefined, // invoiceNumbers
-        undefined, // contactIDs
-        undefined, // statuses
-        1, // page
-        false // includeArchived
-      );
-    } catch (err: unknown) {
-      const statusCode = (err as { response?: { statusCode?: number } })?.response?.statusCode;
-      const retryAfter = (err as { response?: { headers?: Record<string, string> } })?.response?.headers?.["retry-after"];
-      if (statusCode === 429 && retries > 0) {
-        const waitSec = Math.min(parseInt(retryAfter || "30", 10), 60);
-        await new Promise((r) => setTimeout(r, waitSec * 1000));
-        return getInvoicesWithRetry(retries - 1);
-      }
-      throw err;
-    }
-  };
-  const response = await getInvoicesWithRetry(3);
+  const response = await withXeroRetry(
+    () => xero.accountingApi.getInvoices(
+      tenantId,
+      undefined, // ifModifiedSince
+      `Contact.ContactID=guid("${member.xeroContactId}")`, // where
+      undefined, // order
+      undefined, // iDs
+      undefined, // invoiceNumbers
+      undefined, // contactIDs
+      undefined, // statuses
+      1, // page
+      false // includeArchived
+    ),
+    { context: `checkMembershipStatus(${memberId})` }
+  );
 
   const invoices = response.body.invoices ?? [];
 
