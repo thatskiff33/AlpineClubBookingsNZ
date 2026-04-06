@@ -20,6 +20,7 @@ import {
   adminDailyDigestTemplate,
   postStayFeedbackTemplate,
   bulkCommunicationTemplate,
+  adminPasswordResetTemplate,
 } from "./email-templates";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -155,6 +156,21 @@ export async function sendPasswordResetEmail(
     subject: "Reset your TAC Bookings password",
     html: passwordResetTemplate(resetUrl),
     templateName: "password-reset",
+  });
+}
+
+export async function sendAdminPasswordResetEmail(
+  email: string,
+  token: string
+) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+
+  await sendEmail({
+    to: email,
+    subject: "Reset your TAC Bookings password",
+    html: adminPasswordResetTemplate(resetUrl),
+    templateName: "admin-password-reset",
   });
 }
 
