@@ -1396,14 +1396,18 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
     throw new Error("Failed to create Xero invoice");
   }
 
-  // Record payment against the invoice in Xero
-  if (booking.payment.status === "SUCCEEDED" && booking.payment.amountCents > 0) {
+  // Record payment against the invoice in Xero.
+  // For zero-dollar bookings (100% promo discount), we still record a $0 payment so the
+  // invoice shows as PAID in Xero rather than sitting as an open AUTHORISED invoice.
+  if (booking.payment.status === "SUCCEEDED") {
     const payment: XeroPayment = {
       invoice: { invoiceID: createdInvoice.invoiceID },
       account: { code: bankCode },
       amount: booking.payment.amountCents / 100,
       date: formatDate(new Date()),
-      reference: `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`,
+      reference: booking.payment.amountCents > 0
+        ? `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`
+        : "Zero-dollar booking (100% promo discount)",
     };
 
     await xero.accountingApi.createPayment(tenantId, payment);
