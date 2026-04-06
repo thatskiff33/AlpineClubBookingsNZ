@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
 import { formatCents } from "@/lib/utils";
+import { bookingStatusClass } from "@/lib/status-colors";
 
 interface Guest {
   id: string;
@@ -37,21 +38,6 @@ export interface BookingEditorData {
   nonMemberHoldUntil: string | null;
 }
 
-function statusColor(status: string) {
-  switch (status) {
-    case "CONFIRMED":
-    case "PAID":
-      return "success" as const;
-    case "DRAFT":
-    case "PENDING":
-      return "warning" as const;
-    case "CANCELLED":
-    case "BUMPED":
-      return "destructive" as const;
-    default:
-      return "secondary" as const;
-  }
-}
 
 export function BookingEditor({
   booking,
@@ -94,7 +80,7 @@ export function BookingEditor({
                 </Button>
               )}
             </div>
-            <Badge variant={statusColor(booking.status)}>{booking.status}</Badge>
+            <Badge variant="secondary" className={bookingStatusClass(booking.status)}>{booking.status}</Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">

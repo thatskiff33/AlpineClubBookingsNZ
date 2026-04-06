@@ -13,16 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CalendarDays, BedDouble, PlusCircle, Mountain } from "lucide-react";
 import { formatCents } from "@/lib/utils";
-
-const statusColor: Record<string, string> = {
-  DRAFT: "bg-gray-100 text-gray-700 border-gray-200",
-  CONFIRMED: "bg-green-100 text-green-800 border-green-200",
-  PAID: "bg-emerald-100 text-emerald-800 border-emerald-200",
-  PENDING: "bg-yellow-100 text-yellow-800 border-yellow-200",
-  CANCELLED: "bg-red-100 text-red-800 border-red-200",
-  BUMPED: "bg-red-100 text-red-800 border-red-200",
-  COMPLETED: "bg-slate-100 text-slate-600 border-slate-200",
-};
+import { bookingStatusClass } from "@/lib/status-colors";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -275,7 +266,7 @@ export default async function DashboardPage() {
                     </div>
                     <Badge
                       variant="secondary"
-                      className={statusColor[booking.status] || ""}
+                      className={bookingStatusClass(booking.status)}
                     >
                       {booking.status}
                     </Badge>

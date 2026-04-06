@@ -23,19 +23,11 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { DollarSign, CreditCard, TrendingUp, BarChart2 } from "lucide-react";
+import { paymentStatusClass } from "@/lib/status-colors";
 
 function formatCents(cents: number): string {
   return "$" + (cents / 100).toFixed(2);
 }
-
-const paymentStatusColors: Record<string, string> = {
-  PENDING: "bg-yellow-100 text-yellow-800",
-  PROCESSING: "bg-blue-100 text-blue-800",
-  SUCCEEDED: "bg-green-100 text-green-800",
-  FAILED: "bg-red-100 text-red-800",
-  REFUNDED: "bg-purple-100 text-purple-800",
-  PARTIALLY_REFUNDED: "bg-orange-100 text-orange-800",
-};
 
 interface PaymentRow {
   id: string;
@@ -141,7 +133,7 @@ export default function PaymentsPage() {
                     <TableCell>{format(new Date(p.booking.checkIn), "d MMM yyyy")}</TableCell>
                     <TableCell className="font-medium">{p.booking.member.lastName}, {p.booking.member.firstName}</TableCell>
                     <TableCell>{formatCents(p.amountCents)}</TableCell>
-                    <TableCell><Badge className={paymentStatusColors[p.status] || ""}>{p.status.replace("_", " ")}</Badge></TableCell>
+                    <TableCell><Badge className={paymentStatusClass(p.status)}>{p.status.replace("_", " ")}</Badge></TableCell>
                     <TableCell>
                       {p.stripePaymentIntentId ? (
                         <span className="text-xs text-slate-500 cursor-pointer hover:text-slate-700" title={p.stripePaymentIntentId} onClick={() => navigator.clipboard.writeText(p.stripePaymentIntentId!)}>
