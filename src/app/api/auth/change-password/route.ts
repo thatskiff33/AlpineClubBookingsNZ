@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
     data: {
       passwordHash: newHash,
       forcePasswordChange: false,
+      passwordChangedAt: new Date(),
     },
   });
 

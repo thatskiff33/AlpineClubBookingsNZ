@@ -8,6 +8,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Users,
   CalendarRange,
@@ -15,16 +16,86 @@ import {
   Tag,
   ClipboardList,
   ArrowRight,
+  DollarSign,
+  CalendarCheck,
 } from "lucide-react";
+import { formatCents } from "@/lib/utils";
 
 async function getStats() {
-  const [totalMembers, activeMembers] = await Promise.all([
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const sevenDaysFromNow = new Date(now);
+  sevenDaysFromNow.setDate(sevenDaysFromNow.getDate() + 7);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const [
+    totalMembers,
+    activeMembers,
+    inactiveMembers,
+    totalBookings,
+    activeBookings,
+    revenueResult,
+    upcomingCheckIns,
+    recentBookings,
+  ] = await Promise.all([
     prisma.member.count(),
     prisma.member.count({ where: { active: true } }),
+    prisma.member.count({ where: { active: false } }),
+    prisma.booking.count(),
+    prisma.booking.count({
+      where: { status: { in: ["CONFIRMED", "PENDING"] } },
+    }),
+    prisma.payment.aggregate({
+      _sum: { amountCents: true },
+      where: {
+        status: "SUCCEEDED",
+        createdAt: { gte: startOfMonth, lte: endOfMonth },
+      },
+    }),
+    prisma.booking.count({
+      where: {
+        status: { in: ["CONFIRMED", "PENDING"] },
+        checkIn: { gte: today, lte: sevenDaysFromNow },
+      },
+    }),
+    prisma.booking.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        status: true,
+        finalPriceCents: true,
+        createdAt: true,
+        member: { select: { firstName: true, lastName: true } },
+        _count: { select: { guests: true } },
+      },
+    }),
   ]);
 
-  return { totalMembers, activeMembers, totalBookings: 0 };
+  const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
+
+  return {
+    totalMembers,
+    activeMembers,
+    inactiveMembers,
+    totalBookings,
+    activeBookings,
+    revenueThisMonth,
+    upcomingCheckIns,
+    recentBookings,
+  };
 }
+
+const statusColor: Record<string, string> = {
+  CONFIRMED: "bg-green-100 text-green-800 border-green-200",
+  PENDING: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  CANCELLED: "bg-red-100 text-red-800 border-red-200",
+  BUMPED: "bg-red-100 text-red-800 border-red-200",
+  COMPLETED: "bg-slate-100 text-slate-600 border-slate-200",
+};
 
 export default async function AdminDashboardPage() {
   const stats = await getStats();
@@ -48,7 +119,69 @@ export default async function AdminDashboardPage() {
           <CardContent>
             <div className="text-3xl font-bold">{stats.totalMembers}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              Registered members
+              {stats.activeMembers} active, {stats.inactiveMembers} inactive
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">
+              Total Bookings
+            </CardTitle>
+            <BookOpen className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{stats.totalBookings}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              All-time bookings
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">
+              Active Bookings
+            </CardTitle>
+            <CalendarCheck className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{stats.activeBookings}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Confirmed + Pending
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">
+              Revenue This Month
+            </CardTitle>
+            <DollarSign className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">
+              {formatCents(stats.revenueThisMonth)}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              From succeeded payments
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">
+              Upcoming Check-ins
+            </CardTitle>
+            <CalendarRange className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{stats.upcomingCheckIns}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Next 7 days
             </p>
           </CardContent>
         </Card>
@@ -67,19 +200,68 @@ export default async function AdminDashboardPage() {
             </p>
           </CardContent>
         </Card>
+      </div>
 
+      {/* Recent Bookings */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-slate-900">
+            Recent Bookings
+          </h2>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/admin/bookings">View all</Link>
+          </Button>
+        </div>
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Total Bookings
-            </CardTitle>
-            <BookOpen className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{stats.totalBookings}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              All-time bookings
-            </p>
+          <CardContent className="pt-4">
+            {stats.recentBookings.length === 0 ? (
+              <div className="py-8 text-center">
+                <BookOpen className="mx-auto h-10 w-10 text-slate-300 mb-3" />
+                <p className="text-sm font-medium text-slate-500">
+                  No bookings yet
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {stats.recentBookings.map((booking) => (
+                  <Link
+                    key={booking.id}
+                    href={`/admin/bookings`}
+                    className="flex items-center justify-between py-3 hover:bg-slate-50 -mx-2 px-2 rounded"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm truncate">
+                        {booking.member.firstName} {booking.member.lastName}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(booking.checkIn).toLocaleDateString("en-NZ", {
+                          day: "numeric",
+                          month: "short",
+                        })}
+                        {" — "}
+                        {new Date(booking.checkOut).toLocaleDateString("en-NZ", {
+                          day: "numeric",
+                          month: "short",
+                        })}
+                        {" · "}
+                        {booking._count.guests} guest{booking._count.guests !== 1 ? "s" : ""}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <span className="text-sm font-medium">
+                        {formatCents(booking.finalPriceCents)}
+                      </span>
+                      <Badge
+                        variant="secondary"
+                        className={statusColor[booking.status] || ""}
+                      >
+                        {booking.status}
+                      </Badge>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

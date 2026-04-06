@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { prisma } from "@/lib/prisma";
 import {
   Card,
   CardContent,
@@ -9,13 +10,61 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { CalendarDays, BedDouble, PlusCircle, Mountain } from "lucide-react";
+import { formatCents } from "@/lib/utils";
+
+const statusColor: Record<string, string> = {
+  CONFIRMED: "bg-green-100 text-green-800 border-green-200",
+  PENDING: "bg-yellow-100 text-yellow-800 border-yellow-200",
+  CANCELLED: "bg-red-100 text-red-800 border-red-200",
+  BUMPED: "bg-red-100 text-red-800 border-red-200",
+  COMPLETED: "bg-slate-100 text-slate-600 border-slate-200",
+};
 
 export default async function DashboardPage() {
   const session = await auth();
   if (!session?.user) redirect("/login");
 
   const firstName = session.user.name?.split(" ")[0] ?? "Member";
+  const memberId = session.user.id;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const [upcomingBookings, recentBookings] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        memberId,
+        status: { in: ["CONFIRMED", "PENDING"] },
+        checkIn: { gte: today },
+      },
+      orderBy: { checkIn: "asc" },
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        status: true,
+        finalPriceCents: true,
+        _count: { select: { guests: true } },
+      },
+    }),
+    prisma.booking.findMany({
+      where: { memberId },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: {
+        id: true,
+        checkIn: true,
+        checkOut: true,
+        status: true,
+        finalPriceCents: true,
+        createdAt: true,
+        _count: { select: { guests: true } },
+      },
+    }),
+  ]);
+
+  const nextStay = upcomingBookings[0] ?? null;
 
   return (
     <div className="space-y-8">
@@ -47,9 +96,11 @@ export default async function DashboardPage() {
             <CalendarDays className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">0</div>
+            <div className="text-3xl font-bold">{upcomingBookings.length}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              No bookings scheduled
+              {upcomingBookings.length === 0
+                ? "No bookings scheduled"
+                : `${upcomingBookings.length} booking${upcomingBookings.length !== 1 ? "s" : ""} coming up`}
             </p>
           </CardContent>
         </Card>
@@ -60,12 +111,33 @@ export default async function DashboardPage() {
             <BedDouble className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-lg font-semibold text-slate-500">
-              No upcoming stays
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Book a stay at the lodge
-            </p>
+            {nextStay ? (
+              <>
+                <div className="text-lg font-semibold">
+                  {new Date(nextStay.checkIn).toLocaleDateString("en-NZ", {
+                    day: "numeric",
+                    month: "short",
+                  })}
+                  {" — "}
+                  {new Date(nextStay.checkOut).toLocaleDateString("en-NZ", {
+                    day: "numeric",
+                    month: "short",
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {nextStay._count.guests} guest{nextStay._count.guests !== 1 ? "s" : ""} · {formatCents(nextStay.finalPriceCents)}
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="text-lg font-semibold text-slate-500">
+                  No upcoming stays
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Book a stay at the lodge
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -85,7 +157,7 @@ export default async function DashboardPage() {
         </Card>
       </div>
 
-      {/* Recent bookings placeholder */}
+      {/* Recent bookings */}
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-slate-900">
@@ -96,18 +168,57 @@ export default async function DashboardPage() {
           </Button>
         </div>
         <Card>
-          <CardContent className="py-12 text-center">
-            <BedDouble className="mx-auto h-10 w-10 text-slate-300 mb-3" />
-            <p className="text-sm font-medium text-slate-500">
-              No bookings yet
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Your booking history will appear here.
-            </p>
-            <Button asChild size="sm" className="mt-4">
-              <Link href="/book">Make your first booking</Link>
-            </Button>
-          </CardContent>
+          {recentBookings.length === 0 ? (
+            <CardContent className="py-12 text-center">
+              <BedDouble className="mx-auto h-10 w-10 text-slate-300 mb-3" />
+              <p className="text-sm font-medium text-slate-500">
+                No bookings yet
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Your booking history will appear here.
+              </p>
+              <Button asChild size="sm" className="mt-4">
+                <Link href="/book">Make your first booking</Link>
+              </Button>
+            </CardContent>
+          ) : (
+            <CardContent className="pt-4">
+              <div className="divide-y">
+                {recentBookings.map((booking) => (
+                  <Link
+                    key={booking.id}
+                    href={`/bookings/${booking.id}`}
+                    className="flex items-center justify-between py-3 hover:bg-slate-50 -mx-2 px-2 rounded"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm">
+                        {new Date(booking.checkIn).toLocaleDateString("en-NZ", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                        {" — "}
+                        {new Date(booking.checkOut).toLocaleDateString("en-NZ", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {booking._count.guests} guest{booking._count.guests !== 1 ? "s" : ""} · {formatCents(booking.finalPriceCents)}
+                      </p>
+                    </div>
+                    <Badge
+                      variant="secondary"
+                      className={statusColor[booking.status] || ""}
+                    >
+                      {booking.status}
+                    </Badge>
+                  </Link>
+                ))}
+              </div>
+            </CardContent>
+          )}
         </Card>
       </div>
     </div>
