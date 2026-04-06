@@ -4,6 +4,8 @@ import {
   paymentStatusClasses,
   bookingStatusClass,
   paymentStatusClass,
+  subscriptionStatusClasses,
+  subscriptionStatusClass,
 } from "@/lib/status-colors";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 
@@ -70,6 +72,35 @@ describe("paymentStatusClass helper", () => {
 
   it("returns a fallback for unknown statuses", () => {
     const fallback = paymentStatusClass("UNKNOWN_STATUS");
+    expect(fallback).toBeTruthy();
+    expect(fallback).toContain("bg-gray-100");
+  });
+});
+
+describe("subscriptionStatusClasses", () => {
+  it("defines all subscription statuses", () => {
+    const statuses = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"];
+    for (const s of statuses) {
+      expect(subscriptionStatusClasses[s], `missing class for ${s}`).toBeTruthy();
+    }
+  });
+
+  it("each subscription status has a unique colour class", () => {
+    const statuses = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"];
+    const classes = statuses.map((s) => subscriptionStatusClasses[s]);
+    const unique = new Set(classes);
+    expect(unique.size).toBe(statuses.length);
+  });
+});
+
+describe("subscriptionStatusClass helper", () => {
+  it("returns the correct class for known statuses", () => {
+    expect(subscriptionStatusClass("PAID")).toBe(subscriptionStatusClasses["PAID"]);
+    expect(subscriptionStatusClass("OVERDUE")).toBe(subscriptionStatusClasses["OVERDUE"]);
+  });
+
+  it("returns a fallback for unknown statuses", () => {
+    const fallback = subscriptionStatusClass("UNKNOWN_STATUS");
     expect(fallback).toBeTruthy();
     expect(fallback).toContain("bg-gray-100");
   });

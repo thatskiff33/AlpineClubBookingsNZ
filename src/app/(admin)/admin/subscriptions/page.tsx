@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { format } from "date-fns";
+import { subscriptionStatusClass } from "@/lib/status-colors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,12 +30,6 @@ function getSeasonYear(date: Date): number {
 const currentYear = getSeasonYear(new Date());
 const yearOptions = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i);
 
-const statusColors: Record<string, string> = {
-  PAID: "bg-green-100 text-green-800",
-  UNPAID: "bg-yellow-100 text-yellow-800",
-  OVERDUE: "bg-red-100 text-red-800",
-  NOT_INVOICED: "bg-slate-100 text-slate-800",
-};
 
 interface Subscription {
   id: string;
@@ -131,7 +126,7 @@ export default function SubscriptionsPage() {
                   <TableRow key={sub.id}>
                     <TableCell className="font-medium">{sub.member.lastName}, {sub.member.firstName}</TableCell>
                     <TableCell>{sub.member.email}</TableCell>
-                    <TableCell><Badge className={statusColors[sub.status] || ""}>{sub.status.replace("_", " ")}</Badge></TableCell>
+                    <TableCell><Badge className={subscriptionStatusClass(sub.status)}>{sub.status.replace("_", " ")}</Badge></TableCell>
                     <TableCell className="text-xs text-slate-500">{sub.xeroInvoiceId || "—"}</TableCell>
                     <TableCell>{sub.paidAt ? format(new Date(sub.paidAt), "d MMM yyyy") : "—"}</TableCell>
                   </TableRow>

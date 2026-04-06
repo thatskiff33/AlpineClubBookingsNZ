@@ -29,3 +29,14 @@ export function bookingStatusClass(status: string): string {
 export function paymentStatusClass(status: string): string {
   return paymentStatusClasses[status] ?? "bg-gray-100 text-gray-700";
 }
+
+export const subscriptionStatusClasses: Record<string, string> = {
+  PAID:         "bg-green-100 text-green-800",
+  UNPAID:       "bg-yellow-100 text-yellow-800",
+  OVERDUE:      "bg-red-100 text-red-800",
+  NOT_INVOICED: "bg-slate-100 text-slate-800",
+};
+
+export function subscriptionStatusClass(status: string): string {
+  return subscriptionStatusClasses[status] ?? "bg-gray-100 text-gray-700";
+}
