@@ -39,6 +39,7 @@ enum SeasonType {
 }
 
 enum BookingStatus {
+  DRAFT
   PENDING
   CONFIRMED
   PAID
@@ -258,6 +259,7 @@ model Booking {
   finalPriceCents    Int
   hasNonMembers      Boolean       @default(false)
   nonMemberHoldUntil DateTime?
+  draftExpiresAt     DateTime?
   notes              String?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt

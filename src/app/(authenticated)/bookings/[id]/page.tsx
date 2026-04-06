@@ -11,6 +11,7 @@ import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { BookingNotesEditor } from "@/components/booking-notes-editor";
 import { BookingEditor, type BookingEditorData } from "@/components/booking-editor";
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
+import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 
 export default async function BookingDetailPage({
   params,
@@ -47,6 +48,7 @@ export default async function BookingDetailPage({
       (1000 * 60 * 60 * 24)
   );
 
+  const isDraft = booking.status === "DRAFT";
   const canCancel = ["CONFIRMED", "PAID", "PENDING"].includes(booking.status);
   const isFutureCheckIn = new Date(booking.checkIn) > new Date();
   const canModify = canCancel && isFutureCheckIn;
@@ -89,6 +91,34 @@ export default async function BookingDetailPage({
       </div>
 
       <BookingEditor booking={editorData} canModify={canModify} />
+
+      {/* Draft booking: $0 confirm or payment to complete */}
+      {isDraft && booking.finalPriceCents === 0 && (
+        <ConfirmDraftButton bookingId={booking.id} />
+      )}
+
+      {/* Draft booking with non-zero price: show payment section to complete */}
+      {isDraft && booking.finalPriceCents > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Complete Booking</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600 mb-4">
+              This is a saved draft. Complete your booking by making payment below.
+            </p>
+            <BookingPaymentSection
+              bookingId={booking.id}
+              amountCents={booking.finalPriceCents}
+              hasNonMembers={booking.hasNonMembers}
+              checkInDaysAway={Math.ceil(
+                (new Date(booking.checkIn).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+              )}
+              returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Show payment form if payment hasn't been completed */}
       {(booking.status === "CONFIRMED" && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (

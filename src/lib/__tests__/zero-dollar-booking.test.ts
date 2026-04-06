@@ -57,6 +57,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => mockPrismaTransaction(fn),
     member: { findUnique: (...args: unknown[]) => mockMemberFindUnique(...args) },
+    memberSubscription: { findFirst: vi.fn().mockResolvedValue({ id: "sub-1", status: "PAID" }) },
     booking: {
       findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
       findMany: (...args: unknown[]) => mockBookingFindMany(...args),

@@ -203,6 +203,31 @@ export async function register() {
       } catch (err) {
         logger.error({ err }, "Failed to prune webhook logs");
       }
+
+      // Delete expired DRAFT bookings (and their promo redemptions via cascade)
+      try {
+        const expiredDrafts = await prisma.booking.findMany({
+          where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
+          select: { id: true, promoRedemption: { select: { id: true, promoCodeId: true } } },
+        });
+        if (expiredDrafts.length > 0) {
+          // Decrement promo code redemption counts for expired drafts
+          for (const draft of expiredDrafts) {
+            if (draft.promoRedemption) {
+              await prisma.promoCode.update({
+                where: { id: draft.promoRedemption.promoCodeId },
+                data: { currentRedemptions: { decrement: 1 } },
+              });
+            }
+          }
+          const { count } = await prisma.booking.deleteMany({
+            where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
+          });
+          logger.info({ job: "backup", deletedDrafts: count }, "Deleted expired draft bookings");
+        }
+      } catch (err) {
+        logger.error({ err }, "Failed to delete expired draft bookings");
+      }
     });
 
     logger.info({ job: "backup", schedule: backupSchedule }, "Scheduled database backup");
