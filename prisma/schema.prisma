@@ -112,15 +112,20 @@ model Member {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  // Family/dependent support: dependents share parent's email but don't log in
-  parentMemberId    String?
-  parent            Member?  @relation("FamilyMembers", fields: [parentMemberId], references: [id])
-  dependents        Member[] @relation("FamilyMembers")
+  // Family/dependent support: dependents can share parent's email or have their own
+  parentMemberId      String?
+  inheritParentEmail  Boolean  @default(true) // When true, dependent uses parent's email
+  parent              Member?  @relation("FamilyMembers", fields: [parentMemberId], references: [id])
+  dependents          Member[] @relation("FamilyMembers")
 
   // Secondary parent for split families (e.g. child with separated parents)
   secondaryParentId String?
   secondaryParent   Member?  @relation("SecondaryFamily", fields: [secondaryParentId], references: [id])
   secondaryDependents Member[] @relation("SecondaryFamily")
+
+  // Family group: links primary adult members (e.g. spouses) for shared booking quick-add
+  familyGroupId     String?
+  familyGroup       FamilyGroup?             @relation(fields: [familyGroupId], references: [id])
 
   // Relations
   passwordResetTokens        PasswordResetToken[]
@@ -132,11 +137,13 @@ model Member {
   promoRedemptions           PromoRedemption[]
   notificationPreference     NotificationPreference?
   hutLeaderAssignments       HutLeaderAssignment[]
+  familyGroupRequests        FamilyGroupJoinRequest[]
 
   @@index([email])
   @@index([xeroContactId])
   @@index([parentMemberId])
   @@index([secondaryParentId])
+  @@index([familyGroupId])
 }
 
 model PasswordResetToken {
@@ -642,4 +649,34 @@ model GuestChoreToken {
 
   @@index([token])
   @@index([bookingGuestId])
+}
+
+// ---------------------------------------------------------------------------
+// Family Groups (links primary adult members for shared booking quick-add)
+// ---------------------------------------------------------------------------
+
+model FamilyGroup {
+  id           String                  @id @default(cuid())
+  name         String?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  members      Member[]
+  joinRequests FamilyGroupJoinRequest[]
+}
+
+model FamilyGroupJoinRequest {
+  id            String      @id @default(cuid())
+  familyGroupId String
+  requesterId   String
+  status        String      @default("PENDING") // PENDING | APPROVED | REJECTED
+  createdAt     DateTime    @default(now())
+  reviewedAt    DateTime?
+  reviewedBy    String?
+
+  familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  requester   Member      @relation(fields: [requesterId], references: [id])
+
+  @@index([familyGroupId])
+  @@index([requesterId])
+  @@index([status])
 }

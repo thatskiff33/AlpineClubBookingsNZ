@@ -7,6 +7,7 @@ import { ProfileForm } from "./profile-form";
 import { ChangeEmailForm } from "./change-email-form";
 import { NotificationPreferences } from "./notification-preferences";
 import { DependentsSection } from "./dependents-section";
+import { FamilyGroupSection } from "./family-group-section";
 import {
   Card,
   CardContent,
@@ -38,6 +39,18 @@ export default async function ProfilePage() {
       active: true,
       createdAt: true,
       passwordChangedAt: true,
+      parentMemberId: true,
+      familyGroupId: true,
+      familyGroup: {
+        select: {
+          id: true,
+          name: true,
+          members: {
+            where: { active: true },
+            select: { id: true, firstName: true, lastName: true },
+          },
+        },
+      },
       subscriptions: {
         orderBy: { seasonYear: "desc" },
         select: { status: true, seasonYear: true },
@@ -61,6 +74,8 @@ export default async function ProfilePage() {
       lastName: true,
       ageTier: true,
       dateOfBirth: true,
+      email: true,
+      inheritParentEmail: true,
     },
     orderBy: { firstName: "asc" },
   });
@@ -231,10 +246,33 @@ export default async function ProfilePage() {
         </CardContent>
       </Card>
 
-      {/* Family Members / Dependents */}
+      {/* Family Group */}
+      {!member.parentMemberId && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Family Group</CardTitle>
+            <CardDescription>
+              Link with your partner/spouse so you appear in each other&apos;s booking quick-add lists
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FamilyGroupSection
+              familyGroupId={member.familyGroupId}
+              familyGroupName={member.familyGroup?.name ?? null}
+              familyGroupMembers={
+                member.familyGroup?.members
+                  .filter((m) => m.id !== member.id)
+                  .map((m) => ({ id: m.id, firstName: m.firstName, lastName: m.lastName })) ?? []
+              }
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Dependents */}
       <Card>
         <CardHeader>
-          <CardTitle>Family Members</CardTitle>
+          <CardTitle>Dependents</CardTitle>
           <CardDescription>
             Manage dependents who share your account (e.g. children). They get member pricing when you book.
           </CardDescription>
@@ -247,6 +285,8 @@ export default async function ProfilePage() {
               lastName: d.lastName,
               ageTier: d.ageTier,
               dateOfBirth: d.dateOfBirth ? d.dateOfBirth.toISOString().substring(0, 10) : null,
+              email: d.email,
+              inheritParentEmail: d.inheritParentEmail,
             }))}
           />
         </CardContent>

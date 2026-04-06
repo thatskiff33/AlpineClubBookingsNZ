@@ -22,10 +22,13 @@ interface Member {
   subscriptionXeroInvoiceId: string | null; createdAt: string; joinedDate: string | null
   forcePasswordChange: boolean
   parentMemberId: string | null
+  inheritParentEmail: boolean
   parentName: string | null
   secondaryParentId: string | null
   secondaryParentName: string | null
   dependentCount: number
+  familyGroupId: string | null
+  familyGroupName: string | null
 }
 
 interface MemberForm {
@@ -33,6 +36,7 @@ interface MemberForm {
   dateOfBirth: string; role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
   active: boolean; sendInvite: boolean; forcePasswordChange: boolean
   joinedDate: string; parentMemberId: string | null; secondaryParentId: string | null
+  inheritParentEmail: boolean
 }
 
 interface PrimaryMemberOption {
@@ -42,7 +46,7 @@ interface PrimaryMemberOption {
 interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string; type: string }
 interface ImportRow { firstName: string; lastName: string; email: string; phone?: string; dateOfBirth?: string; role?: string }
 
-const emptyForm: MemberForm = { firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", ageTier: "ADULT", active: true, sendInvite: false, forcePasswordChange: false, joinedDate: "", parentMemberId: null, secondaryParentId: null }
+const emptyForm: MemberForm = { firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", ageTier: "ADULT", active: true, sendInvite: false, forcePasswordChange: false, joinedDate: "", parentMemberId: null, secondaryParentId: null, inheritParentEmail: true }
 const emptyFilters: Filters = { role: "", active: "", ageTier: "", xeroLinked: "", subscription: "", type: "" }
 function parseCsvLine(line: string): string[] {
   const result: string[] = []; let current = ""; let inQuotes = false
@@ -156,13 +160,14 @@ export default function MembersPage() {
     finally { setPrimaryMembersLoading(false) }
   }, [])
   const openCreateDialog = () => { setEditingMember(null); setForm(emptyForm); setFormError(""); fetchPrimaryMembers(); setDialogOpen(true) }
-  const openEditDialog = (member: Member) => { setEditingMember(member); setForm({ firstName: member.firstName, lastName: member.lastName, email: member.email, phone: member.phone || "", dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "", role: member.role, ageTier: member.ageTier, active: member.active, sendInvite: false, forcePasswordChange: member.forcePasswordChange, joinedDate: member.joinedDate ? new Date(member.joinedDate).toISOString().split("T")[0] : "", parentMemberId: member.parentMemberId, secondaryParentId: member.secondaryParentId }); setFormError(""); fetchPrimaryMembers(); setDialogOpen(true) }
+  const openEditDialog = (member: Member) => { setEditingMember(member); setForm({ firstName: member.firstName, lastName: member.lastName, email: member.email, phone: member.phone || "", dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "", role: member.role, ageTier: member.ageTier, active: member.active, sendInvite: false, forcePasswordChange: member.forcePasswordChange, joinedDate: member.joinedDate ? new Date(member.joinedDate).toISOString().split("T")[0] : "", parentMemberId: member.parentMemberId, secondaryParentId: member.secondaryParentId, inheritParentEmail: member.inheritParentEmail }); setFormError(""); fetchPrimaryMembers(); setDialogOpen(true) }
 
   const handleSave = async () => {
     setSaving(true); setFormError("")
     try {
       const url = editingMember ? `/api/admin/members/${editingMember.id}` : "/api/admin/members"
       const body: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, phone: form.phone || null, dateOfBirth: form.dateOfBirth || null, role: form.role, ageTier: form.ageTier, active: form.active }
+      if (form.parentMemberId) body.inheritParentEmail = form.inheritParentEmail
       if (editingMember) {
         body.forcePasswordChange = form.forcePasswordChange
         body.joinedDate = form.joinedDate || null
@@ -276,6 +281,7 @@ export default function MembersPage() {
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("ageTier")}><span className="inline-flex items-center">Age Tier<SortIcon col="ageTier" /></span></TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("active")}><span className="inline-flex items-center">Status<SortIcon col="active" /></span></TableHead>
             <TableHead>Type</TableHead>
+            <TableHead>Family Group</TableHead>
             <TableHead>Subscription</TableHead><TableHead>Xero</TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("createdAt")}><span className="inline-flex items-center">Joined<SortIcon col="createdAt" /></span></TableHead>
             <TableHead className="text-right">Actions</TableHead>
@@ -288,6 +294,7 @@ export default function MembersPage() {
               <TableCell><span className="text-sm text-slate-600">{member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()}</span></TableCell>
               <TableCell><Badge variant={member.active ? "default" : "destructive"} className={member.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}>{member.active ? "Active" : "Inactive"}</Badge></TableCell>
               <TableCell>{member.parentMemberId ? <><Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Dependent</Badge>{member.parentName && <span className="ml-1 text-xs text-muted-foreground">of {member.parentName}</span>}{member.secondaryParentName && <span className="ml-1 text-xs text-muted-foreground">& {member.secondaryParentName}</span>}</> : <><Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Primary</Badge>{member.dependentCount > 0 && <Badge variant="secondary" className="ml-1 text-xs">{member.dependentCount} dep</Badge>}</>}</TableCell>
+              <TableCell>{member.familyGroupName ? <Link href="/admin/family-groups"><Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer">{member.familyGroupName}</Badge></Link> : <span className="text-xs text-slate-400">-</span>}</TableCell>
               <TableCell>{member.subscriptionStatus ? (() => { const cfg = statusConfig[member.subscriptionStatus] || statusConfig.NOT_INVOICED; const badge = <Badge variant="secondary" className={`${cfg.className} ${member.subscriptionXeroInvoiceId ? "cursor-pointer inline-flex items-center gap-1" : ""}`}>{cfg.label}{member.subscriptionXeroInvoiceId && <ExternalLink className="h-3 w-3" />}</Badge>; return member.subscriptionXeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${member.subscriptionXeroInvoiceId}`} target="_blank" rel="noopener noreferrer">{badge}</a> : badge })() : <span className="text-xs text-slate-400">-</span>}</TableCell>
               <TableCell>{member.xeroContactId ? <a href={`https://go.xero.com/app/contacts/contact/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer"><Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer inline-flex items-center gap-1">Linked<ExternalLink className="h-3 w-3" /></Badge></a> : <span className="text-xs text-slate-400">-</span>}</TableCell>
               <TableCell className="text-slate-500 text-sm">{new Date(member.joinedDate || member.createdAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })}</TableCell>
@@ -302,7 +309,7 @@ export default function MembersPage() {
         {form.parentMemberId !== null && <><div className="space-y-2"><Label>Primary Parent *</Label>{primaryMembersLoading ? <p className="text-xs text-muted-foreground">Loading...</p> : <Select value={form.parentMemberId || ""} onValueChange={v => setForm(f => ({ ...f, parentMemberId: v || null }))}><SelectTrigger><SelectValue placeholder="Select parent..." /></SelectTrigger><SelectContent>{primaryMembers.filter(pm => pm.id !== editingMember?.id).map(pm => <SelectItem key={pm.id} value={pm.id}>{pm.firstName} {pm.lastName} ({pm.email})</SelectItem>)}</SelectContent></Select>}<p className="text-xs text-muted-foreground">Dependent will share the parent&apos;s email address.</p></div>
         <div className="space-y-2"><Label>Secondary Parent (optional)</Label>{primaryMembersLoading ? <p className="text-xs text-muted-foreground">Loading...</p> : <Select value={form.secondaryParentId || "none"} onValueChange={v => setForm(f => ({ ...f, secondaryParentId: v === "none" ? null : v }))}><SelectTrigger><SelectValue placeholder="None" /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem>{primaryMembers.filter(pm => pm.id !== editingMember?.id && pm.id !== form.parentMemberId).map(pm => <SelectItem key={pm.id} value={pm.id}>{pm.firstName} {pm.lastName} ({pm.email})</SelectItem>)}</SelectContent></Select>}<p className="text-xs text-muted-foreground">For split families where both parents can book.</p></div></>}
         <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label htmlFor="firstName">First Name *</Label><Input id="firstName" value={form.firstName} onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="lastName">Last Name *</Label><Input id="lastName" value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} /></div></div>
-        <div className="space-y-2"><Label htmlFor="email">Email {form.parentMemberId ? "(set from parent)" : "*"}</Label><Input id="email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} disabled={!!form.parentMemberId} className={form.parentMemberId ? "bg-slate-50" : ""} />{form.parentMemberId === null && editingMember?.parentMemberId && <p className="text-xs text-orange-600">Converting to primary: provide a unique email address.</p>}</div>
+        <div className="space-y-2"><Label htmlFor="email">Email {form.parentMemberId && form.inheritParentEmail ? "(inherited from parent)" : form.parentMemberId ? "" : "*"}</Label><Input id="email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} disabled={!!form.parentMemberId && form.inheritParentEmail} className={form.parentMemberId && form.inheritParentEmail ? "bg-slate-50" : ""} />{form.parentMemberId === null && editingMember?.parentMemberId && <p className="text-xs text-orange-600">Converting to primary: provide a unique email address.</p>}{form.parentMemberId && <div className="flex items-center gap-2 mt-1"><input type="checkbox" id="inheritEmail" checked={form.inheritParentEmail} onChange={e => setForm(f => ({ ...f, inheritParentEmail: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="inheritEmail" className="text-xs">Inherit parent&apos;s email address</Label></div>}</div>
         <div className="space-y-2"><Label htmlFor="phone">Phone</Label><Input id="phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
         <div className="space-y-2"><Label htmlFor="dateOfBirth">Date of Birth</Label><Input id="dateOfBirth" type="date" value={form.dateOfBirth} onChange={e => setForm(f => ({ ...f, dateOfBirth: e.target.value }))} /><p className="text-xs text-muted-foreground">Age tier is calculated automatically from date of birth.</p></div>
         <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label>Role</Label><Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as "MEMBER" | "ADMIN" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="MEMBER">Member</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>Age Tier</Label><Select value={form.ageTier} onValueChange={v => setForm(f => ({ ...f, ageTier: v as "ADULT" | "YOUTH" | "CHILD" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ADULT">Adult</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="CHILD">Child</SelectItem></SelectContent></Select></div></div>

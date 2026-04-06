@@ -29,6 +29,8 @@ const updateMemberSchema = z.object({
     .or(z.literal("")),
   parentMemberId: z.string().optional().nullable(),
   secondaryParentId: z.string().optional().nullable(),
+  familyGroupId: z.string().optional().nullable(),
+  inheritParentEmail: z.boolean().optional(),
 });
 
 /**
@@ -64,9 +66,12 @@ export async function GET(
         joinedDate: true,
         createdAt: true,
         parentMemberId: true,
+        inheritParentEmail: true,
         parent: { select: { id: true, firstName: true, lastName: true } },
         secondaryParentId: true,
         secondaryParent: { select: { id: true, firstName: true, lastName: true } },
+        familyGroupId: true,
+        familyGroup: { select: { id: true, name: true } },
         _count: { select: { dependents: true, secondaryDependents: true } },
         subscriptions: {
           orderBy: { seasonYear: "desc" },
@@ -251,18 +256,35 @@ export async function PUT(
   if (data.active !== undefined) updateData.active = data.active;
   if (data.forcePasswordChange !== undefined) updateData.forcePasswordChange = data.forcePasswordChange;
 
+  // Handle inheritParentEmail
+  if (data.inheritParentEmail !== undefined) {
+    updateData.inheritParentEmail = data.inheritParentEmail;
+  }
+
   // Handle parent assignment
   if (data.parentMemberId !== undefined) {
     updateData.parentMemberId = data.parentMemberId;
     if (data.parentMemberId) {
-      // When assigning a parent, set email to parent's email
-      const parent = await prisma.member.findUnique({ where: { id: data.parentMemberId } });
-      if (parent) updateData.email = parent.email;
+      // When assigning a parent, set email to parent's email only if inheriting
+      const shouldInherit = data.inheritParentEmail !== undefined ? data.inheritParentEmail : existing.inheritParentEmail;
+      if (shouldInherit) {
+        const parent = await prisma.member.findUnique({ where: { id: data.parentMemberId } });
+        if (parent) updateData.email = parent.email;
+      }
     }
     if (data.parentMemberId === null) {
-      // When unlinking, also clear secondary parent
+      // When unlinking, also clear secondary parent and reset inheritParentEmail
       updateData.secondaryParentId = null;
+      updateData.inheritParentEmail = true;
     }
+  } else if (data.inheritParentEmail !== undefined && existing.parentMemberId) {
+    // Changing inheritParentEmail without changing parent
+    if (data.inheritParentEmail) {
+      // Switching to inherit: update email to parent's
+      const parent = await prisma.member.findUnique({ where: { id: existing.parentMemberId } });
+      if (parent) updateData.email = parent.email;
+    }
+    // If switching to own email, the email field should be provided separately
   }
 
   // Handle secondary parent
@@ -286,6 +308,26 @@ export async function PUT(
     } else {
       updateData.joinedDate = null;
     }
+  }
+
+  // Handle family group assignment
+  if (data.familyGroupId !== undefined) {
+    const effectiveParent = data.parentMemberId !== undefined ? data.parentMemberId : existing.parentMemberId;
+    if (data.familyGroupId && effectiveParent) {
+      return NextResponse.json({ error: "Dependents cannot be assigned to a family group" }, { status: 422 });
+    }
+    if (data.familyGroupId) {
+      const group = await prisma.familyGroup.findUnique({ where: { id: data.familyGroupId } });
+      if (!group) {
+        return NextResponse.json({ error: "Family group not found" }, { status: 404 });
+      }
+    }
+    updateData.familyGroupId = data.familyGroupId;
+  }
+
+  // Clear family group if converting to a dependent
+  if (data.parentMemberId && data.parentMemberId !== null && existing.familyGroupId && data.familyGroupId === undefined) {
+    updateData.familyGroupId = null;
   }
 
   // Handle DOB and age tier
@@ -324,7 +366,9 @@ export async function PUT(
         joinedDate: true,
         createdAt: true,
         parentMemberId: true,
+        inheritParentEmail: true,
         secondaryParentId: true,
+        familyGroupId: true,
       },
     });
 
