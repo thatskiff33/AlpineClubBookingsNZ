@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NavBar } from "@/components/nav-bar";
+import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 
 export default async function AuthenticatedLayout({
   children,
@@ -29,10 +30,16 @@ export default async function AuthenticatedLayout({
     redirect("/change-password");
   }
 
+  const isHutLeaderActive =
+    session.user.role === "MEMBER"
+      ? await hasActiveHutLeaderAssignment(session.user.id)
+      : false;
+
   const user = {
     name: session.user.name ?? "Member",
     email: session.user.email ?? "",
     role: (session.user as { role?: string }).role ?? "MEMBER",
+    isHutLeader: isHutLeaderActive,
   };
 
   return (

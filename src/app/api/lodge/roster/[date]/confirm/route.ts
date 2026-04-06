@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+import { checkLodgeAuth } from "@/lib/lodge-auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -26,12 +26,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
-  }
-  if (session.user.role !== "LODGE" && session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const { error, status } = await checkLodgeAuth();
+  if (error) {
+    return NextResponse.json({ error }, { status: status! });
   }
 
   const { date: dateStr } = await params;

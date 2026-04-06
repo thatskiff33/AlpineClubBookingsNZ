@@ -16,6 +16,7 @@ const mockPrisma = {
     groupBy: vi.fn(),
   },
   choreTemplate: { findMany: vi.fn() },
+  hutLeaderAssignment: { count: vi.fn() },
   $transaction: vi.fn(),
 };
 
@@ -56,7 +57,9 @@ function makeParams(date = "2026-07-10") {
 describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
   });
 
   it("sets completedAt and completedVia on complete action", async () => {
@@ -148,6 +151,7 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
 describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
@@ -220,6 +224,7 @@ describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
 describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
@@ -313,6 +318,7 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
 describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
@@ -386,6 +392,7 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
 describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
@@ -429,6 +436,7 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
 describe("F6: POST /api/lodge/roster/[date]/generate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
@@ -524,6 +532,7 @@ describe("F6: POST /api/lodge/roster/[date]/generate", () => {
 describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
@@ -665,6 +674,7 @@ describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
 describe("F6: GET /api/lodge/roster/[date]/frequency-info", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 

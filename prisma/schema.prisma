@@ -130,6 +130,7 @@ model Member {
   guestAppearances           BookingGuest[]
   promoRedemptions           PromoRedemption[]
   notificationPreference     NotificationPreference?
+  hutLeaderAssignments       HutLeaderAssignment[]
 
   @@index([email])
   @@index([xeroContactId])
@@ -282,6 +283,7 @@ model BookingGuest {
   booking          Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   member           Member?           @relation(fields: [memberId], references: [id])
   choreAssignments ChoreAssignment[]
+  choreTokens      GuestChoreToken[]
 
   @@index([bookingId])
   @@index([memberId])
@@ -603,4 +605,40 @@ model CronJobRun {
 
   @@index([jobName])
   @@index([startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Hut Leader Assignment (F8)
+// ---------------------------------------------------------------------------
+
+model HutLeaderAssignment {
+  id        String   @id @default(cuid())
+  memberId  String
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@index([startDate, endDate])
+}
+
+// ---------------------------------------------------------------------------
+// Guest Chore Token (F10)
+// ---------------------------------------------------------------------------
+
+model GuestChoreToken {
+  id             String   @id @default(cuid())
+  token          String   @unique
+  bookingGuestId String
+  date           DateTime @db.Date
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+
+  bookingGuest BookingGuest @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([bookingGuestId])
 }

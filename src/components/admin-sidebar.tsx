@@ -22,6 +22,7 @@ import {
   Shield,
   Activity,
   Mail,
+  UserCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -42,6 +43,7 @@ const navItems = [
   { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
   { href: "/admin/chores", label: "Chores", icon: CheckSquare },
   { href: "/admin/roster", label: "Roster", icon: ClipboardList },
+  { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
   {
     href: "/admin/cancellation-policy",
     label: "Booking Policies",

@@ -302,7 +302,8 @@ export function emailChangeNotificationTemplate(newEmail: string): string {
 export function choreRosterTemplate(
   guestName: string,
   date: string,
-  chores: Array<{ name: string; description: string | null }>
+  chores: Array<{ name: string; description: string | null }>,
+  choreLink?: string
 ): string {
   const formattedDate = new Date(date + "T00:00:00").toLocaleDateString(
     "en-NZ",
@@ -314,11 +315,16 @@ export function choreRosterTemplate(
     value: c.description ? escapeHtml(c.description) : "",
   }));
 
+  const linkSection = choreLink
+    ? `${button("Mark Chores Complete", choreLink)}${muted("Use this link to mark your chores as done from your phone. Link expires in 48 hours.")}`
+    : "";
+
   return layout(`
     ${heading("Chore Roster")}
     ${paragraph("Hi " + escapeHtml(guestName) + ",")}
     ${paragraph("Here are your assigned chores for <strong>" + escapeHtml(formattedDate) + "</strong> at the lodge:")}
     ${infoTable(choreRows)}
+    ${linkSection}
     ${alertBox("Last person to bed: Check heaters and fire are safe and doors are secure.", "warning")}
     ${muted("Thanks for helping keep the lodge running smoothly!")}
   `);

@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { allocateChores, ChoreTemplateInput, GuestInput, ChoreHistoryEntry } from "@/lib/chore-allocator"
 import { sendChoreRosterEmail } from "@/lib/email"
+import { createGuestChoreToken } from "@/lib/guest-chore-token"
 import { z } from "zod"
 import logger from "@/lib/logger"
 
@@ -349,17 +350,23 @@ export async function PUT(
         })
       }
 
-      // Send emails to guests who have an email (members)
+      // Generate per-guest chore tokens and send emails
+      const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000"
       const emailPromises: Promise<void>[] = []
-      for (const [, guest] of byGuest) {
+      for (const [guestId, guest] of byGuest) {
         if (guest.email) {
           emailPromises.push(
-            sendChoreRosterEmail(
-              guest.email,
-              guest.name,
-              dateStr,
-              guest.chores
-            )
+            (async () => {
+              const token = await createGuestChoreToken(guestId, date)
+              const choreLink = `${baseUrl}/chores/${token}`
+              await sendChoreRosterEmail(
+                guest.email!,
+                guest.name,
+                dateStr,
+                guest.chores,
+                choreLink
+              )
+            })()
           )
         }
       }

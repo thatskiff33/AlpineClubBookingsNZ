@@ -28,6 +28,7 @@ interface NavBarProps {
     name: string;
     email: string;
     role: string;
+    isHutLeader?: boolean;
   };
 }
 
@@ -38,12 +39,17 @@ const memberLinks = [
 ];
 
 const adminLink = { href: "/admin/dashboard", label: "Admin" };
+const hutLeaderLink = { href: "/lodge/kiosk", label: "Hut Leader" };
 
 export function NavBar({ user }: NavBarProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const links = user.role === "ADMIN" ? [...memberLinks, adminLink] : memberLinks;
+  const links = [
+    ...memberLinks,
+    ...(user.isHutLeader ? [hutLeaderLink] : []),
+    ...(user.role === "ADMIN" ? [adminLink] : []),
+  ];
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard";

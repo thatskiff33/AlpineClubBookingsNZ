@@ -5,7 +5,7 @@
 ```bash
 npm install
 npx prisma generate
-npm test              # 411 tests pass (21 test files)
+npm test              # 575 tests pass (28 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -26,7 +26,7 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + Delivery Phases 1, 4, 5, 6, 9 complete. Security audit + 5 integration reviews done. 411 tests pass, build succeeds.
+All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 9 complete. Security audit + 5 integration reviews done. 575 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
@@ -250,9 +250,60 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 9 complete. Security audit + 5 
 - `src/lib/bumping.ts` - Admin alert on booking bump
 - `prisma/schema.prisma` - EmailLog, NotificationPreference models
 
+### Delivery Phase 7: Hut Leader Tools & Lodge Chore System - COMPLETED
+
+**Date:** 2026-04-06
+**Branch:** phase-7-lodge
+**Tests:** 575 (was 411, +164 new across 4 sub-phases)
+
+**Sub-phase 7a: Foundation**
+1. **F1 - LODGE Role**: Added LODGE to Role enum, lodge account in seed, 30-day JWT for iPad, route guards
+2. **F3 - Time-of-Day**: ChoreTimeOfDay enum (MORNING/EVENING/ANYTIME) on ChoreTemplate, allocator integration, grouped display
+3. **F4 - Frequency Settings**: ChoreFrequencyMode (DAILY/EVERY_X_DAYS/SPECIFIC_DAYS), filterChoresByFrequency, admin UI
+4. **F5 - Family Allocation**: Allocator family-grouping tie-breaker for same-booking guests
+
+**Sub-phase 7b: Kiosk & Routing**
+5. **F2 - iPad Kiosk Page**: /lodge/kiosk with lodge list and chore roster, touch-optimised, auto-refresh
+6. **F7 - Arriving/Departing Routing**: isArriving/isDeparting flags, time-of-day eligibility filtering
+7. **F11 - Frequency Lookback**: choreLastRosteredDates parameter, frequency-info API endpoint
+
+**Sub-phase 7c: Guest Interaction**
+8. **F9 - Guest Arrival/Departure**: completedAt/completedVia on ChoreAssignment, arrivedAt/departedAt on BookingGuest, kiosk toggle endpoints
+9. **F6 - Hut Leader Wizard**: 4-step wizard at /lodge/roster/[date]/setup, generate/confirm/reassign APIs
+
+**Sub-phase 7d: Hut Leader & Guest Links**
+10. **F8 - Hut Leader Role Assignment**: HutLeaderAssignment model, admin CRUD UI at /admin/hut-leaders, isHutLeader date-scoped auth, lodge layout and all lodge API endpoints accept hut leaders, nav bar shows "Hut Leader" link for active assignments
+11. **F10 - Per-Guest Chore Link**: GuestChoreToken model (48h expiry, crypto.randomBytes), public /chores/[token] page with completion toggle, /api/chores/[token] GET/PUT endpoints, roster email includes per-guest "Mark Chores Complete" link with completedVia: "GUEST_LINK"
+
+**New files (7d):**
+- `src/lib/hut-leader.ts` - isHutLeader and hasActiveHutLeaderAssignment helpers
+- `src/lib/lodge-auth.ts` - Shared lodge auth check (LODGE/ADMIN/hut-leader)
+- `src/lib/guest-chore-token.ts` - Token generation, creation, validation
+- `src/app/api/admin/hut-leaders/route.ts` - GET/POST hut leader assignments
+- `src/app/api/admin/hut-leaders/[id]/route.ts` - PUT/DELETE hut leader assignments
+- `src/app/(admin)/admin/hut-leaders/page.tsx` - Hut leaders admin page
+- `src/app/api/chores/[token]/route.ts` - Public guest chore token API
+- `src/app/(public)/chores/[token]/page.tsx` - Public guest chore page
+- `src/lib/__tests__/phase7d.test.ts` - 35 tests for F8 and F10
+
+**New Prisma models (require migration):**
+- `HutLeaderAssignment` - Date-scoped hut leader elevation (memberId, startDate, endDate)
+- `GuestChoreToken` - Time-limited guest chore access (token, bookingGuestId, date, expiresAt)
+
+**Modified files (7d):**
+- `prisma/schema.prisma` - HutLeaderAssignment, GuestChoreToken models, relations on Member and BookingGuest
+- `src/app/(lodge)/layout.tsx` - Now accepts MEMBER with active hut leader assignment
+- `src/app/api/lodge/*/route.ts` - All 7 lodge API routes updated to use checkLodgeAuth (hut leader support)
+- `src/components/admin-sidebar.tsx` - Added Hut Leaders nav entry
+- `src/components/nav-bar.tsx` - Shows "Hut Leader" link for active assignments
+- `src/app/(authenticated)/layout.tsx` - Passes isHutLeader to NavBar
+- `src/lib/email-templates.ts` - choreRosterTemplate accepts optional choreLink
+- `src/lib/email.ts` - sendChoreRosterEmail accepts optional choreLink
+- `src/app/api/admin/roster/[date]/route.ts` - Generates GuestChoreToken per guest on roster email
+
 ## What's Next
 
-Phases 1, 4, 5, 6, and 9 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
+Phases 1, 4, 5, 6, 7, and 9 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
 
 ## Context
 
@@ -574,4 +625,4 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 
 ## Build History Summary
 
-9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1, 4, 5, 6, and 9 completed 2026-04-06. 411 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
+9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1, 4, 5, 6, 7, and 9 completed 2026-04-06. 575 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
