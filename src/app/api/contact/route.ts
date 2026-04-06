@@ -8,10 +8,19 @@ const contactSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
   email: z.string().email("Invalid email address").max(200),
   message: z.string().min(1, "Message is required").max(5000),
+  recipient: z.string().max(50).optional(),
 });
 
 const CONTACT_EMAIL =
-  process.env.CONTACT_EMAIL || "bookings@tacbookings.co.nz";
+  process.env.CONTACT_EMAIL || "bookings@tokoroa.org.nz";
+
+const RECIPIENT_MAP: Record<string, string> = {
+  president: "president@tokoroa.org.nz",
+  secretary: "secretary@tokoroa.org.nz",
+  treasurer: "treasurer@tokoroa.org.nz",
+  bookings: "bookings@tokoroa.org.nz",
+  communications: "communications@tokoroa.org.nz",
+};
 
 export async function POST(request: Request) {
   // Rate limit: 5 per hour
@@ -29,11 +38,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const { name, email, message } = result.data;
+    const { name, email, message, recipient } = result.data;
+    const toEmail = (recipient && RECIPIENT_MAP[recipient]) || CONTACT_EMAIL;
+    const recipientLabel = recipient ? ` (to ${recipient})` : "";
 
     await sendEmail({
-      to: CONTACT_EMAIL,
-      subject: `Website Contact: ${escapeHtml(name)}`,
+      to: toEmail,
+      subject: `Website Contact${recipientLabel}: ${escapeHtml(name)}`,
       html: `
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #1e293b;">New Contact Form Submission</h2>
