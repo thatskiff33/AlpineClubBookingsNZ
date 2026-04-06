@@ -19,7 +19,10 @@ vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@/lib/age-tier", () => ({ computeAgeTier: vi.fn().mockReturnValue("ADULT") }));
+vi.mock("@/lib/age-tier", () => ({
+  computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
+  getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
+}));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
   updateXeroContact: vi.fn(),

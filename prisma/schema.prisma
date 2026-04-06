@@ -703,6 +703,23 @@ model XeroAccountMapping {
 }
 
 // ---------------------------------------------------------------------------
+// Age Tier Settings (Issue 14 — configurable age group boundaries)
+// ---------------------------------------------------------------------------
+
+model AgeTierSetting {
+  id        String   @id @default(cuid())
+  tier      AgeTier  @unique
+  minAge    Int
+  maxAge    Int?     // null for ADULT (no upper limit)
+  label     String   // e.g. "Child (under 10)"
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sortOrder])
+}
+
+// ---------------------------------------------------------------------------
 // Account Deletion Requests (F-COMP-04)
 // ---------------------------------------------------------------------------
 

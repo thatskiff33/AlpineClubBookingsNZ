@@ -4,7 +4,8 @@ import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { computeAgeTier } from "@/lib/age-tier";
+import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { getSeasonYear } from "@/lib/utils";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
@@ -131,7 +132,7 @@ export async function POST(req: NextRequest) {
         results.errors.push({ row: rowNum, errors: ["Invalid date of birth"] });
         continue;
       }
-      ageTier = computeAgeTier(dateOfBirth) as "ADULT" | "YOUTH" | "CHILD";
+      ageTier = (await computeAgeTier(dateOfBirth, getSeasonStartDate(getSeasonYear()))) as "ADULT" | "YOUTH" | "CHILD";
     }
 
     validatedRows.push({

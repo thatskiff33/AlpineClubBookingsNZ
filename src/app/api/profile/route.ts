@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { computeAgeTier } from "@/lib/age-tier";
+import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { getSeasonYear } from "@/lib/utils";
 
 const profileSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100),
@@ -66,7 +67,7 @@ export async function PUT(req: NextRequest) {
       );
     }
     updateData.dateOfBirth = dob;
-    updateData.ageTier = computeAgeTier(dob);
+    updateData.ageTier = await computeAgeTier(dob, getSeasonStartDate(getSeasonYear()));
   } else if (dateOfBirth === "" || dateOfBirth === null) {
     updateData.dateOfBirth = null;
   }

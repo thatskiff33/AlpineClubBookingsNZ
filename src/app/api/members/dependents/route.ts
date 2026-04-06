@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { computeAgeTier } from "@/lib/age-tier";
+import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { getSeasonYear } from "@/lib/utils";
 import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";
 
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
     if (isNaN(dateOfBirth.getTime())) {
       return NextResponse.json({ error: "Invalid date of birth" }, { status: 422 });
     }
-    ageTier = computeAgeTier(dateOfBirth);
+    ageTier = await computeAgeTier(dateOfBirth, getSeasonStartDate(getSeasonYear()));
   }
 
   // Determine email: use own email or inherit parent's

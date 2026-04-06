@@ -3,7 +3,8 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { sendWelcomeEmail, sendVerificationEmail } from "@/lib/email";
-import { computeAgeTier } from "@/lib/age-tier";
+import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { getSeasonYear } from "@/lib/utils";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { createEmailVerificationToken } from "@/lib/verification-tokens";
 import { AgeTier } from "@prisma/client";
@@ -48,7 +49,9 @@ export async function POST(req: NextRequest) {
 
     const passwordHash = await bcrypt.hash(password, 13);
 
-    const ageTier = dateOfBirth ? computeAgeTier(new Date(dateOfBirth)) : AgeTier.ADULT;
+    const ageTier = dateOfBirth
+      ? await computeAgeTier(new Date(dateOfBirth), getSeasonStartDate(getSeasonYear()))
+      : AgeTier.ADULT;
 
     const member = await prisma.member.create({
       data: {

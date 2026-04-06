@@ -32,7 +32,10 @@ vi.mock("@/lib/utils", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/rate-limit", () => ({ applyRateLimit: vi.fn().mockReturnValue(null) }));
-vi.mock("@/lib/age-tier", () => ({ computeAgeTier: vi.fn().mockReturnValue("ADULT") }));
+vi.mock("@/lib/age-tier", () => ({
+  computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
+  getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
+}));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
   findOrCreateXeroContact: vi.fn(),

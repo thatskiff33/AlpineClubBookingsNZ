@@ -298,6 +298,21 @@ async function main() {
   }
   console.log("Xero account mappings seeded");
 
+  // Seed age tier settings with correct TAC boundaries (Issue 14)
+  const ageTierSettings = [
+    { tier: "CHILD" as const, minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
+    { tier: "YOUTH" as const, minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
+    { tier: "ADULT" as const, minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
+  ];
+  for (const setting of ageTierSettings) {
+    await prisma.ageTierSetting.upsert({
+      where: { tier: setting.tier },
+      update: {},
+      create: setting,
+    });
+  }
+  console.log("Age tier settings seeded");
+
   console.log("Seeding complete!");
 }
 

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
+import { AGE_TIER_DEFAULTS } from "@/lib/age-tier";
 
 export const metadata: Metadata = {
   title: "Join the Club",
@@ -99,11 +100,16 @@ function getRate(
 }
 
 export default async function JoinPage() {
-  const seasons = await prisma.season.findMany({
-    where: { active: true },
-    include: { rates: true },
-    orderBy: { startDate: "asc" },
-  });
+  const [seasons, ageTierSettings] = await Promise.all([
+    prisma.season.findMany({
+      where: { active: true },
+      include: { rates: true },
+      orderBy: { startDate: "asc" },
+    }),
+    prisma.ageTierSetting
+      .findMany({ orderBy: { sortOrder: "asc" } })
+      .catch(() => AGE_TIER_DEFAULTS),
+  ]);
   return (
     <>
       {/* Header */}
@@ -266,39 +272,19 @@ export default async function JoinPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        <tr className="border-t border-slate-200">
-                          <td className="px-4 py-2 font-medium text-slate-800">
-                            Adult (18+)
-                          </td>
-                          <td className="px-4 py-2 text-blue-700 font-medium">
-                            {getRate(season.rates, "ADULT", true)}
-                          </td>
-                          <td className="px-4 py-2">
-                            {getRate(season.rates, "ADULT", false)}
-                          </td>
-                        </tr>
-                        <tr className="border-t border-slate-200">
-                          <td className="px-4 py-2 font-medium text-slate-800">
-                            Youth (10\u201317)
-                          </td>
-                          <td className="px-4 py-2 text-blue-700 font-medium">
-                            {getRate(season.rates, "YOUTH", true)}
-                          </td>
-                          <td className="px-4 py-2">
-                            {getRate(season.rates, "YOUTH", false)}
-                          </td>
-                        </tr>
-                        <tr className="border-t border-slate-200">
-                          <td className="px-4 py-2 font-medium text-slate-800">
-                            Child (under 10)
-                          </td>
-                          <td className="px-4 py-2 text-blue-700 font-medium">
-                            {getRate(season.rates, "CHILD", true)}
-                          </td>
-                          <td className="px-4 py-2">
-                            {getRate(season.rates, "CHILD", false)}
-                          </td>
-                        </tr>
+                        {ageTierSettings.map((tier) => (
+                          <tr key={tier.tier} className="border-t border-slate-200">
+                            <td className="px-4 py-2 font-medium text-slate-800">
+                              {tier.label}
+                            </td>
+                            <td className="px-4 py-2 text-blue-700 font-medium">
+                              {getRate(season.rates, tier.tier, true)}
+                            </td>
+                            <td className="px-4 py-2">
+                              {getRate(season.rates, tier.tier, false)}
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>

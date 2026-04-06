@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { computeAgeTier, computeAge, computeSeasonYear } from "../age-tier";
+import {
+  computeAge,
+  computeSeasonYear,
+  computeAgeTierWithSettings,
+  AGE_TIER_DEFAULTS,
+  getSeasonStartDate,
+} from "../age-tier";
 
 describe("computeAge", () => {
   const ref = new Date("2026-04-03");
@@ -22,38 +28,95 @@ describe("computeAge", () => {
   });
 });
 
-describe("computeAgeTier", () => {
-  const ref = new Date("2026-04-03");
-
-  it("returns CHILD for age < 13", () => {
-    expect(computeAgeTier(new Date("2014-06-01"), ref)).toBe("CHILD"); // 11
-    expect(computeAgeTier(new Date("2015-01-01"), ref)).toBe("CHILD"); // 11
-    expect(computeAgeTier(new Date("2013-04-04"), ref)).toBe("CHILD"); // 12 (hasn't turned 13 yet)
+describe("getSeasonStartDate", () => {
+  it("returns April 1 of the given season year", () => {
+    const d = getSeasonStartDate(2026);
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(3); // April = 3 in JS
+    expect(d.getDate()).toBe(1);
   });
 
-  it("returns YOUTH for age 13-17", () => {
-    expect(computeAgeTier(new Date("2013-04-03"), ref)).toBe("YOUTH"); // exactly 13
-    expect(computeAgeTier(new Date("2013-01-01"), ref)).toBe("YOUTH"); // 13
-    expect(computeAgeTier(new Date("2009-01-01"), ref)).toBe("YOUTH"); // 17
-    expect(computeAgeTier(new Date("2008-04-04"), ref)).toBe("YOUTH"); // 17 (hasn't turned 18)
+  it("works for other season years", () => {
+    const d = getSeasonStartDate(2025);
+    expect(d.getFullYear()).toBe(2025);
+    expect(d.getMonth()).toBe(3);
+    expect(d.getDate()).toBe(1);
+  });
+});
+
+describe("computeAgeTierWithSettings (new TAC boundaries: CHILD<10, YOUTH 10-17, ADULT 18+)", () => {
+  // Use April 1 2026 as reference (season start date for season 2026)
+  const ref = new Date("2026-04-01");
+
+  it("returns CHILD for age under 10", () => {
+    // Born 2017-01-01: age 9 on April 1 2026 -> CHILD
+    expect(computeAgeTierWithSettings(new Date("2017-01-01"), ref, AGE_TIER_DEFAULTS)).toBe("CHILD");
+    // Born 2016-04-02: still 9 on April 1 2026 (turns 10 on April 2) -> CHILD
+    expect(computeAgeTierWithSettings(new Date("2016-04-02"), ref, AGE_TIER_DEFAULTS)).toBe("CHILD");
+    // Born 2025-01-01: age 1 -> CHILD
+    expect(computeAgeTierWithSettings(new Date("2025-01-01"), ref, AGE_TIER_DEFAULTS)).toBe("CHILD");
   });
 
-  it("returns ADULT for age >= 18", () => {
-    expect(computeAgeTier(new Date("2008-04-03"), ref)).toBe("ADULT"); // exactly 18
-    expect(computeAgeTier(new Date("2008-01-01"), ref)).toBe("ADULT"); // 18
-    expect(computeAgeTier(new Date("2000-01-01"), ref)).toBe("ADULT"); // 26
-    expect(computeAgeTier(new Date("1980-06-15"), ref)).toBe("ADULT"); // 45
+  it("returns YOUTH for age 10 to 17 (inclusive)", () => {
+    // Born 2016-04-01: exactly 10 on April 1 2026 -> YOUTH
+    expect(computeAgeTierWithSettings(new Date("2016-04-01"), ref, AGE_TIER_DEFAULTS)).toBe("YOUTH");
+    // Born 2016-01-01: age 10 on April 1 2026 -> YOUTH
+    expect(computeAgeTierWithSettings(new Date("2016-01-01"), ref, AGE_TIER_DEFAULTS)).toBe("YOUTH");
+    // Born 2014-08-28 (Malia example from spec): age 11 on April 1 2026 -> YOUTH
+    expect(computeAgeTierWithSettings(new Date("2014-08-28"), ref, AGE_TIER_DEFAULTS)).toBe("YOUTH");
+    // Born 2009-01-01: age 17 on April 1 2026 -> YOUTH
+    expect(computeAgeTierWithSettings(new Date("2009-01-01"), ref, AGE_TIER_DEFAULTS)).toBe("YOUTH");
+    // Born 2008-04-02: age 17 on April 1 2026 (hasn't turned 18 yet) -> YOUTH
+    expect(computeAgeTierWithSettings(new Date("2008-04-02"), ref, AGE_TIER_DEFAULTS)).toBe("YOUTH");
   });
 
-  it("handles birthday edge cases", () => {
-    // Exactly on 13th birthday -> YOUTH
-    expect(computeAgeTier(new Date("2013-04-03"), ref)).toBe("YOUTH");
-    // Day before 13th birthday -> still CHILD
-    expect(computeAgeTier(new Date("2013-04-04"), ref)).toBe("CHILD");
-    // Exactly on 18th birthday -> ADULT
-    expect(computeAgeTier(new Date("2008-04-03"), ref)).toBe("ADULT");
-    // Day before 18th birthday -> still YOUTH
-    expect(computeAgeTier(new Date("2008-04-04"), ref)).toBe("YOUTH");
+  it("returns ADULT for age 18 and over", () => {
+    // Born 2008-04-01: exactly 18 on April 1 2026 -> ADULT
+    expect(computeAgeTierWithSettings(new Date("2008-04-01"), ref, AGE_TIER_DEFAULTS)).toBe("ADULT");
+    // Born 2008-01-01: age 18 -> ADULT
+    expect(computeAgeTierWithSettings(new Date("2008-01-01"), ref, AGE_TIER_DEFAULTS)).toBe("ADULT");
+    // Born 2000-01-01: age 26 -> ADULT
+    expect(computeAgeTierWithSettings(new Date("2000-01-01"), ref, AGE_TIER_DEFAULTS)).toBe("ADULT");
+    // Born 1980-06-15: age 45 -> ADULT
+    expect(computeAgeTierWithSettings(new Date("1980-06-15"), ref, AGE_TIER_DEFAULTS)).toBe("ADULT");
+  });
+
+  it("Malia example: DOB 2014-08-28, season 2026 -> YOUTH (age 11 on April 1 2026)", () => {
+    const malia = new Date("2014-08-28");
+    const seasonStart = getSeasonStartDate(2026); // April 1, 2026
+    expect(computeAgeTierWithSettings(malia, seasonStart, AGE_TIER_DEFAULTS)).toBe("YOUTH");
+    // Verify age calculation: she turns 12 in August, so on April 1 she is 11
+    expect(computeAge(malia, seasonStart)).toBe(11);
+  });
+
+  it("birthday edge case: turning 10 on April 1 -> YOUTH", () => {
+    // Born exactly April 1 2016: turns 10 on April 1 2026 -> YOUTH (boundary inclusive)
+    expect(computeAgeTierWithSettings(new Date("2016-04-01"), ref, AGE_TIER_DEFAULTS)).toBe("YOUTH");
+  });
+
+  it("birthday edge case: born April 2 2016 is still CHILD on April 1 2026", () => {
+    // Still 9 years old (turns 10 the next day) -> CHILD
+    expect(computeAgeTierWithSettings(new Date("2016-04-02"), ref, AGE_TIER_DEFAULTS)).toBe("CHILD");
+  });
+
+  it("birthday edge case: turning 18 on April 1 -> ADULT", () => {
+    expect(computeAgeTierWithSettings(new Date("2008-04-01"), ref, AGE_TIER_DEFAULTS)).toBe("ADULT");
+  });
+
+  it("birthday edge case: born April 2 2008 is still YOUTH on April 1 2026", () => {
+    // Still 17 years old (turns 18 the next day) -> YOUTH
+    expect(computeAgeTierWithSettings(new Date("2008-04-02"), ref, AGE_TIER_DEFAULTS)).toBe("YOUTH");
+  });
+
+  it("season start date is used as reference", () => {
+    // Malia born 2014-08-28:
+    //   - On April 1 2026 (season 2026 start) she is 11 -> YOUTH
+    //   - On Sept 1 2026 she turns 12 - still YOUTH
+    //   - On April 1 2024 she would be 9 -> CHILD
+    const malia = new Date("2014-08-28");
+    expect(computeAgeTierWithSettings(malia, getSeasonStartDate(2024), AGE_TIER_DEFAULTS)).toBe("CHILD");
+    expect(computeAgeTierWithSettings(malia, getSeasonStartDate(2025), AGE_TIER_DEFAULTS)).toBe("YOUTH"); // age 10
+    expect(computeAgeTierWithSettings(malia, getSeasonStartDate(2026), AGE_TIER_DEFAULTS)).toBe("YOUTH"); // age 11
   });
 });
 
