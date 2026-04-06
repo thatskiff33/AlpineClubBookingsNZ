@@ -37,7 +37,9 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
     return pathname.startsWith(href);
   };
 
-  const bookingsHref = isAuthenticated ? "/book" : "/login";
+  const bookingsHref = isAuthenticated
+    ? "/book"
+    : "https://tokoroa-alpine-club.checkfront.com/";
   const dashboardHref = isAuthenticated ? "/dashboard" : "/login";
 
   return (
@@ -93,7 +95,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                 <Link href="/login">Log In</Link>
               </Button>
               <Button size="sm" asChild>
-                <Link href={bookingsHref}>Book Now</Link>
+                <a href={bookingsHref} target="_blank" rel="noopener noreferrer">Book Now</a>
               </Button>
             </>
           )}
@@ -164,9 +166,9 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                     </Link>
                   </Button>
                   <Button size="sm" asChild className="w-full">
-                    <Link href={bookingsHref} onClick={() => setMobileOpen(false)}>
+                    <a href={bookingsHref} target="_blank" rel="noopener noreferrer" onClick={() => setMobileOpen(false)}>
                       Book Now
-                    </Link>
+                    </a>
                   </Button>
                 </>
               )}
