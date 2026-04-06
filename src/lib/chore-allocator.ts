@@ -35,6 +35,8 @@ export interface GuestInput {
   firstName: string;
   lastName: string;
   ageTier: AgeTier;
+  isArriving?: boolean;
+  isDeparting?: boolean;
 }
 
 /** A record of a past chore assignment for a guest */
@@ -78,6 +80,17 @@ function ageForTier(tier: AgeTier): number {
 /** Check if a guest meets the minimum age for a chore */
 export function meetsMinAge(guestAgeTier: AgeTier, minAge: number): boolean {
   return ageForTier(guestAgeTier) >= minAge;
+}
+
+/** Check if a guest is eligible for a chore based on time-of-day routing */
+export function isEligibleForTimeOfDay(
+  guest: Pick<GuestInput, "isArriving" | "isDeparting">,
+  choreTimeOfDay: ChoreTimeOfDay | undefined
+): boolean {
+  const tod = choreTimeOfDay ?? "ANYTIME";
+  if (guest.isArriving && tod === "MORNING") return false;
+  if (guest.isDeparting && tod === "EVENING") return false;
+  return true;
 }
 
 /** Check if a guest is eligible for a chore based on age restriction */
@@ -226,6 +239,8 @@ export function allocateChores(
   options: {
     includeNonEssential?: boolean;
     highOccupancyThreshold?: number;
+    choreLastRosteredDates?: Map<string, Date>;
+    currentDate?: Date;
   } = {}
 ): ChoreAllocation[] {
   if (guests.length === 0 || chores.length === 0) {
@@ -243,6 +258,15 @@ export function allocateChores(
       : chores.filter((c) => c.isEssential);
   } else {
     selectedChores = selectChoresForOccupancy(chores, guests.length, threshold);
+  }
+
+  // 1b. Apply frequency filtering (F11)
+  if (options.choreLastRosteredDates && options.currentDate) {
+    selectedChores = filterChoresByFrequency(
+      selectedChores,
+      options.choreLastRosteredDates,
+      options.currentDate
+    );
   }
 
   // Sort by sortOrder
@@ -268,9 +292,11 @@ export function allocateChores(
       guests.length
     );
 
-    // Find eligible guests for this chore
-    const eligible = guests.filter((g) =>
-      isEligibleForChore(g.ageTier, chore)
+    // Find eligible guests for this chore (age + time-of-day routing)
+    const eligible = guests.filter(
+      (g) =>
+        isEligibleForChore(g.ageTier, chore) &&
+        isEligibleForTimeOfDay(g, chore.timeOfDay)
     );
 
     if (eligible.length === 0) continue;
