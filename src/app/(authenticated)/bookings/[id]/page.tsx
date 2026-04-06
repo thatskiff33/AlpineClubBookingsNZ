@@ -9,6 +9,8 @@ import { formatCents } from "@/lib/utils";
 import { CancelBookingButton } from "@/components/cancel-booking-button";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { BookingNotesEditor } from "@/components/booking-notes-editor";
+import { ChangeDatesDialog } from "@/components/change-dates-dialog";
+import { ManageGuests } from "@/components/manage-guests";
 
 export default async function BookingDetailPage({
   params,
@@ -28,6 +30,9 @@ export default async function BookingDetailPage({
         include: {
           promoCode: { select: { code: true, type: true, description: true } },
         },
+      },
+      modifications: {
+        orderBy: { createdAt: "desc" },
       },
     },
   });
@@ -52,6 +57,8 @@ export default async function BookingDetailPage({
   );
 
   const canCancel = booking.status === "CONFIRMED" || booking.status === "PENDING";
+  const isFutureCheckIn = new Date(booking.checkIn) > new Date();
+  const canModify = canCancel && isFutureCheckIn;
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -65,7 +72,17 @@ export default async function BookingDetailPage({
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>Stay Details</CardTitle>
+            <div className="flex items-center gap-3">
+              <CardTitle>Stay Details</CardTitle>
+              {canModify && (
+                <ChangeDatesDialog
+                  bookingId={booking.id}
+                  currentCheckIn={new Date(booking.checkIn).toISOString().split("T")[0]}
+                  currentCheckOut={new Date(booking.checkOut).toISOString().split("T")[0]}
+                  currentFinalPriceCents={booking.finalPriceCents}
+                />
+              )}
+            </div>
             <Badge variant={statusColor(booking.status)}>{booking.status}</Badge>
           </div>
         </CardHeader>
@@ -112,19 +129,35 @@ export default async function BookingDetailPage({
           <CardTitle>Guests</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="divide-y">
-            {booking.guests.map((guest) => (
-              <div key={guest.id} className="flex items-center justify-between py-3">
-                <div>
-                  <p className="font-medium">{guest.firstName} {guest.lastName}</p>
-                  <p className="text-sm text-gray-500">
-                    {guest.ageTier} &middot; {guest.isMember ? "Member" : "Non-member"}
-                  </p>
+          {canModify ? (
+            <ManageGuests
+              bookingId={booking.id}
+              guests={booking.guests.map((g) => ({
+                id: g.id,
+                firstName: g.firstName,
+                lastName: g.lastName,
+                ageTier: g.ageTier,
+                isMember: g.isMember,
+                priceCents: g.priceCents,
+              }))}
+              checkIn={new Date(booking.checkIn).toISOString().split("T")[0]}
+              checkOut={new Date(booking.checkOut).toISOString().split("T")[0]}
+            />
+          ) : (
+            <div className="divide-y">
+              {booking.guests.map((guest) => (
+                <div key={guest.id} className="flex items-center justify-between py-3">
+                  <div>
+                    <p className="font-medium">{guest.firstName} {guest.lastName}</p>
+                    <p className="text-sm text-gray-500">
+                      {guest.ageTier} &middot; {guest.isMember ? "Member" : "Non-member"}
+                    </p>
+                  </div>
+                  <p className="font-medium">{formatCents(guest.priceCents)}</p>
                 </div>
-                <p className="font-medium">{formatCents(guest.priceCents)}</p>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -214,6 +247,87 @@ export default async function BookingDetailPage({
           />
         </CardContent>
       </Card>
+
+      {booking.modifications.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Modification History</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="divide-y">
+              {booking.modifications.map((mod) => {
+                const prev = mod.previousData as Record<string, unknown>;
+                const next = mod.newData as Record<string, unknown>;
+                const typeLabels: Record<string, string> = {
+                  DATE_CHANGE: "Dates Changed",
+                  GUEST_ADD: "Guests Added",
+                  GUEST_REMOVE: "Guest Removed",
+                  EXTEND_STAY: "Stay Extended",
+                };
+                return (
+                  <div key={mod.id} className="py-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">
+                          {typeLabels[mod.modificationType] || mod.modificationType}
+                        </Badge>
+                        <span className="text-sm text-gray-500">
+                          {new Date(mod.createdAt).toLocaleDateString("en-NZ", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
+                      {mod.priceDiffCents !== 0 && (
+                        <span
+                          className={`text-sm font-medium ${
+                            mod.priceDiffCents > 0
+                              ? "text-red-600"
+                              : "text-green-600"
+                          }`}
+                        >
+                          {mod.priceDiffCents > 0 ? "+" : ""}
+                          {formatCents(mod.priceDiffCents)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      {mod.modificationType === "DATE_CHANGE" && (
+                        <p>
+                          {String(prev.checkIn)} &rarr; {String(next.checkIn)},{" "}
+                          {String(prev.checkOut)} &rarr; {String(next.checkOut)}
+                        </p>
+                      )}
+                      {mod.modificationType === "GUEST_ADD" && (
+                        <p>
+                          {String(prev.guestCount)} &rarr; {String(next.guestCount)} guests
+                        </p>
+                      )}
+                      {mod.modificationType === "GUEST_REMOVE" && (
+                        <p>
+                          Removed{" "}
+                          {(prev.removedGuest as { firstName: string; lastName: string })?.firstName}{" "}
+                          {(prev.removedGuest as { firstName: string; lastName: string })?.lastName}
+                          {" "}&middot;{" "}
+                          {String(prev.guestCount)} &rarr; {String(next.guestCount)} guests
+                        </p>
+                      )}
+                    </div>
+                    {mod.changeFeeCents > 0 && (
+                      <p className="text-xs text-amber-600">
+                        Change fee: {formatCents(mod.changeFeeCents)}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

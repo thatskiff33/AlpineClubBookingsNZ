@@ -1,0 +1,364 @@
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import {
+  calculateBookingPrice,
+  calculatePromoDiscount,
+  type SeasonRateData,
+} from "@/lib/pricing";
+import { validatePromoCodeRules } from "@/lib/promo";
+import { processRefund } from "@/lib/stripe";
+import { logAudit } from "@/lib/audit";
+import { sendBookingModifiedEmail } from "@/lib/email";
+import { createXeroCreditNoteForModification } from "@/lib/xero";
+import logger from "@/lib/logger";
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string; guestId: string }> }
+) {
+  const session = await auth();
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+
+  const { id: bookingId, guestId } = await params;
+  const ipAddress =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: {
+          guests: true,
+          payment: true,
+          member: true,
+          promoRedemption: { include: { promoCode: true } },
+        },
+      });
+
+      if (!booking) {
+        throw new ApiError("Booking not found", 404);
+      }
+
+      if (
+        booking.memberId !== session.user.id &&
+        session.user.role !== "ADMIN"
+      ) {
+        throw new ApiError("Forbidden", 403);
+      }
+
+      if (!["PENDING", "CONFIRMED"].includes(booking.status)) {
+        throw new ApiError(
+          "Only PENDING or CONFIRMED bookings can be modified",
+          400
+        );
+      }
+
+      const guestToRemove = booking.guests.find((g) => g.id === guestId);
+      if (!guestToRemove) {
+        throw new ApiError("Guest not found on this booking", 404);
+      }
+
+      if (booking.guests.length <= 1) {
+        throw new ApiError(
+          "Cannot remove the last guest. Cancel the booking instead.",
+          400
+        );
+      }
+
+      // Check for chore assignments on the guest
+      const choreWarnings: string[] = [];
+      const guestAssignments = await tx.choreAssignment.findMany({
+        where: { bookingGuestId: guestId },
+        include: { choreTemplate: true },
+      });
+
+      for (const assignment of guestAssignments) {
+        if (
+          assignment.status === "CONFIRMED" ||
+          assignment.status === "COMPLETED"
+        ) {
+          choreWarnings.push(
+            `${assignment.choreTemplate.name} on ${assignment.date.toISOString().split("T")[0]} was ${assignment.status}`
+          );
+        }
+      }
+
+      // Delete chore assignments for this guest
+      await tx.choreAssignment.deleteMany({
+        where: { bookingGuestId: guestId },
+      });
+
+      // Delete the guest
+      await tx.bookingGuest.delete({ where: { id: guestId } });
+
+      // Recalculate price with remaining guests
+      const remainingGuests = booking.guests.filter((g) => g.id !== guestId);
+
+      const seasons = await tx.season.findMany({
+        where: { active: true },
+        include: { rates: true },
+      });
+
+      const seasonRateData: SeasonRateData[] = seasons.map((s) => ({
+        seasonId: s.id,
+        startDate: s.startDate,
+        endDate: s.endDate,
+        rates: s.rates.map((r) => ({
+          ageTier: r.ageTier,
+          isMember: r.isMember,
+          pricePerNightCents: r.pricePerNightCents,
+        })),
+      }));
+
+      const guestsForPricing = remainingGuests.map((g) => ({
+        ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+        isMember: g.isMember,
+      }));
+
+      const priceBreakdown = calculateBookingPrice(
+        booking.checkIn,
+        booking.checkOut,
+        guestsForPricing,
+        seasonRateData
+      );
+
+      const newTotalPriceCents = priceBreakdown.totalPriceCents;
+
+      // Handle promo recalculation
+      let newDiscountCents = 0;
+      let promoRemoved = false;
+
+      if (booking.promoRedemption?.promoCode) {
+        const promo = booking.promoRedemption.promoCode;
+        const validationError = validatePromoCodeRules(
+          promo,
+          { memberId: booking.memberId },
+          new Date(),
+          0
+        );
+
+        if (validationError) {
+          promoRemoved = true;
+          await tx.promoRedemption.delete({
+            where: { id: booking.promoRedemption.id },
+          });
+          await tx.promoCode.update({
+            where: { id: promo.id },
+            data: { currentRedemptions: { decrement: 1 } },
+          });
+        } else {
+          const allPerNightRates = guestsForPricing.flatMap((guest) => {
+            const breakdown = calculateBookingPrice(
+              booking.checkIn,
+              booking.checkOut,
+              [guest],
+              seasonRateData
+            );
+            return breakdown.guests[0].perNightCents;
+          });
+
+          newDiscountCents = calculatePromoDiscount(
+            {
+              type: promo.type,
+              valueCents: promo.valueCents,
+              percentOff: promo.percentOff,
+              freeNights: promo.freeNights,
+            },
+            newTotalPriceCents,
+            allPerNightRates
+          );
+
+          await tx.promoRedemption.update({
+            where: { id: booking.promoRedemption.id },
+            data: { discountCents: newDiscountCents },
+          });
+        }
+      }
+
+      const newFinalPriceCents = newTotalPriceCents - newDiscountCents;
+      const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+
+      // Handle refund for price decrease
+      let refundAmountCents = 0;
+      let stripeRefundId: string | undefined;
+      const hasSucceededPayment =
+        booking.status === "CONFIRMED" &&
+        booking.payment?.status === "SUCCEEDED";
+
+      if (hasSucceededPayment && priceDiffCents < 0 && booking.payment) {
+        refundAmountCents = Math.abs(priceDiffCents);
+        if (
+          booking.payment.stripePaymentIntentId &&
+          refundAmountCents > 0
+        ) {
+          const refund = await processRefund({
+            paymentIntentId: booking.payment.stripePaymentIntentId,
+            amountCents: refundAmountCents,
+            metadata: {
+              bookingId: booking.id,
+              reason: "guest_removed_price_decrease",
+            },
+          });
+          stripeRefundId = refund.id;
+
+          const newRefundedTotal =
+            booking.payment.refundedAmountCents + refundAmountCents;
+          await tx.payment.update({
+            where: { id: booking.payment.id },
+            data: {
+              refundedAmountCents: newRefundedTotal,
+              status: "PARTIALLY_REFUNDED",
+            },
+          });
+        }
+      }
+
+      // Update hasNonMembers
+      const wasOnlyNonMember =
+        !guestToRemove.isMember &&
+        remainingGuests.every((g) => g.isMember);
+      const hasNonMembers = wasOnlyNonMember
+        ? false
+        : booking.hasNonMembers;
+
+      // Update guest prices
+      for (let i = 0; i < remainingGuests.length; i++) {
+        await tx.bookingGuest.update({
+          where: { id: remainingGuests[i].id },
+          data: { priceCents: priceBreakdown.guests[i].priceCents },
+        });
+      }
+
+      // Update booking
+      const updatedBooking = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          totalPriceCents: newTotalPriceCents,
+          discountCents: newDiscountCents,
+          finalPriceCents: newFinalPriceCents,
+          hasNonMembers,
+          nonMemberHoldUntil: hasNonMembers
+            ? booking.nonMemberHoldUntil
+            : null,
+        },
+        include: { guests: true, payment: true },
+      });
+
+      // Create BookingModification record
+      await tx.bookingModification.create({
+        data: {
+          bookingId,
+          memberId: session.user.id,
+          modificationType: "GUEST_REMOVE",
+          previousData: {
+            guestCount: booking.guests.length,
+            removedGuest: {
+              firstName: guestToRemove.firstName,
+              lastName: guestToRemove.lastName,
+              ageTier: guestToRemove.ageTier,
+              isMember: guestToRemove.isMember,
+            },
+            totalPriceCents: booking.totalPriceCents,
+            finalPriceCents: booking.finalPriceCents,
+          },
+          newData: {
+            guestCount: updatedBooking.guests.length,
+            totalPriceCents: newTotalPriceCents,
+            finalPriceCents: newFinalPriceCents,
+          },
+          priceDiffCents,
+          changeFeeCents: 0,
+        },
+      });
+
+      return {
+        booking: updatedBooking,
+        removedGuest: guestToRemove,
+        priceDiffCents,
+        refundAmountCents,
+        stripeRefundId,
+        promoRemoved,
+        choreWarnings,
+        oldGuestCount: booking.guests.length,
+      };
+    });
+
+    // Audit log
+    logAudit({
+      action: "booking.modify.guests.remove",
+      memberId: session.user.id,
+      targetId: bookingId,
+      details: JSON.stringify({
+        removedGuest: `${result.removedGuest.firstName} ${result.removedGuest.lastName}`,
+        priceDiffCents: result.priceDiffCents,
+        refundAmountCents: result.refundAmountCents,
+        choreWarnings: result.choreWarnings,
+      }),
+      ipAddress,
+    });
+
+    // XER-01: Xero credit note for price decrease (fire-and-forget)
+    if (result.refundAmountCents > 0) {
+      createXeroCreditNoteForModification({
+        bookingId,
+        refundAmountCents: result.refundAmountCents,
+      }).catch((err) =>
+        logger.error({ err, bookingId }, "Failed to create Xero credit note for guest removal")
+      );
+    }
+
+    // Send email
+    const member = await prisma.member.findUnique({
+      where: { id: result.booking.memberId },
+    });
+    if (member) {
+      sendBookingModifiedEmail({
+        email: member.email,
+        firstName: member.firstName,
+        modificationType: "GUEST_REMOVE",
+        oldCheckIn: result.booking.checkIn,
+        oldCheckOut: result.booking.checkOut,
+        newCheckIn: result.booking.checkIn,
+        newCheckOut: result.booking.checkOut,
+        oldGuestCount: result.oldGuestCount,
+        newGuestCount: result.booking.guests.length,
+        oldFinalPriceCents: result.booking.finalPriceCents - result.priceDiffCents,
+        newFinalPriceCents: result.booking.finalPriceCents,
+        changeFeeCents: 0,
+        refundAmountCents: result.refundAmountCents,
+        additionalAmountCents: 0,
+      }).catch((err) =>
+        logger.error({ err, bookingId }, "Failed to send booking modified email")
+      );
+    }
+
+    return NextResponse.json({
+      booking: result.booking,
+      removedGuest: result.removedGuest,
+      priceDiffCents: result.priceDiffCents,
+      refundAmountCents: result.refundAmountCents,
+      stripeRefundId: result.stripeRefundId,
+      promoRemoved: result.promoRemoved,
+      choreWarnings: result.choreWarnings,
+    });
+  } catch (err) {
+    if (err instanceof ApiError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    const message =
+      err instanceof Error ? err.message : "Failed to remove guest";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number
+  ) {
+    super(message);
+  }
+}
