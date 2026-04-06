@@ -303,7 +303,7 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 9 complete. Security audit +
 
 ## What's Next
 
-Phases 1, 4, 5, 6, 7, and 9 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
+Phases 1, 4, 5, 6, 7, and 9 complete. Remaining: Phase 10 (Compliance & Public Content), Phase 11 (Xero Account Mapping). See `docs/DELIVERY_PLAN.md` for details.
 
 ## Context
 
