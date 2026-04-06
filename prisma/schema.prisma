@@ -274,6 +274,8 @@ model BookingGuest {
   isMember  Boolean @default(false)
   memberId  String?
   priceCents Int
+  arrivedAt  DateTime?
+  departedAt DateTime?
   createdAt DateTime @default(now())
 
   // Relations
@@ -390,6 +392,8 @@ model ChoreAssignment {
   bookingGuestId   String?
   date             DateTime    @db.Date
   status           ChoreStatus @default(SUGGESTED)
+  completedAt      DateTime?
+  completedVia     String?     // "KIOSK", "ADMIN", or "GUEST_LINK"
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 

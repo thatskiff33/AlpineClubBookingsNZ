@@ -10,6 +10,8 @@ interface Guest {
   isMember: boolean;
   isArriving: boolean;
   isDeparting: boolean;
+  arrivedAt: string | null;
+  departedAt: string | null;
 }
 
 interface BookingGroup {
@@ -30,6 +32,8 @@ interface Assignment {
   guestAgeTier: string | null;
   bookingId: string;
   status: string;
+  completedAt: string | null;
+  completedVia: string | null;
 }
 
 function formatDate(date: Date): string {
@@ -107,13 +111,64 @@ export default function KioskPage() {
         setAssignments((prev) =>
           prev.map((a) =>
             a.id === assignmentId
-              ? { ...a, status: action === "complete" ? "COMPLETED" : "CONFIRMED" }
+              ? {
+                  ...a,
+                  status: action === "complete" ? "COMPLETED" : "CONFIRMED",
+                  completedAt: action === "complete" ? new Date().toISOString() : null,
+                  completedVia: action === "complete" ? "KIOSK" : null,
+                }
               : a
           )
         );
       }
     } catch {
       // Silently fail - auto-refresh will sync
+    }
+  };
+
+  const toggleArrival = async (guestId: string) => {
+    try {
+      const res = await fetch(`/api/lodge/guests/${date}/arrive`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingGuestId: guestId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBookings((prev) =>
+          prev.map((b) => ({
+            ...b,
+            guests: b.guests.map((g) =>
+              g.id === guestId ? { ...g, arrivedAt: data.arrivedAt } : g
+            ),
+          }))
+        );
+      }
+    } catch {
+      // Silently fail
+    }
+  };
+
+  const toggleDeparture = async (guestId: string) => {
+    try {
+      const res = await fetch(`/api/lodge/guests/${date}/depart`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingGuestId: guestId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBookings((prev) =>
+          prev.map((b) => ({
+            ...b,
+            guests: b.guests.map((g) =>
+              g.id === guestId ? { ...g, departedAt: data.departedAt } : g
+            ),
+          }))
+        );
+      }
+    } catch {
+      // Silently fail
     }
   };
 
@@ -194,7 +249,13 @@ export default function KioskPage() {
                     {booking.guests.map((guest) => (
                       <div
                         key={guest.id}
-                        className="flex items-center justify-between bg-slate-700/50 rounded-lg px-4 py-3 min-h-[56px]"
+                        className={`flex items-center justify-between rounded-lg px-4 py-3 min-h-[56px] ${
+                          guest.departedAt
+                            ? "bg-slate-700/30 opacity-60"
+                            : guest.arrivedAt
+                              ? "bg-green-900/30 border border-green-700/50"
+                              : "bg-slate-700/50"
+                        }`}
                       >
                         <div className="flex items-center gap-3">
                           <span className="text-lg font-medium">
@@ -204,7 +265,7 @@ export default function KioskPage() {
                             {guest.ageTier}
                           </span>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 items-center">
                           {guest.isArriving && (
                             <span className="bg-green-700 text-green-100 text-sm font-medium px-3 py-1 rounded-full">
                               Arriving
@@ -219,6 +280,31 @@ export default function KioskPage() {
                             <span className="bg-slate-600 text-slate-300 text-sm px-3 py-1 rounded-full">
                               Non-member
                             </span>
+                          )}
+                          {/* Arrival/Departure toggle buttons */}
+                          {guest.isArriving && !guest.departedAt && (
+                            <button
+                              onClick={() => toggleArrival(guest.id)}
+                              className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
+                                guest.arrivedAt
+                                  ? "bg-green-600 text-white"
+                                  : "bg-slate-600 hover:bg-slate-500 active:bg-slate-400 text-slate-200"
+                              }`}
+                            >
+                              {guest.arrivedAt ? "Arrived" : "Mark Arrived"}
+                            </button>
+                          )}
+                          {guest.isDeparting && (
+                            <button
+                              onClick={() => toggleDeparture(guest.id)}
+                              className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
+                                guest.departedAt
+                                  ? "bg-amber-600 text-white"
+                                  : "bg-slate-600 hover:bg-slate-500 active:bg-slate-400 text-slate-200"
+                              }`}
+                            >
+                              {guest.departedAt ? "Departed" : "Mark Departed"}
+                            </button>
                           )}
                         </div>
                       </div>
@@ -240,6 +326,12 @@ export default function KioskPage() {
               <p className="text-slate-400 text-lg mb-4">
                 No roster set up for this date
               </p>
+              <a
+                href={`/lodge/roster/${date}/setup`}
+                className="inline-block bg-blue-600 hover:bg-blue-500 active:bg-blue-400 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+              >
+                Set Up Today&apos;s Roster
+              </a>
             </div>
           ) : (
             <div className="space-y-4">

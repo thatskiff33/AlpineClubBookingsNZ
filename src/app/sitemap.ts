@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = process.env.NEXTAUTH_URL || "https://bookings.tokoroa.org.nz";
+  const baseUrl = process.env.NEXTAUTH_URL || "https://tokoroa.org.nz";
 
   return [
     {

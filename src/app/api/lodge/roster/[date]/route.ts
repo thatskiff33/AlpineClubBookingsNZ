@@ -70,6 +70,8 @@ export async function GET(
       guestAgeTier: a.bookingGuest?.ageTier ?? null,
       bookingId: a.bookingId,
       status: a.status,
+      completedAt: a.completedAt?.toISOString() ?? null,
+      completedVia: a.completedVia ?? null,
     })),
   });
 }
@@ -116,12 +118,20 @@ export async function PUT(
     if (data.action === "complete") {
       await prisma.choreAssignment.update({
         where: { id: data.assignmentId },
-        data: { status: "COMPLETED" },
+        data: {
+          status: "COMPLETED",
+          completedAt: new Date(),
+          completedVia: "KIOSK",
+        },
       });
     } else {
       await prisma.choreAssignment.update({
         where: { id: data.assignmentId },
-        data: { status: "CONFIRMED" },
+        data: {
+          status: "CONFIRMED",
+          completedAt: null,
+          completedVia: null,
+        },
       });
     }
   } catch (err) {

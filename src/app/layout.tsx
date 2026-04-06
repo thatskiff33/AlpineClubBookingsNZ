@@ -3,7 +3,7 @@ import { SessionProvider } from "next-auth/react";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
-const baseUrl = process.env.NEXTAUTH_URL || "https://bookings.tokoroa.org.nz";
+const baseUrl = process.env.NEXTAUTH_URL || "https://tokoroa.org.nz";
 
 export const metadata: Metadata = {
   title: {

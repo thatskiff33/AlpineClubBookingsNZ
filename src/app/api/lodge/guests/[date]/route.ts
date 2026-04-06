@@ -60,6 +60,8 @@ export async function GET(
       isMember: g.isMember,
       isArriving: b.checkIn.getTime() === date.getTime(),
       isDeparting: b.checkOut.getTime() === nextDay.getTime(),
+      arrivedAt: g.arrivedAt?.toISOString() ?? null,
+      departedAt: g.departedAt?.toISOString() ?? null,
     })),
   }));
 
