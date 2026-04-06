@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 /**
  * GET /api/members/family
  * Returns the full quick-add list for the booking wizard:
- * self + family group peers + all dependents (own + peers').
+ * self + family group peers from ALL groups the member belongs to + all dependents (own + peers').
  */
 export async function GET() {
   const session = await auth();
@@ -20,9 +20,13 @@ export async function GET() {
       firstName: true,
       lastName: true,
       ageTier: true,
-      familyGroupId: true,
-      familyGroup: { select: { id: true, name: true } },
       parentMemberId: true,
+      familyGroupMemberships: {
+        select: {
+          familyGroupId: true,
+          familyGroup: { select: { id: true, name: true } },
+        },
+      },
     },
   });
 
@@ -55,23 +59,50 @@ export async function GET() {
     "self"
   );
 
-  // 2. Family group peers (other primary members in same group)
+  // 2. Family group peers from ALL groups the member belongs to (via join table)
+  const groupIds = self.familyGroupMemberships.map((m) => m.familyGroupId);
   let peerIds: string[] = [];
-  if (self.familyGroupId) {
-    const peers = await prisma.member.findMany({
+
+  if (groupIds.length > 0) {
+    const peerMemberships = await prisma.familyGroupMember.findMany({
       where: {
-        familyGroupId: self.familyGroupId,
-        id: { not: session.user.id },
-        active: true,
-        parentMemberId: null,
+        familyGroupId: { in: groupIds },
+        memberId: { not: session.user.id },
+        member: { active: true, parentMemberId: null },
       },
-      select: { id: true, firstName: true, lastName: true, ageTier: true },
-      orderBy: { firstName: "asc" },
+      include: {
+        member: {
+          select: { id: true, firstName: true, lastName: true, ageTier: true },
+        },
+      },
+      orderBy: { member: { firstName: "asc" } },
     });
-    for (const p of peers) {
-      addMember(p, "partner");
+    for (const pm of peerMemberships) {
+      addMember(pm.member, "partner");
     }
-    peerIds = peers.map((p) => p.id);
+    peerIds = [...new Set(peerMemberships.map((pm) => pm.member.id))];
+  } else if (self.familyGroupMemberships.length === 0) {
+    // Fallback: check legacy familyGroupId field for backward compatibility
+    const selfWithLegacy = await prisma.member.findUnique({
+      where: { id: session.user.id },
+      select: { familyGroupId: true },
+    });
+    if (selfWithLegacy?.familyGroupId) {
+      const peers = await prisma.member.findMany({
+        where: {
+          familyGroupId: selfWithLegacy.familyGroupId,
+          id: { not: session.user.id },
+          active: true,
+          parentMemberId: null,
+        },
+        select: { id: true, firstName: true, lastName: true, ageTier: true },
+        orderBy: { firstName: "asc" },
+      });
+      for (const p of peers) {
+        addMember(p, "partner");
+      }
+      peerIds = peers.map((p) => p.id);
+    }
   }
 
   // 3. Own dependents
@@ -108,9 +139,13 @@ export async function GET() {
     }
   }
 
+  // Return the first group's info for backward compat (or null if no groups)
+  const firstGroup = self.familyGroupMemberships[0]?.familyGroup ?? null;
+
   return NextResponse.json({
-    familyGroupId: self.familyGroupId,
-    familyGroupName: self.familyGroup?.name ?? null,
+    familyGroupId: firstGroup?.id ?? null,
+    familyGroupName: firstGroup?.name ?? null,
+    familyGroupIds: groupIds,
     familyMembers,
   });
 }

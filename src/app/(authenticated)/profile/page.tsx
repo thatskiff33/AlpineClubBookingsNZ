@@ -47,9 +47,9 @@ export default async function ProfilePage() {
         select: {
           id: true,
           name: true,
-          members: {
-            where: { active: true },
-            select: { id: true, firstName: true, lastName: true },
+          memberships: {
+            where: { member: { active: true } },
+            select: { member: { select: { id: true, firstName: true, lastName: true } } },
           },
         },
       },
@@ -262,7 +262,8 @@ export default async function ProfilePage() {
               familyGroupId={member.familyGroupId}
               familyGroupName={member.familyGroup?.name ?? null}
               familyGroupMembers={
-                member.familyGroup?.members
+                member.familyGroup?.memberships
+                  .map((ms) => ms.member)
                   .filter((m) => m.id !== member.id)
                   .map((m) => ({ id: m.id, firstName: m.firstName, lastName: m.lastName })) ?? []
               }

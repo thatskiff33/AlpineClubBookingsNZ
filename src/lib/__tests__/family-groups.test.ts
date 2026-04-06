@@ -11,6 +11,12 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(),
       delete: vi.fn(),
     },
+    familyGroupMember: {
+      findMany: vi.fn(),
+      createMany: vi.fn(),
+      deleteMany: vi.fn(),
+      upsert: vi.fn(),
+    },
     familyGroupJoinRequest: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
@@ -79,8 +85,11 @@ describe("Admin Family Groups API", () => {
           name: "Smith Family",
           createdAt: new Date(),
           updatedAt: new Date(),
-          members: [
-            { id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", ageTier: "ADULT", active: true, parentMemberId: null },
+          memberships: [
+            {
+              member: { id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", ageTier: "ADULT", active: true, parentMemberId: null },
+              role: "MEMBER",
+            },
           ],
           _count: { joinRequests: 0 },
         },
@@ -107,15 +116,19 @@ describe("Admin Family Groups API", () => {
     it("creates a family group and assigns members", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockedPrisma.member.findMany.mockResolvedValue([
-        { id: "m1", firstName: "John", lastName: "Smith", active: true, parentMemberId: null, familyGroupId: null },
-        { id: "m2", firstName: "Jane", lastName: "Smith", active: true, parentMemberId: null, familyGroupId: null },
+        { id: "m1", firstName: "John", lastName: "Smith", active: true, parentMemberId: null },
+        { id: "m2", firstName: "Jane", lastName: "Smith", active: true, parentMemberId: null },
       ] as any);
 
-      const createdGroup = { id: "fg-new", name: "Smith Family", members: [{ id: "m1" }, { id: "m2" }] };
-      mockedPrisma.$transaction.mockImplementation(async (fn: any) => {
-        // Mock the transaction function
-        return createdGroup;
-      });
+      const createdGroup = {
+        id: "fg-new",
+        name: "Smith Family",
+        memberships: [
+          { member: { id: "m1", firstName: "John", lastName: "Smith", email: "j@t.com", ageTier: "ADULT" }, role: "MEMBER" },
+          { member: { id: "m2", firstName: "Jane", lastName: "Smith", email: "j@t.com", ageTier: "ADULT" }, role: "MEMBER" },
+        ],
+      };
+      mockedPrisma.$transaction.mockImplementation(async (fn: any) => createdGroup);
 
       const { POST } = await import("@/app/api/admin/family-groups/route");
       const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "Smith Family", memberIds: ["m1", "m2"] }));
@@ -135,17 +148,24 @@ describe("Admin Family Groups API", () => {
       expect(body.error).toContain("dependent");
     });
 
-    it("rejects members already in a group", async () => {
+    it("allows members who are already in another group (multi-group support)", async () => {
       mockedAuth.mockResolvedValue(adminSession);
+      // Members can now belong to multiple groups — no restriction on existing group membership
       mockedPrisma.member.findMany.mockResolvedValue([
-        { id: "m1", firstName: "John", lastName: "Smith", active: true, parentMemberId: null, familyGroupId: "other-group" },
+        { id: "m1", firstName: "John", lastName: "Smith", active: true, parentMemberId: null },
       ] as any);
 
+      const createdGroup = {
+        id: "fg-new",
+        name: "New Group",
+        memberships: [{ member: { id: "m1", firstName: "John", lastName: "Smith", email: "j@t.com", ageTier: "ADULT" }, role: "MEMBER" }],
+      };
+      mockedPrisma.$transaction.mockImplementation(async (fn: any) => createdGroup);
+
       const { POST } = await import("@/app/api/admin/family-groups/route");
-      const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "Test", memberIds: ["m1"] }));
-      expect(res.status).toBe(422);
-      const body = await res.json();
-      expect(body.error).toContain("already in a family group");
+      const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "New Group", memberIds: ["m1"] }));
+      // Should succeed — multi-group is now allowed
+      expect(res.status).toBe(201);
     });
   });
 
@@ -194,15 +214,17 @@ describe("GET /api/members/family", () => {
 
   it("returns self + dependents when no family group", async () => {
     mockedAuth.mockResolvedValue(memberSession);
-    mockedPrisma.member.findUnique.mockResolvedValue({
-      id: "member-1",
-      firstName: "John",
-      lastName: "Smith",
-      ageTier: "ADULT",
-      familyGroupId: null,
-      familyGroup: null,
-      parentMemberId: null,
-    } as any);
+    mockedPrisma.member.findUnique
+      .mockResolvedValueOnce({
+        id: "member-1",
+        firstName: "John",
+        lastName: "Smith",
+        ageTier: "ADULT",
+        parentMemberId: null,
+        familyGroupMemberships: [], // no join table memberships
+      } as any)
+      // Fallback legacy check
+      .mockResolvedValueOnce({ familyGroupId: null } as any);
 
     // Own dependents
     mockedPrisma.member.findMany.mockResolvedValueOnce([
@@ -228,17 +250,19 @@ describe("GET /api/members/family", () => {
       firstName: "John",
       lastName: "Smith",
       ageTier: "ADULT",
-      familyGroupId: "fg1",
-      familyGroup: { id: "fg1", name: "Smith Family" },
       parentMemberId: null,
+      familyGroupMemberships: [
+        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
+      ],
     } as any);
 
-    // Peers
+    // Peers from join table
+    mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
+      { member: { id: "member-2", firstName: "Jane", lastName: "Smith", ageTier: "ADULT" } },
+    ] as any);
+
+    // Own dependents
     mockedPrisma.member.findMany
-      .mockResolvedValueOnce([
-        { id: "member-2", firstName: "Jane", lastName: "Smith", ageTier: "ADULT" },
-      ] as any)
-      // Own dependents
       .mockResolvedValueOnce([
         { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" },
       ] as any)
@@ -267,15 +291,17 @@ describe("GET /api/members/family", () => {
   it("split family: parent sees own children but not ex-partner", async () => {
     mockedAuth.mockResolvedValue(memberSession);
     // Dad has no family group
-    mockedPrisma.member.findUnique.mockResolvedValue({
-      id: "member-1",
-      firstName: "Dad",
-      lastName: "Smith",
-      ageTier: "ADULT",
-      familyGroupId: null,
-      familyGroup: null,
-      parentMemberId: null,
-    } as any);
+    mockedPrisma.member.findUnique
+      .mockResolvedValueOnce({
+        id: "member-1",
+        firstName: "Dad",
+        lastName: "Smith",
+        ageTier: "ADULT",
+        parentMemberId: null,
+        familyGroupMemberships: [], // no groups
+      } as any)
+      // Fallback legacy check — also no group
+      .mockResolvedValueOnce({ familyGroupId: null } as any);
 
     // Own dependents (children linked via parentMemberId or secondaryParentId)
     mockedPrisma.member.findMany.mockResolvedValueOnce([
@@ -431,7 +457,7 @@ describe("Admin Family Group Join Requests", () => {
           id: "req-1",
           createdAt: new Date(),
           requester: { id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com" },
-          familyGroup: { id: "fg1", name: "Smith Family", members: [] },
+          familyGroup: { id: "fg1", name: "Smith Family", memberships: [] },
         },
       ] as any);
 
@@ -440,6 +466,8 @@ describe("Admin Family Group Join Requests", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.requests).toHaveLength(1);
+      // Should have members array (flattened from memberships)
+      expect(body.requests[0].familyGroup.members).toEqual([]);
     });
   });
 

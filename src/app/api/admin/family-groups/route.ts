@@ -12,7 +12,7 @@ const createFamilyGroupSchema = z.object({
 
 /**
  * GET /api/admin/family-groups
- * List all family groups with their members.
+ * List all family groups with their members (via join table).
  */
 export async function GET() {
   const session = await auth();
@@ -22,40 +22,48 @@ export async function GET() {
 
   const groups = await prisma.familyGroup.findMany({
     include: {
-      members: {
-        where: { active: true },
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
-          ageTier: true,
-          active: true,
-          parentMemberId: true,
+      memberships: {
+        include: {
+          member: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              ageTier: true,
+              active: true,
+              parentMemberId: true,
+            },
+          },
         },
-        orderBy: { firstName: "asc" },
+        orderBy: { member: { firstName: "asc" } },
       },
       _count: { select: { joinRequests: { where: { status: "PENDING" } } } },
     },
     orderBy: { name: "asc" },
   });
 
-  const result = groups.map((g) => ({
-    id: g.id,
-    name: g.name,
-    createdAt: g.createdAt,
-    updatedAt: g.updatedAt,
-    members: g.members,
-    memberCount: g.members.length,
-    pendingRequests: g._count.joinRequests,
-  }));
+  const result = groups.map((g) => {
+    const activeMembers = g.memberships
+      .filter((m) => m.member.active)
+      .map((m) => ({ ...m.member, role: m.role }));
+    return {
+      id: g.id,
+      name: g.name,
+      createdAt: g.createdAt,
+      updatedAt: g.updatedAt,
+      members: activeMembers,
+      memberCount: activeMembers.length,
+      pendingRequests: g._count.joinRequests,
+    };
+  });
 
   return NextResponse.json({ familyGroups: result });
 }
 
 /**
  * POST /api/admin/family-groups
- * Create a new family group with the given members.
+ * Create a new family group with the given members (via join table).
  */
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -81,10 +89,10 @@ export async function POST(req: NextRequest) {
   const { name, memberIds } = parsed.data;
   const uniqueIds = [...new Set(memberIds)];
 
-  // Validate all members exist, are active, are primary, and not already in a group
+  // Validate all members exist and are active primary members
   const members = await prisma.member.findMany({
     where: { id: { in: uniqueIds } },
-    select: { id: true, firstName: true, lastName: true, active: true, parentMemberId: true, familyGroupId: true },
+    select: { id: true, firstName: true, lastName: true, active: true, parentMemberId: true },
   });
 
   if (members.length !== uniqueIds.length) {
@@ -104,12 +112,6 @@ export async function POST(req: NextRequest) {
         { status: 422 }
       );
     }
-    if (m.familyGroupId) {
-      return NextResponse.json(
-        { error: `${m.firstName} ${m.lastName} is already in a family group` },
-        { status: 422 }
-      );
-    }
   }
 
   const group = await prisma.$transaction(async (tx) => {
@@ -117,16 +119,24 @@ export async function POST(req: NextRequest) {
       data: { name: name.trim() },
     });
 
-    await tx.member.updateMany({
-      where: { id: { in: uniqueIds } },
-      data: { familyGroupId: created.id },
+    await tx.familyGroupMember.createMany({
+      data: uniqueIds.map((mid) => ({
+        familyGroupId: created.id,
+        memberId: mid,
+        role: "MEMBER",
+      })),
+      skipDuplicates: true,
     });
 
     return tx.familyGroup.findUnique({
       where: { id: created.id },
       include: {
-        members: {
-          select: { id: true, firstName: true, lastName: true, email: true, ageTier: true },
+        memberships: {
+          include: {
+            member: {
+              select: { id: true, firstName: true, lastName: true, email: true, ageTier: true },
+            },
+          },
         },
       },
     });
@@ -141,5 +151,12 @@ export async function POST(req: NextRequest) {
 
   logger.info({ groupId: group?.id, name, memberCount: uniqueIds.length }, "Family group created");
 
-  return NextResponse.json(group, { status: 201 });
+  const response = group
+    ? {
+        ...group,
+        members: group.memberships.map((m) => ({ ...m.member, role: m.role })),
+      }
+    : group;
+
+  return NextResponse.json(response, { status: 201 });
 }

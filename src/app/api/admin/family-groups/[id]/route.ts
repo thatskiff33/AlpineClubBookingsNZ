@@ -26,17 +26,21 @@ export async function GET(
   const group = await prisma.familyGroup.findUnique({
     where: { id },
     include: {
-      members: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
-          ageTier: true,
-          active: true,
-          parentMemberId: true,
+      memberships: {
+        include: {
+          member: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              ageTier: true,
+              active: true,
+              parentMemberId: true,
+            },
+          },
         },
-        orderBy: { firstName: "asc" },
+        orderBy: { member: { firstName: "asc" } },
       },
       joinRequests: {
         where: { status: "PENDING" },
@@ -54,12 +58,15 @@ export async function GET(
     return NextResponse.json({ error: "Family group not found" }, { status: 404 });
   }
 
-  return NextResponse.json(group);
+  return NextResponse.json({
+    ...group,
+    members: group.memberships.map((m) => ({ ...m.member, role: m.role })),
+  });
 }
 
 /**
  * PUT /api/admin/family-groups/[id]
- * Update group name and/or member list.
+ * Update group name and/or member list (via join table).
  */
 export async function PUT(
   req: NextRequest,
@@ -89,7 +96,7 @@ export async function PUT(
 
   const existing = await prisma.familyGroup.findUnique({
     where: { id },
-    include: { members: { select: { id: true } } },
+    include: { memberships: { select: { memberId: true } } },
   });
 
   if (!existing) {
@@ -101,10 +108,10 @@ export async function PUT(
   if (memberIds) {
     const uniqueIds = [...new Set(memberIds)];
 
-    // Validate new members
+    // Validate new members are active primary members
     const members = await prisma.member.findMany({
       where: { id: { in: uniqueIds } },
-      select: { id: true, firstName: true, lastName: true, active: true, parentMemberId: true, familyGroupId: true },
+      select: { id: true, firstName: true, lastName: true, active: true, parentMemberId: true },
     });
 
     if (members.length !== uniqueIds.length) {
@@ -124,16 +131,9 @@ export async function PUT(
           { status: 422 }
         );
       }
-      // Allow members already in THIS group, reject if in a different group
-      if (m.familyGroupId && m.familyGroupId !== id) {
-        return NextResponse.json(
-          { error: `${m.firstName} ${m.lastName} is already in another family group` },
-          { status: 422 }
-        );
-      }
     }
 
-    const currentMemberIds = existing.members.map((m) => m.id);
+    const currentMemberIds = existing.memberships.map((m) => m.memberId);
     const toRemove = currentMemberIds.filter((mid) => !uniqueIds.includes(mid));
     const toAdd = uniqueIds.filter((mid) => !currentMemberIds.includes(mid));
 
@@ -142,15 +142,14 @@ export async function PUT(
         await tx.familyGroup.update({ where: { id }, data: { name: name.trim() } });
       }
       if (toRemove.length > 0) {
-        await tx.member.updateMany({
-          where: { id: { in: toRemove } },
-          data: { familyGroupId: null },
+        await tx.familyGroupMember.deleteMany({
+          where: { familyGroupId: id, memberId: { in: toRemove } },
         });
       }
       if (toAdd.length > 0) {
-        await tx.member.updateMany({
-          where: { id: { in: toAdd } },
-          data: { familyGroupId: id },
+        await tx.familyGroupMember.createMany({
+          data: toAdd.map((mid) => ({ familyGroupId: id, memberId: mid, role: "MEMBER" })),
+          skipDuplicates: true,
         });
       }
     });
@@ -161,9 +160,13 @@ export async function PUT(
   const updated = await prisma.familyGroup.findUnique({
     where: { id },
     include: {
-      members: {
-        select: { id: true, firstName: true, lastName: true, email: true, ageTier: true },
-        orderBy: { firstName: "asc" },
+      memberships: {
+        include: {
+          member: {
+            select: { id: true, firstName: true, lastName: true, email: true, ageTier: true },
+          },
+        },
+        orderBy: { member: { firstName: "asc" } },
       },
     },
   });
@@ -175,7 +178,10 @@ export async function PUT(
     details: JSON.stringify(parsed.data),
   });
 
-  return NextResponse.json(updated);
+  return NextResponse.json({
+    ...updated,
+    members: updated?.memberships.map((m) => ({ ...m.member, role: m.role })) ?? [],
+  });
 }
 
 /**
@@ -202,11 +208,8 @@ export async function DELETE(
   }
 
   await prisma.$transaction(async (tx) => {
-    // Clear familyGroupId on all members
-    await tx.member.updateMany({
-      where: { familyGroupId: id },
-      data: { familyGroupId: null },
-    });
+    // Delete join table rows (cascade would also handle this, but be explicit)
+    await tx.familyGroupMember.deleteMany({ where: { familyGroupId: id } });
     // Delete the group (cascades to join requests)
     await tx.familyGroup.delete({ where: { id } });
   });
