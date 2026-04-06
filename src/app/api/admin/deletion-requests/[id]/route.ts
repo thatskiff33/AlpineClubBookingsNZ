@@ -153,7 +153,7 @@ export async function POST(
         email: anonymisedEmail,
         phone: null,
         dateOfBirth: null,
-        passwordHash: "",
+        passwordHash: "DELETED_ACCOUNT",
         active: false,
         xeroContactId: null,
         // Unlink from family structures

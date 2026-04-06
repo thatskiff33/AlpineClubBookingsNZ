@@ -317,13 +317,15 @@ export async function PUT(
         newNonMemberHoldUntil = null;
       }
 
-      // Update guest prices
-      for (let i = 0; i < booking.guests.length; i++) {
-        await tx.bookingGuest.update({
-          where: { id: booking.guests[i].id },
-          data: { priceCents: priceBreakdown.guests[i].priceCents },
-        });
-      }
+      // Update guest prices (parallel to avoid sequential N+1)
+      await Promise.all(
+        booking.guests.map((g, i) =>
+          tx.bookingGuest.update({
+            where: { id: g.id },
+            data: { priceCents: priceBreakdown.guests[i].priceCents },
+          })
+        )
+      );
 
       // CHR-01: Clean up chore assignments for dates no longer in range
       const oldCheckIn = new Date(booking.checkIn);

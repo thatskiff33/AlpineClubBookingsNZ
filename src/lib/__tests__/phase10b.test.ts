@@ -453,7 +453,7 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
         firstName: "Deleted",
         lastName: "Member",
         active: false,
-        passwordHash: "",
+        passwordHash: "DELETED_ACCOUNT",
       }),
     });
 

@@ -211,14 +211,17 @@ export async function register() {
           select: { id: true, promoRedemption: { select: { id: true, promoCodeId: true } } },
         });
         if (expiredDrafts.length > 0) {
-          // Decrement promo code redemption counts for expired drafts
-          for (const draft of expiredDrafts) {
-            if (draft.promoRedemption) {
-              await prisma.promoCode.update({
-                where: { id: draft.promoRedemption.promoCodeId },
+          // Decrement promo code redemption counts for expired drafts (parallel)
+          const promoDecrements = expiredDrafts
+            .filter((d) => d.promoRedemption)
+            .map((d) =>
+              prisma.promoCode.update({
+                where: { id: d.promoRedemption!.promoCodeId },
                 data: { currentRedemptions: { decrement: 1 } },
-              });
-            }
+              })
+            );
+          if (promoDecrements.length > 0) {
+            await Promise.all(promoDecrements);
           }
           const { count } = await prisma.booking.deleteMany({
             where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },

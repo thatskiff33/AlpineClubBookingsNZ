@@ -28,6 +28,8 @@ export async function DELETE(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
+
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
         include: {
@@ -224,13 +226,15 @@ export async function DELETE(
         ? false
         : booking.hasNonMembers;
 
-      // Update guest prices
-      for (let i = 0; i < remainingGuests.length; i++) {
-        await tx.bookingGuest.update({
-          where: { id: remainingGuests[i].id },
-          data: { priceCents: priceBreakdown.guests[i].priceCents },
-        });
-      }
+      // Update guest prices (parallel to avoid sequential N+1)
+      await Promise.all(
+        remainingGuests.map((g, i) =>
+          tx.bookingGuest.update({
+            where: { id: g.id },
+            data: { priceCents: priceBreakdown.guests[i].priceCents },
+          })
+        )
+      );
 
       // Update booking
       const updatedBooking = await tx.booking.update({
