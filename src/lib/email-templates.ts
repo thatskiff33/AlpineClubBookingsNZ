@@ -521,6 +521,42 @@ export function adminCapacityWarningTemplate(days: Array<{
 
 // ---- N-13: Admin Daily Digest ----
 
+// ---- N-12: Post-Stay Feedback Request ----
+
+export function postStayFeedbackTemplate(
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date
+): string {
+  return layout(`
+    ${heading("How Was Your Stay?")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", we hope you enjoyed your time at the TAC Lodge!")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(checkIn) },
+      { label: "Check-out", value: formatNZDate(checkOut) },
+    ])}
+    ${paragraph("We'd love to hear your feedback. Your input helps us improve the lodge experience for all members.")}
+    ${button("Share Your Feedback", BASE_URL + "/feedback")}
+    ${muted("Thank you for staying with us at the Tokoroa Alpine Club Lodge.")}
+  `);
+}
+
+// ---- N-09: Bulk Member Communication ----
+
+export function bulkCommunicationTemplate(
+  subject: string,
+  body: string
+): string {
+  return layout(`
+    ${heading(escapeHtml(subject))}
+    <div style="color: ${TEXT_COLOR}; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(body)}</div>
+    ${muted("This email was sent to you by the Tokoroa Alpine Club administration. You can update your email preferences in your account settings.")}
+    ${button("Manage Preferences", BASE_URL + "/profile")}
+  `);
+}
+
+// ---- N-13: Admin Daily Digest ----
+
 export function adminDailyDigestTemplate(sections: {
   newBookings: number;
   paymentFailures: number;

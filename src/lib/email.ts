@@ -18,6 +18,8 @@ import {
   adminXeroSyncErrorTemplate,
   adminCapacityWarningTemplate,
   adminDailyDigestTemplate,
+  postStayFeedbackTemplate,
+  bulkCommunicationTemplate,
 } from "./email-templates";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
