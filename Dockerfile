@@ -1,4 +1,4 @@
-FROM node:20-alpine AS base
+FROM node:20.20-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -7,9 +7,6 @@ COPY package.json package-lock.json ./
 COPY prisma ./prisma/
 COPY prisma.config.ts ./
 RUN npm ci --legacy-peer-deps
-
-# Generate Prisma client
-RUN npx prisma generate
 
 # Build the application
 FROM base AS builder
