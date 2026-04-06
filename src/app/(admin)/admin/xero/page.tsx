@@ -25,6 +25,7 @@ interface SyncResult {
   message?: string
   // Import-specific fields
   created?: number
+  createdAsDependent?: number
   skippedExisting?: number
   linkedExisting?: number
   skippedNoEmail?: number
@@ -579,6 +580,12 @@ export default function XeroPage() {
                         <span className="text-muted-foreground">New members created:</span>{" "}
                         <span className="font-medium text-green-700">{syncResult.created}</span>
                       </p>
+                      {syncResult.createdAsDependent !== undefined && syncResult.createdAsDependent > 0 && (
+                        <p>
+                          <span className="text-muted-foreground">Family dependents created:</span>{" "}
+                          <span className="font-medium text-blue-700">{syncResult.createdAsDependent}</span>
+                        </p>
+                      )}
                       {syncResult.skippedExisting !== undefined && syncResult.skippedExisting > 0 && (
                         <p>
                           <span className="text-muted-foreground">Skipped (already exist):</span>{" "}

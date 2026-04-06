@@ -411,10 +411,21 @@ export async function syncContactsFromXero(): Promise<{
     total += contacts.length;
 
     for (const contact of contacts) {
-      if (!contact.emailAddress || !contact.contactID) continue;
+      if (!contact.contactID) continue;
 
-      const member = await prisma.member.findUnique({
-        where: { email: contact.emailAddress.toLowerCase() },
+      // First check if already linked by xeroContactId
+      const alreadyLinked = await prisma.member.findFirst({
+        where: { xeroContactId: contact.contactID },
+      });
+      if (alreadyLinked) {
+        matched++;
+        continue;
+      }
+
+      // Fall back to email matching (primary members only)
+      if (!contact.emailAddress) continue;
+      const member = await prisma.member.findFirst({
+        where: { email: contact.emailAddress.toLowerCase(), parentMemberId: null },
       });
 
       if (member) {
@@ -515,6 +526,7 @@ export async function importMembersFromXeroGroups(
   sendInvites: boolean
 ): Promise<{
   created: number;
+  createdAsDependent: number;
   skippedExisting: number;
   linkedExisting: number;
   skippedNoEmail: number;
@@ -524,6 +536,7 @@ export async function importMembersFromXeroGroups(
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   let created = 0;
+  let createdAsDependent = 0;
   let skippedExisting = 0;
   let linkedExisting = 0;
   let skippedNoEmail = 0;
@@ -574,37 +587,126 @@ export async function importMembersFromXeroGroups(
           }
 
           const email = contact.emailAddress.toLowerCase().trim();
-          const existingMember = await prisma.member.findUnique({
-            where: { email },
+
+          // Check if this Xero contact is already linked to any member
+          if (contact.contactID) {
+            const alreadyLinked = await prisma.member.findFirst({
+              where: { xeroContactId: contact.contactID },
+            });
+            if (alreadyLinked) {
+              skippedExisting++;
+              continue;
+            }
+          }
+
+          // Find the primary account holder with this email
+          const existingPrimary = await prisma.member.findFirst({
+            where: { email, parentMemberId: null },
           });
 
-          if (existingMember) {
-            skippedExisting++;
-            // Link xeroContactId and backfill DOB/phone if missing
-            const updates: Record<string, unknown> = {};
-            if (!existingMember.xeroContactId && contact.contactID) {
-              updates.xeroContactId = contact.contactID;
+          if (existingPrimary) {
+            // Check if this is the same person (name match) or a family dependent
+            const contactFirstName = (contact.firstName || "").toLowerCase().trim();
+            const contactLastName = (contact.lastName || "").toLowerCase().trim();
+            const primaryFirstName = existingPrimary.firstName.toLowerCase().trim();
+            const primaryLastName = existingPrimary.lastName.toLowerCase().trim();
+
+            const isSamePerson =
+              (contactFirstName === primaryFirstName && contactLastName === primaryLastName) ||
+              (!contactFirstName && !contactLastName); // No name data — assume same person
+
+            if (isSamePerson) {
+              skippedExisting++;
+              // Link xeroContactId and backfill DOB/phone if missing
+              const updates: Record<string, unknown> = {};
+              if (!existingPrimary.xeroContactId && contact.contactID) {
+                updates.xeroContactId = contact.contactID;
+              }
+              if (!existingPrimary.dateOfBirth && contact.companyNumber) {
+                const dobMatch = contact.companyNumber.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+                if (dobMatch) {
+                  const parsed = new Date(`${dobMatch[3]}-${dobMatch[2]}-${dobMatch[1]}T00:00:00`);
+                  if (!isNaN(parsed.getTime())) {
+                    updates.dateOfBirth = parsed;
+                  }
+                }
+              }
+              if (!existingPrimary.phone) {
+                const phone = getXeroContactPhone(contact.phones);
+                if (phone) updates.phone = phone;
+              }
+              if (Object.keys(updates).length > 0) {
+                await prisma.member.update({
+                  where: { id: existingPrimary.id },
+                  data: updates,
+                });
+                if (updates.xeroContactId) linkedExisting++;
+              }
+              continue;
             }
-            if (!existingMember.dateOfBirth && contact.companyNumber) {
-              const dobMatch = contact.companyNumber.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-              if (dobMatch) {
-                const parsed = new Date(`${dobMatch[3]}-${dobMatch[2]}-${dobMatch[1]}T00:00:00`);
+
+            // Also check if this contact already exists as a dependent
+            const existingDependent = await prisma.member.findFirst({
+              where: {
+                email,
+                parentMemberId: existingPrimary.id,
+                firstName: { equals: contact.firstName || "Unknown", mode: "insensitive" },
+                lastName: { equals: contact.lastName || "Unknown", mode: "insensitive" },
+              },
+            });
+            if (existingDependent) {
+              skippedExisting++;
+              // Link xeroContactId if missing
+              if (!existingDependent.xeroContactId && contact.contactID) {
+                await prisma.member.update({
+                  where: { id: existingDependent.id },
+                  data: { xeroContactId: contact.contactID },
+                });
+                linkedExisting++;
+              }
+              continue;
+            }
+
+            // Different name — create as dependent of the primary account
+            let depFirstName = contact.firstName || "";
+            let depLastName = contact.lastName || "";
+            if (!depFirstName && !depLastName && contact.name) {
+              const parts = contact.name.trim().split(/\s+/);
+              depFirstName = parts[0] || "Unknown";
+              depLastName = parts.slice(1).join(" ") || "Unknown";
+            }
+            if (!depFirstName) depFirstName = "Unknown";
+            if (!depLastName) depLastName = "Unknown";
+
+            let depDob: Date | null = null;
+            if (contact.companyNumber) {
+              const match = contact.companyNumber.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+              if (match) {
+                const [, dd, mm, yyyy] = match;
+                const parsed = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
                 if (!isNaN(parsed.getTime())) {
-                  updates.dateOfBirth = parsed;
+                  depDob = parsed;
                 }
               }
             }
-            if (!existingMember.phone) {
-              const phone = getXeroContactPhone(contact.phones);
-              if (phone) updates.phone = phone;
-            }
-            if (Object.keys(updates).length > 0) {
-              await prisma.member.update({
-                where: { id: existingMember.id },
-                data: updates,
-              });
-              if (updates.xeroContactId) linkedExisting++;
-            }
+
+            await prisma.member.create({
+              data: {
+                email,
+                firstName: depFirstName,
+                lastName: depLastName,
+                passwordHash: placeholderHash,
+                ageTier: mapping.ageTier,
+                dateOfBirth: depDob,
+                xeroContactId: contact.contactID || null,
+                phone: getXeroContactPhone(contact.phones),
+                active: true,
+                emailVerified: true, // Dependents don't need email verification
+                parentMemberId: existingPrimary.id,
+              },
+            });
+
+            createdAsDependent++;
             continue;
           }
 
@@ -686,6 +788,7 @@ export async function importMembersFromXeroGroups(
 
   return {
     created,
+    createdAsDependent,
     skippedExisting,
     linkedExisting,
     skippedNoEmail,

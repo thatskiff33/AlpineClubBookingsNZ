@@ -48,9 +48,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "New email is the same as your current email" }, { status: 400 });
     }
 
-    // Check if new email is already taken
-    const existing = await prisma.member.findUnique({
-      where: { email: newEmail },
+    // Check if new email is already taken (among primary accounts only)
+    const existing = await prisma.member.findFirst({
+      where: { email: newEmail, parentMemberId: null },
       select: { id: true },
     });
 

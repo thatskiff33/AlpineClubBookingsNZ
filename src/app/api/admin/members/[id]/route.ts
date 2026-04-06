@@ -142,8 +142,8 @@ export async function PUT(
 
   // Check email uniqueness if changing
   if (data.email && data.email.toLowerCase() !== existing.email) {
-    const emailTaken = await prisma.member.findUnique({
-      where: { email: data.email.toLowerCase() },
+    const emailTaken = await prisma.member.findFirst({
+      where: { email: data.email.toLowerCase(), parentMemberId: null, id: { not: id } },
     });
     if (emailTaken) {
       return NextResponse.json(
@@ -198,6 +198,14 @@ export async function PUT(
         createdAt: true,
       },
     });
+
+    // Cascade deactivation to dependents
+    if (data.active === false) {
+      await prisma.member.updateMany({
+        where: { parentMemberId: id },
+        data: { active: false },
+      });
+    }
 
     // Sync to Xero if connected and member has a linked contact
     if (updated.xeroContactId) {

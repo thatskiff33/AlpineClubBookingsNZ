@@ -31,6 +31,7 @@ const createBookingSchema = z.object({
         lastName: z.string().min(1),
         ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
         isMember: z.boolean(),
+        memberId: z.string().optional(),
       })
     )
     .min(1),
@@ -268,6 +269,7 @@ export async function POST(request: NextRequest) {
               lastName: g.lastName,
               ageTier: g.ageTier,
               isMember: g.isMember,
+              memberId: g.memberId || null,
               priceCents: price.guests[i].priceCents,
             })),
           },

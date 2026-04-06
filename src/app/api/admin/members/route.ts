@@ -121,6 +121,14 @@ export async function GET(req: NextRequest) {
     andConditions.push({ xeroContactId: null });
   }
 
+  // Filter: member type (primary vs dependent)
+  const typeFilter = sp.get("type");
+  if (typeFilter === "primary") {
+    andConditions.push({ parentMemberId: null });
+  } else if (typeFilter === "dependent") {
+    andConditions.push({ parentMemberId: { not: null } });
+  }
+
   // Filter: subscription
   const subscriptionFilter = sp.get("subscription");
   if (subscriptionFilter === "NONE") {
@@ -154,6 +162,13 @@ export async function GET(req: NextRequest) {
     active: true,
     xeroContactId: true,
     createdAt: true,
+    parentMemberId: true,
+    parent: {
+      select: { id: true, firstName: true, lastName: true },
+    },
+    _count: {
+      select: { dependents: true },
+    },
     subscriptions: {
       where: { seasonYear: currentSeasonYear },
       select: { status: true, seasonYear: true, xeroInvoiceId: true },
@@ -176,7 +191,11 @@ export async function GET(req: NextRequest) {
     ...m,
     subscriptionStatus: m.subscriptions[0]?.status ?? null,
     subscriptionXeroInvoiceId: m.subscriptions[0]?.xeroInvoiceId ?? null,
+    parentName: m.parent ? `${m.parent.firstName} ${m.parent.lastName}` : null,
+    dependentCount: m._count.dependents,
     subscriptions: undefined,
+    parent: undefined,
+    _count: undefined,
   }));
 
   return NextResponse.json({
@@ -217,7 +236,7 @@ export async function POST(req: NextRequest) {
   const email = data.email.toLowerCase().trim();
 
   // Check for existing member
-  const existing = await prisma.member.findUnique({ where: { email } });
+  const existing = await prisma.member.findFirst({ where: { email, parentMemberId: null } });
   if (existing) {
     return NextResponse.json(
       { error: "A member with this email already exists" },

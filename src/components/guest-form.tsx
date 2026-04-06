@@ -9,6 +9,7 @@ export interface GuestData {
   lastName: string;
   ageTier: "ADULT" | "YOUTH" | "CHILD";
   isMember: boolean;
+  memberId?: string;
 }
 
 interface GuestFormProps {

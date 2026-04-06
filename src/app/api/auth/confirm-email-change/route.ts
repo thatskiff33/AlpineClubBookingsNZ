@@ -30,9 +30,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL("/profile?emailChangeError=expired", request.url));
     }
 
-    // Check new email isn't taken (race condition check)
-    const existing = await prisma.member.findUnique({
-      where: { email: record.newEmail },
+    // Check new email isn't taken among primary accounts (race condition check)
+    const existing = await prisma.member.findFirst({
+      where: { email: record.newEmail, parentMemberId: null },
       select: { id: true },
     });
 
@@ -43,10 +43,14 @@ export async function GET(request: NextRequest) {
 
     const oldEmail = record.member.email;
 
-    // Update email and delete token atomically
+    // Update email and delete token atomically, also cascade to dependents
     await prisma.$transaction([
       prisma.member.update({
         where: { id: record.memberId },
+        data: { email: record.newEmail },
+      }),
+      prisma.member.updateMany({
+        where: { parentMemberId: record.memberId },
         data: { email: record.newEmail },
       }),
       prisma.emailChangeToken.delete({ where: { id: record.id } }),

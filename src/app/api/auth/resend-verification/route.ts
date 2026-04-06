@@ -22,8 +22,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid email" }, { status: 400 });
     }
 
-    const member = await prisma.member.findUnique({
-      where: { email: parsed.data.email.toLowerCase() },
+    const member = await prisma.member.findFirst({
+      where: { email: parsed.data.email.toLowerCase(), parentMemberId: null },
       select: { id: true, email: true, firstName: true, emailVerified: true },
     });
 

@@ -27,8 +27,8 @@ export async function POST(req: NextRequest) {
     const { email } = parsed.data;
 
     // Always return success to avoid leaking which emails are registered
-    const member = await prisma.member.findUnique({
-      where: { email: email.toLowerCase() },
+    const member = await prisma.member.findFirst({
+      where: { email: email.toLowerCase(), parentMemberId: null },
     });
 
     if (member && member.active) {

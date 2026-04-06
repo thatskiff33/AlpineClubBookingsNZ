@@ -5,6 +5,7 @@ import { getSeasonYear } from "@/lib/utils";
 import { ProfileForm } from "./profile-form";
 import { ChangeEmailForm } from "./change-email-form";
 import { NotificationPreferences } from "./notification-preferences";
+import { DependentsSection } from "./dependents-section";
 import {
   Card,
   CardContent,
@@ -43,6 +44,18 @@ export default async function ProfilePage() {
   });
 
   if (!member) redirect("/login");
+
+  const dependents = await prisma.member.findMany({
+    where: { parentMemberId: session.user.id, active: true },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      ageTier: true,
+      dateOfBirth: true,
+    },
+    orderBy: { firstName: "asc" },
+  });
 
   const subscriptionStatus = member.subscriptions[0]?.status ?? null;
   const seasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
@@ -120,6 +133,27 @@ export default async function ProfilePage() {
               </Badge>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Family Members / Dependents */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Family Members</CardTitle>
+          <CardDescription>
+            Manage dependents who share your account (e.g. children). They get member pricing when you book.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <DependentsSection
+            initialDependents={dependents.map((d) => ({
+              id: d.id,
+              firstName: d.firstName,
+              lastName: d.lastName,
+              ageTier: d.ageTier,
+              dateOfBirth: d.dateOfBirth ? d.dateOfBirth.toISOString().substring(0, 10) : null,
+            }))}
+          />
         </CardContent>
       </Card>
 

@@ -30,7 +30,8 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 9 complete. Security audit + 5 
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
-- Booking: availability calendar, booking wizard, guest forms, pricing engine, advisory lock concurrency
+- Family/dependents: parentMemberId self-referencing FK, shared email support, Xero import creates dependents, profile management, booking wizard quick-add, admin type filter
+- Booking: availability calendar, booking wizard (with family member quick-add), guest forms, pricing engine, advisory lock concurrency
 - Payments: Stripe PaymentIntents (confirmed), SetupIntents (pending), webhook handler, policy-based refunds
 - Non-member flow: PENDING status, 7-day hold, cron auto-confirm, FIFO bumping algorithm
 - Xero: OAuth2 connect, encrypted tokens, invoice creation, credit notes, contact sync, membership verification, daily cron
@@ -421,11 +422,11 @@ TACBookings/
 
 ### Core Entities
 
-**Member** - Club members who can log in and book
+**Member** - Club members who can log in and book (or dependents managed by a parent)
 ```
-id, email (unique), passwordHash, firstName, lastName, dateOfBirth, phone
+id, email (unique among primary members), passwordHash, firstName, lastName, dateOfBirth, phone
 role: MEMBER | ADMIN, ageTier: ADULT | YOUTH | CHILD (computed from DOB)
-xeroContactId, active, timestamps
+xeroContactId, active, parentMemberId (nullable self-FK for dependents), timestamps
 ```
 
 **MemberSubscription** - Annual season subscription status from Xero

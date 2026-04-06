@@ -79,7 +79,7 @@ enum AgeRestriction {
 
 model Member {
   id            String   @id @default(cuid())
-  email         String   @unique
+  email         String
   passwordHash        String
   forcePasswordChange Boolean  @default(false)
   // Email verification: new registrations start as false.
@@ -96,6 +96,11 @@ model Member {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  // Family/dependent support: dependents share parent's email but don't log in
+  parentMemberId String?
+  parent         Member?  @relation("FamilyMembers", fields: [parentMemberId], references: [id])
+  dependents     Member[] @relation("FamilyMembers")
+
   // Relations
   passwordResetTokens        PasswordResetToken[]
   emailVerificationTokens    EmailVerificationToken[]
@@ -108,6 +113,7 @@ model Member {
 
   @@index([email])
   @@index([xeroContactId])
+  @@index([parentMemberId])
 }
 
 model PasswordResetToken {

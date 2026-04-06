@@ -20,6 +20,9 @@ interface Member {
   active: boolean; xeroContactId: string | null
   subscriptionStatus: "NOT_INVOICED" | "UNPAID" | "PAID" | "OVERDUE" | null
   subscriptionXeroInvoiceId: string | null; createdAt: string
+  parentMemberId: string | null
+  parentName: string | null
+  dependentCount: number
 }
 
 interface MemberForm {
@@ -28,11 +31,11 @@ interface MemberForm {
   active: boolean; sendInvite: boolean
 }
 
-interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string }
+interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string; type: string }
 interface ImportRow { firstName: string; lastName: string; email: string; phone?: string; dateOfBirth?: string; role?: string }
 
 const emptyForm: MemberForm = { firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", ageTier: "ADULT", active: true, sendInvite: false }
-const emptyFilters: Filters = { role: "", active: "", ageTier: "", xeroLinked: "", subscription: "" }
+const emptyFilters: Filters = { role: "", active: "", ageTier: "", xeroLinked: "", subscription: "", type: "" }
 function parseCsvLine(line: string): string[] {
   const result: string[] = []; let current = ""; let inQuotes = false
   for (let i = 0; i < line.length; i++) {
@@ -69,6 +72,7 @@ export default function MembersPage() {
     ageTier: searchParams.get("ageTier") || "",
     xeroLinked: searchParams.get("xeroLinked") || "",
     subscription: searchParams.get("subscription") || "",
+    type: searchParams.get("type") || "",
   })
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -205,6 +209,7 @@ export default function MembersPage() {
         <Select value={filters.ageTier || "all"} onValueChange={v => setFilter("ageTier", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Age Tier" /></SelectTrigger><SelectContent><SelectItem value="all">All Tiers</SelectItem><SelectItem value="ADULT">Adult</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="CHILD">Child</SelectItem></SelectContent></Select>
         <Select value={filters.xeroLinked || "all"} onValueChange={v => setFilter("xeroLinked", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Xero" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero</SelectItem><SelectItem value="true">Linked</SelectItem><SelectItem value="false">Not Linked</SelectItem></SelectContent></Select>
         <Select value={filters.subscription || "all"} onValueChange={v => setFilter("subscription", v === "all" ? "" : v)}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Subscription" /></SelectTrigger><SelectContent><SelectItem value="all">All Subs</SelectItem><SelectItem value="PAID">Paid</SelectItem><SelectItem value="UNPAID">Unpaid</SelectItem><SelectItem value="OVERDUE">Overdue</SelectItem><SelectItem value="NOT_INVOICED">Not Invoiced</SelectItem><SelectItem value="NONE">No Record</SelectItem></SelectContent></Select>
+        <Select value={filters.type || "all"} onValueChange={v => setFilter("type", v === "all" ? "" : v)}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Type" /></SelectTrigger><SelectContent><SelectItem value="all">All Types</SelectItem><SelectItem value="primary">Primary</SelectItem><SelectItem value="dependent">Dependent</SelectItem></SelectContent></Select>
         {activeFilterCount > 0 && <Button variant="ghost" size="sm" onClick={clearFilters}><X className="h-4 w-4 mr-1" />Clear ({activeFilterCount})</Button>}
       </div>
       {activeFilterCount > 0 && <div className="flex flex-wrap gap-2">{Object.entries(filters).filter(([,v]) => v).map(([k, v]) => <Badge key={k} variant="secondary" className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setFilter(k as keyof Filters, "")}>{k}: {v}<X className="h-3 w-3" /></Badge>)}</div>}
@@ -226,7 +231,7 @@ export default function MembersPage() {
           </TableRow></TableHeader><TableBody>
             {members.map(member => <TableRow key={member.id} className="hover:bg-slate-50">
               <TableCell><input type="checkbox" checked={selectedIds.has(member.id)} onChange={() => toggleSelect(member.id)} className="h-4 w-4 rounded border-gray-300" /></TableCell>
-              <TableCell className="font-medium"><Link href={`/admin/members/${member.id}`} className="text-blue-600 hover:underline">{member.firstName} {member.lastName}</Link></TableCell>
+              <TableCell className="font-medium"><Link href={`/admin/members/${member.id}`} className="text-blue-600 hover:underline">{member.firstName} {member.lastName}</Link>{member.dependentCount > 0 && <Badge variant="secondary" className="ml-2 text-xs">{member.dependentCount} dep</Badge>}{member.parentName && <span className="ml-2 text-xs text-muted-foreground">(dep. of {member.parentName})</span>}</TableCell>
               <TableCell className="text-slate-600">{member.email}</TableCell>
               <TableCell><Badge variant={member.role === "ADMIN" ? "default" : "secondary"} className={member.role === "ADMIN" ? "bg-blue-600 text-white hover:bg-blue-700" : ""}>{member.role}</Badge></TableCell>
               <TableCell><span className="text-sm text-slate-600">{member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()}</span></TableCell>

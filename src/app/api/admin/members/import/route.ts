@@ -83,10 +83,10 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Check for existing emails in DB
+  // Check for existing emails in DB (primary accounts only)
   const allEmails = [...new Set(rows.map((r) => r.email.toLowerCase().trim()))];
   const existingMembers = await prisma.member.findMany({
-    where: { email: { in: allEmails } },
+    where: { email: { in: allEmails }, parentMemberId: null },
     select: { email: true },
   });
   const existingEmailSet = new Set(existingMembers.map((m) => m.email));

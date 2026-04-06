@@ -96,6 +96,13 @@ export async function POST(req: NextRequest) {
         where: { id: { in: idsToUpdate } },
         data: updateData,
       });
+      // Cascade deactivation to dependents
+      if (action === "deactivate") {
+        await tx.member.updateMany({
+          where: { parentMemberId: { in: idsToUpdate } },
+          data: { active: false },
+        });
+      }
       return updateResult;
     });
 

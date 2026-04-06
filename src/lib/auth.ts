@@ -41,8 +41,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const email = credentials.email as string;
         const password = credentials.password as string;
 
-        const member = await prisma.member.findUnique({
-          where: { email: email.toLowerCase() },
+        // Only primary accounts (not dependents) can log in
+        const member = await prisma.member.findFirst({
+          where: { email: email.toLowerCase(), parentMemberId: null },
         });
 
         if (!member || !member.active) {

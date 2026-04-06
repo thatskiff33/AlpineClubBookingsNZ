@@ -189,7 +189,7 @@ async function main() {
   }
 
   // Seed test member
-  const existingMember = await prisma.member.findUnique({
+  const existingMember = await prisma.member.findFirst({
     where: { email: "member@tac.org.nz" },
   });
 

@@ -35,8 +35,8 @@ export async function POST(req: NextRequest) {
 
     const { email, password, firstName, lastName, dateOfBirth, phone } = parsed.data;
 
-    const existing = await prisma.member.findUnique({
-      where: { email: email.toLowerCase() },
+    const existing = await prisma.member.findFirst({
+      where: { email: email.toLowerCase(), parentMemberId: null },
     });
 
     if (existing) {

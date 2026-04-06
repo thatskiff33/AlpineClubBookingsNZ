@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
 import { GuestForm, type GuestData } from "@/components/guest-form";
@@ -10,6 +10,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
+
+interface FamilyMember {
+  id: string;
+  firstName: string;
+  lastName: string;
+  ageTier: "ADULT" | "YOUTH" | "CHILD";
+}
 
 interface PriceQuote {
   guests: {
@@ -34,6 +41,29 @@ export default function BookPage() {
   const [submitting, setSubmitting] = useState(false);
   const [availableBeds, setAvailableBeds] = useState(LODGE_CAPACITY);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+
+  useEffect(() => {
+    fetch("/api/members/dependents")
+      .then((res) => res.ok ? res.json() : { dependents: [] })
+      .then((data) => setFamilyMembers(data.dependents || []))
+      .catch(() => {});
+  }, []);
+
+  function addFamilyMemberAsGuest(fm: FamilyMember) {
+    if (guests.some((g) => g.memberId === fm.id)) return;
+    if (guests.length >= availableBeds) return;
+    setGuests([
+      ...guests,
+      {
+        firstName: fm.firstName,
+        lastName: fm.lastName,
+        ageTier: fm.ageTier,
+        isMember: true,
+        memberId: fm.id,
+      },
+    ]);
+  }
 
   async function handleDateSelect(ci: Date, co: Date) {
     setCheckIn(ci);
@@ -182,6 +212,29 @@ export default function BookPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {familyMembers.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-muted-foreground">Quick add family members</p>
+                <div className="flex flex-wrap gap-2">
+                  {familyMembers.map((fm) => {
+                    const alreadyAdded = guests.some((g) => g.memberId === fm.id);
+                    return (
+                      <Button
+                        key={fm.id}
+                        type="button"
+                        variant={alreadyAdded ? "secondary" : "outline"}
+                        size="sm"
+                        disabled={alreadyAdded || guests.length >= availableBeds}
+                        onClick={() => addFamilyMemberAsGuest(fm)}
+                      >
+                        {alreadyAdded ? "\u2713 " : "+ "}
+                        {fm.firstName} {fm.lastName} ({fm.ageTier})
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <GuestForm
               guests={guests}
               onGuestsChange={setGuests}
