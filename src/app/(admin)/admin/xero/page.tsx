@@ -1,0 +1,712 @@
+"use client"
+
+import { useEffect, useState, useCallback } from "react"
+import { useSearchParams } from "next/navigation"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
+
+interface XeroStatus {
+  connected: boolean
+  tenantId: string | null
+  tokenExpiresAt: string | null
+}
+
+interface SyncResult {
+  total?: number
+  matched?: number
+  updated?: number
+  checked?: number
+  errors?: number
+  errorDetails?: Array<{ member: string; error: string }>
+  message?: string
+  // Import-specific fields
+  created?: number
+  createdAsDependent?: number
+  skippedExisting?: number
+  linkedExisting?: number
+  skippedNoEmail?: number
+  groupsProcessed?: string[]
+}
+
+interface ContactGroup {
+  id: string
+  name: string
+  contactCount: number
+}
+
+interface GroupMapping {
+  groupId: string
+  groupName: string
+  ageTier: string // "ADULT" | "YOUTH" | "CHILD" | "SKIP"
+}
+
+interface DuplicateContact {
+  contactID: string
+  name: string
+  firstName?: string
+  lastName?: string
+  emailAddress: string
+  hasInvoices: boolean
+  invoiceCount: number
+  contactStatus: string
+  updatedDateUTC?: string
+  xeroLink: string
+}
+
+interface DuplicateGroup {
+  email: string
+  contacts: DuplicateContact[]
+}
+
+interface DuplicateResult {
+  duplicateGroups: DuplicateGroup[]
+  totalContacts: number
+  totalDuplicateEmails: number
+}
+
+export default function XeroPage() {
+  const searchParams = useSearchParams()
+  const [status, setStatus] = useState<XeroStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState<string | null>(null)
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
+  const [error, setError] = useState("")
+
+  // Import state
+  const [contactGroups, setContactGroups] = useState<ContactGroup[]>([])
+  const [groupMappings, setGroupMappings] = useState<GroupMapping[]>([])
+  const [loadingGroups, setLoadingGroups] = useState(false)
+  const [sendInvites, setSendInvites] = useState(false)
+
+  // Duplicate detection state
+  const [duplicates, setDuplicates] = useState<DuplicateResult | null>(null)
+  const [scanningDuplicates, setScanningDuplicates] = useState(false)
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/xero/status")
+      if (!res.ok) throw new Error("Failed to fetch status")
+      const data = await res.json()
+      setStatus(data)
+    } catch {
+      setError("Failed to load Xero connection status")
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchStatus()
+  }, [fetchStatus])
+
+  useEffect(() => {
+    const connected = searchParams.get("connected")
+    const errorParam = searchParams.get("error")
+    if (connected === "true") {
+      fetchStatus()
+    }
+    if (errorParam) {
+      setError(decodeURIComponent(errorParam))
+    }
+  }, [searchParams, fetchStatus])
+
+  const handleConnect = () => {
+    window.location.href = "/api/admin/xero/connect"
+  }
+
+  const handleDisconnect = async () => {
+    if (!confirm("Are you sure you want to disconnect Xero? This will remove all stored tokens.")) {
+      return
+    }
+    try {
+      const res = await fetch("/api/admin/xero/disconnect", { method: "POST" })
+      if (!res.ok) throw new Error("Failed to disconnect")
+      setStatus({ connected: false, tenantId: null, tokenExpiresAt: null })
+      setSyncResult(null)
+    } catch {
+      setError("Failed to disconnect Xero")
+    }
+  }
+
+  const handleSyncContacts = async () => {
+    setSyncing("contacts")
+    setSyncResult(null)
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/sync-contacts", { method: "POST" })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Sync failed")
+      }
+      const data = await res.json()
+      setSyncResult(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Contact sync failed")
+    } finally {
+      setSyncing(null)
+    }
+  }
+
+  const handleSyncMemberships = async () => {
+    setSyncing("memberships")
+    setSyncResult(null)
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/sync-memberships", { method: "POST" })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Sync failed")
+      }
+      const data = await res.json()
+      setSyncResult(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Membership sync failed")
+    } finally {
+      setSyncing(null)
+    }
+  }
+
+  const handleFetchGroups = async () => {
+    setLoadingGroups(true)
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/contact-groups")
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to fetch groups")
+      }
+      const data = await res.json()
+      setContactGroups(data.groups)
+      // Initialize mappings with "SKIP" for all groups
+      setGroupMappings(
+        data.groups.map((g: ContactGroup) => ({
+          groupId: g.id,
+          groupName: g.name,
+          ageTier: "SKIP",
+        }))
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch contact groups")
+    } finally {
+      setLoadingGroups(false)
+    }
+  }
+
+  const handleImportMembers = async () => {
+    const selectedMappings = groupMappings.filter((m) => m.ageTier !== "SKIP")
+    if (selectedMappings.length === 0) {
+      setError("Please select at least one group to import")
+      return
+    }
+
+    const groupNames = selectedMappings.map((m) => m.groupName).join(", ")
+    if (
+      !confirm(
+        `Import members from ${selectedMappings.length} group(s): ${groupNames}?\n\n${
+          sendInvites
+            ? "Invite emails will be sent to all new members."
+            : "No invite emails will be sent."
+        }`
+      )
+    ) {
+      return
+    }
+
+    setSyncing("import")
+    setSyncResult(null)
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/import-members", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          groupMappings: selectedMappings,
+          sendInvites,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Import failed")
+      }
+      const data = await res.json()
+      setSyncResult(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Member import failed")
+    } finally {
+      setSyncing(null)
+    }
+  }
+
+  const updateGroupMapping = (groupId: string, ageTier: string) => {
+    setGroupMappings((prev) =>
+      prev.map((m) => (m.groupId === groupId ? { ...m, ageTier } : m))
+    )
+  }
+
+  const handleScanDuplicates = async () => {
+    setScanningDuplicates(true)
+    setDuplicates(null)
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/duplicate-contacts")
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Duplicate scan failed")
+      }
+      const data: DuplicateResult = await res.json()
+      setDuplicates(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Duplicate scan failed")
+    } finally {
+      setScanningDuplicates(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <h1 className="text-2xl font-bold mb-4">Xero Integration</h1>
+        <p className="text-muted-foreground">Loading...</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-6 max-w-4xl">
+      <h1 className="text-2xl font-bold mb-2">Xero Integration</h1>
+      <p className="text-muted-foreground mb-6">
+        Connect to Xero for automatic invoice creation, membership verification, and contact sync.
+      </p>
+
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+          {error}
+          <button onClick={() => setError("")} className="ml-2 underline">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {searchParams.get("connected") === "true" && (
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">
+          Xero connected successfully!
+        </div>
+      )}
+
+      {/* Connection Status */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-3">
+            Connection Status
+            {status?.connected ? (
+              <Badge variant="default" className="bg-green-600">Connected</Badge>
+            ) : (
+              <Badge variant="secondary">Not Connected</Badge>
+            )}
+          </CardTitle>
+          <CardDescription>
+            {status?.connected
+              ? "Xero is connected and ready for syncing."
+              : "Connect your Xero organisation to enable accounting integration."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {status?.connected ? (
+            <div className="space-y-3">
+              <div className="text-sm">
+                <span className="text-muted-foreground">Tenant ID:</span>{" "}
+                <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                  {status.tenantId}
+                </code>
+              </div>
+              {status.tokenExpiresAt && (
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Token expires:</span>{" "}
+                  {new Date(status.tokenExpiresAt).toLocaleString("en-NZ")}
+                  <span className="text-muted-foreground ml-1">(auto-refreshes)</span>
+                </div>
+              )}
+              <Button variant="destructive" size="sm" onClick={handleDisconnect}>
+                Disconnect Xero
+              </Button>
+            </div>
+          ) : (
+            <Button onClick={handleConnect}>Connect Xero</Button>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Sync Operations - only show when connected */}
+      {status?.connected && (
+        <>
+          {/* Import Members from Xero */}
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Import Members from Xero</CardTitle>
+              <CardDescription>
+                Import members from Xero contact groups into TACBookings. Select which groups
+                to import and map each to an age tier. Existing members (matched by email)
+                will be skipped but linked to their Xero contact.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {contactGroups.length === 0 ? (
+                <Button
+                  onClick={handleFetchGroups}
+                  disabled={loadingGroups}
+                >
+                  {loadingGroups ? "Loading Groups..." : "Load Contact Groups from Xero"}
+                </Button>
+              ) : (
+                <>
+                  <div className="space-y-3">
+                    {contactGroups.map((group) => {
+                      const mapping = groupMappings.find((m) => m.groupId === group.id)
+                      return (
+                        <div
+                          key={group.id}
+                          className="flex items-center gap-4 p-3 border rounded-md"
+                        >
+                          <div className="flex-1">
+                            <p className="font-medium text-sm">{group.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {group.contactCount} contact{group.contactCount !== 1 ? "s" : ""}
+                            </p>
+                          </div>
+                          <div className="w-40">
+                            <Select
+                              value={mapping?.ageTier || "SKIP"}
+                              onValueChange={(value) => updateGroupMapping(group.id, value)}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="SKIP">Skip</SelectItem>
+                                <SelectItem value="ADULT">Adult</SelectItem>
+                                <SelectItem value="YOUTH">Youth</SelectItem>
+                                <SelectItem value="CHILD">Child</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="sendInvites"
+                      checked={sendInvites}
+                      onChange={(e) => setSendInvites(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <Label htmlFor="sendInvites" className="text-sm">
+                      Send invite emails to new members (password reset link, valid 7 days)
+                    </Label>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleImportMembers}
+                      disabled={
+                        syncing !== null ||
+                        groupMappings.every((m) => m.ageTier === "SKIP")
+                      }
+                    >
+                      {syncing === "import" ? "Importing..." : "Import Members"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setContactGroups([])
+                        setGroupMappings([])
+                      }}
+                    >
+                      Reset
+                    </Button>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Duplicate Contact Detection */}
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Duplicate Contact Detection</CardTitle>
+              <CardDescription>
+                Scan Xero contacts for duplicate email addresses. Duplicates are shown with
+                invoice counts so you can identify which contact to keep, then merge them
+                directly in Xero.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Button
+                onClick={handleScanDuplicates}
+                disabled={scanningDuplicates || syncing !== null}
+              >
+                {scanningDuplicates ? "Scanning..." : "Scan for Duplicates"}
+              </Button>
+
+              {duplicates && (
+                <div className="space-y-4">
+                  <div className="flex gap-4 text-sm">
+                    <span className="text-muted-foreground">
+                      Total contacts scanned:{" "}
+                      <span className="font-medium text-foreground">{duplicates.totalContacts}</span>
+                    </span>
+                    <span className="text-muted-foreground">
+                      Duplicate emails found:{" "}
+                      <span className="font-medium text-foreground">{duplicates.totalDuplicateEmails}</span>
+                    </span>
+                  </div>
+
+                  {duplicates.duplicateGroups.length === 0 ? (
+                    <p className="text-sm text-green-700">No duplicate contacts found.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {duplicates.duplicateGroups.map((group) => (
+                        <div key={group.email} className="border rounded-md p-4 space-y-2">
+                          <p className="font-medium text-sm">
+                            {group.email}
+                            <span className="ml-2 text-xs text-muted-foreground font-normal">
+                              ({group.contacts.length} contacts)
+                            </span>
+                          </p>
+                          <div className="space-y-1">
+                            {group.contacts.map((contact) => (
+                              <div
+                                key={contact.contactID}
+                                className="flex items-center gap-3 text-sm pl-2 py-1 border-l-2 border-muted"
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <span className="font-medium">{contact.name}</span>
+                                  {contact.invoiceCount > 0 ? (
+                                    <Badge variant="default" className="ml-2 bg-blue-600 text-xs">
+                                      {contact.invoiceCount} invoice{contact.invoiceCount !== 1 ? "s" : ""}
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="secondary" className="ml-2 text-xs">
+                                      No invoices
+                                    </Badge>
+                                  )}
+                                  <span className="ml-2 text-xs text-muted-foreground">
+                                    {contact.contactStatus}
+                                  </span>
+                                </div>
+                                <a
+                                  href={contact.xeroLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-blue-600 hover:underline whitespace-nowrap"
+                                >
+                                  Open in Xero
+                                </a>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Merge into the contact with invoices. Open each in Xero, then use
+                            Xero&apos;s &quot;Merge&quot; option from the contact with no invoices.
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Contact Sync */}
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Contact Sync</CardTitle>
+              <CardDescription>
+                Link existing TACBookings members to their Xero contacts by email address.
+                This is useful after members are already in the database.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                onClick={handleSyncContacts}
+                disabled={syncing !== null}
+              >
+                {syncing === "contacts" ? "Syncing..." : "Sync Contacts from Xero"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Membership Status Refresh */}
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>Membership Status Refresh</CardTitle>
+              <CardDescription>
+                Check Xero invoices for all active members and update their subscription status
+                for the current season year. This runs automatically as a daily cron job.
+                Only checks members that have been linked to a Xero contact.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                onClick={handleSyncMemberships}
+                disabled={syncing !== null}
+              >
+                {syncing === "memberships" ? "Refreshing..." : "Refresh Membership Statuses"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Sync Results */}
+          {syncResult && (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Results</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2 text-sm">
+                  {syncResult.message && <p>{syncResult.message}</p>}
+
+                  {/* Import results */}
+                  {syncResult.created !== undefined && (
+                    <>
+                      <p>
+                        <span className="text-muted-foreground">New members created:</span>{" "}
+                        <span className="font-medium text-green-700">{syncResult.created}</span>
+                      </p>
+                      {syncResult.createdAsDependent !== undefined && syncResult.createdAsDependent > 0 && (
+                        <p>
+                          <span className="text-muted-foreground">Family dependents created:</span>{" "}
+                          <span className="font-medium text-blue-700">{syncResult.createdAsDependent}</span>
+                        </p>
+                      )}
+                      {syncResult.skippedExisting !== undefined && syncResult.skippedExisting > 0 && (
+                        <p>
+                          <span className="text-muted-foreground">Skipped (already exist):</span>{" "}
+                          {syncResult.skippedExisting}
+                        </p>
+                      )}
+                      {syncResult.linkedExisting !== undefined && syncResult.linkedExisting > 0 && (
+                        <p>
+                          <span className="text-muted-foreground">Existing members linked to Xero:</span>{" "}
+                          {syncResult.linkedExisting}
+                        </p>
+                      )}
+                      {syncResult.skippedNoEmail !== undefined && syncResult.skippedNoEmail > 0 && (
+                        <p>
+                          <span className="text-muted-foreground">Skipped (no email):</span>{" "}
+                          {syncResult.skippedNoEmail}
+                        </p>
+                      )}
+                      {syncResult.groupsProcessed && syncResult.groupsProcessed.length > 0 && (
+                        <p>
+                          <span className="text-muted-foreground">Groups processed:</span>{" "}
+                          {syncResult.groupsProcessed.join(", ")}
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                  {/* Contact sync results */}
+                  {syncResult.total !== undefined && syncResult.created === undefined && (
+                    <p>
+                      <span className="text-muted-foreground">Total Xero contacts:</span>{" "}
+                      {syncResult.total}
+                    </p>
+                  )}
+                  {syncResult.matched !== undefined && (
+                    <p>
+                      <span className="text-muted-foreground">Matched to members:</span>{" "}
+                      {syncResult.matched}
+                    </p>
+                  )}
+                  {syncResult.updated !== undefined && syncResult.created === undefined && (
+                    <p>
+                      <span className="text-muted-foreground">Records updated:</span>{" "}
+                      {syncResult.updated}
+                    </p>
+                  )}
+
+                  {/* Membership results */}
+                  {syncResult.checked !== undefined && (
+                    <>
+                      <p>
+                        <span className="text-muted-foreground">Members checked:</span>{" "}
+                        {syncResult.checked}
+                      </p>
+                      {syncResult.checked === 0 && (
+                        <p className="text-amber-600">
+                          No members with linked Xero contacts found. Use &quot;Import Members from Xero&quot;
+                          above to import members from your Xero contact groups first.
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                  {syncResult.errors !== undefined && syncResult.errors > 0 && (
+                    <div className="text-red-600">
+                      <p>
+                        <span className="text-muted-foreground">Errors:</span>{" "}
+                        {syncResult.errors}
+                      </p>
+                      {syncResult.errorDetails && syncResult.errorDetails.length > 0 && (
+                        <ul className="mt-2 text-sm space-y-1 list-disc list-inside">
+                          {syncResult.errorDetails.map((detail, i) => (
+                            <li key={i}>
+                              <span className="font-medium">{detail.member}</span>:{" "}
+                              {detail.error}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Separator className="my-6" />
+
+          <div className="text-sm text-muted-foreground space-y-2">
+            <h3 className="font-medium text-foreground">How it works</h3>
+            <ul className="list-disc list-inside space-y-1">
+              <li>
+                <strong>Import members:</strong> Import members from Xero contact groups,
+                mapping each group to an age tier (Adult, Youth, Child). New members get
+                an invite email with a password reset link.
+              </li>
+              <li>
+                <strong>Invoice creation:</strong> When a booking is confirmed and paid,
+                an invoice is automatically created in Xero with line items per guest.
+              </li>
+              <li>
+                <strong>Credit notes:</strong> When a booking is cancelled and refunded,
+                a credit note is created against the original invoice.
+              </li>
+              <li>
+                <strong>Membership verification:</strong> A daily cron job checks Xero
+                invoices for keywords like &quot;subscription&quot; or &quot;membership&quot; to verify
+                each member&apos;s subscription is paid for the current season.
+              </li>
+              <li>
+                <strong>Contact sync:</strong> Members are matched to Xero contacts by email.
+                New contacts are created automatically when invoices are generated.
+              </li>
+              <li>
+                <strong>Two-way sync:</strong> Editing a member in the admin panel syncs
+                changes to their linked Xero contact.
+              </li>
+            </ul>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}

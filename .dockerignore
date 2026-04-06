@@ -1,0 +1,11 @@
+.git
+.gitignore
+node_modules
+.next
+.env
+.env.*
+!.env.example
+coverage
+*.md
+docs
+.claude

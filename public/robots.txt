@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+
+# Private areas - do not index
+Disallow: /admin/
+Disallow: /dashboard
+Disallow: /bookings
+Disallow: /profile
+Disallow: /book
+Disallow: /api/
+
+Sitemap: https://bookings.tokoroa.org.nz/sitemap.xml

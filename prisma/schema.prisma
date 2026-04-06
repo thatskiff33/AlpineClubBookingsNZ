@@ -1,0 +1,578 @@
+// TACBookings - Tokoroa Alpine Club Booking System
+// Single source of truth for all database models
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  MEMBER
+  ADMIN
+}
+
+enum AgeTier {
+  ADULT
+  YOUTH
+  CHILD
+}
+
+enum SubscriptionStatus {
+  NOT_INVOICED
+  UNPAID
+  PAID
+  OVERDUE
+}
+
+enum SeasonType {
+  WINTER
+  SUMMER
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  BUMPED
+  CANCELLED
+  COMPLETED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PromoCodeType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_NIGHTS
+}
+
+enum ChoreStatus {
+  SUGGESTED
+  CONFIRMED
+  COMPLETED
+}
+
+enum AgeRestriction {
+  ANY
+  ADULTS_ONLY
+  MIXED_PREFERRED
+  ADULT_SUPERVISED
+}
+
+// ---------------------------------------------------------------------------
+// Member & Auth
+// ---------------------------------------------------------------------------
+
+model Member {
+  id            String   @id @default(cuid())
+  email         String
+  passwordHash        String
+  forcePasswordChange Boolean  @default(false)
+  passwordChangedAt   DateTime?
+  // Email verification: new registrations start as false.
+  // Existing members should be bulk-updated: UPDATE "Member" SET "emailVerified" = true;
+  emailVerified       Boolean  @default(false)
+  firstName           String
+  lastName            String
+  dateOfBirth   DateTime?
+  phone         String?
+  role          Role     @default(MEMBER)
+  ageTier       AgeTier  @default(ADULT)
+  xeroContactId String?  @unique
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Family/dependent support: dependents share parent's email but don't log in
+  parentMemberId String?
+  parent         Member?  @relation("FamilyMembers", fields: [parentMemberId], references: [id])
+  dependents     Member[] @relation("FamilyMembers")
+
+  // Relations
+  passwordResetTokens        PasswordResetToken[]
+  emailVerificationTokens    EmailVerificationToken[]
+  emailChangeTokens          EmailChangeToken[]
+  subscriptions              MemberSubscription[]
+  bookings                   Booking[]
+  guestAppearances           BookingGuest[]
+  promoRedemptions           PromoRedemption[]
+  notificationPreference     NotificationPreference?
+
+  @@index([email])
+  @@index([xeroContactId])
+  @@index([parentMemberId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  memberId  String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Relations
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(cuid())
+  memberId  String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([memberId])
+}
+
+model EmailChangeToken {
+  id        String   @id @default(cuid())
+  memberId  String
+  newEmail  String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Membership Subscriptions
+// ---------------------------------------------------------------------------
+
+model MemberSubscription {
+  id             String             @id @default(cuid())
+  memberId       String
+  seasonYear     Int
+  status         SubscriptionStatus @default(NOT_INVOICED)
+  xeroInvoiceId  String?
+  paidAt         DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  // Relations
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, seasonYear])
+  @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Seasons & Rates
+// ---------------------------------------------------------------------------
+
+model Season {
+  id        String     @id @default(cuid())
+  name      String
+  type      SeasonType
+  startDate DateTime   @db.Date
+  endDate   DateTime   @db.Date
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  rates SeasonRate[]
+
+  @@index([startDate, endDate])
+}
+
+model SeasonRate {
+  id                 String  @id @default(cuid())
+  seasonId           String
+  ageTier            AgeTier
+  isMember           Boolean
+  pricePerNightCents Int
+
+  // Relations
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonId, ageTier, isMember])
+  @@index([seasonId])
+}
+
+// ---------------------------------------------------------------------------
+// Bookings
+// ---------------------------------------------------------------------------
+
+model Booking {
+  id                 String        @id @default(cuid())
+  memberId           String
+  checkIn            DateTime      @db.Date
+  checkOut           DateTime      @db.Date
+  status             BookingStatus @default(PENDING)
+  totalPriceCents    Int
+  discountCents      Int           @default(0)
+  finalPriceCents    Int
+  hasNonMembers      Boolean       @default(false)
+  nonMemberHoldUntil DateTime?
+  notes              String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  // Relations
+  member           Member               @relation(fields: [memberId], references: [id])
+  guests           BookingGuest[]
+  payment          Payment?
+  choreAssignments ChoreAssignment[]
+  promoRedemption  PromoRedemption?
+  modifications    BookingModification[]
+
+  @@index([memberId])
+  @@index([checkIn, checkOut])
+  @@index([status])
+}
+
+model BookingGuest {
+  id        String  @id @default(cuid())
+  bookingId String
+  firstName String
+  lastName  String
+  ageTier   AgeTier
+  isMember  Boolean @default(false)
+  memberId  String?
+  priceCents Int
+  createdAt DateTime @default(now())
+
+  // Relations
+  booking          Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  member           Member?           @relation(fields: [memberId], references: [id])
+  choreAssignments ChoreAssignment[]
+
+  @@index([bookingId])
+  @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Payments
+// ---------------------------------------------------------------------------
+
+model Payment {
+  id                     String        @id @default(cuid())
+  bookingId              String        @unique
+  amountCents            Int
+  stripePaymentIntentId  String?       @unique
+  stripePaymentMethodId  String?
+  stripeSetupIntentId    String?       @unique
+  stripeCustomerId       String?
+  xeroInvoiceId          String?       @unique
+  status                 PaymentStatus @default(PENDING)
+  refundedAmountCents    Int           @default(0)
+  changeFeeCents         Int           @default(0)
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  // Relations
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([stripePaymentIntentId])
+}
+
+// ---------------------------------------------------------------------------
+// Promo Codes
+// ---------------------------------------------------------------------------
+
+model PromoCode {
+  id                  String        @id @default(cuid())
+  code                String        @unique
+  description         String?
+  type                PromoCodeType
+  valueCents          Int?
+  percentOff          Int?
+  freeNights          Int?
+  maxRedemptions      Int?
+  currentRedemptions  Int           @default(0)
+  validFrom           DateTime?
+  validUntil          DateTime?
+  membersOnly         Boolean       @default(false)
+  singleUse           Boolean       @default(false)
+  active              Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  // Relations
+  redemptions PromoRedemption[]
+
+  @@index([code])
+}
+
+model PromoRedemption {
+  id            String   @id @default(cuid())
+  promoCodeId   String
+  bookingId     String   @unique
+  memberId      String
+  discountCents Int
+  createdAt     DateTime @default(now())
+
+  // Relations
+  promoCode PromoCode @relation(fields: [promoCodeId], references: [id])
+  booking   Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  member    Member    @relation(fields: [memberId], references: [id])
+
+  @@index([promoCodeId])
+  @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Chore Roster
+// ---------------------------------------------------------------------------
+
+model ChoreTemplate {
+  id                   String         @id @default(cuid())
+  name                 String
+  description          String?
+  recommendedPeopleMin Int            @default(1)
+  recommendedPeopleMax Int            @default(2)
+  isEssential          Boolean        @default(false)
+  ageRestriction       AgeRestriction @default(ANY)
+  conditionalNote      String?
+  minAge               Int            @default(0)
+  sortOrder            Int            @default(0)
+  active               Boolean        @default(true)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  // Relations
+  assignments ChoreAssignment[]
+}
+
+model ChoreAssignment {
+  id               String      @id @default(cuid())
+  choreTemplateId  String
+  bookingId        String
+  bookingGuestId   String?
+  date             DateTime    @db.Date
+  status           ChoreStatus @default(SUGGESTED)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  // Relations
+  choreTemplate ChoreTemplate @relation(fields: [choreTemplateId], references: [id])
+  booking       Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingGuest  BookingGuest? @relation(fields: [bookingGuestId], references: [id])
+
+  @@index([date])
+  @@index([bookingId])
+  @@index([choreTemplateId])
+}
+
+// ---------------------------------------------------------------------------
+// Cancellation Policy
+// ---------------------------------------------------------------------------
+
+model CancellationPolicy {
+  id               String   @id @default(cuid())
+  daysBeforeStay   Int
+  refundPercentage Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([daysBeforeStay])
+}
+
+// ---------------------------------------------------------------------------
+// Booking Periods (date-specific policy overrides, e.g. school holidays)
+// ---------------------------------------------------------------------------
+
+model BookingPeriod {
+  id                String   @id @default(cuid())
+  name              String   // e.g. "School Holidays Jul 2026"
+  startDate         DateTime @db.Date
+  endDate           DateTime @db.Date
+  nonMemberHoldDays Int      @default(7)
+  cancellationRules Json     // Array of {daysBeforeStay: number, refundPercentage: number}
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([startDate, endDate])
+}
+
+// ---------------------------------------------------------------------------
+// Booking Defaults (global settings, single row)
+// ---------------------------------------------------------------------------
+
+model BookingDefaults {
+  id                String @id @default("default")
+  nonMemberHoldDays Int    @default(7)
+}
+
+// ---------------------------------------------------------------------------
+// Xero OAuth Token (single row)
+// ---------------------------------------------------------------------------
+
+model XeroToken {
+  id           String   @id @default(cuid())
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  tenantId     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Webhook Idempotency (prevents duplicate event processing)
+// ---------------------------------------------------------------------------
+
+model ProcessedWebhookEvent {
+  id          String   @id @default(cuid())
+  eventId     String   @unique
+  source      String   // "stripe" or "xero"
+  eventType   String
+  processedAt DateTime @default(now())
+
+  @@index([source])
+}
+
+// ---------------------------------------------------------------------------
+// Webhook Delivery Monitoring (OBS-08)
+// ---------------------------------------------------------------------------
+
+model WebhookLog {
+  id        String   @id @default(cuid())
+  source    String   // "stripe" or "xero"
+  eventType String
+  eventId   String
+  status    String   // "success" or "failure"
+  durationMs Int
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@index([source])
+  @@index([createdAt])
+  @@index([source, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Audit Log (tracks sensitive admin and system actions)
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  memberId  String?
+  targetId  String?
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([memberId])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Booking Modifications (history of changes to bookings)
+// ---------------------------------------------------------------------------
+
+model BookingModification {
+  id               String   @id @default(cuid())
+  bookingId        String
+  memberId         String
+  modificationType String   // DATE_CHANGE | GUEST_ADD | GUEST_REMOVE | EXTEND_STAY
+  previousData     Json     // snapshot of changed fields before
+  newData          Json     // snapshot of changed fields after
+  priceDiffCents   Int      @default(0) // positive = owes more, negative = refund
+  changeFeeCents   Int      @default(0) // late-notice fee charged
+  createdAt        DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Email Delivery Tracking (N-10)
+// ---------------------------------------------------------------------------
+
+enum EmailLogStatus {
+  QUEUED
+  SENT
+  FAILED
+  BOUNCED
+}
+
+model EmailLog {
+  id            String         @id @default(cuid())
+  to            String
+  subject       String
+  templateName  String
+  htmlBody      String?        // Stored for retry purposes (N-11)
+  status        EmailLogStatus @default(QUEUED)
+  errorMessage  String?
+  attempts      Int            @default(1)
+  lastAttemptAt DateTime       @default(now())
+  sentAt        DateTime?
+  messageId     String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([to])
+  @@index([status])
+  @@index([createdAt])
+  @@index([status, attempts])
+  @@index([templateName, status, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Notification Preferences (N-08)
+// ---------------------------------------------------------------------------
+
+model NotificationPreference {
+  id                   String   @id @default(cuid())
+  memberId             String   @unique
+  bookingConfirmation  Boolean  @default(true)
+  bookingReminder      Boolean  @default(true)
+  bookingBumped        Boolean  @default(true)
+  bookingCancelled     Boolean  @default(true)
+  choreRoster          Boolean  @default(true)
+  marketingEmails      Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Cron Job Run Tracking (OBS-09)
+// ---------------------------------------------------------------------------
+
+model CronJobRun {
+  id            String    @id @default(cuid())
+  jobName       String
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  durationMs    Int?
+  status        String    // SUCCESS | FAILURE | SKIPPED
+  resultSummary Json?
+  error         String?
+  createdAt     DateTime  @default(now())
+
+  @@index([jobName])
+  @@index([startedAt])
+}

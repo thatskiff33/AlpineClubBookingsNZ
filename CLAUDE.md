@@ -1,4 +1,258 @@
-# TACBookings - Build Plan
+# TACBookings
+
+## How to Run
+
+```bash
+npm install
+npx prisma generate
+npm test              # 411 tests pass (21 test files)
+npm run build         # builds successfully
+npm run dev           # development server
+
+# Docker deployment:
+docker compose up -d --build
+docker compose run --rm migrate    # run database migrations
+
+# Seed database (requires running PostgreSQL):
+npx prisma migrate dev --name initial
+npm run db:seed
+```
+
+**Test accounts (from seed):**
+- Admin: admin@tac.org.nz / admin123
+- Member: member@tac.org.nz / member123
+
+**Note:** nodemailer pinned to v7 for next-auth peer dep compatibility
+
+## Current State
+
+All 9 build phases + Delivery Phases 1, 4, 5, 6, 9 complete. Security audit + 5 integration reviews done. 411 tests pass, build succeeds.
+
+**What works today:**
+- Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
+- Family/dependents: parentMemberId self-referencing FK, shared email support, Xero import creates dependents, profile management, booking wizard quick-add, admin type filter
+- Booking: availability calendar, booking wizard (with family member quick-add), guest forms, pricing engine, advisory lock concurrency
+- Payments: Stripe PaymentIntents (confirmed), SetupIntents (pending), webhook handler, policy-based refunds
+- Non-member flow: PENDING status, 7-day hold, cron auto-confirm, FIFO bumping algorithm
+- Xero: OAuth2 connect, encrypted tokens, invoice creation, credit notes, contact sync, membership verification, daily cron
+- Promo codes: PERCENTAGE/FIXED_AMOUNT/FREE_NIGHTS types, validation, redemption tracking, admin CRUD
+- Chore roster: round-robin allocator, admin review/edit, printable A4 view, email notifications
+- Admin: seasons CRUD, cancellation policy, members list, bookings with filters, reports dashboard (recharts)
+- Infrastructure: security headers (CSP, HSTS), rate limiting, audit logging, automated pg_dump backups, error pages
+- Cancellation: shared service in `src/lib/booking-cancel.ts`, both routes delegate to it
+- Logging: structured JSON logging via pino (`src/lib/logger.ts`), LOG_LEVEL env var
+- Health: `GET /api/health` checks DB, Stripe, Xero, SMTP with latency and status
+- Cron tracking: `CronJobRun` model records execution metadata, auto-prunes after 90 days
+- Schema: `BookingModification` model, `Payment.changeFeeCents` field (for future booking mods)
+- Refunds: `getRefundTier()` extracted from cancellation logic with full test coverage
+- Docker: log rotation (json-file, 10m x 5) on all services
+- Sentry: server-side + client-side error tracking, cron monitoring, performance tracing
+- Observability: API request logging middleware, webhook delivery monitoring (`WebhookLog`), admin health dashboard
+- Notifications: EmailLog tracking, check-in reminders, admin alerts (new booking, payment failure, pending deadline, bumped, Xero errors, capacity warnings), notification preferences, email retry with backoff, admin daily digest, bulk member communication (rate-limited, preference-gated), post-stay feedback requests
+
+### Delivery Phase 1: Foundational Infrastructure - COMPLETED
+
+**Date:** 2026-04-05
+**Branch:** phase-1-infra
+**Tests:** 312 (was 292, +20 new)
+
+**Features built:**
+1. **CAN-01**: Shared cancellation service (`src/lib/booking-cancel.ts`) - both cancel routes delegate
+2. **CAN-02**: CancelBookingButton uses path-based route, body-based route logs deprecation
+3. **SCH-01**: `BookingModification` Prisma model with indexes
+4. **SCH-02**: `Payment.changeFeeCents` field (default 0)
+5. **FEE-01**: `getRefundTier()` extracted from cancellation.ts, 12 new tests
+6. **OBS-04**: Structured pino logger, all ~85 console.* calls replaced in src/lib/ and src/app/api/
+7. **OBS-06**: `GET /api/health` endpoint with DB/Stripe/Xero/SMTP checks, 8 new tests
+8. **OBS-09**: `CronJobRun` model, instrumentation.ts persists run metadata, 90-day auto-prune
+9. **OBS-13**: Docker Compose log rotation (json-file, max-size 10m, max-file 5) on all 3 services
+
+**New files:**
+- `src/lib/booking-cancel.ts` - Shared cancellation service
+- `src/lib/logger.ts` - Pino structured logger
+- `src/app/api/health/route.ts` - Health check endpoint
+- `src/lib/__tests__/health.test.ts` - Health endpoint tests
+
+**New Prisma models (require migration):**
+- `BookingModification` - Booking change history with before/after snapshots
+- `CronJobRun` - Cron execution tracking
+
+**New env vars:**
+- `LOG_LEVEL` - Logging level (default: info in production, debug in development)
+
+
+### Delivery Phase 4: Admin Operations & Tooling - COMPLETED
+
+**Date:** 2026-04-06
+**Branch:** phase-4-admin-ops
+**Tests:** 327 (was 312, +15 new)
+
+**Features built:**
+1. **Subscription Tracking**: GET /api/admin/subscriptions with season year selector, status filter, pagination, summary counts. Admin page with summary cards and filterable table.
+2. **Payments List**: GET /api/admin/payments with status/date range filters, pagination, revenue aggregates. Admin page with summary cards and table with copyable Stripe PI IDs.
+3. **Audit Log Viewer**: GET /api/admin/audit-log with action/actor/date filters, pagination, distinct action list. Admin page with expandable detail rows showing formatted JSON.
+4. **Report Export**: CSV download button generates tac-report-YYYY-MM-DD.csv. PDF print button with @media print stylesheet hides sidebar/nav/filters, sizes charts to A4.
+5. **Sidebar Nav**: Added Subscriptions, Payments, Audit Log entries to admin sidebar.
+
+**New files:**
+- src/app/api/admin/subscriptions/route.ts - Subscription tracking API
+- src/app/api/admin/payments/route.ts - Payments list API
+- src/app/api/admin/audit-log/route.ts - Audit log API
+- src/app/(admin)/admin/subscriptions/page.tsx - Subscriptions admin page
+- src/app/(admin)/admin/payments/page.tsx - Payments admin page
+- src/app/(admin)/admin/audit-log/page.tsx - Audit log admin page
+- src/lib/__tests__/admin-api.test.ts - 15 tests for all 3 new APIs
+
+**Modified files:**
+- src/components/admin-sidebar.tsx - Added 3 new nav entries
+- src/app/(admin)/admin/reports/page.tsx - Added CSV/PDF export buttons
+- src/app/globals.css - Added @media print styles
+### Delivery Phase 5: Member Auth Enhancements - COMPLETED
+
+**Date:** 2026-04-06
+**Branch:** phase-5-auth
+**Tests:** 342 (was 327, +15 new)
+
+**Features built:**
+1. **B3 - Email Verification on Registration**: `emailVerified` field on Member (default false), `EmailVerificationToken` model (24h expiry, crypto.randomBytes), registration sends verification email, `GET /api/auth/verify-email` validates token and sets emailVerified=true, `POST /api/auth/resend-verification` (rate-limited 3/hr), unverified members blocked from login (EMAIL_NOT_VERIFIED error), login page shows verification prompt with resend button, booking creation gated on emailVerified (403), existing members grandfathered via SQL comment.
+2. **B2 - Email Change with Verification**: `EmailChangeToken` model (1h expiry), `POST /api/auth/request-email-change` validates new email/sends verification to new address/notification to old, `GET /api/auth/confirm-email-change` updates email/deletes token/updates Xero contact (fire-and-forget), ChangeEmailForm on profile page, audit log entries for request and confirmation, rate-limited 3/hr.
+
+**New files:**
+- `src/lib/verification-tokens.ts` - Token generation (crypto.randomBytes) and creation helpers
+- `src/app/api/auth/verify-email/route.ts` - Email verification endpoint
+- `src/app/api/auth/resend-verification/route.ts` - Resend verification endpoint
+- `src/app/api/auth/request-email-change/route.ts` - Request email change endpoint
+- `src/app/api/auth/confirm-email-change/route.ts` - Confirm email change endpoint
+- `src/app/(public)/verify-email/page.tsx` - Verify email page
+- `src/app/(public)/confirm-email-change/page.tsx` - Confirm email change page
+- `src/app/(authenticated)/profile/change-email-form.tsx` - Change email form component
+- `src/lib/__tests__/email-verification.test.ts` - 15 tests for verification flows
+
+**New Prisma models (require migration):**
+- `EmailVerificationToken` - Email verification tokens with 24h expiry
+- `EmailChangeToken` - Email change tokens with 1h expiry
+
+**Modified files:**
+- `prisma/schema.prisma` - Added emailVerified field, EmailVerificationToken, EmailChangeToken models
+- `src/lib/auth.ts` - Added isEmailVerified to session, block unverified login
+- `src/lib/email.ts` - Added verification/change email sending functions
+- `src/lib/email-templates.ts` - Added 3 new email templates
+- `src/lib/rate-limit.ts` - Added resendVerification and requestEmailChange limiters
+- `src/app/api/auth/register/route.ts` - Send verification email on registration
+- `src/app/api/bookings/route.ts` - Gate booking on emailVerified
+- `src/app/(public)/login/page.tsx` - Handle EMAIL_NOT_VERIFIED, show resend button
+- `src/app/(authenticated)/profile/page.tsx` - Added ChangeEmailForm section
+
+### Delivery Phase 9: Observability - COMPLETED
+
+**Date:** 2026-04-06
+**Branch:** phase-9-observability
+**Tests:** 359 (was 342, +17 new)
+
+**Features built:**
+1. **OBS-01**: Sentry server-side integration (`@sentry/nextjs`), `sentry.server.config.ts` with sensitive data scrubbing (`beforeSend`), source map support
+2. **OBS-02**: Sentry client-side error boundaries - `error.tsx` and `global-error.tsx` call `Sentry.captureException()` with digest tag correlation, breadcrumbs enabled
+3. **OBS-03**: Sentry cron monitoring for 3 jobs (`confirm-pending-bookings`, `xero-membership-refresh`, `database-backup`) with check-in/check-out signals and schedule config
+4. **OBS-05**: API request logging middleware (`src/lib/api-logger.ts`) - `withRequestLogging()` wrapper logs method, path, status, durationMs, IP at appropriate log levels
+5. **OBS-08**: `WebhookLog` Prisma model for webhook delivery monitoring, `recordWebhookLog()` + `getWebhookStats()` helpers, Stripe and Xero handlers instrumented, 30-day auto-prune
+6. **OBS-10**: Sentry performance tracing (0.2 sample rate in production, 1.0 in development)
+7. **OBS-11**: Sentry alerting rules documented in `docs/SENTRY_ALERTS.md` (4 alert rules with triage steps)
+8. **OBS-12**: External uptime monitoring config in `docs/UPTIME_MONITORING.md` (UptimeRobot, Sentry Uptime, Route 53 options)
+9. **OBS-07**: Admin health dashboard `/admin/health` with service checks, cron job history, webhook stats, system info, Sentry link, auto-refresh every 60s
+
+**New files:**
+- `sentry.server.config.ts` - Sentry server-side initialization
+- `sentry.client.config.ts` - Sentry client-side initialization
+- `sentry.edge.config.ts` - Sentry edge runtime initialization
+- `src/lib/api-logger.ts` - API request logging middleware
+- `src/lib/webhook-log.ts` - Webhook delivery monitoring helpers
+- `src/app/api/admin/health/route.ts` - Admin health data API
+- `src/app/(admin)/admin/health/page.tsx` - Admin health dashboard page
+- `src/lib/__tests__/observability.test.ts` - 17 tests for observability features
+- `docs/SENTRY_ALERTS.md` - Sentry alerting rules documentation
+- `docs/UPTIME_MONITORING.md` - External uptime monitoring documentation
+
+**New Prisma models (require migration):**
+- `WebhookLog` - Webhook delivery tracking with source, eventType, status, duration
+
+**New env vars:**
+- `SENTRY_DSN` - Sentry DSN for server-side error tracking
+- `NEXT_PUBLIC_SENTRY_DSN` - Sentry DSN for client-side error tracking
+- `SENTRY_ORG` - Sentry organization slug (for source map uploads)
+- `SENTRY_PROJECT` - Sentry project slug (for source map uploads)
+- `SENTRY_AUTH_TOKEN` - Sentry auth token (for source map uploads during build)
+
+**Modified files:**
+- `next.config.ts` - Wrapped with `withSentryConfig`
+- `src/instrumentation.ts` - Added Sentry init + cron monitoring
+- `src/app/error.tsx` - Added Sentry error capture
+- `src/app/global-error.tsx` - Added Sentry error capture
+- `src/middleware.ts` - Added Sentry ingest to CSP connect-src
+- `src/app/api/webhooks/stripe/route.ts` - Added webhook logging
+- `src/app/api/webhooks/xero/route.ts` - Added webhook logging
+- `src/components/admin-sidebar.tsx` - Added System Health nav entry
+- `prisma/schema.prisma` - Added WebhookLog model
+- `.env.example` - Added Sentry env vars
+
+### Delivery Phase 6: Notifications - COMPLETED
+
+**Date:** 2026-04-06
+**Branch:** phase-6-notifications
+**Tests:** 411 (was 359, +52 new across 3 sub-phases)
+
+**Sub-phase 6a: Core Alerts**
+1. **N-10**: EmailLog Prisma model with delivery tracking (QUEUED/SENT/FAILED/BOUNCED), htmlBody for retry, integrated into sendEmail()
+2. **N-01**: Check-in reminder cron (daily 9AM NZST), queries CONFIRMED bookings with checkIn=tomorrow, includes guest list and chore assignments
+3. **N-02**: Admin alert on new booking creation (fire-and-forget to all admins)
+4. **N-04**: Admin alert on payment failure (Stripe webhook + charge-saved-method failures)
+5. **N-06**: Pending deadline alert cron (daily 8AM NZST), digest of PENDING bookings within 48h of nonMemberHoldUntil
+6. **N-07**: Admin alert when booking bumped, includes triggering member info
+
+**Sub-phase 6b: Preference-Gated Features**
+7. **N-03**: Capacity warning cron (daily 7AM NZST), alerts when any of next 14 days has <=5 beds remaining
+8. **N-05**: Xero sync error alerts with 1-hour deduplication via EmailLog check
+9. **N-08**: NotificationPreference model (per-member toggles), GET/PUT API, profile page UI with toggle switches, shouldSendEmail() helper
+10. **N-11**: Email retry cron (every 30min), retries FAILED emails up to 3 attempts using stored htmlBody
+11. **N-13**: Admin daily digest cron (daily 7:30AM NZST), summarizes past 24h alerts by type with counts
+
+**Sub-phase 6c: Advanced Communication**
+12. **N-09**: Bulk member communication - admin-only POST endpoint, rate limited 1/hr, respects marketingEmails preference, HTML/header injection prevention (escapeHtml + newline stripping), compose UI, send history via audit log
+13. **N-12**: Post-stay feedback request cron (daily 10AM NZST), queries CONFIRMED/COMPLETED bookings where checkOut=yesterday, respects bookingReminder preference
+
+**New files:**
+- `src/lib/cron-checkin-reminders.ts` - Check-in reminder cron logic
+- `src/lib/cron-pending-deadline-alerts.ts` - Pending deadline alert cron
+- `src/lib/cron-capacity-warnings.ts` - Capacity warning cron
+- `src/lib/cron-email-retry.ts` - Email retry with backoff cron
+- `src/lib/cron-admin-digest.ts` - Admin daily digest cron
+- `src/lib/cron-feedback-requests.ts` - Post-stay feedback request cron
+- `src/lib/xero-error-alert.ts` - Xero sync error alert with deduplication
+- `src/app/api/notifications/preferences/route.ts` - Notification preferences API
+- `src/app/api/admin/communications/send/route.ts` - Bulk communication send API
+- `src/app/api/admin/communications/history/route.ts` - Communication history API
+- `src/app/(admin)/admin/communications/page.tsx` - Communications admin page
+- `src/app/(authenticated)/profile/notification-preferences.tsx` - Notification preferences UI
+- `src/lib/__tests__/phase6a-notifications.test.ts` - 18 tests for Phase 6a
+- `src/lib/__tests__/phase6b-notifications.test.ts` - 17 tests for Phase 6b
+- `src/lib/__tests__/phase6c-notifications.test.ts` - 17 tests for Phase 6c
+
+**New Prisma models (require migration):**
+- `EmailLog` - Email delivery tracking with status, attempts, htmlBody for retry
+- `NotificationPreference` - Per-member notification toggle preferences
+
+**Modified files:**
+- `src/lib/email.ts` - EmailLog integration, shouldSendEmail(), admin alert senders, bulk communication support
+- `src/lib/email-templates.ts` - 13 new email templates (check-in reminder, admin alerts, digest, feedback, bulk communication)
+- `src/instrumentation.ts` - 6 new cron jobs registered with overlap guards and timezone config
+- `src/components/admin-sidebar.tsx` - Added Communications nav entry
+- `src/app/api/bookings/route.ts` - Fire-and-forget admin new booking alert
+- `src/app/api/webhooks/stripe/route.ts` - Payment failure admin alert
+- `src/lib/bumping.ts` - Admin alert on booking bump
+- `prisma/schema.prisma` - EmailLog, NotificationPreference models
+
+## What's Next
+
+Phases 1, 4, 5, 6, and 9 complete. See `docs/DELIVERY_PLAN.md` for remaining phases.
 
 ## Context
 
@@ -8,24 +262,18 @@ Tokoroa Alpine Club (TAC) is a not-for-profit operating a 29-bed alpine lodge. T
 
 | Layer | Choice | Rationale |
 |-------|--------|-----------|
-| **Framework** | Next.js 15 (App Router) | Full-stack TypeScript monolith. Largest LLM training corpus. Single codebase for frontend + API |
-| **Language** | TypeScript | Type safety catches errors at compile time. LLMs generate excellent TS |
-| **Database** | PostgreSQL 16 | Robust relational DB, handles bookings/members/payments well. Free on Lightsail |
-| **ORM** | Prisma | Type-safe DB access, declarative schema = self-documenting, auto migrations |
-| **Auth** | NextAuth.js v5 (Auth.js) | Credentials provider (email+password), JWT sessions, built-in password reset |
-| **UI** | Tailwind CSS + shadcn/ui | Production-quality components without design skills. LLMs produce excellent Tailwind |
+| **Framework** | Next.js 15 (App Router) | Full-stack TypeScript monolith. Single codebase for frontend + API |
+| **Language** | TypeScript | Type safety catches errors at compile time |
+| **Database** | PostgreSQL 16 | Robust relational DB. Free on Lightsail |
+| **ORM** | Prisma 6 | Type-safe DB access, declarative schema, auto migrations |
+| **Auth** | NextAuth.js v5 (Auth.js) | Credentials provider (email+password), JWT sessions |
+| **UI** | Tailwind CSS + shadcn/ui | Production-quality components |
 | **Payments** | Stripe (PaymentIntents + SetupIntents) | Industry standard, Xero has native Stripe feed |
 | **Accounting** | Xero API via `xero-node` SDK | Full bidirectional sync: invoices, contacts, payments |
-| **Email** | AWS SES via `nodemailer` (or Resend) | Already on AWS. Transactional emails for confirmations, resets, notifications |
+| **Email** | AWS SES via `nodemailer` | Transactional emails for confirmations, resets, notifications |
 | **Deployment** | Docker Compose on Lightsail | Single `docker compose up` deploys everything |
-| **Reverse Proxy** | Caddy 2 | Automatic HTTPS via Let's Encrypt. Two-line config |
+| **Reverse Proxy** | Caddy 2 | Automatic HTTPS via Let's Encrypt |
 | **Scheduled Jobs** | `node-cron` in Next.js `instrumentation.ts` | No external scheduler needed for this scale |
-
-**Why NOT alternatives:**
-- Django/Rails: Two-language problem (Python/Ruby + JS for frontend)
-- Microservices: Massively over-engineered for 410 users
-- Separate React SPA + Express: Two codebases instead of one
-- Supabase/Firebase: Adds vendor lock-in, another abstraction layer
 
 ## Architecture Overview
 
@@ -60,14 +308,50 @@ TACBookings/
 │   ├── app/
 │   │   ├── layout.tsx             # Root layout with auth provider
 │   │   ├── page.tsx               # Landing / redirect to login
+│   │   ├── not-found.tsx          # 404 page
+│   │   ├── error.tsx              # Error boundary
+│   │   ├── global-error.tsx       # Global error boundary
 │   │   ├── api/
 │   │   │   ├── auth/[...nextauth]/route.ts
+│   │   │   ├── bookings/route.ts          # Create booking, list bookings
+│   │   │   ├── bookings/quote/route.ts    # Price quote
+│   │   │   ├── bookings/cancel/route.ts   # Cancel by booking ID in body
+│   │   │   ├── bookings/[id]/cancel/route.ts  # Cancel by URL param
+│   │   │   ├── availability/route.ts      # Bed availability check
+│   │   │   ├── payments/create-payment-intent/route.ts
+│   │   │   ├── payments/create-setup-intent/route.ts
+│   │   │   ├── payments/charge-saved-method/route.ts
 │   │   │   ├── webhooks/stripe/route.ts
 │   │   │   ├── webhooks/xero/route.ts
-│   │   │   ├── cron/route.ts      # Cron endpoint (secured)
+│   │   │   ├── cron/route.ts              # Manual cron trigger
+│   │   │   ├── cron/xero/route.ts         # Xero membership refresh
+│   │   │   ├── promo-codes/validate/route.ts
+│   │   │   ├── admin/seasons/route.ts
+│   │   │   ├── admin/seasons/[id]/route.ts
+│   │   │   ├── admin/bookings/route.ts
+│   │   │   ├── admin/members/route.ts
+│   │   │   ├── admin/promo-codes/route.ts
+│   │   │   ├── admin/promo-codes/[id]/route.ts
+│   │   │   ├── admin/chores/route.ts
+│   │   │   ├── admin/chores/[id]/route.ts
+│   │   │   ├── admin/roster/[date]/route.ts
+│   │   │   ├── admin/cancellation-policy/route.ts
+│   │   │   ├── admin/subscriptions/route.ts
+│   │   │   ├── admin/payments/route.ts
+│   │   │   ├── admin/audit-log/route.ts
+│   │   │   ├── admin/health/route.ts
+│   │   │   ├── admin/reports/route.ts
+│   │   │   ├── admin/xero/connect/route.ts
+│   │   │   ├── admin/xero/callback/route.ts
+│   │   │   ├── admin/xero/disconnect/route.ts
+│   │   │   ├── admin/xero/status/route.ts
+│   │   │   ├── admin/xero/sync-contacts/route.ts
+│   │   │   ├── admin/xero/sync-memberships/route.ts
 │   │   │   └── chores/roster/[date]/print/route.ts
 │   │   ├── (public)/              # No auth required
 │   │   │   ├── login/page.tsx
+│   │   │   ├── register/page.tsx
+│   │   │   ├── forgot-password/page.tsx
 │   │   │   └── reset-password/page.tsx
 │   │   ├── (authenticated)/       # Member pages
 │   │   │   ├── layout.tsx         # Auth guard
@@ -87,28 +371,50 @@ TACBookings/
 │   │       ├── admin/roster/page.tsx
 │   │       ├── admin/roster/[date]/print/page.tsx
 │   │       ├── admin/cancellation-policy/page.tsx
+│   │       ├── admin/subscriptions/page.tsx
+│   │       ├── admin/payments/page.tsx
+│   │       ├── admin/audit-log/page.tsx
 │   │       ├── admin/xero/page.tsx
-│   │       └── admin/reports/page.tsx
+│   │       ├── admin/reports/page.tsx
+│   │       └── admin/health/page.tsx
 │   ├── lib/
 │   │   ├── prisma.ts              # Singleton Prisma client
 │   │   ├── auth.ts                # NextAuth config
 │   │   ├── stripe.ts              # Stripe client + helpers
 │   │   ├── xero.ts                # Xero client + token refresh
-│   │   ├── email.ts               # Email transport + templates
+│   │   ├── email.ts               # Email transport
+│   │   ├── email-templates.ts     # Branded HTML email templates
 │   │   ├── capacity.ts            # Bed availability calculation
 │   │   ├── pricing.ts             # Rate calculation engine
+│   │   ├── cancellation.ts        # Refund calculation
 │   │   ├── bumping.ts             # Non-member FIFO bumping
-│   │   └── chore-allocator.ts     # Auto-suggest chore roster
+│   │   ├── promo.ts               # Promo code validation & redemption
+│   │   ├── chore-allocator.ts     # Auto-suggest chore roster
+│   │   ├── age-tier.ts            # Age tier & season year computation
+│   │   ├── rate-limit.ts          # In-memory rate limiter
+│   │   ├── audit.ts               # Audit logging helper
+│   │   ├── backup.ts              # Automated pg_dump to S3
+│   │   ├── api-logger.ts          # API request logging middleware
+│   │   └── webhook-log.ts         # Webhook delivery monitoring
+│   ├── middleware.ts              # Security headers (CSP, HSTS, etc.)
+│   ├── instrumentation.ts        # Cron job scheduling
 │   └── components/
 │       ├── ui/                    # shadcn/ui components
 │       ├── booking-calendar.tsx
+│       ├── booking-payment-section.tsx
 │       ├── guest-form.tsx
+│       ├── promo-code-input.tsx
 │       └── chore-roster-print.tsx
+├── docs/
+│   ├── DELIVERY_PLAN.md           # Next wave: ~75 features in 10 phases
+│   ├── BUILD_HISTORY.md           # Archived build & review logs
+│   ├── DEVELOPMENT_WORKFLOW.md    # Claude Code session workflow
+│   ├── FEATURE_REQUIREMENTS.md
+│   └── CODEBASE_AUDIT.md
 ├── docker-compose.yml
 ├── Dockerfile
 ├── Caddyfile
 ├── .env.example
-├── CLAUDE.md
 └── package.json
 ```
 
@@ -116,111 +422,57 @@ TACBookings/
 
 ### Core Entities
 
-**Member** - Club members who can log in and book
+**Member** - Club members who can log in and book (or dependents managed by a parent)
 ```
-- id, email (unique), passwordHash, firstName, lastName
-- dateOfBirth, phone
-- role: MEMBER | ADMIN
-- ageTier: ADULT | YOUTH | CHILD (computed from DOB)
-- xeroContactId (link to Xero contact)
-- active: boolean
-- timestamps
+id, email (unique among primary members), passwordHash, firstName, lastName, dateOfBirth, phone
+role: MEMBER | ADMIN, ageTier: ADULT | YOUTH | CHILD (computed from DOB)
+xeroContactId, active, parentMemberId (nullable self-FK for dependents), timestamps
 ```
 
-**MemberSubscription** - Tracks annual season subscription status from Xero
+**MemberSubscription** - Annual season subscription status from Xero
 ```
-- id, memberId, seasonYear (e.g. 2025 = Apr 2025 - Mar 2026)
-- status: UNPAID | PAID | OVERDUE
-- xeroInvoiceId
-- paidAt
+id, memberId, seasonYear (e.g. 2025 = Apr 2025 - Mar 2026)
+status: UNPAID | PAID | OVERDUE, xeroInvoiceId, paidAt
 ```
 
-**Season** - Admin-configured winter/summer periods with rates
+**Season / SeasonRate** - Admin-configured periods with per-tier pricing
 ```
-- id, name ("Winter 2025"), type: WINTER | SUMMER
-- startDate, endDate
-- active: boolean
-```
-
-**SeasonRate** - Per-season pricing (6 rates per season: 3 age tiers x member/non-member)
-```
-- id, seasonId, ageTier: ADULT | YOUTH | CHILD
-- isMember: boolean
-- pricePerNightCents: integer (store money as cents to avoid floating point)
+Season: id, name, type: WINTER | SUMMER, startDate, endDate, active
+SeasonRate: id, seasonId, ageTier, isMember, pricePerNightCents
 ```
 
-**Booking** - A stay at the lodge
+**Booking / BookingGuest** - Stays at the lodge
 ```
-- id, memberId (who booked), checkIn, checkOut
-- status: PENDING | CONFIRMED | BUMPED | CANCELLED | COMPLETED
-- totalPriceCents, discountCents, finalPriceCents
-- hasNonMembers: boolean
-- nonMemberHoldUntil: datetime (checkIn - 7 days, for pending bookings)
-- notes
-- timestamps
+Booking: id, memberId, checkIn, checkOut, status (PENDING|CONFIRMED|BUMPED|CANCELLED|COMPLETED)
+  totalPriceCents, discountCents, finalPriceCents, hasNonMembers, nonMemberHoldUntil
+BookingGuest: id, bookingId, firstName, lastName, ageTier, isMember, memberId, priceCents
 ```
 
-**BookingGuest** - Individual guests within a booking
+**Payment** - Stripe payment record
 ```
-- id, bookingId, firstName, lastName
-- ageTier, isMember, memberId (nullable - linked if they're a member)
-- priceCents (price for this guest for the full stay)
-```
-
-**Payment** - Stripe payment record linked to booking
-```
-- id, bookingId (unique), amountCents
-- stripePaymentIntentId (unique), stripePaymentMethodId
-- xeroInvoiceId (unique)
-- status: PENDING | PROCESSING | SUCCEEDED | FAILED | REFUNDED | PARTIALLY_REFUNDED
-- refundedAmountCents
+id, bookingId (unique), amountCents, stripePaymentIntentId (unique)
+stripePaymentMethodId, xeroInvoiceId (unique)
+status: PENDING | PROCESSING | SUCCEEDED | FAILED | REFUNDED | PARTIALLY_REFUNDED
+refundedAmountCents
 ```
 
-**PromoCode** - Discount codes and vouchers
+**PromoCode / PromoRedemption** - Discount codes
 ```
-- id, code (unique), description
-- type: PERCENTAGE | FIXED_AMOUNT | FREE_NIGHTS
-- valueCents, percentOff, freeNights (nullable, depends on type)
-- maxRedemptions, currentRedemptions
-- validFrom, validUntil
-- membersOnly, singleUse, active
+PromoCode: type (PERCENTAGE|FIXED_AMOUNT|FREE_NIGHTS), valueCents, percentOff, freeNights
+  maxRedemptions, currentRedemptions, validFrom, validUntil, membersOnly, singleUse
+PromoRedemption: promoCodeId, bookingId (unique), memberId, discountCents
 ```
 
-**PromoRedemption** - Tracks which member used which code on which booking
+**ChoreTemplate / ChoreAssignment** - Chore roster
 ```
-- id, promoCodeId, bookingId (unique), memberId
-- discountCents
-```
-
-**ChoreTemplate** - Configurable chore definitions
-```
-- id, name ("Dishes", "Sweep common area", "Clean bathrooms")
-- description, recommendedPeople (default 2)
-- minAge (default 10 - skip children under this age)
-- sortOrder, active
+ChoreTemplate: name, description, recommendedPeople, minAge, ageRestriction, isEssential
+ChoreAssignment: choreTemplateId, bookingId, bookingGuestId, date, status (SUGGESTED|CONFIRMED|COMPLETED)
 ```
 
-**ChoreAssignment** - Assigns guests to chores per day
-```
-- id, choreTemplateId, bookingId, bookingGuestId (nullable)
-- date (which day)
-- status: SUGGESTED | CONFIRMED | COMPLETED
-```
-
-**CancellationPolicy** - Admin-configurable refund rules
-```
-- id, daysBeforeStay, refundPercentage
-- e.g. [{days: 14, refund: 100}, {days: 7, refund: 50}, {days: 0, refund: 0}]
-```
-
-**XeroToken** - Stores OAuth2 tokens for Xero integration
-```
-- id, accessToken (encrypted), refreshToken (encrypted)
-- expiresAt, tenantId
-```
+**Other:** CancellationPolicy, XeroToken, ProcessedWebhookEvent, AuditLog, Room, PasswordResetToken
 
 ### Key Relationships
-- Member -> many Bookings, many MemberSubscriptions, many PromoRedemptions
+- Member -> many Bookings, MemberSubscriptions, PromoRedemptions
 - Booking -> many BookingGuests, one Payment, many ChoreAssignments
 - Season -> many SeasonRates
 - ChoreTemplate -> many ChoreAssignments
@@ -241,14 +493,13 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 1. Find all PENDING bookings overlapping those nights
 2. Sort by `createdAt DESC` (most recent first)
 3. Bump bookings one at a time until capacity is restored
-4. For each bumped booking: set status = BUMPED, send notification email
-5. No refund needed (payment wasn't taken for PENDING bookings)
+4. For each bumped booking: set status = BUMPED, clean up promo redemption, send notification email
 
-### 3. Pending Booking Confirmation (Cron - runs every few hours)
+### 3. Pending Booking Confirmation (Cron - every 3 hours)
 1. Find PENDING bookings where `nonMemberHoldUntil <= now()`
-2. Re-check availability for each
-3. If beds available: charge saved PaymentMethod via Stripe, set CONFIRMED, create Xero invoice, email confirmation
-4. If beds no longer available: set BUMPED, email notification
+2. Atomic claim (updateMany WHERE status=PENDING) before charging
+3. If beds available + payment method saved: charge card, confirm booking, create Xero invoice, email
+4. If beds not available: bump booking, email notification
 
 ### 4. Pricing Engine
 - For each night in stay: determine which Season it falls in, look up SeasonRate for guest's ageTier + isMember
@@ -258,444 +509,69 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 ### 5. Cancellation & Refunds
 - Admin-configurable policy: e.g. 14+ days = 100% refund, 7-14 days = 50%, <7 days = 0%
 - Members cancel from their booking detail page
-- System calculates refund based on policy, processes Stripe refund, creates Xero credit note
+- System calculates refund based on policy, processes Stripe refund, creates Xero credit note, cleans up promo redemption
 
 ### 6. Chore Roster
-- Admin configures chore templates (name, recommended people count, min age)
-- For a given date, system auto-suggests assignments using round-robin across all confirmed guests
-- Hut leader reviews on admin panel, can reassign/edit
-- Confirms roster - status changes from SUGGESTED to CONFIRMED
-- Printable A4 page: clean table with guest names, assigned chores, date - CSS `@media print` styling
+- Admin configures chore templates (name, recommended people count, min age, age restriction)
+- For a given date, system auto-suggests assignments using round-robin across confirmed guests (4-day history lookback, occupancy scaling)
+- Hut leader reviews on admin panel, can reassign/edit, then confirms
+- Printable A4 page with CSS `@media print` styling
 
 ### 7. Xero Integration (Full Bidirectional Sync)
-
-**OAuth2 Flow:**
-1. Admin clicks "Connect Xero" in admin panel
-2. Redirects to Xero authorization
-3. Callback stores encrypted access + refresh tokens
-4. Auto-refresh before 30-min expiry
-
-**Xero -> TAC (Membership Verification):**
-- Daily cron + on-login check: query Xero for member's contact by `xeroContactId`
-- Check for paid invoices matching current season subscription
-- Update MemberSubscription status
-- Season year logic: if current month >= April, seasonYear = currentYear; else seasonYear = currentYear - 1
-
-**TAC -> Xero (Booking Invoices):**
-- On CONFIRMED + payment succeeded:
-  1. Find or create Xero Contact for the member
-  2. Create Xero Invoice with line items (per guest, per night, showing rates)
-  3. Record payment against the invoice
-  4. Store xeroInvoiceId on Payment record
-
-**Refund Sync:**
-- Stripe refund webhook -> create Xero credit note against original invoice
+- **OAuth2 Flow:** Admin connects via admin panel, tokens encrypted with AES-256-GCM
+- **Membership Verification:** Daily cron queries Xero invoices for subscription keywords in current season year
+- **Booking Invoices:** On CONFIRMED + payment: find/create Contact, create Invoice with per-guest line items, record payment
+- **Refund Sync:** Stripe refund -> Xero credit note against original invoice
 
 ## Email Notifications
 
-| Event | Recipient | Content |
-|-------|-----------|---------|
-| Registration | New member | Welcome email |
-| Password reset | Member | Reset link (1hr expiry) |
-| Booking confirmed | Booking member | Dates, guests, total, payment receipt |
-| Booking pending | Booking member | Dates, guests, explanation of hold period |
-| Pending -> confirmed | Booking member | Payment taken, confirmation details |
-| Booking bumped | Booking member | Apology, explanation, rebooking link |
-| Booking cancelled | Booking member | Cancellation confirmation, refund amount |
-| Chore roster | All guests for date | Their assigned chores for the day |
-| Admin: new booking | Admin | Notification of new booking |
-| Admin: capacity warning | Admin | Lodge nearly full for upcoming dates |
-| Admin: pending approaching deadline | Admin | Non-member bookings about to auto-confirm |
+| Event | Recipient | Status |
+|-------|-----------|--------|
+| Registration | New member | Implemented |
+| Password reset | Member | Implemented |
+| Booking confirmed | Booking member | Implemented |
+| Booking pending | Booking member | Implemented |
+| Pending -> confirmed | Booking member | Implemented |
+| Booking bumped | Booking member | Implemented |
+| Booking cancelled | Booking member | Implemented |
+| Chore roster | All guests for date | Implemented |
+| Admin: new booking | Admin | Not yet |
+| Admin: capacity warning | Admin | Not yet |
+| Admin: pending approaching deadline | Admin | Not yet |
 
 ## Deployment (AWS Lightsail)
 
-**Instance:** 2GB RAM, 1 vCPU ($10/mo). Upgrade to 4GB ($20/mo) if needed.
-**OS:** Ubuntu 24.04 LTS
-**DNS:** Point domain A record to Lightsail static IP.
+**Instance:** 2GB RAM, 1 vCPU ($10/mo), Ubuntu 24.04 LTS.
 
-**Docker Compose** (3 services):
-1. `caddy` - reverse proxy, auto HTTPS
-2. `app` - Next.js application
-3. `postgres` - PostgreSQL 16
-
-**Caddyfile:**
-```
-yourdomain.co.nz {
-    reverse_proxy app:3000
-}
-```
+**Docker Compose** (3 services): `caddy` (reverse proxy, auto HTTPS), `app` (Next.js), `postgres` (PostgreSQL 16).
 
 **Deploy process:**
 1. Push to GitHub
 2. SSH into Lightsail: `git pull && docker compose up -d --build`
-3. On schema changes: `docker compose exec app npx prisma migrate deploy`
-4. Future: automate with GitHub Actions
+3. On schema changes: `docker compose run --rm migrate`
 
-**Backups:**
-- Lightsail automatic snapshots (built-in, ~$2/mo)
-- Daily `pg_dump` cron to S3 bucket
+**Backups:** Lightsail snapshots + daily pg_dump cron to S3 (configurable via env vars).
 
-**Environment variables (.env):**
-```
-DATABASE_URL=postgresql://tac:PASSWORD@postgres:5432/tacbookings
-NEXTAUTH_URL=https://yourdomain.co.nz
-NEXTAUTH_SECRET=<random-64-char>
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_PUBLISHABLE_KEY=pk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-XERO_CLIENT_ID=...
-XERO_CLIENT_SECRET=...
-XERO_REDIRECT_URI=https://yourdomain.co.nz/api/admin/xero/callback
-AWS_SES_REGION=ap-southeast-2
-AWS_SES_ACCESS_KEY_ID=...
-AWS_SES_SECRET_ACCESS_KEY=...
-EMAIL_FROM=bookings@yourdomain.co.nz
-CRON_SECRET=<random-32-char>
-```
-
-## Phased Build Order
-
-### Phase 1: Foundation (Week 1-2)
-**Goal: Working login, basic member management, deployed to Lightsail**
-1. Initialize Next.js 15 + TypeScript + Tailwind + shadcn/ui
-2. Prisma schema (full schema upfront), initial migration
-3. Seed rooms (7 rooms, capacities)
-4. NextAuth credentials provider (login/register)
-5. Password reset flow with email
-6. Basic member profile page
-7. Admin layout + member list page
-8. Docker Compose + Caddy setup
-9. Deploy to Lightsail, verify HTTPS
-- **Files:** `prisma/schema.prisma`, `src/lib/prisma.ts`, `src/lib/auth.ts`, `src/lib/email.ts`, `docker-compose.yml`, `Dockerfile`, `Caddyfile`
-
-### Phase 2: Seasons & Pricing (Week 3)
-**Goal: Admin can configure seasons, rates, and cancellation policy**
-1. Admin UI: create/edit seasons (name, type, start/end dates)
-2. Admin UI: set rates per season (6 rates per season)
-3. Admin UI: cancellation policy configuration
-4. Pricing engine with unit tests
-5. Seed initial seasons and rates
-- **Files:** `src/lib/pricing.ts`, `src/app/(admin)/admin/seasons/page.tsx`, `src/app/(admin)/admin/cancellation-policy/page.tsx`
-
-### Phase 3: Core Booking (Week 4-5)
-**Goal: Members can book stays and see availability**
-1. Availability calculator (beds per night query)
-2. Booking calendar UI (date picker showing availability)
-3. Guest addition form (name, age, member/non-member)
-4. Real-time price display as guests are added
-5. Booking creation (member-only bookings first, immediate confirmation)
-6. My bookings list + detail pages
-7. Admin: view all bookings with filters
-8. Concurrency handling (advisory locks)
-- **Files:** `src/lib/capacity.ts`, `src/app/(authenticated)/book/page.tsx`, `src/app/(authenticated)/bookings/page.tsx`
-
-### Phase 4: Stripe Payments (Week 6)
-**Goal: Bookings require payment to confirm**
-1. Stripe integration: PaymentIntents for confirmed bookings
-2. Stripe Elements card input in booking wizard
-3. Webhook handler for payment events
-4. Booking status tied to payment success
-5. SetupIntents for pending bookings (save card, charge later)
-6. Cancellation with policy-based Stripe refunds
-- **Files:** `src/lib/stripe.ts`, `src/app/api/webhooks/stripe/route.ts`
-
-### Phase 5: Non-Member Guests & Bumping (Week 7-8)
-**Goal: Full non-member booking flow with priority system**
-1. Non-member guest flow in booking wizard
-2. PENDING status for non-member bookings >7 days out
-3. Cron job to auto-confirm pending bookings at 7-day mark
-4. FIFO bumping algorithm when members fill lodge
-5. Charge saved PaymentMethod on confirmation
-6. Bumped booking notification emails
-7. Thorough edge-case testing
-- **Files:** `src/lib/bumping.ts`, cron logic in `src/instrumentation.ts`
-
-### Phase 6: Xero Integration (Week 9-10)
-**Goal: Full bidirectional Xero sync**
-1. OAuth2 connect flow in admin panel
-2. Token storage (encrypted) and auto-refresh
-3. Membership subscription check (block booking if unpaid)
-4. Invoice creation on confirmed booking
-5. Payment recording against Xero invoice
-6. Credit note on refund
-7. Contact sync (bulk import + ongoing sync)
-8. Daily cron for membership status refresh
-- **Files:** `src/lib/xero.ts`, `src/app/api/webhooks/xero/route.ts`, `src/app/(admin)/admin/xero/page.tsx`
-
-### Phase 7: Promo Codes & Discounts (Week 11)
-**Goal: Working bee vouchers and promotional pricing**
-1. Admin UI: create/edit promo codes (type, value, limits, date range)
-2. Promo code entry in booking wizard
-3. Validation (expiry, usage limits, single-use, member-only)
-4. Discount reflected in Stripe charge and Xero invoice
-5. Redemption tracking
-- **Files:** `src/app/(admin)/admin/promo-codes/page.tsx`
-
-### Phase 8: Chore Roster (Week 12-13)
-**Goal: Auto-suggested, editable, printable chore roster**
-1. Admin UI: chore template management (name, recommended people, min age)
-2. Auto-suggest algorithm (round-robin, skip children under min age)
-3. Hut leader review/edit interface (drag-and-drop or dropdown reassignment)
-4. Confirm roster (SUGGESTED -> CONFIRMED)
-5. Printable A4 page with `@media print` CSS
-6. Email roster to guests for the day
-- **Files:** `src/lib/chore-allocator.ts`, `src/app/(admin)/admin/roster/page.tsx`, `src/app/(admin)/admin/roster/[date]/print/page.tsx`
-
-### Phase 9: Polish & Production Hardening (Week 14-15)
-**Goal: Production-ready, tested, documented**
-1. Comprehensive error handling and user-friendly error pages
-2. Admin reports (occupancy rates, revenue by period, booking trends)
-3. Email template polish (React Email)
-4. Automated database backup cron to S3
-5. GitHub Actions deploy pipeline (optional)
-6. Security audit (rate limiting, input validation, CSRF)
-7. User acceptance testing with club committee
-8. Member data import from Checkfront/Xero
+**Environment variables:** See `.env.example` for the full list.
 
 ## Key Design Decisions
 
 - **All prices in cents as integers** - prevents floating point rounding bugs with money
-- **Timezone: Pacific/Auckland (NZST/NZDT)** - all dates stored as date-only (no time) since bookings are per-night. Server timezone set to NZ
-- **JWT sessions (not database sessions)** - 410 members, simple roles. 24hr expiry with refresh. Trade-off: can't instantly revoke, but acceptable at this scale
-- **Capacity-based booking (not room-based)** - members book beds, admin assigns rooms separately if needed. Simplifies the booking engine significantly
+- **Timezone: Pacific/Auckland (NZST/NZDT)** - all dates stored as date-only (no time) since bookings are per-night
+- **JWT sessions (not database sessions)** - 410 members, simple roles. 8hr expiry. Trade-off: can't instantly revoke, but acceptable at this scale
+- **Capacity-based booking (not room-based)** - members book beds, admin assigns rooms separately if needed
 - **Season year = April to March** - if current month >= April, seasonYear = currentYear; else seasonYear = currentYear - 1
+- **Fixed advisory lock key** - `pg_advisory_xact_lock(1)` serializes all booking creation to prevent double-booking
+- **Promo codes cleaned up on cancel/bump** - PromoRedemption deleted and currentRedemptions decremented
 
 ## Verification & Testing
 
-- **Unit tests**: Pricing engine, availability calculator, bumping algorithm, chore allocator (use Vitest)
-- **Integration tests**: Booking flow end-to-end, Stripe webhook handling, Xero sync
+- **Unit tests**: Pricing engine, availability calculator, bumping algorithm, chore allocator, promo validation, rate limiter, email templates (use Vitest)
 - **Manual testing**: Each phase deployed and tested on Lightsail before proceeding
 - **UAT**: Club committee tests before go-live with real member data
 - **Stripe test mode**: Use Stripe test keys throughout development, switch to live keys at go-live
 - **Xero demo company**: Test against Xero demo org before connecting production
 
-## Development Workflow: How to Build This with Claude
+## Build History Summary
 
-### Overview
-
-The build uses a **session-per-phase** approach. Each session focuses on one build phase, runs autonomously with minimal interruption, and hands off cleanly to the next session via CLAUDE.md. Within each session, Claude uses sub-agents in parallel where modules are independent.
-
-### Step 1: Configure Claude Code for Autonomous Work
-
-Create `.claude/settings.json` in the project root to pre-approve safe commands so Claude doesn't ask permission for every npm/git/prisma operation:
-
-```json
-{
-  "permissions": {
-    "allow": [
-      "Bash(npm *)",
-      "Bash(npx *)",
-      "Bash(node *)",
-      "Bash(git add *)",
-      "Bash(git commit *)",
-      "Bash(git push *)",
-      "Bash(git status*)",
-      "Bash(git diff*)",
-      "Bash(git log*)",
-      "Bash(docker compose *)",
-      "Bash(mkdir *)",
-      "Bash(ls *)",
-      "Bash(cat *)",
-      "Bash(cp *)",
-      "Bash(mv *)",
-      "Bash(rm -rf node_modules)",
-      "Bash(rm -rf .next)",
-      "Read(*)",
-      "Edit(*)",
-      "Write(*)",
-      "Glob(*)",
-      "Grep(*)"
-    ],
-    "deny": [
-      "Bash(rm -rf /)*",
-      "Bash(rm -rf .git)*"
-    ]
-  }
-}
-```
-
-This eliminates ~90% of permission prompts. Claude can freely create files, install packages, run builds/tests, commit, and push without stopping to ask.
-
-### Step 2: Structure CLAUDE.md for Session Handoff
-
-The CLAUDE.md in the repo root is the **single source of truth** that any new Claude session reads first. It must always contain:
-
-1. **What the project is** (context, requirements) - already written
-2. **What has been built so far** - updated at end of each session
-3. **What to build next** - the next phase's scope
-4. **How to run/test it** - commands that work right now
-5. **Known issues / decisions made** - so Claude doesn't re-litigate settled decisions
-
-At the end of each build session, tell Claude: **"Update CLAUDE.md with what was built, what works, and what's next. Commit and push."**
-
-### Step 3: Add Path-Scoped Rules for Focused Context
-
-Create `.claude/rules/` directory with files that only load when Claude touches files in matching paths:
-
-**`.claude/rules/database.md`** (loads when touching `prisma/**`):
-```
-- All prices stored as integer cents (e.g. $45.50 = 4550)
-- Use Prisma transactions for any multi-table writes
-- Always add indexes on foreign keys and commonly queried fields
-- Season year: if month >= April, year = currentYear; else year = currentYear - 1
-```
-
-**`.claude/rules/api.md`** (loads when touching `src/app/api/**`):
-```
-- Validate all inputs with Zod schemas
-- Return consistent error shape: { error: string, details?: any }
-- Always check auth via auth() helper before processing
-- Admin routes must verify role === ADMIN
-```
-
-**`.claude/rules/stripe.md`** (loads when touching `src/lib/stripe*`):
-```
-- Always verify Stripe webhook signatures
-- Use PaymentIntents for confirmed bookings, SetupIntents for pending
-- Store all Stripe IDs for reconciliation
-- Handle idempotency - webhooks may fire multiple times
-```
-
-**`.claude/rules/testing.md`** (loads when touching `**/*.test.*`):
-```
-- Use Vitest for all tests
-- Test business logic (pricing, availability, bumping) thoroughly
-- Mock Stripe and Xero API calls in tests
-- Every new lib/ function should have tests before the session ends
-```
-
-### Step 4: Session-per-Phase Execution
-
-Each phase = one Claude Code session. Here's how to run each:
-
-**Starting a session (your prompt to Claude):**
-```
-Read CLAUDE.md. Build Phase [N]: [Phase Name].
-
-Build everything in this phase autonomously. Write tests for all
-business logic. Commit after each major milestone. When done, update
-CLAUDE.md with what was built, commands to run/test, and what's next.
-Push all commits.
-```
-
-That's it. Claude reads the plan, knows the full context, builds the phase, tests it, commits, and updates the handoff doc. You review the output at the end.
-
-**What Claude does autonomously within a session:**
-- Reads CLAUDE.md and the phase requirements
-- Creates files, installs dependencies
-- Writes implementation code
-- Writes tests and runs them
-- Fixes failing tests
-- Commits at milestones (e.g. "Add Prisma schema and seed", "Add auth with NextAuth")
-- Updates CLAUDE.md at the end
-- Pushes to the branch
-
-**When Claude SHOULD interrupt you:**
-- Ambiguous requirements (e.g. "should promo codes stack?")
-- Architecture decisions not covered in the plan
-- External service setup needed (e.g. "I need your Stripe test API key")
-- A persistent bug it can't resolve after 2-3 attempts
-
-### Step 5: Security & Quality Checkpoints
-
-After each phase is built, run a dedicated **review session** before moving to the next phase:
-
-```
-Read CLAUDE.md. Review Phase [N] code for:
-1. Security vulnerabilities (OWASP top 10, input validation, auth bypass)
-2. Business logic correctness (edge cases in pricing, bumping, availability)
-3. Error handling (what happens when Stripe/Xero is down?)
-4. Test coverage gaps
-5. Code quality (duplication, unnecessary complexity)
-
-Fix any issues found. Do NOT add features or refactor beyond what's needed.
-Commit fixes and push.
-```
-
-### Step 6: Parallel Sub-Agents Within Sessions
-
-Claude automatically uses sub-agents for independent work within a session. For example, during Phase 3 (Core Booking), Claude might:
-- **Agent 1**: Build the availability calculator + tests
-- **Agent 2**: Build the booking calendar UI component
-- **Agent 3**: Research the best date-range picker library for the stack
-
-These run in parallel, then Claude integrates the results. You don't need to orchestrate this - Claude decides when parallelism helps.
-
-### Recommended Session Sequence
-
-| Session | Phase | Prompt | Duration |
-|---------|-------|--------|----------|
-| 1 | Foundation | "Build Phase 1: Foundation" | ~30-45 min |
-| 1R | Review | "Review Phase 1 for security and correctness" | ~15 min |
-| 2 | Seasons & Pricing | "Build Phase 2: Seasons & Pricing" | ~20 min |
-| 3 | Core Booking | "Build Phase 3: Core Booking" | ~45 min |
-| 3R | Review | "Review Phases 2-3 for security and correctness" | ~15 min |
-| 4 | Payments | "Build Phase 4: Stripe Payments" | ~30 min |
-| 4R | Review | "Review Phase 4 - payment security is critical" | ~15 min |
-| 5 | Non-Member + Bumping | "Build Phase 5: Non-Member Guests & Bumping" | ~30 min |
-| 5R | Review | "Review Phase 5 bumping logic edge cases" | ~15 min |
-| 6 | Xero Integration | "Build Phase 6: Xero Integration" | ~30 min |
-| 7 | Promo Codes | "Build Phase 7: Promo Codes & Discounts" | ~20 min |
-| 8 | Chore Roster | "Build Phase 8: Chore Roster" | ~30 min |
-| 8R | Review | "Full security and integration review of all phases" | ~20 min |
-| 9 | Polish | "Build Phase 9: Polish & Production Hardening" | ~30 min |
-
-**Total: ~15 sessions, mostly hands-off.** You review output between sessions and provide any missing info (API keys, domain name, etc).
-
-### What You Need to Provide (Once, Before Starting)
-
-Before Phase 1, gather these. Claude will ask for them when needed but having them ready avoids interruptions:
-
-1. **Domain name** for the booking system
-2. **Stripe account** - sign up at stripe.com, get test API keys from dashboard
-3. **Xero app** - register at developer.xero.com, get client ID and secret
-4. **AWS SES** - verify your sending domain in SES console (or use Resend as alternative - simpler setup)
-5. **Lightsail instance** - provision a 2GB Ubuntu 24.04 instance, attach a static IP, note the IP address
-6. **Club logo** (optional) - PNG/SVG for the booking site header
-
-### Recovery: When Things Go Wrong
-
-If a session produces broken code:
-```
-Read CLAUDE.md. The last session left the build in a broken state.
-Run `npm run build` and `npm test` to see what's failing.
-Fix all errors without changing working functionality.
-Commit and push when green.
-```
-
-If you want to restart a phase from scratch:
-```
-Read CLAUDE.md. Revert Phase [N] commits and rebuild Phase [N]
-from the beginning using a different approach for [specific issue].
-```
-
-### Hooks for Auto-Formatting (Optional)
-
-Add to `.claude/settings.json` to auto-format code after every edit:
-
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "npx prettier --write \"$CLAUDE_FILE_PATH\" 2>/dev/null || true"
-          }
-        ]
-      },
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "npx prettier --write \"$CLAUDE_FILE_PATH\" 2>/dev/null || true"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1, 4, 5, 6, and 9 completed 2026-04-06. 411 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
