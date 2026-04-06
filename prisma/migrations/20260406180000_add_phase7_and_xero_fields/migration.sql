@@ -39,6 +39,8 @@ DO $$ BEGIN
   ) THEN
     -- Fix any invalid enum values from the old TEXT column
     UPDATE "ChoreTemplate" SET "timeOfDay" = 'ANYTIME' WHERE "timeOfDay" NOT IN ('MORNING', 'EVENING', 'ANYTIME');
+    -- Drop the old default before type conversion
+    ALTER TABLE "ChoreTemplate" ALTER COLUMN "timeOfDay" DROP DEFAULT;
     -- Convert TEXT column to enum
     ALTER TABLE "ChoreTemplate" ALTER COLUMN "timeOfDay" TYPE "ChoreTimeOfDay" USING "timeOfDay"::"ChoreTimeOfDay";
     ALTER TABLE "ChoreTemplate" ALTER COLUMN "timeOfDay" SET DEFAULT 'ANYTIME'::"ChoreTimeOfDay";
