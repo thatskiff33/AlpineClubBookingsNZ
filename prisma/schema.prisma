@@ -683,6 +683,20 @@ model FamilyGroupJoinRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Xero Account Mappings (XAM-01)
+// ---------------------------------------------------------------------------
+
+model XeroAccountMapping {
+  id        String   @id @default(cuid())
+  key       String   @unique  // hutFeesIncome | hutFeeRefunds | stripeBankAccount | stripeFees | subscriptionIncome
+  code      String?           // null = not configured, use application default
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
+}
+
+// ---------------------------------------------------------------------------
 // Account Deletion Requests (F-COMP-04)
 // ---------------------------------------------------------------------------
 

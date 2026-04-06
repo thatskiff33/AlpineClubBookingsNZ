@@ -281,6 +281,23 @@ async function main() {
   });
   console.log(`Season seeded: ${summer2026.name}`);
 
+  // Seed Xero account mappings with current defaults (XAM-01)
+  const accountMappings = [
+    { key: "hutFeesIncome", code: "200" },
+    { key: "hutFeeRefunds", code: "200" },
+    { key: "stripeBankAccount", code: "606" },
+    { key: "stripeFees", code: null },
+    { key: "subscriptionIncome", code: "203" },
+  ];
+  for (const mapping of accountMappings) {
+    await prisma.xeroAccountMapping.upsert({
+      where: { key: mapping.key },
+      update: {},
+      create: mapping,
+    });
+  }
+  console.log("Xero account mappings seeded");
+
   console.log("Seeding complete!");
 }
 
