@@ -11,6 +11,9 @@ import { AgeTier, AgeRestriction } from "@prisma/client";
 // Types
 // ---------------------------------------------------------------------------
 
+export type ChoreTimeOfDay = "MORNING" | "EVENING" | "ANYTIME";
+export type ChoreFrequencyMode = "DAILY" | "EVERY_X_DAYS" | "SPECIFIC_DAYS";
+
 export interface ChoreTemplateInput {
   id: string;
   name: string;
@@ -20,6 +23,10 @@ export interface ChoreTemplateInput {
   ageRestriction: AgeRestriction;
   minAge: number;
   sortOrder: number;
+  timeOfDay?: ChoreTimeOfDay;
+  frequencyMode?: ChoreFrequencyMode;
+  frequencyDays?: number | null;
+  frequencyDaysOfWeek?: number[];
 }
 
 export interface GuestInput {
@@ -164,6 +171,51 @@ function buildHistoryDateMap(
 }
 
 // ---------------------------------------------------------------------------
+// Frequency Filtering
+// ---------------------------------------------------------------------------
+
+/**
+ * Filter chores by their frequency settings.
+ * Returns only chores that are "due" on the given date.
+ *
+ * - DAILY: always included
+ * - EVERY_X_DAYS: included only if last rostered >= X days ago (or never rostered)
+ * - SPECIFIC_DAYS: included only if currentDate's ISO day-of-week is in the array
+ */
+export function filterChoresByFrequency(
+  chores: ChoreTemplateInput[],
+  choreLastRosteredDates: Map<string, Date>,
+  currentDate: Date
+): ChoreTemplateInput[] {
+  const currentDayOfWeek = currentDate.getDay() === 0 ? 7 : currentDate.getDay(); // ISO: 1=Mon, 7=Sun
+
+  return chores.filter((chore) => {
+    const mode = chore.frequencyMode ?? "DAILY";
+
+    if (mode === "DAILY") return true;
+
+    if (mode === "EVERY_X_DAYS") {
+      const interval = chore.frequencyDays;
+      if (!interval || interval < 2) return true; // fallback to daily
+      const lastDate = choreLastRosteredDates.get(chore.id);
+      if (!lastDate) return true; // never rostered, include it
+      const daysSince = Math.floor(
+        (currentDate.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24)
+      );
+      return daysSince >= interval;
+    }
+
+    if (mode === "SPECIFIC_DAYS") {
+      const days = chore.frequencyDaysOfWeek;
+      if (!days || days.length === 0) return true; // no days specified, fallback to daily
+      return days.includes(currentDayOfWeek);
+    }
+
+    return true;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main Allocation Algorithm
 // ---------------------------------------------------------------------------
 
@@ -224,7 +276,7 @@ export function allocateChores(
     if (eligible.length === 0) continue;
 
     // Sort eligible guests by: fewest assignments first, then prefer those
-    // who haven't done this chore recently
+    // who haven't done this chore recently, then family grouping
     const guestHistory = historySet;
     const guestHistoryDates = historyDates;
 
@@ -256,7 +308,31 @@ export function allocateChores(
       return a.id.localeCompare(b.id);
     });
 
+    /**
+     * Family grouping helper: after picking the first guest, re-sort remaining
+     * candidates to prefer same-booking guests (secondary to fairness).
+     */
+    function familySortRemaining(
+      remaining: GuestInput[],
+      firstBookingId: string
+    ): GuestInput[] {
+      return [...remaining].sort((a, b) => {
+        // Primary: fewest total assignments (preserve fairness)
+        const countDiff =
+          (assignmentCount.get(a.id) ?? 0) - (assignmentCount.get(b.id) ?? 0);
+        if (countDiff !== 0) return countDiff;
+
+        // Secondary: prefer same booking as first picked guest
+        const aFamily = a.bookingId === firstBookingId ? 0 : 1;
+        const bFamily = b.bookingId === firstBookingId ? 0 : 1;
+        if (aFamily !== bFamily) return aFamily - bFamily;
+
+        return a.id.localeCompare(b.id);
+      });
+    }
+
     // For MIXED_PREFERRED, try to interleave adults and children/youth
+    // with family grouping preference
     const assigned: GuestInput[] = [];
     if (
       chore.ageRestriction === "MIXED_PREFERRED" &&
@@ -265,32 +341,45 @@ export function allocateChores(
       const adults = sorted.filter((g) => g.ageTier === "ADULT");
       const nonAdults = sorted.filter((g) => g.ageTier !== "ADULT");
 
-      // Alternate: adult, non-adult, adult, non-adult...
-      let ai = 0,
-        ni = 0;
-      let pickAdult = true;
-      while (assigned.length < needed && (ai < adults.length || ni < nonAdults.length)) {
-        if (pickAdult && ai < adults.length) {
-          assigned.push(adults[ai++]);
-        } else if (!pickAdult && ni < nonAdults.length) {
-          assigned.push(nonAdults[ni++]);
-        } else if (ai < adults.length) {
-          assigned.push(adults[ai++]);
-        } else if (ni < nonAdults.length) {
-          assigned.push(nonAdults[ni++]);
+      // Pick first adult
+      if (adults.length > 0) {
+        assigned.push(adults[0]);
+        // Prefer non-adults from same booking as first adult
+        const familyNonAdults = familySortRemaining(nonAdults, adults[0].bookingId);
+        const familyAdults = adults.slice(1);
+
+        let ni = 0;
+        let ai = 0;
+        let pickNonAdult = true;
+        while (assigned.length < needed && (ni < familyNonAdults.length || ai < familyAdults.length)) {
+          if (pickNonAdult && ni < familyNonAdults.length) {
+            assigned.push(familyNonAdults[ni++]);
+          } else if (!pickNonAdult && ai < familyAdults.length) {
+            assigned.push(familyAdults[ai++]);
+          } else if (ni < familyNonAdults.length) {
+            assigned.push(familyNonAdults[ni++]);
+          } else if (ai < familyAdults.length) {
+            assigned.push(familyAdults[ai++]);
+          }
+          pickNonAdult = !pickNonAdult;
         }
-        pickAdult = !pickAdult;
+      } else {
+        // No adults, just fill from non-adults
+        for (const g of nonAdults) {
+          if (assigned.length >= needed) break;
+          assigned.push(g);
+        }
       }
     } else if (chore.ageRestriction === "ADULT_SUPERVISED") {
-      // Ensure at least one adult is included
+      // Ensure at least one adult is included, prefer same-booking members
       const adults = sorted.filter((g) => g.ageTier === "ADULT");
-      const others = sorted.filter((g) => g.ageTier !== "ADULT");
 
       if (adults.length > 0) {
         assigned.push(adults[0]);
-        // Fill remaining slots from combined pool (excluding the assigned adult)
+        // Fill remaining slots preferring same booking
         const remaining = sorted.filter((g) => g.id !== adults[0].id);
-        for (const g of remaining) {
+        const familyRemaining = familySortRemaining(remaining, adults[0].bookingId);
+        for (const g of familyRemaining) {
           if (assigned.length >= needed) break;
           assigned.push(g);
         }
@@ -302,10 +391,22 @@ export function allocateChores(
         }
       }
     } else {
-      // ANY or ADULTS_ONLY - just take from sorted list
-      for (const g of sorted) {
-        if (assigned.length >= needed) break;
-        assigned.push(g);
+      // ANY or ADULTS_ONLY - take first, then prefer family for remaining slots
+      if (needed >= 2 && sorted.length >= 2) {
+        assigned.push(sorted[0]);
+        const remaining = familySortRemaining(
+          sorted.slice(1),
+          sorted[0].bookingId
+        );
+        for (const g of remaining) {
+          if (assigned.length >= needed) break;
+          assigned.push(g);
+        }
+      } else {
+        for (const g of sorted) {
+          if (assigned.length >= needed) break;
+          assigned.push(g);
+        }
       }
     }
 

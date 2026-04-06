@@ -14,6 +14,11 @@ export default async function AuthenticatedLayout({
     redirect("/login");
   }
 
+  // LODGE accounts can only access /lodge/* routes
+  if (session.user.role === "LODGE") {
+    redirect("/lodge/kiosk");
+  }
+
   // Check DB directly for force password change (JWT may be stale)
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },

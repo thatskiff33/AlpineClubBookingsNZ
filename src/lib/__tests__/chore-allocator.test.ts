@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   allocateChores,
+  filterChoresByFrequency,
   isEligibleForChore,
   meetsMinAge,
   scalePeopleCount,
@@ -24,6 +25,10 @@ function makeChore(overrides: Partial<ChoreTemplateInput> = {}): ChoreTemplateIn
     ageRestriction: overrides.ageRestriction ?? "ANY",
     minAge: overrides.minAge ?? 0,
     sortOrder: overrides.sortOrder ?? 1,
+    timeOfDay: overrides.timeOfDay,
+    frequencyMode: overrides.frequencyMode,
+    frequencyDays: overrides.frequencyDays,
+    frequencyDaysOfWeek: overrides.frequencyDaysOfWeek,
   };
 }
 
@@ -551,5 +556,222 @@ describe("allocateChores - edge cases", () => {
     const result = allocateChores(chores, guests, []);
     // Only any-chore should be assigned
     expect(result.every((a) => a.choreTemplateId === "any-chore")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// filterChoresByFrequency
+// ---------------------------------------------------------------------------
+
+describe("filterChoresByFrequency", () => {
+  it("DAILY chores are always included", () => {
+    const chores = [
+      makeChore({ id: "c1", frequencyMode: "DAILY" }),
+    ];
+    const result = filterChoresByFrequency(chores, new Map(), new Date("2026-04-06"));
+    expect(result).toHaveLength(1);
+  });
+
+  it("EVERY_X_DAYS chore included when never rostered", () => {
+    const chores = [
+      makeChore({ id: "c1", frequencyMode: "EVERY_X_DAYS", frequencyDays: 3 }),
+    ];
+    const result = filterChoresByFrequency(chores, new Map(), new Date("2026-04-06"));
+    expect(result).toHaveLength(1);
+  });
+
+  it("EVERY_X_DAYS chore excluded when rostered within interval", () => {
+    const chores = [
+      makeChore({ id: "c1", frequencyMode: "EVERY_X_DAYS", frequencyDays: 3 }),
+    ];
+    // Last rostered 1 day ago
+    const lastDates = new Map([["c1", new Date("2026-04-05")]]);
+    const result = filterChoresByFrequency(chores, lastDates, new Date("2026-04-06"));
+    expect(result).toHaveLength(0);
+  });
+
+  it("EVERY_X_DAYS chore included when interval has elapsed", () => {
+    const chores = [
+      makeChore({ id: "c1", frequencyMode: "EVERY_X_DAYS", frequencyDays: 3 }),
+    ];
+    // Last rostered 3 days ago
+    const lastDates = new Map([["c1", new Date("2026-04-03")]]);
+    const result = filterChoresByFrequency(chores, lastDates, new Date("2026-04-06"));
+    expect(result).toHaveLength(1);
+  });
+
+  it("SPECIFIC_DAYS chore included on matching day", () => {
+    const chores = [
+      makeChore({ id: "c1", frequencyMode: "SPECIFIC_DAYS", frequencyDaysOfWeek: [1, 4] }), // Mon, Thu
+    ];
+    // 2026-04-06 is a Monday (ISO day 1)
+    const result = filterChoresByFrequency(chores, new Map(), new Date("2026-04-06"));
+    expect(result).toHaveLength(1);
+  });
+
+  it("SPECIFIC_DAYS chore excluded on non-matching day", () => {
+    const chores = [
+      makeChore({ id: "c1", frequencyMode: "SPECIFIC_DAYS", frequencyDaysOfWeek: [4, 7] }), // Thu, Sun
+    ];
+    // 2026-04-06 is a Monday (ISO day 1)
+    const result = filterChoresByFrequency(chores, new Map(), new Date("2026-04-06"));
+    expect(result).toHaveLength(0);
+  });
+
+  it("SPECIFIC_DAYS with Sunday (day 7) works correctly", () => {
+    const chores = [
+      makeChore({ id: "c1", frequencyMode: "SPECIFIC_DAYS", frequencyDaysOfWeek: [7] }), // Sun
+    ];
+    // 2026-04-05 is a Sunday
+    const result = filterChoresByFrequency(chores, new Map(), new Date("2026-04-05"));
+    expect(result).toHaveLength(1);
+  });
+
+  it("chores without frequencyMode default to DAILY", () => {
+    const chores = [makeChore({ id: "c1" })]; // no frequencyMode set
+    const result = filterChoresByFrequency(chores, new Map(), new Date("2026-04-06"));
+    expect(result).toHaveLength(1);
+  });
+
+  it("mixed frequency chores filter correctly", () => {
+    const chores = [
+      makeChore({ id: "daily", frequencyMode: "DAILY" }),
+      makeChore({ id: "every3", frequencyMode: "EVERY_X_DAYS", frequencyDays: 3 }),
+      makeChore({ id: "monOnly", frequencyMode: "SPECIFIC_DAYS", frequencyDaysOfWeek: [1] }),
+    ];
+    // Last rostered every3 yesterday, today is Monday 2026-04-06
+    const lastDates = new Map([["every3", new Date("2026-04-05")]]);
+    const result = filterChoresByFrequency(chores, lastDates, new Date("2026-04-06"));
+    const ids = result.map((c) => c.id);
+    expect(ids).toContain("daily");
+    expect(ids).not.toContain("every3");
+    expect(ids).toContain("monOnly");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// allocateChores - family group allocation
+// ---------------------------------------------------------------------------
+
+describe("allocateChores - family grouping", () => {
+  it("prefers same-booking guests when chore needs 2 people", () => {
+    const chores = [
+      makeChore({ id: "c1", recommendedPeopleMin: 2, recommendedPeopleMax: 2 }),
+    ];
+    const guests = [
+      makeGuest({ id: "fam1-a", bookingId: "booking-A" }),
+      makeGuest({ id: "fam1-b", bookingId: "booking-A" }),
+      makeGuest({ id: "fam2-a", bookingId: "booking-B" }),
+      makeGuest({ id: "fam2-b", bookingId: "booking-B" }),
+    ];
+    const result = allocateChores(chores, guests, []);
+    expect(result).toHaveLength(2);
+    // Both assigned should be from the same booking
+    expect(result[0].bookingId).toBe(result[1].bookingId);
+  });
+
+  it("family grouping does not override round-robin fairness", () => {
+    // Two chores each needing 1 person -- first two guests from different bookings
+    // should each get one chore (round-robin) rather than both going to same family
+    const chores = [
+      makeChore({ id: "c1", sortOrder: 1, recommendedPeopleMin: 1, recommendedPeopleMax: 1 }),
+      makeChore({ id: "c2", sortOrder: 2, recommendedPeopleMin: 1, recommendedPeopleMax: 1 }),
+    ];
+    const guests = [
+      makeGuest({ id: "fam1-a", bookingId: "booking-A" }),
+      makeGuest({ id: "fam2-a", bookingId: "booking-B" }),
+    ];
+    const result = allocateChores(chores, guests, []);
+    expect(result).toHaveLength(2);
+    // Each guest should have exactly 1 chore (round-robin fairness)
+    const g1Chores = result.filter((a) => a.bookingGuestId === "fam1-a");
+    const g2Chores = result.filter((a) => a.bookingGuestId === "fam2-a");
+    expect(g1Chores).toHaveLength(1);
+    expect(g2Chores).toHaveLength(1);
+  });
+
+  it("family grouping does not override age restrictions", () => {
+    const chores = [
+      makeChore({
+        id: "c1",
+        ageRestriction: "ADULTS_ONLY",
+        minAge: 18,
+        recommendedPeopleMin: 2,
+        recommendedPeopleMax: 2,
+      }),
+    ];
+    const guests = [
+      makeGuest({ id: "adult1", bookingId: "booking-A", ageTier: "ADULT" }),
+      makeGuest({ id: "child1", bookingId: "booking-A", ageTier: "CHILD" }),
+      makeGuest({ id: "adult2", bookingId: "booking-B", ageTier: "ADULT" }),
+    ];
+    const result = allocateChores(chores, guests, []);
+    expect(result).toHaveLength(2);
+    // Child should NOT be assigned despite being in same family
+    const assignedIds = result.map((a) => a.bookingGuestId);
+    expect(assignedIds).not.toContain("child1");
+    expect(assignedIds).toContain("adult1");
+    expect(assignedIds).toContain("adult2");
+  });
+
+  it("MIXED_PREFERRED prefers adult+child from same booking", () => {
+    const chores = [
+      makeChore({
+        id: "c1",
+        ageRestriction: "MIXED_PREFERRED",
+        minAge: 0,
+        recommendedPeopleMin: 2,
+        recommendedPeopleMax: 2,
+      }),
+    ];
+    const guests = [
+      makeGuest({ id: "adult-A", bookingId: "booking-A", ageTier: "ADULT" }),
+      makeGuest({ id: "child-A", bookingId: "booking-A", ageTier: "CHILD" }),
+      makeGuest({ id: "adult-B", bookingId: "booking-B", ageTier: "ADULT" }),
+      makeGuest({ id: "child-B", bookingId: "booking-B", ageTier: "CHILD" }),
+    ];
+    const result = allocateChores(chores, guests, []);
+    expect(result).toHaveLength(2);
+    // Should pick adult + child from same booking
+    expect(result[0].bookingId).toBe(result[1].bookingId);
+    const tiers = result.map(
+      (a) => guests.find((g) => g.id === a.bookingGuestId)!.ageTier
+    );
+    expect(tiers).toContain("ADULT");
+    expect(tiers).toContain("CHILD");
+  });
+
+  it("ADULT_SUPERVISED prefers supervising adult from same booking", () => {
+    const chores = [
+      makeChore({
+        id: "c1",
+        ageRestriction: "ADULT_SUPERVISED",
+        minAge: 7,
+        recommendedPeopleMin: 2,
+        recommendedPeopleMax: 2,
+      }),
+    ];
+    const guests = [
+      makeGuest({ id: "adult-A", bookingId: "booking-A", ageTier: "ADULT" }),
+      makeGuest({ id: "youth-A", bookingId: "booking-A", ageTier: "YOUTH" }),
+      makeGuest({ id: "adult-B", bookingId: "booking-B", ageTier: "ADULT" }),
+      makeGuest({ id: "youth-B", bookingId: "booking-B", ageTier: "YOUTH" }),
+    ];
+    const result = allocateChores(chores, guests, []);
+    expect(result).toHaveLength(2);
+    // Adult and youth should be from same booking
+    expect(result[0].bookingId).toBe(result[1].bookingId);
+  });
+
+  it("single-person chores are unaffected by family grouping", () => {
+    const chores = [
+      makeChore({ id: "c1", recommendedPeopleMin: 1, recommendedPeopleMax: 1 }),
+    ];
+    const guests = [
+      makeGuest({ id: "g1", bookingId: "booking-A" }),
+      makeGuest({ id: "g2", bookingId: "booking-A" }),
+    ];
+    const result = allocateChores(chores, guests, []);
+    expect(result).toHaveLength(1);
   });
 });

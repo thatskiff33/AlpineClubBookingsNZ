@@ -13,6 +13,10 @@ const updateSchema = z.object({
   conditionalNote: z.string().nullable().optional(),
   minAge: z.number().int().min(0).optional(),
   sortOrder: z.number().int().optional(),
+  timeOfDay: z.enum(["MORNING", "EVENING", "ANYTIME"]).optional(),
+  frequencyMode: z.enum(["DAILY", "EVERY_X_DAYS", "SPECIFIC_DAYS"]).optional(),
+  frequencyDays: z.number().int().min(2).nullable().optional(),
+  frequencyDaysOfWeek: z.array(z.number().int().min(1).max(7)).optional(),
   active: z.boolean().optional(),
 })
 

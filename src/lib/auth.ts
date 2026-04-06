@@ -13,13 +13,13 @@ declare module "next-auth" {
       id: string;
       email: string;
       name: string;
-      role: "MEMBER" | "ADMIN";
+      role: "MEMBER" | "ADMIN" | "LODGE";
       forcePasswordChange: boolean;
       isEmailVerified: boolean;
     };
   }
   interface User {
-    role: "MEMBER" | "ADMIN";
+    role: "MEMBER" | "ADMIN" | "LODGE";
     forcePasswordChange: boolean;
     isEmailVerified: boolean;
   }
@@ -78,11 +78,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.id = user.id as string;
         token.forcePasswordChange = user.forcePasswordChange;
         token.isEmailVerified = user.isEmailVerified;
+        // LODGE accounts get 30-day sessions for shared iPad
+        if (user.role === "LODGE") {
+          token.exp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+        }
       }
       return token;
     },
     async session({ session, token }) {
-      session.user.role = token.role as "MEMBER" | "ADMIN";
+      session.user.role = token.role as "MEMBER" | "ADMIN" | "LODGE";
       session.user.id = token.id as string;
       session.user.forcePasswordChange = token.forcePasswordChange as boolean;
       session.user.isEmailVerified = token.isEmailVerified as boolean;

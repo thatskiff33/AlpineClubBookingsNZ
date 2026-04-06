@@ -17,6 +17,7 @@ datasource db {
 enum Role {
   MEMBER
   ADMIN
+  LODGE
 }
 
 enum AgeTier {
@@ -71,6 +72,18 @@ enum AgeRestriction {
   ADULTS_ONLY
   MIXED_PREFERRED
   ADULT_SUPERVISED
+}
+
+enum ChoreTimeOfDay {
+  MORNING
+  EVENING
+  ANYTIME
+}
+
+enum ChoreFrequencyMode {
+  DAILY
+  EVERY_X_DAYS
+  SPECIFIC_DAYS
 }
 
 // ---------------------------------------------------------------------------
@@ -348,19 +361,23 @@ model PromoRedemption {
 // ---------------------------------------------------------------------------
 
 model ChoreTemplate {
-  id                   String         @id @default(cuid())
+  id                   String             @id @default(cuid())
   name                 String
   description          String?
-  recommendedPeopleMin Int            @default(1)
-  recommendedPeopleMax Int            @default(2)
-  isEssential          Boolean        @default(false)
-  ageRestriction       AgeRestriction @default(ANY)
+  recommendedPeopleMin Int                @default(1)
+  recommendedPeopleMax Int                @default(2)
+  isEssential          Boolean            @default(false)
+  ageRestriction       AgeRestriction     @default(ANY)
   conditionalNote      String?
-  minAge               Int            @default(0)
-  sortOrder            Int            @default(0)
-  active               Boolean        @default(true)
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
+  minAge               Int                @default(0)
+  sortOrder            Int                @default(0)
+  timeOfDay            ChoreTimeOfDay     @default(ANYTIME)
+  frequencyMode        ChoreFrequencyMode @default(DAILY)
+  frequencyDays        Int?
+  frequencyDaysOfWeek  Int[]
+  active               Boolean            @default(true)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 
   // Relations
   assignments ChoreAssignment[]

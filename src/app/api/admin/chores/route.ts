@@ -13,6 +13,10 @@ const choreSchema = z.object({
   conditionalNote: z.string().nullable().optional().default(null),
   minAge: z.number().int().min(0).default(0),
   sortOrder: z.number().int().default(0),
+  timeOfDay: z.enum(["MORNING", "EVENING", "ANYTIME"]).default("ANYTIME"),
+  frequencyMode: z.enum(["DAILY", "EVERY_X_DAYS", "SPECIFIC_DAYS"]).default("DAILY"),
+  frequencyDays: z.number().int().min(2).nullable().optional().default(null),
+  frequencyDaysOfWeek: z.array(z.number().int().min(1).max(7)).optional().default([]),
   active: z.boolean().default(true),
 })
 

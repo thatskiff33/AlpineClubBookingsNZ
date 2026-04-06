@@ -20,6 +20,10 @@ interface ChoreTemplate {
   conditionalNote: string | null
   minAge: number
   sortOrder: number
+  timeOfDay: "MORNING" | "EVENING" | "ANYTIME"
+  frequencyMode: "DAILY" | "EVERY_X_DAYS" | "SPECIFIC_DAYS"
+  frequencyDays: number | null
+  frequencyDaysOfWeek: number[]
   active: boolean
 }
 
@@ -29,6 +33,20 @@ const AGE_RESTRICTION_LABELS: Record<string, string> = {
   MIXED_PREFERRED: "Mixed (adult + child preferred)",
   ADULT_SUPERVISED: "Adult supervised",
 }
+
+const TIME_OF_DAY_LABELS: Record<string, string> = {
+  MORNING: "Morning",
+  EVENING: "Evening",
+  ANYTIME: "Anytime",
+}
+
+const FREQUENCY_MODE_LABELS: Record<string, string> = {
+  DAILY: "Daily",
+  EVERY_X_DAYS: "Every X days",
+  SPECIFIC_DAYS: "Specific days of week",
+}
+
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 export default function ChoresPage() {
   const [chores, setChores] = useState<ChoreTemplate[]>([])
@@ -48,6 +66,10 @@ export default function ChoresPage() {
   const [conditionalNote, setConditionalNote] = useState("")
   const [minAge, setMinAge] = useState(0)
   const [sortOrder, setSortOrder] = useState(0)
+  const [timeOfDay, setTimeOfDay] = useState<ChoreTemplate["timeOfDay"]>("ANYTIME")
+  const [frequencyMode, setFrequencyMode] = useState<ChoreTemplate["frequencyMode"]>("DAILY")
+  const [frequencyDays, setFrequencyDays] = useState<number | null>(null)
+  const [frequencyDaysOfWeek, setFrequencyDaysOfWeek] = useState<number[]>([])
   const [active, setActive] = useState(true)
 
   const fetchChores = useCallback(async () => {
@@ -77,6 +99,10 @@ export default function ChoresPage() {
     setConditionalNote("")
     setMinAge(0)
     setSortOrder(0)
+    setTimeOfDay("ANYTIME")
+    setFrequencyMode("DAILY")
+    setFrequencyDays(null)
+    setFrequencyDaysOfWeek([])
     setActive(true)
     setEditingId(null)
     setShowForm(false)
@@ -94,6 +120,10 @@ export default function ChoresPage() {
     setConditionalNote(chore.conditionalNote ?? "")
     setMinAge(chore.minAge)
     setSortOrder(chore.sortOrder)
+    setTimeOfDay(chore.timeOfDay)
+    setFrequencyMode(chore.frequencyMode)
+    setFrequencyDays(chore.frequencyDays)
+    setFrequencyDaysOfWeek(chore.frequencyDaysOfWeek)
     setActive(chore.active)
     setShowForm(true)
   }
@@ -113,6 +143,10 @@ export default function ChoresPage() {
       conditionalNote: conditionalNote || null,
       minAge,
       sortOrder,
+      timeOfDay,
+      frequencyMode,
+      frequencyDays: frequencyMode === "EVERY_X_DAYS" ? frequencyDays : null,
+      frequencyDaysOfWeek: frequencyMode === "SPECIFIC_DAYS" ? frequencyDaysOfWeek : [],
       active,
     }
 
@@ -295,6 +329,75 @@ export default function ChoresPage() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="timeOfDay">Time of Day</Label>
+                  <select
+                    id="timeOfDay"
+                    value={timeOfDay}
+                    onChange={(e) => setTimeOfDay(e.target.value as ChoreTemplate["timeOfDay"])}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                  >
+                    {Object.entries(TIME_OF_DAY_LABELS).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="frequencyMode">Frequency</Label>
+                  <select
+                    id="frequencyMode"
+                    value={frequencyMode}
+                    onChange={(e) => setFrequencyMode(e.target.value as ChoreTemplate["frequencyMode"])}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                  >
+                    {Object.entries(FREQUENCY_MODE_LABELS).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                {frequencyMode === "EVERY_X_DAYS" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="frequencyDays">Every X Days</Label>
+                    <Input
+                      id="frequencyDays"
+                      type="number"
+                      min={2}
+                      value={frequencyDays ?? 2}
+                      onChange={(e) => setFrequencyDays(parseInt(e.target.value) || 2)}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {frequencyMode === "SPECIFIC_DAYS" && (
+                <div className="space-y-2">
+                  <Label>Days of Week</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {DAY_LABELS.map((label, idx) => {
+                      const dayNum = idx + 1
+                      return (
+                        <label key={dayNum} className="flex items-center space-x-1.5">
+                          <input
+                            type="checkbox"
+                            checked={frequencyDaysOfWeek.includes(dayNum)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setFrequencyDaysOfWeek([...frequencyDaysOfWeek, dayNum].sort())
+                              } else {
+                                setFrequencyDaysOfWeek(frequencyDaysOfWeek.filter((d) => d !== dayNum))
+                              }
+                            }}
+                            className="rounded border-input"
+                          />
+                          <span className="text-sm">{label}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="flex items-center space-x-6">
                 <div className="flex items-center space-x-2">
                   <input
@@ -338,77 +441,94 @@ export default function ChoresPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12">#</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>People</TableHead>
-                  <TableHead>Age Rule</TableHead>
-                  <TableHead>Essential</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {chores.map((chore) => (
-                  <TableRow key={chore.id} className={!chore.active ? "opacity-50" : ""}>
-                    <TableCell className="font-mono text-muted-foreground">
-                      {chore.sortOrder}
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <span className="font-medium">{chore.name}</span>
-                        {chore.conditionalNote && (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {chore.conditionalNote}
-                          </p>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {chore.recommendedPeopleMin === chore.recommendedPeopleMax
-                        ? chore.recommendedPeopleMin
-                        : `${chore.recommendedPeopleMin}-${chore.recommendedPeopleMax}`}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="text-xs">
-                        {AGE_RESTRICTION_LABELS[chore.ageRestriction]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      {chore.isEssential ? (
-                        <Badge>Essential</Badge>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">Optional</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={chore.active ? "default" : "secondary"}>
-                        {chore.active ? "Active" : "Inactive"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end space-x-2">
-                        <Button variant="outline" size="sm" onClick={() => handleToggleActive(chore)}>
-                          {chore.active ? "Deactivate" : "Activate"}
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => startEdit(chore)}>
-                          Edit
-                        </Button>
-                        <Button variant="destructive" size="sm" onClick={() => handleDelete(chore.id)}>
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+        <>{(["MORNING", "EVENING", "ANYTIME"] as const).map((tod) => {
+          const grouped = chores.filter((c) => c.timeOfDay === tod)
+          if (grouped.length === 0) return null
+          return (
+            <Card key={tod}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg">{TIME_OF_DAY_LABELS[tod]} Chores</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">#</TableHead>
+                      <TableHead>Name</TableHead>
+                      <TableHead>People</TableHead>
+                      <TableHead>Age Rule</TableHead>
+                      <TableHead>Frequency</TableHead>
+                      <TableHead>Essential</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {grouped.map((chore) => (
+                      <TableRow key={chore.id} className={!chore.active ? "opacity-50" : ""}>
+                        <TableCell className="font-mono text-muted-foreground">
+                          {chore.sortOrder}
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <span className="font-medium">{chore.name}</span>
+                            {chore.conditionalNote && (
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {chore.conditionalNote}
+                              </p>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {chore.recommendedPeopleMin === chore.recommendedPeopleMax
+                            ? chore.recommendedPeopleMin
+                            : `${chore.recommendedPeopleMin}-${chore.recommendedPeopleMax}`}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">
+                            {AGE_RESTRICTION_LABELS[chore.ageRestriction]}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">
+                            {chore.frequencyMode === "DAILY" && "Daily"}
+                            {chore.frequencyMode === "EVERY_X_DAYS" && `Every ${chore.frequencyDays}d`}
+                            {chore.frequencyMode === "SPECIFIC_DAYS" && chore.frequencyDaysOfWeek.map((d) => DAY_LABELS[d - 1]).join(", ")}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          {chore.isEssential ? (
+                            <Badge>Essential</Badge>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">Optional</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={chore.active ? "default" : "secondary"}>
+                            {chore.active ? "Active" : "Inactive"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end space-x-2">
+                            <Button variant="outline" size="sm" onClick={() => handleToggleActive(chore)}>
+                              {chore.active ? "Deactivate" : "Activate"}
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => startEdit(chore)}>
+                              Edit
+                            </Button>
+                            <Button variant="destructive" size="sm" onClick={() => handleDelete(chore.id)}>
+                              Delete
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )
+        })}</>
       )}
     </div>
   )

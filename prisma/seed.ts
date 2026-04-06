@@ -37,6 +37,10 @@ async function main() {
     conditionalNote: string | null;
     minAge: number;
     sortOrder: number;
+    timeOfDay: "MORNING" | "EVENING" | "ANYTIME";
+    frequencyMode: "DAILY" | "EVERY_X_DAYS" | "SPECIFIC_DAYS";
+    frequencyDays: number | null;
+    frequencyDaysOfWeek: number[];
   }> = [
     {
       name: "Breakfast",
@@ -44,6 +48,7 @@ async function main() {
       recommendedPeopleMin: 2, recommendedPeopleMax: 2,
       isEssential: true, ageRestriction: "ADULTS_ONLY",
       conditionalNote: null, minAge: 18, sortOrder: 1,
+      timeOfDay: "MORNING", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Fridge",
@@ -51,6 +56,7 @@ async function main() {
       recommendedPeopleMin: 1, recommendedPeopleMax: 1,
       isEssential: false, ageRestriction: "ADULTS_ONLY",
       conditionalNote: "Essential if closing down lodge", minAge: 18, sortOrder: 2,
+      timeOfDay: "MORNING", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Breakfast dishes",
@@ -58,6 +64,7 @@ async function main() {
       recommendedPeopleMin: 4, recommendedPeopleMax: 4,
       isEssential: true, ageRestriction: "MIXED_PREFERRED",
       conditionalNote: null, minAge: 0, sortOrder: 3,
+      timeOfDay: "MORNING", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Dining room and kitchen floor",
@@ -65,6 +72,7 @@ async function main() {
       recommendedPeopleMin: 1, recommendedPeopleMax: 1,
       isEssential: true, ageRestriction: "ANY",
       conditionalNote: null, minAge: 0, sortOrder: 4,
+      timeOfDay: "MORNING", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Oven, microwave and hob",
@@ -72,6 +80,7 @@ async function main() {
       recommendedPeopleMin: 1, recommendedPeopleMax: 1,
       isEssential: false, ageRestriction: "ANY",
       conditionalNote: null, minAge: 0, sortOrder: 5,
+      timeOfDay: "MORNING", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Tea towels",
@@ -79,6 +88,7 @@ async function main() {
       recommendedPeopleMin: 1, recommendedPeopleMax: 1,
       isEssential: false, ageRestriction: "ADULTS_ONLY",
       conditionalNote: "Involves boiling water and heavy pot", minAge: 18, sortOrder: 6,
+      timeOfDay: "MORNING", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Firewood",
@@ -87,6 +97,7 @@ async function main() {
       isEssential: false, ageRestriction: "ADULT_SUPERVISED",
       conditionalNote: "Adult or responsible teenager required. Children under 7 can assist alongside 1-2 youth or 1 adult",
       minAge: 7, sortOrder: 7,
+      timeOfDay: "ANYTIME", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Rubbish",
@@ -94,6 +105,7 @@ async function main() {
       recommendedPeopleMin: 1, recommendedPeopleMax: 1,
       isEssential: true, ageRestriction: "ADULTS_ONLY",
       conditionalNote: null, minAge: 18, sortOrder: 8,
+      timeOfDay: "ANYTIME", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Dinner",
@@ -101,6 +113,7 @@ async function main() {
       recommendedPeopleMin: 2, recommendedPeopleMax: 3,
       isEssential: true, ageRestriction: "ADULTS_ONLY",
       conditionalNote: null, minAge: 18, sortOrder: 9,
+      timeOfDay: "EVENING", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Pre-dinner dishes",
@@ -108,6 +121,7 @@ async function main() {
       recommendedPeopleMin: 2, recommendedPeopleMax: 2,
       isEssential: false, ageRestriction: "ANY",
       conditionalNote: "Only required for full lodge", minAge: 0, sortOrder: 10,
+      timeOfDay: "EVENING", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Dinner dishes",
@@ -115,6 +129,7 @@ async function main() {
       recommendedPeopleMin: 4, recommendedPeopleMax: 6,
       isEssential: true, ageRestriction: "MIXED_PREFERRED",
       conditionalNote: null, minAge: 0, sortOrder: 11,
+      timeOfDay: "EVENING", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Women's bathroom and toilets",
@@ -122,6 +137,7 @@ async function main() {
       recommendedPeopleMin: 2, recommendedPeopleMax: 2,
       isEssential: true, ageRestriction: "MIXED_PREFERRED",
       conditionalNote: "Ideal pairing: adult + child", minAge: 0, sortOrder: 12,
+      timeOfDay: "ANYTIME", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Men's bathroom and toilets",
@@ -129,6 +145,7 @@ async function main() {
       recommendedPeopleMin: 2, recommendedPeopleMax: 2,
       isEssential: true, ageRestriction: "MIXED_PREFERRED",
       conditionalNote: "Ideal pairing: adult + child", minAge: 0, sortOrder: 13,
+      timeOfDay: "ANYTIME", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Ski room, drying room and foyer",
@@ -136,6 +153,7 @@ async function main() {
       recommendedPeopleMin: 1, recommendedPeopleMax: 1,
       isEssential: false, ageRestriction: "ANY",
       conditionalNote: null, minAge: 0, sortOrder: 14,
+      timeOfDay: "ANYTIME", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Lounge",
@@ -143,6 +161,7 @@ async function main() {
       recommendedPeopleMin: 1, recommendedPeopleMax: 2,
       isEssential: false, ageRestriction: "ANY",
       conditionalNote: null, minAge: 0, sortOrder: 15,
+      timeOfDay: "ANYTIME", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Bunkrooms, corridor, stairs and dining room carpet",
@@ -150,6 +169,7 @@ async function main() {
       recommendedPeopleMin: 1, recommendedPeopleMax: 1,
       isEssential: false, ageRestriction: "ANY",
       conditionalNote: null, minAge: 0, sortOrder: 16,
+      timeOfDay: "ANYTIME", frequencyMode: "DAILY", frequencyDays: null, frequencyDaysOfWeek: [],
     },
     {
       name: "Stores",
@@ -157,6 +177,7 @@ async function main() {
       recommendedPeopleMin: 1, recommendedPeopleMax: 2,
       isEssential: true, ageRestriction: "ADULTS_ONLY",
       conditionalNote: null, minAge: 18, sortOrder: 17,
+      timeOfDay: "ANYTIME", frequencyMode: "SPECIFIC_DAYS", frequencyDays: null, frequencyDaysOfWeek: [1, 4, 5, 7],
     },
   ];
 
@@ -207,6 +228,28 @@ async function main() {
       },
     });
     console.log("Test member seeded: member@tac.org.nz / member123");
+  }
+
+  // Seed lodge account (shared iPad in lodge)
+  const existingLodge = await prisma.member.findFirst({
+    where: { email: "lodge@tokoroa.org.nz" },
+  });
+
+  if (!existingLodge) {
+    const lodgePasswordHash = await bcrypt.hash("lodge123", 12);
+    await prisma.member.create({
+      data: {
+        email: "lodge@tokoroa.org.nz",
+        passwordHash: lodgePasswordHash,
+        firstName: "Lodge",
+        lastName: "Kiosk",
+        role: "LODGE",
+        ageTier: "ADULT",
+        emailVerified: true,
+        forcePasswordChange: true,
+      },
+    });
+    console.log("Lodge account seeded: lodge@tokoroa.org.nz / lodge123");
   }
 
   // Seed Winter 2026 season (June - September) with rates
