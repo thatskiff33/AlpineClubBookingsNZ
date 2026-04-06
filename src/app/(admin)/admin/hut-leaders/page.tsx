@@ -27,9 +27,10 @@ interface MemberOption {
 
 export default function HutLeadersPage() {
   const [assignments, setAssignments] = useState<HutLeaderAssignment[]>([]);
-  const [members, setMembers] = useState<MemberOption[]>([]);
+  const [eligibleMembers, setEligibleMembers] = useState<MemberOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [loadingMembers, setLoadingMembers] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     memberId: "",
@@ -50,27 +51,41 @@ export default function HutLeadersPage() {
     }
   }, []);
 
-  const fetchMembers = useCallback(async () => {
-    const res = await fetch("/api/admin/members?limit=500");
-    if (res.ok) {
-      const data = await res.json();
-      setMembers(
-        data.members
-          .filter((m: MemberOption & { role: string }) => m.role !== "LODGE")
-          .map((m: MemberOption) => ({
-            id: m.id,
-            firstName: m.firstName,
-            lastName: m.lastName,
-            email: m.email,
-          }))
-      );
-    }
-  }, []);
-
   useEffect(() => {
     fetchAssignments();
-    fetchMembers();
-  }, [fetchAssignments, fetchMembers]);
+  }, [fetchAssignments]);
+
+  // Fetch eligible members when dates change
+  useEffect(() => {
+    if (!formData.startDate || !formData.endDate || formData.startDate > formData.endDate) {
+      setEligibleMembers([]);
+      setFormData((prev) => ({ ...prev, memberId: "" }));
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingMembers(true);
+    setFormData((prev) => ({ ...prev, memberId: "" }));
+
+    fetch(`/api/admin/hut-leaders/eligible-members?startDate=${formData.startDate}&endDate=${formData.endDate}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((data) => {
+        if (!cancelled) {
+          setEligibleMembers(data.members);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setEligibleMembers([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingMembers(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.startDate, formData.endDate]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -104,6 +119,7 @@ export default function HutLeadersPage() {
   }
 
   const today = new Date().toISOString().split("T")[0];
+  const datesSelected = formData.startDate && formData.endDate && formData.startDate <= formData.endDate;
 
   return (
     <div className="space-y-6">
@@ -127,23 +143,6 @@ export default function HutLeadersPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleCreate} className="space-y-4">
-              <div>
-                <Label htmlFor="memberId">Member</Label>
-                <select
-                  id="memberId"
-                  className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  value={formData.memberId}
-                  onChange={(e) => setFormData({ ...formData, memberId: e.target.value })}
-                  required
-                >
-                  <option value="">Select a member...</option>
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.firstName} {m.lastName} ({m.email})
-                    </option>
-                  ))}
-                </select>
-              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="startDate">Start Date</Label>
@@ -166,9 +165,41 @@ export default function HutLeadersPage() {
                   />
                 </div>
               </div>
+              <div>
+                <Label htmlFor="memberId">Hut Leader</Label>
+                {!datesSelected ? (
+                  <p className="mt-1 text-sm text-slate-500">
+                    Select a date range first to see adults staying at the lodge
+                  </p>
+                ) : loadingMembers ? (
+                  <p className="mt-1 text-sm text-slate-500">Loading eligible members...</p>
+                ) : eligibleMembers.length === 0 ? (
+                  <p className="mt-1 text-sm text-amber-600">
+                    No adult members have bookings during this date range
+                  </p>
+                ) : (
+                  <select
+                    id="memberId"
+                    className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    value={formData.memberId}
+                    onChange={(e) => setFormData({ ...formData, memberId: e.target.value })}
+                    required
+                  >
+                    <option value="">Select a member...</option>
+                    {eligibleMembers.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.firstName} {m.lastName} ({m.email})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
               {error && <p className="text-sm text-red-600">{error}</p>}
               <div className="flex gap-2">
-                <Button type="submit" disabled={creating}>
+                <Button
+                  type="submit"
+                  disabled={creating || !datesSelected || eligibleMembers.length === 0 || !formData.memberId}
+                >
                   {creating ? "Creating..." : "Create Assignment"}
                 </Button>
                 <Button type="button" variant="outline" onClick={() => setShowForm(false)}>

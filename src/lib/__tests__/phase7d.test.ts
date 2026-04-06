@@ -9,6 +9,7 @@ const mockPrisma = {
     count: vi.fn(),
     findMany: vi.fn(),
     findUnique: vi.fn(),
+    findFirst: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
@@ -22,6 +23,12 @@ const mockPrisma = {
   },
   member: {
     findUnique: vi.fn(),
+    findMany: vi.fn(),
+  },
+  bookingGuest: {
+    findMany: vi.fn(),
+  },
+  booking: {
     findMany: vi.fn(),
   },
 };
@@ -179,6 +186,7 @@ describe("F8: Hut Leader Role Assignment", () => {
       });
 
       mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
+      mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue(null);
       mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-assign" });
 
       const { POST } = await import(
@@ -191,6 +199,52 @@ describe("F8: Hut Leader Role Assignment", () => {
 
       const data = await res.json();
       expect(data.id).toBe("new-assign");
+    });
+
+    it("rejects overlapping assignment", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", email: "admin@tac.org.nz" },
+      });
+
+      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
+      mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue({
+        id: "existing",
+        startDate: new Date("2026-07-08"),
+        endDate: new Date("2026-07-12"),
+        member: { firstName: "Bob", lastName: "Smith" },
+      });
+
+      const { POST } = await import(
+        "@/app/api/admin/hut-leaders/route"
+      );
+      const res = await POST(
+        makeRequest({ memberId: "m1", startDate: "2026-07-10", endDate: "2026-07-17" }) as any
+      );
+      expect(res.status).toBe(409);
+
+      const data = await res.json();
+      expect(data.error).toContain("Overlaps");
+      expect(data.error).toContain("Bob Smith");
+    });
+
+    it("allows same-day boundary (no overlap)", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", email: "admin@tac.org.nz" },
+      });
+
+      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
+      // findFirst returns null because same-day boundary is not an overlap
+      // (existing ends on 10th, new starts on 10th: endDate > startDate is false when equal)
+      mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue(null);
+      mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-assign" });
+
+      const { POST } = await import(
+        "@/app/api/admin/hut-leaders/route"
+      );
+      const res = await POST(
+        makeRequest({ memberId: "m1", startDate: "2026-07-10", endDate: "2026-07-17" }) as any
+      );
+      expect(res.status).toBe(201);
     });
 
     it("rejects when endDate before startDate", async () => {
@@ -322,6 +376,123 @@ describe("F8: Hut Leader Role Assignment", () => {
       });
       const res = await PUT(req as any, makeParams());
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe("GET /api/admin/hut-leaders/eligible-members", () => {
+    it("returns 403 for non-admin", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "m1", role: "MEMBER", email: "a@b.com" },
+      });
+
+      const { GET } = await import(
+        "@/app/api/admin/hut-leaders/eligible-members/route"
+      );
+      const req = new Request("http://localhost/api/admin/hut-leaders/eligible-members?startDate=2026-07-10&endDate=2026-07-17");
+      const res = await GET(req as any);
+      expect(res.status).toBe(403);
+    });
+
+    it("returns 400 when dates missing", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", email: "admin@tac.org.nz" },
+      });
+
+      const { GET } = await import(
+        "@/app/api/admin/hut-leaders/eligible-members/route"
+      );
+      const req = new Request("http://localhost/api/admin/hut-leaders/eligible-members");
+      const res = await GET(req as any);
+      expect(res.status).toBe(400);
+    });
+
+    it("returns eligible adult members for date range", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", email: "admin@tac.org.nz" },
+      });
+
+      mockPrisma.bookingGuest.findMany.mockResolvedValue([
+        {
+          memberId: "m1",
+          member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true },
+        },
+      ]);
+      mockPrisma.booking.findMany.mockResolvedValue([]);
+
+      const { GET } = await import(
+        "@/app/api/admin/hut-leaders/eligible-members/route"
+      );
+      const req = new Request("http://localhost/api/admin/hut-leaders/eligible-members?startDate=2026-07-10&endDate=2026-07-17");
+      const res = await GET(req as any);
+      expect(res.status).toBe(200);
+
+      const data = await res.json();
+      expect(data.members).toHaveLength(1);
+      expect(data.members[0].firstName).toBe("Alice");
+    });
+
+    it("deduplicates members across bookings", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", email: "admin@tac.org.nz" },
+      });
+
+      mockPrisma.bookingGuest.findMany.mockResolvedValue([
+        {
+          memberId: "m1",
+          member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true },
+        },
+        {
+          memberId: "m1",
+          member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true },
+        },
+      ]);
+      mockPrisma.booking.findMany.mockResolvedValue([
+        {
+          member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true, ageTier: "ADULT" },
+        },
+      ]);
+
+      const { GET } = await import(
+        "@/app/api/admin/hut-leaders/eligible-members/route"
+      );
+      const req = new Request("http://localhost/api/admin/hut-leaders/eligible-members?startDate=2026-07-10&endDate=2026-07-17");
+      const res = await GET(req as any);
+      const data = await res.json();
+      expect(data.members).toHaveLength(1);
+    });
+  });
+
+  describe("PUT overlap validation", () => {
+    it("rejects update that creates overlap", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin1", role: "ADMIN", email: "admin@tac.org.nz" },
+      });
+
+      mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
+        id: "assign-1",
+        startDate: new Date("2026-07-10"),
+        endDate: new Date("2026-07-17"),
+      });
+      mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue({
+        id: "assign-2",
+        startDate: new Date("2026-07-18"),
+        endDate: new Date("2026-07-25"),
+        member: { firstName: "Bob", lastName: "Jones" },
+      });
+
+      const { PUT } = await import(
+        "@/app/api/admin/hut-leaders/[id]/route"
+      );
+      const req = new Request("http://localhost", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endDate: "2026-07-20" }),
+      });
+      const res = await PUT(req as any, makeParams());
+      expect(res.status).toBe(409);
+
+      const data = await res.json();
+      expect(data.error).toContain("Overlaps");
     });
   });
 
