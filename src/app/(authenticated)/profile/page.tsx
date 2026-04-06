@@ -48,7 +48,13 @@ export default async function ProfilePage() {
   if (!member) redirect("/login");
 
   const dependents = await prisma.member.findMany({
-    where: { parentMemberId: session.user.id, active: true },
+    where: {
+      OR: [
+        { parentMemberId: session.user.id },
+        { secondaryParentId: session.user.id },
+      ],
+      active: true,
+    },
     select: {
       id: true,
       firstName: true,

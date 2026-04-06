@@ -21,6 +21,14 @@ const updateMemberSchema = z.object({
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]).optional(),
   active: z.boolean().optional(),
   forcePasswordChange: z.boolean().optional(),
+  joinedDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+  parentMemberId: z.string().optional().nullable(),
+  secondaryParentId: z.string().optional().nullable(),
 });
 
 /**
@@ -53,7 +61,13 @@ export async function GET(
         active: true,
         forcePasswordChange: true,
         xeroContactId: true,
+        joinedDate: true,
         createdAt: true,
+        parentMemberId: true,
+        parent: { select: { id: true, firstName: true, lastName: true } },
+        secondaryParentId: true,
+        secondaryParent: { select: { id: true, firstName: true, lastName: true } },
+        _count: { select: { dependents: true, secondaryDependents: true } },
         subscriptions: {
           orderBy: { seasonYear: "desc" },
         },
@@ -142,8 +156,9 @@ export async function PUT(
 
   const data = parsed.data;
 
-  // Check email uniqueness if changing
-  if (data.email && data.email.toLowerCase() !== existing.email) {
+  // Check email uniqueness if changing (skip if assigning a parent, since dependent email comes from parent)
+  const isBecomingDependent = data.parentMemberId && data.parentMemberId !== null;
+  if (data.email && data.email.toLowerCase() !== existing.email && !isBecomingDependent) {
     const emailTaken = await prisma.member.findFirst({
       where: { email: data.email.toLowerCase(), parentMemberId: null, id: { not: id } },
     });
@@ -155,15 +170,123 @@ export async function PUT(
     }
   }
 
+  // Validate parent assignment changes
+  if (data.parentMemberId !== undefined) {
+    if (data.parentMemberId === null) {
+      // Unlinking: converting dependent to primary - require a unique email
+      if (existing.parentMemberId) {
+        const newEmail = data.email?.toLowerCase().trim();
+        if (!newEmail) {
+          return NextResponse.json(
+            { error: "Email is required when converting a dependent to a primary member" },
+            { status: 422 }
+          );
+        }
+        const emailTaken = await prisma.member.findFirst({
+          where: { email: newEmail, parentMemberId: null, id: { not: id } },
+        });
+        if (emailTaken) {
+          return NextResponse.json({ error: "A primary member with this email already exists" }, { status: 409 });
+        }
+      }
+    } else {
+      // Assigning or reassigning parent
+      if (data.parentMemberId === id) {
+        return NextResponse.json({ error: "A member cannot be their own parent" }, { status: 422 });
+      }
+      const parent = await prisma.member.findUnique({ where: { id: data.parentMemberId } });
+      if (!parent) {
+        return NextResponse.json({ error: "Primary parent not found" }, { status: 404 });
+      }
+      if (!parent.active) {
+        return NextResponse.json({ error: "Primary parent is inactive" }, { status: 422 });
+      }
+      if (parent.parentMemberId) {
+        return NextResponse.json({ error: "Primary parent cannot be a dependent" }, { status: 422 });
+      }
+      // If member currently has dependents, block conversion to dependent
+      if (!existing.parentMemberId) {
+        const depCount = await prisma.member.count({
+          where: { OR: [{ parentMemberId: id }, { secondaryParentId: id }] },
+        });
+        if (depCount > 0) {
+          return NextResponse.json(
+            { error: "Cannot convert to dependent: this member has dependents. Reassign them first." },
+            { status: 422 }
+          );
+        }
+      }
+    }
+  }
+
+  if (data.secondaryParentId !== undefined && data.secondaryParentId !== null) {
+    const effectiveParent = data.parentMemberId !== undefined ? data.parentMemberId : existing.parentMemberId;
+    if (!effectiveParent) {
+      return NextResponse.json({ error: "Primary parent is required when setting a secondary parent" }, { status: 422 });
+    }
+    if (data.secondaryParentId === id) {
+      return NextResponse.json({ error: "A member cannot be their own secondary parent" }, { status: 422 });
+    }
+    if (data.secondaryParentId === effectiveParent) {
+      return NextResponse.json({ error: "Secondary parent must be different from primary parent" }, { status: 422 });
+    }
+    const secParent = await prisma.member.findUnique({ where: { id: data.secondaryParentId } });
+    if (!secParent) {
+      return NextResponse.json({ error: "Secondary parent not found" }, { status: 404 });
+    }
+    if (!secParent.active) {
+      return NextResponse.json({ error: "Secondary parent is inactive" }, { status: 422 });
+    }
+    if (secParent.parentMemberId) {
+      return NextResponse.json({ error: "Secondary parent cannot be a dependent" }, { status: 422 });
+    }
+  }
+
   // Build update data
   const updateData: Record<string, unknown> = {};
   if (data.firstName !== undefined) updateData.firstName = data.firstName.trim();
   if (data.lastName !== undefined) updateData.lastName = data.lastName.trim();
-  if (data.email !== undefined) updateData.email = data.email.toLowerCase().trim();
   if (data.phone !== undefined) updateData.phone = data.phone?.trim() || null;
   if (data.role !== undefined) updateData.role = data.role;
   if (data.active !== undefined) updateData.active = data.active;
   if (data.forcePasswordChange !== undefined) updateData.forcePasswordChange = data.forcePasswordChange;
+
+  // Handle parent assignment
+  if (data.parentMemberId !== undefined) {
+    updateData.parentMemberId = data.parentMemberId;
+    if (data.parentMemberId) {
+      // When assigning a parent, set email to parent's email
+      const parent = await prisma.member.findUnique({ where: { id: data.parentMemberId } });
+      if (parent) updateData.email = parent.email;
+    }
+    if (data.parentMemberId === null) {
+      // When unlinking, also clear secondary parent
+      updateData.secondaryParentId = null;
+    }
+  }
+
+  // Handle secondary parent
+  if (data.secondaryParentId !== undefined) {
+    updateData.secondaryParentId = data.secondaryParentId;
+  }
+
+  // Handle email (only if not already set by parent assignment)
+  if (data.email !== undefined && !updateData.email) {
+    updateData.email = data.email.toLowerCase().trim();
+  }
+
+  // Handle joinedDate
+  if (data.joinedDate !== undefined) {
+    if (data.joinedDate && data.joinedDate !== "") {
+      const jd = new Date(data.joinedDate);
+      if (isNaN(jd.getTime())) {
+        return NextResponse.json({ error: "Invalid joined date" }, { status: 422 });
+      }
+      updateData.joinedDate = jd;
+    } else {
+      updateData.joinedDate = null;
+    }
+  }
 
   // Handle DOB and age tier
   if (data.dateOfBirth !== undefined) {
@@ -198,7 +321,10 @@ export async function PUT(
         ageTier: true,
         active: true,
         xeroContactId: true,
+        joinedDate: true,
         createdAt: true,
+        parentMemberId: true,
+        secondaryParentId: true,
       },
     });
 

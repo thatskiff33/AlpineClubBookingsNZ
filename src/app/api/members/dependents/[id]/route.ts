@@ -28,10 +28,10 @@ export async function PUT(
 
   const dependent = await prisma.member.findUnique({
     where: { id },
-    select: { id: true, parentMemberId: true },
+    select: { id: true, parentMemberId: true, secondaryParentId: true },
   });
 
-  if (!dependent || dependent.parentMemberId !== session.user.id) {
+  if (!dependent || (dependent.parentMemberId !== session.user.id && dependent.secondaryParentId !== session.user.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -101,10 +101,10 @@ export async function DELETE(
 
   const dependent = await prisma.member.findUnique({
     where: { id },
-    select: { id: true, parentMemberId: true },
+    select: { id: true, parentMemberId: true, secondaryParentId: true },
   });
 
-  if (!dependent || dependent.parentMemberId !== session.user.id) {
+  if (!dependent || (dependent.parentMemberId !== session.user.id && dependent.secondaryParentId !== session.user.id)) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

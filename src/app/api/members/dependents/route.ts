@@ -24,7 +24,13 @@ export async function GET() {
   }
 
   const dependents = await prisma.member.findMany({
-    where: { parentMemberId: session.user.id, active: true },
+    where: {
+      OR: [
+        { parentMemberId: session.user.id },
+        { secondaryParentId: session.user.id },
+      ],
+      active: true,
+    },
     select: {
       id: true,
       firstName: true,
