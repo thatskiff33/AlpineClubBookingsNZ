@@ -18,9 +18,32 @@ Sentry.init({
     }),
   ],
 
-  // Don't send if no DSN configured
+  // Scrub sensitive data from Sentry payloads
   beforeSend(event) {
     if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return null;
+
+    // Scrub sensitive data from request body (e.g. password fields in form submissions)
+    if (event.request?.data) {
+      const dataStr =
+        typeof event.request.data === "string"
+          ? event.request.data
+          : JSON.stringify(event.request.data);
+      const sensitiveFields = [
+        "password",
+        "passwordHash",
+        "token",
+        "accessToken",
+        "refreshToken",
+        "secret",
+      ];
+      let scrubbed = dataStr;
+      for (const field of sensitiveFields) {
+        const regex = new RegExp(`("${field}"\\s*:\\s*)"[^"]*"`, "gi");
+        scrubbed = scrubbed.replace(regex, `$1"[REDACTED]"`);
+      }
+      event.request.data = scrubbed;
+    }
+
     return event;
   },
 
