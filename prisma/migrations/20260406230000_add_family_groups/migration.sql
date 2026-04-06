@@ -24,18 +24,34 @@ CREATE TABLE IF NOT EXISTS "FamilyGroupJoinRequest" (
     CONSTRAINT "FamilyGroupJoinRequest_pkey" PRIMARY KEY ("id")
 );
 
--- Add foreign keys
-ALTER TABLE "Member" ADD CONSTRAINT "Member_secondaryParentId_fkey"
-    FOREIGN KEY ("secondaryParentId") REFERENCES "Member"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- Add foreign keys (idempotent)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Member_secondaryParentId_fkey') THEN
+    ALTER TABLE "Member" ADD CONSTRAINT "Member_secondaryParentId_fkey"
+      FOREIGN KEY ("secondaryParentId") REFERENCES "Member"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
-ALTER TABLE "Member" ADD CONSTRAINT "Member_familyGroupId_fkey"
-    FOREIGN KEY ("familyGroupId") REFERENCES "FamilyGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Member_familyGroupId_fkey') THEN
+    ALTER TABLE "Member" ADD CONSTRAINT "Member_familyGroupId_fkey"
+      FOREIGN KEY ("familyGroupId") REFERENCES "FamilyGroup"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
-ALTER TABLE "FamilyGroupJoinRequest" ADD CONSTRAINT "FamilyGroupJoinRequest_familyGroupId_fkey"
-    FOREIGN KEY ("familyGroupId") REFERENCES "FamilyGroup"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FamilyGroupJoinRequest_familyGroupId_fkey') THEN
+    ALTER TABLE "FamilyGroupJoinRequest" ADD CONSTRAINT "FamilyGroupJoinRequest_familyGroupId_fkey"
+      FOREIGN KEY ("familyGroupId") REFERENCES "FamilyGroup"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
-ALTER TABLE "FamilyGroupJoinRequest" ADD CONSTRAINT "FamilyGroupJoinRequest_requesterId_fkey"
-    FOREIGN KEY ("requesterId") REFERENCES "Member"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'FamilyGroupJoinRequest_requesterId_fkey') THEN
+    ALTER TABLE "FamilyGroupJoinRequest" ADD CONSTRAINT "FamilyGroupJoinRequest_requesterId_fkey"
+      FOREIGN KEY ("requesterId") REFERENCES "Member"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- Add indexes
 CREATE INDEX IF NOT EXISTS "Member_secondaryParentId_idx" ON "Member"("secondaryParentId");
