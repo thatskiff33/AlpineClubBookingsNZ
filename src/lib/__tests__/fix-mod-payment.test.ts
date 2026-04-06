@@ -213,7 +213,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       totalPriceCents: 15000, // price increased from 10000
       guests: [{ priceCents: 15000, perNightCents: [7500, 7500] }],
     } as any);
-    mockedCalcChangeFee.mockReturnValue({ feeCents: 0 });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_additional",
       client_secret: "pi_additional_secret_xxx",
@@ -266,7 +266,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       totalPriceCents: 12000,
       guests: [{ priceCents: 12000, perNightCents: [6000, 6000] }],
     } as any);
-    mockedCalcChangeFee.mockReturnValue({ feeCents: 0 });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_add2",
       client_secret: "secret_2",
@@ -296,7 +296,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       totalPriceCents: 10000, // same price, but change fee applies
       guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
     } as any);
-    mockedCalcChangeFee.mockReturnValue({ feeCents: 2000 }); // $20 change fee
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 2000, fromTierRefundPct: 50, toTierRefundPct: 100 }); // $20 change fee
     mockedCreatePaymentIntent.mockResolvedValue({
       id: "pi_fee",
       client_secret: "fee_secret",
@@ -330,7 +330,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       totalPriceCents: 7000, // price decreased from 10000
       guests: [{ priceCents: 7000, perNightCents: [3500] }],
     } as any);
-    mockedCalcChangeFee.mockReturnValue({ feeCents: 0 });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
     mockedProcessRefund.mockResolvedValue({ id: "re_refund123" } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ email: "alice@test.com", firstName: "Alice" });
@@ -387,7 +387,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       totalPriceCents: 15000,
       guests: [{ priceCents: 15000, perNightCents: [7500, 7500] }],
     } as any);
-    mockedCalcChangeFee.mockReturnValue({ feeCents: 0 });
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
     mockMemberFindUnique.mockResolvedValue({ email: "alice@test.com", firstName: "Alice" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {

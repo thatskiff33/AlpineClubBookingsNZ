@@ -259,7 +259,7 @@ describe("N-11: retryFailedEmails", () => {
     mockPrisma.emailLog.update.mockResolvedValue({});
 
     const origEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
+    (process.env as Record<string, string>).NODE_ENV = "production";
 
     const { retryFailedEmails } = await import("../cron-email-retry");
     const result = await retryFailedEmails();
@@ -275,7 +275,7 @@ describe("N-11: retryFailedEmails", () => {
       }),
     });
 
-    process.env.NODE_ENV = origEnv;
+    (process.env as Record<string, string>).NODE_ENV = origEnv!;
   });
 
   it("does not retry emails without htmlBody", async () => {

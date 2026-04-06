@@ -577,7 +577,7 @@ describe("Booking Detail Page: payment section visibility", () => {
   });
 
   it("$0 CONFIRMED booking has PAID status: both payment sections hidden", () => {
-    const status = "PAID";
+    const status: string = "PAID";
     const payment = { status: "SUCCEEDED", stripeSetupIntentId: null as string | null };
 
     const showCompletePayment = status === "CONFIRMED" && (!payment || payment.status !== "SUCCEEDED");

@@ -54,7 +54,7 @@ describe("N-10: EmailLog tracking", () => {
   it("creates an EmailLog record with QUEUED status before sending", async () => {
     // Force non-dev mode for this test
     const origEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
+    (process.env as Record<string, string>).NODE_ENV ="production";
 
     const { sendEmail } = await import("../email");
 
@@ -74,12 +74,12 @@ describe("N-10: EmailLog tracking", () => {
       }),
     });
 
-    process.env.NODE_ENV = origEnv;
+    (process.env as Record<string, string>).NODE_ENV =origEnv;
   });
 
   it("updates EmailLog to SENT on success", async () => {
     const origEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
+    (process.env as Record<string, string>).NODE_ENV ="production";
 
     const { sendEmail } = await import("../email");
 
@@ -98,12 +98,12 @@ describe("N-10: EmailLog tracking", () => {
       }),
     });
 
-    process.env.NODE_ENV = origEnv;
+    (process.env as Record<string, string>).NODE_ENV =origEnv;
   });
 
   it("updates EmailLog to FAILED on send error", async () => {
     const origEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
+    (process.env as Record<string, string>).NODE_ENV ="production";
 
     mockTransporter.sendMail.mockRejectedValue(new Error("SMTP connection refused"));
 
@@ -126,12 +126,12 @@ describe("N-10: EmailLog tracking", () => {
       }),
     });
 
-    process.env.NODE_ENV = origEnv;
+    (process.env as Record<string, string>).NODE_ENV =origEnv;
   });
 
   it("does not break email delivery if EmailLog create fails", async () => {
     const origEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
+    (process.env as Record<string, string>).NODE_ENV ="production";
 
     mockPrisma.emailLog.create.mockRejectedValue(new Error("DB down"));
 
@@ -147,12 +147,12 @@ describe("N-10: EmailLog tracking", () => {
 
     expect(mockTransporter.sendMail).toHaveBeenCalled();
 
-    process.env.NODE_ENV = origEnv;
+    (process.env as Record<string, string>).NODE_ENV =origEnv;
   });
 
   it("defaults templateName to 'unknown'", async () => {
     const origEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
+    (process.env as Record<string, string>).NODE_ENV ="production";
 
     const { sendEmail } = await import("../email");
 
@@ -168,7 +168,7 @@ describe("N-10: EmailLog tracking", () => {
       }),
     });
 
-    process.env.NODE_ENV = origEnv;
+    (process.env as Record<string, string>).NODE_ENV =origEnv;
   });
 });
 

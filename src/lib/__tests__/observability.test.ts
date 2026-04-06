@@ -294,7 +294,7 @@ describe("OBS-07: GET /api/admin/health", () => {
   });
 
   it("returns 401 for unauthenticated users", async () => {
-    vi.mocked(auth).mockResolvedValue(null);
+    vi.mocked(auth).mockResolvedValue(null as any);
 
     const { GET } = await import("@/app/api/admin/health/route");
     const response = await GET();

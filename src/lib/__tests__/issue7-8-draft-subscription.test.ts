@@ -288,8 +288,7 @@ describe("Issue 7: GET /api/bookings/drafts", () => {
     ];
     mockPrisma.booking.findMany.mockResolvedValue(drafts);
 
-    const req = new NextRequest("http://localhost/api/bookings/drafts");
-    const res = await getDrafts(req);
+    const res = await getDrafts();
     expect(res.status).toBe(200);
 
     const data = await res.json();
@@ -300,8 +299,7 @@ describe("Issue 7: GET /api/bookings/drafts", () => {
   it("returns 401 when unauthenticated", async () => {
     mockAuth.mockResolvedValue(null);
 
-    const req = new NextRequest("http://localhost/api/bookings/drafts");
-    const res = await getDrafts(req);
+    const res = await getDrafts();
     expect(res.status).toBe(401);
   });
 });

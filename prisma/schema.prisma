@@ -219,6 +219,8 @@ model MemberSubscription {
 
   @@unique([memberId, seasonYear])
   @@index([memberId])
+  @@index([seasonYear])
+  @@index([seasonYear, status])
 }
 
 // ---------------------------------------------------------------------------

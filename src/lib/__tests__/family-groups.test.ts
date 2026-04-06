@@ -50,7 +50,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 
 const mockedAuth = vi.mocked(auth);
-const mockedPrisma = vi.mocked(prisma);
+const mockedPrisma = vi.mocked(prisma, true);
 
 const adminSession = { user: { id: "admin-1", role: "ADMIN" } } as any;
 const memberSession = { user: { id: "member-1", role: "MEMBER" } } as any;
@@ -206,7 +206,7 @@ describe("GET /api/members/family", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("returns 401 for unauthenticated", async () => {
-    mockedAuth.mockResolvedValue(null);
+    mockedAuth.mockResolvedValue(null as any);
     const { GET } = await import("@/app/api/members/family/route");
     const res = await GET();
     expect(res.status).toBe(401);
@@ -324,7 +324,7 @@ describe("POST /api/members/family/request-join", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("returns 401 for unauthenticated", async () => {
-    mockedAuth.mockResolvedValue(null);
+    mockedAuth.mockResolvedValue(null as any);
     const { POST } = await import("@/app/api/members/family/request-join/route");
     const res = await POST(makeReq("/api/members/family/request-join", "POST", { targetEmail: "test@test.com" }));
     expect(res.status).toBe(401);

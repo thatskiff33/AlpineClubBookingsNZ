@@ -37,8 +37,8 @@ const createBookingSchema = z.object({
       })
     )
     .min(1),
-  notes: z.string().optional(),
-  promoCode: z.string().optional(),
+  notes: z.string().max(500).optional(),
+  promoCode: z.string().max(50).optional(),
   draft: z.boolean().optional(),
 });
 

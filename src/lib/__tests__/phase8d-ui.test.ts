@@ -32,11 +32,11 @@ describe("Phase 8d: Booking Modification UI", () => {
       expect(currentCheckIn !== currentCheckIn || currentCheckOut !== currentCheckOut).toBe(false);
 
       // Check-in changed
-      const newCheckIn = "2026-05-02";
+      const newCheckIn: string = "2026-05-02";
       expect(newCheckIn !== currentCheckIn || currentCheckOut !== currentCheckOut).toBe(true);
 
       // Check-out changed
-      const newCheckOut = "2026-05-06";
+      const newCheckOut: string = "2026-05-06";
       expect(currentCheckIn !== currentCheckIn || newCheckOut !== currentCheckOut).toBe(true);
     });
 
