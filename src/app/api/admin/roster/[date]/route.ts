@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { allocateChores, ChoreTemplateInput, GuestInput, ChoreHistoryEntry } from "@/lib/chore-allocator"
 import { sendChoreRosterEmail } from "@/lib/email"
+import { createGuestChoreToken } from "@/lib/guest-chore-token"
 import { z } from "zod"
 import logger from "@/lib/logger"
 
@@ -65,6 +66,9 @@ export async function GET(
     },
   })
 
+  const nextDay = new Date(date)
+  nextDay.setDate(nextDay.getDate() + 1)
+
   const guests: GuestInput[] = bookings.flatMap((b) =>
     b.guests.map((g) => ({
       id: g.id,
@@ -72,6 +76,8 @@ export async function GET(
       firstName: g.firstName,
       lastName: g.lastName,
       ageTier: g.ageTier,
+      isArriving: b.checkIn.getTime() === date.getTime(),
+      isDeparting: b.checkOut.getTime() === nextDay.getTime(),
     }))
   )
 
@@ -112,6 +118,10 @@ export async function GET(
       ageRestriction: t.ageRestriction,
       minAge: t.minAge,
       sortOrder: t.sortOrder,
+      timeOfDay: t.timeOfDay,
+      frequencyMode: t.frequencyMode,
+      frequencyDays: t.frequencyDays,
+      frequencyDaysOfWeek: t.frequencyDaysOfWeek,
     }))
 
     // 4-day lookback for chore history
@@ -133,7 +143,24 @@ export async function GET(
         date: h.date,
       }))
 
-    const options: { includeNonEssential?: boolean } = {}
+    // Query most recent assignment date per chore template for frequency filtering (F11)
+    const lastRosteredRecords = await prisma.choreAssignment.groupBy({
+      by: ["choreTemplateId"],
+      where: { date: { lt: date } },
+      _max: { date: true },
+    })
+    const choreLastRosteredDates = new Map<string, Date>()
+    for (const rec of lastRosteredRecords) {
+      if (rec._max.date) {
+        choreLastRosteredDates.set(rec.choreTemplateId, rec._max.date)
+      }
+    }
+
+    const options: {
+      includeNonEssential?: boolean;
+      choreLastRosteredDates?: Map<string, Date>;
+      currentDate?: Date;
+    } = { choreLastRosteredDates, currentDate: date }
     if (includeNonEssentialParam !== null) {
       options.includeNonEssential = includeNonEssentialParam === "true"
     }
@@ -323,17 +350,23 @@ export async function PUT(
         })
       }
 
-      // Send emails to guests who have an email (members)
+      // Generate per-guest chore tokens and send emails
+      const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000"
       const emailPromises: Promise<void>[] = []
-      for (const [, guest] of byGuest) {
+      for (const [guestId, guest] of byGuest) {
         if (guest.email) {
           emailPromises.push(
-            sendChoreRosterEmail(
-              guest.email,
-              guest.name,
-              dateStr,
-              guest.chores
-            )
+            (async () => {
+              const token = await createGuestChoreToken(guestId, date)
+              const choreLink = `${baseUrl}/chores/${token}`
+              await sendChoreRosterEmail(
+                guest.email!,
+                guest.name,
+                dateStr,
+                guest.chores,
+                choreLink
+              )
+            })()
           )
         }
       }

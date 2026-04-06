@@ -241,7 +241,8 @@ export async function sendChoreRosterEmail(
   email: string,
   guestName: string,
   date: string,
-  chores: Array<{ name: string; description: string | null }>
+  chores: Array<{ name: string; description: string | null }>,
+  choreLink?: string
 ) {
   const formattedDate = new Date(date + "T00:00:00").toLocaleDateString("en-NZ", {
     weekday: "long",
@@ -253,7 +254,7 @@ export async function sendChoreRosterEmail(
   await sendEmail({
     to: email,
     subject: `Your chore roster for ${formattedDate} - TAC Lodge`,
-    html: choreRosterTemplate(guestName, date, chores),
+    html: choreRosterTemplate(guestName, date, chores, choreLink),
     templateName: "chore-roster",
   });
 }

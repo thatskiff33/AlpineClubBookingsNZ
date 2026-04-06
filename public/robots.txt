@@ -9,4 +9,4 @@ Disallow: /profile
 Disallow: /book
 Disallow: /api/
 
-Sitemap: https://bookings.tokoroa.org.nz/sitemap.xml
+Sitemap: https://tokoroa.org.nz/sitemap.xml
