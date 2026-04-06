@@ -16,10 +16,46 @@ END $$;
 -- Add index on secondaryParentId
 CREATE INDEX IF NOT EXISTS "Member_secondaryParentId_idx" ON "Member"("secondaryParentId");
 
--- ChoreTemplate: add timeOfDay, maxPerDay, daysPerStay
-ALTER TABLE "ChoreTemplate" ADD COLUMN IF NOT EXISTS "timeOfDay" TEXT NOT NULL DEFAULT 'ANY';
-ALTER TABLE "ChoreTemplate" ADD COLUMN IF NOT EXISTS "maxPerDay" INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE "ChoreTemplate" ADD COLUMN IF NOT EXISTS "daysPerStay" INTEGER NOT NULL DEFAULT 0;
+-- Create ChoreTimeOfDay enum
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ChoreTimeOfDay') THEN
+    CREATE TYPE "ChoreTimeOfDay" AS ENUM ('MORNING', 'EVENING', 'ANYTIME');
+  END IF;
+END $$;
+
+-- Create ChoreFrequencyMode enum
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ChoreFrequencyMode') THEN
+    CREATE TYPE "ChoreFrequencyMode" AS ENUM ('DAILY', 'EVERY_X_DAYS', 'SPECIFIC_DAYS');
+  END IF;
+END $$;
+
+-- ChoreTemplate: add timeOfDay as proper enum
+-- If column already exists as TEXT (from a prior buggy migration), fix it
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'ChoreTemplate' AND column_name = 'timeOfDay' AND udt_name = 'text'
+  ) THEN
+    -- Fix any invalid enum values from the old TEXT column
+    UPDATE "ChoreTemplate" SET "timeOfDay" = 'ANYTIME' WHERE "timeOfDay" NOT IN ('MORNING', 'EVENING', 'ANYTIME');
+    -- Convert TEXT column to enum
+    ALTER TABLE "ChoreTemplate" ALTER COLUMN "timeOfDay" TYPE "ChoreTimeOfDay" USING "timeOfDay"::"ChoreTimeOfDay";
+    ALTER TABLE "ChoreTemplate" ALTER COLUMN "timeOfDay" SET DEFAULT 'ANYTIME'::"ChoreTimeOfDay";
+  ELSE
+    -- Column doesn't exist yet, add it fresh
+    ALTER TABLE "ChoreTemplate" ADD COLUMN IF NOT EXISTS "timeOfDay" "ChoreTimeOfDay" NOT NULL DEFAULT 'ANYTIME';
+  END IF;
+END $$;
+
+-- Drop bogus columns from prior buggy migration if they exist
+ALTER TABLE "ChoreTemplate" DROP COLUMN IF EXISTS "maxPerDay";
+ALTER TABLE "ChoreTemplate" DROP COLUMN IF EXISTS "daysPerStay";
+
+-- ChoreTemplate: add frequency columns
+ALTER TABLE "ChoreTemplate" ADD COLUMN IF NOT EXISTS "frequencyMode" "ChoreFrequencyMode" NOT NULL DEFAULT 'DAILY';
+ALTER TABLE "ChoreTemplate" ADD COLUMN IF NOT EXISTS "frequencyDays" INTEGER;
+ALTER TABLE "ChoreTemplate" ADD COLUMN IF NOT EXISTS "frequencyDaysOfWeek" INTEGER[] DEFAULT '{}';
 
 -- ChoreAssignment: add completedAt, completedVia
 ALTER TABLE "ChoreAssignment" ADD COLUMN IF NOT EXISTS "completedAt" TIMESTAMP(3);
