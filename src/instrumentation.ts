@@ -104,7 +104,7 @@ export async function register() {
       } finally {
         isPendingCronRunning = false;
       }
-    });
+    }, { timezone: "Pacific/Auckland" });
 
     logger.info({ job: "confirm-pending" }, "Scheduled pending booking confirmation (every 3 hours)");
 
@@ -146,9 +146,9 @@ export async function register() {
       } finally {
         isXeroCronRunning = false;
       }
-    });
+    }, { timezone: "Pacific/Auckland" });
 
-    logger.info({ job: "xero-membership-refresh" }, "Scheduled Xero membership refresh (daily at 2 AM)");
+    logger.info({ job: "xero-membership-refresh" }, "Scheduled Xero membership refresh (daily at 2 AM NZST)");
 
     // OBS-03: Cron job 3 - Database backup (daily at 3 AM)
     let isBackupRunning = false;
@@ -231,7 +231,7 @@ export async function register() {
       } catch (err) {
         logger.error({ err }, "Failed to delete expired draft bookings");
       }
-    });
+    }, { timezone: "Pacific/Auckland" });
 
     logger.info({ job: "backup", schedule: backupSchedule }, "Scheduled database backup");
 

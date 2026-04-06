@@ -14,7 +14,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-const FROM = process.env.EMAIL_FROM || "bookings@tacbookings.co.nz";
+const FROM = process.env.EMAIL_FROM || "support@tokoroa.org.nz";
 
 /**
  * N-11: Retry failed emails with backoff.
