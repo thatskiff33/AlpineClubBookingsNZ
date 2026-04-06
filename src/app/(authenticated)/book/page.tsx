@@ -16,6 +16,7 @@ interface FamilyMember {
   firstName: string;
   lastName: string;
   ageTier: "ADULT" | "YOUTH" | "CHILD";
+  relationship: "self" | "partner" | "dependent";
 }
 
 interface PriceQuote {
@@ -44,9 +45,9 @@ export default function BookPage() {
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
 
   useEffect(() => {
-    fetch("/api/members/dependents")
-      .then((res) => res.ok ? res.json() : { dependents: [] })
-      .then((data) => setFamilyMembers(data.dependents || []))
+    fetch("/api/members/family")
+      .then((res) => res.ok ? res.json() : { familyMembers: [] })
+      .then((data) => setFamilyMembers(data.familyMembers || []))
       .catch(() => {});
   }, []);
 
@@ -218,17 +219,20 @@ export default function BookPage() {
                 <div className="flex flex-wrap gap-2">
                   {familyMembers.map((fm) => {
                     const alreadyAdded = guests.some((g) => g.memberId === fm.id);
+                    const label = fm.relationship === "self"
+                      ? `${fm.firstName} ${fm.lastName} (You)`
+                      : `${fm.firstName} ${fm.lastName} (${fm.ageTier})`;
                     return (
                       <Button
                         key={fm.id}
                         type="button"
-                        variant={alreadyAdded ? "secondary" : "outline"}
+                        variant={alreadyAdded ? "secondary" : fm.relationship === "self" ? "default" : "outline"}
                         size="sm"
                         disabled={alreadyAdded || guests.length >= availableBeds}
                         onClick={() => addFamilyMemberAsGuest(fm)}
                       >
                         {alreadyAdded ? "\u2713 " : "+ "}
-                        {fm.firstName} {fm.lastName} ({fm.ageTier})
+                        {label}
                       </Button>
                     );
                   })}

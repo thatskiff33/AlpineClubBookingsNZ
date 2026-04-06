@@ -11,6 +11,8 @@ const createDependentSchema = z.object({
   lastName: z.string().min(1).max(100),
   dateOfBirth: z.string().optional(),
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]).optional(),
+  email: z.string().email().optional(),
+  inheritParentEmail: z.boolean().default(true),
 });
 
 /**
@@ -37,6 +39,8 @@ export async function GET() {
       lastName: true,
       ageTier: true,
       dateOfBirth: true,
+      email: true,
+      inheritParentEmail: true,
       xeroContactId: true,
     },
     orderBy: { firstName: "asc" },
@@ -92,11 +96,18 @@ export async function POST(req: NextRequest) {
     ageTier = computeAgeTier(dateOfBirth);
   }
 
+  // Determine email: use own email or inherit parent's
+  const inheritEmail = parsed.data.inheritParentEmail !== false;
+  let dependentEmail = parent.email;
+  if (!inheritEmail && parsed.data.email) {
+    dependentEmail = parsed.data.email.toLowerCase().trim();
+  }
+
   const placeholderHash = await hash(randomBytes(32).toString("hex"), 13);
 
   const dependent = await prisma.member.create({
     data: {
-      email: parent.email,
+      email: dependentEmail,
       firstName: parsed.data.firstName.trim(),
       lastName: parsed.data.lastName.trim(),
       passwordHash: placeholderHash,
@@ -105,6 +116,7 @@ export async function POST(req: NextRequest) {
       active: true,
       emailVerified: true,
       parentMemberId: session.user.id,
+      inheritParentEmail: inheritEmail,
     },
     select: {
       id: true,
@@ -112,6 +124,8 @@ export async function POST(req: NextRequest) {
       lastName: true,
       ageTier: true,
       dateOfBirth: true,
+      email: true,
+      inheritParentEmail: true,
     },
   });
 

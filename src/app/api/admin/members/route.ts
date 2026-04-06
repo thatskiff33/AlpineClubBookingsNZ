@@ -26,6 +26,8 @@ const createMemberSchema = z.object({
   sendInvite: z.boolean().default(false),
   parentMemberId: z.string().optional().nullable(),
   secondaryParentId: z.string().optional().nullable(),
+  familyGroupId: z.string().optional().nullable(),
+  inheritParentEmail: z.boolean().default(true),
 });
 
 const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
@@ -152,6 +154,16 @@ export async function GET(req: NextRequest) {
     where.AND = andConditions;
   }
 
+  // Filter: family group
+  const familyGroupFilter = sp.get("familyGroup");
+  if (familyGroupFilter === "none") {
+    andConditions.push({ familyGroupId: null });
+  } else if (familyGroupFilter === "any") {
+    andConditions.push({ familyGroupId: { not: null } });
+  } else if (familyGroupFilter && familyGroupFilter !== "all") {
+    andConditions.push({ familyGroupId: familyGroupFilter });
+  }
+
   const select = {
     id: true,
     firstName: true,
@@ -167,12 +179,17 @@ export async function GET(req: NextRequest) {
     createdAt: true,
     forcePasswordChange: true,
     parentMemberId: true,
+    inheritParentEmail: true,
     parent: {
       select: { id: true, firstName: true, lastName: true },
     },
     secondaryParentId: true,
     secondaryParent: {
       select: { id: true, firstName: true, lastName: true },
+    },
+    familyGroupId: true,
+    familyGroup: {
+      select: { id: true, name: true },
     },
     _count: {
       select: { dependents: true, secondaryDependents: true },
@@ -202,9 +219,11 @@ export async function GET(req: NextRequest) {
     parentName: m.parent ? `${m.parent.firstName} ${m.parent.lastName}` : null,
     secondaryParentName: m.secondaryParent ? `${m.secondaryParent.firstName} ${m.secondaryParent.lastName}` : null,
     dependentCount: m._count.dependents + m._count.secondaryDependents,
+    familyGroupName: m.familyGroup?.name ?? null,
     subscriptions: undefined,
     parent: undefined,
     secondaryParent: undefined,
+    familyGroup: undefined,
     _count: undefined,
   }));
 
@@ -257,8 +276,10 @@ export async function POST(req: NextRequest) {
     if (parent.parentMemberId) {
       return NextResponse.json({ error: "Primary parent cannot be a dependent" }, { status: 422 });
     }
-    // Dependents share parent's email
-    email = parent.email;
+    // Dependents share parent's email unless they have their own
+    if (data.inheritParentEmail !== false) {
+      email = parent.email;
+    }
   }
 
   if (data.secondaryParentId) {
@@ -277,6 +298,17 @@ export async function POST(req: NextRequest) {
     }
     if (secondaryParent.parentMemberId) {
       return NextResponse.json({ error: "Secondary parent cannot be a dependent" }, { status: 422 });
+    }
+  }
+
+  // Validate family group assignment (only for primary members)
+  if (data.familyGroupId) {
+    if (data.parentMemberId) {
+      return NextResponse.json({ error: "Dependents cannot be assigned to a family group" }, { status: 422 });
+    }
+    const group = await prisma.familyGroup.findUnique({ where: { id: data.familyGroupId } });
+    if (!group) {
+      return NextResponse.json({ error: "Family group not found" }, { status: 404 });
     }
   }
 
@@ -319,6 +351,8 @@ export async function POST(req: NextRequest) {
         passwordHash: placeholderHash,
         parentMemberId: data.parentMemberId || null,
         secondaryParentId: data.secondaryParentId || null,
+        familyGroupId: data.familyGroupId || null,
+        inheritParentEmail: data.parentMemberId ? data.inheritParentEmail : true,
         emailVerified: data.parentMemberId ? true : false, // Dependents don't need verification
       },
       select: {

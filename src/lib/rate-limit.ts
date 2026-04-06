@@ -167,6 +167,8 @@ export const rateLimiters = {
   resendVerification: { id: "resend-verification", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Request email change: 3 per hour */
   requestEmailChange: { id: "request-email-change", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Family group join request: 3 per hour */
+  familyGroupJoinRequest: { id: "family-group-join-request", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
 } as const;
 
 // Export for testing

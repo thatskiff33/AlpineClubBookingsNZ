@@ -12,6 +12,8 @@ interface Dependent {
   lastName: string;
   ageTier: string;
   dateOfBirth: string | null;
+  email: string | null;
+  inheritParentEmail: boolean;
 }
 
 export function DependentsSection({
@@ -25,6 +27,8 @@ export function DependentsSection({
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
+  const [email, setEmail] = useState("");
+  const [inheritParentEmail, setInheritParentEmail] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -32,6 +36,8 @@ export function DependentsSection({
     setFirstName("");
     setLastName("");
     setDateOfBirth("");
+    setEmail("");
+    setInheritParentEmail(true);
     setShowForm(false);
     setEditingId(null);
     setError("");
@@ -48,11 +54,13 @@ export function DependentsSection({
     setError("");
 
     try {
-      const body: Record<string, string> = {
+      const body: Record<string, string | boolean> = {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
+        inheritParentEmail,
       };
       if (dateOfBirth) body.dateOfBirth = dateOfBirth;
+      if (!inheritParentEmail && email) body.email = email;
 
       if (editingId) {
         const res = await fetch(`/api/members/dependents/${editingId}`, {
@@ -76,6 +84,8 @@ export function DependentsSection({
                   dateOfBirth: updated.dateOfBirth
                     ? updated.dateOfBirth.substring(0, 10)
                     : null,
+                  email: updated.email || d.email,
+                  inheritParentEmail: updated.inheritParentEmail ?? d.inheritParentEmail,
                 }
               : d
           )
@@ -101,6 +111,8 @@ export function DependentsSection({
             dateOfBirth: created.dateOfBirth
               ? created.dateOfBirth.substring(0, 10)
               : null,
+            email: created.email || null,
+            inheritParentEmail: created.inheritParentEmail ?? inheritParentEmail,
           },
         ]);
       }
@@ -134,6 +146,8 @@ export function DependentsSection({
     setFirstName(dep.firstName);
     setLastName(dep.lastName);
     setDateOfBirth(dep.dateOfBirth || "");
+    setEmail(dep.email || "");
+    setInheritParentEmail(dep.inheritParentEmail);
     setShowForm(true);
     setError("");
   };
@@ -226,6 +240,34 @@ export function DependentsSection({
             <p className="text-xs text-muted-foreground mt-1">
               Age tier (Adult/Youth/Child) is calculated from date of birth
             </p>
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="dep-inherit-email"
+                checked={inheritParentEmail}
+                onChange={(e) => setInheritParentEmail(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              <Label htmlFor="dep-inherit-email">Use my email address</Label>
+            </div>
+            {!inheritParentEmail && (
+              <div>
+                <Label htmlFor="dep-email">Email Address</Label>
+                <Input
+                  id="dep-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="dependent@example.com"
+                  required={!inheritParentEmail}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  This email will be synced with Xero
+                </p>
+              </div>
+            )}
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex gap-2">

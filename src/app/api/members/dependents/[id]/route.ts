@@ -9,6 +9,8 @@ const updateDependentSchema = z.object({
   lastName: z.string().min(1).max(100).optional(),
   dateOfBirth: z.string().nullable().optional(),
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]).optional(),
+  email: z.string().email().optional(),
+  inheritParentEmail: z.boolean().optional(),
 });
 
 /**
@@ -54,6 +56,24 @@ export async function PUT(
   if (parsed.data.firstName) updateData.firstName = parsed.data.firstName.trim();
   if (parsed.data.lastName) updateData.lastName = parsed.data.lastName.trim();
 
+  // Handle email inheritance toggle
+  if (parsed.data.inheritParentEmail !== undefined) {
+    updateData.inheritParentEmail = parsed.data.inheritParentEmail;
+    if (parsed.data.inheritParentEmail) {
+      // Switching to inherit: set email to parent's
+      const parent = await prisma.member.findUnique({
+        where: { id: dependent.parentMemberId! },
+        select: { email: true },
+      });
+      if (parent) updateData.email = parent.email;
+    } else if (parsed.data.email) {
+      // Using own email
+      updateData.email = parsed.data.email.toLowerCase().trim();
+    }
+  } else if (parsed.data.email) {
+    updateData.email = parsed.data.email.toLowerCase().trim();
+  }
+
   if (parsed.data.dateOfBirth !== undefined) {
     if (parsed.data.dateOfBirth === null) {
       updateData.dateOfBirth = null;
@@ -78,6 +98,8 @@ export async function PUT(
       lastName: true,
       ageTier: true,
       dateOfBirth: true,
+      email: true,
+      inheritParentEmail: true,
     },
   });
 
