@@ -5,6 +5,9 @@
 ALTER TABLE "Member" ADD COLUMN IF NOT EXISTS "forcePasswordChange" BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE "Member" ADD COLUMN IF NOT EXISTS "emailVerified" BOOLEAN NOT NULL DEFAULT false;
 
+-- Grandfather existing members as verified (new registrations will verify via email)
+UPDATE "Member" SET "emailVerified" = true WHERE "emailVerified" = false;
+
 -- AlterTable: Payment - add changeFeeCents
 ALTER TABLE "Payment" ADD COLUMN "changeFeeCents" INTEGER NOT NULL DEFAULT 0;
 
