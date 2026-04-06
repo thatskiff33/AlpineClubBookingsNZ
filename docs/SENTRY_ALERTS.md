@@ -42,5 +42,5 @@ Configure these alert rules in the Sentry project dashboard after deploying with
 ## Alert Recipients
 
 Configure in Sentry project settings:
-- Primary: admin@tac.org.nz
+- Primary: support@tokoroa.org.nz
 - Optional: Add a Slack webhook integration for faster notification

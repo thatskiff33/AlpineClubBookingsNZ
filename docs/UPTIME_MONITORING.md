@@ -13,7 +13,7 @@ External uptime monitoring ensures you are alerted when the entire application o
    - **URL:** `https://yourdomain.co.nz/api/health`
    - **Monitoring Interval:** 60 seconds (free tier minimum)
 3. Configure alert contacts:
-   - **Email:** admin@tac.org.nz
+   - **Email:** support@tokoroa.org.nz
 4. Advanced settings:
    - **Alert when down for:** 2 consecutive checks (2 minutes)
    - **HTTP method:** GET

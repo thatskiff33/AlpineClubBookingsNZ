@@ -203,7 +203,7 @@ describe("N-02: sendAdminNewBookingAlert", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "admin@tac.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
@@ -221,7 +221,7 @@ describe("N-02: sendAdminNewBookingAlert", () => {
 
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        to: "admin@tac.org.nz",
+        to: "support@tokoroa.org.nz",
         templateName: "admin-new-booking",
       }),
     });
@@ -314,7 +314,7 @@ describe("N-04: sendAdminPaymentFailureAlert", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "admin@tac.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
@@ -346,7 +346,7 @@ describe("N-06: checkPendingDeadlines", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "admin@tac.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
@@ -392,7 +392,7 @@ describe("N-07: sendAdminBookingBumpedAlert", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "admin@tac.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });

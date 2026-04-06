@@ -209,27 +209,6 @@ async function main() {
     console.log("Admin user seeded: support@tokoroa.org.nz / admin123 (password change required on first login)");
   }
 
-  // Seed test member
-  const existingMember = await prisma.member.findFirst({
-    where: { email: "member@tac.org.nz" },
-  });
-
-  if (!existingMember) {
-    const memberPasswordHash = await bcrypt.hash("member123", 12);
-    await prisma.member.create({
-      data: {
-        email: "member@tac.org.nz",
-        passwordHash: memberPasswordHash,
-        firstName: "Test",
-        lastName: "Member",
-        role: "MEMBER",
-        ageTier: "ADULT",
-        emailVerified: true,
-      },
-    });
-    console.log("Test member seeded: member@tac.org.nz / member123");
-  }
-
   // Seed lodge account (shared iPad in lodge)
   const existingLodge = await prisma.member.findFirst({
     where: { email: "lodge@tokoroa.org.nz" },

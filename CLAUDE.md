@@ -18,9 +18,8 @@ npx prisma migrate dev --name initial
 npm run db:seed
 ```
 
-**Test accounts (from seed):**
-- Admin: admin@tac.org.nz / admin123
-- Member: member@tac.org.nz / member123
+**Seed account:**
+- Admin: support@tokoroa.org.nz / admin123 (password change required on first login)
 
 **Note:** nodemailer pinned to v7 for next-auth peer dep compatibility
 

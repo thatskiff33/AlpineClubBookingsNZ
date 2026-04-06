@@ -116,7 +116,7 @@ describe("N-03: checkCapacityWarnings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "admin@tac.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
@@ -167,7 +167,7 @@ describe("N-05: notifyXeroSyncError", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "admin@tac.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
     mockPrisma.emailLog.findFirst.mockResolvedValue(null);
@@ -314,7 +314,7 @@ describe("N-13: sendAdminDigest", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "admin@tac.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
