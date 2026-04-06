@@ -5,7 +5,7 @@
 ```bash
 npm install
 npx prisma generate
-npm test              # 805 tests pass (37 test files)
+npm test              # 948 tests pass (45 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -25,7 +25,7 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9, 10, 11 complete. Security audit + 5 integration reviews done. 805 tests pass, build succeeds.
+All 9 build phases + all Delivery Phases (1–12) + post-launch bugfix rounds complete. Security audit + 5 integration reviews done. 948 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
@@ -48,6 +48,20 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9, 10, 11 complete. Secur
 - Sentry: server-side + client-side error tracking, cron monitoring, performance tracing
 - Observability: API request logging middleware, webhook delivery monitoring (`WebhookLog`), admin health dashboard
 - Notifications: EmailLog tracking, check-in reminders, admin alerts (new booking, payment failure, pending deadline, bumped, Xero errors, capacity warnings), notification preferences, email retry with backoff, admin daily digest, bulk member communication (rate-limited, preference-gated), post-stay feedback requests
+- Booking notes: members and admins can add/edit notes on bookings (HTML stripped, 500 char limit)
+- Admin member management: pagination, advanced filtering/sorting, CSV export/import, bulk deactivate/role-change, member detail page with full booking history and stats, member detail edit (name, email, role, DOB, active, force password reset), Xero contact sync on update
+- Xero phone sync: `formatXeroPhone()`/`getXeroContactPhone()` read structured phone from Xero (mobile preferred), phone backfill in `syncContactsFromXero()` for already-linked contacts
+- Zero-dollar bookings: $0 bookings skip Stripe entirely, get SUCCEEDED payment and PAID status in same transaction, Xero invoice created
+- Modification payment collection: price increases on booking modifications create additional PaymentIntent; client confirms in UI before change is committed
+- DRAFT bookings: booking wizard can save as draft (DRAFT status, 72h expiry); `GET /api/bookings/drafts` returns active drafts; excluded from default booking listing
+- Subscription enforcement: members with unpaid/overdue subscription blocked from creating new bookings (403)
+- Configurable age tiers: `AgeTierSetting` model, admin UI at `/admin/age-tiers`; default CHILD <10 / YOUTH 10–17 / ADULT 18+; season start date (Apr 1) used as age reference
+- Calendar UI: bed count per day, color-coded availability tiers, season boundary indicators
+- Status colors: centralized utility `src/lib/status-colors.ts`; unique color per status; PAID=blue, DRAFT=grey/slate
+- Navigation: admin Home link → `/dashboard`, branding link → public homepage, all 6 KPI cards link to filtered admin pages
+- Content pages: about/committee/join/FAQ/rules/contact/privacy/terms; Waldvogel Lodge caption, catering info, tokoroa.org.nz links
+- Family group multi-membership: `FamilyGroupMember` join table (members can belong to multiple groups); click-through edit from member list badge
+- Family email inheritance: `inheritEmailFromId` field on Member, `getEffectiveEmail()` helper; child/youth dependents can inherit parent's email for all notification sends
 
 ### Delivery Phase 1: Foundational Infrastructure - COMPLETED
 
@@ -413,9 +427,183 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9, 10, 11 complete. Secur
 - `src/lib/xero.ts` — Added `getAccountMapping()`, `ACCOUNT_MAPPING_DEFAULTS`, refactored all hardcoded account codes, added `subscriptionAccountCode` param to `findSubscriptionInvoice`, added `accountCode` param to `buildInvoiceLineItems`
 - `src/app/(admin)/admin/xero/page.tsx` — Added Account Mappings card with filtered dropdowns
 
+### Delivery Phase 2: Dashboard & Booking Notes - COMPLETED
+
+**Date:** 2026-04-06
+**Tests:** +10 new
+
+**Features built:**
+1. **Booking notes**: `PUT /api/bookings/[id]/notes` — members and admins can save freetext notes on a booking. HTML tags stripped server-side. Max 500 characters (Zod validation). Owner or ADMIN only.
+
+**New files:**
+- `src/app/api/bookings/[id]/notes/route.ts` - Booking notes API
+- `src/lib/__tests__/phase2-dashboard.test.ts` - 10 tests
+
+### Delivery Phase 3: Admin Member Management - COMPLETED
+
+**Date:** 2026-04-06
+**Tests:** +51 new (32 + 19 across 2 sub-phases)
+
+**Features built:**
+1. **A1/A11 - Pagination & Sorting**: `GET /api/admin/members` supports `page`, `pageSize` (max 100), `sortBy`, `sortDir`; returns `{total, totalPages, page, pageSize, members}`.
+2. **A2 - Advanced Filtering**: filter by `role`, `active`, `type` (primary/dependent), `subscriptionStatus` (including NONE for no record), free-text search (name/email AND logic).
+3. **A3 - CSV Export**: `GET /api/admin/members/export` streams CSV with all filter params applied; correct `Content-Disposition` header; special chars escaped.
+4. **A4 - CSV Import**: `POST /api/admin/members/import` — validates required fields, detects intra-file duplicate emails, skips already-existing DB emails, all-or-nothing Prisma transaction.
+5. **A5/A6 - Bulk Operations**: `POST /api/admin/members/bulk-update` — bulk deactivate or set-role; guards against self-demotion/self-deactivation; all changes audit-logged in transaction.
+6. **A8 - Member Detail**: `GET /api/admin/members/[id]` returns member with booking history, aggregate stats, and recent audit log entries.
+7. **A8 - Member Detail Edit**: `PUT /api/admin/members/[id]` — edit name, email (conflict check), role, DOB (recomputes ageTier), active (cascades to dependents), forcePasswordChange; updates Xero contact if connected.
+
+**New files:**
+- `src/app/api/admin/members/export/route.ts` - CSV export
+- `src/app/api/admin/members/import/route.ts` - CSV import
+- `src/app/api/admin/members/bulk-update/route.ts` - Bulk operations
+- `src/app/api/admin/members/[id]/route.ts` - Member detail GET/PUT
+- `src/app/(admin)/admin/members/[id]/page.tsx` - Member detail admin page
+- `src/lib/__tests__/phase3-admin-members.test.ts` - 32 tests
+- `src/lib/__tests__/phase3b-member-detail-edit.test.ts` - 19 tests
+
+**Modified files:**
+- `src/app/api/admin/members/route.ts` - Added pagination, sorting, advanced filtering
+
+### Delivery Phase 12: Xero Phone Number Sync - COMPLETED
+
+**Date:** 2026-04-06
+
+**Features built:**
+1. **XPH-01/XPH-02 - Phone read helpers**: `formatXeroPhone()` assembles Xero's split `phoneCountryCode`/`phoneAreaCode`/`phoneNumber` fields into a single formatted string (e.g. `"+64 27 4224115"`). `getXeroContactPhone()` finds the best number from a contact's phones array (prefers MOBILE type).
+2. **XPH-03 - Phone backfill in sync**: `syncContactsFromXero()` now backfills `phone` from Xero for already-linked contacts that have a null phone in the DB, using `getXeroContactPhone()`.
+
+**Modified files:**
+- `src/lib/xero.ts` - Added `formatXeroPhone`, `getXeroContactPhone`, phone backfill in `syncContactsFromXero` (both already-linked and email-match branches)
+
+### Bugfix: Zero-Dollar Payments - COMPLETED
+
+**Date:** 2026-04-07
+**Tests:** +25 new (`src/lib/__tests__/zero-dollar-booking.test.ts`)
+
+- Booking creation: $0 CONFIRMED bookings skip Stripe PaymentIntent, create SUCCEEDED Payment + PAID booking status in same transaction
+- Cron confirm-pending: $0 PENDING bookings confirmed without Stripe charge; existing $0 payment record updated to SUCCEEDED
+- Xero: `createXeroInvoiceForBooking` now records $0 payment for $0 bookings
+- UI: `BookingPaymentWrapper` shows "Booking Complete" when `amountCents === 0`
+
+### Bugfix: Modification Payment Collection - COMPLETED
+
+**Date:** 2026-04-07
+**Tests:** +18 new (`src/lib/__tests__/fix-mod-payment.test.ts`)
+
+- `modify-dates` and `add-guests` routes: price increases now create an additional PaymentIntent and return `clientSecret` to the UI
+- `POST /api/bookings/[id]/confirm-modification-payment` — verifies PI succeeded and updates DB
+- `GET /api/bookings/[id]/additional-payment-secret` — returns `clientSecret` for pending additional PI
+- Stripe webhook: `payment_intent.succeeded` handles additional PIs for modifications
+- Change Dates and Add Guest dialogs updated to collect payment when `clientSecret` is returned
+
+### Bugfix: Draft Bookings - COMPLETED
+
+**Date:** 2026-04-07
+**Tests:** +15 new (`src/lib/__tests__/issue7-8-draft-subscription.test.ts`)
+
+- New `DRAFT` booking status; booking wizard has "Save as Draft" button
+- `GET /api/bookings/drafts` — returns active (non-expired) drafts for current member
+- `DELETE /api/bookings/[id]` with DRAFT status — deletes draft without refund logic
+- Draft expiry: 72 hours from creation; cron auto-expires via status check
+- Booking listing (`GET /api/bookings`) defaults to `status != DRAFT` to hide drafts from main list
+
+### Bugfix: Subscription Enforcement - COMPLETED
+
+**Date:** 2026-04-07
+**Tests:** (covered in `issue7-8-draft-subscription.test.ts`)
+
+- `POST /api/bookings` checks `MemberSubscription` for the booking member; UNPAID or OVERDUE → 403 with `SUBSCRIPTION_REQUIRED` error code
+- Members can still view, modify, and cancel existing bookings
+
+### Bugfix: Age Tier Calculation & Configurable Age Groups - COMPLETED
+
+**Date:** 2026-04-07
+**Tests:** +13 new (`src/lib/__tests__/age-tier-settings.test.ts`)
+
+- Age boundaries corrected: CHILD = age 0–9, YOUTH = 10–17, ADULT = 18+ (was 0–11, 12–17, 18+)
+- Reference date is season start (April 1 of the season year), not today — prevents mid-season tier changes
+- `AgeTierSetting` Prisma model: key/value store (`childMaxAge`, `youthMaxAge`) with DB-level cache
+- `computeAgeTierWithSettings()` reads from DB with fallback to hardcoded defaults
+- Admin UI at `/admin/age-tiers` — edit boundaries with contiguity validation
+- `invalidateAgeTierCache()` clears in-memory cache when settings saved
+
+**New Prisma models:**
+- `AgeTierSetting` — key/value age tier configuration
+
+### Bugfix: Calendar UI - COMPLETED
+
+**Date:** 2026-04-07
+**Tests:** (covered in status-colors and nav-content tests)
+
+- Availability calendar shows bed count per day (e.g. "12 beds")
+- Background color tiers: green (>15 beds), amber (6–15), red (1–5), grey (full/closed)
+- Season boundary indicators show season name and type on the first day of each season
+- Booking detail status badge uses centralized color utility
+
+### Bugfix: Status Colors - COMPLETED
+
+**Date:** 2026-04-07
+**Tests:** +19 new (`src/lib/__tests__/status-colors.test.ts`)
+
+- New `src/lib/status-colors.ts` — maps every booking/payment/subscription status to a unique Tailwind color class
+- Booking: DRAFT=slate, PENDING=yellow, CONFIRMED=green, PAID=blue, BUMPED=orange, CANCELLED=red, COMPLETED=purple
+- Payment: PENDING=yellow, PROCESSING=blue, SUCCEEDED=green, PAID=blue, FAILED=red, REFUNDED=orange, PARTIALLY_REFUNDED=amber
+- Subscription: PAID=green, UNPAID=red, OVERDUE=orange
+- Helper functions `bookingStatusClass()`, `paymentStatusClass()`, `subscriptionStatusClass()` with unknown-status fallback
+
+### Bugfix: Navigation & Content - COMPLETED
+
+**Date:** 2026-04-07
+**Tests:** +22 new (`src/lib/__tests__/nav-content-fixes.test.ts`)
+
+- Admin sidebar: Home link points to `/dashboard` (not `/admin/dashboard`)
+- Nav bar branding link: → `/` (public homepage) for unauthenticated, `/dashboard` for authenticated
+- All 6 dashboard KPI cards are clickable and link to filtered admin list pages
+- Booking list default filter excludes DRAFT status (`status != DRAFT`)
+- About page: Waldvogel Lodge photo caption corrected; catering info added
+- Join page: correct membership fee table; links to `tokoroa.org.nz`
+- Contact page footer links updated
+
+### Bugfix: Family Group Multi-Membership - COMPLETED
+
+**Date:** 2026-04-07
+**Tests:** +20 new (`src/lib/__tests__/family-group-multi.test.ts`)
+
+- `FamilyGroupMember` join table replaces single `familyGroupId` FK — members can now belong to multiple family groups
+- `GET /api/admin/family-groups` and `[id]` routes query via join table; inactive members filtered from response
+- `POST/PUT /api/admin/family-groups/[id]` manage join table rows (add/remove members); rejects dependents and inactive members
+- `GET /api/members/family` returns deduplicated peers from all groups the member belongs to; falls back to legacy `familyGroupId` for un-migrated records
+- Admin member list: family group badge shows one chip per group with correct `?edit=GROUP_ID` URL
+- Migration: `20260407_family_group_member` inserts existing `Member.familyGroupId` rows into join table (idempotent ON CONFLICT DO NOTHING)
+
+**New Prisma models:**
+- `FamilyGroupMember` — join table (memberId, familyGroupId, unique constraint)
+
+### Bugfix: Family Email Inheritance - COMPLETED
+
+**Date:** 2026-04-07
+**Tests:** +9 new (`src/lib/__tests__/member-email.test.ts`)
+
+- `inheritEmailFromId` field on `Member` — nullable FK to another Member whose email to use
+- `getEffectiveEmail(member)` helper in `src/lib/member-email.ts` — returns inherited email if set, own email otherwise; accepts pre-loaded relation to avoid extra DB round-trip
+- All notification sends (check-in reminders, roster emails, etc.) call `getEffectiveEmail()` for dependent guests
+- Profile page: shows "Email inherited from [parent name]" when inheritance is active; link to change
+
+**New files:**
+- `src/lib/member-email.ts` - `getEffectiveEmail()` helper
+
 ## What's Next
 
-Phases 1, 4, 5, 6, 7, 8, 9, 10, and 11 complete. Remaining: Phase 12 (Xero Phone Sync). See `docs/DELIVERY_PLAN.md` for details.
+All delivery phases (1–12) and post-launch bugfix rounds are complete. The system is ready for UAT testing and production deployment.
+
+**Recommended next steps:**
+1. UAT: Club committee tests with real member data against the staging/production instance
+2. Production deployment: `docker compose up -d --build` + `docker compose run --rm migrate` on Lightsail
+3. Switch Stripe to live keys and Xero to production org
+4. Seed production database and import existing Checkfront member data via CSV import
+
+See `docs/DELIVERY_PLAN.md` for the full feature specification reference.
 
 ## Context
 
@@ -559,7 +747,6 @@ TACBookings/
 │   │   ├── backup.ts              # Automated pg_dump to S3
 │   │   ├── api-logger.ts          # API request logging middleware
 │   │   └── webhook-log.ts         # Webhook delivery monitoring
-│   ├── middleware.ts              # Security headers (CSP, HSTS, etc.)
 │   ├── instrumentation.ts        # Cron job scheduling
 │   └── components/
 │       ├── ui/                    # shadcn/ui components
@@ -606,10 +793,12 @@ SeasonRate: id, seasonId, ageTier, isMember, pricePerNightCents
 
 **Booking / BookingGuest** - Stays at the lodge
 ```
-Booking: id, memberId, checkIn, checkOut, status (PENDING|CONFIRMED|BUMPED|CANCELLED|COMPLETED)
+Booking: id, memberId, checkIn, checkOut, notes
+  status (DRAFT|PENDING|CONFIRMED|PAID|BUMPED|CANCELLED|COMPLETED)
   totalPriceCents, discountCents, finalPriceCents, hasNonMembers, nonMemberHoldUntil
 BookingGuest: id, bookingId, firstName, lastName, ageTier, isMember, memberId, priceCents
 ```
+Note: DRAFT bookings expire 72h after creation. PAID is set for $0 bookings (no Stripe charge).
 
 **Payment** - Stripe payment record
 ```
@@ -632,7 +821,7 @@ ChoreTemplate: name, description, recommendedPeople, minAge, ageRestriction, isE
 ChoreAssignment: choreTemplateId, bookingId, bookingGuestId, date, status (SUGGESTED|CONFIRMED|COMPLETED)
 ```
 
-**Other:** CancellationPolicy, XeroToken, ProcessedWebhookEvent, AuditLog, Room, PasswordResetToken
+**Other:** CancellationPolicy, XeroToken, ProcessedWebhookEvent, AuditLog, Room, PasswordResetToken, AgeTierSetting, FamilyGroupMember, HutLeaderAssignment, GuestChoreToken, EmailLog, NotificationPreference, WebhookLog, CronJobRun, BookingModification, EmailVerificationToken, EmailChangeToken, DeletionRequest, XeroAccountMapping
 
 ### Key Relationships
 - Member -> many Bookings, MemberSubscriptions, PromoRedemptions
@@ -698,9 +887,9 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 | Booking bumped | Booking member | Implemented |
 | Booking cancelled | Booking member | Implemented |
 | Chore roster | All guests for date | Implemented |
-| Admin: new booking | Admin | Not yet |
-| Admin: capacity warning | Admin | Not yet |
-| Admin: pending approaching deadline | Admin | Not yet |
+| Admin: new booking | Admin | Implemented |
+| Admin: capacity warning | Admin | Implemented |
+| Admin: pending approaching deadline | Admin | Implemented |
 
 ## Deployment (AWS Lightsail)
 
@@ -726,6 +915,11 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 - **Season year = April to March** - if current month >= April, seasonYear = currentYear; else seasonYear = currentYear - 1
 - **Fixed advisory lock key** - `pg_advisory_xact_lock(1)` serializes all booking creation to prevent double-booking
 - **Promo codes cleaned up on cancel/bump** - PromoRedemption deleted and currentRedemptions decremented
+- **Age tiers are configurable** - Default CHILD <10 / YOUTH 10–17 / ADULT 18+; admin can adjust via AgeTierSetting model; age is computed at season start (April 1) so tier is stable for the whole season
+- **DRAFT bookings expire** - 72h TTL; excluded from default booking listing; no Stripe charge or Xero invoice created until confirmed
+- **$0 bookings skip Stripe** - When finalPriceCents=0 (e.g. 100% promo), booking goes straight to PAID status with a SUCCEEDED Payment record; Xero invoice still created
+- **Family multi-membership via join table** - FamilyGroupMember replaces familyGroupId FK; members can be in multiple groups; legacy FK preserved as fallback
+- **Email inheritance for dependents** - inheritEmailFromId on Member; getEffectiveEmail() used for all notification sends so dependent members receive emails via parent's address
 
 ## Verification & Testing
 
@@ -737,4 +931,4 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 
 ## Build History Summary
 
-9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1, 4, 5, 6, 7, 8, and 9 completed 2026-04-06. 688 tests pass. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
+9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1–11 completed 2026-04-06 to 2026-04-07. Phase 12 (Xero Phone Sync) and all post-launch bugfix rounds completed 2026-04-07. 948 tests pass across 45 test files. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
