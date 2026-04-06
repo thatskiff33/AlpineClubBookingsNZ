@@ -110,33 +110,17 @@ export async function POST(request: Request) {
   // Generate the email HTML (using escapeHtml inside the template)
   const html = bulkCommunicationTemplate(subject, messageBody);
 
-  // Queue emails via EmailLog (let retry cron handle actual delivery if needed)
-  let queued = 0;
-  for (const recipient of eligibleRecipients) {
-    try {
-      await prisma.emailLog.create({
-        data: {
-          to: recipient.email,
-          subject,
-          templateName: "bulk-communication",
-          htmlBody: html,
-          status: "QUEUED",
-          lastAttemptAt: new Date(),
-        },
-      });
-      queued++;
-    } catch (err) {
-      logger.error(
-        { err, email: recipient.email },
-        "Failed to queue bulk communication email"
-      );
-    }
-  }
+  const queued = eligibleRecipients.length;
 
-  // Send emails in background (fire-and-forget)
+  // Send emails in background with batching to avoid SMTP rate limits.
+  // sendEmail() handles its own EmailLog creation — no manual QUEUED records needed.
+  const BATCH_SIZE = 10;
+  const BATCH_DELAY_MS = 1000; // 1 second between batches
+
   (async () => {
     const { sendEmail } = await import("@/lib/email");
-    for (const recipient of eligibleRecipients) {
+    for (let i = 0; i < eligibleRecipients.length; i++) {
+      const recipient = eligibleRecipients[i];
       try {
         await sendEmail({
           to: recipient.email,
@@ -149,6 +133,10 @@ export async function POST(request: Request) {
           { err, email: recipient.email },
           "Failed to send bulk communication email"
         );
+      }
+      // Pause between batches to avoid overwhelming SMTP
+      if ((i + 1) % BATCH_SIZE === 0 && i + 1 < eligibleRecipients.length) {
+        await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
       }
     }
   })();

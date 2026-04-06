@@ -529,6 +529,7 @@ model EmailLog {
   @@index([status])
   @@index([createdAt])
   @@index([status, attempts])
+  @@index([templateName, status, createdAt])
 }
 
 // ---------------------------------------------------------------------------
