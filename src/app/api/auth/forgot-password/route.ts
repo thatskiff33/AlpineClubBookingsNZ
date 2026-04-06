@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomBytes } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail } from "@/lib/email";
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (member && member.active) {
-      const token = crypto.randomUUID();
+      const token = randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
       await prisma.passwordResetToken.create({

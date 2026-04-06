@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomBytes } from "crypto";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest) {
       await Promise.all(
         batch.map(async (member) => {
           try {
-            const token = crypto.randomUUID();
+            const token = randomBytes(32).toString("hex");
             const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
             await prisma.passwordResetToken.create({
