@@ -69,6 +69,13 @@ export async function GET(req: NextRequest) {
     andConditions.push({ xeroContactId: null });
   }
 
+  const typeFilter = sp.get("type");
+  if (typeFilter === "primary") {
+    andConditions.push({ parentMemberId: null });
+  } else if (typeFilter === "dependent") {
+    andConditions.push({ parentMemberId: { not: null } });
+  }
+
   const subscriptionFilter = sp.get("subscription");
   if (subscriptionFilter === "NONE") {
     andConditions.push({

@@ -94,6 +94,19 @@ export async function POST(req: NextRequest) {
   // Track which rows had file-duplicate errors
   const errorRowSet = new Set(results.errors.map((e) => e.row));
 
+  // Pre-validate all rows before committing (all-or-nothing)
+  interface ValidatedRow {
+    rowNum: number;
+    email: string;
+    firstName: string;
+    lastName: string;
+    phone: string | null;
+    dateOfBirth: Date | null;
+    ageTier: "ADULT" | "YOUTH" | "CHILD";
+    role: "MEMBER" | "ADMIN";
+  }
+  const validatedRows: ValidatedRow[] = [];
+
   for (let i = 0; i < rows.length; i++) {
     const rowNum = i + 1;
 
@@ -109,42 +122,66 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    try {
-      // Determine age tier
-      let ageTier: "ADULT" | "YOUTH" | "CHILD" = "ADULT";
-      let dateOfBirth: Date | null = null;
-      if (row.dateOfBirth) {
-        dateOfBirth = new Date(row.dateOfBirth);
-        if (isNaN(dateOfBirth.getTime())) {
-          results.errors.push({ row: rowNum, errors: ["Invalid date of birth"] });
-          continue;
-        }
-        ageTier = computeAgeTier(dateOfBirth) as "ADULT" | "YOUTH" | "CHILD";
+    // Determine age tier
+    let ageTier: "ADULT" | "YOUTH" | "CHILD" = "ADULT";
+    let dateOfBirth: Date | null = null;
+    if (row.dateOfBirth) {
+      dateOfBirth = new Date(row.dateOfBirth);
+      if (isNaN(dateOfBirth.getTime())) {
+        results.errors.push({ row: rowNum, errors: ["Invalid date of birth"] });
+        continue;
       }
+      ageTier = computeAgeTier(dateOfBirth) as "ADULT" | "YOUTH" | "CHILD";
+    }
 
-      // Generate cryptographically random password
-      const randomPassword = randomBytes(16).toString("hex");
-      const passwordHash = await hash(randomPassword, 13);
+    validatedRows.push({
+      rowNum,
+      email,
+      firstName: row.firstName.trim(),
+      lastName: row.lastName.trim(),
+      phone: row.phone?.trim() || null,
+      dateOfBirth,
+      ageTier,
+      role: (row.role || "MEMBER") as "MEMBER" | "ADMIN",
+    });
+  }
 
-      const member = await prisma.member.create({
-        data: {
-          email,
-          firstName: row.firstName.trim(),
-          lastName: row.lastName.trim(),
-          phone: row.phone?.trim() || null,
-          dateOfBirth,
-          role: row.role || "MEMBER",
-          ageTier,
-          active: true,
-          passwordHash,
-        },
-        select: { id: true, email: true, firstName: true, lastName: true },
-      });
+  // If there are validation errors, abort the entire import
+  if (results.errors.length > 0) {
+    return NextResponse.json(results, { status: 200 });
+  }
 
-      // Add to existing set so subsequent rows cannot create duplicates
-      existingEmailSet.add(email);
+  // All-or-nothing: create all members in a transaction
+  try {
+    const createdMembers = await prisma.$transaction(async (tx) => {
+      const created: Array<{ id: string; email: string; firstName: string; lastName: string }> = [];
+      for (const row of validatedRows) {
+        const randomPassword = randomBytes(16).toString("hex");
+        const passwordHash = await hash(randomPassword, 13);
 
-      // Audit log
+        const member = await tx.member.create({
+          data: {
+            email: row.email,
+            firstName: row.firstName,
+            lastName: row.lastName,
+            phone: row.phone,
+            dateOfBirth: row.dateOfBirth,
+            role: row.role,
+            ageTier: row.ageTier,
+            active: true,
+            passwordHash,
+          },
+          select: { id: true, email: true, firstName: true, lastName: true },
+        });
+        created.push(member);
+      }
+      return created;
+    });
+
+    results.created = createdMembers.length;
+
+    // Audit log and invite emails (outside transaction, fire-and-forget)
+    for (const member of createdMembers) {
       logAudit({
         action: "member.imported",
         memberId: session.user.id,
@@ -152,7 +189,6 @@ export async function POST(req: NextRequest) {
         details: `Imported member: ${member.firstName} ${member.lastName} (${member.email})`,
       });
 
-      // Send invite email if requested
       if (sendInvites) {
         try {
           const token = randomBytes(32).toString("hex");
@@ -162,15 +198,16 @@ export async function POST(req: NextRequest) {
           });
           await sendPasswordResetEmail(member.email, token);
         } catch (emailErr) {
-          logger.error({ err: emailErr, memberId: member.id }, "Failed to create import invite token");
+          logger.error({ err: emailErr, memberId: member.id }, "Failed to send import invite email");
         }
       }
-
-      results.created++;
-    } catch (err) {
-      logger.error({ err, row: rowNum }, "Failed to import member row");
-      results.errors.push({ row: rowNum, errors: ["Failed to create member"] });
     }
+  } catch (err) {
+    logger.error({ err }, "Failed to import members (transaction rolled back)");
+    return NextResponse.json(
+      { error: "Import failed — no members were created. Please try again." },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json(results, { status: 200 });
