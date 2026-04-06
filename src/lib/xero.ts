@@ -518,6 +518,36 @@ function getXeroContactPhone(phones?: Array<{ phoneType?: Phone.PhoneTypeEnum; p
 }
 
 /**
+ * Parse an error thrown during Xero API operations into a human-readable string.
+ * Handles Error instances, xero-node SDK response objects, plain strings, and unknown types.
+ */
+function parseXeroError(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  if (typeof err === "object" && err !== null) {
+    const obj = err as Record<string, unknown>;
+    if (obj.statusCode || obj.status) {
+      let msg = `HTTP ${obj.statusCode ?? obj.status}`;
+      if (obj.body && typeof obj.body === "object") {
+        const body = obj.body as Record<string, unknown>;
+        if (body.Detail) msg += `: ${body.Detail}`;
+        else if (body.Message) msg += `: ${body.Message}`;
+        else if (body.Title) msg += `: ${body.Title}`;
+      } else if (obj.message) {
+        msg += `: ${obj.message}`;
+      }
+      return msg;
+    }
+    return JSON.stringify(err).slice(0, 200);
+  }
+  if (typeof err === "string") {
+    return err;
+  }
+  return "Unknown error";
+}
+
+/**
  * Import members from Xero contact groups into TACBookings.
  * Creates new Member records and optionally sends invite emails.
  */
@@ -531,6 +561,7 @@ export async function importMembersFromXeroGroups(
   linkedExisting: number;
   skippedNoEmail: number;
   errors: number;
+  errorDetails: Array<{ member: string; error: string }>;
   groupsProcessed: string[];
 }> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -541,6 +572,7 @@ export async function importMembersFromXeroGroups(
   let linkedExisting = 0;
   let skippedNoEmail = 0;
   let errors = 0;
+  const errorDetails: Array<{ member: string; error: string }> = [];
   const groupsProcessed: string[] = [];
 
   // Hash a random UUID — unguessable placeholder password
@@ -778,11 +810,18 @@ export async function importMembersFromXeroGroups(
         } catch (contactErr) {
           logger.error({ err: contactErr, contactEmail: contact.emailAddress }, "Error processing contact during member import");
           errors++;
+          const contactLabel = contact.name ||
+            [contact.firstName, contact.lastName].filter(Boolean).join(" ") ||
+            contact.emailAddress ||
+            contact.contactID ||
+            "Unknown contact";
+          errorDetails.push({ member: contactLabel, error: parseXeroError(contactErr) });
         }
       }
     } catch (groupErr) {
       logger.error({ err: groupErr, groupName: mapping.groupName }, "Error fetching group during member import");
       errors++;
+      errorDetails.push({ member: `Group: ${mapping.groupName}`, error: parseXeroError(groupErr) });
     }
   }
 
@@ -793,6 +832,7 @@ export async function importMembersFromXeroGroups(
     linkedExisting,
     skippedNoEmail,
     errors,
+    errorDetails,
     groupsProcessed,
   };
 }
@@ -1010,29 +1050,7 @@ export async function refreshAllMembershipStatuses(): Promise<{
     } catch (err) {
       errors++;
       const memberLabel = `${member.firstName} ${member.lastName} (${member.email})`;
-      let errorMessage = "Unknown error";
-      if (err instanceof Error) {
-        errorMessage = err.message;
-      } else if (typeof err === "object" && err !== null) {
-        // xero-node SDK often throws response objects, not Error instances
-        const obj = err as Record<string, unknown>;
-        if (obj.statusCode || obj.status) {
-          errorMessage = `HTTP ${obj.statusCode ?? obj.status}`;
-          if (obj.body && typeof obj.body === "object") {
-            const body = obj.body as Record<string, unknown>;
-            if (body.Detail) errorMessage += `: ${body.Detail}`;
-            else if (body.Message) errorMessage += `: ${body.Message}`;
-            else if (body.Title) errorMessage += `: ${body.Title}`;
-          } else if (obj.message) {
-            errorMessage += `: ${obj.message}`;
-          }
-        } else {
-          errorMessage = JSON.stringify(err).slice(0, 200);
-        }
-      } else if (typeof err === "string") {
-        errorMessage = err;
-      }
-      errorDetails.push({ member: memberLabel, error: errorMessage });
+      errorDetails.push({ member: memberLabel, error: parseXeroError(err) });
     }
   }
 
