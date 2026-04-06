@@ -126,12 +126,14 @@ export async function cancelBooking(
   }
 
   // Calculate refund based on cancellation policy
+  // Change fees (from prior booking modifications) are non-refundable per FEE-03
   const paidAmountCents =
     booking.payment.amountCents - booking.payment.refundedAmountCents;
+  const refundableBaseCents = paidAmountCents - booking.payment.changeFeeCents;
   const days = daysUntilDate(booking.checkIn);
   const policy = await loadCancellationPolicy(booking.checkIn);
   const { refundAmountCents, refundPercentage } = calculateRefundAmount(
-    paidAmountCents,
+    refundableBaseCents,
     days,
     policy
   );
@@ -184,7 +186,9 @@ export async function cancelBooking(
       action: "booking.cancel",
       memberId: sessionUserId,
       targetId: bookingId,
-      details: `Refund ${refundPercentage}% = ${refundAmountCents} cents`,
+      details: booking.payment.changeFeeCents > 0
+        ? `Refund ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${booking.payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents`
+        : `Refund ${refundPercentage}% = ${refundAmountCents} cents`,
       ipAddress,
     });
 
