@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { subscriptionStatusClass } from "@/lib/status-colors";
 
 export default async function ProfilePage() {
   const session = await auth();
@@ -146,23 +147,9 @@ export default async function ProfilePage() {
             <span className="text-muted-foreground">
               Subscription ({seasonLabel})
             </span>
-            {subscriptionStatus === "PAID" ? (
-              <Badge className="bg-green-100 text-green-800 border-green-200">
-                Paid
-              </Badge>
-            ) : subscriptionStatus === "UNPAID" ? (
-              <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">
-                Unpaid
-              </Badge>
-            ) : subscriptionStatus === "OVERDUE" ? (
-              <Badge className="bg-red-100 text-red-800 border-red-200">
-                Overdue
-              </Badge>
-            ) : (
-              <Badge variant="secondary" className="bg-slate-100 text-slate-600">
-                Not Invoiced
-              </Badge>
-            )}
+            <Badge className={subscriptionStatusClass(subscriptionStatus ?? "NOT_INVOICED")}>
+              {subscriptionStatus === "PAID" ? "Paid" : subscriptionStatus === "UNPAID" ? "Unpaid" : subscriptionStatus === "OVERDUE" ? "Overdue" : "Not Invoiced"}
+            </Badge>
           </div>
         </CardContent>
       </Card>
@@ -227,23 +214,9 @@ export default async function ProfilePage() {
                         <span className="ml-2 text-xs text-muted-foreground">(current)</span>
                       )}
                     </span>
-                    {sub.status === "PAID" ? (
-                      <Badge className="bg-green-100 text-green-800 border-green-200">
-                        Paid
-                      </Badge>
-                    ) : sub.status === "UNPAID" ? (
-                      <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">
-                        Unpaid
-                      </Badge>
-                    ) : sub.status === "OVERDUE" ? (
-                      <Badge className="bg-red-100 text-red-800 border-red-200">
-                        Overdue
-                      </Badge>
-                    ) : (
-                      <Badge variant="secondary" className="bg-slate-100 text-slate-600">
-                        {sub.status}
-                      </Badge>
-                    )}
+                    <Badge className={subscriptionStatusClass(sub.status)}>
+                      {sub.status === "PAID" ? "Paid" : sub.status === "UNPAID" ? "Unpaid" : sub.status === "OVERDUE" ? "Overdue" : sub.status.replace("_", " ")}
+                    </Badge>
                   </div>
                 );
               })}

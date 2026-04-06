@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ArrowLeft, ExternalLink, User, Calendar, CreditCard, Clock, Pencil } from "lucide-react"
+import { bookingStatusClass, subscriptionStatusClass } from "@/lib/status-colors"
 
 interface MemberDetail {
   id: string; firstName: string; lastName: string; email: string
@@ -119,8 +120,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
   const fmt = (cents: number) => new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100)
   const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })
-  const subCls = (s: string) => s === "PAID" ? "bg-green-100 text-green-800 border-green-200" : s === "OVERDUE" ? "bg-red-100 text-red-800 border-red-200" : s === "UNPAID" ? "bg-yellow-100 text-yellow-800 border-yellow-200" : "bg-slate-100 text-slate-600 border-slate-200"
-  const bkCls = (s: string) => s === "CONFIRMED" ? "bg-green-100 text-green-800 border-green-200" : s === "COMPLETED" ? "bg-blue-100 text-blue-800 border-blue-200" : s === "CANCELLED" ? "bg-red-100 text-red-800 border-red-200" : s === "BUMPED" ? "bg-orange-100 text-orange-800 border-orange-200" : "bg-yellow-100 text-yellow-800 border-yellow-200"
 
   return (
     <div className="space-y-6">
@@ -167,14 +166,14 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       <Card><CardHeader><CardTitle className="text-base font-medium">Subscription History</CardTitle></CardHeader><CardContent>
         {member.subscriptions.length === 0 ? <p className="text-sm text-slate-500">No subscription records</p> : (
           <Table><TableHeader><TableRow><TableHead>Season Year</TableHead><TableHead>Status</TableHead><TableHead>Paid At</TableHead><TableHead>Xero Invoice</TableHead></TableRow></TableHeader><TableBody>{member.subscriptions.map((sub) => (
-            <TableRow key={sub.id}><TableCell className="font-medium">{sub.seasonYear}/{sub.seasonYear + 1}</TableCell><TableCell><Badge variant="secondary" className={subCls(sub.status)}>{sub.status.replace("_", " ")}</Badge></TableCell><TableCell>{sub.paidAt ? fmtDate(sub.paidAt) : "-"}</TableCell><TableCell>{sub.xeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">View <ExternalLink className="h-3 w-3" /></a> : "-"}</TableCell></TableRow>
+            <TableRow key={sub.id}><TableCell className="font-medium">{sub.seasonYear}/{sub.seasonYear + 1}</TableCell><TableCell><Badge variant="secondary" className={subscriptionStatusClass(sub.status)}>{sub.status.replace("_", " ")}</Badge></TableCell><TableCell>{sub.paidAt ? fmtDate(sub.paidAt) : "-"}</TableCell><TableCell>{sub.xeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">View <ExternalLink className="h-3 w-3" /></a> : "-"}</TableCell></TableRow>
           ))}</TableBody></Table>)}
       </CardContent></Card>
 
       <Card><CardHeader><CardTitle className="text-base font-medium">Booking History</CardTitle></CardHeader><CardContent>
         {member.bookings.length === 0 ? <p className="text-sm text-slate-500">No bookings yet</p> : (
           <Table><TableHeader><TableRow><TableHead>Check In</TableHead><TableHead>Check Out</TableHead><TableHead>Status</TableHead><TableHead>Guests</TableHead><TableHead>Amount</TableHead></TableRow></TableHeader><TableBody>{member.bookings.map((booking) => (
-            <TableRow key={booking.id}><TableCell>{fmtDate(booking.checkIn)}</TableCell><TableCell>{fmtDate(booking.checkOut)}</TableCell><TableCell><Badge variant="secondary" className={bkCls(booking.status)}>{booking.status}</Badge></TableCell><TableCell>{booking._count.guests}</TableCell><TableCell>{fmt(booking.finalPriceCents)}</TableCell></TableRow>
+            <TableRow key={booking.id}><TableCell>{fmtDate(booking.checkIn)}</TableCell><TableCell>{fmtDate(booking.checkOut)}</TableCell><TableCell><Badge variant="secondary" className={bookingStatusClass(booking.status)}>{booking.status}</Badge></TableCell><TableCell>{booking._count.guests}</TableCell><TableCell>{fmt(booking.finalPriceCents)}</TableCell></TableRow>
           ))}</TableBody></Table>)}
       </CardContent></Card>
 
