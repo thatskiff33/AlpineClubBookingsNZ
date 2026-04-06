@@ -23,6 +23,7 @@ import {
   Activity,
   Mail,
   UserCheck,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -52,6 +53,7 @@ const navItems = [
   },
   { href: "/admin/payments", label: "Payments", icon: CreditCard },
   { href: "/admin/audit-log", label: "Audit Log", icon: Shield },
+  { href: "/admin/deletion-requests", label: "Deletion Requests", icon: Trash2 },
   { href: "/admin/communications", label: "Communications", icon: Mail },
   { href: "/admin/xero", label: "Xero", icon: RefreshCw },
   { href: "/admin/reports", label: "Reports", icon: BarChart2 },

@@ -22,6 +22,8 @@ import {
   bulkCommunicationTemplate,
   adminPasswordResetTemplate,
   bookingModifiedTemplate,
+  accountDeletionApprovedTemplate,
+  accountDeletionRejectedTemplate,
 } from "./email-templates";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -463,6 +465,33 @@ export async function shouldSendEmail(
   }
 
   return Boolean(pref[prefField]);
+}
+
+// F-COMP-04: Account deletion approved
+export async function sendAccountDeletionApprovedEmail(
+  email: string,
+  firstName: string
+) {
+  await sendEmail({
+    to: email,
+    subject: "Your Account Deletion Request Has Been Processed",
+    html: accountDeletionApprovedTemplate(firstName),
+    templateName: "account-deletion-approved",
+  });
+}
+
+// F-COMP-04: Account deletion rejected
+export async function sendAccountDeletionRejectedEmail(
+  email: string,
+  firstName: string,
+  adminNote: string
+) {
+  await sendEmail({
+    to: email,
+    subject: "Update on Your Account Deletion Request",
+    html: accountDeletionRejectedTemplate(firstName, adminNote),
+    templateName: "account-deletion-rejected",
+  });
 }
 
 // EML-01: Booking modified email

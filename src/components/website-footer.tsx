@@ -38,6 +38,11 @@ export function WebsiteFooter() {
                 </Link>
               </li>
               <li>
+                <Link href="/faq" className="hover:text-white transition-colors">
+                  FAQ
+                </Link>
+              </li>
+              <li>
                 <Link href="/rules" className="hover:text-white transition-colors">
                   Club Rules
                 </Link>
@@ -94,8 +99,19 @@ export function WebsiteFooter() {
         </div>
 
         <div className="mt-10 border-t border-slate-700 pt-6 text-center text-sm text-slate-400">
-          &copy; {new Date().getFullYear()} Tokoroa Alpine Club Incorporated. All
-          rights reserved.
+          <p>
+            &copy; {new Date().getFullYear()} Tokoroa Alpine Club Incorporated. All
+            rights reserved.
+          </p>
+          <p className="mt-2 space-x-4">
+            <Link href="/privacy" className="hover:text-white transition-colors">
+              Privacy Policy
+            </Link>
+            <span aria-hidden="true">&middot;</span>
+            <Link href="/terms" className="hover:text-white transition-colors">
+              Terms of Service
+            </Link>
+          </p>
         </div>
       </div>
     </footer>

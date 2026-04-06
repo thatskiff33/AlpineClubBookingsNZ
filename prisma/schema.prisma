@@ -138,6 +138,7 @@ model Member {
   notificationPreference     NotificationPreference?
   hutLeaderAssignments       HutLeaderAssignment[]
   familyGroupRequests        FamilyGroupJoinRequest[]
+  deletionRequests           DeletionRequest[]
 
   @@index([email])
   @@index([xeroContactId])
@@ -679,4 +680,32 @@ model FamilyGroupJoinRequest {
   @@index([familyGroupId])
   @@index([requesterId])
   @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Account Deletion Requests (F-COMP-04)
+// ---------------------------------------------------------------------------
+
+enum DeletionRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model DeletionRequest {
+  id           String                @id @default(cuid())
+  memberId     String
+  status       DeletionRequestStatus @default(PENDING)
+  reason       String?               // Optional free-text reason from member
+  adminNote    String?               // Note from admin on approve/reject
+  reviewedBy   String?               // Admin member ID
+  reviewedAt   DateTime?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@index([memberId])
+  @@index([status])
+  @@index([createdAt])
 }

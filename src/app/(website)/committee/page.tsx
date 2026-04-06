@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Phone, Mail } from "lucide-react";
+import committeeMembers from "@/data/committee";
 
 export const metadata: Metadata = {
   title: "Committee",
@@ -10,62 +11,26 @@ export const metadata: Metadata = {
     "Meet the Tokoroa Alpine Club committee members who volunteer their time to run the club and maintain the lodge.",
 };
 
-interface CommitteeMember {
-  role: string;
-  name: string;
-  phone: string;
-  contactKey?: string; // maps to /contact?recipient=key
-  description: string;
-}
-
-const committeeMembers: CommitteeMember[] = [
-  {
-    role: "President",
-    name: "Michael Higgins",
-    phone: "+64 20 4079 4310",
-    contactKey: "president",
-    description: "Chairs meetings and oversees club operations.",
-  },
-  {
-    role: "Secretary",
-    name: "Sally Woodfield",
-    phone: "+64 21 686 020",
-    contactKey: "secretary",
-    description: "Manages club correspondence and meeting minutes.",
-  },
-  {
-    role: "Treasurer",
-    name: "Jordan Hartley-Smith",
-    phone: "+64 27 422 4115",
-    contactKey: "treasurer",
-    description: "Manages club finances, subscriptions, and accounts.",
-  },
-  {
-    role: "Booking Officer",
-    name: "Chris Duyvestyn",
-    phone: "+64 27 472 1328",
-    contactKey: "bookings",
-    description:
-      "Manages lodge bookings, confirms non-member stays, and handles booking enquiries.",
-  },
-  {
-    role: "Communications Officer",
-    name: "Wayne Peterson",
-    phone: "+64 21 832 118",
-    contactKey: "communications",
-    description:
-      "Manages club communications, newsletters, and public information.",
-  },
-  {
-    role: "Lodge Maintenance Officer",
-    name: "Lance Pilcher",
-    phone: "+64 27 699 2688",
-    description:
-      "Coordinates lodge maintenance, working bees, and improvement projects.",
-  },
-];
-
 export default function CommitteePage() {
+  if (committeeMembers.length === 0) {
+    return (
+      <>
+        <section className="bg-gradient-to-br from-slate-800 to-slate-900 text-white py-16 sm:py-20">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+              Committee
+            </h1>
+          </div>
+        </section>
+        <section className="bg-white py-16 sm:py-20">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center">
+            <p className="text-slate-600">Committee information coming soon.</p>
+          </div>
+        </section>
+      </>
+    );
+  }
+
   return (
     <>
       {/* Header */}

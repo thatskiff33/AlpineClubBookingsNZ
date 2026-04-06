@@ -161,14 +161,18 @@ export const rateLimiters = {
   bookingCreate: { id: "booking-create", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Booking quote / availability / promo validate: 60 per minute */
   bookingQuery: { id: "booking-query", limit: 60, windowSeconds: 60 } as RateLimitConfig,
-  /** Contact form: 5 per hour */
-  contact: { id: "contact", limit: 5, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Contact form: 10 per hour */
+  contact: { id: "contact", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Resend verification email: 3 per hour */
   resendVerification: { id: "resend-verification", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Request email change: 3 per hour */
   requestEmailChange: { id: "request-email-change", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Family group join request: 3 per hour */
   familyGroupJoinRequest: { id: "family-group-join-request", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Personal data export: 5 per day */
+  dataExport: { id: "data-export", limit: 5, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
+  /** Account deletion request: 3 per day */
+  deletionRequest: { id: "deletion-request", limit: 3, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
 } as const;
 
 // Export for testing

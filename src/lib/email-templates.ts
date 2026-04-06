@@ -724,3 +724,33 @@ export function bookingModifiedTemplate(params: {
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
 }
+
+/** F-COMP-04: Account deletion approved — sent before anonymisation */
+export function accountDeletionApprovedTemplate(firstName: string): string {
+  return layout(`
+    ${heading("Account Deletion Confirmed")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ",")}
+    ${paragraph("We have processed your account deletion request. Your personal data has been anonymised in accordance with our Privacy Policy.")}
+    ${alertBox("Your account is now deactivated and you will no longer be able to log in. Booking history has been retained for financial and audit purposes with your personal details removed.", "info")}
+    ${paragraph("If you have any questions, please contact the club.")}
+    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+  `);
+}
+
+/** F-COMP-04: Account deletion rejected — sent to member with admin note */
+export function accountDeletionRejectedTemplate(
+  firstName: string,
+  adminNote: string
+): string {
+  const noteHtml = adminNote
+    ? `${alertBox("Admin note: " + escapeHtml(adminNote), "warning")}`
+    : "";
+  return layout(`
+    ${heading("Account Deletion Request Update")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ",")}
+    ${paragraph("Your account deletion request has been reviewed and was not approved at this time.")}
+    ${noteHtml}
+    ${paragraph("If you have questions about this decision, please contact the club directly.")}
+    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+  `);
+}
