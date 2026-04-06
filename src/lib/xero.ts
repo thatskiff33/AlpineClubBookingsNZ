@@ -1263,7 +1263,7 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
   if (booking.payment.status === "SUCCEEDED" && booking.payment.amountCents > 0) {
     const payment: XeroPayment = {
       invoice: { invoiceID: createdInvoice.invoiceID },
-      account: { code: "090" }, // Default bank account code
+      account: { code: "606" }, // Stripe bank feed account
       amount: booking.payment.amountCents / 100,
       date: formatDate(new Date()),
       reference: `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`,
@@ -1358,6 +1358,154 @@ export async function createXeroCreditNote(
   );
 
   return createdNote.creditNoteID;
+}
+
+// ---------------------------------------------------------------------------
+// XER-01: Xero Invoice Adjustment on Booking Modification
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a supplementary Xero invoice when a booking modification increases
+ * the price. Optionally includes a separate line item for a late-notice
+ * change fee.
+ *
+ * Fire-and-forget: caller should catch errors and log them.
+ */
+export async function createXeroSupplementaryInvoice(params: {
+  bookingId: string;
+  priceDiffCents: number;
+  changeFeeCents: number;
+}): Promise<string | null> {
+  const { bookingId, priceDiffCents, changeFeeCents } = params;
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: { payment: true, member: true },
+  });
+
+  if (!booking?.payment?.xeroInvoiceId) {
+    // No Xero invoice exists — nothing to adjust
+    return null;
+  }
+
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const contactId = await findOrCreateXeroContact(booking.memberId);
+
+  const lineItems: LineItem[] = [];
+
+  if (priceDiffCents > 0) {
+    lineItems.push({
+      description: `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
+      quantity: 1,
+      unitAmount: priceDiffCents / 100,
+      accountCode: "200",
+      taxType: "OUTPUT2",
+    });
+  }
+
+  if (changeFeeCents > 0) {
+    lineItems.push({
+      description: "Late notice booking change fee",
+      quantity: 1,
+      unitAmount: changeFeeCents / 100,
+      accountCode: "200",
+      taxType: "OUTPUT2",
+    });
+  }
+
+  if (lineItems.length === 0) return null;
+
+  const invoice: Invoice = {
+    type: Invoice.TypeEnum.ACCREC,
+    contact: { contactID: contactId },
+    lineItems,
+    date: formatDate(new Date()),
+    dueDate: formatDate(new Date()),
+    reference: `Modification - Booking ${bookingId.slice(0, 8)}`,
+    status: Invoice.StatusEnum.AUTHORISED,
+    lineAmountTypes: LineAmountTypes.Inclusive,
+  };
+
+  const response = await xero.accountingApi.createInvoices(tenantId, {
+    invoices: [invoice],
+  });
+
+  const created = response.body.invoices?.[0];
+  if (!created?.invoiceID) {
+    throw new Error("Failed to create supplementary Xero invoice");
+  }
+
+  return created.invoiceID;
+}
+
+/**
+ * Create a Xero credit note when a booking modification decreases the price.
+ *
+ * Fire-and-forget: caller should catch errors and log them.
+ */
+export async function createXeroCreditNoteForModification(params: {
+  bookingId: string;
+  refundAmountCents: number;
+}): Promise<string | null> {
+  const { bookingId, refundAmountCents } = params;
+
+  if (refundAmountCents <= 0) return null;
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: { payment: true, member: true },
+  });
+
+  if (!booking?.payment?.xeroInvoiceId) {
+    return null;
+  }
+
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const contactId = await findOrCreateXeroContact(booking.memberId);
+
+  const creditNote: CreditNote = {
+    type: CreditNote.TypeEnum.ACCRECCREDIT,
+    contact: { contactID: contactId },
+    date: formatDate(new Date()),
+    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineItems: [
+      {
+        description: `Booking modification refund (Booking ${bookingId.slice(0, 8)})`,
+        quantity: 1,
+        unitAmount: refundAmountCents / 100,
+        accountCode: "200",
+        taxType: "OUTPUT2",
+      },
+    ],
+    reference: `Modification refund - Booking ${bookingId.slice(0, 8)}`,
+    status: CreditNote.StatusEnum.AUTHORISED,
+  };
+
+  const response = await xero.accountingApi.createCreditNotes(tenantId, {
+    creditNotes: [creditNote],
+  });
+
+  const created = response.body.creditNotes?.[0];
+  if (!created?.creditNoteID) {
+    throw new Error("Failed to create modification credit note");
+  }
+
+  // Allocate against original invoice
+  await xero.accountingApi.createCreditNoteAllocation(
+    tenantId,
+    created.creditNoteID,
+    {
+      allocations: [
+        {
+          invoice: { invoiceID: booking.payment.xeroInvoiceId },
+          amount: refundAmountCents / 100,
+          date: formatDate(new Date()),
+        },
+      ],
+    }
+  );
+
+  return created.creditNoteID;
 }
 
 // ---------------------------------------------------------------------------
