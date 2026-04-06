@@ -5,7 +5,7 @@
 ```bash
 npm install
 npx prisma generate
-npm test              # 783 tests pass (36 test files)
+npm test              # 805 tests pass (37 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -25,7 +25,7 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9, 10 complete. Security audit + 5 integration reviews done. 783 tests pass, build succeeds.
+All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9, 10, 11 complete. Security audit + 5 integration reviews done. 805 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
@@ -386,9 +386,36 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9, 10 complete. Security 
 - `src/app/(authenticated)/profile/page.tsx` - Added Privacy & Data section with both buttons
 - `src/components/admin-sidebar.tsx` - Added Deletion Requests nav entry
 
+### Delivery Phase 11: Xero Account Mapping Configuration - COMPLETED
+
+**Date:** 2026-04-07
+**Branch:** phase-11-xero-mapping
+**Tests:** 805 (was 783, +22 new)
+
+**Features built:**
+1. **XAM-01**: `XeroAccountMapping` Prisma model — key/value store (keys: `hutFeesIncome`, `hutFeeRefunds`, `stripeBankAccount`, `stripeFees`, `subscriptionIncome`). Seeded with current defaults (200, 200, 606, null, 203).
+2. **XAM-02**: `GET /api/admin/xero/chart-of-accounts` — fetches accounts from Xero API, 1-hour in-memory cache, returns `{code, name, type, class}` per account, admin-only.
+3. **XAM-03**: Account Mappings section on `/admin/xero` page — dropdown selectors per mapping, filtered by account type (BANK/REVENUE/EXPENSE), save button, real-time account list from chart-of-accounts.
+4. **XAM-04**: `GET/PUT /api/admin/xero/account-mappings` — read and update mappings, admin-only, audit logged.
+5. **XAM-05**: `getAccountMapping(key)` exported helper in `src/lib/xero.ts` reads from DB with fallback to hard-coded defaults. All 5 hardcoded account codes refactored: `createXeroInvoiceForBooking`, `createXeroCreditNote`, `createXeroSupplementaryInvoice`, `createXeroCreditNoteForModification`, and `findSubscriptionInvoice` (now accepts optional `subscriptionAccountCode` parameter, backwards-compatible with tests).
+
+**New files:**
+- `src/app/api/admin/xero/account-mappings/route.ts` - GET/PUT account mappings API
+- `src/app/api/admin/xero/chart-of-accounts/route.ts` - Chart of accounts API with 1-hour cache
+- `src/lib/__tests__/phase11.test.ts` - 22 tests for XAM-01 through XAM-05
+
+**New Prisma models (require migration):**
+- `XeroAccountMapping` — key/value account code mappings with unique key constraint
+
+**Modified files:**
+- `prisma/schema.prisma` — Added XeroAccountMapping model
+- `prisma/seed.ts` — Seeds 5 XeroAccountMapping records with defaults
+- `src/lib/xero.ts` — Added `getAccountMapping()`, `ACCOUNT_MAPPING_DEFAULTS`, refactored all hardcoded account codes, added `subscriptionAccountCode` param to `findSubscriptionInvoice`, added `accountCode` param to `buildInvoiceLineItems`
+- `src/app/(admin)/admin/xero/page.tsx` — Added Account Mappings card with filtered dropdowns
+
 ## What's Next
 
-Phases 1, 4, 5, 6, 7, 8, 9, and 10 complete. Remaining: Phase 11 (Xero Account Mapping), Phase 12 (Xero Phone Sync). See `docs/DELIVERY_PLAN.md` for details.
+Phases 1, 4, 5, 6, 7, 8, 9, 10, and 11 complete. Remaining: Phase 12 (Xero Phone Sync). See `docs/DELIVERY_PLAN.md` for details.
 
 ## Context
 

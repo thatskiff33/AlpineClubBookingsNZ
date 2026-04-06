@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
+import type { XeroAccount } from "@/app/api/admin/xero/chart-of-accounts/route"
 
 interface XeroStatus {
   connected: boolean
@@ -68,6 +69,39 @@ interface DuplicateResult {
   totalDuplicateEmails: number
 }
 
+type AccountMappings = {
+  hutFeesIncome: string | null
+  hutFeeRefunds: string | null
+  stripeBankAccount: string | null
+  stripeFees: string | null
+  subscriptionIncome: string | null
+}
+
+const MAPPING_LABELS: Record<keyof AccountMappings, string> = {
+  hutFeesIncome: "Hut Fees Income",
+  hutFeeRefunds: "Hut Fee Refunds",
+  stripeBankAccount: "Stripe Bank Account",
+  stripeFees: "Stripe Fees",
+  subscriptionIncome: "Subscription Income",
+}
+
+const MAPPING_DESCRIPTIONS: Record<keyof AccountMappings, string> = {
+  hutFeesIncome: "Sales account for booking income line items",
+  hutFeeRefunds: "Account for refund credit notes",
+  stripeBankAccount: "Bank account used to record Stripe payments",
+  stripeFees: "Expense account for Stripe transaction fees (optional)",
+  subscriptionIncome: "Account code used to detect annual subscription invoices",
+}
+
+/** Which Xero account types each mapping accepts */
+const MAPPING_TYPE_FILTER: Record<keyof AccountMappings, string> = {
+  hutFeesIncome: "REVENUE",
+  hutFeeRefunds: "REVENUE",
+  stripeBankAccount: "BANK",
+  stripeFees: "EXPENSE",
+  subscriptionIncome: "REVENUE",
+}
+
 export default function XeroPage() {
   const searchParams = useSearchParams()
   const [status, setStatus] = useState<XeroStatus | null>(null)
@@ -86,6 +120,14 @@ export default function XeroPage() {
   const [duplicates, setDuplicates] = useState<DuplicateResult | null>(null)
   const [scanningDuplicates, setScanningDuplicates] = useState(false)
 
+  // Account mappings state
+  const [accountMappings, setAccountMappings] = useState<AccountMappings | null>(null)
+  const [chartOfAccounts, setChartOfAccounts] = useState<XeroAccount[]>([])
+  const [loadingMappings, setLoadingMappings] = useState(false)
+  const [savingMappings, setSavingMappings] = useState(false)
+  const [mappingError, setMappingError] = useState("")
+  const [mappingSaved, setMappingSaved] = useState(false)
+
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/xero/status")
@@ -96,6 +138,28 @@ export default function XeroPage() {
       setError("Failed to load Xero connection status")
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  const fetchAccountMappings = useCallback(async () => {
+    setLoadingMappings(true)
+    try {
+      const [mappingsRes, accountsRes] = await Promise.all([
+        fetch("/api/admin/xero/account-mappings"),
+        fetch("/api/admin/xero/chart-of-accounts"),
+      ])
+      if (mappingsRes.ok) {
+        const data = await mappingsRes.json()
+        setAccountMappings(data)
+      }
+      if (accountsRes.ok) {
+        const data = await accountsRes.json()
+        setChartOfAccounts(data.accounts ?? [])
+      }
+    } catch {
+      setMappingError("Failed to load account mappings")
+    } finally {
+      setLoadingMappings(false)
     }
   }, [])
 
@@ -113,6 +177,13 @@ export default function XeroPage() {
       setError(decodeURIComponent(errorParam))
     }
   }, [searchParams, fetchStatus])
+
+  // Load account mappings whenever Xero is connected
+  useEffect(() => {
+    if (status?.connected) {
+      fetchAccountMappings()
+    }
+  }, [status?.connected, fetchAccountMappings])
 
   const handleConnect = () => {
     window.location.href = "/api/admin/xero/connect"
@@ -247,6 +318,32 @@ export default function XeroPage() {
     )
   }
 
+  const handleSaveAccountMappings = async () => {
+    if (!accountMappings) return
+    setSavingMappings(true)
+    setMappingError("")
+    setMappingSaved(false)
+    try {
+      const res = await fetch("/api/admin/xero/account-mappings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(accountMappings),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to save mappings")
+      }
+      const data = await res.json()
+      setAccountMappings(data)
+      setMappingSaved(true)
+      setTimeout(() => setMappingSaved(false), 3000)
+    } catch (err) {
+      setMappingError(err instanceof Error ? err.message : "Failed to save mappings")
+    } finally {
+      setSavingMappings(false)
+    }
+  }
+
   const handleScanDuplicates = async () => {
     setScanningDuplicates(true)
     setDuplicates(null)
@@ -339,6 +436,83 @@ export default function XeroPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Account Mappings - only show when connected */}
+      {status?.connected && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Account Mappings</CardTitle>
+            <CardDescription>
+              Map TACBookings transactions to your Xero chart of accounts. Changes take effect
+              on the next invoice or credit note created.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loadingMappings ? (
+              <p className="text-sm text-muted-foreground">Loading accounts...</p>
+            ) : (
+              <div className="space-y-4">
+                {mappingError && (
+                  <p className="text-sm text-red-600">{mappingError}</p>
+                )}
+                {mappingSaved && (
+                  <p className="text-sm text-green-700">Account mappings saved.</p>
+                )}
+                {accountMappings && (Object.keys(MAPPING_LABELS) as Array<keyof AccountMappings>).map((key) => {
+                  const typeFilter = MAPPING_TYPE_FILTER[key]
+                  const filtered = chartOfAccounts.filter((a) => a.type === typeFilter)
+                  const currentCode = accountMappings[key]
+                  return (
+                    <div key={key} className="grid grid-cols-3 gap-4 items-start">
+                      <div>
+                        <p className="text-sm font-medium">{MAPPING_LABELS[key]}</p>
+                        <p className="text-xs text-muted-foreground">{MAPPING_DESCRIPTIONS[key]}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <Select
+                          value={currentCode ?? "__none__"}
+                          onValueChange={(val) =>
+                            setAccountMappings((prev) =>
+                              prev ? { ...prev, [key]: val === "__none__" ? null : val } : prev
+                            )
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select account..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">
+                              <span className="text-muted-foreground">Not configured (use default)</span>
+                            </SelectItem>
+                            {filtered.map((account) => (
+                              <SelectItem key={account.code} value={account.code}>
+                                {account.code} — {account.name}
+                              </SelectItem>
+                            ))}
+                            {filtered.length === 0 && (
+                              <SelectItem value="__empty__" disabled>
+                                No {typeFilter.toLowerCase()} accounts found
+                              </SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  )
+                })}
+                <div className="pt-2">
+                  <Button
+                    onClick={handleSaveAccountMappings}
+                    disabled={savingMappings || !accountMappings}
+                  >
+                    {savingMappings ? "Saving..." : "Save Account Mappings"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Sync Operations - only show when connected */}
       {status?.connected && (

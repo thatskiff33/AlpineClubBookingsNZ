@@ -201,6 +201,38 @@ export async function isXeroConnected(): Promise<boolean> {
   return record !== null && record.tenantId !== null;
 }
 
+// ---------------------------------------------------------------------------
+// Account Mapping (XAM-05)
+// ---------------------------------------------------------------------------
+
+/** Default fallbacks if no DB record exists or code is null */
+const ACCOUNT_MAPPING_DEFAULTS: Record<string, string | null> = {
+  hutFeesIncome: "200",
+  hutFeeRefunds: "200",
+  stripeBankAccount: "606",
+  stripeFees: null,
+  subscriptionIncome: "203",
+};
+
+/**
+ * Read a Xero account code from the DB, falling back to the hard-coded default.
+ * Returns null for unconfigured optional mappings (e.g. stripeFees).
+ */
+export async function getAccountMapping(key: string): Promise<string | null> {
+  try {
+    const mapping = await prisma.xeroAccountMapping.findUnique({
+      where: { key },
+      select: { code: true },
+    });
+    if (mapping?.code) {
+      return mapping.code;
+    }
+  } catch {
+    // DB not available — fall through to default
+  }
+  return ACCOUNT_MAPPING_DEFAULTS[key] ?? null;
+}
+
 /**
  * Get connection status details for the admin page.
  */
@@ -1077,7 +1109,8 @@ export async function checkMembershipStatus(
   const invoices = response.body.invoices ?? [];
 
   // Look for subscription invoices matching the season year
-  const subscriptionInvoice = findSubscriptionInvoice(invoices, year);
+  const subscriptionAccountCode = await getAccountMapping("subscriptionIncome") ?? "203";
+  const subscriptionInvoice = findSubscriptionInvoice(invoices, year, subscriptionAccountCode);
 
   if (!subscriptionInvoice) {
     return { status: "NOT_INVOICED" };
@@ -1117,9 +1150,10 @@ export async function checkMembershipStatus(
  */
 export function findSubscriptionInvoice(
   invoices: Invoice[],
-  seasonYear: number
+  seasonYear: number,
+  subscriptionAccountCode: string = "203"
 ): Invoice | null {
-  const SUBSCRIPTION_ACCOUNT_CODE = "203";
+  const SUBSCRIPTION_ACCOUNT_CODE = subscriptionAccountCode;
   const seasonStart = new Date(seasonYear, 3, 1); // April 1
   const seasonEndExclusive = new Date(seasonYear + 1, 3, 1); // April 1 next year (exclusive)
 
@@ -1246,7 +1280,8 @@ export function buildInvoiceLineItems(
   }>,
   checkIn: Date,
   checkOut: Date,
-  nights: number
+  nights: number,
+  accountCode: string = "200"
 ): LineItem[] {
   return guests.map((guest) => {
     const perNightCents = nights > 0 ? Math.round(guest.priceCents / nights) : guest.priceCents;
@@ -1261,7 +1296,7 @@ export function buildInvoiceLineItems(
       description,
       quantity: nights,
       unitAmount: perNightCents / 100, // Xero uses dollars, not cents
-      accountCode: "200", // Default sales account code
+      accountCode,
       taxType: "OUTPUT2", // GST on Income (NZ)
     };
   });
@@ -1301,6 +1336,14 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
   // Ensure the member has a Xero contact
   const contactId = await findOrCreateXeroContact(booking.memberId);
 
+  // Resolve account codes from DB (with fallback to defaults)
+  const [hutFeesIncomeCode, stripeBankCode] = await Promise.all([
+    getAccountMapping("hutFeesIncome"),
+    getAccountMapping("stripeBankAccount"),
+  ]);
+  const incomeCode = hutFeesIncomeCode ?? "200";
+  const bankCode = stripeBankCode ?? "606";
+
   // Calculate nights using the same logic as the pricing engine
   const checkIn = new Date(booking.checkIn);
   const checkOut = new Date(booking.checkOut);
@@ -1317,7 +1360,8 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
     })),
     checkIn,
     checkOut,
-    nights
+    nights,
+    incomeCode
   );
 
   // Add discount line if applicable
@@ -1326,7 +1370,7 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
       description: "Discount",
       quantity: 1,
       unitAmount: -(booking.discountCents / 100),
-      accountCode: "200",
+      accountCode: incomeCode,
       taxType: "OUTPUT2",
     });
   }
@@ -1356,7 +1400,7 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
   if (booking.payment.status === "SUCCEEDED" && booking.payment.amountCents > 0) {
     const payment: XeroPayment = {
       invoice: { invoiceID: createdInvoice.invoiceID },
-      account: { code: "606" }, // Stripe bank feed account
+      account: { code: bankCode },
       amount: booking.payment.amountCents / 100,
       date: formatDate(new Date()),
       reference: `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`,
@@ -1407,6 +1451,7 @@ export async function createXeroCreditNote(
 
   // Ensure the member has a Xero contact
   const contactId = await findOrCreateXeroContact(payment.booking.memberId);
+  const refundCode = (await getAccountMapping("hutFeeRefunds")) ?? "200";
 
   const creditNote: CreditNote = {
     type: CreditNote.TypeEnum.ACCRECCREDIT,
@@ -1418,7 +1463,7 @@ export async function createXeroCreditNote(
         description: `Refund for booking ${payment.booking.id.slice(0, 8)} (${formatDate(new Date(payment.booking.checkIn))} - ${formatDate(new Date(payment.booking.checkOut))})`,
         quantity: 1,
         unitAmount: refundAmountCents / 100,
-        accountCode: "200",
+        accountCode: refundCode,
         taxType: "OUTPUT2",
       },
     ],
@@ -1483,6 +1528,7 @@ export async function createXeroSupplementaryInvoice(params: {
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = await findOrCreateXeroContact(booking.memberId);
+  const incomeCode = (await getAccountMapping("hutFeesIncome")) ?? "200";
 
   const lineItems: LineItem[] = [];
 
@@ -1491,7 +1537,7 @@ export async function createXeroSupplementaryInvoice(params: {
       description: `Booking modification - price adjustment (Booking ${bookingId.slice(0, 8)})`,
       quantity: 1,
       unitAmount: priceDiffCents / 100,
-      accountCode: "200",
+      accountCode: incomeCode,
       taxType: "OUTPUT2",
     });
   }
@@ -1501,7 +1547,7 @@ export async function createXeroSupplementaryInvoice(params: {
       description: "Late notice booking change fee",
       quantity: 1,
       unitAmount: changeFeeCents / 100,
-      accountCode: "200",
+      accountCode: incomeCode,
       taxType: "OUTPUT2",
     });
   }
@@ -1555,6 +1601,7 @@ export async function createXeroCreditNoteForModification(params: {
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = await findOrCreateXeroContact(booking.memberId);
+  const refundCode = (await getAccountMapping("hutFeeRefunds")) ?? "200";
 
   const creditNote: CreditNote = {
     type: CreditNote.TypeEnum.ACCRECCREDIT,
@@ -1566,7 +1613,7 @@ export async function createXeroCreditNoteForModification(params: {
         description: `Booking modification refund (Booking ${bookingId.slice(0, 8)})`,
         quantity: 1,
         unitAmount: refundAmountCents / 100,
-        accountCode: "200",
+        accountCode: refundCode,
         taxType: "OUTPUT2",
       },
     ],
