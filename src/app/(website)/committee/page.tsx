@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Phone, Mail } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "Committee",
@@ -12,53 +13,55 @@ export const metadata: Metadata = {
 interface CommitteeMember {
   role: string;
   name: string;
-  description?: string;
+  phone: string;
+  contactKey?: string; // maps to /contact?recipient=key
+  description: string;
 }
 
-// TODO: Update with full committee list from club
 const committeeMembers: CommitteeMember[] = [
   {
     role: "President",
-    name: "TBC",
+    name: "Michael Higgins",
+    phone: "+64 20 4079 4310",
+    contactKey: "president",
     description: "Chairs meetings and oversees club operations.",
   },
   {
-    role: "Vice President",
-    name: "TBC",
-    description: "Supports the President and stands in when required.",
-  },
-  {
     role: "Secretary",
-    name: "TBC",
+    name: "Sally Woodfield",
+    phone: "+64 21 686 020",
+    contactKey: "secretary",
     description: "Manages club correspondence and meeting minutes.",
   },
   {
     role: "Treasurer",
-    name: "TBC",
+    name: "Jordan Hartley-Smith",
+    phone: "+64 27 422 4115",
+    contactKey: "treasurer",
     description: "Manages club finances, subscriptions, and accounts.",
   },
   {
     role: "Booking Officer",
     name: "Chris Duyvestyn",
+    phone: "+64 27 472 1328",
+    contactKey: "bookings",
     description:
       "Manages lodge bookings, confirms non-member stays, and handles booking enquiries.",
   },
   {
     role: "Communications Officer",
     name: "Wayne Peterson",
+    phone: "+64 21 832 118",
+    contactKey: "communications",
     description:
       "Manages club communications, newsletters, and public information.",
   },
   {
-    role: "Lodge Maintenance",
-    name: "TBC",
+    role: "Lodge Maintenance Officer",
+    name: "Lance Pilcher",
+    phone: "+64 27 699 2688",
     description:
       "Coordinates lodge maintenance, working bees, and improvement projects.",
-  },
-  {
-    role: "Committee Member",
-    name: "TBC",
-    description: "General committee member.",
   },
 ];
 
@@ -91,11 +94,27 @@ export default function CommitteePage() {
                   <h3 className="font-semibold text-slate-900 text-lg">
                     {member.name}
                   </h3>
-                  {member.description && (
-                    <p className="text-sm text-slate-600 mt-2">
-                      {member.description}
-                    </p>
-                  )}
+                  <p className="text-sm text-slate-600 mt-2">
+                    {member.description}
+                  </p>
+                  <div className="mt-4 flex flex-col gap-2">
+                    <a
+                      href={`tel:${member.phone.replace(/\s/g, "")}`}
+                      className="inline-flex items-center gap-2 text-sm text-slate-700 hover:text-blue-600"
+                    >
+                      <Phone className="h-4 w-4" />
+                      {member.phone}
+                    </a>
+                    {member.contactKey && (
+                      <Link
+                        href={`/contact?recipient=${member.contactKey}`}
+                        className="inline-flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        <Mail className="h-4 w-4" />
+                        Send a message
+                      </Link>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             ))}
@@ -110,8 +129,8 @@ export default function CommitteePage() {
             Get in Touch
           </h2>
           <p className="text-slate-600 mb-8 max-w-xl mx-auto">
-            Have a question for the committee? Want to volunteer or get involved
-            with the club?
+            Have a general question about the club, the lodge, or booking a
+            stay?
           </p>
           <Button size="lg" asChild>
             <Link href="/contact">Contact Us</Link>

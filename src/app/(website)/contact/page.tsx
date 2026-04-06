@@ -1,18 +1,37 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, MapPin, Phone } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { MapPin, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-const CONTACT_EMAIL =
-  process.env.NEXT_PUBLIC_CONTACT_EMAIL || "bookings@tacbookings.co.nz";
+const RECIPIENTS: Record<string, string> = {
+  general: "General Enquiry",
+  president: "President — Michael Higgins",
+  secretary: "Secretary — Sally Woodfield",
+  treasurer: "Treasurer — Jordan Hartley-Smith",
+  bookings: "Booking Officer — Chris Duyvestyn",
+  communications: "Communications — Wayne Peterson",
+};
 
 export default function ContactPage() {
+  const searchParams = useSearchParams();
+  const initialRecipient = searchParams.get("recipient") || "general";
   const [form, setForm] = useState({ name: "", email: "", message: "" });
+  const [recipient, setRecipient] = useState(
+    RECIPIENTS[initialRecipient] ? initialRecipient : "general"
+  );
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">(
     "idle"
   );
@@ -27,7 +46,10 @@ export default function ContactPage() {
       const res = await fetch("/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          recipient: recipient === "general" ? undefined : recipient,
+        }),
       });
 
       if (!res.ok) {
@@ -91,6 +113,21 @@ export default function ContactPage() {
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-5">
                   <div>
+                    <Label htmlFor="recipient">Send to</Label>
+                    <Select value={recipient} onValueChange={setRecipient}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Object.entries(RECIPIENTS).map(([key, label]) => (
+                          <SelectItem key={key} value={key}>
+                            {label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
                     <Label htmlFor="name">Name</Label>
                     <Input
                       id="name"
@@ -152,46 +189,29 @@ export default function ContactPage() {
               <Card>
                 <CardContent className="pt-6 space-y-4">
                   <div className="flex items-start gap-3">
-                    <Mail className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+                    <Phone className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
                     <div>
-                      <p className="font-medium text-slate-900 text-sm">Email</p>
+                      <p className="font-medium text-slate-900 text-sm">
+                        Booking Officer
+                      </p>
+                      <p className="text-sm text-slate-600">Chris Duyvestyn</p>
                       <a
-                        href={`mailto:${CONTACT_EMAIL}`}
+                        href="tel:+64274721328"
                         className="text-sm text-blue-600 hover:underline"
                       >
-                        {CONTACT_EMAIL}
+                        +64 27 472 1328
                       </a>
                     </div>
                   </div>
                   <div className="flex items-start gap-3">
                     <MapPin className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
                     <div>
-                      <p className="font-medium text-slate-900 text-sm">Lodge</p>
+                      <p className="font-medium text-slate-900 text-sm">
+                        Lodge
+                      </p>
                       <p className="text-sm text-slate-600">
-                        Whakapapa Ski Area, Mt Ruapehu, New Zealand
+                        Waldvogel Lodge, Iwikau Village, Mt Ruapehu, New Zealand
                       </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="pt-6">
-                  <h3 className="font-semibold text-slate-900 mb-3">
-                    Key Contacts
-                  </h3>
-                  <div className="space-y-3 text-sm">
-                    <div>
-                      <p className="font-medium text-slate-800">
-                        Booking Officer
-                      </p>
-                      <p className="text-slate-600">Chris Duyvestyn</p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-slate-800">
-                        Communications Officer
-                      </p>
-                      <p className="text-slate-600">Wayne Peterson</p>
                     </div>
                   </div>
                 </CardContent>
