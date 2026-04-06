@@ -22,6 +22,9 @@ interface MemberDetail {
   parent: { id: string; firstName: string; lastName: string } | null
   secondaryParentId: string | null
   secondaryParent: { id: string; firstName: string; lastName: string } | null
+  inheritParentEmail: boolean
+  inheritEmailFromId: string | null
+  inheritEmailFrom: { id: string; firstName: string; lastName: string; email: string } | null
   _count: { dependents: number; secondaryDependents: number }
   subscriptions: Array<{ id: string; seasonYear: number; status: string; xeroInvoiceId: string | null; paidAt: string | null }>
   bookings: Array<{ id: string; checkIn: string; checkOut: string; status: string; finalPriceCents: number; _count: { guests: number } }>
@@ -32,6 +35,7 @@ interface MemberDetail {
 interface EditForm {
   firstName: string; lastName: string; email: string; phone: string
   dateOfBirth: string; role: "MEMBER" | "ADMIN"; active: boolean; forcePasswordChange: boolean
+  inheritEmailFromId: string | null
 }
 
 export default function MemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -43,7 +47,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [editOpen, setEditOpen] = useState(false)
-  const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", active: true, forcePasswordChange: false })
+  const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", active: true, forcePasswordChange: false, inheritEmailFromId: null })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState("")
 
@@ -69,6 +73,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       role: member.role,
       active: member.active,
       forcePasswordChange: member.forcePasswordChange,
+      inheritEmailFromId: member.inheritEmailFromId,
     })
     setFormError("")
     setEditOpen(true)
@@ -89,6 +94,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           role: form.role,
           active: form.active,
           forcePasswordChange: form.forcePasswordChange,
+          inheritEmailFromId: form.inheritEmailFromId || null,
         }),
       })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Save failed") }
@@ -154,6 +160,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         <div><dt className="text-slate-500">Phone</dt><dd className="font-medium">{member.phone || "Not provided"}</dd></div>
         <div><dt className="text-slate-500">Member Since</dt><dd className="font-medium">{fmtDate(member.joinedDate || member.createdAt)}{member.joinedDate && <span className="text-xs text-slate-400 ml-1">(from Xero)</span>}</dd></div>
         <div><dt className="text-slate-500">Type</dt><dd className="font-medium">{member.parentMemberId ? <><Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Dependent</Badge>{member.parent && <span className="ml-1 text-xs">of {member.parent.firstName} {member.parent.lastName}</span>}{member.secondaryParent && <span className="ml-1 text-xs">& {member.secondaryParent.firstName} {member.secondaryParent.lastName}</span>}</> : <><Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Primary</Badge>{(member._count.dependents + member._count.secondaryDependents) > 0 && <span className="ml-1 text-xs">{member._count.dependents + member._count.secondaryDependents} dependent(s)</span>}</>}</dd></div>
+        <div><dt className="text-slate-500">Email Inheritance</dt><dd className="font-medium">{member.inheritEmailFrom ? <span className="text-xs">{member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} <span className="text-slate-400">({member.inheritEmailFrom.email})</span></span> : member.inheritParentEmail && member.parentMemberId ? <span className="text-xs text-slate-500">Parent&apos;s email (default)</span> : <span className="text-xs text-slate-500">Own email</span>}</dd></div>
         <div><dt className="text-slate-500">Xero Contact ID</dt><dd className="font-medium">{member.xeroContactId ? <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">{member.xeroContactId}<ExternalLink className="h-3 w-3" /></a> : "Not linked"}</dd></div>
       </dl></CardContent></Card>
 
@@ -229,6 +236,26 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               <input type="checkbox" id="edit-forcePasswordChange" checked={form.forcePasswordChange} onChange={e => setForm(f => ({ ...f, forcePasswordChange: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" />
               <Label htmlFor="edit-forcePasswordChange">Force Password Change on Next Login</Label>
             </div>
+            {(member.parentMemberId || member.ageTier !== "ADULT") && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-inheritEmailFromId">Inherit Email From (optional)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Enter the member ID of an adult whose email this member should use for notifications.
+                  Leave blank to use the default (parent&apos;s email or own email).
+                  {member.parent && <span className="block mt-0.5">Parent: {member.parent.firstName} {member.parent.lastName} — ID: <code className="text-xs bg-slate-100 px-1 rounded">{member.parent.id}</code></span>}
+                  {member.secondaryParent && <span className="block mt-0.5">Secondary parent: {member.secondaryParent.firstName} {member.secondaryParent.lastName} — ID: <code className="text-xs bg-slate-100 px-1 rounded">{member.secondaryParent.id}</code></span>}
+                </p>
+                <Input
+                  id="edit-inheritEmailFromId"
+                  value={form.inheritEmailFromId || ""}
+                  onChange={e => setForm(f => ({ ...f, inheritEmailFromId: e.target.value.trim() || null }))}
+                  placeholder="Adult member ID (leave blank for default)"
+                />
+                {member.inheritEmailFrom && (
+                  <p className="text-xs text-green-700">Currently inheriting from: {member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} ({member.inheritEmailFrom.email})</p>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>Cancel</Button>

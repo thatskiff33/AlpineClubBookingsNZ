@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma"
 import { allocateChores, ChoreTemplateInput, GuestInput, ChoreHistoryEntry } from "@/lib/chore-allocator"
 import { sendChoreRosterEmail } from "@/lib/email"
 import { createGuestChoreToken } from "@/lib/guest-chore-token"
+import { getEffectiveEmail } from "@/lib/member-utils"
 import { z } from "zod"
 import logger from "@/lib/logger"
 
@@ -321,13 +322,19 @@ export async function PUT(
           choreTemplate: true,
           bookingGuest: {
             include: {
-              member: true,
+              member: {
+                select: {
+                  email: true,
+                  inheritEmailFromId: true,
+                  inheritEmailFrom: { select: { email: true } },
+                },
+              },
             },
           },
         },
       })
 
-      // Group assignments by guest
+      // Group assignments by guest, resolving effective email for dependents
       const byGuest = new Map<string, {
         email: string | null
         name: string
@@ -338,8 +345,11 @@ export async function PUT(
         if (!a.bookingGuest) continue
         const guestId = a.bookingGuest.id
         if (!byGuest.has(guestId)) {
+          const effectiveEmail = a.bookingGuest.member
+            ? await getEffectiveEmail(a.bookingGuest.member)
+            : null
           byGuest.set(guestId, {
-            email: a.bookingGuest.member?.email ?? null,
+            email: effectiveEmail,
             name: `${a.bookingGuest.firstName} ${a.bookingGuest.lastName}`,
             chores: [],
           })

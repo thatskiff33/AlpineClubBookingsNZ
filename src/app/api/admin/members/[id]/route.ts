@@ -32,6 +32,7 @@ const updateMemberSchema = z.object({
   secondaryParentId: z.string().optional().nullable(),
   familyGroupId: z.string().optional().nullable(),
   inheritParentEmail: z.boolean().optional(),
+  inheritEmailFromId: z.string().optional().nullable(),
 });
 
 /**
@@ -71,6 +72,8 @@ export async function GET(
         parent: { select: { id: true, firstName: true, lastName: true } },
         secondaryParentId: true,
         secondaryParent: { select: { id: true, firstName: true, lastName: true } },
+        inheritEmailFromId: true,
+        inheritEmailFrom: { select: { id: true, firstName: true, lastName: true, email: true } },
         familyGroupId: true,
         familyGroup: { select: { id: true, name: true } },
         _count: { select: { dependents: true, secondaryDependents: true } },
@@ -225,6 +228,23 @@ export async function PUT(
     }
   }
 
+  // Validate inheritEmailFromId
+  if (data.inheritEmailFromId !== undefined && data.inheritEmailFromId !== null) {
+    if (data.inheritEmailFromId === id) {
+      return NextResponse.json({ error: "A member cannot inherit email from themselves" }, { status: 422 });
+    }
+    const source = await prisma.member.findUnique({ where: { id: data.inheritEmailFromId } });
+    if (!source) {
+      return NextResponse.json({ error: "Email source member not found" }, { status: 404 });
+    }
+    if (source.ageTier !== "ADULT") {
+      return NextResponse.json({ error: "Email can only be inherited from an adult member" }, { status: 422 });
+    }
+    if (!source.active) {
+      return NextResponse.json({ error: "Email source member is inactive" }, { status: 422 });
+    }
+  }
+
   if (data.secondaryParentId !== undefined && data.secondaryParentId !== null) {
     const effectiveParent = data.parentMemberId !== undefined ? data.parentMemberId : existing.parentMemberId;
     if (!effectiveParent) {
@@ -260,6 +280,11 @@ export async function PUT(
   // Handle inheritParentEmail
   if (data.inheritParentEmail !== undefined) {
     updateData.inheritParentEmail = data.inheritParentEmail;
+  }
+
+  // Handle inheritEmailFromId
+  if (data.inheritEmailFromId !== undefined) {
+    updateData.inheritEmailFromId = data.inheritEmailFromId;
   }
 
   // Handle parent assignment
@@ -368,6 +393,7 @@ export async function PUT(
         createdAt: true,
         parentMemberId: true,
         inheritParentEmail: true,
+        inheritEmailFromId: true,
         secondaryParentId: true,
         familyGroupId: true,
       },
