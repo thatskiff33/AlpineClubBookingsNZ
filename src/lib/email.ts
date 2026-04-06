@@ -15,6 +15,9 @@ import {
   adminPaymentFailureTemplate,
   adminPendingDeadlineTemplate,
   adminBookingBumpedTemplate,
+  adminXeroSyncErrorTemplate,
+  adminCapacityWarningTemplate,
+  adminDailyDigestTemplate,
 } from "./email-templates";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -50,6 +53,7 @@ export async function sendEmail({
         to,
         subject,
         templateName,
+        htmlBody: html,
         status: "QUEUED",
         lastAttemptAt: new Date(),
       },
@@ -356,4 +360,87 @@ export async function sendAdminBookingBumpedAlert(data: {
     html: adminBookingBumpedTemplate(data),
     templateName: "admin-booking-bumped",
   });
+}
+
+// N-05: Admin alert - Xero sync error
+export async function sendAdminXeroSyncErrorAlert(data: {
+  errorType: string;
+  operation: string;
+  errorMessage: string;
+  timestamp: Date;
+}) {
+  await sendToAdmins({
+    subject: "Xero Sync Error - TAC Bookings",
+    html: adminXeroSyncErrorTemplate(data),
+    templateName: "admin-xero-sync-error",
+  });
+}
+
+// N-03: Admin alert - capacity warning
+export async function sendAdminCapacityWarningAlert(days: Array<{
+  date: Date;
+  occupiedBeds: number;
+  availableBeds: number;
+}>) {
+  await sendToAdmins({
+    subject: `Capacity Warning: ${days.length} high-occupancy day${days.length > 1 ? "s" : ""} ahead`,
+    html: adminCapacityWarningTemplate(days),
+    templateName: "admin-capacity-warning",
+  });
+}
+
+// N-13: Admin daily digest
+export async function sendAdminDailyDigestAlert(sections: {
+  newBookings: number;
+  paymentFailures: number;
+  capacityWarnings: number;
+  bookingsBumped: number;
+  pendingDeadlines: number;
+  xeroErrors: number;
+  totalAlerts: number;
+}) {
+  await sendToAdmins({
+    subject: `Admin Daily Digest - ${sections.totalAlerts} alert${sections.totalAlerts !== 1 ? "s" : ""} in past 24h`,
+    html: adminDailyDigestTemplate(sections),
+    templateName: "admin-daily-digest",
+  });
+}
+
+/**
+ * N-08: Check notification preferences before sending a member email.
+ * Maps template categories to preference fields.
+ * Admin alerts bypass preferences entirely.
+ */
+const CATEGORY_TO_PREFERENCE: Record<string, keyof Omit<
+  import("@prisma/client").NotificationPreference,
+  "id" | "memberId" | "createdAt" | "updatedAt"
+>> = {
+  bookingConfirmation: "bookingConfirmation",
+  bookingReminder: "bookingReminder",
+  bookingBumped: "bookingBumped",
+  bookingCancelled: "bookingCancelled",
+  choreRoster: "choreRoster",
+  marketingEmails: "marketingEmails",
+};
+
+export async function shouldSendEmail(
+  memberId: string,
+  category: string
+): Promise<boolean> {
+  const prefField = CATEGORY_TO_PREFERENCE[category];
+  if (!prefField) {
+    // Unknown category — default to sending
+    return true;
+  }
+
+  const pref = await prisma.notificationPreference.findUnique({
+    where: { memberId },
+  });
+
+  if (!pref) {
+    // No preference record = defaults (all true except marketingEmails)
+    return category !== "marketingEmails";
+  }
+
+  return Boolean(pref[prefField]);
 }

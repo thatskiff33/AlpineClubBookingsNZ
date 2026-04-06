@@ -279,6 +279,14 @@ export async function getAuthenticatedXeroClient(): Promise<{
       return { xero, tenantId: tokens.tenantId };
     } catch (err) {
       logger.error({ err }, "Xero token refresh failed");
+      // N-05: Fire-and-forget Xero error alert
+      import("./xero-error-alert").then(({ notifyXeroSyncError }) =>
+        notifyXeroSyncError({
+          errorType: "Token Refresh Failure",
+          operation: "getAuthenticatedXeroClient",
+          errorMessage: err instanceof Error ? err.message : String(err),
+        })
+      ).catch(() => {});
       throw new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
     }
   }

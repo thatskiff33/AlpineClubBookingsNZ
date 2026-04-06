@@ -262,6 +262,90 @@ export async function register() {
     }, { timezone: "Pacific/Auckland" });
 
     logger.info({ job: "checkin-reminders" }, "Scheduled check-in reminders (daily at 9:00 AM NZST)");
+
+    // N-03: Cron job - Capacity warnings (daily at 7:00 AM NZST)
+    let isCapacityWarningRunning = false;
+    cron.default.schedule("0 7 * * *", async () => {
+      if (isCapacityWarningRunning) {
+        logger.info({ job: "capacity-warnings" }, "Already running, skipping");
+        return;
+      }
+      isCapacityWarningRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "capacity-warnings" }, "Checking capacity for upcoming days");
+
+      try {
+        const { checkCapacityWarnings } = await import("./lib/cron-capacity-warnings");
+        const result = await checkCapacityWarnings();
+        logger.info({ job: "capacity-warnings", ...result }, "Capacity warnings check complete");
+        await recordCronRun("capacity-warnings", startedAt, "SUCCESS", result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "capacity-warnings" }, "Error in capacity warnings");
+        Sentry.captureException(err);
+        await recordCronRun("capacity-warnings", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isCapacityWarningRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "capacity-warnings" }, "Scheduled capacity warnings (daily at 7:00 AM NZST)");
+
+    // N-13: Cron job - Admin daily digest (daily at 7:30 AM NZST)
+    let isAdminDigestRunning = false;
+    cron.default.schedule("30 7 * * *", async () => {
+      if (isAdminDigestRunning) {
+        logger.info({ job: "admin-digest" }, "Already running, skipping");
+        return;
+      }
+      isAdminDigestRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "admin-digest" }, "Sending admin daily digest");
+
+      try {
+        const { sendAdminDigest } = await import("./lib/cron-admin-digest");
+        const result = await sendAdminDigest();
+        logger.info({ job: "admin-digest", ...result }, "Admin daily digest complete");
+        await recordCronRun("admin-digest", startedAt, "SUCCESS", result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "admin-digest" }, "Error in admin daily digest");
+        Sentry.captureException(err);
+        await recordCronRun("admin-digest", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isAdminDigestRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "admin-digest" }, "Scheduled admin daily digest (daily at 7:30 AM NZST)");
+
+    // N-11: Cron job - Email retry (every 30 minutes)
+    let isEmailRetryRunning = false;
+    cron.default.schedule("*/30 * * * *", async () => {
+      if (isEmailRetryRunning) {
+        logger.info({ job: "email-retry" }, "Already running, skipping");
+        return;
+      }
+      isEmailRetryRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "email-retry" }, "Retrying failed emails");
+
+      try {
+        const { retryFailedEmails } = await import("./lib/cron-email-retry");
+        const result = await retryFailedEmails();
+        logger.info({ job: "email-retry", ...result }, "Email retry complete");
+        await recordCronRun("email-retry", startedAt, "SUCCESS", result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "email-retry" }, "Error in email retry");
+        Sentry.captureException(err);
+        await recordCronRun("email-retry", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isEmailRetryRunning = false;
+      }
+    });
+
+    logger.info({ job: "email-retry" }, "Scheduled email retry (every 30 minutes)");
   }
 }
 

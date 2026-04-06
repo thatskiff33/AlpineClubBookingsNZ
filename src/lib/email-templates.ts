@@ -460,3 +460,114 @@ export function adminBookingBumpedTemplate(data: {
     ${button("View Bookings", BASE_URL + "/admin/bookings")}
   `);
 }
+
+// ---- N-05: Admin Alert — Xero Sync Error ----
+
+export function adminXeroSyncErrorTemplate(data: {
+  errorType: string;
+  operation: string;
+  errorMessage: string;
+  timestamp: Date;
+}): string {
+  return layout(`
+    ${heading("Xero Sync Error")}
+    ${alertBox("A Xero integration error occurred and may require attention.", "warning")}
+    ${infoTable([
+      { label: "Error Type", value: escapeHtml(data.errorType) },
+      { label: "Operation", value: escapeHtml(data.operation) },
+      { label: "Error Message", value: escapeHtml(data.errorMessage) },
+      { label: "Timestamp", value: data.timestamp.toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" }) },
+    ])}
+    ${button("View Xero Status", BASE_URL + "/admin/xero")}
+  `);
+}
+
+// ---- N-03: Admin Alert — Capacity Warning ----
+
+export function adminCapacityWarningTemplate(days: Array<{
+  date: Date;
+  occupiedBeds: number;
+  availableBeds: number;
+}>): string {
+  const tableRowsHtml = days
+    .map((d) => {
+      const pct = Math.round((d.occupiedBeds / 29) * 100);
+      const color = d.availableBeds <= 2 ? "#dc2626" : d.availableBeds <= 5 ? "#d97706" : TEXT_COLOR;
+      return `
+    <tr>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDate(d.date)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${d.occupiedBeds}/29</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${color}; font-weight: 700;">${d.availableBeds}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${color}; font-weight: 700;">${pct}%</td>
+    </tr>`;
+    })
+    .join("");
+
+  return layout(`
+    ${heading("Capacity Warning")}
+    ${alertBox(days.length + " day" + (days.length > 1 ? "s" : "") + " in the next 14 days have high occupancy.", "warning")}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+      <tr>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Date</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Occupied</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Available</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Occupancy</th>
+      </tr>
+      ${tableRowsHtml}
+    </table>
+    ${button("View Bookings", BASE_URL + "/admin/bookings")}
+  `);
+}
+
+// ---- N-13: Admin Daily Digest ----
+
+export function adminDailyDigestTemplate(sections: {
+  newBookings: number;
+  paymentFailures: number;
+  capacityWarnings: number;
+  bookingsBumped: number;
+  pendingDeadlines: number;
+  xeroErrors: number;
+  totalAlerts: number;
+}): string {
+  const rows: Array<{ label: string; value: string; link: string }> = [];
+
+  if (sections.newBookings > 0) rows.push({ label: "New Bookings", value: String(sections.newBookings), link: "/admin/bookings" });
+  if (sections.paymentFailures > 0) rows.push({ label: "Payment Failures", value: String(sections.paymentFailures), link: "/admin/payments" });
+  if (sections.capacityWarnings > 0) rows.push({ label: "Capacity Warnings", value: String(sections.capacityWarnings), link: "/admin/bookings" });
+  if (sections.bookingsBumped > 0) rows.push({ label: "Bookings Bumped", value: String(sections.bookingsBumped), link: "/admin/bookings" });
+  if (sections.pendingDeadlines > 0) rows.push({ label: "Pending Deadlines", value: String(sections.pendingDeadlines), link: "/admin/bookings" });
+  if (sections.xeroErrors > 0) rows.push({ label: "Xero Errors", value: String(sections.xeroErrors), link: "/admin/xero" });
+
+  const tableRowsHtml = rows
+    .map(
+      (r) => `
+    <tr>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${r.label}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR}; font-weight: 700;">${r.value}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR};"><a href="${BASE_URL}${r.link}" style="color: ${BRAND_COLOR}; text-decoration: none;">View</a></td>
+    </tr>`
+    )
+    .join("");
+
+  const noAlerts = rows.length === 0
+    ? paragraph("No alerts were triggered in the past 24 hours. All systems running normally.")
+    : "";
+
+  return layout(`
+    ${heading("Admin Daily Digest")}
+    ${paragraph("Summary of admin alerts from the past 24 hours.")}
+    ${noAlerts}
+    ${rows.length > 0 ? `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+      <tr>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Alert Type</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Count</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Action</th>
+      </tr>
+      ${tableRowsHtml}
+    </table>` : ""}
+    ${paragraph("<strong>Total alerts:</strong> " + sections.totalAlerts)}
+    ${button("Open Admin Dashboard", BASE_URL + "/admin/dashboard")}
+  `);
+}
