@@ -3,6 +3,7 @@ import { withSentryConfig } from "@sentry/nextjs";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  poweredByHeader: false,
 };
 
 // Warn at build time if Sentry is partially configured

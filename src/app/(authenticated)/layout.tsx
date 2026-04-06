@@ -20,13 +20,18 @@ export default async function AuthenticatedLayout({
     redirect("/lodge/kiosk");
   }
 
-  // Check DB directly for force password change (JWT may be stale)
+  // Check DB directly for force password change and active status (JWT may be stale)
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: { forcePasswordChange: true },
+    select: { forcePasswordChange: true, active: true },
   });
 
-  if (member?.forcePasswordChange) {
+  // Redirect deleted/deactivated accounts even if JWT is still valid
+  if (!member || !member.active) {
+    redirect("/login");
+  }
+
+  if (member.forcePasswordChange) {
     redirect("/change-password");
   }
 

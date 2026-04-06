@@ -18,13 +18,17 @@ export default async function AdminLayout({
     redirect("/dashboard");
   }
 
-  // Check DB directly for force password change
+  // Check DB directly for force password change and active status (JWT may be stale)
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: { forcePasswordChange: true },
+    select: { forcePasswordChange: true, active: true },
   });
 
-  if (member?.forcePasswordChange) {
+  if (!member || !member.active) {
+    redirect("/login");
+  }
+
+  if (member.forcePasswordChange) {
     redirect("/change-password");
   }
 
