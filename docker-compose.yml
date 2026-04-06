@@ -13,6 +13,8 @@ services:
       POSTGRES_DB: tacbookings
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    mem_limit: 512m
+    cpus: 0.5
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tac -d tacbookings"]
       interval: 5s
@@ -58,6 +60,8 @@ services:
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
       BACKUP_CRON_SCHEDULE: ${BACKUP_CRON_SCHEDULE:-0 3 * * *}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    mem_limit: 1g
+    cpus: 0.8
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ || exit 1"]
       interval: 30s
@@ -68,6 +72,8 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.2
     logging:
       driver: json-file
       options:
