@@ -882,15 +882,17 @@ export async function refreshAllMembershipStatuses(): Promise<{
   checked: number;
   updated: number;
   errors: number;
+  errorDetails: Array<{ member: string; error: string }>;
 }> {
   const members = await prisma.member.findMany({
     where: { active: true, xeroContactId: { not: null } },
-    select: { id: true },
+    select: { id: true, email: true, firstName: true, lastName: true },
   });
 
   let checked = 0;
   let updated = 0;
   let errors = 0;
+  const errorDetails: Array<{ member: string; error: string }> = [];
 
   for (const member of members) {
     try {
@@ -902,12 +904,15 @@ export async function refreshAllMembershipStatuses(): Promise<{
       if (!before || before.status !== result.status) {
         updated++;
       }
-    } catch {
+    } catch (err) {
       errors++;
+      const memberLabel = `${member.firstName} ${member.lastName} (${member.email})`;
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      errorDetails.push({ member: memberLabel, error: errorMessage });
     }
   }
 
-  return { checked, updated, errors };
+  return { checked, updated, errors, errorDetails };
 }
 
 // ---------------------------------------------------------------------------

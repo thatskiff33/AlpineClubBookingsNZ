@@ -21,6 +21,7 @@ interface SyncResult {
   updated?: number
   checked?: number
   errors?: number
+  errorDetails?: Array<{ member: string; error: string }>
   message?: string
   // Import-specific fields
   created?: number
@@ -642,10 +643,22 @@ export default function XeroPage() {
                   )}
 
                   {syncResult.errors !== undefined && syncResult.errors > 0 && (
-                    <p className="text-red-600">
-                      <span className="text-muted-foreground">Errors:</span>{" "}
-                      {syncResult.errors}
-                    </p>
+                    <div className="text-red-600">
+                      <p>
+                        <span className="text-muted-foreground">Errors:</span>{" "}
+                        {syncResult.errors}
+                      </p>
+                      {syncResult.errorDetails && syncResult.errorDetails.length > 0 && (
+                        <ul className="mt-2 text-sm space-y-1 list-disc list-inside">
+                          {syncResult.errorDetails.map((detail, i) => (
+                            <li key={i}>
+                              <span className="font-medium">{detail.member}</span>:{" "}
+                              {detail.error}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
                 </div>
               </CardContent>
