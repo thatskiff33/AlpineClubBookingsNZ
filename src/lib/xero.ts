@@ -972,19 +972,33 @@ export async function checkMembershipStatus(
   const year = seasonYear ?? getSeasonYear(new Date());
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
-  // Fetch invoices for this contact
-  const response = await xero.accountingApi.getInvoices(
-    tenantId,
-    undefined, // ifModifiedSince
-    `Contact.ContactID=guid("${member.xeroContactId}")`, // where
-    undefined, // order
-    undefined, // iDs
-    undefined, // invoiceNumbers
-    undefined, // contactIDs
-    undefined, // statuses
-    1, // page
-    false // includeArchived
-  );
+  // Fetch invoices for this contact (with retry on 429 rate limit)
+  const getInvoicesWithRetry = async (retries: number): Promise<{ body: { invoices?: Invoice[] } }> => {
+    try {
+      return await xero.accountingApi.getInvoices(
+        tenantId,
+        undefined, // ifModifiedSince
+        `Contact.ContactID=guid("${member.xeroContactId}")`, // where
+        undefined, // order
+        undefined, // iDs
+        undefined, // invoiceNumbers
+        undefined, // contactIDs
+        undefined, // statuses
+        1, // page
+        false // includeArchived
+      );
+    } catch (err: unknown) {
+      const statusCode = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+      const retryAfter = (err as { response?: { headers?: Record<string, string> } })?.response?.headers?.["retry-after"];
+      if (statusCode === 429 && retries > 0) {
+        const waitSec = Math.min(parseInt(retryAfter || "30", 10), 60);
+        await new Promise((r) => setTimeout(r, waitSec * 1000));
+        return getInvoicesWithRetry(retries - 1);
+      }
+      throw err;
+    }
+  };
+  const response = await getInvoicesWithRetry(3);
 
   const invoices = response.body.invoices ?? [];
 
@@ -1115,6 +1129,9 @@ export async function refreshAllMembershipStatuses(): Promise<{
   let errors = 0;
   const errorDetails: Array<{ member: string; error: string }> = [];
 
+  // Throttle to ~50 requests/minute to stay under Xero's 60/min limit
+  const THROTTLE_MS = 1200;
+
   for (const member of members) {
     try {
       const before = await prisma.memberSubscription.findFirst({
@@ -1130,6 +1147,8 @@ export async function refreshAllMembershipStatuses(): Promise<{
       const memberLabel = `${member.firstName} ${member.lastName} (${member.email})`;
       errorDetails.push({ member: memberLabel, error: parseXeroError(err) });
     }
+    // Throttle between requests to avoid Xero rate limits
+    await new Promise((r) => setTimeout(r, THROTTLE_MS));
   }
 
   return { checked, updated, errors, errorDetails };
