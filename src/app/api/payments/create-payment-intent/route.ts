@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
+import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
@@ -44,10 +44,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Don't create a new PaymentIntent if one already exists
-    if (booking.payment?.stripePaymentIntentId) {
+    // If a PaymentIntent already exists and payment is still in progress, return its clientSecret
+    if (booking.payment?.stripePaymentIntentId && booking.payment.status === "PROCESSING") {
+      const existingIntent = await getPaymentIntent(booking.payment.stripePaymentIntentId);
+      if (existingIntent.client_secret && existingIntent.status !== "succeeded") {
+        return NextResponse.json({
+          clientSecret: existingIntent.client_secret,
+          paymentIntentId: existingIntent.id,
+        });
+      }
+    }
+
+    // Don't create a new PaymentIntent if one already succeeded
+    if (booking.payment?.stripePaymentIntentId && booking.payment.status === "SUCCEEDED") {
       return NextResponse.json(
-        { error: "Payment already initiated for this booking" },
+        { error: "Payment already completed for this booking" },
         { status: 409 }
       );
     }
