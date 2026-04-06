@@ -20,6 +20,7 @@ import {
   CalendarCheck,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
+import { bookingStatusClass } from "@/lib/status-colors";
 
 async function getStats() {
   const now = new Date();
@@ -89,14 +90,6 @@ async function getStats() {
   };
 }
 
-const statusColor: Record<string, string> = {
-  CONFIRMED: "bg-green-100 text-green-800 border-green-200",
-  PAID: "bg-emerald-100 text-emerald-800 border-emerald-200",
-  PENDING: "bg-yellow-100 text-yellow-800 border-yellow-200",
-  CANCELLED: "bg-red-100 text-red-800 border-red-200",
-  BUMPED: "bg-red-100 text-red-800 border-red-200",
-  COMPLETED: "bg-slate-100 text-slate-600 border-slate-200",
-};
 
 export default async function AdminDashboardPage() {
   const stats = await getStats();
@@ -254,7 +247,7 @@ export default async function AdminDashboardPage() {
                       </span>
                       <Badge
                         variant="secondary"
-                        className={statusColor[booking.status] || ""}
+                        className={bookingStatusClass(booking.status)}
                       >
                         {booking.status}
                       </Badge>

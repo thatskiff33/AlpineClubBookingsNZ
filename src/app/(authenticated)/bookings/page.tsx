@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCents } from "@/lib/utils";
+import { bookingStatusClass } from "@/lib/status-colors";
 
 export default async function MyBookingsPage() {
   const session = await auth();
@@ -15,17 +16,6 @@ export default async function MyBookingsPage() {
     include: { guests: true },
     orderBy: { checkIn: "desc" },
   });
-
-  const statusColor = (status: string) => {
-    switch (status) {
-      case "CONFIRMED": return "success" as const;
-      case "PAID": return "success" as const;
-      case "PENDING": return "warning" as const;
-      case "CANCELLED": case "BUMPED": return "destructive" as const;
-      case "COMPLETED": return "secondary" as const;
-      default: return "secondary" as const;
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -66,7 +56,7 @@ export default async function MyBookingsPage() {
                       {formatCents(booking.finalPriceCents)}
                     </p>
                   </div>
-                  <Badge variant={statusColor(booking.status)}>{booking.status}</Badge>
+                  <Badge variant="secondary" className={bookingStatusClass(booking.status)}>{booking.status}</Badge>
                 </CardContent>
               </Card>
             </Link>

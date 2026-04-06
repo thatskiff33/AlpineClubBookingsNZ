@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
+import { bookingStatusClass } from "@/lib/status-colors";
 
 export default async function AdminBookingsPage({
   searchParams,
@@ -55,16 +56,6 @@ export default async function AdminBookingsPage({
     take: 100,
   });
 
-  const statusColor = (status: string) => {
-    switch (status) {
-      case "CONFIRMED": return "success" as const;
-      case "PENDING": return "warning" as const;
-      case "CANCELLED": case "BUMPED": return "destructive" as const;
-      case "COMPLETED": return "secondary" as const;
-      default: return "secondary" as const;
-    }
-  };
-
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold">All Bookings</h1>
@@ -109,7 +100,7 @@ export default async function AdminBookingsPage({
                     <td className="px-4 py-3 text-sm">{booking.guests.length}</td>
                     <td className="px-4 py-3 text-sm font-medium">{formatCents(booking.finalPriceCents)}</td>
                     <td className="px-4 py-3">
-                      <Badge variant={statusColor(booking.status)}>{booking.status}</Badge>
+                      <Badge variant="secondary" className={bookingStatusClass(booking.status)}>{booking.status}</Badge>
                     </td>
                   </tr>
                 ))}

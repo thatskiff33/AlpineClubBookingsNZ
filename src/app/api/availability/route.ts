@@ -26,16 +26,28 @@ export async function GET(request: NextRequest) {
   const startDate = new Date(year, month, 1);
   const endDate = new Date(year, month + 1, 1);
 
-  const overlappingBookings = await prisma.booking.findMany({
-    where: {
-      checkIn: { lt: endDate },
-      checkOut: { gt: startDate },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
-    },
-    include: { guests: true },
-  });
+  const [overlappingBookings, activeSeasons] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        checkIn: { lt: endDate },
+        checkOut: { gt: startDate },
+        status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+      },
+      include: { guests: true },
+    }),
+    prisma.season.findMany({
+      where: {
+        startDate: { lte: endDate },
+        endDate: { gte: startDate },
+        active: true,
+      },
+      select: { name: true, type: true, startDate: true, endDate: true },
+    }),
+  ]);
 
   const availability: Record<string, number> = {};
+  const seasons: Record<string, { name: string; type: string }> = {};
+
   const nights = eachDayOfInterval({
     start: startDate,
     end: subDays(endDate, 1),
@@ -55,7 +67,17 @@ export async function GET(request: NextRequest) {
 
     const key = night.toISOString().split("T")[0];
     availability[key] = occupiedBeds;
+
+    // Determine which season this date falls in
+    for (const season of activeSeasons) {
+      const sStart = new Date(season.startDate).toISOString().split("T")[0];
+      const sEnd = new Date(season.endDate).toISOString().split("T")[0];
+      if (key >= sStart && key <= sEnd) {
+        seasons[key] = { name: season.name, type: season.type };
+        break;
+      }
+    }
   }
 
-  return NextResponse.json(availability);
+  return NextResponse.json({ availability, seasons });
 }
