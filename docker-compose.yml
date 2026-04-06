@@ -86,6 +86,19 @@ services:
       - caddy_data:/data
       - caddy_config:/config
 
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    profiles: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tac:${DB_PASSWORD:-password}@postgres:5432/tacbookings
+    command: npx prisma migrate deploy
+
 volumes:
   postgres_data:
   caddy_data:
