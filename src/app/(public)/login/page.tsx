@@ -39,7 +39,7 @@ function LoginForm() {
       });
 
       if (result?.error) {
-        if ("code" in result && result.code === "EMAIL_NOT_VERIFIED") {
+        if (result.error === "EMAIL_NOT_VERIFIED" || result.code === "EMAIL_NOT_VERIFIED") {
           setEmailNotVerified(true);
         } else {
           setError("Invalid email or password. Please try again.");
