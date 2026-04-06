@@ -907,7 +907,28 @@ export async function refreshAllMembershipStatuses(): Promise<{
     } catch (err) {
       errors++;
       const memberLabel = `${member.firstName} ${member.lastName} (${member.email})`;
-      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+      let errorMessage = "Unknown error";
+      if (err instanceof Error) {
+        errorMessage = err.message;
+      } else if (typeof err === "object" && err !== null) {
+        // xero-node SDK often throws response objects, not Error instances
+        const obj = err as Record<string, unknown>;
+        if (obj.statusCode || obj.status) {
+          errorMessage = `HTTP ${obj.statusCode ?? obj.status}`;
+          if (obj.body && typeof obj.body === "object") {
+            const body = obj.body as Record<string, unknown>;
+            if (body.Detail) errorMessage += `: ${body.Detail}`;
+            else if (body.Message) errorMessage += `: ${body.Message}`;
+            else if (body.Title) errorMessage += `: ${body.Title}`;
+          } else if (obj.message) {
+            errorMessage += `: ${obj.message}`;
+          }
+        } else {
+          errorMessage = JSON.stringify(err).slice(0, 200);
+        }
+      } else if (typeof err === "string") {
+        errorMessage = err;
+      }
       errorDetails.push({ member: memberLabel, error: errorMessage });
     }
   }
