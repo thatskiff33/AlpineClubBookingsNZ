@@ -9,8 +9,7 @@ import { formatCents } from "@/lib/utils";
 import { CancelBookingButton } from "@/components/cancel-booking-button";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { BookingNotesEditor } from "@/components/booking-notes-editor";
-import { ChangeDatesDialog } from "@/components/change-dates-dialog";
-import { ManageGuests } from "@/components/manage-guests";
+import { BookingEditor, type BookingEditorData } from "@/components/booking-editor";
 
 export default async function BookingDetailPage({
   params,
@@ -42,16 +41,6 @@ export default async function BookingDetailPage({
     redirect("/bookings");
   }
 
-  const statusColor = (status: string) => {
-    switch (status) {
-      case "CONFIRMED": return "success" as const;
-      case "PAID": return "success" as const;
-      case "PENDING": return "warning" as const;
-      case "CANCELLED": case "BUMPED": return "destructive" as const;
-      default: return "secondary" as const;
-    }
-  };
-
   const nights = Math.ceil(
     (new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) /
       (1000 * 60 * 60 * 24)
@@ -60,6 +49,34 @@ export default async function BookingDetailPage({
   const canCancel = ["CONFIRMED", "PAID", "PENDING"].includes(booking.status);
   const isFutureCheckIn = new Date(booking.checkIn) > new Date();
   const canModify = canCancel && isFutureCheckIn;
+
+  const editorData: BookingEditorData = {
+    id: booking.id,
+    checkIn: new Date(booking.checkIn).toISOString().split("T")[0],
+    checkOut: new Date(booking.checkOut).toISOString().split("T")[0],
+    nights,
+    status: booking.status,
+    guests: booking.guests.map((g) => ({
+      id: g.id,
+      firstName: g.firstName,
+      lastName: g.lastName,
+      ageTier: g.ageTier,
+      isMember: g.isMember,
+      priceCents: g.priceCents,
+    })),
+    totalPriceCents: booking.totalPriceCents,
+    discountCents: booking.discountCents,
+    finalPriceCents: booking.finalPriceCents,
+    promo: booking.promoRedemption?.promoCode
+      ? {
+          code: booking.promoRedemption.promoCode.code,
+          type: booking.promoRedemption.promoCode.type,
+          description: booking.promoRedemption.promoCode.description,
+        }
+      : null,
+    hasNonMembers: booking.hasNonMembers,
+    nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
+  };
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -70,124 +87,7 @@ export default async function BookingDetailPage({
         </Link>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CardTitle>Stay Details</CardTitle>
-              {canModify && (
-                <ChangeDatesDialog
-                  bookingId={booking.id}
-                  currentCheckIn={new Date(booking.checkIn).toISOString().split("T")[0]}
-                  currentCheckOut={new Date(booking.checkOut).toISOString().split("T")[0]}
-                  currentFinalPriceCents={booking.finalPriceCents}
-                />
-              )}
-            </div>
-            <Badge variant={statusColor(booking.status)}>{booking.status}</Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-sm text-gray-500">Check-in</p>
-              <p className="font-medium">
-                {new Date(booking.checkIn).toLocaleDateString("en-NZ", {
-                  weekday: "long", day: "numeric", month: "long", year: "numeric",
-                })}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">Check-out</p>
-              <p className="font-medium">
-                {new Date(booking.checkOut).toLocaleDateString("en-NZ", {
-                  weekday: "long", day: "numeric", month: "long", year: "numeric",
-                })}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">Nights</p>
-              <p className="font-medium">{nights}</p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">Guests</p>
-              <p className="font-medium">{booking.guests.length}</p>
-            </div>
-          </div>
-
-          {booking.status === "PENDING" && booking.nonMemberHoldUntil && (
-            <div className="rounded-md bg-yellow-50 p-3 text-sm text-yellow-800">
-              This booking includes non-members. It will be auto-confirmed on{" "}
-              {new Date(booking.nonMemberHoldUntil).toLocaleDateString("en-NZ")},
-              subject to availability. Members have priority.
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Guests</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {canModify ? (
-            <ManageGuests
-              bookingId={booking.id}
-              guests={booking.guests.map((g) => ({
-                id: g.id,
-                firstName: g.firstName,
-                lastName: g.lastName,
-                ageTier: g.ageTier,
-                isMember: g.isMember,
-                priceCents: g.priceCents,
-              }))}
-              checkIn={new Date(booking.checkIn).toISOString().split("T")[0]}
-              checkOut={new Date(booking.checkOut).toISOString().split("T")[0]}
-            />
-          ) : (
-            <div className="divide-y">
-              {booking.guests.map((guest) => (
-                <div key={guest.id} className="flex items-center justify-between py-3">
-                  <div>
-                    <p className="font-medium">{guest.firstName} {guest.lastName}</p>
-                    <p className="text-sm text-gray-500">
-                      {guest.ageTier} &middot; {guest.isMember ? "Member" : "Non-member"}
-                    </p>
-                  </div>
-                  <p className="font-medium">{formatCents(guest.priceCents)}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Payment</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <div className="flex justify-between">
-            <span>Subtotal</span>
-            <span>{formatCents(booking.totalPriceCents)}</span>
-          </div>
-          {booking.discountCents > 0 && (
-            <div className="flex justify-between text-green-600">
-              <span>
-                Discount
-                {booking.promoRedemption?.promoCode?.code && (
-                  <span className="ml-1 text-xs">({booking.promoRedemption.promoCode.code})</span>
-                )}
-              </span>
-              <span>-{formatCents(booking.discountCents)}</span>
-            </div>
-          )}
-          <div className="flex justify-between border-t pt-2 font-bold">
-            <span>Total</span>
-            <span>{formatCents(booking.finalPriceCents)}</span>
-          </div>
-        </CardContent>
-      </Card>
+      <BookingEditor booking={editorData} canModify={canModify} />
 
       {/* Show payment form if payment hasn't been completed */}
       {(booking.status === "CONFIRMED" && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
@@ -264,6 +164,7 @@ export default async function BookingDetailPage({
                   GUEST_ADD: "Guests Added",
                   GUEST_REMOVE: "Guest Removed",
                   EXTEND_STAY: "Stay Extended",
+                  BATCH_MODIFY: "Booking Modified",
                 };
                 return (
                   <div key={mod.id} className="py-3 space-y-1">
@@ -314,6 +215,16 @@ export default async function BookingDetailPage({
                           {(prev.removedGuest as { firstName: string; lastName: string })?.lastName}
                           {" "}&middot;{" "}
                           {String(prev.guestCount)} &rarr; {String(next.guestCount)} guests
+                        </p>
+                      )}
+                      {mod.modificationType === "BATCH_MODIFY" && (
+                        <p>
+                          {prev.checkIn !== next.checkIn || prev.checkOut !== next.checkOut
+                            ? `${String(prev.checkIn)}-${String(prev.checkOut)} → ${String(next.checkIn)}-${String(next.checkOut)}`
+                            : ""}
+                          {prev.guestCount !== next.guestCount
+                            ? `${prev.checkIn !== next.checkIn ? " · " : ""}${String(prev.guestCount)} → ${String(next.guestCount)} guests`
+                            : ""}
                         </p>
                       )}
                     </div>
