@@ -162,6 +162,7 @@ export async function GET(req: NextRequest) {
     active: true,
     xeroContactId: true,
     createdAt: true,
+    forcePasswordChange: true,
     parentMemberId: true,
     parent: {
       select: { id: true, firstName: true, lastName: true },
@@ -296,6 +297,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Send invite email if requested
+    let inviteWarning: string | undefined;
     if (data.sendInvite) {
       try {
         const token = randomBytes(32).toString("hex");
@@ -303,15 +305,17 @@ export async function POST(req: NextRequest) {
         await prisma.passwordResetToken.create({
           data: { token, memberId: member.id, expiresAt },
         });
-        sendPasswordResetEmail(member.email, token).catch((err) => {
-          logger.error({ err, memberId: member.id }, "Failed to send invite email");
-        });
+        await sendPasswordResetEmail(member.email, token);
       } catch (emailErr) {
-        logger.error({ err: emailErr, memberId: member.id }, "Failed to create invite token");
+        logger.error({ err: emailErr, memberId: member.id }, "Failed to send invite email");
+        inviteWarning = `Member created but invite email failed to send: ${emailErr instanceof Error ? emailErr.message : String(emailErr)}`;
       }
     }
 
-    return NextResponse.json(member, { status: 201 });
+    return NextResponse.json(
+      { ...member, ...(inviteWarning ? { warning: inviteWarning } : {}) },
+      { status: 201 },
+    );
   } catch (error) {
     logger.error({ err: error }, "Failed to create member");
     return NextResponse.json({ error: "Failed to create member" }, { status: 500 });

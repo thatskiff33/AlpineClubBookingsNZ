@@ -20,6 +20,7 @@ const updateMemberSchema = z.object({
   role: z.enum(["MEMBER", "ADMIN"]).optional(),
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]).optional(),
   active: z.boolean().optional(),
+  forcePasswordChange: z.boolean().optional(),
 });
 
 /**
@@ -50,6 +51,7 @@ export async function GET(
         role: true,
         ageTier: true,
         active: true,
+        forcePasswordChange: true,
         xeroContactId: true,
         createdAt: true,
         subscriptions: {
@@ -161,6 +163,7 @@ export async function PUT(
   if (data.phone !== undefined) updateData.phone = data.phone?.trim() || null;
   if (data.role !== undefined) updateData.role = data.role;
   if (data.active !== undefined) updateData.active = data.active;
+  if (data.forcePasswordChange !== undefined) updateData.forcePasswordChange = data.forcePasswordChange;
 
   // Handle DOB and age tier
   if (data.dateOfBirth !== undefined) {

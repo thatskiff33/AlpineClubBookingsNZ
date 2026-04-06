@@ -82,6 +82,7 @@ model Member {
   email         String
   passwordHash        String
   forcePasswordChange Boolean  @default(false)
+  passwordChangedAt   DateTime?
   // Email verification: new registrations start as false.
   // Existing members should be bulk-updated: UPDATE "Member" SET "emailVerified" = true;
   emailVerified       Boolean  @default(false)

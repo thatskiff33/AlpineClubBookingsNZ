@@ -8,6 +8,7 @@ import Link from "next/link";
 import { formatCents } from "@/lib/utils";
 import { CancelBookingButton } from "@/components/cancel-booking-button";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
+import { BookingNotesEditor } from "@/components/booking-notes-editor";
 
 export default async function BookingDetailPage({
   params,
@@ -201,16 +202,18 @@ export default async function BookingDetailPage({
         <CancelBookingButton bookingId={booking.id} />
       )}
 
-      {booking.notes && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Notes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-gray-600">{booking.notes}</p>
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Notes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <BookingNotesEditor
+            bookingId={booking.id}
+            initialNotes={booking.notes ?? ""}
+            canEdit={canCancel}
+          />
+        </CardContent>
+      </Card>
     </div>
   );
 }

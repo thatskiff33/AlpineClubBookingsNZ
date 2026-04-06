@@ -109,7 +109,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://tac:${DB_PASSWORD:-password}@postgres:5432/tacbookings
-    command: npx prisma migrate deploy
+    command: ./node_modules/.bin/prisma migrate deploy
 
 volumes:
   postgres_data:

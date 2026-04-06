@@ -160,9 +160,7 @@ export async function POST(req: NextRequest) {
           await prisma.passwordResetToken.create({
             data: { token, memberId: member.id, expiresAt },
           });
-          sendPasswordResetEmail(member.email, token).catch((err) => {
-            logger.error({ err, memberId: member.id }, "Failed to send import invite email");
-          });
+          await sendPasswordResetEmail(member.email, token);
         } catch (emailErr) {
           logger.error({ err: emailErr, memberId: member.id }, "Failed to create import invite token");
         }
