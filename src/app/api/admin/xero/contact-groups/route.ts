@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { getXeroContactGroups, XeroDailyLimitError } from "@/lib/xero";
+import { getXeroContactGroups } from "@/lib/xero";
 import logger from "@/lib/logger";
 
 /**
@@ -17,17 +17,25 @@ export async function GET() {
     const groups = await getXeroContactGroups();
     return NextResponse.json({ groups });
   } catch (error) {
-    if (error instanceof XeroDailyLimitError) {
+    // Check by name to avoid instanceof issues across module boundaries
+    if (error instanceof Error && error.name === "XeroDailyLimitError") {
       return NextResponse.json(
         { error: "Xero daily API limit reached. Please try again tomorrow." },
         { status: 429 }
       );
     }
 
-    logger.error({ err: error }, "Failed to fetch Xero contact groups");
-
-    // Extract meaningful message from Xero SDK errors
+    // Detect 429 from raw Xero SDK errors that bypassed withXeroRetry
     const statusCode = (error as { response?: { statusCode?: number } })?.response?.statusCode;
+    const rateLimitProblem = (error as { response?: { headers?: Record<string, string> } })?.response?.headers?.["x-rate-limit-problem"];
+
+    if (statusCode === 429) {
+      const message = rateLimitProblem === "day"
+        ? "Xero daily API limit reached. Please try again tomorrow."
+        : "Xero rate limit hit. Please wait a moment and try again.";
+      return NextResponse.json({ error: message }, { status: 429 });
+    }
+
     if (statusCode === 401 || statusCode === 403) {
       return NextResponse.json(
         { error: "Xero connection expired. Please reconnect Xero from the admin panel." },
@@ -35,6 +43,7 @@ export async function GET() {
       );
     }
 
+    logger.error({ err: error }, "Failed to fetch Xero contact groups");
     const message =
       error instanceof Error ? error.message : "Failed to fetch contact groups";
     return NextResponse.json({ error: message }, { status: 500 });
