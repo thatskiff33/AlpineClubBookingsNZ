@@ -303,25 +303,29 @@ model BookingGuest {
 // ---------------------------------------------------------------------------
 
 model Payment {
-  id                     String        @id @default(cuid())
-  bookingId              String        @unique
-  amountCents            Int
-  stripePaymentIntentId  String?       @unique
-  stripePaymentMethodId  String?
-  stripeSetupIntentId    String?       @unique
-  stripeCustomerId       String?
-  xeroInvoiceId          String?       @unique
-  status                 PaymentStatus @default(PENDING)
-  refundedAmountCents    Int           @default(0)
-  changeFeeCents         Int           @default(0)
-  createdAt              DateTime      @default(now())
-  updatedAt              DateTime      @updatedAt
+  id                          String        @id @default(cuid())
+  bookingId                   String        @unique
+  amountCents                 Int
+  stripePaymentIntentId       String?       @unique
+  stripePaymentMethodId       String?
+  stripeSetupIntentId         String?       @unique
+  stripeCustomerId            String?
+  xeroInvoiceId               String?       @unique
+  status                      PaymentStatus @default(PENDING)
+  refundedAmountCents         Int           @default(0)
+  changeFeeCents              Int           @default(0)
+  additionalPaymentIntentId   String?       @unique
+  additionalAmountCents       Int           @default(0)
+  additionalPaymentStatus     String?       // PENDING, SUCCEEDED, FAILED
+  createdAt                   DateTime      @default(now())
+  updatedAt                   DateTime      @updatedAt
 
   // Relations
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@index([bookingId])
   @@index([stripePaymentIntentId])
+  @@index([additionalPaymentIntentId])
 }
 
 // ---------------------------------------------------------------------------

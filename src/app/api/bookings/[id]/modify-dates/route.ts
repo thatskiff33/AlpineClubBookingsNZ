@@ -14,7 +14,7 @@ import {
   getNonMemberHoldDays,
 } from "@/lib/cancellation";
 import { validatePromoCodeRules } from "@/lib/promo";
-import { processRefund } from "@/lib/stripe";
+import { processRefund, createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { cleanupChoreAssignmentsForDateChange } from "@/lib/chore-cleanup";
@@ -274,6 +274,7 @@ export async function PUT(
             });
           }
         } else if (priceDiffCents > 0 || changeFeeCents > 0) {
+          // Price increase - will create Stripe PI after transaction
           additionalAmountCents = priceDiffCents + changeFeeCents;
         }
 
@@ -385,8 +386,57 @@ export async function PUT(
         choreWarnings,
         oldCheckIn,
         oldCheckOut,
+        hasSucceededPayment,
+        paymentId: booking.payment?.id ?? null,
+        paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
+        memberEmail: booking.member.email,
+        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        memberId: booking.memberId,
       };
     });
+
+    // Create additional PaymentIntent for price increases (outside transaction to avoid holding advisory lock)
+    let additionalPaymentClientSecret: string | undefined;
+    if (result.additionalAmountCents > 0 && result.hasSucceededPayment && result.paymentId) {
+      try {
+        let customerId = result.paymentCustomerId ?? undefined;
+        if (!customerId) {
+          const customer = await findOrCreateCustomer({
+            email: result.memberEmail,
+            name: result.memberName,
+            memberId: result.memberId,
+          });
+          customerId = customer.id;
+        }
+
+        const pi = await createPaymentIntent({
+          amountCents: result.additionalAmountCents,
+          customerId,
+          metadata: {
+            bookingId,
+            type: "modification_additional",
+            reason: "date_change_price_increase",
+          },
+        });
+
+        await prisma.payment.update({
+          where: { id: result.paymentId },
+          data: {
+            additionalPaymentIntentId: pi.id,
+            additionalAmountCents: result.additionalAmountCents,
+            additionalPaymentStatus: "PENDING",
+            ...(customerId && !result.paymentCustomerId
+              ? { stripeCustomerId: customerId }
+              : {}),
+          },
+        });
+
+        additionalPaymentClientSecret = pi.client_secret ?? undefined;
+      } catch (piErr) {
+        logger.error({ err: piErr, bookingId }, "Failed to create additional PaymentIntent for modification");
+        // Non-fatal: modification already applied, payment can be collected via booking detail page
+      }
+    }
 
     // Audit log (fire-and-forget)
     logAudit({
@@ -455,6 +505,7 @@ export async function PUT(
       changeFeeCents: result.changeFeeCents,
       refundAmountCents: result.refundAmountCents,
       additionalAmountCents: result.additionalAmountCents,
+      additionalPaymentClientSecret: additionalPaymentClientSecret ?? null,
       stripeRefundId: result.stripeRefundId,
       promoRemoved: result.promoRemoved,
       choreWarnings: result.choreWarnings,

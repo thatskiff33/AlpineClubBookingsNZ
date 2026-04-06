@@ -10,6 +10,7 @@ import { CancelBookingButton } from "@/components/cancel-booking-button";
 import { BookingPaymentSection } from "@/components/booking-payment-section";
 import { BookingNotesEditor } from "@/components/booking-notes-editor";
 import { BookingEditor, type BookingEditorData } from "@/components/booking-editor";
+import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 
 export default async function BookingDetailPage({
   params,
@@ -131,6 +132,16 @@ export default async function BookingDetailPage({
           </CardContent>
         </Card>
       )}
+
+      {/* Additional payment required after a modification that increased the price */}
+      {booking.payment &&
+        booking.payment.additionalAmountCents > 0 &&
+        booking.payment.additionalPaymentStatus !== "SUCCEEDED" && (
+          <AdditionalPaymentCard
+            bookingId={booking.id}
+            additionalAmountCents={booking.payment.additionalAmountCents}
+          />
+        )}
 
       {canCancel && (
         <CancelBookingButton bookingId={booking.id} />
