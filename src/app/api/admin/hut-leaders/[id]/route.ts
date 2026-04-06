@@ -62,6 +62,28 @@ export async function PUT(
     );
   }
 
+  // Check for overlapping assignments (excluding self, same-day boundaries allowed)
+  const overlapping = await prisma.hutLeaderAssignment.findFirst({
+    where: {
+      id: { not: id },
+      startDate: { lt: finalEnd },
+      endDate: { gt: finalStart },
+    },
+    include: {
+      member: { select: { firstName: true, lastName: true } },
+    },
+  });
+
+  if (overlapping) {
+    const name = `${overlapping.member.firstName} ${overlapping.member.lastName}`;
+    const start = overlapping.startDate.toISOString().split("T")[0];
+    const end = overlapping.endDate.toISOString().split("T")[0];
+    return NextResponse.json(
+      { error: `Overlaps with existing assignment for ${name} (${start} to ${end})` },
+      { status: 409 }
+    );
+  }
+
   try {
     await prisma.hutLeaderAssignment.update({
       where: { id },

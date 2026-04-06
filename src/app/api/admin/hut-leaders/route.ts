@@ -78,12 +78,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Member not found or inactive" }, { status: 404 });
   }
 
+  // Check for overlapping assignments (same-day boundaries are allowed)
+  // Overlap: existing.startDate < new.endDate AND existing.endDate > new.startDate
+  const newStart = new Date(parsed.data.startDate + "T00:00:00");
+  const newEnd = new Date(parsed.data.endDate + "T00:00:00");
+
+  const overlapping = await prisma.hutLeaderAssignment.findFirst({
+    where: {
+      startDate: { lt: newEnd },
+      endDate: { gt: newStart },
+    },
+    include: {
+      member: { select: { firstName: true, lastName: true } },
+    },
+  });
+
+  if (overlapping) {
+    const name = `${overlapping.member.firstName} ${overlapping.member.lastName}`;
+    const start = overlapping.startDate.toISOString().split("T")[0];
+    const end = overlapping.endDate.toISOString().split("T")[0];
+    return NextResponse.json(
+      { error: `Overlaps with existing assignment for ${name} (${start} to ${end})` },
+      { status: 409 }
+    );
+  }
+
   try {
     const assignment = await prisma.hutLeaderAssignment.create({
       data: {
         memberId: parsed.data.memberId,
-        startDate: new Date(parsed.data.startDate + "T00:00:00"),
-        endDate: new Date(parsed.data.endDate + "T00:00:00"),
+        startDate: newStart,
+        endDate: newEnd,
       },
     });
 
