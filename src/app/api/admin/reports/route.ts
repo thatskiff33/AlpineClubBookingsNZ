@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
       where: {
         checkIn: { lte: toDate },
         checkOut: { gte: fromDate },
-        status: { in: [BookingStatus.CONFIRMED, BookingStatus.COMPLETED] },
+        status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.COMPLETED] },
       },
       include: { guests: true },
     });
@@ -121,7 +121,7 @@ export async function GET(request: NextRequest) {
         bookingsByWeek[weekKey] = { total: 0, confirmed: 0, cancelled: 0, bumped: 0, pending: 0 };
       }
       bookingsByWeek[weekKey].total += 1;
-      if (b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.COMPLETED) {
+      if (b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PAID || b.status === BookingStatus.COMPLETED) {
         bookingsByWeek[weekKey].confirmed += 1;
       } else if (b.status === BookingStatus.CANCELLED) {
         bookingsByWeek[weekKey].cancelled += 1;
@@ -167,6 +167,7 @@ export async function GET(request: NextRequest) {
     // 6. Status breakdown
     const statusBreakdown = {
       confirmed: bookings.filter((b) => b.status === BookingStatus.CONFIRMED).length,
+      paid: bookings.filter((b) => b.status === BookingStatus.PAID).length,
       completed: bookings.filter((b) => b.status === BookingStatus.COMPLETED).length,
       pending: bookings.filter((b) => b.status === BookingStatus.PENDING).length,
       cancelled: bookings.filter((b) => b.status === BookingStatus.CANCELLED).length,

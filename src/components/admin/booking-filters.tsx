@@ -42,6 +42,7 @@ export function BookingFilters() {
         >
           <option value="all">All</option>
           <option value="CONFIRMED">Confirmed</option>
+          <option value="PAID">Paid</option>
           <option value="PENDING">Pending</option>
           <option value="CANCELLED">Cancelled</option>
           <option value="BUMPED">Bumped</option>

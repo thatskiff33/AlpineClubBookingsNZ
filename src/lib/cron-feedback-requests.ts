@@ -34,7 +34,7 @@ export async function sendFeedbackRequests(): Promise<{
   const bookings = await prisma.booking.findMany({
     where: {
       checkOut: yesterdayNZ,
-      status: { in: ["CONFIRMED", "COMPLETED"] },
+      status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
     },
     include: {
       member: {

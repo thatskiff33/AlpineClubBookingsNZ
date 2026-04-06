@@ -34,7 +34,7 @@ export async function getOccupiedBedsPerNight(
     where: {
       checkIn: { lt: checkOut },
       checkOut: { gt: checkIn },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
       ...(excludeBookingIds.length > 0
         ? { id: { notIn: excludeBookingIds } }
         : {}),

@@ -45,6 +45,7 @@ export default async function BookingDetailPage({
   const statusColor = (status: string) => {
     switch (status) {
       case "CONFIRMED": return "success" as const;
+      case "PAID": return "success" as const;
       case "PENDING": return "warning" as const;
       case "CANCELLED": case "BUMPED": return "destructive" as const;
       default: return "secondary" as const;
@@ -56,7 +57,7 @@ export default async function BookingDetailPage({
       (1000 * 60 * 60 * 24)
   );
 
-  const canCancel = booking.status === "CONFIRMED" || booking.status === "PENDING";
+  const canCancel = ["CONFIRMED", "PAID", "PENDING"].includes(booking.status);
   const isFutureCheckIn = new Date(booking.checkIn) > new Date();
   const canModify = canCancel && isFutureCheckIn;
 

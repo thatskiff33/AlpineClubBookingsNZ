@@ -48,10 +48,10 @@ export async function cancelBooking(
     return { status: 403, error: "Forbidden" };
   }
 
-  if (booking.status !== "PENDING" && booking.status !== "CONFIRMED") {
+  if (!["PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
     return {
       status: 400,
-      error: "Only PENDING or CONFIRMED bookings can be cancelled",
+      error: "Only PENDING, CONFIRMED, or PAID bookings can be cancelled",
     };
   }
 
@@ -90,7 +90,7 @@ export async function cancelBooking(
     };
   }
 
-  // Handle CONFIRMED bookings without successful payment
+  // Handle CONFIRMED/PAID bookings without successful payment
   if (!booking.payment || booking.payment.status !== "SUCCEEDED") {
     await prisma.booking.update({
       where: { id: bookingId },

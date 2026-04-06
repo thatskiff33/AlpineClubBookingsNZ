@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
         where: {
           checkIn: { lt: checkOut },
           checkOut: { gt: checkIn },
-          status: { in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+          status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
         },
         include: { guests: true },
       });

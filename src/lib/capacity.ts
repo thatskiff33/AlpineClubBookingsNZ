@@ -28,7 +28,7 @@ export async function getAvailability(
     where: {
       checkIn: { lt: checkOut },
       checkOut: { gt: checkIn },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
     },
     include: {
       guests: true,
@@ -74,7 +74,7 @@ export async function checkCapacity(
     where: {
       checkIn: { lt: checkOut },
       checkOut: { gt: checkIn },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
       ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
     },
     include: {
@@ -124,7 +124,7 @@ export async function getMonthAvailability(
     where: {
       checkIn: { lt: endDate },
       checkOut: { gt: startDate },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
     },
     include: {
       guests: true,

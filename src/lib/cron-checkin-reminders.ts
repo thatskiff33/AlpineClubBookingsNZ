@@ -32,7 +32,7 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
   // Find CONFIRMED bookings checking in tomorrow
   const bookings = await prisma.booking.findMany({
     where: {
-      status: BookingStatus.CONFIRMED,
+      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID] },
       checkIn: {
         gte: tomorrowNZ,
         lt: dayAfterNZ,

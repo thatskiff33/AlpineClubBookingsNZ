@@ -84,9 +84,9 @@ export async function PUT(
         throw new ApiError("Forbidden", 403);
       }
 
-      if (!["PENDING", "CONFIRMED"].includes(booking.status)) {
+      if (!["PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
         throw new ApiError(
-          "Only PENDING or CONFIRMED bookings can be modified",
+          "Only PENDING, CONFIRMED, or PAID bookings can be modified",
           400
         );
       }
@@ -242,7 +242,7 @@ export async function PUT(
       let stripeRefundId: string | undefined;
 
       const hasSucceededPayment =
-        booking.status === "CONFIRMED" &&
+        ["CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
 
       if (hasSucceededPayment && booking.payment) {

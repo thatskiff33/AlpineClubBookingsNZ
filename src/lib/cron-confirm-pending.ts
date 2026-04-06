@@ -97,7 +97,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       // Atomically claim the booking to prevent double-charge with manual confirm
       const claimed = await prisma.booking.updateMany({
         where: { id: booking.id, status: BookingStatus.PENDING },
-        data: { status: BookingStatus.CONFIRMED },
+        data: { status: BookingStatus.PAID },
       });
       if (claimed.count === 0) {
         // Another process already changed the status - skip
@@ -176,7 +176,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       logger.error({ err, bookingId: booking.id, job: "confirmPendingBookings" }, "Error processing pending booking");
       // Revert status if we claimed it but the charge failed
       await prisma.booking.updateMany({
-        where: { id: booking.id, status: BookingStatus.CONFIRMED },
+        where: { id: booking.id, status: BookingStatus.PAID },
         data: { status: BookingStatus.PENDING },
       }).catch((revertErr) => logger.error({ err: revertErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to revert booking status"));
       result.failedBookingIds.push(booking.id);

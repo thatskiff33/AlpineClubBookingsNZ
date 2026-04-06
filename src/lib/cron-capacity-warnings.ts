@@ -40,7 +40,7 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
     where: {
       checkIn: { lt: endDate },
       checkOut: { gt: todayNZ },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
     },
     include: { guests: true },
   });

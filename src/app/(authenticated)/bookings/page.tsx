@@ -19,6 +19,7 @@ export default async function MyBookingsPage() {
   const statusColor = (status: string) => {
     switch (status) {
       case "CONFIRMED": return "success" as const;
+      case "PAID": return "success" as const;
       case "PENDING": return "warning" as const;
       case "CANCELLED": case "BUMPED": return "destructive" as const;
       case "COMPLETED": return "secondary" as const;

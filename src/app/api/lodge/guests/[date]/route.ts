@@ -35,7 +35,7 @@ export async function GET(
   // Guests staying on this date: checkIn <= date < checkOut
   const bookings = await prisma.booking.findMany({
     where: {
-      status: { in: ["CONFIRMED", "COMPLETED"] },
+      status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
       checkIn: { lte: date },
       checkOut: { gt: date },
     },

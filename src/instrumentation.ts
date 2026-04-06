@@ -374,6 +374,35 @@ export async function register() {
     }, { timezone: "Pacific/Auckland" });
 
     logger.info({ job: "feedback-requests" }, "Scheduled post-stay feedback requests (daily at 10:00 AM NZST)");
+
+    // Cron job - Complete bookings (daily at 1:00 AM NZST)
+    // Transitions PAID bookings to COMPLETED once check-in date has passed
+    let isCompleteBookingsRunning = false;
+    cron.default.schedule("0 1 * * *", async () => {
+      if (isCompleteBookingsRunning) {
+        logger.info({ job: "complete-bookings" }, "Already running, skipping");
+        return;
+      }
+      isCompleteBookingsRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "complete-bookings" }, "Transitioning PAID bookings to COMPLETED");
+
+      try {
+        const { completeBookings } = await import("./lib/cron-complete-bookings");
+        const result = await completeBookings();
+        logger.info({ job: "complete-bookings", ...result }, "Complete bookings cron finished");
+        await recordCronRun("complete-bookings", startedAt, "SUCCESS", result as unknown as Record<string, unknown>);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "complete-bookings" }, "Error in complete bookings cron");
+        Sentry.captureException(err);
+        await recordCronRun("complete-bookings", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isCompleteBookingsRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "complete-bookings" }, "Scheduled complete bookings (daily at 1:00 AM NZST)");
   }
 }
 

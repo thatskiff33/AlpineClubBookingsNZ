@@ -41,6 +41,7 @@ enum SeasonType {
 enum BookingStatus {
   PENDING
   CONFIRMED
+  PAID
   BUMPED
   CANCELLED
   COMPLETED

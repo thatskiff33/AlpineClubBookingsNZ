@@ -170,11 +170,11 @@ async function handlePaymentIntentSucceeded(
     }),
     prisma.booking.update({
       where: { id: bookingId },
-      data: { status: "CONFIRMED" },
+      data: { status: "PAID" },
     }),
   ]);
 
-  logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Booking confirmed via PaymentIntent");
+  logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Booking paid via PaymentIntent");
 
   // Send confirmation email
   try {

@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     where: {
       checkIn: { lt: endDate },
       checkOut: { gt: startDate },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PENDING] },
+      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
     },
     include: { guests: true },
   });
