@@ -8,6 +8,8 @@ import { ChangeEmailForm } from "./change-email-form";
 import { NotificationPreferences } from "./notification-preferences";
 import { DependentsSection } from "./dependents-section";
 import { FamilyGroupSection } from "./family-group-section";
+import { DataExportButton } from "./data-export-button";
+import { DeleteAccountButton } from "./delete-account-button";
 import {
   Card,
   CardContent,
@@ -338,6 +340,37 @@ export default async function ProfilePage() {
                 : "",
             }}
           />
+        </CardContent>
+      </Card>
+
+      {/* Privacy & Data */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Privacy &amp; Data</CardTitle>
+          <CardDescription>
+            Download a copy of your data or request account deletion
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <p className="text-sm text-muted-foreground mb-2">
+              Download a machine-readable copy of all data the system holds
+              about you (JSON format, max 5 times per day).
+            </p>
+            <DataExportButton />
+          </div>
+          <div className="pt-2 border-t">
+            <p className="text-sm text-muted-foreground mb-2">
+              Request permanent deletion of your account. An admin will review
+              your request. This action is irreversible.
+            </p>
+            {member.role !== "ADMIN" && <DeleteAccountButton />}
+            {member.role === "ADMIN" && (
+              <p className="text-sm text-slate-500 italic">
+                Admin accounts cannot be self-deleted. Contact another admin.
+              </p>
+            )}
+          </div>
         </CardContent>
       </Card>
     </div>

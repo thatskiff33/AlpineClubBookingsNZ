@@ -5,7 +5,7 @@
 ```bash
 npm install
 npx prisma generate
-npm test              # 688 tests pass (33 test files)
+npm test              # 783 tests pass (36 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -25,7 +25,7 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9 complete. Security audit + 5 integration reviews done. 688 tests pass, build succeeds.
+All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9, 10 complete. Security audit + 5 integration reviews done. 783 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
@@ -347,9 +347,48 @@ All 9 build phases + Delivery Phases 1, 4, 5, 6, 7, 8, 9 complete. Security audi
 - `src/lib/cancellation.ts` - Exclude change fees from refund base
 - `src/app/(authenticated)/bookings/[id]/page.tsx` - Modification history UI, Change Dates button, Manage Guests UI
 
+### Delivery Phase 10: Compliance & Public Content - COMPLETED
+
+**Date:** 2026-04-07
+**Branch:** phase-10-compliance
+**Tests:** 783 (was 688, +95 new across 2 sub-phases)
+
+**Sub-phase 10a: Public Pages (F-COMP-01, F-COMP-02, F-PUB-01 through F-PUB-04)**
+- Privacy Policy page at `/privacy`, Terms of Service at `/terms`
+- Committee page at `/committee` with data-file-driven content
+- Join page at `/join` with membership fees from config
+- Contact page at `/contact` with rate-limited contact form
+- FAQ page at `/faq` with collapsible accordion from data file
+- Footer and nav links updated
+
+**Sub-phase 10b: Data Compliance (F-COMP-03, F-COMP-04)**
+1. **F-COMP-03**: Personal data export — `GET /api/member/data-export` returns JSON with profile/bookings/guests/payments/promos/chores/subscriptions/audit log. Excludes passwordHash and internal IDs. Rate limited 5/day per member ID. `Content-Disposition: attachment` header with dated filename.
+2. **F-COMP-04**: Account deletion workflow — `POST /api/member/request-deletion` creates a `DeletionRequest` (PENDING), admin page `/admin/deletion-requests` lists/approves/rejects. On approve: cancels future bookings with refunds, anonymises member record (name→"Deleted Member", email→random@deleted.invalid, phone/DOB cleared, passwordHash cleared, active=false), anonymises BookingGuest references, sends confirmation email before anonymisation. On reject: sends email with admin note. Admins blocked from self-deletion. Booking/payment/audit history retained.
+
+**New files (10b):**
+- `src/app/api/member/data-export/route.ts` - Personal data export API
+- `src/app/api/member/request-deletion/route.ts` - Deletion request API
+- `src/app/api/admin/deletion-requests/route.ts` - Admin list deletion requests
+- `src/app/api/admin/deletion-requests/[id]/route.ts` - Admin approve/reject
+- `src/app/(admin)/admin/deletion-requests/page.tsx` - Admin deletion requests page
+- `src/app/(authenticated)/profile/data-export-button.tsx` - Download My Data button
+- `src/app/(authenticated)/profile/delete-account-button.tsx` - Request deletion button with modal
+- `src/lib/__tests__/phase10b.test.ts` - 30 tests for phase 10b
+
+**New Prisma models (require migration):**
+- `DeletionRequest` - Account deletion requests with PENDING/APPROVED/REJECTED status
+
+**Modified files (10b):**
+- `prisma/schema.prisma` - Added DeletionRequestStatus enum, DeletionRequest model, relation on Member
+- `src/lib/rate-limit.ts` - Added dataExport (5/day) and deletionRequest (3/day) limiters
+- `src/lib/email-templates.ts` - Added accountDeletionApprovedTemplate, accountDeletionRejectedTemplate
+- `src/lib/email.ts` - Added sendAccountDeletionApprovedEmail, sendAccountDeletionRejectedEmail
+- `src/app/(authenticated)/profile/page.tsx` - Added Privacy & Data section with both buttons
+- `src/components/admin-sidebar.tsx` - Added Deletion Requests nav entry
+
 ## What's Next
 
-Phases 1, 4, 5, 6, 7, 8, and 9 complete. Remaining: Phase 10 (Compliance & Public Content), Phase 11 (Xero Account Mapping), Phase 12 (Xero Phone Sync). See `docs/DELIVERY_PLAN.md` for details.
+Phases 1, 4, 5, 6, 7, 8, 9, and 10 complete. Remaining: Phase 11 (Xero Account Mapping), Phase 12 (Xero Phone Sync). See `docs/DELIVERY_PLAN.md` for details.
 
 ## Context
 
