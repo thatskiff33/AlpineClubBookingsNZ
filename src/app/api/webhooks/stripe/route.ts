@@ -48,12 +48,22 @@ export async function POST(request: NextRequest) {
   const webhookStart = Date.now();
 
   try {
-    // Idempotency check: skip already-processed events
-    const existing = await prisma.processedWebhookEvent.findUnique({
-      where: { eventId: event.id },
-    });
-    if (existing) {
-      return NextResponse.json({ received: true });
+    // Idempotency: attempt to claim this event atomically
+    try {
+      await prisma.processedWebhookEvent.create({
+        data: { eventId: event.id, source: "stripe", eventType: event.type },
+      });
+    } catch (err: unknown) {
+      // Unique constraint violation (P2002) = already processed
+      if (
+        err &&
+        typeof err === "object" &&
+        "code" in err &&
+        err.code === "P2002"
+      ) {
+        return NextResponse.json({ received: true });
+      }
+      throw err; // Re-throw unexpected errors
     }
 
     switch (event.type) {
@@ -89,13 +99,6 @@ export async function POST(request: NextRequest) {
         // Unhandled event type - log but don't error
         logger.info({ eventType: event.type }, "Unhandled Stripe event type");
     }
-
-    // Record event as processed
-    await prisma.processedWebhookEvent.create({
-      data: { eventId: event.id, source: "stripe", eventType: event.type },
-    }).catch(() => {
-      // Ignore unique constraint violation (concurrent request)
-    });
 
     // OBS-08: Record successful webhook processing
     await recordWebhookLog({
@@ -159,6 +162,20 @@ async function handlePaymentIntentSucceeded(
       logger.warn({ paymentIntentId: paymentIntent.id, bookingId }, "No payment record found for PaymentIntent");
       return;
     }
+  }
+
+  // Validate webhook amount matches expected booking amount
+  const existingPayment = payment ?? await prisma.payment.findUnique({ where: { bookingId } });
+  if (existingPayment && existingPayment.amountCents !== paymentIntent.amount) {
+    logger.warn(
+      {
+        bookingId,
+        expectedCents: existingPayment.amountCents,
+        receivedCents: paymentIntent.amount,
+        paymentIntentId: paymentIntent.id,
+      },
+      "Stripe webhook amount mismatch - using Stripe amount as authoritative"
+    );
   }
 
   await prisma.$transaction([

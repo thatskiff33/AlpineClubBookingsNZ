@@ -144,7 +144,7 @@ export async function calculateBookingRefund(
   }
 
   if (
-    booking.status !== "CONFIRMED" ||
+    !["CONFIRMED", "PAID"].includes(booking.status) ||
     booking.payment.status !== "SUCCEEDED"
   ) {
     return null;

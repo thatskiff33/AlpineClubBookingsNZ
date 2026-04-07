@@ -36,7 +36,8 @@ const createBookingSchema = z.object({
         memberId: z.string().optional(),
       })
     )
-    .min(1),
+    .min(1)
+    .max(29),
   notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
   draft: z.boolean().optional(),
