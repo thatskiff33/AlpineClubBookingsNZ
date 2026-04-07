@@ -187,14 +187,14 @@ declare -A PHASES
 declare -a PHASE_ORDER
 
 # Phase number | Name | Model | Branch | Prompt file
-PHASES[1]="Database Schema Safety|sonnet|fix/phase-1-schema-safety|$PROMPTS_DIR/phase-1-schema-safety.md"
-PHASES[2]="UI/UX Bugs|sonnet|fix/phase-2-ui-ux|$PROMPTS_DIR/phase-2-ui-ux.md"
-PHASES[3]="Booking & Payment Fixes|sonnet|fix/phase-3-booking-payment|$PROMPTS_DIR/phase-3-booking-payment.md"
-PHASES[5]="Cron High Priority|sonnet|fix/phase-5a-cron-high|$PROMPTS_DIR/phase-5a-cron-high.md"
-PHASES[51]="Cron Medium Priority|sonnet|fix/phase-5b-cron-medium|$PROMPTS_DIR/phase-5b-cron-medium.md"
-PHASES[6]="Xero Edge Cases|sonnet|fix/phase-6-xero-edge-cases|$PROMPTS_DIR/phase-6-xero.md"
+PHASES[1]="Database Schema Safety|opus|fix/phase-1-schema-safety|$PROMPTS_DIR/phase-1-schema-safety.md"
+PHASES[2]="UI/UX Bugs|opus|fix/phase-2-ui-ux|$PROMPTS_DIR/phase-2-ui-ux.md"
+PHASES[3]="Booking & Payment Fixes|opus|fix/phase-3-booking-payment|$PROMPTS_DIR/phase-3-booking-payment.md"
+PHASES[5]="Cron High Priority|opus|fix/phase-5a-cron-high|$PROMPTS_DIR/phase-5a-cron-high.md"
+PHASES[51]="Cron Medium Priority|opus|fix/phase-5b-cron-medium|$PROMPTS_DIR/phase-5b-cron-medium.md"
+PHASES[6]="Xero Edge Cases|opus|fix/phase-6-xero-edge-cases|$PROMPTS_DIR/phase-6-xero.md"
 PHASES[4]="Concurrency Fixes|opus|fix/phase-4-concurrency|$PROMPTS_DIR/phase-4-concurrency.md"
-PHASES[7]="Security Hardening|sonnet|fix/phase-7-security-hardening|$PROMPTS_DIR/phase-7-security.md"
+PHASES[7]="Security Hardening|opus|fix/phase-7-security-hardening|$PROMPTS_DIR/phase-7-security.md"
 
 # Execution order (dependency-safe)
 PHASE_ORDER=(1 2 3 5 51 6 4 7)
