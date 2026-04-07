@@ -67,6 +67,7 @@ interface DuplicateResult {
   duplicateGroups: DuplicateGroup[]
   totalContacts: number
   totalDuplicateEmails: number
+  filteredByFamilyGroup: number
 }
 
 type AccountMappings = {
@@ -630,7 +631,7 @@ export default function XeroPage() {
 
               {duplicates && (
                 <div className="space-y-4">
-                  <div className="flex gap-4 text-sm">
+                  <div className="flex flex-wrap gap-4 text-sm">
                     <span className="text-muted-foreground">
                       Total contacts scanned:{" "}
                       <span className="font-medium text-foreground">{duplicates.totalContacts}</span>
@@ -639,6 +640,12 @@ export default function XeroPage() {
                       Duplicate emails found:{" "}
                       <span className="font-medium text-foreground">{duplicates.totalDuplicateEmails}</span>
                     </span>
+                    {duplicates.filteredByFamilyGroup > 0 && (
+                      <span className="text-muted-foreground">
+                        Already in family groups (hidden):{" "}
+                        <span className="font-medium text-foreground">{duplicates.filteredByFamilyGroup}</span>
+                      </span>
+                    )}
                   </div>
 
                   {duplicates.duplicateGroups.length === 0 ? (

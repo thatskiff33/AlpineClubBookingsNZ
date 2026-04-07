@@ -1840,6 +1840,55 @@ export async function findDuplicateContacts(): Promise<{
     duplicateGroups.push({ email, contacts: groupContacts });
   }
 
+  // Filter out groups where all contacts are already in a common family group
+  const allContactIds = duplicateGroups.flatMap((g) =>
+    g.contacts.map((c) => c.contactID)
+  );
+
+  let filteredByFamilyGroup = 0;
+
+  if (allContactIds.length > 0) {
+    const membersWithGroups = await prisma.member.findMany({
+      where: { xeroContactId: { in: allContactIds } },
+      select: {
+        xeroContactId: true,
+        familyGroupMemberships: { select: { familyGroupId: true } },
+      },
+    });
+
+    const contactToGroupIds = new Map<string, Set<string>>();
+    for (const m of membersWithGroups) {
+      if (m.xeroContactId) {
+        contactToGroupIds.set(
+          m.xeroContactId,
+          new Set(m.familyGroupMemberships.map((fg) => fg.familyGroupId))
+        );
+      }
+    }
+
+    const beforeCount = duplicateGroups.length;
+    const filtered = duplicateGroups.filter((group) => {
+      const groupSets = group.contacts.map((c) =>
+        contactToGroupIds.get(c.contactID)
+      );
+      // All contacts must map to members with family groups
+      if (groupSets.some((s) => !s || s.size === 0)) return true;
+      // Check if there's at least one common family group across all contacts
+      const intersection = groupSets.reduce((acc, curr) => {
+        const result = new Set<string>();
+        for (const id of acc!) {
+          if (curr!.has(id)) result.add(id);
+        }
+        return result;
+      })!;
+      if (intersection.size > 0) return false; // exclude — they share a family group
+      return true;
+    });
+    filteredByFamilyGroup = beforeCount - filtered.length;
+    duplicateGroups.length = 0;
+    duplicateGroups.push(...filtered);
+  }
+
   // Sort groups by email
   duplicateGroups.sort((a, b) => a.email.localeCompare(b.email));
 
@@ -1847,5 +1896,6 @@ export async function findDuplicateContacts(): Promise<{
     duplicateGroups,
     totalContacts: allContacts.length,
     totalDuplicateEmails: duplicateEmails.length,
+    filteredByFamilyGroup,
   };
 }
