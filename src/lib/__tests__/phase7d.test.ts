@@ -30,6 +30,7 @@ const mockPrisma = {
   },
   booking: {
     findMany: vi.fn(),
+    count: vi.fn(),
   },
 };
 
@@ -513,6 +514,7 @@ describe("F8: Hut Leader Role Assignment", () => {
         user: { id: "m2", role: "MEMBER", email: "m2@test.com" },
       });
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+      mockPrisma.booking.count.mockResolvedValue(0);
 
       const { checkLodgeAuth } = await import("@/lib/lodge-auth");
       const result = await checkLodgeAuth();

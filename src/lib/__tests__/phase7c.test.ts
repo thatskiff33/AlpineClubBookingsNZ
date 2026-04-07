@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const mockPrisma = {
-  booking: { findMany: vi.fn() },
+  booking: { findMany: vi.fn(), count: vi.fn() },
   bookingGuest: { findUnique: vi.fn(), update: vi.fn() },
   choreAssignment: {
     findMany: vi.fn(),
@@ -58,8 +58,10 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+    mockPrisma.booking.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+    mockPrisma.booking.count.mockResolvedValue(0);
   });
 
   it("sets completedAt and completedVia on complete action", async () => {
@@ -152,6 +154,7 @@ describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+    mockPrisma.booking.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
@@ -225,6 +228,7 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+    mockPrisma.booking.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
@@ -319,6 +323,7 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+    mockPrisma.booking.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
@@ -393,6 +398,7 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+    mockPrisma.booking.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
@@ -437,7 +443,9 @@ describe("F6: POST /api/lodge/roster/[date]/generate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
-    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockPrisma.booking.count.mockResolvedValue(0);
+    // Generate requires hut-leader or admin tier (LODGE can't generate)
+    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
   });
 
   it("generates allocations without saving to DB", async () => {
@@ -533,7 +541,9 @@ describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
-    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockPrisma.booking.count.mockResolvedValue(0);
+    // Confirm requires hut-leader or admin tier (LODGE can't confirm)
+    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
   });
 
   it("saves allocations as CONFIRMED when no existing roster", async () => {
@@ -675,6 +685,7 @@ describe("F6: GET /api/lodge/roster/[date]/frequency-info", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+    mockPrisma.booking.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
   });
 
