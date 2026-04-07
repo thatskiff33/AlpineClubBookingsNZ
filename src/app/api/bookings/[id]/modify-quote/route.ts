@@ -317,28 +317,7 @@ export async function POST(
         valid: false,
         error: validation.error,
       };
-      // Fall back to existing promo if new one fails
-      if (booking.promoRedemption?.promoCode) {
-        const promo = booking.promoRedemption.promoCode;
-        const validationError = validatePromoCodeRules(
-          promo,
-          { memberId: booking.memberId },
-          new Date(),
-          0
-        );
-        if (!validationError) {
-          newDiscountCents = calculatePromoDiscount(
-            {
-              type: promo.type,
-              valueCents: promo.valueCents,
-              percentOff: promo.percentOff,
-              freeNights: promo.freeNights,
-            },
-            newTotalPriceCents,
-            getAllPerNightRates()
-          );
-        }
-      }
+      // Invalid new promo — discount stays 0, don't fall back to old promo
     }
   } else if (booking.promoRedemption?.promoCode) {
     // Keep existing promo, recalculate with new price
