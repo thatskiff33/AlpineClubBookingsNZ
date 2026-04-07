@@ -52,11 +52,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
-  // Gate: email must be verified before booking
+  // Verify member is still active (session JWT may outlive deactivation)
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: { emailVerified: true },
+    select: { active: true, emailVerified: true },
   });
+  if (!member?.active) {
+    return NextResponse.json(
+      { error: "Account is deactivated" },
+      { status: 403 }
+    );
+  }
+
+  // Gate: email must be verified before booking
   if (!member?.emailVerified) {
     return NextResponse.json({ error: "Email not verified" }, { status: 403 });
   }

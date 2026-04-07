@@ -17,7 +17,8 @@ export async function createEmailVerificationToken(memberId: string): Promise<st
   await prisma.emailVerificationToken.deleteMany({ where: { memberId } });
 
   const token = generateToken();
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+  // Email verification: 48h (generous — users may not check email same day)
+  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000); // 48 hours
 
   await prisma.emailVerificationToken.create({
     data: { memberId, token, expiresAt },
@@ -35,7 +36,8 @@ export async function createEmailChangeToken(memberId: string, newEmail: string)
   await prisma.emailChangeToken.deleteMany({ where: { memberId } });
 
   const token = generateToken();
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  // Email change: 2h (moderate — user initiated, but allow for email delay)
+  const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours
 
   await prisma.emailChangeToken.create({
     data: { memberId, newEmail, token, expiresAt },

@@ -75,7 +75,7 @@ describe("createEmailVerificationToken", () => {
     expect(token).toHaveLength(64);
   });
 
-  it("sets expiry to 24 hours from now", async () => {
+  it("sets expiry to 48 hours from now", async () => {
     const before = Date.now();
     await createEmailVerificationToken("member-1");
     const after = Date.now();
@@ -83,8 +83,8 @@ describe("createEmailVerificationToken", () => {
     const createCall = mockPrisma.emailVerificationToken.create.mock.calls[0][0];
     const expiresAt = createCall.data.expiresAt.getTime();
 
-    const expectedMin = before + 24 * 60 * 60 * 1000;
-    const expectedMax = after + 24 * 60 * 60 * 1000;
+    const expectedMin = before + 48 * 60 * 60 * 1000;
+    const expectedMax = after + 48 * 60 * 60 * 1000;
     expect(expiresAt).toBeGreaterThanOrEqual(expectedMin);
     expect(expiresAt).toBeLessThanOrEqual(expectedMax);
   });
@@ -97,7 +97,7 @@ describe("createEmailChangeToken", () => {
     mockPrisma.emailChangeToken.create.mockResolvedValue({ id: "t2", token: "def" });
   });
 
-  it("deletes existing tokens and creates one with 1h expiry", async () => {
+  it("deletes existing tokens and creates one with 2h expiry", async () => {
     const before = Date.now();
     const token = await createEmailChangeToken("member-1", "new@example.com");
     const after = Date.now();
@@ -117,8 +117,8 @@ describe("createEmailChangeToken", () => {
 
     const createCall = mockPrisma.emailChangeToken.create.mock.calls[0][0];
     const expiresAt = createCall.data.expiresAt.getTime();
-    const expectedMin = before + 60 * 60 * 1000;
-    const expectedMax = after + 60 * 60 * 1000;
+    const expectedMin = before + 2 * 60 * 60 * 1000;
+    const expectedMax = after + 2 * 60 * 60 * 1000;
     expect(expiresAt).toBeGreaterThanOrEqual(expectedMin);
     expect(expiresAt).toBeLessThanOrEqual(expectedMax);
   });

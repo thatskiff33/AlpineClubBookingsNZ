@@ -173,6 +173,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       email: "alice@example.com",
       firstName: "Alice",
       lastName: "Smith",
+      active: true,
       emailVerified: true,
     });
 

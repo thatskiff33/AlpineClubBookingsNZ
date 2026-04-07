@@ -243,6 +243,13 @@ export async function PUT(
     if (!source.active) {
       return NextResponse.json({ error: "Email source member is inactive" }, { status: 422 });
     }
+    // Source must be a primary member (not a dependent)
+    if (source.parentMemberId !== null) {
+      return NextResponse.json(
+        { error: "Email can only be inherited from primary members, not dependents" },
+        { status: 400 }
+      );
+    }
   }
 
   if (data.secondaryParentId !== undefined && data.secondaryParentId !== null) {

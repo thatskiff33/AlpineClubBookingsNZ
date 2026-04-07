@@ -13,6 +13,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
     }
 
+    // Verify member is still active (session JWT may outlive deactivation)
+    const activeMember = await prisma.member.findUnique({
+      where: { id: session.user.id },
+      select: { active: true },
+    });
+    if (!activeMember?.active) {
+      return NextResponse.json(
+        { error: "Account is deactivated" },
+        { status: 403 }
+      );
+    }
+
     const body = await request.json();
     const parsed = CreatePaymentIntentSchema.safeParse(body);
 

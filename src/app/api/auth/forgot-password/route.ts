@@ -34,7 +34,8 @@ export async function POST(req: NextRequest) {
 
     if (member && member.active) {
       const token = randomBytes(32).toString("hex");
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      // Password reset: 2h expiry (allows time for email delivery delays)
+      const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours
 
       await prisma.passwordResetToken.create({
         data: {

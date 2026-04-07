@@ -173,8 +173,8 @@ function makeBookingBody(extra: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
 
-  // Verified member by default
-  mockPrisma.member.findUnique.mockResolvedValue({ emailVerified: true });
+  // Active, verified member by default
+  mockPrisma.member.findUnique.mockResolvedValue({ active: true, emailVerified: true });
   // Paid subscription by default
   mockPrisma.memberSubscription.findFirst.mockResolvedValue({ id: "sub-1", status: "PAID" });
   // No seasons (returns empty = price will be 0 — but pricing is mocked so doesn't matter)
