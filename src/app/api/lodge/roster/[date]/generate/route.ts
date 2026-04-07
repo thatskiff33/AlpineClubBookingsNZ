@@ -25,12 +25,17 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
-  const { error, status } = await checkLodgeAuth();
+  const { date: dateStr } = await params;
+
+  const { error, status, tier } = await checkLodgeAuth(dateStr);
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
 
-  const { date: dateStr } = await params;
+  // Roster generation requires hut-leader or admin tier
+  if (tier !== "admin" && tier !== "hut-leader") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   if (!dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }

@@ -12,6 +12,7 @@ import { BookingNotesEditor } from "@/components/booking-notes-editor";
 import { BookingEditor, type BookingEditorData } from "@/components/booking-editor";
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
+import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 
 export default async function BookingDetailPage({
   params,
@@ -91,6 +92,20 @@ export default async function BookingDetailPage({
       </div>
 
       <BookingEditor booking={editorData} canModify={canModify} />
+
+      {/* Expected Arrival Time */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Expected Arrival Time</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ArrivalTimeEditor
+            bookingId={booking.id}
+            initialTime={booking.expectedArrivalTime}
+            canEdit={isFutureCheckIn}
+          />
+        </CardContent>
+      </Card>
 
       {/* Draft booking: $0 confirm or payment to complete */}
       {isDraft && booking.finalPriceCents === 0 && (

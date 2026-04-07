@@ -11,9 +11,10 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CalendarDays, BedDouble, PlusCircle, Mountain } from "lucide-react";
+import { CalendarDays, BedDouble, PlusCircle, Mountain, Home, Shield } from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass } from "@/lib/status-colors";
+import { isHutLeader } from "@/lib/hut-leader";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -23,6 +24,28 @@ export default async function DashboardPage() {
   const memberId = session.user.id;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+
+  // Check if member is a staying guest (PAID booking where checkIn-1 <= today <= checkOut)
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const stayingGuestBooking = await prisma.booking.findFirst({
+    where: {
+      memberId,
+      status: "PAID",
+      checkIn: { lte: tomorrow },
+      checkOut: { gte: today },
+    },
+    select: { id: true },
+  });
+  const isStayingGuest = !!stayingGuestBooking;
+
+  // Check if member has an active hut leader assignment (day-before access)
+  const isHutLeaderActive = session.user.role === "MEMBER"
+    ? await isHutLeader(memberId, tomorrow).then(async (dayBefore) => {
+        if (dayBefore) return true;
+        return isHutLeader(memberId, today);
+      })
+    : false;
 
   const [upcomingBookings, recentBookings, draftBookings] = await Promise.all([
     prisma.booking.findMany({
@@ -95,6 +118,28 @@ export default async function DashboardPage() {
           </Link>
         </Button>
       </div>
+
+      {/* Lodge access cards */}
+      {(isStayingGuest || isHutLeaderActive) && (
+        <div className="flex flex-wrap gap-3">
+          {isStayingGuest && (
+            <Button asChild variant="outline" className="gap-2">
+              <Link href="/lodge/kiosk">
+                <Home className="h-4 w-4" />
+                View Lodge
+              </Link>
+            </Button>
+          )}
+          {isHutLeaderActive && (
+            <Button asChild variant="outline" className="gap-2">
+              <Link href="/lodge/kiosk">
+                <Shield className="h-4 w-4" />
+                Hut Leader
+              </Link>
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

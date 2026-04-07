@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import type { KioskTier } from "@/lib/kiosk-access";
 
 interface Guest {
   id: string;
@@ -17,6 +18,7 @@ interface Guest {
 interface BookingGroup {
   bookingId: string;
   memberName: string;
+  expectedArrivalTime: string | null;
   guests: Guest[];
 }
 
@@ -36,6 +38,14 @@ interface Assignment {
   completedVia: string | null;
 }
 
+interface AccessInfo {
+  tier: KioskTier;
+  dateRange: { minDate: string; maxDate: string } | null;
+  canManageRoster: boolean;
+  canMarkAttendance: boolean;
+  canCompleteChores: boolean;
+}
+
 function formatDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -53,20 +63,36 @@ function displayDate(dateStr: string): string {
   });
 }
 
+function formatArrivalTime(time: string): string {
+  const [hours, minutes] = time.split(":").map(Number);
+  const suffix = hours >= 12 ? "PM" : "AM";
+  const displayHour = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
+  return `${displayHour}:${String(minutes).padStart(2, "0")} ${suffix}`;
+}
+
 export default function KioskPage() {
   const [date, setDate] = useState(() => formatDate(new Date()));
   const [bookings, setBookings] = useState<BookingGroup[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [access, setAccess] = useState<AccessInfo | null>(null);
+  const [viewAs, setViewAs] = useState<KioskTier | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [failCount, setFailCount] = useState(0);
 
+  // Effective tier (admin can preview other tiers)
+  const effectiveTier = viewAs ?? access?.tier ?? "none";
+  const canMarkAttendance = effectiveTier === "admin" || effectiveTier === "hut-leader" || effectiveTier === "lodge";
+  const canCompleteChores = canMarkAttendance;
+  const canManageRoster = effectiveTier === "admin" || effectiveTier === "hut-leader";
+
   const fetchData = useCallback(async () => {
     try {
-      const [guestsRes, rosterRes] = await Promise.all([
+      const [guestsRes, rosterRes, accessRes] = await Promise.all([
         fetch(`/api/lodge/guests/${date}`),
         fetch(`/api/lodge/roster/${date}`),
+        fetch(`/api/lodge/access?date=${date}`),
       ]);
 
       if (guestsRes.ok) {
@@ -77,6 +103,11 @@ export default function KioskPage() {
       if (rosterRes.ok) {
         const rosterData = await rosterRes.json();
         setAssignments(rosterData.assignments);
+      }
+
+      if (accessRes.ok) {
+        const accessData = await accessRes.json();
+        setAccess(accessData);
       }
 
       setError(null);
@@ -101,13 +132,37 @@ export default function KioskPage() {
     return () => clearInterval(timer);
   }, [failCount, fetchData]);
 
+  const canNavigateBack = () => {
+    if (!access?.dateRange) return true;
+    const prev = new Date(date + "T00:00:00");
+    prev.setDate(prev.getDate() - 1);
+    return formatDate(prev) >= access.dateRange.minDate;
+  };
+
+  const canNavigateForward = () => {
+    if (!access?.dateRange) return true;
+    const next = new Date(date + "T00:00:00");
+    next.setDate(next.getDate() + 1);
+    return formatDate(next) <= access.dateRange.maxDate;
+  };
+
   const changeDate = (delta: number) => {
     const d = new Date(date + "T00:00:00");
     d.setDate(d.getDate() + delta);
-    setDate(formatDate(d));
+    const newDate = formatDate(d);
+
+    // Enforce date range for restricted tiers
+    if (access?.dateRange) {
+      if (newDate < access.dateRange.minDate || newDate > access.dateRange.maxDate) {
+        return;
+      }
+    }
+
+    setDate(newDate);
   };
 
   const toggleChore = async (assignmentId: string, currentStatus: string) => {
+    if (!canCompleteChores) return;
     const action = currentStatus === "COMPLETED" ? "uncomplete" : "complete";
     try {
       const res = await fetch(`/api/lodge/roster/${date}`, {
@@ -136,6 +191,7 @@ export default function KioskPage() {
   };
 
   const toggleArrival = async (guestId: string) => {
+    if (!canMarkAttendance) return;
     try {
       const res = await fetch(`/api/lodge/guests/${date}/arrive`, {
         method: "PUT",
@@ -160,6 +216,7 @@ export default function KioskPage() {
   };
 
   const toggleDeparture = async (guestId: string) => {
+    if (!canMarkAttendance) return;
     try {
       const res = await fetch(`/api/lodge/guests/${date}/depart`, {
         method: "PUT",
@@ -211,27 +268,61 @@ export default function KioskPage() {
           {actionError}
         </div>
       )}
+
+      {/* Admin tier preview dropdown */}
+      {access?.tier === "admin" && (
+        <div className="flex items-center justify-end mb-3 gap-2">
+          <span className="text-sm text-slate-400">Viewing as:</span>
+          <select
+            value={viewAs ?? "admin"}
+            onChange={(e) => {
+              const val = e.target.value as KioskTier;
+              setViewAs(val === access.tier ? null : val);
+            }}
+            className="bg-slate-700 text-white text-sm rounded px-3 py-1.5 border border-slate-600"
+          >
+            <option value="admin">Admin</option>
+            <option value="hut-leader">Hut Leader</option>
+            <option value="lodge">Lodge</option>
+            <option value="staying-guest">Staying Guest</option>
+          </select>
+        </div>
+      )}
+
       {/* Header with date navigation */}
       <header className="flex items-center justify-between mb-6">
         <button
           onClick={() => changeDate(-1)}
-          className="bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-white text-2xl font-bold rounded-xl px-6 py-4 min-w-[64px] min-h-[56px]"
+          disabled={!canNavigateBack()}
+          className={`text-white text-2xl font-bold rounded-xl px-6 py-4 min-w-[64px] min-h-[56px] ${
+            canNavigateBack()
+              ? "bg-slate-700 hover:bg-slate-600 active:bg-slate-500"
+              : "bg-slate-800 text-slate-600 cursor-not-allowed"
+          }`}
           aria-label="Previous day"
         >
-          ‹
+          &lsaquo;
         </button>
         <div className="text-center">
           <h1 className="text-2xl font-bold">{displayDate(date)}</h1>
           <p className="text-slate-400 text-lg">
             {totalGuests} guest{totalGuests !== 1 ? "s" : ""} staying
           </p>
+          {effectiveTier === "staying-guest" && (
+            <p className="text-blue-400 text-sm mt-1">Read-only view</p>
+          )}
         </div>
         <button
           onClick={() => changeDate(1)}
-          className="bg-slate-700 hover:bg-slate-600 active:bg-slate-500 text-white text-2xl font-bold rounded-xl px-6 py-4 min-w-[64px] min-h-[56px]"
+          disabled={!canNavigateForward()}
+          className={`text-white text-2xl font-bold rounded-xl px-6 py-4 min-w-[64px] min-h-[56px] ${
+            canNavigateForward()
+              ? "bg-slate-700 hover:bg-slate-600 active:bg-slate-500"
+              : "bg-slate-800 text-slate-600 cursor-not-allowed"
+          }`}
           aria-label="Next day"
         >
-          ›
+          &rsaquo;
         </button>
       </header>
 
@@ -258,9 +349,21 @@ export default function KioskPage() {
                   key={booking.bookingId}
                   className="bg-slate-800 rounded-xl p-4"
                 >
-                  <p className="text-sm text-slate-400 mb-2">
-                    Booked by {booking.memberName}
-                  </p>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm text-slate-400">
+                      Booked by {booking.memberName}
+                    </p>
+                    {booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
+                      <span className="text-sm text-blue-300 font-medium">
+                        Arriving {formatArrivalTime(booking.expectedArrivalTime)}
+                      </span>
+                    )}
+                    {!booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
+                      <span className="text-sm text-slate-500">
+                        Arrival time: Not specified
+                      </span>
+                    )}
+                  </div>
                   <div className="space-y-2">
                     {booking.guests.map((guest) => (
                       <div
@@ -297,8 +400,8 @@ export default function KioskPage() {
                               Non-member
                             </span>
                           )}
-                          {/* Arrival/Departure toggle buttons */}
-                          {guest.isArriving && !guest.departedAt && (
+                          {/* Arrival/Departure toggle buttons - hidden for staying-guest tier */}
+                          {canMarkAttendance && guest.isArriving && !guest.departedAt && (
                             <button
                               onClick={() => toggleArrival(guest.id)}
                               className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
@@ -310,7 +413,7 @@ export default function KioskPage() {
                               {guest.arrivedAt ? "Arrived" : "Mark Arrived"}
                             </button>
                           )}
-                          {guest.isDeparting && (
+                          {canMarkAttendance && guest.isDeparting && (
                             <button
                               onClick={() => toggleDeparture(guest.id)}
                               className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
@@ -342,12 +445,14 @@ export default function KioskPage() {
               <p className="text-slate-400 text-lg mb-4">
                 No roster set up for this date
               </p>
-              <a
-                href={`/lodge/roster/${date}/setup`}
-                className="inline-block bg-blue-600 hover:bg-blue-500 active:bg-blue-400 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
-              >
-                Set Up Today&apos;s Roster
-              </a>
+              {canManageRoster && (
+                <a
+                  href={`/lodge/roster/${date}/setup`}
+                  className="inline-block bg-blue-600 hover:bg-blue-500 active:bg-blue-400 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
+                >
+                  Set Up Today&apos;s Roster
+                </a>
+              )}
             </div>
           ) : (
             <div className="space-y-4">
@@ -386,47 +491,85 @@ export default function KioskPage() {
                             {chore.name}
                           </h4>
                           <div className="space-y-1">
-                            {chore.assignments.map((a) => (
-                              <button
-                                key={a.id}
-                                onClick={() => toggleChore(a.id, a.status)}
-                                disabled={a.status === "SUGGESTED"}
-                                className={`w-full flex items-center gap-3 rounded-lg px-4 py-3 min-h-[56px] text-left transition-colors ${
-                                  a.status === "COMPLETED"
-                                    ? "bg-green-800/40 text-green-200"
-                                    : a.status === "CONFIRMED"
-                                      ? "bg-slate-700/50 hover:bg-slate-600/50 active:bg-slate-500/50"
-                                      : "bg-slate-700/30 text-slate-500 cursor-default"
-                                }`}
-                              >
-                                <div
-                                  className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center flex-shrink-0 ${
+                            {chore.assignments.map((a) =>
+                              canCompleteChores ? (
+                                <button
+                                  key={a.id}
+                                  onClick={() => toggleChore(a.id, a.status)}
+                                  disabled={a.status === "SUGGESTED"}
+                                  className={`w-full flex items-center gap-3 rounded-lg px-4 py-3 min-h-[56px] text-left transition-colors ${
                                     a.status === "COMPLETED"
-                                      ? "border-green-400 bg-green-600"
-                                      : "border-slate-500"
+                                      ? "bg-green-800/40 text-green-200"
+                                      : a.status === "CONFIRMED"
+                                        ? "bg-slate-700/50 hover:bg-slate-600/50 active:bg-slate-500/50"
+                                        : "bg-slate-700/30 text-slate-500 cursor-default"
                                   }`}
                                 >
-                                  {a.status === "COMPLETED" && (
-                                    <svg
-                                      className="w-5 h-5 text-white"
-                                      fill="none"
-                                      viewBox="0 0 24 24"
-                                      stroke="currentColor"
-                                      strokeWidth={3}
-                                    >
-                                      <path
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                        d="M5 13l4 4L19 7"
-                                      />
-                                    </svg>
-                                  )}
+                                  <div
+                                    className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center flex-shrink-0 ${
+                                      a.status === "COMPLETED"
+                                        ? "border-green-400 bg-green-600"
+                                        : "border-slate-500"
+                                    }`}
+                                  >
+                                    {a.status === "COMPLETED" && (
+                                      <svg
+                                        className="w-5 h-5 text-white"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                        strokeWidth={3}
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          d="M5 13l4 4L19 7"
+                                        />
+                                      </svg>
+                                    )}
+                                  </div>
+                                  <span className="text-lg">
+                                    {a.guestName ?? "Unassigned"}
+                                  </span>
+                                </button>
+                              ) : (
+                                <div
+                                  key={a.id}
+                                  className={`w-full flex items-center gap-3 rounded-lg px-4 py-3 min-h-[56px] ${
+                                    a.status === "COMPLETED"
+                                      ? "bg-green-800/40 text-green-200"
+                                      : "bg-slate-700/30"
+                                  }`}
+                                >
+                                  <div
+                                    className={`w-8 h-8 rounded-lg border-2 flex items-center justify-center flex-shrink-0 ${
+                                      a.status === "COMPLETED"
+                                        ? "border-green-400 bg-green-600"
+                                        : "border-slate-500"
+                                    }`}
+                                  >
+                                    {a.status === "COMPLETED" && (
+                                      <svg
+                                        className="w-5 h-5 text-white"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                        strokeWidth={3}
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          d="M5 13l4 4L19 7"
+                                        />
+                                      </svg>
+                                    )}
+                                  </div>
+                                  <span className="text-lg">
+                                    {a.guestName ?? "Unassigned"}
+                                  </span>
                                 </div>
-                                <span className="text-lg">
-                                  {a.guestName ?? "Unassigned"}
-                                </span>
-                              </button>
-                            ))}
+                              )
+                            )}
                           </div>
                         </div>
                       ))}

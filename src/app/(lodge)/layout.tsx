@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { isHutLeader } from "@/lib/hut-leader";
+import { canAccessKiosk } from "@/lib/kiosk-access";
 
 export default async function LodgeLayout({
   children,
@@ -18,11 +18,11 @@ export default async function LodgeLayout({
     return <>{children}</>;
   }
 
-  // MEMBER role: check for active hut leader assignment (today)
+  // MEMBER role: check for hut leader assignment or staying guest (today)
   if (session.user.role === "MEMBER") {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const hasAccess = await isHutLeader(session.user.id, today);
+    const hasAccess = await canAccessKiosk(session.user.id, session.user.role, today);
     if (hasAccess) {
       return <>{children}</>;
     }

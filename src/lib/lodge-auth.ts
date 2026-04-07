@@ -1,29 +1,25 @@
 import { auth } from "./auth";
-import { isHutLeader } from "./hut-leader";
+import { getKioskAccessTier, type KioskTier } from "./kiosk-access";
 
 /**
  * Shared auth check for lodge API endpoints.
- * Allows LODGE, ADMIN, or MEMBER with active hut leader assignment.
- * Returns the session if authorized, or null if not.
+ * Allows LODGE, ADMIN, MEMBER with hut leader assignment, or staying guest.
+ * Returns the session and tier if authorized.
  */
-export async function checkLodgeAuth() {
+export async function checkLodgeAuth(dateStr?: string) {
   const session = await auth();
   if (!session?.user) {
-    return { session: null, error: "Unauthorised" as const, status: 401 as const };
+    return { session: null, tier: "none" as KioskTier, error: "Unauthorised" as const, status: 401 as const };
   }
 
-  if (session.user.role === "LODGE" || session.user.role === "ADMIN") {
-    return { session, error: null, status: null };
+  const date = dateStr ? new Date(dateStr + "T00:00:00") : new Date();
+  if (!dateStr) date.setHours(0, 0, 0, 0);
+
+  const tier = await getKioskAccessTier(session.user.id, session.user.role, date);
+
+  if (tier === "none") {
+    return { session: null, tier, error: "Forbidden" as const, status: 403 as const };
   }
 
-  if (session.user.role === "MEMBER") {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const hasAccess = await isHutLeader(session.user.id, today);
-    if (hasAccess) {
-      return { session, error: null, status: null };
-    }
-  }
-
-  return { session: null, error: "Forbidden" as const, status: 403 as const };
+  return { session, tier, error: null, status: null };
 }

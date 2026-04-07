@@ -8,18 +8,19 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 /**
  * GET /api/lodge/guests/[date]
  * Returns the lodge list for a date: all confirmed guests grouped by booking,
- * with arriving/departing indicators.
+ * with arriving/departing indicators and expected arrival times.
  */
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
-  const { error, status } = await checkLodgeAuth();
+  const { date: dateStr } = await params;
+
+  const { error, status, tier } = await checkLodgeAuth(dateStr);
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
 
-  const { date: dateStr } = await params;
   if (!dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
@@ -49,6 +50,7 @@ export async function GET(
   const result = bookings.map((b) => ({
     bookingId: b.id,
     memberName: `${b.member.firstName} ${b.member.lastName}`,
+    expectedArrivalTime: b.expectedArrivalTime,
     guests: b.guests.map((g) => ({
       id: g.id,
       firstName: g.firstName,
@@ -64,6 +66,7 @@ export async function GET(
 
   return NextResponse.json({
     date: dateStr,
+    tier,
     bookings: result,
     totalGuests: result.reduce((sum, b) => sum + b.guests.length, 0),
   });
