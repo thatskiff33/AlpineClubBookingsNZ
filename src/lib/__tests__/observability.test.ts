@@ -391,10 +391,10 @@ describe("OBS-01/02: Sentry config files", () => {
     expect(fs.existsSync(rootPath)).toBe(true);
   });
 
-  it("sentry.client.config.ts exists", async () => {
+  it("instrumentation-client.ts exists (client-side Sentry + Session Replay)", async () => {
     const fs = await import("fs");
     const path = await import("path");
-    const rootPath = path.resolve(process.cwd(), "sentry.client.config.ts");
+    const rootPath = path.resolve(process.cwd(), "src", "instrumentation-client.ts");
     expect(fs.existsSync(rootPath)).toBe(true);
   });
 
