@@ -20,6 +20,15 @@ export async function register() {
     const { default: logger } = await import("./lib/logger");
     const { prisma } = await import("./lib/prisma");
 
+    // Verify Prisma client is ready before starting cron jobs
+    try {
+      await prisma.$queryRawUnsafe("SELECT 1");
+      logger.info("Prisma client verified — database connection OK");
+    } catch (err) {
+      logger.error({ err }, "Prisma client startup check failed — cron jobs may be unreliable");
+      Sentry.captureException(err);
+    }
+
     // Overlap guards: prevent concurrent execution of the same cron job
     let isPendingCronRunning = false;
     let isXeroCronRunning = false;

@@ -121,6 +121,28 @@ function formatDate(dateStr: string) {
   });
 }
 
+function CronError({ error }: { error: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = error.length > 80;
+
+  if (!isLong) {
+    return <span className="text-red-600">{error}</span>;
+  }
+
+  return (
+    <button
+      onClick={() => setExpanded((e) => !e)}
+      className="text-left text-red-600 max-w-xs"
+    >
+      {expanded ? (
+        <span className="whitespace-pre-wrap break-words">{error}</span>
+      ) : (
+        <span>{error.slice(0, 80)}... <span className="text-red-400 underline text-xs">show more</span></span>
+      )}
+    </button>
+  );
+}
+
 export default function AdminHealthPage() {
   const [data, setData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -319,11 +341,7 @@ export default function AdminHealthPage() {
                       </div>
                       <div className="flex items-center gap-4 text-slate-500">
                         {run.durationMs != null && <span>{run.durationMs}ms</span>}
-                        {run.error && (
-                          <span className="text-red-600 max-w-xs truncate" title={run.error}>
-                            {run.error}
-                          </span>
-                        )}
+                        {run.error && <CronError error={run.error} />}
                       </div>
                     </div>
                   ))}
