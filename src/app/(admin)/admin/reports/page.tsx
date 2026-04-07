@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { format, subMonths, startOfMonth, endOfMonth } from "date-fns";
 import {
   BarChart,
@@ -30,7 +30,7 @@ import {
   TrendingUp,
   BarChart2,
   Download,
-  Printer,
+  FileDown,
 } from "lucide-react";
 
 interface ReportData {
@@ -86,6 +86,8 @@ export default function ReportsPage() {
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [generatingPDF, setGeneratingPDF] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -180,6 +182,19 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url);
   }
 
+  async function downloadPDF() {
+    if (!reportRef.current) return;
+    setGeneratingPDF(true);
+    try {
+      const { generateReportPDF } = await import("@/lib/report-pdf");
+      await generateReportPDF(reportRef.current, { from, to });
+    } catch {
+      // silent — PDF generation may fail if html2canvas has issues
+    } finally {
+      setGeneratingPDF(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-end gap-4">
@@ -216,8 +231,8 @@ export default function ReportsPage() {
           <Button variant="outline" onClick={exportCSV} disabled={!data} className="print:hidden">
             <Download className="h-4 w-4 mr-1" /> CSV
           </Button>
-          <Button variant="outline" onClick={() => window.print()} disabled={!data} className="print:hidden">
-            <Printer className="h-4 w-4 mr-1" /> Print
+          <Button variant="outline" onClick={downloadPDF} disabled={!data || generatingPDF} className="print:hidden">
+            <FileDown className="h-4 w-4 mr-1" /> {generatingPDF ? "Generating..." : "Download PDF"}
           </Button>
         </div>
       </div>
@@ -227,7 +242,7 @@ export default function ReportsPage() {
       )}
 
       {data && (
-        <>
+        <div ref={reportRef}>
           {/* Summary cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card>
@@ -504,7 +519,7 @@ export default function ReportsPage() {
               </CardContent>
             </Card>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
