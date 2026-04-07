@@ -56,11 +56,16 @@ interface DuplicateContact {
   contactStatus: string
   updatedDateUTC?: string
   xeroLink: string
+  memberId?: string
+  memberActive?: boolean
 }
 
 interface DuplicateGroup {
   email: string
   contacts: DuplicateContact[]
+  canCreateFamilyGroup: boolean
+  eligibleMemberIds: string[]
+  suggestedGroupName?: string
 }
 
 interface DuplicateResult {
@@ -120,6 +125,7 @@ export default function XeroPage() {
   // Duplicate detection state
   const [duplicates, setDuplicates] = useState<DuplicateResult | null>(null)
   const [scanningDuplicates, setScanningDuplicates] = useState(false)
+  const [creatingFamilyGroup, setCreatingFamilyGroup] = useState<string | null>(null)
 
   // Account mappings state
   const [accountMappings, setAccountMappings] = useState<AccountMappings | null>(null)
@@ -361,6 +367,40 @@ export default function XeroPage() {
       setError(err instanceof Error ? err.message : "Duplicate scan failed")
     } finally {
       setScanningDuplicates(false)
+    }
+  }
+
+  const handleCreateFamilyGroup = async (group: DuplicateGroup) => {
+    const name = group.suggestedGroupName || `Family (${group.email})`
+    setCreatingFamilyGroup(group.email)
+    setError("")
+    try {
+      const res = await fetch("/api/admin/family-groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          memberIds: group.eligibleMemberIds,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to create family group")
+      }
+      // Remove this group from the displayed duplicates
+      setDuplicates((prev) =>
+        prev
+          ? {
+              ...prev,
+              duplicateGroups: prev.duplicateGroups.filter((g) => g.email !== group.email),
+              filteredByFamilyGroup: prev.filteredByFamilyGroup + 1,
+            }
+          : prev
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create family group")
+    } finally {
+      setCreatingFamilyGroup(null)
     }
   }
 
@@ -654,12 +694,31 @@ export default function XeroPage() {
                     <div className="space-y-3">
                       {duplicates.duplicateGroups.map((group) => (
                         <div key={group.email} className="border rounded-md p-4 space-y-2">
-                          <p className="font-medium text-sm">
-                            {group.email}
-                            <span className="ml-2 text-xs text-muted-foreground font-normal">
-                              ({group.contacts.length} contacts)
-                            </span>
-                          </p>
+                          <div className="flex items-center justify-between">
+                            <p className="font-medium text-sm">
+                              {group.email}
+                              <span className="ml-2 text-xs text-muted-foreground font-normal">
+                                ({group.contacts.length} contacts)
+                              </span>
+                              {group.suggestedGroupName && (
+                                <span className="ml-2 text-xs text-blue-600 font-normal">
+                                  — {group.suggestedGroupName}
+                                </span>
+                              )}
+                            </p>
+                            {group.canCreateFamilyGroup && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleCreateFamilyGroup(group)}
+                                disabled={creatingFamilyGroup === group.email}
+                              >
+                                {creatingFamilyGroup === group.email
+                                  ? "Creating..."
+                                  : "Create Family Group"}
+                              </Button>
+                            )}
+                          </div>
                           <div className="space-y-1">
                             {group.contacts.map((contact) => (
                               <div
@@ -668,6 +727,11 @@ export default function XeroPage() {
                               >
                                 <div className="flex-1 min-w-0">
                                   <span className="font-medium">{contact.name}</span>
+                                  {contact.memberId && (
+                                    <Badge variant="outline" className="ml-2 text-xs border-green-300 text-green-700">
+                                      TACBookings member
+                                    </Badge>
+                                  )}
                                   {contact.invoiceCount > 0 ? (
                                     <Badge variant="default" className="ml-2 bg-blue-600 text-xs">
                                       {contact.invoiceCount} invoice{contact.invoiceCount !== 1 ? "s" : ""}
@@ -693,8 +757,9 @@ export default function XeroPage() {
                             ))}
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            Merge into the contact with invoices. Open each in Xero, then use
-                            Xero&apos;s &quot;Merge&quot; option from the contact with no invoices.
+                            {group.canCreateFamilyGroup
+                              ? "These contacts match TACBookings members. Create a Family Group to link them, or merge in Xero."
+                              : "Merge into the contact with invoices. Open each in Xero, then use Xero\u0027s \u0022Merge\u0022 option from the contact with no invoices."}
                           </p>
                         </div>
                       ))}

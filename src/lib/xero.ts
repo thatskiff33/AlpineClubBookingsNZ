@@ -1690,11 +1690,16 @@ export interface DuplicateContact {
   contactStatus: string;
   updatedDateUTC?: string;
   xeroLink: string;
+  memberId?: string;
+  memberActive?: boolean;
 }
 
 export interface DuplicateGroup {
   email: string;
   contacts: DuplicateContact[];
+  canCreateFamilyGroup: boolean;
+  eligibleMemberIds: string[];
+  suggestedGroupName?: string;
 }
 
 /**
@@ -1837,10 +1842,16 @@ export async function findDuplicateContacts(): Promise<{
       return b.invoiceCount - a.invoiceCount;
     });
 
-    duplicateGroups.push({ email, contacts: groupContacts });
+    duplicateGroups.push({
+      email,
+      contacts: groupContacts,
+      canCreateFamilyGroup: false,
+      eligibleMemberIds: [],
+    });
   }
 
-  // Filter out groups where all contacts are already in a common family group
+  // Look up members for all contacts — used for both family group filtering (#17)
+  // and enrichment (#18)
   const allContactIds = duplicateGroups.flatMap((g) =>
     g.contacts.map((c) => c.contactID)
   );
@@ -1851,29 +1862,44 @@ export async function findDuplicateContacts(): Promise<{
     const membersWithGroups = await prisma.member.findMany({
       where: { xeroContactId: { in: allContactIds } },
       select: {
+        id: true,
         xeroContactId: true,
+        firstName: true,
+        lastName: true,
+        active: true,
+        parentMemberId: true,
         familyGroupMemberships: { select: { familyGroupId: true } },
       },
     });
 
     const contactToGroupIds = new Map<string, Set<string>>();
+    const contactToMember = new Map<string, {
+      id: string; firstName: string; lastName: string;
+      active: boolean; parentMemberId: string | null;
+    }>();
     for (const m of membersWithGroups) {
       if (m.xeroContactId) {
         contactToGroupIds.set(
           m.xeroContactId,
           new Set(m.familyGroupMemberships.map((fg) => fg.familyGroupId))
         );
+        contactToMember.set(m.xeroContactId, {
+          id: m.id,
+          firstName: m.firstName,
+          lastName: m.lastName,
+          active: m.active,
+          parentMemberId: m.parentMemberId,
+        });
       }
     }
 
+    // Filter out groups where all contacts share a common family group (#17)
     const beforeCount = duplicateGroups.length;
     const filtered = duplicateGroups.filter((group) => {
       const groupSets = group.contacts.map((c) =>
         contactToGroupIds.get(c.contactID)
       );
-      // All contacts must map to members with family groups
       if (groupSets.some((s) => !s || s.size === 0)) return true;
-      // Check if there's at least one common family group across all contacts
       const intersection = groupSets.reduce((acc, curr) => {
         const result = new Set<string>();
         for (const id of acc!) {
@@ -1881,12 +1907,37 @@ export async function findDuplicateContacts(): Promise<{
         }
         return result;
       })!;
-      if (intersection.size > 0) return false; // exclude — they share a family group
+      if (intersection.size > 0) return false;
       return true;
     });
     filteredByFamilyGroup = beforeCount - filtered.length;
     duplicateGroups.length = 0;
     duplicateGroups.push(...filtered);
+
+    // Enrich remaining groups with member info (#18)
+    for (const group of duplicateGroups) {
+      for (const contact of group.contacts) {
+        const member = contactToMember.get(contact.contactID);
+        if (member) {
+          contact.memberId = member.id;
+          contact.memberActive = member.active;
+        }
+      }
+
+      const eligibleMembers = group.contacts
+        .map((c) => contactToMember.get(c.contactID))
+        .filter((m): m is NonNullable<typeof m> => !!m && !m.parentMemberId);
+
+      group.eligibleMemberIds = eligibleMembers.map((m) => m.id);
+      group.canCreateFamilyGroup = eligibleMembers.length >= 2;
+
+      if (group.canCreateFamilyGroup) {
+        const lastNames = [...new Set(eligibleMembers.map((m) => m.lastName))];
+        if (lastNames.length === 1) {
+          group.suggestedGroupName = `${lastNames[0]} Family`;
+        }
+      }
+    }
   }
 
   // Sort groups by email
