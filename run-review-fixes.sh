@@ -81,12 +81,17 @@ run_phase() {
   # Delete branch if it already exists (re-run scenario)
   git branch -D "$branch" 2>/dev/null || true
 
+  # Create the branch so Claude's commits land here, not on main
+  git checkout -b "$branch"
+
   # Read the prompt file
   local prompt
   prompt=$(<"$prompt_file")
 
   # Prepend context instructions for the agent
   local full_prompt="You are running headlessly in an automated pipeline. Do NOT ask questions — make your best judgment on any ambiguity. Do NOT create pull requests. Do NOT push to remote. Just make the changes, run tests, and commit locally.
+
+You are already on branch '$branch'. Commit your changes to THIS branch.
 
 IMPORTANT RULES:
 - Read each file BEFORE editing it
@@ -95,7 +100,7 @@ IMPORTANT RULES:
 - After tests pass, run: npm run build
 - If build fails, read the error, fix it, and re-run build
 - Only commit once everything passes
-- Use the branch name and commit message specified in the prompt
+- Commit to the current branch ('$branch') — do NOT checkout main or create a new branch
 - If a specific change conflicts with the current code (e.g. line numbers shifted), adapt — read the file, find the equivalent code, and make the change
 
 Here is your task:
@@ -116,76 +121,53 @@ $prompt"
     log "WARNING: Claude exited non-zero for phase $num (may still have succeeded)"
   fi
 
-  # Check results
+  # Check results — we're on the branch (created it before running Claude)
   cd "$REPO_DIR"
-  local current_branch
-  current_branch=$(git branch --show-current)
 
-  if [[ "$current_branch" == "$branch" ]]; then
-    # Claude created and stayed on the branch — check if there are commits
-    local commits_ahead
-    commits_ahead=$(git rev-list "$MAIN_BRANCH".."$branch" --count 2>/dev/null || echo "0")
+  # If Claude left uncommitted changes, auto-commit them
+  if [[ -n $(git diff --name-only -- ':(exclude)logs/' ':(exclude)review-fixes.log') ]] || \
+     [[ -n $(git diff --cached --name-only) ]]; then
+    log "WARNING: Claude left uncommitted changes. Auto-committing..."
+    git add -A -- ':(exclude)logs/' ':(exclude)review-fixes.log'
+    git commit -m "Phase $num: $name (auto-committed by runner)" || true
+  fi
 
-    if [[ "$commits_ahead" -gt 0 ]]; then
-      log "Phase $num: $commits_ahead commit(s) on branch $branch"
+  # Discard any untracked/modified log files so they don't block checkout
+  git checkout -- . 2>/dev/null || true
+  git clean -fd -- logs/ 2>/dev/null || true
 
-      # Verify tests pass on this branch
-      log "Verifying tests pass..."
-      if npm test > "$LOG_DIR/phase-${num}-test.log" 2>&1; then
-        log "Tests PASSED for phase $num"
+  local commits_ahead
+  commits_ahead=$(git rev-list "$MAIN_BRANCH".."$branch" --count 2>/dev/null || echo "0")
 
-        # Merge to main
-        git checkout "$MAIN_BRANCH"
-        if git merge "$branch" --no-edit; then
-          log "Phase $num MERGED to $MAIN_BRANCH"
-          git push origin "$MAIN_BRANCH" 2>/dev/null || log "WARNING: Push failed (will retry later)"
-          return 0
-        else
-          log "ERROR: Merge conflict on phase $num"
-          git merge --abort
-          return 1
-        fi
+  if [[ "$commits_ahead" -gt 0 ]]; then
+    log "Phase $num: $commits_ahead commit(s) on branch $branch"
+
+    # Verify tests pass on this branch
+    log "Verifying tests pass..."
+    if npm test > "$LOG_DIR/phase-${num}-test.log" 2>&1; then
+      log "Tests PASSED for phase $num"
+
+      # Merge to main
+      git checkout "$MAIN_BRANCH"
+      if git merge "$branch" --no-edit; then
+        log "Phase $num MERGED to $MAIN_BRANCH"
+        git branch -d "$branch" 2>/dev/null || true
+        return 0
       else
-        log "ERROR: Tests FAILED for phase $num after Claude's changes"
-        log "See $LOG_DIR/phase-${num}-test.log for details"
-        # Don't merge — leave branch for manual inspection
-        git checkout "$MAIN_BRANCH"
+        log "ERROR: Merge conflict on phase $num"
+        git merge --abort
         return 1
       fi
     else
-      log "WARNING: No commits found on branch $branch"
+      log "ERROR: Tests FAILED for phase $num after Claude's changes"
+      log "See $LOG_DIR/phase-${num}-test.log for details"
       git checkout "$MAIN_BRANCH"
       return 1
     fi
   else
-    # Claude may have committed directly to main, or stayed on main
-    # Check if there are uncommitted changes
-    if [[ -n $(git status --porcelain) ]]; then
-      log "WARNING: Claude left uncommitted changes. Attempting to commit..."
-      git checkout -b "$branch" 2>/dev/null || true
-      git add -A
-      git commit -m "Phase $num: $name (auto-committed by runner)" || true
-
-      if npm test > "$LOG_DIR/phase-${num}-test.log" 2>&1; then
-        git checkout "$MAIN_BRANCH"
-        git merge "$branch" --no-edit
-        git push origin "$MAIN_BRANCH" 2>/dev/null || true
-        log "Phase $num MERGED (auto-committed)"
-        return 0
-      else
-        log "ERROR: Tests failed on auto-committed changes"
-        git checkout "$MAIN_BRANCH"
-        return 1
-      fi
-    fi
-
-    # Check if Claude committed directly to main
-    local main_commits_since
-    main_commits_since=$(git log --oneline -5 | head -1)
-    log "Current main HEAD: $main_commits_since"
-    log "Phase $num may have committed directly to main. Pushing..."
-    git push origin "$MAIN_BRANCH" 2>/dev/null || true
-    return 0
+    log "WARNING: No commits found on branch $branch (Claude may not have made changes)"
+    git checkout "$MAIN_BRANCH"
+    return 1
   fi
 }
 
@@ -263,12 +245,12 @@ for phase_key in "${PHASE_ORDER[@]}"; do
 
   if [[ $local_num -lt $START_FROM && $phase_key -ne 51 ]]; then
     log "Skipping phase $phase_key ($name) — before start_from=$START_FROM"
-    ((SKIPPED++))
+    SKIPPED=$((SKIPPED + 1))
     continue
   fi
   if [[ $phase_key -eq 51 && $START_FROM -gt 5 ]]; then
     log "Skipping phase 5b ($name) — before start_from=$START_FROM"
-    ((SKIPPED++))
+    SKIPPED=$((SKIPPED + 1))
     continue
   fi
 
@@ -282,10 +264,10 @@ for phase_key in "${PHASE_ORDER[@]}"; do
   fi
 
   if run_phase "$phase_key" "$name" "$model" "$branch" "$prompt_file"; then
-    ((SUCCEEDED++))
+    SUCCEEDED=$((SUCCEEDED + 1))
     log "Phase $phase_key: SUCCESS"
   else
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
     log "Phase $phase_key: FAILED — see $LOG_DIR/phase-${phase_key}.log"
     log "Continuing to next phase..."
   fi
@@ -307,7 +289,7 @@ log "========================================================================"
 # Final push
 cd "$REPO_DIR"
 git checkout "$MAIN_BRANCH"
-git push origin "$MAIN_BRANCH" 2>/dev/null || log "Final push failed"
+log "All phases attempted. Run 'git push' manually when ready."
 
 if [[ $FAILED -gt 0 ]]; then
   log ""
