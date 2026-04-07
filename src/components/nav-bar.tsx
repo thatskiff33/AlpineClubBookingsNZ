@@ -29,6 +29,7 @@ interface NavBarProps {
     email: string;
     role: string;
     isHutLeader?: boolean;
+    isStayingGuest?: boolean;
   };
 }
 
@@ -40,6 +41,7 @@ const memberLinks = [
 
 const adminLink = { href: "/admin/dashboard", label: "Admin" };
 const hutLeaderLink = { href: "/lodge/kiosk", label: "Hut Leader" };
+const viewLodgeLink = { href: "/lodge/kiosk", label: "View Lodge" };
 
 export function NavBar({ user }: NavBarProps) {
   const pathname = usePathname();
@@ -47,7 +49,7 @@ export function NavBar({ user }: NavBarProps) {
 
   const links = [
     ...memberLinks,
-    ...(user.isHutLeader ? [hutLeaderLink] : []),
+    ...(user.isHutLeader ? [hutLeaderLink] : user.isStayingGuest ? [viewLodgeLink] : []),
     ...(user.role === "ADMIN" ? [adminLink] : []),
   ];
 

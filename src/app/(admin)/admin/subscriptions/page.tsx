@@ -21,7 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Users, CheckCircle, AlertCircle, Clock } from "lucide-react";
+import { Users, CheckCircle, AlertCircle, Clock, ExternalLink } from "lucide-react";
 
 function getSeasonYear(date: Date): number {
   return date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
@@ -37,6 +37,7 @@ interface Subscription {
   seasonYear: number;
   status: string;
   xeroInvoiceId: string | null;
+  xeroInvoiceNumber: string | null;
   paidAt: string | null;
   member: { firstName: string; lastName: string; email: string };
 }
@@ -127,7 +128,19 @@ export default function SubscriptionsPage() {
                     <TableCell className="font-medium">{sub.member.lastName}, {sub.member.firstName}</TableCell>
                     <TableCell>{sub.member.email}</TableCell>
                     <TableCell><Badge className={subscriptionStatusClass(sub.status)}>{sub.status.replace("_", " ")}</Badge></TableCell>
-                    <TableCell className="text-xs text-slate-500">{sub.xeroInvoiceId || "—"}</TableCell>
+                    <TableCell>
+                      {sub.xeroInvoiceId ? (
+                        <a
+                          href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
+                        >
+                          {sub.xeroInvoiceNumber || sub.xeroInvoiceId.slice(0, 8)}
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : "—"}
+                    </TableCell>
                     <TableCell>{sub.paidAt ? format(new Date(sub.paidAt), "d MMM yyyy") : "—"}</TableCell>
                   </TableRow>
                 ))

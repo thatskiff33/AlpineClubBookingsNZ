@@ -13,17 +13,24 @@ const bodySchema = z.object({
  * PUT /api/lodge/guests/[date]/arrive
  * Mark a guest as arrived (sets arrivedAt timestamp).
  * Sending again toggles off (clears arrivedAt).
+ * Requires tier >= lodge (staying-guest cannot mark arrivals).
  */
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
-  const { error, status } = await checkLodgeAuth();
+  const { date: dateStr } = await params;
+
+  const { error, status, tier } = await checkLodgeAuth(dateStr);
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
 
-  const { date: dateStr } = await params;
+  // Staying guests cannot mark arrivals
+  if (tier === "staying-guest") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   if (!dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }

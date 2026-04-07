@@ -5,6 +5,7 @@ import Link from "next/link";
 import { formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
 import { bookingStatusClass } from "@/lib/status-colors";
+import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
 
 export default async function AdminBookingsPage({
   searchParams,
@@ -76,6 +77,8 @@ export default async function AdminBookingsPage({
       <h1 className="text-3xl font-bold">All Bookings</h1>
 
       <BookingFilters />
+
+      <AdminBookingCalendar />
 
       {bookings.length === 0 ? (
         <Card>

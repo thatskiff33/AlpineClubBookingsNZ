@@ -484,9 +484,37 @@ export async function register() {
 
     logger.info({ job: "complete-bookings" }, "Scheduled complete bookings (daily at 1:00 AM NZST)");
 
-    // Age-up cron (daily at 6:00 AM NZST) — detect members turning 18, grant login
-    let isAgeUpRunning = false;
+    // Hut leader auto-assign (daily at 6:00 AM NZST)
+    let isHutLeaderAutoAssignRunning = false;
     cron.default.schedule("0 6 * * *", async () => {
+      if (isHutLeaderAutoAssignRunning) {
+        logger.info({ job: "hut-leader-auto-assign" }, "Already running, skipping");
+        return;
+      }
+      isHutLeaderAutoAssignRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "hut-leader-auto-assign" }, "Running hut leader auto-assign");
+
+      try {
+        const { autoAssignHutLeaders } = await import("./lib/cron-hut-leader-auto-assign");
+        const result = await autoAssignHutLeaders();
+        logger.info({ job: "hut-leader-auto-assign", ...result }, "Hut leader auto-assign complete");
+        await recordCronRun("hut-leader-auto-assign", startedAt, "SUCCESS", result as unknown as Record<string, unknown>);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "hut-leader-auto-assign" }, "Error in hut leader auto-assign");
+        Sentry.captureException(err);
+        await recordCronRun("hut-leader-auto-assign", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isHutLeaderAutoAssignRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "hut-leader-auto-assign" }, "Scheduled hut leader auto-assign (daily at 6:00 AM NZST)");
+
+    // Age-up cron (daily at 6:30 AM NZST) — detect members turning 18, grant login
+    let isAgeUpRunning = false;
+    cron.default.schedule("30 6 * * *", async () => {
       if (isAgeUpRunning) {
         logger.info({ job: "age-up" }, "Already running, skipping");
         return;
@@ -510,7 +538,7 @@ export async function register() {
       }
     }, { timezone: "Pacific/Auckland" });
 
-    logger.info({ job: "age-up" }, "Scheduled age-up check (daily at 6:00 AM NZST)");
+    logger.info({ job: "age-up" }, "Scheduled age-up check (daily at 6:30 AM NZST)");
   }
 }
 

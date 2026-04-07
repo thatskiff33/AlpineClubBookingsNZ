@@ -40,11 +40,32 @@ export default async function AuthenticatedLayout({
       ? await hasActiveHutLeaderAssignment(session.user.id)
       : false;
 
+  // Check if the member is a staying guest (PAID booking where checkIn-1 <= today <= checkOut)
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  let isStayingGuest = false;
+  if (session.user.role === "MEMBER" && !isHutLeaderActive) {
+    const stayingBooking = await prisma.booking.findFirst({
+      where: {
+        memberId: session.user.id,
+        status: "PAID",
+        checkIn: { lte: tomorrow },
+        checkOut: { gte: today },
+      },
+      select: { id: true },
+    });
+    isStayingGuest = !!stayingBooking;
+  }
+
   const user = {
     name: session.user.name ?? "Member",
     email: session.user.email ?? "",
     role: (session.user as { role?: string }).role ?? "MEMBER",
     isHutLeader: isHutLeaderActive,
+    isStayingGuest,
   };
 
   return (

@@ -41,6 +41,7 @@ const createBookingSchema = z.object({
   notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
   draft: z.boolean().optional(),
+  expectedArrivalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]0$/).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -79,7 +80,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { checkIn, checkOut, guests, notes, promoCode: promoCodeStr, draft } = parsed.data;
+  const { checkIn, checkOut, guests, notes, promoCode: promoCodeStr, draft, expectedArrivalTime } = parsed.data;
 
   if (checkOut <= checkIn) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
@@ -102,10 +103,18 @@ export async function POST(request: NextRequest) {
       },
     });
     if (!paidSub) {
+      // Fetch subscription to get invoice URL for member payment
+      const subscription = await prisma.memberSubscription.findFirst({
+        where: { memberId: session.user.id, seasonYear },
+        orderBy: { updatedAt: "desc" },
+      });
       const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
       return NextResponse.json(
         {
           error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,
+          code: "SUBSCRIPTION_REQUIRED",
+          invoiceUrl: subscription?.xeroOnlineInvoiceUrl ?? null,
+          invoiceNumber: subscription?.xeroInvoiceNumber ?? null,
         },
         { status: 403 }
       );
@@ -195,6 +204,7 @@ export async function POST(request: NextRequest) {
         nonMemberHoldUntil: null,
         draftExpiresAt,
         notes: notes || null,
+        expectedArrivalTime: expectedArrivalTime || null,
         guests: {
           create: guests.map((g, i) => ({
             firstName: g.firstName,
@@ -407,6 +417,7 @@ export async function POST(request: NextRequest) {
           hasNonMembers,
           nonMemberHoldUntil,
           notes: notes || null,
+          expectedArrivalTime: expectedArrivalTime || null,
           guests: {
             create: guests.map((g, i) => ({
               firstName: g.firstName,

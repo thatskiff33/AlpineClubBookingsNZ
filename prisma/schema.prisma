@@ -212,10 +212,12 @@ model MemberSubscription {
   memberId       String
   seasonYear     Int
   status         SubscriptionStatus @default(NOT_INVOICED)
-  xeroInvoiceId  String?
-  paidAt         DateTime?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  xeroInvoiceId         String?
+  xeroInvoiceNumber     String?
+  xeroOnlineInvoiceUrl  String?
+  paidAt                DateTime?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
 
   // Relations
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
@@ -277,6 +279,7 @@ model Booking {
   nonMemberHoldUntil DateTime?
   draftExpiresAt     DateTime?
   notes              String?       @db.VarChar(500)
+  expectedArrivalTime String?      @db.VarChar(5)
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
@@ -332,6 +335,7 @@ model Payment {
   stripeSetupIntentId         String?       @unique
   stripeCustomerId            String?
   xeroInvoiceId               String?       @unique
+  xeroInvoiceNumber           String?
   status                      PaymentStatus @default(PENDING)
   refundedAmountCents         Int           @default(0)
   changeFeeCents              Int           @default(0)

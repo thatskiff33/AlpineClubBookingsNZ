@@ -13,12 +13,12 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
-  const { error, status } = await checkLodgeAuth();
+  const { date: dateStr } = await params;
+
+  const { error, status } = await checkLodgeAuth(dateStr);
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
-
-  const { date: dateStr } = await params;
   if (!dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }

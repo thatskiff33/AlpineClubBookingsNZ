@@ -11,8 +11,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ArrowLeft, ExternalLink, User, Calendar, CreditCard, Clock, Pencil } from "lucide-react"
+import { ArrowLeft, ExternalLink, User, Calendar, CreditCard, Clock, Pencil, Search, Link2, Plus } from "lucide-react"
 import { bookingStatusClass, subscriptionStatusClass } from "@/lib/status-colors"
+
+interface XeroSearchResult {
+  contactId: string; name: string; email: string | null; isLinked: boolean; linkedMemberName: string | null
+}
 
 interface MemberDetail {
   id: string; firstName: string; lastName: string; email: string
@@ -47,6 +51,13 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", active: true, forcePasswordChange: false, inheritEmailFromId: null })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState("")
+  // Xero link/push state
+  const [xeroSearchOpen, setXeroSearchOpen] = useState(false)
+  const [xeroSearchQuery, setXeroSearchQuery] = useState("")
+  const [xeroSearchResults, setXeroSearchResults] = useState<XeroSearchResult[]>([])
+  const [xeroSearching, setXeroSearching] = useState(false)
+  const [xeroLinking, setXeroLinking] = useState(false)
+  const [xeroPushing, setXeroPushing] = useState(false)
 
   const fetchMember = async () => {
     try {
@@ -104,6 +115,49 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     finally { setSaving(false) }
   }
 
+  const handleXeroSearch = async () => {
+    if (!xeroSearchQuery || xeroSearchQuery.length < 2) return
+    setXeroSearching(true)
+    try {
+      const res = await fetch(`/api/admin/xero/search-contacts?q=${encodeURIComponent(xeroSearchQuery)}`)
+      if (!res.ok) throw new Error("Search failed")
+      const data = await res.json()
+      setXeroSearchResults(data.contacts ?? [])
+    } catch { setXeroSearchResults([]) }
+    finally { setXeroSearching(false) }
+  }
+
+  const handleXeroLink = async (xeroContactId: string) => {
+    setXeroLinking(true); setError("")
+    try {
+      const res = await fetch(`/api/admin/members/${id}/xero-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ xeroContactId }),
+      })
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Link failed") }
+      setXeroSearchOpen(false)
+      setSuccess("Member linked to Xero contact")
+      setTimeout(() => setSuccess(""), 3000)
+      setLoading(true)
+      await fetchMember()
+    } catch (err) { setError(err instanceof Error ? err.message : "Link failed") }
+    finally { setXeroLinking(false) }
+  }
+
+  const handleXeroPush = async () => {
+    setXeroPushing(true); setError("")
+    try {
+      const res = await fetch(`/api/admin/members/${id}/xero-push`, { method: "POST" })
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Push failed") }
+      setSuccess("Member created in Xero")
+      setTimeout(() => setSuccess(""), 3000)
+      setLoading(true)
+      await fetchMember()
+    } catch (err) { setError(err instanceof Error ? err.message : "Push failed") }
+    finally { setXeroPushing(false) }
+  }
+
   const isSelf = session?.user?.id === id
 
   if (loading) return <div className="py-12 text-center"><p className="text-sm text-slate-500">Loading member details...</p></div>
@@ -131,11 +185,16 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               {member.forcePasswordChange && <Badge variant="destructive" className="text-xs">PW Reset Required</Badge>}
             </div>
           </div>
-          <div className="flex gap-2 shrink-0">
-            {member.xeroContactId && (
+          <div className="flex gap-2 shrink-0 flex-wrap">
+            {member.xeroContactId ? (
               <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer">
                 <Button variant="outline" size="sm"><ExternalLink className="h-4 w-4 mr-1" />View in Xero</Button>
               </a>
+            ) : (
+              <>
+                <Button variant="outline" size="sm" onClick={() => { setXeroSearchOpen(true); setXeroSearchQuery(""); setXeroSearchResults([]) }}><Link2 className="h-4 w-4 mr-1" />Link to Xero</Button>
+                <Button variant="outline" size="sm" onClick={handleXeroPush} disabled={xeroPushing}><Plus className="h-4 w-4 mr-1" />{xeroPushing ? "Creating..." : "Create in Xero"}</Button>
+              </>
             )}
             <Button size="sm" onClick={openEditDialog}><Pencil className="h-4 w-4 mr-1" />Edit Member</Button>
           </div>
@@ -180,6 +239,48 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             <div key={log.id} className="flex items-start justify-between border-b border-slate-100 pb-2 last:border-0"><div><p className="text-sm font-medium text-slate-700">{log.action}</p>{log.details && <p className="text-xs text-slate-500 mt-0.5">{log.details}</p>}</div><span className="text-xs text-slate-400 whitespace-nowrap ml-4">{fmtDate(log.createdAt)}</span></div>
           ))}</div>)}
       </CardContent></Card>
+
+      <Dialog open={xeroSearchOpen} onOpenChange={setXeroSearchOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Link to Xero Contact</DialogTitle>
+            <DialogDescription>Search for an existing Xero contact to link to {member.firstName} {member.lastName}.</DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2">
+            <Input
+              placeholder="Search by name or email..."
+              value={xeroSearchQuery}
+              onChange={e => setXeroSearchQuery(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleXeroSearch()}
+            />
+            <Button onClick={handleXeroSearch} disabled={xeroSearching || xeroSearchQuery.length < 2}>
+              <Search className="h-4 w-4 mr-1" />{xeroSearching ? "..." : "Search"}
+            </Button>
+          </div>
+          <div className="max-h-64 overflow-y-auto space-y-2">
+            {xeroSearchResults.length === 0 && !xeroSearching && xeroSearchQuery.length >= 2 && (
+              <p className="text-sm text-slate-500 text-center py-4">No contacts found</p>
+            )}
+            {xeroSearchResults.map(c => (
+              <div key={c.contactId} className="flex items-center justify-between p-2 border rounded hover:bg-slate-50">
+                <div>
+                  <p className="text-sm font-medium">{c.name}</p>
+                  {c.email && <p className="text-xs text-slate-500">{c.email}</p>}
+                  {c.isLinked && <p className="text-xs text-amber-600">Already linked to {c.linkedMemberName}</p>}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={c.isLinked || xeroLinking}
+                  onClick={() => handleXeroLink(c.contactId)}
+                >
+                  {xeroLinking ? "..." : "Link"}
+                </Button>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-lg">

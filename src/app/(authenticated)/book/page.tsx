@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
+import { TimePicker } from "@/components/time-picker";
 import Link from "next/link";
 
 interface FamilyMember {
@@ -45,10 +46,12 @@ export default function BookPage() {
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
   const [error, setError] = useState("");
+  const [subscriptionInvoiceUrl, setSubscriptionInvoiceUrl] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [availableBeds, setAvailableBeds] = useState(LODGE_CAPACITY);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
+  const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
@@ -161,6 +164,7 @@ export default function BookPage() {
         guests,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
+        expectedArrivalTime: expectedArrivalTime || undefined,
       }),
     });
 
@@ -170,6 +174,9 @@ export default function BookPage() {
     } else {
       const data = await res.json();
       setError(data.error || "Failed to create booking");
+      if (data.code === "SUBSCRIPTION_REQUIRED" && data.invoiceUrl) {
+        setSubscriptionInvoiceUrl(data.invoiceUrl);
+      }
       setSubmitting(false);
     }
   }
@@ -187,6 +194,7 @@ export default function BookPage() {
         guests,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
+        expectedArrivalTime: expectedArrivalTime || undefined,
         draft: true,
       }),
     });
@@ -230,7 +238,19 @@ export default function BookPage() {
       )}
 
       {error && (
-        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <p>{error}</p>
+          {subscriptionInvoiceUrl && (
+            <a
+              href={subscriptionInvoiceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-block rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Pay Your Subscription
+            </a>
+          )}
+        </div>
       )}
 
       {/* Step indicator */}
@@ -409,6 +429,13 @@ export default function BookPage() {
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Any special requirements..."
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="arrival-time">Expected Arrival Time (optional)</Label>
+                <TimePicker
+                  value={expectedArrivalTime}
+                  onChange={setExpectedArrivalTime}
                 />
               </div>
               <PromoCodeInput

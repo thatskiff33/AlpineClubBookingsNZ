@@ -79,9 +79,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.id = user.id as string;
         token.forcePasswordChange = user.forcePasswordChange;
         token.isEmailVerified = user.isEmailVerified;
-        // LODGE accounts get 30-day sessions for shared iPad
+        // LODGE accounts get 180-day sessions for shared iPad
         if (user.role === "LODGE") {
-          token.exp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+          token.exp = Math.floor(Date.now() / 1000) + 180 * 24 * 60 * 60;
         }
       }
       return token;

@@ -30,6 +30,7 @@ const mockPrisma = {
   },
   booking: {
     findMany: vi.fn(),
+    count: vi.fn(),
   },
 };
 
@@ -186,7 +187,7 @@ describe("F8: Hut Leader Role Assignment", () => {
       });
 
       mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
-      mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue(null);
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
       mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-assign" });
 
       const { POST } = await import(
@@ -201,18 +202,18 @@ describe("F8: Hut Leader Role Assignment", () => {
       expect(data.id).toBe("new-assign");
     });
 
-    it("rejects overlapping assignment", async () => {
+    it("rejects overlapping assignment (2+ days)", async () => {
       mockAuth.mockResolvedValue({
         user: { id: "admin1", role: "ADMIN", email: "support@tokoroa.org.nz" },
       });
 
       mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
-      mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue({
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([{
         id: "existing",
         startDate: new Date("2026-07-08"),
         endDate: new Date("2026-07-12"),
         member: { firstName: "Bob", lastName: "Smith" },
-      });
+      }]);
 
       const { POST } = await import(
         "@/app/api/admin/hut-leaders/route"
@@ -223,19 +224,18 @@ describe("F8: Hut Leader Role Assignment", () => {
       expect(res.status).toBe(409);
 
       const data = await res.json();
-      expect(data.error).toContain("Overlaps");
+      expect(data.error).toContain("overlaps");
       expect(data.error).toContain("Bob Smith");
     });
 
-    it("allows same-day boundary (no overlap)", async () => {
+    it("allows same-day boundary (1-day overlap for handover)", async () => {
       mockAuth.mockResolvedValue({
         user: { id: "admin1", role: "ADMIN", email: "support@tokoroa.org.nz" },
       });
 
       mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: true });
-      // findFirst returns null because same-day boundary is not an overlap
-      // (existing ends on 10th, new starts on 10th: endDate > startDate is false when equal)
-      mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue(null);
+      // 1-day overlap is allowed for handover
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
       mockPrisma.hutLeaderAssignment.create.mockResolvedValue({ id: "new-assign" });
 
       const { POST } = await import(
@@ -415,6 +415,7 @@ describe("F8: Hut Leader Role Assignment", () => {
         {
           memberId: "m1",
           member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true },
+          booking: { checkIn: new Date("2026-07-10"), checkOut: new Date("2026-07-17") },
         },
       ]);
       mockPrisma.booking.findMany.mockResolvedValue([]);
@@ -440,14 +441,18 @@ describe("F8: Hut Leader Role Assignment", () => {
         {
           memberId: "m1",
           member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true },
+          booking: { checkIn: new Date("2026-07-10"), checkOut: new Date("2026-07-14") },
         },
         {
           memberId: "m1",
           member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true },
+          booking: { checkIn: new Date("2026-07-14"), checkOut: new Date("2026-07-17") },
         },
       ]);
       mockPrisma.booking.findMany.mockResolvedValue([
         {
+          checkIn: new Date("2026-07-10"),
+          checkOut: new Date("2026-07-17"),
           member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true, ageTier: "ADULT" },
         },
       ]);
@@ -463,7 +468,7 @@ describe("F8: Hut Leader Role Assignment", () => {
   });
 
   describe("PUT overlap validation", () => {
-    it("rejects update that creates overlap", async () => {
+    it("rejects update that creates 2+ day overlap", async () => {
       mockAuth.mockResolvedValue({
         user: { id: "admin1", role: "ADMIN", email: "support@tokoroa.org.nz" },
       });
@@ -473,12 +478,13 @@ describe("F8: Hut Leader Role Assignment", () => {
         startDate: new Date("2026-07-10"),
         endDate: new Date("2026-07-17"),
       });
-      mockPrisma.hutLeaderAssignment.findFirst.mockResolvedValue({
+      // Extending end to Jul 20 overlaps with assign-2 (Jul 18-25) by 3 days
+      mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([{
         id: "assign-2",
         startDate: new Date("2026-07-18"),
         endDate: new Date("2026-07-25"),
         member: { firstName: "Bob", lastName: "Jones" },
-      });
+      }]);
 
       const { PUT } = await import(
         "@/app/api/admin/hut-leaders/[id]/route"
@@ -492,7 +498,7 @@ describe("F8: Hut Leader Role Assignment", () => {
       expect(res.status).toBe(409);
 
       const data = await res.json();
-      expect(data.error).toContain("Overlaps");
+      expect(data.error).toContain("overlaps");
     });
   });
 
@@ -513,6 +519,7 @@ describe("F8: Hut Leader Role Assignment", () => {
         user: { id: "m2", role: "MEMBER", email: "m2@test.com" },
       });
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+      mockPrisma.booking.count.mockResolvedValue(0);
 
       const { checkLodgeAuth } = await import("@/lib/lodge-auth");
       const result = await checkLodgeAuth();

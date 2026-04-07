@@ -18,7 +18,9 @@ import {
   ArrowRight,
   DollarSign,
   CalendarCheck,
+  AlertTriangle,
 } from "lucide-react";
+import { eachDayOfInterval, addDays } from "date-fns";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass } from "@/lib/status-colors";
 
@@ -78,6 +80,38 @@ async function getStats() {
 
   const revenueThisMonth = revenueResult._sum.amountCents ?? 0;
 
+  // Check for unassigned hut leader dates in the next 14 days
+  const lookAheadEnd = addDays(today, 14);
+  const [hutLeaderAssignments, bookingsFor14Days] = await Promise.all([
+    prisma.hutLeaderAssignment.findMany({
+      where: { startDate: { lte: lookAheadEnd }, endDate: { gte: today } },
+      select: { startDate: true, endDate: true },
+    }),
+    prisma.booking.findMany({
+      where: {
+        status: { in: ["CONFIRMED", "PAID"] },
+        checkIn: { lte: lookAheadEnd },
+        checkOut: { gt: today },
+      },
+      select: { checkIn: true, checkOut: true },
+    }),
+  ]);
+
+  const unassignedDatesWithBookings: string[] = [];
+  const days14 = eachDayOfInterval({ start: today, end: lookAheadEnd });
+  for (const day of days14) {
+    const isCovered = hutLeaderAssignments.some(
+      (a) => a.startDate.getTime() <= day.getTime() && a.endDate.getTime() >= day.getTime()
+    );
+    if (isCovered) continue;
+    const hasBooking = bookingsFor14Days.some(
+      (b) => b.checkIn.getTime() <= day.getTime() && b.checkOut.getTime() > day.getTime()
+    );
+    if (hasBooking) {
+      unassignedDatesWithBookings.push(day.toISOString().split("T")[0]);
+    }
+  }
+
   return {
     totalMembers,
     activeMembers,
@@ -87,6 +121,7 @@ async function getStats() {
     revenueThisMonth,
     upcomingCheckIns,
     recentBookings,
+    unassignedDatesWithBookings,
   };
 }
 
@@ -102,6 +137,25 @@ export default async function AdminDashboardPage() {
           Tokoroa Alpine Club — Administration
         </p>
       </div>
+
+      {/* Hut Leader warning */}
+      {stats.unassignedDatesWithBookings.length > 0 && (
+        <Link href="/admin/hut-leaders">
+          <Card className="border-amber-200 bg-amber-50 hover:shadow-md transition-shadow cursor-pointer">
+            <CardContent className="flex items-start gap-3 pt-5">
+              <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-amber-900">Hut Leader Assignment Required</p>
+                <p className="text-sm text-amber-700 mt-1">
+                  {stats.unassignedDatesWithBookings.length} upcoming date{stats.unassignedDatesWithBookings.length !== 1 ? "s" : ""} with bookings but no hut leader assigned:{" "}
+                  {stats.unassignedDatesWithBookings.slice(0, 5).join(", ")}
+                  {stats.unassignedDatesWithBookings.length > 5 ? ` and ${stats.unassignedDatesWithBookings.length - 5} more` : ""}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
 
       {/* Summary stats */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
