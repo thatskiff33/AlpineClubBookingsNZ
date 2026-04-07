@@ -19,14 +19,10 @@ interface MemberDetail {
   phone: string | null; dateOfBirth: string | null
   role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
   active: boolean; forcePasswordChange: boolean; xeroContactId: string | null; joinedDate: string | null; createdAt: string
-  parentMemberId: string | null
-  parent: { id: string; firstName: string; lastName: string } | null
-  secondaryParentId: string | null
-  secondaryParent: { id: string; firstName: string; lastName: string } | null
-  inheritParentEmail: boolean
+  canLogin: boolean
   inheritEmailFromId: string | null
   inheritEmailFrom: { id: string; firstName: string; lastName: string; email: string } | null
-  _count: { dependents: number; secondaryDependents: number }
+  familyGroups: { id: string; name: string | null }[]
   subscriptions: Array<{ id: string; seasonYear: number; status: string; xeroInvoiceId: string | null; paidAt: string | null }>
   bookings: Array<{ id: string; checkIn: string; checkOut: string; status: string; finalPriceCents: number; _count: { guests: number } }>
   auditLogs: Array<{ id: string; action: string; details: string | null; createdAt: string }>
@@ -158,8 +154,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       <Card><CardHeader><CardTitle className="text-base font-medium">Member Information</CardTitle></CardHeader><CardContent><dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
         <div><dt className="text-slate-500">Phone</dt><dd className="font-medium">{member.phone || "Not provided"}</dd></div>
         <div><dt className="text-slate-500">Member Since</dt><dd className="font-medium">{fmtDate(member.joinedDate || member.createdAt)}{member.joinedDate && <span className="text-xs text-slate-400 ml-1">(from Xero)</span>}</dd></div>
-        <div><dt className="text-slate-500">Type</dt><dd className="font-medium">{member.parentMemberId ? <><Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Dependent</Badge>{member.parent && <span className="ml-1 text-xs">of {member.parent.firstName} {member.parent.lastName}</span>}{member.secondaryParent && <span className="ml-1 text-xs">& {member.secondaryParent.firstName} {member.secondaryParent.lastName}</span>}</> : <><Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Primary</Badge>{(member._count.dependents + member._count.secondaryDependents) > 0 && <span className="ml-1 text-xs">{member._count.dependents + member._count.secondaryDependents} dependent(s)</span>}</>}</dd></div>
-        <div><dt className="text-slate-500">Email Inheritance</dt><dd className="font-medium">{member.inheritEmailFrom ? <span className="text-xs">{member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} <span className="text-slate-400">({member.inheritEmailFrom.email})</span></span> : member.inheritParentEmail && member.parentMemberId ? <span className="text-xs text-slate-500">Parent&apos;s email (default)</span> : <span className="text-xs text-slate-500">Own email</span>}</dd></div>
+        <div><dt className="text-slate-500">Login</dt><dd className="font-medium">{member.canLogin ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Can Login</Badge> : <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Non-Login</Badge>}</dd></div>
+        <div><dt className="text-slate-500">Email Inheritance</dt><dd className="font-medium">{member.inheritEmailFrom ? <span className="text-xs">{member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} <span className="text-slate-400">({member.inheritEmailFrom.email})</span></span> : <span className="text-xs text-slate-500">Own email</span>}</dd></div>
+        <div><dt className="text-slate-500">Family Groups</dt><dd className="font-medium">{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Badge key={fg.id} variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200">{fg.name || "Unnamed"}</Badge>)}</div> : <span className="text-xs text-slate-500">None</span>}</dd></div>
         <div><dt className="text-slate-500">Xero Contact ID</dt><dd className="font-medium">{member.xeroContactId ? <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">{member.xeroContactId}<ExternalLink className="h-3 w-3" /></a> : "Not linked"}</dd></div>
       </dl></CardContent></Card>
 
@@ -235,20 +232,18 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               <input type="checkbox" id="edit-forcePasswordChange" checked={form.forcePasswordChange} onChange={e => setForm(f => ({ ...f, forcePasswordChange: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" />
               <Label htmlFor="edit-forcePasswordChange">Force Password Change on Next Login</Label>
             </div>
-            {(member.parentMemberId || member.ageTier !== "ADULT") && (
+            {!member.canLogin && (
               <div className="space-y-2">
                 <Label htmlFor="edit-inheritEmailFromId">Inherit Email From (optional)</Label>
                 <p className="text-xs text-muted-foreground">
                   Enter the member ID of an adult whose email this member should use for notifications.
-                  Leave blank to use the default (parent&apos;s email or own email).
-                  {member.parent && <span className="block mt-0.5">Parent: {member.parent.firstName} {member.parent.lastName} — ID: <code className="text-xs bg-slate-100 px-1 rounded">{member.parent.id}</code></span>}
-                  {member.secondaryParent && <span className="block mt-0.5">Secondary parent: {member.secondaryParent.firstName} {member.secondaryParent.lastName} — ID: <code className="text-xs bg-slate-100 px-1 rounded">{member.secondaryParent.id}</code></span>}
+                  Leave blank to use their own email.
                 </p>
                 <Input
                   id="edit-inheritEmailFromId"
                   value={form.inheritEmailFromId || ""}
                   onChange={e => setForm(f => ({ ...f, inheritEmailFromId: e.target.value.trim() || null }))}
-                  placeholder="Adult member ID (leave blank for default)"
+                  placeholder="Adult member ID (leave blank for own email)"
                 />
                 {member.inheritEmailFrom && (
                   <p className="text-xs text-green-700">Currently inheriting from: {member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} ({member.inheritEmailFrom.email})</p>

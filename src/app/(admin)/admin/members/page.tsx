@@ -21,14 +21,7 @@ interface Member {
   subscriptionStatus: "NOT_INVOICED" | "UNPAID" | "PAID" | "OVERDUE" | null
   subscriptionXeroInvoiceId: string | null; createdAt: string; joinedDate: string | null
   forcePasswordChange: boolean
-  parentMemberId: string | null
-  inheritParentEmail: boolean
-  parentName: string | null
-  secondaryParentId: string | null
-  secondaryParentName: string | null
-  dependentCount: number
-  familyGroupId: string | null
-  familyGroupName: string | null
+  canLogin: boolean
   familyGroups: { id: string; name: string | null }[]
 }
 
@@ -36,18 +29,14 @@ interface MemberForm {
   firstName: string; lastName: string; email: string; phone: string
   dateOfBirth: string; role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
   active: boolean; sendInvite: boolean; forcePasswordChange: boolean
-  joinedDate: string; parentMemberId: string | null; secondaryParentId: string | null
-  inheritParentEmail: boolean
+  joinedDate: string; canLogin: boolean
 }
 
-interface PrimaryMemberOption {
-  id: string; firstName: string; lastName: string; email: string
-}
 
 interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string; type: string }
 interface ImportRow { firstName: string; lastName: string; email: string; phone?: string; dateOfBirth?: string; role?: string }
 
-const emptyForm: MemberForm = { firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", ageTier: "ADULT", active: true, sendInvite: false, forcePasswordChange: false, joinedDate: "", parentMemberId: null, secondaryParentId: null, inheritParentEmail: true }
+const emptyForm: MemberForm = { firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", ageTier: "ADULT", active: true, sendInvite: false, forcePasswordChange: false, joinedDate: "", canLogin: true }
 const emptyFilters: Filters = { role: "", active: "", ageTier: "", xeroLinked: "", subscription: "", type: "" }
 function parseCsvLine(line: string): string[] {
   const result: string[] = []; let current = ""; let inQuotes = false
@@ -107,8 +96,6 @@ export default function MembersPage() {
   const [importSendInvites, setImportSendInvites] = useState(false)
   const [importLoading, setImportLoading] = useState(false)
   const [importResult, setImportResult] = useState<{ created: number; skipped: number; errors: Array<{ row: number; errors: string[] }> } | null>(null)
-  const [primaryMembers, setPrimaryMembers] = useState<PrimaryMemberOption[]>([])
-  const [primaryMembersLoading, setPrimaryMembersLoading] = useState(false)
 
   useEffect(() => { const t = setTimeout(() => { setDebouncedSearch(search); setPage(1) }, 300); return () => clearTimeout(t) }, [search])
 
@@ -149,36 +136,20 @@ export default function MembersPage() {
   const activeFilterCount = Object.values(filters).filter(Boolean).length
   const toggleSelect = (id: string) => setSelectedIds(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const toggleSelectAll = () => { if (selectedIds.size === members.length) setSelectedIds(new Set()); else setSelectedIds(new Set(members.map(m => m.id))) }
-  const fetchPrimaryMembers = useCallback(async () => {
-    setPrimaryMembersLoading(true)
-    try {
-      const res = await fetch("/api/admin/members?type=primary&active=true&pageSize=500&sortBy=name&sortDir=asc")
-      if (res.ok) {
-        const data = await res.json()
-        setPrimaryMembers(data.members.map((m: Member) => ({ id: m.id, firstName: m.firstName, lastName: m.lastName, email: m.email })))
-      }
-    } catch { /* ignore */ }
-    finally { setPrimaryMembersLoading(false) }
-  }, [])
-  const openCreateDialog = () => { setEditingMember(null); setForm(emptyForm); setFormError(""); fetchPrimaryMembers(); setDialogOpen(true) }
-  const openEditDialog = (member: Member) => { setEditingMember(member); setForm({ firstName: member.firstName, lastName: member.lastName, email: member.email, phone: member.phone || "", dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "", role: member.role, ageTier: member.ageTier, active: member.active, sendInvite: false, forcePasswordChange: member.forcePasswordChange, joinedDate: member.joinedDate ? new Date(member.joinedDate).toISOString().split("T")[0] : "", parentMemberId: member.parentMemberId, secondaryParentId: member.secondaryParentId, inheritParentEmail: member.inheritParentEmail }); setFormError(""); fetchPrimaryMembers(); setDialogOpen(true) }
+  const openCreateDialog = () => { setEditingMember(null); setForm(emptyForm); setFormError(""); setDialogOpen(true) }
+  const openEditDialog = (member: Member) => { setEditingMember(member); setForm({ firstName: member.firstName, lastName: member.lastName, email: member.email, phone: member.phone || "", dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "", role: member.role, ageTier: member.ageTier, active: member.active, sendInvite: false, forcePasswordChange: member.forcePasswordChange, joinedDate: member.joinedDate ? new Date(member.joinedDate).toISOString().split("T")[0] : "", canLogin: member.canLogin }); setFormError(""); setDialogOpen(true) }
 
   const handleSave = async () => {
     setSaving(true); setFormError("")
     try {
       const url = editingMember ? `/api/admin/members/${editingMember.id}` : "/api/admin/members"
-      const body: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, phone: form.phone || null, dateOfBirth: form.dateOfBirth || null, role: form.role, ageTier: form.ageTier, active: form.active }
-      if (form.parentMemberId) body.inheritParentEmail = form.inheritParentEmail
+      const body: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, phone: form.phone || null, dateOfBirth: form.dateOfBirth || null, role: form.role, ageTier: form.ageTier, active: form.active, canLogin: form.canLogin }
       if (editingMember) {
         body.forcePasswordChange = form.forcePasswordChange
         body.joinedDate = form.joinedDate || null
-        body.parentMemberId = form.parentMemberId
-        body.secondaryParentId = form.secondaryParentId
       }
       if (!editingMember) {
         body.sendInvite = form.sendInvite
-        body.parentMemberId = form.parentMemberId
-        body.secondaryParentId = form.secondaryParentId
       }
       const res = await fetch(url, { method: editingMember ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Save failed") }
@@ -294,8 +265,8 @@ export default function MembersPage() {
               <TableCell><Badge variant={member.role === "ADMIN" ? "default" : "secondary"} className={member.role === "ADMIN" ? "bg-blue-600 text-white hover:bg-blue-700" : ""}>{member.role}</Badge></TableCell>
               <TableCell><span className="text-sm text-slate-600">{member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()}</span></TableCell>
               <TableCell><Badge variant={member.active ? "default" : "destructive"} className={member.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}>{member.active ? "Active" : "Inactive"}</Badge></TableCell>
-              <TableCell>{member.parentMemberId ? <><Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Dependent</Badge>{member.parentName && <span className="ml-1 text-xs text-muted-foreground">of {member.parentName}</span>}{member.secondaryParentName && <span className="ml-1 text-xs text-muted-foreground">& {member.secondaryParentName}</span>}</> : <><Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Primary</Badge>{member.dependentCount > 0 && <Badge variant="secondary" className="ml-1 text-xs">{member.dependentCount} dep</Badge>}</>}</TableCell>
-              <TableCell>{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Link key={fg.id} href={`/admin/family-groups?edit=${fg.id}`}><Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer">{fg.name || "Unnamed Group"}</Badge></Link>)}</div> : member.familyGroupName ? <Link href={`/admin/family-groups?edit=${member.familyGroupId}`}><Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer">{member.familyGroupName}</Badge></Link> : <span className="text-xs text-slate-400">-</span>}</TableCell>
+              <TableCell>{member.canLogin ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Can Login</Badge> : <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Non-Login</Badge>}</TableCell>
+              <TableCell>{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Link key={fg.id} href={`/admin/family-groups?edit=${fg.id}`}><Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer">{fg.name || "Unnamed Group"}</Badge></Link>)}</div> : <span className="text-xs text-slate-400">-</span>}</TableCell>
               <TableCell>{member.subscriptionStatus ? (() => { const cfg = statusConfig[member.subscriptionStatus] || statusConfig.NOT_INVOICED; const badge = <Badge variant="secondary" className={`${cfg.className} ${member.subscriptionXeroInvoiceId ? "cursor-pointer inline-flex items-center gap-1" : ""}`}>{cfg.label}{member.subscriptionXeroInvoiceId && <ExternalLink className="h-3 w-3" />}</Badge>; return member.subscriptionXeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${member.subscriptionXeroInvoiceId}`} target="_blank" rel="noopener noreferrer">{badge}</a> : badge })() : <span className="text-xs text-slate-400">-</span>}</TableCell>
               <TableCell>{member.xeroContactId ? <a href={`https://go.xero.com/app/contacts/contact/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer"><Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer inline-flex items-center gap-1">Linked<ExternalLink className="h-3 w-3" /></Badge></a> : <span className="text-xs text-slate-400">-</span>}</TableCell>
               <TableCell className="text-slate-500 text-sm">{new Date(member.joinedDate || member.createdAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })}</TableCell>
@@ -306,11 +277,9 @@ export default function MembersPage() {
       </CardContent></Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{editingMember ? "Edit Member" : "Add Member"}</DialogTitle><DialogDescription>{editingMember ? "Update the member details." : "Create a new member account."}</DialogDescription></DialogHeader>{formError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{formError}</div>}<div className="grid gap-4 py-2">
-        <div className="space-y-2"><Label>Member Type</Label><Select value={form.parentMemberId ? "dependent" : "primary"} onValueChange={v => { if (v === "primary") { setForm(f => ({ ...f, parentMemberId: null, secondaryParentId: null })) } else { setForm(f => ({ ...f, parentMemberId: primaryMembers[0]?.id || null })) } }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="primary">Primary</SelectItem><SelectItem value="dependent">Dependent</SelectItem></SelectContent></Select></div>
-        {form.parentMemberId !== null && <><div className="space-y-2"><Label>Primary Parent *</Label>{primaryMembersLoading ? <p className="text-xs text-muted-foreground">Loading...</p> : <Select value={form.parentMemberId || ""} onValueChange={v => setForm(f => ({ ...f, parentMemberId: v || null }))}><SelectTrigger><SelectValue placeholder="Select parent..." /></SelectTrigger><SelectContent>{primaryMembers.filter(pm => pm.id !== editingMember?.id).map(pm => <SelectItem key={pm.id} value={pm.id}>{pm.firstName} {pm.lastName} ({pm.email})</SelectItem>)}</SelectContent></Select>}<p className="text-xs text-muted-foreground">Dependent will share the parent&apos;s email address.</p></div>
-        <div className="space-y-2"><Label>Secondary Parent (optional)</Label>{primaryMembersLoading ? <p className="text-xs text-muted-foreground">Loading...</p> : <Select value={form.secondaryParentId || "none"} onValueChange={v => setForm(f => ({ ...f, secondaryParentId: v === "none" ? null : v }))}><SelectTrigger><SelectValue placeholder="None" /></SelectTrigger><SelectContent><SelectItem value="none">None</SelectItem>{primaryMembers.filter(pm => pm.id !== editingMember?.id && pm.id !== form.parentMemberId).map(pm => <SelectItem key={pm.id} value={pm.id}>{pm.firstName} {pm.lastName} ({pm.email})</SelectItem>)}</SelectContent></Select>}<p className="text-xs text-muted-foreground">For split families where both parents can book.</p></div></>}
+        <div className="flex items-center gap-2"><input type="checkbox" id="canLogin" checked={form.canLogin} onChange={e => setForm(f => ({ ...f, canLogin: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="canLogin">Can Login</Label><p className="text-xs text-muted-foreground ml-2">Adults who can sign in and make bookings. Uncheck for children/youth managed by family group.</p></div>
         <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label htmlFor="firstName">First Name *</Label><Input id="firstName" value={form.firstName} onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="lastName">Last Name *</Label><Input id="lastName" value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} /></div></div>
-        <div className="space-y-2"><Label htmlFor="email">Email {form.parentMemberId && form.inheritParentEmail ? "(inherited from parent)" : form.parentMemberId ? "" : "*"}</Label><Input id="email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} disabled={!!form.parentMemberId && form.inheritParentEmail} className={form.parentMemberId && form.inheritParentEmail ? "bg-slate-50" : ""} />{form.parentMemberId === null && editingMember?.parentMemberId && <p className="text-xs text-orange-600">Converting to primary: provide a unique email address.</p>}{form.parentMemberId && <div className="flex items-center gap-2 mt-1"><input type="checkbox" id="inheritEmail" checked={form.inheritParentEmail} onChange={e => setForm(f => ({ ...f, inheritParentEmail: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="inheritEmail" className="text-xs">Inherit parent&apos;s email address</Label></div>}</div>
+        <div className="space-y-2"><Label htmlFor="email">Email *</Label><Input id="email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
         <div className="space-y-2"><Label htmlFor="phone">Phone</Label><Input id="phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
         <div className="space-y-2"><Label htmlFor="dateOfBirth">Date of Birth</Label><Input id="dateOfBirth" type="date" value={form.dateOfBirth} onChange={e => setForm(f => ({ ...f, dateOfBirth: e.target.value }))} /><p className="text-xs text-muted-foreground">Age tier is calculated automatically from date of birth.</p></div>
         <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label>Role</Label><Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as "MEMBER" | "ADMIN" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="MEMBER">Member</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>Age Tier</Label><Select value={form.ageTier} onValueChange={v => setForm(f => ({ ...f, ageTier: v as "ADULT" | "YOUTH" | "CHILD" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ADULT">Adult</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="CHILD">Child</SelectItem></SelectContent></Select></div></div>
