@@ -26,7 +26,7 @@ REPO_DIR="/home/ubuntu/TACBookings"
 PROMPTS_DIR="$REPO_DIR/docs/github-issues/prompts"
 LOG_DIR="$REPO_DIR/logs/review-fixes"
 MAIN_BRANCH="main"
-MAX_BUDGET="5.00"  # USD per phase — safety cap
+# No budget cap — running on Claude subscription, not API
 
 # Parse args
 START_FROM=${1:-1}
@@ -109,7 +109,6 @@ $prompt"
   if claude -p "$full_prompt" \
     --model "$model" \
     --dangerously-skip-permissions \
-    --max-budget-usd "$MAX_BUDGET" \
     --effort max \
     > "$phase_log" 2>&1; then
     log "Claude completed phase $num"
