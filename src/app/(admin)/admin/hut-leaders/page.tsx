@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, UserCheck } from "lucide-react";
+import { Trash2, Plus, UserCheck, CalendarDays, Check, Pencil } from "lucide-react";
 
 interface HutLeaderAssignment {
   id: string;
@@ -18,20 +18,25 @@ interface HutLeaderAssignment {
   createdAt: string;
 }
 
-interface MemberOption {
+interface EligibleMember {
   id: string;
   firstName: string;
   lastName: string;
   email: string;
+  bookingCheckIn: string;
+  bookingCheckOut: string;
+  suggestedStartDate: string;
+  suggestedEndDate: string;
 }
 
 export default function HutLeadersPage() {
   const [assignments, setAssignments] = useState<HutLeaderAssignment[]>([]);
-  const [eligibleMembers, setEligibleMembers] = useState<MemberOption[]>([]);
+  const [eligibleMembers, setEligibleMembers] = useState<EligibleMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [editingMember, setEditingMember] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     memberId: "",
     startDate: "",
@@ -66,6 +71,7 @@ export default function HutLeadersPage() {
     let cancelled = false;
     setLoadingMembers(true);
     setFormData((prev) => ({ ...prev, memberId: "" }));
+    setEditingMember(null);
 
     fetch(`/api/admin/hut-leaders/eligible-members?startDate=${formData.startDate}&endDate=${formData.endDate}`)
       .then((res) => (res.ok ? res.json() : Promise.reject()))
@@ -104,10 +110,47 @@ export default function HutLeadersPage() {
       }
       setFormData({ memberId: "", startDate: "", endDate: "" });
       setShowForm(false);
+      setEditingMember(null);
       fetchAssignments();
     } finally {
       setCreating(false);
     }
+  }
+
+  async function handleQuickAssign(member: EligibleMember) {
+    setError("");
+    setCreating(true);
+    try {
+      const res = await fetch("/api/admin/hut-leaders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberId: member.id,
+          startDate: member.suggestedStartDate,
+          endDate: member.suggestedEndDate,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.error || "Failed to create");
+        return;
+      }
+      setFormData({ memberId: "", startDate: "", endDate: "" });
+      setShowForm(false);
+      setEditingMember(null);
+      fetchAssignments();
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  function handleEditAndAssign(member: EligibleMember) {
+    setEditingMember(member.id);
+    setFormData({
+      memberId: member.id,
+      startDate: member.suggestedStartDate,
+      endDate: member.suggestedEndDate,
+    });
   }
 
   async function handleDelete(id: string) {
@@ -166,7 +209,7 @@ export default function HutLeadersPage() {
                 </div>
               </div>
               <div>
-                <Label htmlFor="memberId">Hut Leader</Label>
+                <Label>Eligible Members</Label>
                 {!datesSelected ? (
                   <p className="mt-1 text-sm text-slate-500">
                     Select a date range first to see adults staying at the lodge
@@ -178,32 +221,104 @@ export default function HutLeadersPage() {
                     No adult members have bookings during this date range
                   </p>
                 ) : (
-                  <select
-                    id="memberId"
-                    className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                    value={formData.memberId}
-                    onChange={(e) => setFormData({ ...formData, memberId: e.target.value })}
-                    required
-                  >
-                    <option value="">Select a member...</option>
+                  <div className="mt-2 space-y-3">
                     {eligibleMembers.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.firstName} {m.lastName} ({m.email})
-                      </option>
+                      <div
+                        key={m.id}
+                        className={`rounded-lg border p-4 ${
+                          editingMember === m.id ? "border-blue-300 bg-blue-50" : "border-slate-200 bg-white"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <p className="font-medium text-sm">
+                              {m.firstName} {m.lastName}
+                            </p>
+                            <p className="text-xs text-slate-500">{m.email}</p>
+                            <div className="flex items-center gap-1 mt-1.5 text-xs text-slate-600">
+                              <CalendarDays className="h-3.5 w-3.5" />
+                              <span>
+                                Booking: {m.bookingCheckIn} — {m.bookingCheckOut}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              Suggested: {m.suggestedStartDate} — {m.suggestedEndDate}
+                            </p>
+                          </div>
+                          <div className="flex gap-2 flex-shrink-0">
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={creating}
+                              onClick={() => handleQuickAssign(m)}
+                            >
+                              <Check className="h-3.5 w-3.5 mr-1" />
+                              Confirm
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={creating}
+                              onClick={() => handleEditAndAssign(m)}
+                            >
+                              <Pencil className="h-3.5 w-3.5 mr-1" />
+                              Edit &amp; Assign
+                            </Button>
+                          </div>
+                        </div>
+                        {editingMember === m.id && (
+                          <div className="mt-3 pt-3 border-t border-blue-200">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <Label htmlFor={`edit-start-${m.id}`} className="text-xs">Start Date</Label>
+                                <Input
+                                  id={`edit-start-${m.id}`}
+                                  type="date"
+                                  value={formData.startDate}
+                                  onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                                  className="mt-1"
+                                />
+                              </div>
+                              <div>
+                                <Label htmlFor={`edit-end-${m.id}`} className="text-xs">End Date</Label>
+                                <Input
+                                  id={`edit-end-${m.id}`}
+                                  type="date"
+                                  value={formData.endDate}
+                                  onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                                  className="mt-1"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-2 mt-3">
+                              <Button
+                                type="submit"
+                                size="sm"
+                                disabled={creating || !formData.startDate || !formData.endDate}
+                              >
+                                {creating ? "Saving..." : "Save Assignment"}
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setEditingMember(null)}
+                              >
+                                Cancel Edit
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     ))}
-                  </select>
+                  </div>
                 )}
               </div>
               {error && <p className="text-sm text-red-600">{error}</p>}
               <div className="flex gap-2">
-                <Button
-                  type="submit"
-                  disabled={creating || !datesSelected || eligibleMembers.length === 0 || !formData.memberId}
-                >
-                  {creating ? "Creating..." : "Create Assignment"}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
-                  Cancel
+                <Button type="button" variant="outline" onClick={() => { setShowForm(false); setEditingMember(null); }}>
+                  Close
                 </Button>
               </div>
             </form>

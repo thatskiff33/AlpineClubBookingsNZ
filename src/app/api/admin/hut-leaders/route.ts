@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
+import { calculateOverlapDays } from "@/lib/hut-leader-overlap";
 
 const createSchema = z.object({
   memberId: z.string().min(1),
@@ -78,29 +79,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Member not found or inactive" }, { status: 404 });
   }
 
-  // Check for overlapping assignments (same-day boundaries are allowed)
-  // Overlap: existing.startDate < new.endDate AND existing.endDate > new.startDate
+  // Check for overlapping assignments — 1 day overlap allowed for handover, 2+ rejected
   const newStart = new Date(parsed.data.startDate + "T00:00:00");
   const newEnd = new Date(parsed.data.endDate + "T00:00:00");
 
-  const overlapping = await prisma.hutLeaderAssignment.findFirst({
+  const potentialOverlaps = await prisma.hutLeaderAssignment.findMany({
     where: {
-      startDate: { lt: newEnd },
-      endDate: { gt: newStart },
+      startDate: { lte: newEnd },
+      endDate: { gte: newStart },
     },
     include: {
       member: { select: { firstName: true, lastName: true } },
     },
   });
 
-  if (overlapping) {
-    const name = `${overlapping.member.firstName} ${overlapping.member.lastName}`;
-    const start = overlapping.startDate.toISOString().split("T")[0];
-    const end = overlapping.endDate.toISOString().split("T")[0];
-    return NextResponse.json(
-      { error: `Overlaps with existing assignment for ${name} (${start} to ${end})` },
-      { status: 409 }
-    );
+  for (const existing of potentialOverlaps) {
+    const overlapDays = calculateOverlapDays(newStart, newEnd, existing.startDate, existing.endDate);
+    if (overlapDays > 1) {
+      const name = `${existing.member.firstName} ${existing.member.lastName}`;
+      const start = existing.startDate.toISOString().split("T")[0];
+      const end = existing.endDate.toISOString().split("T")[0];
+      return NextResponse.json(
+        { error: `Assignment overlaps with ${name}'s assignment (${start} to ${end}) by ${overlapDays} days. Maximum 1 day overlap is allowed for handover.` },
+        { status: 409 }
+      );
+    }
   }
 
   try {
