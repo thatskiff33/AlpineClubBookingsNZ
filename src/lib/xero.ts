@@ -523,17 +523,30 @@ export async function withXeroRetry<T>(
  * Matches by email address and links xeroContactId.
  * Returns count of matched and linked contacts.
  */
-export async function syncContactsFromXero(): Promise<{
+export interface SyncReport {
+  created: Array<{ name: string; email: string; xeroContactId: string; group?: string }>;
+  updated: Array<{ name: string; memberId: string; xeroContactId: string; changes: string[] }>;
+  skippedNoChanges: number;
+  skippedNoEmail: Array<{ name: string; xeroContactId: string }>;
+  skippedOther: Array<{ name: string; xeroContactId?: string; reason: string }>;
+  errors: Array<{ name: string; xeroContactId?: string; error: string }>;
   total: number;
-  matched: number;
-  updated: number;
-}> {
+}
+
+export async function syncContactsFromXero(): Promise<SyncReport> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
+  const report: SyncReport = {
+    created: [],
+    updated: [],
+    skippedNoChanges: 0,
+    skippedNoEmail: [],
+    skippedOther: [],
+    errors: [],
+    total: 0,
+  };
+
   let page = 1;
-  let total = 0;
-  let matched = 0;
-  let updated = 0;
   let hasMore = true;
 
   while (hasMore) {
@@ -556,58 +569,124 @@ export async function syncContactsFromXero(): Promise<{
       break;
     }
 
-    total += contacts.length;
+    report.total += contacts.length;
 
     for (const contact of contacts) {
-      if (!contact.contactID) continue;
+      const contactName = contact.name || [contact.firstName, contact.lastName].filter(Boolean).join(" ") || "Unknown";
 
-      // First check if already linked by xeroContactId
-      const alreadyLinked = await prisma.member.findFirst({
-        where: { xeroContactId: contact.contactID },
-      });
-      if (alreadyLinked) {
-        matched++;
-        // Backfill joinedDate if missing
-        if (!alreadyLinked.joinedDate) {
-          const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
-          if (invoiceDate) {
-            await prisma.member.update({
-              where: { id: alreadyLinked.id },
-              data: { joinedDate: invoiceDate },
-            });
-          }
-          await throttle(1500);
-        }
+      if (!contact.contactID) {
+        report.skippedOther.push({ name: contactName, reason: "No Xero contact ID" });
         continue;
       }
 
-      // Fall back to email matching (primary members only)
-      if (!contact.emailAddress) continue;
-      const member = await prisma.member.findFirst({
-        where: { email: contact.emailAddress.toLowerCase(), parentMemberId: null },
-      });
+      try {
+        // First check if already linked by xeroContactId
+        const alreadyLinked = await prisma.member.findFirst({
+          where: { xeroContactId: contact.contactID },
+        });
+        if (alreadyLinked) {
+          const changes: string[] = [];
+          const updateData: Record<string, unknown> = {};
 
-      if (member) {
-        matched++;
-        const updateData: Record<string, unknown> = {};
-        if (member.xeroContactId !== contact.contactID) {
-          updateData.xeroContactId = contact.contactID;
-        }
-        // Populate joinedDate from first invoice
-        if (!member.joinedDate) {
-          const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
-          if (invoiceDate) {
-            updateData.joinedDate = invoiceDate;
+          // Backfill joinedDate if missing
+          if (!alreadyLinked.joinedDate) {
+            const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
+            if (invoiceDate) {
+              updateData.joinedDate = invoiceDate;
+              changes.push(`Joined date set to ${invoiceDate.toISOString().split("T")[0]}`);
+            }
+            await throttle(1500);
           }
-          await throttle(1500);
+
+          // Backfill phone if missing
+          if (!alreadyLinked.phone) {
+            const phone = getXeroContactPhone(contact.phones);
+            if (phone) {
+              updateData.phone = phone;
+              changes.push(`Phone set to ${phone}`);
+            }
+          }
+
+          if (Object.keys(updateData).length > 0) {
+            await prisma.member.update({
+              where: { id: alreadyLinked.id },
+              data: updateData,
+            });
+            report.updated.push({
+              name: `${alreadyLinked.firstName} ${alreadyLinked.lastName}`,
+              memberId: alreadyLinked.id,
+              xeroContactId: contact.contactID,
+              changes,
+            });
+          } else {
+            report.skippedNoChanges++;
+          }
+          continue;
         }
-        if (Object.keys(updateData).length > 0) {
-          await prisma.member.update({
-            where: { id: member.id },
-            data: updateData,
+
+        // Fall back to email matching (primary members only)
+        if (!contact.emailAddress) {
+          report.skippedNoEmail.push({ name: contactName, xeroContactId: contact.contactID });
+          continue;
+        }
+
+        const member = await prisma.member.findFirst({
+          where: { email: contact.emailAddress.toLowerCase(), parentMemberId: null },
+        });
+
+        if (member) {
+          const changes: string[] = [];
+          const updateData: Record<string, unknown> = {};
+
+          if (member.xeroContactId !== contact.contactID) {
+            updateData.xeroContactId = contact.contactID;
+            changes.push("Linked to Xero contact");
+          }
+          // Populate joinedDate from first invoice
+          if (!member.joinedDate) {
+            const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
+            if (invoiceDate) {
+              updateData.joinedDate = invoiceDate;
+              changes.push(`Joined date set to ${invoiceDate.toISOString().split("T")[0]}`);
+            }
+            await throttle(1500);
+          }
+          // Backfill phone if missing
+          if (!member.phone) {
+            const phone = getXeroContactPhone(contact.phones);
+            if (phone) {
+              updateData.phone = phone;
+              changes.push(`Phone set to ${phone}`);
+            }
+          }
+
+          if (Object.keys(updateData).length > 0) {
+            await prisma.member.update({
+              where: { id: member.id },
+              data: updateData,
+            });
+            report.updated.push({
+              name: `${member.firstName} ${member.lastName}`,
+              memberId: member.id,
+              xeroContactId: contact.contactID,
+              changes,
+            });
+          } else {
+            report.skippedNoChanges++;
+          }
+        } else {
+          report.skippedOther.push({
+            name: contactName,
+            xeroContactId: contact.contactID,
+            reason: "No matching member by email",
           });
-          updated++;
         }
+      } catch (err) {
+        report.errors.push({
+          name: contactName,
+          xeroContactId: contact.contactID,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
@@ -618,7 +697,7 @@ export async function syncContactsFromXero(): Promise<{
     }
   }
 
-  return { total, matched, updated };
+  return report;
 }
 
 // ---------------------------------------------------------------------------
@@ -739,6 +818,7 @@ export async function importMembersFromXeroGroups(
   skippedExisting: number;
   linkedExisting: number;
   skippedNoEmail: number;
+  skippedNoEmailDetails: Array<{ name: string; xeroContactId: string }>;
   errors: number;
   errorDetails: Array<{ member: string; error: string }>;
   groupsProcessed: string[];
@@ -750,6 +830,7 @@ export async function importMembersFromXeroGroups(
   let skippedExisting = 0;
   let linkedExisting = 0;
   let skippedNoEmail = 0;
+  const skippedNoEmailDetails: Array<{ name: string; xeroContactId: string }> = [];
   let errors = 0;
   const errorDetails: Array<{ member: string; error: string }> = [];
   const groupsProcessed: string[] = [];
@@ -797,6 +878,10 @@ export async function importMembersFromXeroGroups(
         try {
           if (!contact.emailAddress) {
             skippedNoEmail++;
+            const cName = [contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.name || "Unknown";
+            if (contact.contactID) {
+              skippedNoEmailDetails.push({ name: cName, xeroContactId: contact.contactID });
+            }
             continue;
           }
 
@@ -1032,6 +1117,7 @@ export async function importMembersFromXeroGroups(
     skippedExisting,
     linkedExisting,
     skippedNoEmail,
+    skippedNoEmailDetails,
     errors,
     errorDetails,
     groupsProcessed,

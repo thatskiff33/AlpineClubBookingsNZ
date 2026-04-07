@@ -6,6 +6,7 @@ import { syncContactsFromXero } from "@/lib/xero";
  * POST /api/admin/xero/sync-contacts
  * Triggers a bulk contact sync from Xero.
  * Matches Xero contacts to local members by email and links xeroContactId.
+ * Returns a detailed SyncReport with categorized results.
  */
 export async function POST() {
   const session = await auth();
@@ -14,8 +15,8 @@ export async function POST() {
   }
 
   try {
-    const result = await syncContactsFromXero();
-    return NextResponse.json(result);
+    const report = await syncContactsFromXero();
+    return NextResponse.json({ syncReport: report });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Contact sync failed";
     return NextResponse.json({ error: message }, { status: 500 });
