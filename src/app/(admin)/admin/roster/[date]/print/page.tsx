@@ -51,7 +51,10 @@ export default function PrintRosterPage() {
 
   // Group assignments by chore, sorted by choreSortOrder
   const byChore = new Map<string, { name: string; description: string | null; sortOrder: number; guests: Array<{ name: string; ageTier: string | null }> }>()
-  for (const a of roster.assignments) {
+  const confirmedAssignments = roster.assignments.filter(
+    (a: { status: string }) => a.status === "CONFIRMED" || a.status === "COMPLETED"
+  );
+  for (const a of confirmedAssignments) {
     if (!byChore.has(a.choreTemplateId)) {
       byChore.set(a.choreTemplateId, {
         name: a.choreTemplateName,

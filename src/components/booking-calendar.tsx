@@ -91,9 +91,11 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     if (isPast) {
       classes += "text-gray-300 cursor-not-allowed ";
     } else if (available <= 0) {
-      classes += "bg-red-100 text-red-400 cursor-not-allowed ";
+      classes += "bg-gray-100 text-gray-400 cursor-not-allowed ";
     } else if (available <= 5) {
-      classes += "bg-yellow-100 text-yellow-800 hover:bg-yellow-200 cursor-pointer ";
+      classes += "bg-red-100 text-red-700 hover:bg-red-200 cursor-pointer ";
+    } else if (available <= 15) {
+      classes += "bg-amber-100 text-amber-800 hover:bg-amber-200 cursor-pointer ";
     } else {
       classes += "bg-green-100 text-green-800 hover:bg-green-200 cursor-pointer ";
     }
@@ -188,13 +190,16 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
       {/* Availability legend */}
       <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
         <span className="flex items-center gap-1">
-          <span className="h-3 w-3 rounded bg-green-100" /> Available
+          <span className="h-3 w-3 rounded bg-green-100" /> Available (&gt;15 beds)
         </span>
         <span className="flex items-center gap-1">
-          <span className="h-3 w-3 rounded bg-yellow-100" /> Limited (&le;5 beds)
+          <span className="h-3 w-3 rounded bg-amber-100" /> Moderate (6-15 beds)
         </span>
         <span className="flex items-center gap-1">
-          <span className="h-3 w-3 rounded bg-red-100" /> Full
+          <span className="h-3 w-3 rounded bg-red-100" /> Limited (1-5 beds)
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="h-3 w-3 rounded bg-gray-100" /> Full
         </span>
       </div>
 

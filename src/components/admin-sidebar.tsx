@@ -74,7 +74,7 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
         className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors text-slate-600 hover:bg-slate-100 hover:text-slate-900"
       >
         <House className="h-4 w-4 shrink-0 text-slate-400" />
-        Home
+        Member Dashboard
       </Link>
       <div className="my-1.5 border-t border-slate-100" />
       {navItems.map(({ href, label, icon: Icon }) => {

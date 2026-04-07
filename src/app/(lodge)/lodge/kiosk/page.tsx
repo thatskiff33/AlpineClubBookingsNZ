@@ -56,6 +56,7 @@ export default function KioskPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -122,7 +123,8 @@ export default function KioskPage() {
         );
       }
     } catch {
-      // Silently fail - auto-refresh will sync
+      setActionError("Failed to update chore");
+      setTimeout(() => setActionError(null), 3000);
     }
   };
 
@@ -145,7 +147,8 @@ export default function KioskPage() {
         );
       }
     } catch {
-      // Silently fail
+      setActionError("Failed to update arrival");
+      setTimeout(() => setActionError(null), 3000);
     }
   };
 
@@ -168,7 +171,8 @@ export default function KioskPage() {
         );
       }
     } catch {
-      // Silently fail
+      setActionError("Failed to update departure");
+      setTimeout(() => setActionError(null), 3000);
     }
   };
 
@@ -195,6 +199,11 @@ export default function KioskPage() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-white p-4 select-none">
+      {actionError && (
+        <div className="bg-red-600 text-white text-center py-2 text-sm font-medium">
+          {actionError}
+        </div>
+      )}
       {/* Header with date navigation */}
       <header className="flex items-center justify-between mb-6">
         <button

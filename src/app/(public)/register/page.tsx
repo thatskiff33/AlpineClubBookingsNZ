@@ -185,7 +185,7 @@ export default function RegisterPage() {
             <Input
               id="password"
               type="password"
-              placeholder="At least 8 characters"
+              placeholder="At least 12 characters"
               value={form.password}
               onChange={updateField("password")}
               autoComplete="new-password"

@@ -35,6 +35,8 @@ interface ChoreTemplate {
   frequencyDaysOfWeek: number[];
   recommendedPeopleMin: number;
   recommendedPeopleMax: number;
+  ageRestriction: string;
+  minAge: number;
 }
 
 interface Allocation {
@@ -300,6 +302,15 @@ export default function RosterSetupWizard() {
           : a
       )
     );
+  };
+
+  const isGuestEligible = (guest: typeof allGuests[0], ageRestriction: string, minAge: number | null) => {
+    if (ageRestriction === "ADULTS_ONLY" && guest.ageTier !== "ADULT") return false;
+    if (minAge !== null) {
+      if (guest.ageTier === "CHILD" && minAge > 9) return false;
+      if (guest.ageTier === "YOUTH" && minAge > 17) return false;
+    }
+    return true;
   };
 
   // ---------------------------------------------------------------------------
@@ -664,7 +675,12 @@ export default function RosterSetupWizard() {
                                   }
                                   className="flex-1 bg-slate-600 text-white rounded-lg px-3 py-2 text-lg min-h-[44px]"
                                 >
-                                  {allGuests.map((g) => (
+                                  {allGuests
+                                    .filter((g) => {
+                                      const tmpl = templates.find((t) => t.id === choreId);
+                                      return isGuestEligible(g, tmpl?.ageRestriction ?? "NONE", tmpl?.minAge ?? null);
+                                    })
+                                    .map((g) => (
                                     <option key={g.id} value={g.id}>
                                       {g.firstName} {g.lastName} ({g.ageTier})
                                     </option>
