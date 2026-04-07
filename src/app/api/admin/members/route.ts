@@ -24,10 +24,8 @@ const createMemberSchema = z.object({
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]).optional(),
   active: z.boolean().default(true),
   sendInvite: z.boolean().default(false),
-  parentMemberId: z.string().optional().nullable(),
-  secondaryParentId: z.string().optional().nullable(),
-  familyGroupId: z.string().optional().nullable(),
-  inheritParentEmail: z.boolean().default(true),
+  canLogin: z.boolean().optional(),
+  familyGroupIds: z.array(z.string()).optional(),
 });
 
 const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
@@ -125,12 +123,12 @@ export async function GET(req: NextRequest) {
     andConditions.push({ xeroContactId: null });
   }
 
-  // Filter: member type (primary vs dependent)
+  // Filter: member type (canLogin vs non-login)
   const typeFilter = sp.get("type");
   if (typeFilter === "primary") {
-    andConditions.push({ parentMemberId: null });
+    andConditions.push({ canLogin: true });
   } else if (typeFilter === "dependent") {
-    andConditions.push({ parentMemberId: { not: null } });
+    andConditions.push({ canLogin: false });
   }
 
   // Filter: subscription
@@ -174,31 +172,16 @@ export async function GET(req: NextRequest) {
     role: true,
     ageTier: true,
     active: true,
+    canLogin: true,
     xeroContactId: true,
     joinedDate: true,
     createdAt: true,
     forcePasswordChange: true,
-    parentMemberId: true,
-    inheritParentEmail: true,
-    parent: {
-      select: { id: true, firstName: true, lastName: true },
-    },
-    secondaryParentId: true,
-    secondaryParent: {
-      select: { id: true, firstName: true, lastName: true },
-    },
-    familyGroupId: true,
-    familyGroup: {
-      select: { id: true, name: true },
-    },
     familyGroupMemberships: {
       select: {
         familyGroupId: true,
         familyGroup: { select: { id: true, name: true } },
       },
-    },
-    _count: {
-      select: { dependents: true, secondaryDependents: true },
     },
     subscriptions: {
       where: { seasonYear: currentSeasonYear },
@@ -222,22 +205,12 @@ export async function GET(req: NextRequest) {
     ...m,
     subscriptionStatus: m.subscriptions[0]?.status ?? null,
     subscriptionXeroInvoiceId: m.subscriptions[0]?.xeroInvoiceId ?? null,
-    parentName: m.parent ? `${m.parent.firstName} ${m.parent.lastName}` : null,
-    secondaryParentName: m.secondaryParent ? `${m.secondaryParent.firstName} ${m.secondaryParent.lastName}` : null,
-    dependentCount: m._count.dependents + m._count.secondaryDependents,
-    // Legacy single-group field (kept for backward compat)
-    familyGroupName: m.familyGroup?.name ?? null,
-    // All groups from join table
     familyGroups: m.familyGroupMemberships.map((fg) => ({
       id: fg.familyGroup.id,
       name: fg.familyGroup.name,
     })),
     subscriptions: undefined,
-    parent: undefined,
-    secondaryParent: undefined,
-    familyGroup: undefined,
     familyGroupMemberships: undefined,
-    _count: undefined,
   }));
 
   return NextResponse.json({
@@ -275,64 +248,31 @@ export async function POST(req: NextRequest) {
   }
 
   const data = parsed.data;
-  let email = data.email.toLowerCase().trim();
+  const email = data.email.toLowerCase().trim();
 
-  // Validate parent assignment
-  if (data.parentMemberId) {
-    const parent = await prisma.member.findUnique({ where: { id: data.parentMemberId } });
-    if (!parent) {
-      return NextResponse.json({ error: "Primary parent not found" }, { status: 404 });
-    }
-    if (!parent.active) {
-      return NextResponse.json({ error: "Primary parent is inactive" }, { status: 422 });
-    }
-    if (parent.parentMemberId) {
-      return NextResponse.json({ error: "Primary parent cannot be a dependent" }, { status: 422 });
-    }
-    // Dependents share parent's email unless they have their own
-    if (data.inheritParentEmail !== false) {
-      email = parent.email;
-    }
-  }
+  // Determine canLogin: explicit if provided, otherwise adults with unique email can login
+  const ageTierForLogin = data.ageTier || "ADULT";
+  const canLogin = data.canLogin !== undefined ? data.canLogin : ageTierForLogin === "ADULT";
 
-  if (data.secondaryParentId) {
-    if (!data.parentMemberId) {
-      return NextResponse.json({ error: "Primary parent is required when setting a secondary parent" }, { status: 422 });
-    }
-    if (data.secondaryParentId === data.parentMemberId) {
-      return NextResponse.json({ error: "Secondary parent must be different from primary parent" }, { status: 422 });
-    }
-    const secondaryParent = await prisma.member.findUnique({ where: { id: data.secondaryParentId } });
-    if (!secondaryParent) {
-      return NextResponse.json({ error: "Secondary parent not found" }, { status: 404 });
-    }
-    if (!secondaryParent.active) {
-      return NextResponse.json({ error: "Secondary parent is inactive" }, { status: 422 });
-    }
-    if (secondaryParent.parentMemberId) {
-      return NextResponse.json({ error: "Secondary parent cannot be a dependent" }, { status: 422 });
-    }
-  }
-
-  // Validate family group assignment (only for primary members)
-  if (data.familyGroupId) {
-    if (data.parentMemberId) {
-      return NextResponse.json({ error: "Dependents cannot be assigned to a family group" }, { status: 422 });
-    }
-    const group = await prisma.familyGroup.findUnique({ where: { id: data.familyGroupId } });
-    if (!group) {
-      return NextResponse.json({ error: "Family group not found" }, { status: 404 });
-    }
-  }
-
-  // Check for existing member (only for primary members)
-  if (!data.parentMemberId) {
-    const existing = await prisma.member.findFirst({ where: { email, parentMemberId: null } });
+  // Check for existing member with same email that can login
+  if (canLogin) {
+    const existing = await prisma.member.findFirst({ where: { email, canLogin: true } });
     if (existing) {
       return NextResponse.json(
         { error: "A member with this email already exists" },
         { status: 409 }
       );
+    }
+  }
+
+  // Validate family group assignments
+  if (data.familyGroupIds && data.familyGroupIds.length > 0) {
+    const groups = await prisma.familyGroup.findMany({
+      where: { id: { in: data.familyGroupIds } },
+      select: { id: true },
+    });
+    if (groups.length !== data.familyGroupIds.length) {
+      return NextResponse.json({ error: "One or more family groups not found" }, { status: 404 });
     }
   }
 
@@ -351,37 +291,50 @@ export async function POST(req: NextRequest) {
   const placeholderHash = await hash(randomBytes(32).toString("hex"), 13);
 
   try {
-    const member = await prisma.member.create({
-      data: {
-        email,
-        firstName: data.firstName.trim(),
-        lastName: data.lastName.trim(),
-        phone: data.phone?.trim() || null,
-        dateOfBirth,
-        role: data.role,
-        ageTier: ageTier as "ADULT" | "YOUTH" | "CHILD",
-        active: data.active,
-        passwordHash: placeholderHash,
-        parentMemberId: data.parentMemberId || null,
-        secondaryParentId: data.secondaryParentId || null,
-        familyGroupId: data.familyGroupId || null,
-        inheritParentEmail: data.parentMemberId ? data.inheritParentEmail : true,
-        emailVerified: data.parentMemberId ? true : false, // Dependents don't need verification
-      },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        phone: true,
-        dateOfBirth: true,
-        role: true,
-        ageTier: true,
-        active: true,
-        xeroContactId: true,
-        joinedDate: true,
-        createdAt: true,
-      },
+    const member = await prisma.$transaction(async (tx) => {
+      const created = await tx.member.create({
+        data: {
+          email,
+          firstName: data.firstName.trim(),
+          lastName: data.lastName.trim(),
+          phone: data.phone?.trim() || null,
+          dateOfBirth,
+          role: data.role,
+          ageTier: ageTier as "ADULT" | "YOUTH" | "CHILD",
+          active: data.active,
+          canLogin,
+          passwordHash: placeholderHash,
+          emailVerified: !canLogin, // Non-login members don't need verification
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          dateOfBirth: true,
+          role: true,
+          ageTier: true,
+          active: true,
+          canLogin: true,
+          xeroContactId: true,
+          joinedDate: true,
+          createdAt: true,
+        },
+      });
+
+      // Add to family groups if specified
+      if (data.familyGroupIds && data.familyGroupIds.length > 0) {
+        await tx.familyGroupMember.createMany({
+          data: data.familyGroupIds.map((fgId) => ({
+            memberId: created.id,
+            familyGroupId: fgId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      return created;
     });
 
     // Sync to Xero if connected
