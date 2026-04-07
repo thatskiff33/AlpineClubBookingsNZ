@@ -40,7 +40,8 @@ function LoginForm() {
       });
 
       if (result?.error) {
-        if (result.error === "EMAIL_NOT_VERIFIED" || result.code === "EMAIL_NOT_VERIFIED") {
+        // NextAuth v5 sets result.code from CredentialsSignin subclass code
+        if (result.code === "EMAIL_NOT_VERIFIED" || result.error === "EMAIL_NOT_VERIFIED") {
           setEmailNotVerified(true);
         } else {
           setError("Invalid email or password. Please try again.");

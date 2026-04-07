@@ -968,6 +968,7 @@ export async function importMembersFromXeroGroups(
               xeroContactId: contact.contactID || null,
               phone: getXeroContactPhone(contact.phones),
               active: true,
+              emailVerified: true, // Xero-synced members don't need email verification
               joinedDate: memberJoinedDate,
             },
           });

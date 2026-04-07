@@ -170,6 +170,7 @@ export async function POST(req: NextRequest) {
             role: row.role,
             ageTier: row.ageTier,
             active: true,
+            emailVerified: true, // Admin-imported members don't need email verification
             passwordHash,
           },
           select: { id: true, email: true, firstName: true, lastName: true },
