@@ -30,7 +30,20 @@ interface SyncResult {
   skippedExisting?: number
   linkedExisting?: number
   skippedNoEmail?: number
+  skippedNoEmailDetails?: Array<{ name: string; xeroContactId: string }>
   groupsProcessed?: string[]
+  // Detailed sync report fields (#29)
+  syncReport?: SyncReport
+}
+
+interface SyncReport {
+  created: Array<{ name: string; email: string; xeroContactId: string; group?: string }>
+  updated: Array<{ name: string; memberId: string; xeroContactId: string; changes: string[] }>
+  skippedNoChanges: number
+  skippedNoEmail: Array<{ name: string; xeroContactId: string }>
+  skippedOther: Array<{ name: string; xeroContactId?: string; reason: string }>
+  errors: Array<{ name: string; xeroContactId?: string; error: string }>
+  total: number
 }
 
 interface ContactGroup {
@@ -106,6 +119,113 @@ const MAPPING_TYPE_FILTER: Record<keyof AccountMappings, string> = {
   stripeBankAccount: "BANK",
   stripeFees: "EXPENSE",
   subscriptionIncome: "REVENUE",
+}
+
+function SyncReportSection({
+  title,
+  count,
+  defaultOpen,
+  children,
+}: {
+  title: string
+  count: number
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen ?? false)
+  if (count === 0) return null
+  return (
+    <div className="border rounded-md">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-left hover:bg-slate-50"
+      >
+        <span>{title} ({count})</span>
+        <span className="text-xs text-slate-400">{open ? "▼" : "▶"}</span>
+      </button>
+      {open && <div className="px-3 pb-3 space-y-1 border-t">{children}</div>}
+    </div>
+  )
+}
+
+function SyncReportView({ report }: { report: SyncReport }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        Scanned {report.total} Xero contacts
+      </p>
+
+      <SyncReportSection title="Updated Members" count={report.updated.length}>
+        {report.updated.map((u, i) => (
+          <div key={i} className="flex items-start justify-between text-xs py-1 border-b last:border-0">
+            <div>
+              <a href={`/admin/members/${u.memberId}`} className="text-blue-600 hover:underline font-medium">{u.name}</a>
+              <ul className="mt-0.5 text-slate-500 list-disc list-inside">
+                {u.changes.map((c, j) => <li key={j}>{c}</li>)}
+              </ul>
+            </div>
+            <a href={`https://go.xero.com/Contacts/View/${u.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline shrink-0 ml-2">Xero ↗</a>
+          </div>
+        ))}
+      </SyncReportSection>
+
+      <SyncReportSection title="Already Linked (No Changes)" count={report.skippedNoChanges}>
+        <p className="text-xs text-slate-500 pt-1">{report.skippedNoChanges} contacts were already linked and had no data to update.</p>
+      </SyncReportSection>
+
+      <SyncReportSection title="Skipped — No Email" count={report.skippedNoEmail.length}>
+        {report.skippedNoEmail.map((s, i) => (
+          <div key={i} className="flex items-center justify-between text-xs py-1 border-b last:border-0">
+            <span>{s.name}</span>
+            <a href={`https://go.xero.com/Contacts/View/${s.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline shrink-0 ml-2">Open in Xero ↗</a>
+          </div>
+        ))}
+      </SyncReportSection>
+
+      <SyncReportSection title="Skipped — Other Reasons" count={report.skippedOther.length}>
+        {report.skippedOther.map((s, i) => (
+          <div key={i} className="flex items-center justify-between text-xs py-1 border-b last:border-0">
+            <div>
+              <span className="font-medium">{s.name}</span>
+              <span className="text-slate-500 ml-1">— {s.reason}</span>
+            </div>
+            {s.xeroContactId && (
+              <a href={`https://go.xero.com/Contacts/View/${s.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline shrink-0 ml-2">Xero ↗</a>
+            )}
+          </div>
+        ))}
+      </SyncReportSection>
+
+      <SyncReportSection title="Errors" count={report.errors.length} defaultOpen={true}>
+        {report.errors.map((e, i) => (
+          <div key={i} className="flex items-center justify-between text-xs py-1 border-b last:border-0 text-red-700">
+            <div>
+              <span className="font-medium">{e.name}</span>
+              <span className="ml-1">— {e.error}</span>
+            </div>
+            {e.xeroContactId && (
+              <a href={`https://go.xero.com/Contacts/View/${e.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline shrink-0 ml-2">Xero ↗</a>
+            )}
+          </div>
+        ))}
+      </SyncReportSection>
+
+      {report.created.length > 0 && (
+        <SyncReportSection title="Newly Created Members" count={report.created.length}>
+          {report.created.map((c, i) => (
+            <div key={i} className="flex items-center justify-between text-xs py-1 border-b last:border-0">
+              <div>
+                <span className="font-medium">{c.name}</span>
+                <span className="text-slate-500 ml-1">{c.email}</span>
+                {c.group && <Badge variant="secondary" className="ml-1 text-[10px] py-0">{c.group}</Badge>}
+              </div>
+              <a href={`https://go.xero.com/Contacts/View/${c.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline shrink-0 ml-2">Xero ↗</a>
+            </div>
+          ))}
+        </SyncReportSection>
+      )}
+    </div>
+  )
 }
 
 export default function XeroPage() {
@@ -881,10 +1001,29 @@ export default function XeroPage() {
                         </p>
                       )}
                       {syncResult.skippedNoEmail !== undefined && syncResult.skippedNoEmail > 0 && (
-                        <p>
-                          <span className="text-muted-foreground">Skipped (no email):</span>{" "}
-                          {syncResult.skippedNoEmail}
-                        </p>
+                        <div>
+                          <p>
+                            <span className="text-muted-foreground">Skipped (no email):</span>{" "}
+                            {syncResult.skippedNoEmail}
+                          </p>
+                          {syncResult.skippedNoEmailDetails && syncResult.skippedNoEmailDetails.length > 0 && (
+                            <ul className="mt-1 ml-4 text-sm space-y-0.5">
+                              {syncResult.skippedNoEmailDetails.map((c, i) => (
+                                <li key={i} className="flex items-center gap-2">
+                                  <span>{c.name}</span>
+                                  <a
+                                    href={`https://go.xero.com/Contacts/View/${c.xeroContactId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:underline text-xs"
+                                  >
+                                    Open in Xero ↗
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
                       )}
                       {syncResult.groupsProcessed && syncResult.groupsProcessed.length > 0 && (
                         <p>
@@ -895,24 +1034,9 @@ export default function XeroPage() {
                     </>
                   )}
 
-                  {/* Contact sync results */}
-                  {syncResult.total !== undefined && syncResult.created === undefined && (
-                    <p>
-                      <span className="text-muted-foreground">Total Xero contacts:</span>{" "}
-                      {syncResult.total}
-                    </p>
-                  )}
-                  {syncResult.matched !== undefined && (
-                    <p>
-                      <span className="text-muted-foreground">Matched to members:</span>{" "}
-                      {syncResult.matched}
-                    </p>
-                  )}
-                  {syncResult.updated !== undefined && syncResult.created === undefined && (
-                    <p>
-                      <span className="text-muted-foreground">Records updated:</span>{" "}
-                      {syncResult.updated}
-                    </p>
+                  {/* Detailed sync report (#29) */}
+                  {syncResult.syncReport && (
+                    <SyncReportView report={syncResult.syncReport} />
                   )}
 
                   {/* Membership results */}
