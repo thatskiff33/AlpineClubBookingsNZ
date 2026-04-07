@@ -62,6 +62,7 @@ export async function GET(request: NextRequest) {
         include: {
           booking: {
             select: {
+              id: true,
               checkIn: true,
               checkOut: true,
               member: {

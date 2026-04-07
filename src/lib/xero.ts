@@ -1124,6 +1124,20 @@ export async function checkMembershipStatus(
 
   const status = determineSubscriptionStatus(subscriptionInvoice);
 
+  // Fetch the online invoice URL if available
+  let onlineInvoiceUrl: string | null = null;
+  if (subscriptionInvoice.invoiceID) {
+    try {
+      const onlineRes = await xero.accountingApi.getOnlineInvoice(tenantId, subscriptionInvoice.invoiceID);
+      const onlineInvoices = onlineRes.body.onlineInvoices;
+      if (onlineInvoices && onlineInvoices.length > 0) {
+        onlineInvoiceUrl = onlineInvoices[0].onlineInvoiceUrl ?? null;
+      }
+    } catch {
+      // Non-critical — continue without online URL
+    }
+  }
+
   // Update local MemberSubscription record
   await prisma.memberSubscription.upsert({
     where: {
@@ -1132,6 +1146,8 @@ export async function checkMembershipStatus(
     update: {
       status: status.status,
       xeroInvoiceId: subscriptionInvoice.invoiceID,
+      xeroInvoiceNumber: subscriptionInvoice.invoiceNumber ?? null,
+      xeroOnlineInvoiceUrl: onlineInvoiceUrl,
       paidAt: status.paidAt,
     },
     create: {
@@ -1139,6 +1155,8 @@ export async function checkMembershipStatus(
       seasonYear: year,
       status: status.status,
       xeroInvoiceId: subscriptionInvoice.invoiceID,
+      xeroInvoiceNumber: subscriptionInvoice.invoiceNumber ?? null,
+      xeroOnlineInvoiceUrl: onlineInvoiceUrl,
       paidAt: status.paidAt,
     },
   });
@@ -1430,10 +1448,13 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
     await xero.accountingApi.createPayment(tenantId, payment);
   }
 
-  // Store the Xero invoice ID on the payment record
+  // Store the Xero invoice ID and number on the payment record
   await prisma.payment.update({
     where: { id: booking.payment.id },
-    data: { xeroInvoiceId: createdInvoice.invoiceID },
+    data: {
+      xeroInvoiceId: createdInvoice.invoiceID,
+      xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
+    },
   });
 
   return createdInvoice.invoiceID;

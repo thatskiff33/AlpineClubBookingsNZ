@@ -103,10 +103,18 @@ export async function POST(request: NextRequest) {
       },
     });
     if (!paidSub) {
+      // Fetch subscription to get invoice URL for member payment
+      const subscription = await prisma.memberSubscription.findFirst({
+        where: { memberId: session.user.id, seasonYear },
+        orderBy: { updatedAt: "desc" },
+      });
       const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
       return NextResponse.json(
         {
           error: `Your membership subscription for the ${seasonDisplay} season is not paid. Please contact the club to arrange payment before booking.`,
+          code: "SUBSCRIPTION_REQUIRED",
+          invoiceUrl: subscription?.xeroOnlineInvoiceUrl ?? null,
+          invoiceNumber: subscription?.xeroInvoiceNumber ?? null,
         },
         { status: 403 }
       );
