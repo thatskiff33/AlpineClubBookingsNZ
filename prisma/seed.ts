@@ -225,7 +225,7 @@ async function main() {
         role: "LODGE",
         ageTier: "ADULT",
         emailVerified: true,
-        forcePasswordChange: true,
+        forcePasswordChange: false,
       },
     });
     console.log("Lodge account seeded: lodge@tokoroa.org.nz / lodge123");

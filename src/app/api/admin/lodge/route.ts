@@ -1,0 +1,127 @@
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { logAudit } from "@/lib/audit";
+import bcrypt from "bcryptjs";
+import { z } from "zod";
+
+/**
+ * GET /api/admin/lodge
+ * Returns the lodge account details.
+ */
+export async function GET() {
+  const session = await auth();
+  if (!session?.user || session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const lodge = await prisma.member.findFirst({
+    where: { role: "LODGE" },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  });
+
+  if (!lodge) {
+    return NextResponse.json({ error: "Lodge account not found" }, { status: 404 });
+  }
+
+  return NextResponse.json({ lodge });
+}
+
+const updateSchema = z.object({
+  email: z.string().email().optional(),
+  password: z.string().min(6).optional(),
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().min(1).optional(),
+});
+
+/**
+ * PUT /api/admin/lodge
+ * Updates the lodge account email and/or password.
+ */
+export async function PUT(request: NextRequest) {
+  const session = await auth();
+  if (!session?.user || session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const body = await request.json();
+  const parsed = updateSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+  const { email, password, firstName, lastName } = parsed.data;
+
+  const lodge = await prisma.member.findFirst({
+    where: { role: "LODGE" },
+  });
+
+  if (!lodge) {
+    return NextResponse.json({ error: "Lodge account not found" }, { status: 404 });
+  }
+
+  // Check email uniqueness if changing email
+  if (email && email.toLowerCase() !== lodge.email) {
+    const existing = await prisma.member.findFirst({
+      where: { email: email.toLowerCase(), id: { not: lodge.id } },
+    });
+    if (existing) {
+      return NextResponse.json({ error: "Email already in use" }, { status: 409 });
+    }
+  }
+
+  const updateData: Record<string, unknown> = {};
+  const changes: string[] = [];
+
+  if (email) {
+    updateData.email = email.toLowerCase();
+    changes.push(`email changed to ${email.toLowerCase()}`);
+  }
+  if (password) {
+    updateData.passwordHash = await bcrypt.hash(password, 12);
+    changes.push("password changed");
+  }
+  if (firstName) {
+    updateData.firstName = firstName;
+    changes.push(`firstName changed to ${firstName}`);
+  }
+  if (lastName) {
+    updateData.lastName = lastName;
+    changes.push(`lastName changed to ${lastName}`);
+  }
+
+  if (changes.length === 0) {
+    return NextResponse.json({ error: "No changes provided" }, { status: 400 });
+  }
+
+  const updated = await prisma.member.update({
+    where: { id: lodge.id },
+    data: updateData,
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      updatedAt: true,
+    },
+  });
+
+  logAudit({
+    action: "LODGE_ACCOUNT_UPDATED",
+    memberId: session.user.id,
+    targetId: lodge.id,
+    details: changes.join("; "),
+  });
+
+  return NextResponse.json({ lodge: updated });
+}

@@ -5,10 +5,13 @@ Sentry.init({
 
   environment: process.env.NODE_ENV || "development",
 
-  // OBS-10: Performance tracing for client
+  // Performance tracing
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
 
-  // Enable breadcrumbs for error context
+  // Session Replay sampling
+  replaysSessionSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 0,
+  replaysOnErrorSampleRate: 1.0,
+
   integrations: [
     Sentry.breadcrumbsIntegration({
       console: true,
@@ -16,13 +19,13 @@ Sentry.init({
       fetch: true,
       history: true,
     }),
+    Sentry.replayIntegration(),
   ],
 
   // Scrub sensitive data from Sentry payloads
   beforeSend(event) {
     if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return null;
 
-    // Scrub sensitive data from request body (e.g. password fields in form submissions)
     if (event.request?.data) {
       const dataStr =
         typeof event.request.data === "string"
@@ -55,3 +58,6 @@ Sentry.init({
     "Network request failed",
   ],
 });
+
+// Instrument Next.js router transitions for performance tracing
+export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
