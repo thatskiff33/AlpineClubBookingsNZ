@@ -110,12 +110,12 @@ $prompt"
   log "Running Claude ($model) for phase $num..."
   log "Logging to: $phase_log"
 
-  # Run claude headlessly
+  # Run claude — output streams to terminal and log file
   if claude -p "$full_prompt" \
     --model "$model" \
     --dangerously-skip-permissions \
     --effort max \
-    > "$phase_log" 2>&1; then
+    2>&1 | tee "$phase_log"; then
     log "Claude completed phase $num"
   else
     log "WARNING: Claude exited non-zero for phase $num (may still have succeeded)"
