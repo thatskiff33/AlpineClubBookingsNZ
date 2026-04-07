@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
+import { calculateOverlapDays } from "@/lib/hut-leader-overlap";
 
 const updateSchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -62,26 +63,29 @@ export async function PUT(
     );
   }
 
-  // Check for overlapping assignments (excluding self, same-day boundaries allowed)
-  const overlapping = await prisma.hutLeaderAssignment.findFirst({
+  // Check for overlapping assignments (excluding self) — 1 day overlap allowed, 2+ rejected
+  const potentialOverlaps = await prisma.hutLeaderAssignment.findMany({
     where: {
       id: { not: id },
-      startDate: { lt: finalEnd },
-      endDate: { gt: finalStart },
+      startDate: { lte: finalEnd },
+      endDate: { gte: finalStart },
     },
     include: {
       member: { select: { firstName: true, lastName: true } },
     },
   });
 
-  if (overlapping) {
-    const name = `${overlapping.member.firstName} ${overlapping.member.lastName}`;
-    const start = overlapping.startDate.toISOString().split("T")[0];
-    const end = overlapping.endDate.toISOString().split("T")[0];
-    return NextResponse.json(
-      { error: `Overlaps with existing assignment for ${name} (${start} to ${end})` },
-      { status: 409 }
-    );
+  for (const existing of potentialOverlaps) {
+    const overlapDays = calculateOverlapDays(finalStart, finalEnd, existing.startDate, existing.endDate);
+    if (overlapDays > 1) {
+      const name = `${existing.member.firstName} ${existing.member.lastName}`;
+      const start = existing.startDate.toISOString().split("T")[0];
+      const end = existing.endDate.toISOString().split("T")[0];
+      return NextResponse.json(
+        { error: `Assignment overlaps with ${name}'s assignment (${start} to ${end}) by ${overlapDays} days. Maximum 1 day overlap is allowed for handover.` },
+        { status: 409 }
+      );
+    }
   }
 
   try {
