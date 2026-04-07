@@ -226,6 +226,10 @@ export async function PUT(
 
       if (checkInChanged) {
         const now = new Date();
+        // Business rule: change fee is calculated against the ORIGINAL check-in date's
+        // cancellation policy. This is because the member's cancellation obligations were
+        // established when the booking was first created. Using the new date's policy could
+        // allow gaming the system by first moving to a date with a more lenient policy.
         const policy = await loadCancellationPolicy(booking.checkIn);
         const feeResult = calculateChangeFee({
           daysUntilOriginalCheckIn: daysUntilDate(booking.checkIn, now),

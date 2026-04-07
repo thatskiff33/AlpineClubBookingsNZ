@@ -48,8 +48,8 @@ const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
 
-// Xero tokens expire after 30 minutes; refresh 5 minutes early
-const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+// Xero tokens expire after 30 minutes; refresh 10 minutes early
+const TOKEN_REFRESH_BUFFER_MS = 10 * 60 * 1000; // 10 minutes — buffer for long-running bulk ops (contact sync, membership refresh)
 
 // ---------------------------------------------------------------------------
 // Encryption helpers (for token storage at rest)
@@ -1233,6 +1233,17 @@ export async function refreshAllMembershipStatuses(): Promise<{
     select: { id: true, email: true, firstName: true, lastName: true },
   });
 
+  // Log how many members will be refreshed vs skipped
+  const totalMembers = await prisma.member.count({ where: { active: true } });
+  logger.info(
+    {
+      job: "xero-membership-refresh",
+      withXeroContact: members.length,
+      withoutXeroContact: totalMembers - members.length,
+    },
+    "Membership refresh: members with Xero contact will be checked, others skipped"
+  );
+
   let checked = 0;
   let updated = 0;
   let errors = 0;
@@ -1467,6 +1478,9 @@ export async function createXeroCreditNote(
       {
         description: `Refund for booking ${payment.booking.id.slice(0, 8)} (${formatDate(new Date(payment.booking.checkIn))} - ${formatDate(new Date(payment.booking.checkOut))})`,
         quantity: 1,
+        // Note: Xero credit notes expect POSITIVE unitAmount values.
+        // Xero handles the sign internally — a credit note with unitAmount: 50
+        // will correctly reduce the invoice balance by $50.
         unitAmount: refundAmountCents / 100,
         accountCode: refundCode,
         taxType: "OUTPUT2",
@@ -1565,7 +1579,7 @@ export async function createXeroSupplementaryInvoice(params: {
     lineItems,
     date: formatDate(new Date()),
     dueDate: formatDate(new Date()),
-    reference: `Modification - Booking ${bookingId.slice(0, 8)}`,
+    reference: `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,
   };
@@ -1617,6 +1631,9 @@ export async function createXeroCreditNoteForModification(params: {
       {
         description: `Booking modification refund (Booking ${bookingId.slice(0, 8)})`,
         quantity: 1,
+        // Note: Xero credit notes expect POSITIVE unitAmount values.
+        // Xero handles the sign internally — a credit note with unitAmount: 50
+        // will correctly reduce the invoice balance by $50.
         unitAmount: refundAmountCents / 100,
         accountCode: refundCode,
         taxType: "OUTPUT2",
