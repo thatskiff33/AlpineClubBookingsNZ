@@ -584,7 +584,7 @@ export async function syncContactsFromXero(): Promise<{
       // Fall back to email matching (primary members only)
       if (!contact.emailAddress) continue;
       const member = await prisma.member.findFirst({
-        where: { email: contact.emailAddress.toLowerCase(), parentMemberId: null },
+        where: { email: contact.emailAddress.toLowerCase(), canLogin: true },
       });
 
       if (member) {
@@ -815,7 +815,7 @@ export async function importMembersFromXeroGroups(
 
           // Find the primary account holder with this email
           const existingPrimary = await prisma.member.findFirst({
-            where: { email, parentMemberId: null },
+            where: { email, canLogin: true },
           });
 
           if (existingPrimary) {
@@ -865,21 +865,21 @@ export async function importMembersFromXeroGroups(
               continue;
             }
 
-            // Also check if this contact already exists as a dependent
-            const existingDependent = await prisma.member.findFirst({
+            // Also check if this contact already exists as a non-login family member
+            const existingFamilyMember = await prisma.member.findFirst({
               where: {
                 email,
-                parentMemberId: existingPrimary.id,
+                canLogin: false,
                 firstName: { equals: contact.firstName || "Unknown", mode: "insensitive" },
                 lastName: { equals: contact.lastName || "Unknown", mode: "insensitive" },
               },
             });
-            if (existingDependent) {
+            if (existingFamilyMember) {
               skippedExisting++;
               // Link xeroContactId if missing
-              if (!existingDependent.xeroContactId && contact.contactID) {
+              if (!existingFamilyMember.xeroContactId && contact.contactID) {
                 await prisma.member.update({
-                  where: { id: existingDependent.id },
+                  where: { id: existingFamilyMember.id },
                   data: { xeroContactId: contact.contactID },
                 });
                 linkedExisting++;
@@ -887,7 +887,7 @@ export async function importMembersFromXeroGroups(
               continue;
             }
 
-            // Different name — create as dependent of the primary account
+            // Different name — create as non-login family member and add to same family group
             let depFirstName = contact.firstName || "";
             let depLastName = contact.lastName || "";
             if (!depFirstName && !depLastName && contact.name) {
@@ -910,7 +910,7 @@ export async function importMembersFromXeroGroups(
               }
             }
 
-            await prisma.member.create({
+            const newFamilyMember = await prisma.member.create({
               data: {
                 email,
                 firstName: depFirstName,
@@ -921,10 +921,40 @@ export async function importMembersFromXeroGroups(
                 xeroContactId: contact.contactID || null,
                 phone: getXeroContactPhone(contact.phones),
                 active: true,
-                emailVerified: true, // Dependents don't need email verification
-                parentMemberId: existingPrimary.id,
+                emailVerified: true,
+                canLogin: false,
+                inheritEmailFromId: existingPrimary.id,
               },
             });
+
+            // Add both members to a shared family group (create if needed)
+            const existingGroup = await prisma.familyGroupMember.findFirst({
+              where: { memberId: existingPrimary.id },
+              select: { familyGroupId: true },
+            });
+
+            if (existingGroup) {
+              // Add new member to existing group
+              await prisma.familyGroupMember.create({
+                data: {
+                  familyGroupId: existingGroup.familyGroupId,
+                  memberId: newFamilyMember.id,
+                  role: "MEMBER",
+                },
+              }).catch(() => {}); // Ignore duplicate
+            } else {
+              // Create new family group with both members
+              const group = await prisma.familyGroup.create({
+                data: { name: `${existingPrimary.lastName} Family` },
+              });
+              await prisma.familyGroupMember.createMany({
+                data: [
+                  { familyGroupId: group.id, memberId: existingPrimary.id, role: "ADMIN" },
+                  { familyGroupId: group.id, memberId: newFamilyMember.id, role: "MEMBER" },
+                ],
+                skipDuplicates: true,
+              });
+            }
 
             createdAsDependent++;
             continue;
@@ -1868,7 +1898,7 @@ export async function findDuplicateContacts(): Promise<{
         firstName: true,
         lastName: true,
         active: true,
-        parentMemberId: true,
+        canLogin: true,
         familyGroupMemberships: { select: { familyGroupId: true } },
       },
     });
@@ -1876,7 +1906,7 @@ export async function findDuplicateContacts(): Promise<{
     const contactToGroupIds = new Map<string, Set<string>>();
     const contactToMember = new Map<string, {
       id: string; firstName: string; lastName: string;
-      active: boolean; parentMemberId: string | null;
+      active: boolean; canLogin: boolean;
     }>();
     for (const m of membersWithGroups) {
       if (m.xeroContactId) {
@@ -1889,7 +1919,7 @@ export async function findDuplicateContacts(): Promise<{
           firstName: m.firstName,
           lastName: m.lastName,
           active: m.active,
-          parentMemberId: m.parentMemberId,
+          canLogin: m.canLogin,
         });
       }
     }
@@ -1927,7 +1957,7 @@ export async function findDuplicateContacts(): Promise<{
 
       const eligibleMembers = group.contacts
         .map((c) => contactToMember.get(c.contactID))
-        .filter((m): m is NonNullable<typeof m> => !!m && !m.parentMemberId);
+        .filter((m): m is NonNullable<typeof m> => !!m && m.canLogin);
 
       group.eligibleMemberIds = eligibleMembers.map((m) => m.id);
       group.canCreateFamilyGroup = eligibleMembers.length >= 2;

@@ -16,8 +16,8 @@ export type EmailResolvableMember = {
  * Resolution order:
  * 1. If `inheritEmailFromId` is set, use that adult member's email.
  *    Uses pre-loaded `inheritEmailFrom` if available, otherwise does a DB lookup.
- * 2. Otherwise return `member.email` directly — which already contains the
- *    parent's email for dependents with `inheritParentEmail = true`.
+ * 2. Otherwise return `member.email` directly — which may be the family lead's
+ *    email for non-login members with inherited emails.
  *
  * Booking emails (confirmed, pending, cancelled, etc.) go to the booking
  * creator who is always a primary (non-dependent) member, so those code paths
