@@ -71,9 +71,9 @@ export async function GET(req: NextRequest) {
 
   const typeFilter = sp.get("type");
   if (typeFilter === "primary") {
-    andConditions.push({ parentMemberId: null });
+    andConditions.push({ canLogin: true });
   } else if (typeFilter === "dependent") {
-    andConditions.push({ parentMemberId: { not: null } });
+    andConditions.push({ canLogin: false });
   }
 
   const subscriptionFilter = sp.get("subscription");

@@ -157,13 +157,16 @@ export async function POST(
         active: false,
         xeroContactId: null,
         // Unlink from family structures
-        parentMemberId: null,
-        secondaryParentId: null,
-        familyGroupId: null,
+        inheritEmailFromId: null,
       },
     });
 
-    // 4. Anonymise BookingGuest names for this member's guest appearances
+    // 4. Remove from all family groups
+    await prisma.familyGroupMember.deleteMany({
+      where: { memberId: member.id },
+    });
+
+    // 5. Anonymise BookingGuest names for this member's guest appearances
     await prisma.bookingGuest.updateMany({
       where: { memberId: member.id },
       data: {
@@ -173,7 +176,7 @@ export async function POST(
       },
     });
 
-    // 5. Mark deletion request as approved
+    // 6. Mark deletion request as approved
     await prisma.deletionRequest.update({
       where: { id },
       data: {

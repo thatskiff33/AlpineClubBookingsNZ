@@ -170,7 +170,7 @@ describe("Duplicate group enrichment logic", () => {
   // Replicate the enrichment logic from findDuplicateContacts
   function enrichGroup(
     group: { email: string; contacts: { contactID: string; name: string; firstName?: string; lastName?: string }[] },
-    memberMap: Map<string, { id: string; firstName: string; lastName: string; active: boolean; parentMemberId: string | null }>
+    memberMap: Map<string, { id: string; firstName: string; lastName: string; active: boolean; canLogin: boolean }>
   ): EnrichedGroup {
     const enrichedContacts: EnrichedContact[] = group.contacts.map((c) => {
       const member = memberMap.get(c.contactID);
@@ -184,7 +184,7 @@ describe("Duplicate group enrichment logic", () => {
     const eligibleMembers = enrichedContacts
       .filter((c) => {
         const member = memberMap.get(c.contactID);
-        return member && !member.parentMemberId;
+        return member && member.canLogin;
       })
       .map((c) => memberMap.get(c.contactID)!);
 
@@ -217,8 +217,8 @@ describe("Duplicate group enrichment logic", () => {
       ],
     };
     const memberMap = new Map([
-      ["c1", { id: "m1", firstName: "Alice", lastName: "Smith", active: true, parentMemberId: null }],
-      ["c2", { id: "m2", firstName: "Bob", lastName: "Smith", active: true, parentMemberId: null }],
+      ["c1", { id: "m1", firstName: "Alice", lastName: "Smith", active: true, canLogin: true }],
+      ["c2", { id: "m2", firstName: "Bob", lastName: "Smith", active: true, canLogin: true }],
     ]);
 
     const result = enrichGroup(group, memberMap);
@@ -236,8 +236,8 @@ describe("Duplicate group enrichment logic", () => {
       ],
     };
     const memberMap = new Map([
-      ["c1", { id: "m1", firstName: "Parent", lastName: "Jones", active: true, parentMemberId: null }],
-      ["c2", { id: "m2", firstName: "Child", lastName: "Jones", active: true, parentMemberId: "m1" }],
+      ["c1", { id: "m1", firstName: "Parent", lastName: "Jones", active: true, canLogin: true }],
+      ["c2", { id: "m2", firstName: "Child", lastName: "Jones", active: true, canLogin: false }],
     ]);
 
     const result = enrichGroup(group, memberMap);
@@ -254,8 +254,8 @@ describe("Duplicate group enrichment logic", () => {
       ],
     };
     const memberMap = new Map([
-      ["c1", { id: "m1", firstName: "Alice", lastName: "Smith", active: true, parentMemberId: null }],
-      ["c2", { id: "m2", firstName: "Bob", lastName: "Jones", active: true, parentMemberId: null }],
+      ["c1", { id: "m1", firstName: "Alice", lastName: "Smith", active: true, canLogin: true }],
+      ["c2", { id: "m2", firstName: "Bob", lastName: "Jones", active: true, canLogin: true }],
     ]);
 
     const result = enrichGroup(group, memberMap);
@@ -272,7 +272,7 @@ describe("Duplicate group enrichment logic", () => {
       ],
     };
     const memberMap = new Map([
-      ["c1", { id: "m1", firstName: "Known", lastName: "Member", active: true, parentMemberId: null }],
+      ["c1", { id: "m1", firstName: "Known", lastName: "Member", active: true, canLogin: true }],
     ]);
 
     const result = enrichGroup(group, memberMap);
@@ -291,8 +291,8 @@ describe("Duplicate group enrichment logic", () => {
       ],
     };
     const memberMap = new Map([
-      ["c1", { id: "m1", firstName: "Active", lastName: "User", active: true, parentMemberId: null }],
-      ["c2", { id: "m2", firstName: "Inactive", lastName: "User", active: false, parentMemberId: null }],
+      ["c1", { id: "m1", firstName: "Active", lastName: "User", active: true, canLogin: true }],
+      ["c2", { id: "m2", firstName: "Inactive", lastName: "User", active: false, canLogin: true }],
     ]);
 
     const result = enrichGroup(group, memberMap);

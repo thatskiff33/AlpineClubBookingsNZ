@@ -51,6 +51,9 @@ vi.mock("@/lib/prisma", () => ({
     promoRedemption: {
       findUnique: vi.fn(),
     },
+    familyGroupMember: {
+      deleteMany: vi.fn(),
+    },
   },
 }));
 

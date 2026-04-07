@@ -87,7 +87,7 @@ describe("Admin Family Groups API", () => {
           updatedAt: new Date(),
           memberships: [
             {
-              member: { id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", ageTier: "ADULT", active: true, parentMemberId: null },
+              member: { id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", ageTier: "ADULT", active: true, canLogin: true },
               role: "MEMBER",
             },
           ],
@@ -116,8 +116,8 @@ describe("Admin Family Groups API", () => {
     it("creates a family group and assigns members", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockedPrisma.member.findMany.mockResolvedValue([
-        { id: "m1", firstName: "John", lastName: "Smith", active: true, parentMemberId: null },
-        { id: "m2", firstName: "Jane", lastName: "Smith", active: true, parentMemberId: null },
+        { id: "m1", firstName: "John", lastName: "Smith", active: true, canLogin: true },
+        { id: "m2", firstName: "Jane", lastName: "Smith", active: true, canLogin: true },
       ] as any);
 
       const createdGroup = {
@@ -159,7 +159,7 @@ describe("Admin Family Groups API", () => {
       mockedAuth.mockResolvedValue(adminSession);
       // Members can now belong to multiple groups — no restriction on existing group membership
       mockedPrisma.member.findMany.mockResolvedValue([
-        { id: "m1", firstName: "John", lastName: "Smith", active: true, parentMemberId: null },
+        { id: "m1", firstName: "John", lastName: "Smith", active: true, canLogin: true },
       ] as any);
 
       const createdGroup = {

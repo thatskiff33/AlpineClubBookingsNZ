@@ -45,8 +45,9 @@ export async function GET(request: NextRequest) {
           where: { id: record.memberId },
           data: { email: record.newEmail },
         });
+        // Update email for members who inherit email from this member
         await tx.member.updateMany({
-          where: { parentMemberId: record.memberId },
+          where: { inheritEmailFromId: record.memberId },
           data: { email: record.newEmail },
         });
         await tx.emailChangeToken.delete({ where: { id: record.id } });

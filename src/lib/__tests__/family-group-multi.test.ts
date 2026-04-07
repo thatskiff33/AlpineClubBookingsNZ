@@ -111,14 +111,14 @@ describe("GET /api/admin/family-groups", () => {
           {
             member: {
               id: "m1", firstName: "Alice", lastName: "Smith",
-              email: "alice@example.com", ageTier: "ADULT", active: true, parentMemberId: null,
+              email: "alice@example.com", ageTier: "ADULT", active: true, canLogin: true,
             },
             role: "ADMIN",
           },
           {
             member: {
               id: "m2", firstName: "Bob", lastName: "Smith",
-              email: "alice@example.com", ageTier: "ADULT", active: true, parentMemberId: null,
+              email: "alice@example.com", ageTier: "ADULT", active: true, canLogin: true,
             },
             role: "MEMBER",
           },
@@ -150,14 +150,14 @@ describe("GET /api/admin/family-groups", () => {
           {
             member: {
               id: "m1", firstName: "Active", lastName: "Member",
-              email: "a@e.com", ageTier: "ADULT", active: true, parentMemberId: null,
+              email: "a@e.com", ageTier: "ADULT", active: true, canLogin: true,
             },
             role: "MEMBER",
           },
           {
             member: {
               id: "m2", firstName: "Inactive", lastName: "Member",
-              email: "i@e.com", ageTier: "ADULT", active: false, parentMemberId: null,
+              email: "i@e.com", ageTier: "ADULT", active: false, canLogin: true,
             },
             role: "MEMBER",
           },
@@ -182,8 +182,8 @@ describe("GET /api/admin/family-groups", () => {
 describe("POST /api/admin/family-groups", () => {
   it("creates a group with join table entries", async () => {
     const members = [
-      { id: "m1", firstName: "Alice", lastName: "Smith", active: true, parentMemberId: null },
-      { id: "m2", firstName: "Bob", lastName: "Jones", active: true, parentMemberId: null },
+      { id: "m1", firstName: "Alice", lastName: "Smith", active: true, canLogin: true },
+      { id: "m2", firstName: "Bob", lastName: "Jones", active: true, canLogin: true },
     ];
     mockPrisma.member.findMany.mockResolvedValue(members);
 
@@ -220,7 +220,7 @@ describe("POST /api/admin/family-groups", () => {
 
   it("accepts all member types including dependents", async () => {
     mockPrisma.member.findMany.mockResolvedValue([
-      { id: "m1", firstName: "Alice", lastName: "Smith", active: true, parentMemberId: "parent1" },
+      { id: "m1", firstName: "Alice", lastName: "Smith", active: true, canLogin: false },
     ]);
 
     const createdGroup = {
@@ -248,7 +248,7 @@ describe("POST /api/admin/family-groups", () => {
 
   it("allows inactive members to be added to a group", async () => {
     const members = [
-      { id: "m1", firstName: "Alice", lastName: "Smith", active: false, parentMemberId: null },
+      { id: "m1", firstName: "Alice", lastName: "Smith", active: false, canLogin: true },
     ];
     mockPrisma.member.findMany.mockResolvedValue(members);
 
@@ -302,7 +302,7 @@ describe("GET /api/admin/family-groups/[id]", () => {
       updatedAt: new Date(),
       memberships: [
         {
-          member: { id: "m1", firstName: "A", lastName: "B", email: "a@b.com", ageTier: "ADULT", active: true, parentMemberId: null },
+          member: { id: "m1", firstName: "A", lastName: "B", email: "a@b.com", ageTier: "ADULT", active: true, canLogin: true },
           role: "ADMIN",
         },
       ],
@@ -345,8 +345,8 @@ describe("PUT /api/admin/family-groups/[id]", () => {
       });
 
     mockPrisma.member.findMany.mockResolvedValue([
-      { id: "m1", firstName: "A", lastName: "B", active: true, parentMemberId: null },
-      { id: "m3", firstName: "C", lastName: "D", active: true, parentMemberId: null },
+      { id: "m1", firstName: "A", lastName: "B", active: true, canLogin: true },
+      { id: "m3", firstName: "C", lastName: "D", active: true, canLogin: true },
     ]);
 
     mockPrisma.$transaction.mockImplementation(async (fn: (tx: {

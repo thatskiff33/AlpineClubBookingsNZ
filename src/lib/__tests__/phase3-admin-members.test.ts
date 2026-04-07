@@ -264,7 +264,7 @@ describe("Phase 3: Admin Member Management", () => {
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
       expect(call.where?.AND).toEqual(expect.arrayContaining([
         { role: "ADMIN" },
-        { parentMemberId: null },
+        { canLogin: true },
       ]));
     });
   });
@@ -434,7 +434,10 @@ describe("Phase 3: Admin Member Management", () => {
         { id: "m2", firstName: "Bob", lastName: "Smith", email: "bob@test.com" },
       ] as any);
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
-        const tx = { member: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) } };
+        const tx = {
+          member: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+          familyGroupMember: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        };
         return fn(tx);
       });
 

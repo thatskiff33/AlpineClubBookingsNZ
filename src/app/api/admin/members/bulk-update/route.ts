@@ -96,11 +96,10 @@ export async function POST(req: NextRequest) {
         where: { id: { in: idsToUpdate } },
         data: updateData,
       });
-      // Cascade deactivation to dependents
+      // Remove family group memberships for deactivated members
       if (action === "deactivate") {
-        await tx.member.updateMany({
-          where: { parentMemberId: { in: idsToUpdate } },
-          data: { active: false },
+        await tx.familyGroupMember.deleteMany({
+          where: { memberId: { in: idsToUpdate } },
         });
       }
       return updateResult;

@@ -32,7 +32,7 @@ export async function GET() {
               email: true,
               ageTier: true,
               active: true,
-              parentMemberId: true,
+              canLogin: true,
             },
           },
         },
