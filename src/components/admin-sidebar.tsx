@@ -26,6 +26,7 @@ import {
   Trash2,
   Sliders,
   House,
+  Tablet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,7 @@ const navItems = [
   { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
   { href: "/admin/deletion-requests", label: "Deletion Requests", icon: Trash2 },
   { href: "/admin/communications", label: "Communications", icon: Mail },
+  { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
   { href: "/admin/xero", label: "Xero", icon: RefreshCw },
   { href: "/admin/reports", label: "Reports", icon: BarChart2 },
   { href: "/admin/health", label: "System Health", icon: Activity },
