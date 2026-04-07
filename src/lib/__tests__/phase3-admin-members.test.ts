@@ -191,7 +191,7 @@ describe("Phase 3: Admin Member Management", () => {
       ]));
     });
 
-    it("filters by type (primary vs dependent)", async () => {
+    it("filters by type (canLogin vs non-login)", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
       vi.mocked(prisma.member.count).mockResolvedValue(0);
@@ -199,7 +199,7 @@ describe("Phase 3: Admin Member Management", () => {
       await getMembers(new NextRequest("http://localhost/api/admin/members?type=dependent"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
       expect(call.where?.AND).toEqual(expect.arrayContaining([
-        { parentMemberId: { not: null } },
+        { canLogin: false },
       ]));
     });
   });
@@ -513,8 +513,9 @@ describe("Phase 3: Admin Member Management", () => {
         id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
         phone: "021-123", dateOfBirth: new Date("1990-01-15"),
         role: "MEMBER", ageTier: "ADULT", active: true, forcePasswordChange: false,
-        xeroContactId: "xc1", createdAt: new Date("2025-01-01"),
+        xeroContactId: "xc1", createdAt: new Date("2025-01-01"), canLogin: true,
         subscriptions: [{ id: "s1", seasonYear: 2026, status: "PAID", xeroInvoiceId: null, paidAt: null }],
+        familyGroupMemberships: [],
       } as any);
       vi.mocked(prisma.booking.findMany).mockResolvedValue([
         { id: "b1", checkIn: new Date("2026-04-10"), checkOut: new Date("2026-04-12"), status: "CONFIRMED", finalPriceCents: 9100, _count: { guests: 2 } },

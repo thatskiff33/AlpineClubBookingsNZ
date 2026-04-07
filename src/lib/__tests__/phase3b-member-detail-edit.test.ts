@@ -41,8 +41,7 @@ const baseMember = {
   phone: "021-123", dateOfBirth: new Date("1990-01-15"),
   role: "MEMBER", ageTier: "ADULT", active: true, forcePasswordChange: false,
   xeroContactId: null, joinedDate: null, createdAt: new Date("2025-01-01"),
-  parentMemberId: null, secondaryParentId: null, familyGroupId: null,
-  inheritParentEmail: true,
+  canLogin: true,
 };
 
 function makePutRequest(id: string, body: Record<string, unknown>) {
@@ -169,18 +168,15 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     }));
   });
 
-  it("deactivates member and cascades to dependents", async () => {
+  it("deactivates member successfully", async () => {
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
     vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, active: false, xeroContactId: null } as any);
-    vi.mocked(prisma.member.updateMany).mockResolvedValue({ count: 2 });
 
     const res = await updateMember(makePutRequest("m1", { active: false }), { params: Promise.resolve({ id: "m1" }) });
     expect(res.status).toBe(200);
-    expect(prisma.member.updateMany).toHaveBeenCalledWith({
-      where: { parentMemberId: "m1" },
-      data: { active: false },
-    });
+    // No cascade deactivation — family group model replaces parent/dependent
+    expect(prisma.member.updateMany).not.toHaveBeenCalled();
   });
 
   it("clears dateOfBirth when empty string is passed", async () => {
@@ -270,6 +266,7 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
       ...baseMember,
       forcePasswordChange: true,
       subscriptions: [],
+      familyGroupMemberships: [],
     } as any);
     vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
     vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);

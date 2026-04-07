@@ -94,7 +94,7 @@ enum ChoreFrequencyMode {
 
 model Member {
   id            String   @id @default(cuid())
-  email         String   @unique
+  email         String
   passwordHash        String
   forcePasswordChange Boolean  @default(false)
   passwordChangedAt   DateTime?
