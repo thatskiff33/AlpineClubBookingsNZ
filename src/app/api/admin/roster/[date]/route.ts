@@ -82,114 +82,116 @@ export async function GET(
     }))
   )
 
-  // Check for existing assignments
-  let existing = await prisma.choreAssignment.findMany({
-    where: { date },
-    include: {
-      choreTemplate: true,
-      bookingGuest: true,
-    },
-  })
-
-  // If regenerating, delete SUGGESTED assignments (keep CONFIRMED/COMPLETED)
-  if (regenerate) {
-    await prisma.choreAssignment.deleteMany({
-      where: { date, status: "SUGGESTED" },
-    })
-    existing = existing.filter((a) => a.status !== "SUGGESTED")
-  }
-
-  // If no assignments or only non-SUGGESTED remain after regeneration, auto-suggest
-  const hasSuggested = existing.some((a) => a.status === "SUGGESTED")
-  const hasConfirmed = existing.some((a) => a.status === "CONFIRMED" || a.status === "COMPLETED")
-
-  if (!hasSuggested && !hasConfirmed) {
-    // Auto-suggest
-    const choreTemplates = await prisma.choreTemplate.findMany({
-      where: { active: true },
-      orderBy: { sortOrder: "asc" },
-    })
-
-    const templateInputs: ChoreTemplateInput[] = choreTemplates.map((t) => ({
-      id: t.id,
-      name: t.name,
-      recommendedPeopleMin: t.recommendedPeopleMin,
-      recommendedPeopleMax: t.recommendedPeopleMax,
-      isEssential: t.isEssential,
-      ageRestriction: t.ageRestriction,
-      minAge: t.minAge,
-      sortOrder: t.sortOrder,
-      timeOfDay: t.timeOfDay,
-      frequencyMode: t.frequencyMode,
-      frequencyDays: t.frequencyDays,
-      frequencyDaysOfWeek: t.frequencyDaysOfWeek,
-    }))
-
-    // 4-day lookback for chore history
-    const lookbackDate = new Date(date)
-    lookbackDate.setDate(lookbackDate.getDate() - 4)
-
-    const historyRecords = await prisma.choreAssignment.findMany({
-      where: {
-        date: { gte: lookbackDate, lt: date },
-        bookingGuestId: { in: guests.map((g) => g.id) },
-      },
-    })
-
-    const history: ChoreHistoryEntry[] = historyRecords
-      .filter((h) => h.bookingGuestId !== null)
-      .map((h) => ({
-        guestId: h.bookingGuestId!,
-        choreTemplateId: h.choreTemplateId,
-        date: h.date,
-      }))
-
-    // Query most recent assignment date per chore template for frequency filtering (F11)
-    const lastRosteredRecords = await prisma.choreAssignment.groupBy({
-      by: ["choreTemplateId"],
-      where: { date: { lt: date } },
-      _max: { date: true },
-    })
-    const choreLastRosteredDates = new Map<string, Date>()
-    for (const rec of lastRosteredRecords) {
-      if (rec._max.date) {
-        choreLastRosteredDates.set(rec.choreTemplateId, rec._max.date)
-      }
-    }
-
-    const options: {
-      includeNonEssential?: boolean;
-      choreLastRosteredDates?: Map<string, Date>;
-      currentDate?: Date;
-    } = { choreLastRosteredDates, currentDate: date }
-    if (includeNonEssentialParam !== null) {
-      options.includeNonEssential = includeNonEssentialParam === "true"
-    }
-
-    const allocations = allocateChores(templateInputs, guests, history, options)
-
-    // Save allocations
-    if (allocations.length > 0) {
-      await prisma.choreAssignment.createMany({
-        data: allocations.map((a) => ({
-          choreTemplateId: a.choreTemplateId,
-          bookingId: a.bookingId,
-          bookingGuestId: a.bookingGuestId,
-          date,
-          status: "SUGGESTED",
-        })),
-      })
-    }
-
-    // Re-fetch
-    existing = await prisma.choreAssignment.findMany({
+  // Wrap check + create in a transaction to prevent concurrent duplicate assignments
+  const existing = await prisma.$transaction(async (tx) => {
+    let current = await tx.choreAssignment.findMany({
       where: { date },
       include: {
         choreTemplate: true,
         bookingGuest: true,
       },
     })
-  }
+
+    // If regenerating, delete SUGGESTED assignments (keep CONFIRMED/COMPLETED)
+    if (regenerate) {
+      await tx.choreAssignment.deleteMany({
+        where: { date, status: "SUGGESTED" },
+      })
+      current = current.filter((a) => a.status !== "SUGGESTED")
+    }
+
+    // If no assignments or only non-SUGGESTED remain after regeneration, auto-suggest
+    const hasSuggested = current.some((a) => a.status === "SUGGESTED")
+    const hasConfirmed = current.some((a) => a.status === "CONFIRMED" || a.status === "COMPLETED")
+
+    if (!hasSuggested && !hasConfirmed) {
+      // Auto-suggest
+      const choreTemplates = await tx.choreTemplate.findMany({
+        where: { active: true },
+        orderBy: { sortOrder: "asc" },
+      })
+
+      const templateInputs: ChoreTemplateInput[] = choreTemplates.map((t) => ({
+        id: t.id,
+        name: t.name,
+        recommendedPeopleMin: t.recommendedPeopleMin,
+        recommendedPeopleMax: t.recommendedPeopleMax,
+        isEssential: t.isEssential,
+        ageRestriction: t.ageRestriction,
+        minAge: t.minAge,
+        sortOrder: t.sortOrder,
+        timeOfDay: t.timeOfDay,
+        frequencyMode: t.frequencyMode,
+        frequencyDays: t.frequencyDays,
+        frequencyDaysOfWeek: t.frequencyDaysOfWeek,
+      }))
+
+      // 4-day lookback for chore history
+      const lookbackDate = new Date(date)
+      lookbackDate.setDate(lookbackDate.getDate() - 4)
+
+      const historyRecords = await tx.choreAssignment.findMany({
+        where: {
+          date: { gte: lookbackDate, lt: date },
+          bookingGuestId: { in: guests.map((g) => g.id) },
+        },
+      })
+
+      const history: ChoreHistoryEntry[] = historyRecords
+        .filter((h) => h.bookingGuestId !== null)
+        .map((h) => ({
+          guestId: h.bookingGuestId!,
+          choreTemplateId: h.choreTemplateId,
+          date: h.date,
+        }))
+
+      // Query most recent assignment date per chore template for frequency filtering (F11)
+      const lastRosteredRecords = await tx.choreAssignment.groupBy({
+        by: ["choreTemplateId"],
+        where: { date: { lt: date } },
+        _max: { date: true },
+      })
+      const choreLastRosteredDates = new Map<string, Date>()
+      for (const rec of lastRosteredRecords) {
+        if (rec._max.date) {
+          choreLastRosteredDates.set(rec.choreTemplateId, rec._max.date)
+        }
+      }
+
+      const options: {
+        includeNonEssential?: boolean;
+        choreLastRosteredDates?: Map<string, Date>;
+        currentDate?: Date;
+      } = { choreLastRosteredDates, currentDate: date }
+      if (includeNonEssentialParam !== null) {
+        options.includeNonEssential = includeNonEssentialParam === "true"
+      }
+
+      const allocations = allocateChores(templateInputs, guests, history, options)
+
+      // Save allocations
+      if (allocations.length > 0) {
+        await tx.choreAssignment.createMany({
+          data: allocations.map((a) => ({
+            choreTemplateId: a.choreTemplateId,
+            bookingId: a.bookingId,
+            bookingGuestId: a.bookingGuestId,
+            date,
+            status: "SUGGESTED",
+          })),
+        })
+      }
+    }
+
+    // Re-fetch after potential creation
+    return tx.choreAssignment.findMany({
+      where: { date },
+      include: {
+        choreTemplate: true,
+        bookingGuest: true,
+      },
+    })
+  })
 
   // Get all active chore templates for the UI
   const allTemplates = await prisma.choreTemplate.findMany({
@@ -367,6 +369,10 @@ export async function PUT(
         if (guest.email) {
           emailPromises.push(
             (async () => {
+              // Delete old tokens for this guest+date to prevent duplicates
+              await prisma.guestChoreToken.deleteMany({
+                where: { bookingGuestId: guestId, date },
+              })
               const token = await createGuestChoreToken(guestId, date)
               const choreLink = `${baseUrl}/chores/${token}`
               await sendChoreRosterEmail(

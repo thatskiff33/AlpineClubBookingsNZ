@@ -30,31 +30,37 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL("/profile?emailChangeError=expired", request.url));
     }
 
-    // Check new email isn't taken among primary accounts (race condition check)
-    const existing = await prisma.member.findFirst({
-      where: { email: record.newEmail, parentMemberId: null },
-      select: { id: true },
-    });
-
-    if (existing) {
-      await prisma.emailChangeToken.delete({ where: { id: record.id } });
-      return NextResponse.redirect(new URL("/profile?emailChangeError=taken", request.url));
-    }
-
     const oldEmail = record.member.email;
 
-    // Update email and delete token atomically, also cascade to dependents
-    await prisma.$transaction([
-      prisma.member.update({
-        where: { id: record.memberId },
-        data: { email: record.newEmail },
-      }),
-      prisma.member.updateMany({
-        where: { parentMemberId: record.memberId },
-        data: { email: record.newEmail },
-      }),
-      prisma.emailChangeToken.delete({ where: { id: record.id } }),
-    ]);
+    // Atomic: check uniqueness + update email in one transaction
+    try {
+      await prisma.$transaction(async (tx) => {
+        const existingMember = await tx.member.findFirst({
+          where: { email: record.newEmail, parentMemberId: null },
+        });
+        if (existingMember) {
+          throw new Error("EMAIL_TAKEN");
+        }
+        await tx.member.update({
+          where: { id: record.memberId },
+          data: { email: record.newEmail },
+        });
+        await tx.member.updateMany({
+          where: { parentMemberId: record.memberId },
+          data: { email: record.newEmail },
+        });
+        await tx.emailChangeToken.delete({ where: { id: record.id } });
+      });
+    } catch (err) {
+      if (err instanceof Error && err.message === "EMAIL_TAKEN") {
+        return NextResponse.redirect(new URL("/profile?emailChangeError=taken", request.url));
+      }
+      // Handle Prisma unique constraint violation (P2002) as backup
+      if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "P2002") {
+        return NextResponse.redirect(new URL("/profile?emailChangeError=taken", request.url));
+      }
+      throw err;
+    }
 
     // Update Xero contact if connected (fire-and-forget)
     if (record.member.xeroContactId) {

@@ -357,67 +357,72 @@ export async function getAuthenticatedXeroClient(): Promise<{
  * Updates the member's xeroContactId if a new contact is created.
  */
 export async function findOrCreateXeroContact(memberId: string): Promise<string> {
-  const member = await prisma.member.findUnique({
-    where: { id: memberId },
-  });
-  if (!member) throw new Error(`Member not found: ${memberId}`);
+  return prisma.$transaction(async (tx) => {
+    // Advisory lock prevents concurrent duplicate creation for same member
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
 
-  // If member already has a Xero contact linked, verify it exists
-  if (member.xeroContactId) {
+    const member = await tx.member.findUnique({
+      where: { id: memberId },
+    });
+    if (!member) throw new Error(`Member not found: ${memberId}`);
+
+    // If member already has a Xero contact linked, verify it exists
+    if (member.xeroContactId) {
+      try {
+        const { xero, tenantId } = await getAuthenticatedXeroClient();
+        await xero.accountingApi.getContact(tenantId, member.xeroContactId);
+        return member.xeroContactId;
+      } catch {
+        // Contact not found in Xero, will create a new one
+      }
+    }
+
+    const { xero, tenantId } = await getAuthenticatedXeroClient();
+
+    // Search by email first
     try {
-      const { xero, tenantId } = await getAuthenticatedXeroClient();
-      await xero.accountingApi.getContact(tenantId, member.xeroContactId);
-      return member.xeroContactId;
+      const contactsResponse = await xero.accountingApi.getContacts(
+        tenantId,
+        undefined, // ifModifiedSince
+        `EmailAddress="${member.email}"` // where
+      );
+      const contacts = contactsResponse.body.contacts;
+      if (contacts && contacts.length > 0) {
+        const contactId = contacts[0].contactID!;
+        await tx.member.update({
+          where: { id: memberId },
+          data: { xeroContactId: contactId },
+        });
+        return contactId;
+      }
     } catch {
-      // Contact not found in Xero, will create a new one
+      // Search failed, will create new contact
     }
-  }
 
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
+    // Create new contact
+    const contact: Contact = {
+      name: `${member.firstName} ${member.lastName}`,
+      firstName: member.firstName,
+      lastName: member.lastName,
+      emailAddress: member.email,
+      phones: member.phone
+        ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneNumber: member.phone }]
+        : [],
+    };
 
-  // Search by email first
-  try {
-    const contactsResponse = await xero.accountingApi.getContacts(
-      tenantId,
-      undefined, // ifModifiedSince
-      `EmailAddress="${member.email}"` // where
-    );
-    const contacts = contactsResponse.body.contacts;
-    if (contacts && contacts.length > 0) {
-      const contactId = contacts[0].contactID!;
-      await prisma.member.update({
-        where: { id: memberId },
-        data: { xeroContactId: contactId },
-      });
-      return contactId;
+    const response = await xero.accountingApi.createContacts(tenantId, { contacts: [contact] });
+    const createdContact = response.body.contacts?.[0];
+    if (!createdContact?.contactID) {
+      throw new Error("Failed to create Xero contact");
     }
-  } catch {
-    // Search failed, will create new contact
-  }
 
-  // Create new contact
-  const contact: Contact = {
-    name: `${member.firstName} ${member.lastName}`,
-    firstName: member.firstName,
-    lastName: member.lastName,
-    emailAddress: member.email,
-    phones: member.phone
-      ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneNumber: member.phone }]
-      : [],
-  };
+    await tx.member.update({
+      where: { id: memberId },
+      data: { xeroContactId: createdContact.contactID },
+    });
 
-  const response = await xero.accountingApi.createContacts(tenantId, { contacts: [contact] });
-  const createdContact = response.body.contacts?.[0];
-  if (!createdContact?.contactID) {
-    throw new Error("Failed to create Xero contact");
-  }
-
-  await prisma.member.update({
-    where: { id: memberId },
-    data: { xeroContactId: createdContact.contactID },
+    return createdContact.contactID;
   });
-
-  return createdContact.contactID;
 }
 
 /**
