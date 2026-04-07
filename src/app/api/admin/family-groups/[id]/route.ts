@@ -108,23 +108,14 @@ export async function PUT(
   if (memberIds) {
     const uniqueIds = [...new Set(memberIds)];
 
-    // Validate new members are active primary members
+    // Validate new members exist and are active
     const members = await prisma.member.findMany({
       where: { id: { in: uniqueIds } },
-      select: { id: true, firstName: true, lastName: true, active: true, parentMemberId: true },
+      select: { id: true, firstName: true, lastName: true, active: true },
     });
 
     if (members.length !== uniqueIds.length) {
       return NextResponse.json({ error: "One or more members not found" }, { status: 404 });
-    }
-
-    for (const m of members) {
-      if (m.parentMemberId) {
-        return NextResponse.json(
-          { error: `${m.firstName} ${m.lastName} is a dependent and cannot be in a family group` },
-          { status: 422 }
-        );
-      }
     }
 
     const currentMemberIds = existing.memberships.map((m) => m.memberId);

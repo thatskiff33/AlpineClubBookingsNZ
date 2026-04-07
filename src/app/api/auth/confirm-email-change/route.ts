@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
     try {
       await prisma.$transaction(async (tx) => {
         const existingMember = await tx.member.findFirst({
-          where: { email: record.newEmail, parentMemberId: null },
+          where: { email: record.newEmail, canLogin: true },
         });
         if (existingMember) {
           throw new Error("EMAIL_TAKEN");

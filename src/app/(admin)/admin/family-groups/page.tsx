@@ -16,7 +16,6 @@ interface FamilyGroupMemberRow {
   email: string;
   ageTier: string;
   active: boolean;
-  parentMemberId: string | null;
   role?: string;
 }
 
@@ -153,7 +152,6 @@ export default function FamilyGroupsPage() {
     setFormName(group.name || "");
     setSelectedMembers(
       group.members
-        .filter((m) => !m.parentMemberId)
         .map((m) => ({ id: m.id, firstName: m.firstName, lastName: m.lastName, email: m.email }))
     );
     setMemberSearch("");
@@ -400,7 +398,7 @@ export default function FamilyGroupsPage() {
                   )}
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  Only primary (non-dependent) members can be added to a family group
+                  Add adults, youth, or children to this family group
                 </p>
               </div>
 
@@ -456,7 +454,6 @@ export default function FamilyGroupsPage() {
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap gap-1">
                           {g.members
-                            .filter((m) => !m.parentMemberId)
                             .map((m) => (
                               <Badge
                                 key={m.id}

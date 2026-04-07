@@ -4,8 +4,8 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * GET /api/members/family
- * Returns the full quick-add list for the booking wizard:
- * self + family group peers from ALL groups the member belongs to + all dependents (own + peers').
+ * Returns the quick-add list for the booking wizard:
+ * self + all members from all family groups the user belongs to.
  */
 export async function GET() {
   const session = await auth();
@@ -20,7 +20,6 @@ export async function GET() {
       firstName: true,
       lastName: true,
       ageTier: true,
-      parentMemberId: true,
       familyGroupMemberships: {
         select: {
           familyGroupId: true,
@@ -59,16 +58,15 @@ export async function GET() {
     "self"
   );
 
-  // 2. Family group peers from ALL groups the member belongs to (via join table)
+  // 2. All members from all family groups the user belongs to
   const groupIds = self.familyGroupMemberships.map((m) => m.familyGroupId);
-  let peerIds: string[] = [];
 
   if (groupIds.length > 0) {
-    const peerMemberships = await prisma.familyGroupMember.findMany({
+    const groupMemberships = await prisma.familyGroupMember.findMany({
       where: {
         familyGroupId: { in: groupIds },
         memberId: { not: session.user.id },
-        member: { active: true, parentMemberId: null },
+        member: { active: true },
       },
       include: {
         member: {
@@ -77,65 +75,10 @@ export async function GET() {
       },
       orderBy: { member: { firstName: "asc" } },
     });
-    for (const pm of peerMemberships) {
-      addMember(pm.member, "partner");
-    }
-    peerIds = [...new Set(peerMemberships.map((pm) => pm.member.id))];
-  } else if (self.familyGroupMemberships.length === 0) {
-    // Fallback: check legacy familyGroupId field for backward compatibility
-    const selfWithLegacy = await prisma.member.findUnique({
-      where: { id: session.user.id },
-      select: { familyGroupId: true },
-    });
-    if (selfWithLegacy?.familyGroupId) {
-      const peers = await prisma.member.findMany({
-        where: {
-          familyGroupId: selfWithLegacy.familyGroupId,
-          id: { not: session.user.id },
-          active: true,
-          parentMemberId: null,
-        },
-        select: { id: true, firstName: true, lastName: true, ageTier: true },
-        orderBy: { firstName: "asc" },
-      });
-      for (const p of peers) {
-        addMember(p, "partner");
-      }
-      peerIds = peers.map((p) => p.id);
-    }
-  }
-
-  // 3. Own dependents
-  const ownDependents = await prisma.member.findMany({
-    where: {
-      OR: [
-        { parentMemberId: session.user.id },
-        { secondaryParentId: session.user.id },
-      ],
-      active: true,
-    },
-    select: { id: true, firstName: true, lastName: true, ageTier: true },
-    orderBy: { firstName: "asc" },
-  });
-  for (const d of ownDependents) {
-    addMember(d, "dependent");
-  }
-
-  // 4. Dependents of family group peers
-  if (peerIds.length > 0) {
-    const peerDependents = await prisma.member.findMany({
-      where: {
-        OR: [
-          { parentMemberId: { in: peerIds } },
-          { secondaryParentId: { in: peerIds } },
-        ],
-        active: true,
-      },
-      select: { id: true, firstName: true, lastName: true, ageTier: true },
-      orderBy: { firstName: "asc" },
-    });
-    for (const d of peerDependents) {
-      addMember(d, "dependent");
+    for (const gm of groupMemberships) {
+      // Adults are "partner", youth/children are "dependent"
+      const rel = gm.member.ageTier === "ADULT" ? "partner" : "dependent";
+      addMember(gm.member, rel);
     }
   }
 

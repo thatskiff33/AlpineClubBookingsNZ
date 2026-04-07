@@ -135,17 +135,24 @@ describe("Admin Family Groups API", () => {
       expect(res.status).toBe(201);
     });
 
-    it("rejects dependent members", async () => {
+    it("accepts all member types including youth and children", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockedPrisma.member.findMany.mockResolvedValue([
-        { id: "m1", firstName: "Child", lastName: "Smith", active: true, parentMemberId: "m2", familyGroupId: null },
+        { id: "m1", firstName: "Child", lastName: "Smith", active: true },
       ] as any);
+
+      const createdGroup = {
+        id: "fg-new",
+        name: "Test",
+        memberships: [
+          { member: { id: "m1", firstName: "Child", lastName: "Smith", email: "parent@test.com", ageTier: "CHILD" }, role: "MEMBER" },
+        ],
+      };
+      mockedPrisma.$transaction.mockImplementation(async () => createdGroup);
 
       const { POST } = await import("@/app/api/admin/family-groups/route");
       const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "Test", memberIds: ["m1"] }));
-      expect(res.status).toBe(422);
-      const body = await res.json();
-      expect(body.error).toContain("dependent");
+      expect(res.status).toBe(201);
     });
 
     it("allows members who are already in another group (multi-group support)", async () => {
@@ -212,108 +219,83 @@ describe("GET /api/members/family", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns self + dependents when no family group", async () => {
-    mockedAuth.mockResolvedValue(memberSession);
-    mockedPrisma.member.findUnique
-      .mockResolvedValueOnce({
-        id: "member-1",
-        firstName: "John",
-        lastName: "Smith",
-        ageTier: "ADULT",
-        parentMemberId: null,
-        familyGroupMemberships: [], // no join table memberships
-      } as any)
-      // Fallback legacy check
-      .mockResolvedValueOnce({ familyGroupId: null } as any);
-
-    // Own dependents
-    mockedPrisma.member.findMany.mockResolvedValueOnce([
-      { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" },
-    ] as any);
-
-    const { GET } = await import("@/app/api/members/family/route");
-    const res = await GET();
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.familyMembers).toHaveLength(2);
-    expect(body.familyMembers[0].relationship).toBe("self");
-    expect(body.familyMembers[0].firstName).toBe("John");
-    expect(body.familyMembers[1].relationship).toBe("dependent");
-    expect(body.familyMembers[1].firstName).toBe("Emma");
-    expect(body.familyGroupId).toBeNull();
-  });
-
-  it("returns self + partner + all dependents when in family group", async () => {
+  it("returns only self when not in any family group", async () => {
     mockedAuth.mockResolvedValue(memberSession);
     mockedPrisma.member.findUnique.mockResolvedValue({
       id: "member-1",
       firstName: "John",
       lastName: "Smith",
       ageTier: "ADULT",
-      parentMemberId: null,
-      familyGroupMemberships: [
-        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
-      ],
+      familyGroupMemberships: [],
     } as any);
-
-    // Peers from join table
-    mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
-      { member: { id: "member-2", firstName: "Jane", lastName: "Smith", ageTier: "ADULT" } },
-    ] as any);
-
-    // Own dependents
-    mockedPrisma.member.findMany
-      .mockResolvedValueOnce([
-        { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" },
-      ] as any)
-      // Peer dependents
-      .mockResolvedValueOnce([
-        { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" }, // duplicate
-        { id: "child-2", firstName: "Liam", lastName: "Smith", ageTier: "YOUTH" },
-      ] as any);
 
     const { GET } = await import("@/app/api/members/family/route");
     const res = await GET();
     expect(res.status).toBe(200);
     const body = await res.json();
-    // Self + partner + child-1 + child-2 (child-1 deduplicated)
+    expect(body.familyMembers).toHaveLength(1);
+    expect(body.familyMembers[0].relationship).toBe("self");
+    expect(body.familyGroupId).toBeNull();
+  });
+
+  it("returns self + all family group members (adults as partner, children as dependent)", async () => {
+    mockedAuth.mockResolvedValue(memberSession);
+    mockedPrisma.member.findUnique.mockResolvedValue({
+      id: "member-1",
+      firstName: "John",
+      lastName: "Smith",
+      ageTier: "ADULT",
+      familyGroupMemberships: [
+        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
+      ],
+    } as any);
+
+    // All group members (including children/youth)
+    mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
+      { member: { id: "member-2", firstName: "Jane", lastName: "Smith", ageTier: "ADULT" } },
+      { member: { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" } },
+      { member: { id: "youth-1", firstName: "Liam", lastName: "Smith", ageTier: "YOUTH" } },
+    ] as any);
+
+    const { GET } = await import("@/app/api/members/family/route");
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
     expect(body.familyMembers).toHaveLength(4);
     expect(body.familyMembers[0].relationship).toBe("self");
     expect(body.familyMembers[1].relationship).toBe("partner");
     expect(body.familyMembers[2].relationship).toBe("dependent");
     expect(body.familyMembers[3].relationship).toBe("dependent");
     expect(body.familyGroupName).toBe("Smith Family");
-    // Check deduplication - child-1 should appear only once
-    const childIds = body.familyMembers.filter((m: any) => m.id === "child-1");
-    expect(childIds).toHaveLength(1);
   });
 
-  it("split family: parent sees own children but not ex-partner", async () => {
+  it("deduplicates members across multiple family groups", async () => {
     mockedAuth.mockResolvedValue(memberSession);
-    // Dad has no family group
-    mockedPrisma.member.findUnique
-      .mockResolvedValueOnce({
-        id: "member-1",
-        firstName: "Dad",
-        lastName: "Smith",
-        ageTier: "ADULT",
-        parentMemberId: null,
-        familyGroupMemberships: [], // no groups
-      } as any)
-      // Fallback legacy check — also no group
-      .mockResolvedValueOnce({ familyGroupId: null } as any);
+    mockedPrisma.member.findUnique.mockResolvedValue({
+      id: "member-1",
+      firstName: "Dad",
+      lastName: "Smith",
+      ageTier: "ADULT",
+      familyGroupMemberships: [
+        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
+        { familyGroupId: "fg2", familyGroup: { id: "fg2", name: "Jones Family" } },
+      ],
+    } as any);
 
-    // Own dependents (children linked via parentMemberId or secondaryParentId)
-    mockedPrisma.member.findMany.mockResolvedValueOnce([
-      { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" },
+    // Members from both groups — child-1 appears in both
+    mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
+      { member: { id: "member-2", firstName: "Jane", lastName: "Smith", ageTier: "ADULT" } },
+      { member: { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" } },
+      { member: { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" } },
     ] as any);
 
     const { GET } = await import("@/app/api/members/family/route");
     const res = await GET();
     const body = await res.json();
-    // Dad sees self + his child, no ex-partner
-    expect(body.familyMembers).toHaveLength(2);
-    expect(body.familyMembers.map((m: any) => m.firstName)).toEqual(["Dad", "Emma"]);
+    // Self + Jane + Emma (deduplicated)
+    expect(body.familyMembers).toHaveLength(3);
+    const emmas = body.familyMembers.filter((m: any) => m.id === "child-1");
+    expect(emmas).toHaveLength(1);
   });
 });
 

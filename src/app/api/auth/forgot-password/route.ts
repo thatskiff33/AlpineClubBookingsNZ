@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
     // Always return success to avoid leaking which emails are registered
     const member = await prisma.member.findFirst({
-      where: { email: email.toLowerCase(), parentMemberId: null },
+      where: { email: email.toLowerCase(), canLogin: true },
     });
 
     if (member && member.active) {

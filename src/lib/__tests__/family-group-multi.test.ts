@@ -218,17 +218,32 @@ describe("POST /api/admin/family-groups", () => {
     expect(res.status).toBe(201);
   });
 
-  it("rejects dependents from being added to a group", async () => {
+  it("accepts all member types including dependents", async () => {
     mockPrisma.member.findMany.mockResolvedValue([
       { id: "m1", firstName: "Alice", lastName: "Smith", active: true, parentMemberId: "parent1" },
     ]);
 
-    const req = makeReq({ name: "Bad Group", memberIds: ["m1"] });
-    const res = await postFamilyGroup(req);
-    const data = await res.json();
+    const createdGroup = {
+      id: "g1",
+      name: "Good Group",
+      memberships: [
+        { member: { id: "m1", firstName: "Alice", lastName: "Smith", email: "a@t.com", ageTier: "CHILD" }, role: "MEMBER" },
+      ],
+    };
+    mockPrisma.$transaction.mockImplementation(async (fn: any) => {
+      const mockTx = {
+        familyGroup: {
+          create: vi.fn().mockResolvedValue({ id: "g1" }),
+          findUnique: vi.fn().mockResolvedValue(createdGroup),
+        },
+        familyGroupMember: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      };
+      return fn(mockTx);
+    });
 
-    expect(res.status).toBe(422);
-    expect(data.error).toMatch(/dependent/i);
+    const req = makeReq({ name: "Good Group", memberIds: ["m1"] });
+    const res = await postFamilyGroup(req);
+    expect(res.status).toBe(201);
   });
 
   it("allows inactive members to be added to a group", async () => {
@@ -397,61 +412,44 @@ describe("DELETE /api/admin/family-groups/[id]", () => {
 // ─── GET /api/members/family (multi-group support) ───────────────────────────
 
 describe("GET /api/members/family", () => {
-  it("returns members from all groups the member belongs to", async () => {
+  it("returns all group members (adults + children) from all groups", async () => {
     mockAuth.mockResolvedValue({ user: { id: "self1" } });
 
-    // Self with memberships in 2 groups
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "self1",
       firstName: "Alice",
       lastName: "Smith",
       ageTier: "ADULT",
-      parentMemberId: null,
       familyGroupMemberships: [
         { familyGroupId: "g1", familyGroup: { id: "g1", name: "Group A" } },
         { familyGroupId: "g2", familyGroup: { id: "g2", name: "Group B" } },
       ],
     });
 
-    // Peers from both groups (via join table query)
+    // All members from both groups (adults + children via join table)
     mockPrisma.familyGroupMember.findMany.mockResolvedValue([
-      {
-        member: { id: "m2", firstName: "Bob", lastName: "Jones", ageTier: "ADULT" },
-      },
-      {
-        member: { id: "m3", firstName: "Carol", lastName: "White", ageTier: "ADULT" },
-      },
+      { member: { id: "m2", firstName: "Bob", lastName: "Jones", ageTier: "ADULT" } },
+      { member: { id: "m3", firstName: "Carol", lastName: "White", ageTier: "ADULT" } },
+      { member: { id: "d1", firstName: "Dave", lastName: "Smith", ageTier: "CHILD" } },
     ]);
-
-    // Own dependents
-    mockPrisma.member.findMany
-      .mockResolvedValueOnce([
-        { id: "d1", firstName: "Dave", lastName: "Smith", ageTier: "CHILD" },
-      ])
-      // Peer dependents
-      .mockResolvedValueOnce([]);
 
     const res = await getFamilyMembers();
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    // self + 2 peers + 1 dependent = 4
+    // self + 2 adult peers + 1 child = 4
     expect(data.familyMembers).toHaveLength(4);
     expect(data.familyGroupIds).toEqual(["g1", "g2"]);
 
-    const self = data.familyMembers.find((m: { relationship: string }) => m.relationship === "self");
-    expect(self?.id).toBe("self1");
-
     const partners = data.familyMembers.filter((m: { relationship: string }) => m.relationship === "partner");
     expect(partners).toHaveLength(2);
-    expect(partners.map((m: { id: string }) => m.id)).toContain("m2");
-    expect(partners.map((m: { id: string }) => m.id)).toContain("m3");
 
     const dependents = data.familyMembers.filter((m: { relationship: string }) => m.relationship === "dependent");
     expect(dependents).toHaveLength(1);
+    expect(dependents[0].id).toBe("d1");
   });
 
-  it("deduplicates peers who appear in multiple groups", async () => {
+  it("deduplicates members who appear in multiple groups", async () => {
     mockAuth.mockResolvedValue({ user: { id: "self1" } });
 
     mockPrisma.member.findUnique.mockResolvedValue({
@@ -459,22 +457,17 @@ describe("GET /api/members/family", () => {
       firstName: "Alice",
       lastName: "Smith",
       ageTier: "ADULT",
-      parentMemberId: null,
       familyGroupMemberships: [
         { familyGroupId: "g1", familyGroup: { id: "g1", name: "Group A" } },
         { familyGroupId: "g2", familyGroup: { id: "g2", name: "Group B" } },
       ],
     });
 
-    // m2 appears in both groups
+    // m2 appears in both groups (split family scenario)
     mockPrisma.familyGroupMember.findMany.mockResolvedValue([
       { member: { id: "m2", firstName: "Bob", lastName: "Jones", ageTier: "ADULT" } },
       { member: { id: "m2", firstName: "Bob", lastName: "Jones", ageTier: "ADULT" } },
     ]);
-
-    mockPrisma.member.findMany
-      .mockResolvedValueOnce([]) // own dependents
-      .mockResolvedValueOnce([]); // peer dependents
 
     const res = await getFamilyMembers();
     const data = await res.json();
@@ -483,38 +476,23 @@ describe("GET /api/members/family", () => {
     expect(data.familyMembers).toHaveLength(2);
   });
 
-  it("uses legacy familyGroupId as fallback when no join table memberships exist", async () => {
+  it("returns only self when not in any family group", async () => {
     mockAuth.mockResolvedValue({ user: { id: "self1" } });
 
-    mockPrisma.member.findUnique
-      .mockResolvedValueOnce({
-        id: "self1",
-        firstName: "Alice",
-        lastName: "Smith",
-        ageTier: "ADULT",
-        parentMemberId: null,
-        familyGroupMemberships: [], // no join table memberships
-      })
-      // Fallback query for legacy familyGroupId
-      .mockResolvedValueOnce({ familyGroupId: "g_legacy" });
-
-    // Legacy peers
-    mockPrisma.member.findMany
-      .mockResolvedValueOnce([
-        { id: "m_legacy", firstName: "Legacy", lastName: "Peer", ageTier: "ADULT" },
-      ])
-      // own dependents
-      .mockResolvedValueOnce([])
-      // peer dependents
-      .mockResolvedValueOnce([]);
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "self1",
+      firstName: "Alice",
+      lastName: "Smith",
+      ageTier: "ADULT",
+      familyGroupMemberships: [],
+    });
 
     const res = await getFamilyMembers();
     const data = await res.json();
 
-    // self + 1 legacy peer
-    const partners = data.familyMembers.filter((m: { relationship: string }) => m.relationship === "partner");
-    expect(partners).toHaveLength(1);
-    expect(partners[0].id).toBe("m_legacy");
+    expect(data.familyMembers).toHaveLength(1);
+    expect(data.familyMembers[0].relationship).toBe("self");
+    expect(data.familyGroupId).toBeNull();
   });
 
   it("returns 401 for unauthenticated requests", async () => {

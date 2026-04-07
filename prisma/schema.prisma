@@ -109,6 +109,7 @@ model Member {
   ageTier       AgeTier  @default(ADULT)
   xeroContactId String?  @unique
   active        Boolean  @default(true)
+  canLogin      Boolean  @default(false) // true for adults with unique email + password set
   joinedDate    DateTime?  // Membership start date, sourced from Xero first invoice
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

@@ -136,7 +136,7 @@ describe("Admin Send Password Reset API", () => {
         where: {
           id: { in: ["m1", "m2"] },
           active: true,
-          parentMemberId: null,
+          canLogin: true,
         },
       })
     );

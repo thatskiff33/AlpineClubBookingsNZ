@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     }
 
     const member = await prisma.member.findFirst({
-      where: { email: parsed.data.email.toLowerCase(), parentMemberId: null },
+      where: { email: parsed.data.email.toLowerCase(), canLogin: true },
       select: { id: true, email: true, firstName: true, emailVerified: true },
     });
 

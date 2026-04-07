@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     const { email, password, firstName, lastName, dateOfBirth, phone } = parsed.data;
 
     const existing = await prisma.member.findFirst({
-      where: { email: email.toLowerCase(), parentMemberId: null },
+      where: { email: email.toLowerCase(), canLogin: true },
     });
 
     if (existing) {
@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
         firstName,
         lastName,
         ageTier,
+        canLogin: true,
         dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
         phone: phone || null,
       },

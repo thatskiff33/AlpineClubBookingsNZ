@@ -11,6 +11,7 @@ npm run dev           # development server
 
 # Docker deployment:
 docker compose up -d --build
+docker compose build migrate       # rebuild migrate image (has its own build block)
 docker compose run --rm migrate    # run database migrations
 
 # Seed database (requires running PostgreSQL):

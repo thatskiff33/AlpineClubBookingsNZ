@@ -62,12 +62,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Fetch only active primary members with an email
+    // Fetch only active login-eligible members with an email
     const members = await prisma.member.findMany({
       where: {
         id: { in: memberIds },
         active: true,
-        parentMemberId: null,
+        canLogin: true,
       },
       select: { id: true, email: true, firstName: true, lastName: true },
     });
