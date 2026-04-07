@@ -42,6 +42,7 @@ const navItems = [
   { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/members", label: "Members", icon: Users },
   { href: "/admin/family-groups", label: "Family Groups", icon: Users },
+  { href: "/admin/family-suggestions", label: "Family Suggestions", icon: Users },
   { href: "/admin/seasons", label: "Hut Fees & Seasons", icon: CalendarRange },
   { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
   { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
