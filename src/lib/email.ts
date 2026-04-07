@@ -77,7 +77,7 @@ export async function sendEmail({
       prisma.emailLog.update({
         where: { id: emailLogId },
         data: { status: "SENT", sentAt: new Date() },
-      }).catch(() => {});
+      }).catch((err) => logger.error({ err, to, templateName }, "Failed to update EmailLog"));
     }
     return;
   }

@@ -246,16 +246,23 @@ export async function register() {
       const startedAt = new Date();
       logger.info({ job: "pending-deadline-alerts" }, "Checking for pending bookings approaching deadline");
 
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "pending-deadline-alerts", status: "in_progress" },
+        { schedule: { type: "crontab", value: "0 8 * * *" }, checkinMargin: 10, maxRuntime: 10 }
+      );
+
       try {
         const { checkPendingDeadlines } = await import("./lib/cron-pending-deadline-alerts");
         const result = await checkPendingDeadlines();
         logger.info({ job: "pending-deadline-alerts", ...result }, "Pending deadline alerts complete");
         await recordCronRun("pending-deadline-alerts", startedAt, "SUCCESS", result);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "pending-deadline-alerts", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "pending-deadline-alerts" }, "Error in pending deadline alerts");
         Sentry.captureException(err);
         await recordCronRun("pending-deadline-alerts", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "pending-deadline-alerts", status: "error" });
       } finally {
         isPendingDeadlineRunning = false;
       }
@@ -274,16 +281,23 @@ export async function register() {
       const startedAt = new Date();
       logger.info({ job: "checkin-reminders" }, "Sending check-in reminders");
 
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "checkin-reminders", status: "in_progress" },
+        { schedule: { type: "crontab", value: "0 9 * * *" }, checkinMargin: 10, maxRuntime: 15 }
+      );
+
       try {
         const { sendCheckinReminders } = await import("./lib/cron-checkin-reminders");
         const result = await sendCheckinReminders();
         logger.info({ job: "checkin-reminders", ...result }, "Check-in reminders complete");
         await recordCronRun("checkin-reminders", startedAt, "SUCCESS", result);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "checkin-reminders", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "checkin-reminders" }, "Error in check-in reminders");
         Sentry.captureException(err);
         await recordCronRun("checkin-reminders", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "checkin-reminders", status: "error" });
       } finally {
         isCheckinReminderRunning = false;
       }
@@ -302,16 +316,23 @@ export async function register() {
       const startedAt = new Date();
       logger.info({ job: "capacity-warnings" }, "Checking capacity for upcoming days");
 
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "capacity-warnings", status: "in_progress" },
+        { schedule: { type: "crontab", value: "0 7 * * *" }, checkinMargin: 10, maxRuntime: 10 }
+      );
+
       try {
         const { checkCapacityWarnings } = await import("./lib/cron-capacity-warnings");
         const result = await checkCapacityWarnings();
         logger.info({ job: "capacity-warnings", ...result }, "Capacity warnings check complete");
         await recordCronRun("capacity-warnings", startedAt, "SUCCESS", result);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "capacity-warnings", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "capacity-warnings" }, "Error in capacity warnings");
         Sentry.captureException(err);
         await recordCronRun("capacity-warnings", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "capacity-warnings", status: "error" });
       } finally {
         isCapacityWarningRunning = false;
       }
@@ -358,16 +379,23 @@ export async function register() {
       const startedAt = new Date();
       logger.info({ job: "email-retry" }, "Retrying failed emails");
 
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "email-retry", status: "in_progress" },
+        { schedule: { type: "crontab", value: "*/30 * * * *" }, checkinMargin: 10, maxRuntime: 10 }
+      );
+
       try {
         const { retryFailedEmails } = await import("./lib/cron-email-retry");
         const result = await retryFailedEmails();
         logger.info({ job: "email-retry", ...result }, "Email retry complete");
         await recordCronRun("email-retry", startedAt, "SUCCESS", result);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "email-retry", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "email-retry" }, "Error in email retry");
         Sentry.captureException(err);
         await recordCronRun("email-retry", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "email-retry", status: "error" });
       } finally {
         isEmailRetryRunning = false;
       }
@@ -386,16 +414,23 @@ export async function register() {
       const startedAt = new Date();
       logger.info({ job: "feedback-requests" }, "Sending post-stay feedback requests");
 
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "feedback-requests", status: "in_progress" },
+        { schedule: { type: "crontab", value: "0 10 * * *" }, checkinMargin: 10, maxRuntime: 10 }
+      );
+
       try {
         const { sendFeedbackRequests } = await import("./lib/cron-feedback-requests");
         const result = await sendFeedbackRequests();
         logger.info({ job: "feedback-requests", ...result }, "Feedback requests complete");
         await recordCronRun("feedback-requests", startedAt, "SUCCESS", result);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "feedback-requests", status: "ok" });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "feedback-requests" }, "Error in feedback requests");
         Sentry.captureException(err);
         await recordCronRun("feedback-requests", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "feedback-requests", status: "error" });
       } finally {
         isFeedbackRequestRunning = false;
       }

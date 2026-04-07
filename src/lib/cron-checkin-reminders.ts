@@ -65,7 +65,7 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
         templateName: "checkin-reminder",
         to: booking.member.email,
         subject: "Check-in Reminder - TAC Lodge",
-        status: { in: ["SENT", "QUEUED"] },
+        status: "SENT",
         // Only check within the last 48h to avoid false matches from old bookings
         createdAt: { gte: new Date(now.getTime() - 48 * 60 * 60 * 1000) },
       },
