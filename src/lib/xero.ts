@@ -1710,6 +1710,7 @@ export async function findDuplicateContacts(): Promise<{
   duplicateGroups: DuplicateGroup[];
   totalContacts: number;
   totalDuplicateEmails: number;
+  filteredByFamilyGroup: number;
 }> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
