@@ -44,16 +44,17 @@ export async function GET() {
   });
 
   const result = groups.map((g) => {
-    const activeMembers = g.memberships
-      .filter((m) => m.member.active)
+    const allMembers = g.memberships
       .map((m) => ({ ...m.member, role: m.role }));
+    const inactiveCount = allMembers.filter((m) => !m.active).length;
     return {
       id: g.id,
       name: g.name,
       createdAt: g.createdAt,
       updatedAt: g.updatedAt,
-      members: activeMembers,
-      memberCount: activeMembers.length,
+      members: allMembers,
+      memberCount: allMembers.length,
+      inactiveCount,
       pendingRequests: g._count.joinRequests,
     };
   });
@@ -100,12 +101,6 @@ export async function POST(req: NextRequest) {
   }
 
   for (const m of members) {
-    if (!m.active) {
-      return NextResponse.json(
-        { error: `Member ${m.firstName} ${m.lastName} is inactive` },
-        { status: 422 }
-      );
-    }
     if (m.parentMemberId) {
       return NextResponse.json(
         { error: `${m.firstName} ${m.lastName} is a dependent and cannot be added to a family group` },

@@ -119,12 +119,6 @@ export async function PUT(
     }
 
     for (const m of members) {
-      if (!m.active) {
-        return NextResponse.json(
-          { error: `Member ${m.firstName} ${m.lastName} is inactive` },
-          { status: 422 }
-        );
-      }
       if (m.parentMemberId) {
         return NextResponse.json(
           { error: `${m.firstName} ${m.lastName} is a dependent and cannot be in a family group` },

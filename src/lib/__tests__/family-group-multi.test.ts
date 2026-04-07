@@ -136,11 +136,10 @@ describe("GET /api/admin/family-groups", () => {
     expect(data.familyGroups).toHaveLength(1);
     expect(data.familyGroups[0].members).toHaveLength(2);
     expect(data.familyGroups[0].memberCount).toBe(2);
-    // Filters inactive members
-    expect(data.familyGroups[0].members.every((m: { active: boolean }) => m.active)).toBe(true);
+    expect(data.familyGroups[0].inactiveCount).toBe(0);
   });
 
-  it("filters out inactive members from response", async () => {
+  it("includes inactive members with inactiveCount", async () => {
     const mockGroups = [
       {
         id: "g1",
@@ -171,7 +170,9 @@ describe("GET /api/admin/family-groups", () => {
     const res = await getFamilyGroups();
     const data = await res.json();
 
-    expect(data.familyGroups[0].memberCount).toBe(1);
+    expect(data.familyGroups[0].memberCount).toBe(2);
+    expect(data.familyGroups[0].inactiveCount).toBe(1);
+    expect(data.familyGroups[0].members).toHaveLength(2);
     expect(data.familyGroups[0].pendingRequests).toBe(1);
   });
 });
@@ -230,17 +231,41 @@ describe("POST /api/admin/family-groups", () => {
     expect(data.error).toMatch(/dependent/i);
   });
 
-  it("rejects inactive members", async () => {
-    mockPrisma.member.findMany.mockResolvedValue([
+  it("allows inactive members to be added to a group", async () => {
+    const members = [
       { id: "m1", firstName: "Alice", lastName: "Smith", active: false, parentMemberId: null },
-    ]);
+    ];
+    mockPrisma.member.findMany.mockResolvedValue(members);
 
-    const req = makeReq({ name: "Bad Group", memberIds: ["m1"] });
+    const createdGroup = {
+      id: "g1",
+      name: "Group With Inactive",
+      memberships: members.map((m) => ({
+        member: { id: m.id, firstName: m.firstName, lastName: m.lastName, email: "x@x.com", ageTier: "ADULT" },
+        role: "MEMBER",
+      })),
+    };
+
+    mockPrisma.$transaction.mockImplementation(async (fn: (tx: {
+      familyGroup: { create: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
+      familyGroupMember: { createMany: ReturnType<typeof vi.fn> };
+    }) => Promise<unknown>) => {
+      const mockTx = {
+        familyGroup: {
+          create: vi.fn().mockResolvedValue({ id: "g1" }),
+          findUnique: vi.fn().mockResolvedValue(createdGroup),
+        },
+        familyGroupMember: {
+          createMany: vi.fn().mockResolvedValue({ count: 1 }),
+        },
+      };
+      return fn(mockTx);
+    });
+
+    const req = makeReq({ name: "Group With Inactive", memberIds: ["m1"] });
     const res = await postFamilyGroup(req);
-    const data = await res.json();
 
-    expect(res.status).toBe(422);
-    expect(data.error).toMatch(/inactive/i);
+    expect(res.status).toBe(201);
   });
 
   it("requires auth", async () => {

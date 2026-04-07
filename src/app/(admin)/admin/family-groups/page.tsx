@@ -15,6 +15,7 @@ interface FamilyGroupMemberRow {
   lastName: string;
   email: string;
   ageTier: string;
+  active: boolean;
   parentMemberId: string | null;
   role?: string;
 }
@@ -25,6 +26,7 @@ interface FamilyGroup {
   createdAt: string;
   members: FamilyGroupMemberRow[];
   memberCount: number;
+  inactiveCount: number;
   pendingRequests: number;
 }
 
@@ -456,13 +458,25 @@ export default function FamilyGroupsPage() {
                           {g.members
                             .filter((m) => !m.parentMemberId)
                             .map((m) => (
-                              <Badge key={m.id} variant="secondary" className="text-xs">
+                              <Badge
+                                key={m.id}
+                                variant="secondary"
+                                className={`text-xs ${!m.active ? "opacity-50" : ""}`}
+                              >
                                 {m.firstName} {m.lastName}
+                                {!m.active && (
+                                  <span className="ml-1 text-slate-400">(inactive)</span>
+                                )}
                               </Badge>
                             ))}
                         </div>
                         <div className="text-xs text-slate-500 mt-0.5">
                           {g.memberCount} member{g.memberCount !== 1 ? "s" : ""}
+                          {g.inactiveCount > 0 && (
+                            <span className="text-slate-400">
+                              {" "}({g.inactiveCount} inactive)
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-slate-500">
