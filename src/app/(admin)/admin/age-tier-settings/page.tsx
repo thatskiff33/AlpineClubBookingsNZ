@@ -14,17 +14,28 @@ type AgeTierRow = {
   sortOrder: number;
 };
 
+const DEFAULT_SETTINGS: AgeTierRow[] = [
+  { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
+  { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
+  { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
+];
+
 export default function AgeTierSettingsPage() {
   const [settings, setSettings] = useState<AgeTierRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch("/api/admin/age-tier-settings")
       .then((r) => r.json())
-      .then((d) => setSettings(d.settings ?? []))
-      .catch(() => setError("Failed to load settings"));
+      .then((d) => {
+        const rows = d.settings ?? [];
+        setSettings(rows.length > 0 ? rows : DEFAULT_SETTINGS);
+      })
+      .catch(() => setError("Failed to load settings"))
+      .finally(() => setLoading(false));
   }, []);
 
   // Sort by sortOrder for display
@@ -89,6 +100,9 @@ export default function AgeTierSettingsPage() {
           <CardTitle>Age Tier Boundaries</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          {loading && (
+            <p className="text-sm text-slate-500">Loading settings...</p>
+          )}
           {sorted.map((s) => (
             <div key={s.tier} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end border-b pb-4 last:border-0 last:pb-0">
               <div className="space-y-1">
