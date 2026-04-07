@@ -312,32 +312,13 @@ describe("POST /api/members/family/request-join", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects if requester is already in a group", async () => {
-    mockedAuth.mockResolvedValue(memberSession);
-    mockedPrisma.member.findUnique.mockResolvedValue({
-      id: "member-1",
-      firstName: "John",
-      lastName: "Smith",
-      parentMemberId: null,
-      familyGroupId: "existing-group",
-      active: true,
-    } as any);
-
-    const { POST } = await import("@/app/api/members/family/request-join/route");
-    const res = await POST(makeReq("/api/members/family/request-join", "POST", { targetEmail: "jane@test.com" }));
-    expect(res.status).toBe(422);
-    const body = await res.json();
-    expect(body.error).toContain("already in a family group");
-  });
-
-  it("rejects if requester is a dependent", async () => {
+  it("rejects if requester cannot login (e.g. child/youth)", async () => {
     mockedAuth.mockResolvedValue(memberSession);
     mockedPrisma.member.findUnique.mockResolvedValue({
       id: "member-1",
       firstName: "Child",
       lastName: "Smith",
-      parentMemberId: "parent-1",
-      familyGroupId: null,
+      canLogin: false,
       active: true,
     } as any);
 
@@ -352,8 +333,7 @@ describe("POST /api/members/family/request-join", () => {
       id: "member-1",
       firstName: "John",
       lastName: "Smith",
-      parentMemberId: null,
-      familyGroupId: null,
+      canLogin: true,
       active: true,
     } as any);
     mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue(null);
@@ -370,8 +350,7 @@ describe("POST /api/members/family/request-join", () => {
       id: "member-1",
       firstName: "John",
       lastName: "Smith",
-      parentMemberId: null,
-      familyGroupId: null,
+      canLogin: true,
       active: true,
     } as any);
     mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue(null);
@@ -379,7 +358,7 @@ describe("POST /api/members/family/request-join", () => {
       id: "member-2",
       firstName: "Jane",
       lastName: "Smith",
-      familyGroupId: "fg1",
+      familyGroupMemberships: [{ familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } }],
     } as any);
     mockedPrisma.familyGroupJoinRequest.create.mockResolvedValue({
       id: "req-1",
@@ -401,8 +380,7 @@ describe("POST /api/members/family/request-join", () => {
       id: "member-1",
       firstName: "John",
       lastName: "Smith",
-      parentMemberId: null,
-      familyGroupId: null,
+      canLogin: true,
       active: true,
     } as any);
     mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue({

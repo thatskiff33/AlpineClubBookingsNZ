@@ -6,7 +6,6 @@ import { getSeasonYear } from "@/lib/utils";
 import { ProfileForm } from "./profile-form";
 import { ChangeEmailForm } from "./change-email-form";
 import { NotificationPreferences } from "./notification-preferences";
-import { DependentsSection } from "./dependents-section";
 import { FamilyGroupSection } from "./family-group-section";
 import { DataExportButton } from "./data-export-button";
 import { DeleteAccountButton } from "./delete-account-button";
@@ -42,7 +41,7 @@ export default async function ProfilePage() {
       active: true,
       createdAt: true,
       passwordChangedAt: true,
-      parentMemberId: true,
+      canLogin: true,
       familyGroupMemberships: {
         select: {
           familyGroupId: true,
@@ -66,26 +65,6 @@ export default async function ProfilePage() {
   });
 
   if (!member) redirect("/login");
-
-  const dependents = await prisma.member.findMany({
-    where: {
-      OR: [
-        { parentMemberId: session.user.id },
-        { secondaryParentId: session.user.id },
-      ],
-      active: true,
-    },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      ageTier: true,
-      dateOfBirth: true,
-      email: true,
-      inheritParentEmail: true,
-    },
-    orderBy: { firstName: "asc" },
-  });
 
   const currentSub = member.subscriptions.find(s => s.seasonYear === currentSeasonYear);
   const subscriptionStatus = currentSub?.status ?? null;
@@ -226,47 +205,23 @@ export default async function ProfilePage() {
       </Card>
 
       {/* Family Group */}
-      {!member.parentMemberId && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Family Group</CardTitle>
-            <CardDescription>
-              Link with your partner/spouse so you appear in each other&apos;s booking quick-add lists
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <FamilyGroupSection
-              familyGroups={member.familyGroupMemberships.map((ms) => ({
-                id: ms.familyGroup.id,
-                name: ms.familyGroup.name,
-                members: ms.familyGroup.memberships
-                  .map((m) => m.member)
-                  .filter((m) => m.id !== member.id),
-              }))}
-            />
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Dependents */}
       <Card>
         <CardHeader>
-          <CardTitle>Dependents</CardTitle>
+          <CardTitle>Family Group</CardTitle>
           <CardDescription>
-            Manage dependents who share your account (e.g. children). They get member pricing when you book.
+            Manage your family group members. Adults can invite other adults, and request to add children or youth.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <DependentsSection
-            initialDependents={dependents.map((d) => ({
-              id: d.id,
-              firstName: d.firstName,
-              lastName: d.lastName,
-              ageTier: d.ageTier,
-              dateOfBirth: d.dateOfBirth ? d.dateOfBirth.toISOString().substring(0, 10) : null,
-              email: d.email,
-              inheritParentEmail: d.inheritParentEmail,
+          <FamilyGroupSection
+            familyGroups={member.familyGroupMemberships.map((ms) => ({
+              id: ms.familyGroup.id,
+              name: ms.familyGroup.name,
+              members: ms.familyGroup.memberships
+                .map((m) => m.member)
+                .filter((m) => m.id !== member.id),
             }))}
+            canManage={member.ageTier === "ADULT" && member.canLogin === true}
           />
         </CardContent>
       </Card>

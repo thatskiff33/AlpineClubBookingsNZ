@@ -13,6 +13,7 @@ const requestJoinSchema = z.object({
 /**
  * POST /api/members/family/request-join
  * Request to join another member's family group.
+ * The target must be an existing active adult member who is in at least one family group.
  */
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -20,7 +21,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
-  // Rate limit: 3 per hour
   const rateLimited = applyRateLimit(rateLimiters.familyGroupJoinRequest, req);
   if (rateLimited) return rateLimited;
 
@@ -44,52 +44,22 @@ export async function POST(req: NextRequest) {
   // Fetch requester
   const requester = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: { id: true, firstName: true, lastName: true, parentMemberId: true, familyGroupId: true, active: true },
+    select: { id: true, firstName: true, lastName: true, active: true, canLogin: true },
   });
 
   if (!requester || !requester.active) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  if (requester.parentMemberId) {
-    return NextResponse.json(
-      { error: "Dependents cannot request to join a family group" },
-      { status: 403 }
-    );
-  }
-
-  if (requester.familyGroupId) {
-    return NextResponse.json(
-      { error: "You are already in a family group. Leave your current group first or contact an admin." },
-      { status: 422 }
-    );
-  }
-
-  // Find target member by email (must be primary and active)
-  const target = await prisma.member.findFirst({
-    where: {
-      email: targetEmail.toLowerCase(),
-      parentMemberId: null,
-      active: true,
-    },
-    select: { id: true, firstName: true, lastName: true, familyGroupId: true },
-  });
-
-  if (!target) {
-    return NextResponse.json(
-      { error: "No active primary member found with that email address" },
-      { status: 404 }
-    );
-  }
-
-  if (target.id === session.user.id) {
-    return NextResponse.json({ error: "You cannot request to join your own group" }, { status: 422 });
+  if (!requester.canLogin) {
+    return NextResponse.json({ error: "Only members with login accounts can request to join a family group" }, { status: 403 });
   }
 
   // Check for existing pending request from this requester
   const existingRequest = await prisma.familyGroupJoinRequest.findFirst({
     where: {
       requesterId: session.user.id,
+      type: "JOIN_REQUEST",
       status: "PENDING",
     },
   });
@@ -101,20 +71,50 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Find target member by email — must be active and able to login
+  const target = await prisma.member.findFirst({
+    where: {
+      email: targetEmail.toLowerCase(),
+      canLogin: true,
+      active: true,
+    },
+    select: {
+      id: true, firstName: true, lastName: true,
+      familyGroupMemberships: {
+        select: { familyGroupId: true, familyGroup: { select: { id: true, name: true } } },
+        take: 1,
+      },
+    },
+  });
+
+  if (!target) {
+    return NextResponse.json(
+      { error: "No active member found with that email address" },
+      { status: 404 }
+    );
+  }
+
+  if (target.id === session.user.id) {
+    return NextResponse.json({ error: "You cannot request to join your own group" }, { status: 422 });
+  }
+
   let familyGroupId: string;
 
-  if (target.familyGroupId) {
-    // Target already has a family group - request to join it
-    familyGroupId = target.familyGroupId;
+  if (target.familyGroupMemberships.length > 0) {
+    // Target is in a family group — request to join their first group
+    familyGroupId = target.familyGroupMemberships[0].familyGroupId;
   } else {
-    // Create a new family group with the target member
+    // Create a new family group with the target member as lead
     const newGroup = await prisma.$transaction(async (tx) => {
       const group = await tx.familyGroup.create({
         data: { name: `${target.lastName} Family` },
       });
-      await tx.member.update({
-        where: { id: target.id },
-        data: { familyGroupId: group.id },
+      await tx.familyGroupMember.create({
+        data: {
+          familyGroupId: group.id,
+          memberId: target.id,
+          role: "ADMIN",
+        },
       });
       return group;
     });
@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
     data: {
       familyGroupId,
       requesterId: session.user.id,
+      type: "JOIN_REQUEST",
     },
   });
 

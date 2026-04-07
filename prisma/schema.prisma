@@ -149,7 +149,9 @@ model Member {
   promoRedemptions           PromoRedemption[]
   notificationPreference     NotificationPreference?
   hutLeaderAssignments       HutLeaderAssignment[]
-  familyGroupRequests        FamilyGroupJoinRequest[]
+  familyGroupRequests        FamilyGroupJoinRequest[] @relation("FamilyGroupRequester")
+  familyGroupInvitations     FamilyGroupJoinRequest[] @relation("FamilyGroupInvitedMember")
+  familyGroupLinkedRequests  FamilyGroupJoinRequest[] @relation("FamilyGroupLinkedMember")
   deletionRequests           DeletionRequest[]
 
   @@index([email])
@@ -710,17 +712,33 @@ model FamilyGroupJoinRequest {
   id            String      @id @default(cuid())
   familyGroupId String
   requesterId   String
+  type          String      @default("JOIN_REQUEST") // JOIN_REQUEST | ADULT_INVITE | CHILD_REQUEST
   status        String      @default("PENDING") // PENDING | APPROVED | REJECTED
   createdAt     DateTime    @default(now())
   reviewedAt    DateTime?
   reviewedBy    String?
 
+  // For ADULT_INVITE: the member being invited
+  invitedMemberId   String?
+  invitedMember     Member?   @relation("FamilyGroupInvitedMember", fields: [invitedMemberId], references: [id])
+
+  // For CHILD_REQUEST: child details submitted by parent
+  childFirstName    String?
+  childLastName     String?
+  childDateOfBirth  DateTime?
+
+  // Set by admin when approving CHILD_REQUEST — links to existing member
+  linkedMemberId    String?
+  linkedMember      Member?   @relation("FamilyGroupLinkedMember", fields: [linkedMemberId], references: [id])
+
   familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
-  requester   Member      @relation(fields: [requesterId], references: [id])
+  requester   Member      @relation("FamilyGroupRequester", fields: [requesterId], references: [id])
 
   @@index([familyGroupId])
   @@index([requesterId])
+  @@index([invitedMemberId])
   @@index([status])
+  @@index([type])
 }
 
 // ---------------------------------------------------------------------------
