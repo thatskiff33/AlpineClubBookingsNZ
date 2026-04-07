@@ -129,11 +129,13 @@ export default function XeroPage() {
 
   // Account mappings state
   const [accountMappings, setAccountMappings] = useState<AccountMappings | null>(null)
+  const [savedMappings, setSavedMappings] = useState<AccountMappings | null>(null)
   const [chartOfAccounts, setChartOfAccounts] = useState<XeroAccount[]>([])
   const [loadingMappings, setLoadingMappings] = useState(false)
   const [savingMappings, setSavingMappings] = useState(false)
   const [mappingError, setMappingError] = useState("")
   const [mappingSaved, setMappingSaved] = useState(false)
+  const [isEditingMappings, setIsEditingMappings] = useState(false)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -158,6 +160,7 @@ export default function XeroPage() {
       if (mappingsRes.ok) {
         const data = await mappingsRes.json()
         setAccountMappings(data)
+        setSavedMappings(data)
       }
       if (accountsRes.ok) {
         const data = await accountsRes.json()
@@ -342,6 +345,8 @@ export default function XeroPage() {
       }
       const data = await res.json()
       setAccountMappings(data)
+      setSavedMappings(data)
+      setIsEditingMappings(false)
       setMappingSaved(true)
       setTimeout(() => setMappingSaved(false), 3000)
     } catch (err) {
@@ -503,6 +508,7 @@ export default function XeroPage() {
                   const typeFilter = MAPPING_TYPE_FILTER[key]
                   const filtered = chartOfAccounts.filter((a) => a.type === typeFilter)
                   const currentCode = accountMappings[key]
+                  const matchedAccount = filtered.find((a) => a.code === currentCode)
                   return (
                     <div key={key} className="grid grid-cols-3 gap-4 items-start">
                       <div>
@@ -510,44 +516,73 @@ export default function XeroPage() {
                         <p className="text-xs text-muted-foreground">{MAPPING_DESCRIPTIONS[key]}</p>
                       </div>
                       <div className="col-span-2">
-                        <Select
-                          value={currentCode ?? "__none__"}
-                          onValueChange={(val) =>
-                            setAccountMappings((prev) =>
-                              prev ? { ...prev, [key]: val === "__none__" ? null : val } : prev
-                            )
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select account..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">
-                              <span className="text-muted-foreground">Not configured (use default)</span>
-                            </SelectItem>
-                            {filtered.map((account) => (
-                              <SelectItem key={account.code} value={account.code}>
-                                {account.code} — {account.name}
+                        {isEditingMappings ? (
+                          <Select
+                            value={currentCode ?? "__none__"}
+                            onValueChange={(val) =>
+                              setAccountMappings((prev) =>
+                                prev ? { ...prev, [key]: val === "__none__" ? null : val } : prev
+                              )
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select account..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">
+                                <span className="text-muted-foreground">Not configured (use default)</span>
                               </SelectItem>
-                            ))}
-                            {filtered.length === 0 && (
-                              <SelectItem value="__empty__" disabled>
-                                No {typeFilter.toLowerCase()} accounts found
-                              </SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
+                              {filtered.map((account) => (
+                                <SelectItem key={account.code} value={account.code}>
+                                  {account.code} — {account.name}
+                                </SelectItem>
+                              ))}
+                              {filtered.length === 0 && (
+                                <SelectItem value="__empty__" disabled>
+                                  No {typeFilter.toLowerCase()} accounts found
+                                </SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <p className="text-sm py-2 px-3 bg-slate-50 rounded-md border border-slate-200">
+                            {matchedAccount
+                              ? `${matchedAccount.code} — ${matchedAccount.name}`
+                              : currentCode
+                                ? currentCode
+                                : <span className="text-muted-foreground">Not configured (using default)</span>}
+                          </p>
+                        )}
                       </div>
                     </div>
                   )
                 })}
-                <div className="pt-2">
-                  <Button
-                    onClick={handleSaveAccountMappings}
-                    disabled={savingMappings || !accountMappings}
-                  >
-                    {savingMappings ? "Saving..." : "Save Account Mappings"}
-                  </Button>
+                <div className="pt-2 flex gap-2">
+                  {isEditingMappings ? (
+                    <>
+                      <Button
+                        onClick={handleSaveAccountMappings}
+                        disabled={savingMappings || !accountMappings}
+                      >
+                        {savingMappings ? "Saving..." : "Save Changes"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setAccountMappings(savedMappings)
+                          setIsEditingMappings(false)
+                          setMappingError("")
+                        }}
+                        disabled={savingMappings}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="outline" onClick={() => setIsEditingMappings(true)}>
+                      Edit Mappings
+                    </Button>
+                  )}
                 </div>
               </div>
             )}
@@ -651,14 +686,15 @@ export default function XeroPage() {
             </CardContent>
           </Card>
 
-          {/* Duplicate Contact Detection */}
+          {/* Duplicate Contact Detection & Family Groups */}
           <Card className="mb-6">
             <CardHeader>
-              <CardTitle>Duplicate Contact Detection</CardTitle>
+              <CardTitle>Duplicates &amp; Family Groups</CardTitle>
               <CardDescription>
-                Scan Xero contacts for duplicate email addresses. Duplicates are shown with
-                invoice counts so you can identify which contact to keep, then merge them
-                directly in Xero.
+                Scan Xero contacts for duplicate email addresses and suggest Family Group
+                associations. Duplicates are shown with invoice counts so you can identify
+                which contact to keep, merge them in Xero, or create Family Groups for
+                members sharing an email.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -666,7 +702,7 @@ export default function XeroPage() {
                 onClick={handleScanDuplicates}
                 disabled={scanningDuplicates || syncing !== null}
               >
-                {scanningDuplicates ? "Scanning..." : "Scan for Duplicates"}
+                {scanningDuplicates ? "Scanning..." : "Scan for Duplicates & Family Groups"}
               </Button>
 
               {duplicates && (
