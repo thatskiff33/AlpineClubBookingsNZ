@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { sendAdminCapacityWarningAlert } from "./email";
 import { LODGE_CAPACITY } from "./capacity";
+import { getNZSTToday } from "./nzst-date";
 import { eachDayOfInterval, addDays } from "date-fns";
 import logger from "@/lib/logger";
 
@@ -13,21 +14,7 @@ const WARN_THRESHOLD_BEDS = 5; // Alert when <= 5 beds remaining
  * Runs daily at 7:00 AM NZST.
  */
 export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> {
-  // Calculate today in NZ timezone
-  const nzFormatter = new Intl.DateTimeFormat("en-NZ", {
-    timeZone: "Pacific/Auckland",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-
-  const now = new Date();
-  const parts = nzFormatter.formatToParts(now);
-  const year = parts.find((p) => p.type === "year")!.value;
-  const month = parts.find((p) => p.type === "month")!.value;
-  const day = parts.find((p) => p.type === "day")!.value;
-
-  const todayNZ = new Date(`${year}-${month}-${day}T00:00:00`);
+  const todayNZ = getNZSTToday();
   const endDate = addDays(todayNZ, 14);
 
   const nights = eachDayOfInterval({

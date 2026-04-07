@@ -91,6 +91,18 @@ async function checkSmtp(): Promise<CheckResult> {
     if (!host || !user) {
       return { status: "error", latencyMs: 0, error: "SMTP not configured" };
     }
+    // Actually test SMTP connectivity
+    const nodemailer = await import("nodemailer");
+    const transporter = nodemailer.default.createTransport({
+      host,
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: false,
+      auth: {
+        user: process.env.AWS_SES_ACCESS_KEY_ID || "",
+        pass: process.env.AWS_SES_SECRET_ACCESS_KEY || "",
+      },
+    });
+    await transporter.verify();
     return { status: "ok", latencyMs: Date.now() - start };
   } catch (err) {
     return {

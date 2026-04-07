@@ -51,22 +51,6 @@ export async function register() {
       }
     }
 
-    // Auto-prune old CronJobRun records (older than 90 days)
-    async function pruneCronRuns() {
-      try {
-        const cutoff = new Date();
-        cutoff.setDate(cutoff.getDate() - 90);
-        const { count } = await prisma.cronJobRun.deleteMany({
-          where: { startedAt: { lt: cutoff } },
-        });
-        if (count > 0) {
-          logger.info({ job: "cron-prune", deletedCount: count }, "Pruned old cron job runs");
-        }
-      } catch (err) {
-        logger.error({ err, job: "cron-prune" }, "Failed to prune old cron job runs");
-      }
-    }
-
     // OBS-03: Cron job 1 - Pending booking confirmation (every 3 hours)
     cron.default.schedule("0 */3 * * *", async () => {
       if (isPendingCronRunning) {
@@ -195,15 +179,6 @@ export async function register() {
         isBackupRunning = false;
       }
 
-      // Prune old cron runs and webhook logs after backup
-      await pruneCronRuns();
-      try {
-        const { pruneWebhookLogs } = await import("./lib/webhook-log");
-        await pruneWebhookLogs();
-      } catch (err) {
-        logger.error({ err }, "Failed to prune webhook logs");
-      }
-
       // Delete expired DRAFT bookings (and their promo redemptions via cascade)
       try {
         const expiredDrafts = await prisma.booking.findMany({
@@ -234,6 +209,39 @@ export async function register() {
     }, { timezone: "Pacific/Auckland" });
 
     logger.info({ job: "backup", schedule: backupSchedule }, "Scheduled database backup");
+
+    // Data pruning cron (daily at 3:00 AM NZST)
+    cron.default.schedule("0 3 * * *", async () => {
+      const startedAt = new Date();
+      try {
+        const { pruneCronRuns } = await import("./lib/cron-job-run");
+        const { pruneWebhookLogs } = await import("./lib/webhook-log");
+        await pruneCronRuns();
+        await pruneWebhookLogs();
+        // Prune expired tokens
+        await prisma.emailVerificationToken.deleteMany({
+          where: { expiresAt: { lt: new Date() } },
+        });
+        await prisma.emailChangeToken.deleteMany({
+          where: { expiresAt: { lt: new Date() } },
+        });
+        await prisma.guestChoreToken.deleteMany({
+          where: { expiresAt: { lt: new Date() } },
+        });
+        await prisma.passwordResetToken.deleteMany({
+          where: { expiresAt: { lt: new Date() }, used: true },
+        });
+        logger.info({ job: "data-pruning" }, "Data pruning complete");
+        await recordCronRun("data-pruning", startedAt, "SUCCESS");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "data-pruning" }, "Error in data pruning");
+        Sentry.captureException(err);
+        await recordCronRun("data-pruning", startedAt, "FAILURE", undefined, message);
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "data-pruning" }, "Scheduled data pruning (daily at 3:00 AM NZST)");
 
     // N-06: Cron job - Pending deadline alerts (daily at 8:00 AM NZST)
     let isPendingDeadlineRunning = false;

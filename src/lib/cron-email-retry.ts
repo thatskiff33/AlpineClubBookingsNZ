@@ -91,6 +91,28 @@ export async function retryFailedEmails(): Promise<{ retried: number; succeeded:
       }).catch((updateErr) => {
         logger.error({ err: updateErr, emailLogId: emailLog.id }, "Failed to update EmailLog after retry failure");
       });
+
+      // Alert admin when email exhausts retries
+      if (newAttempts >= MAX_ATTEMPTS) {
+        try {
+          const { sendEmail } = await import("./email");
+          const admins = await prisma.member.findMany({
+            where: { role: "ADMIN", active: true },
+            select: { email: true },
+          });
+          for (const admin of admins) {
+            await sendEmail({
+              to: admin.email,
+              subject: "Email delivery permanently failed",
+              html: `<p>Email to ${emailLog.to} (template: ${emailLog.templateName}) has failed after ${newAttempts} attempts and will not be retried.</p>`,
+              templateName: "admin-email-failure",
+            }).catch(() => {}); // Don't let alert failure break the cron
+          }
+        } catch {
+          // Non-critical
+        }
+      }
+
       failed++;
     }
   }

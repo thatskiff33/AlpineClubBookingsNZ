@@ -10,6 +10,15 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+// Mock nodemailer
+vi.mock("nodemailer", () => ({
+  default: {
+    createTransport: vi.fn(() => ({
+      verify: vi.fn().mockResolvedValue(true),
+    })),
+  },
+}));
+
 // Mock logger
 vi.mock("@/lib/logger", () => ({
   default: {

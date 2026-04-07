@@ -6,6 +6,7 @@
 import { prisma } from "@/lib/prisma";
 import { sendEmail, shouldSendEmail } from "@/lib/email";
 import { postStayFeedbackTemplate } from "@/lib/email-templates";
+import { getNZSTToday } from "@/lib/nzst-date";
 import logger from "@/lib/logger";
 
 export async function sendFeedbackRequests(): Promise<{
@@ -14,19 +15,7 @@ export async function sendFeedbackRequests(): Promise<{
   failed: number;
 }> {
   // Calculate "yesterday" in NZST
-  const now = new Date();
-  const nzFormatter = new Intl.DateTimeFormat("en-NZ", {
-    timeZone: "Pacific/Auckland",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  const parts = nzFormatter.formatToParts(now);
-  const year = parts.find((p) => p.type === "year")!.value;
-  const month = parts.find((p) => p.type === "month")!.value;
-  const day = parts.find((p) => p.type === "day")!.value;
-
-  const todayNZ = new Date(`${year}-${month}-${day}T00:00:00Z`);
+  const todayNZ = getNZSTToday();
   const yesterdayNZ = new Date(todayNZ);
   yesterdayNZ.setDate(yesterdayNZ.getDate() - 1);
 

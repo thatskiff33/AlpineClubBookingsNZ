@@ -57,6 +57,7 @@ export default function KioskPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [failCount, setFailCount] = useState(0);
 
   const fetchData = useCallback(async () => {
     try {
@@ -76,8 +77,10 @@ export default function KioskPage() {
       }
 
       setError(null);
+      setFailCount(0);
     } catch {
       setError("Failed to load data");
+      setFailCount((c) => c + 1);
     } finally {
       setLoading(false);
     }
@@ -88,11 +91,12 @@ export default function KioskPage() {
     fetchData();
   }, [fetchData]);
 
-  // Auto-refresh every 60 seconds
+  // Auto-refresh: backs off to 5 min after 3 consecutive failures
   useEffect(() => {
-    const interval = setInterval(fetchData, 60_000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+    const interval = failCount >= 3 ? 300000 : 60000;
+    const timer = setInterval(fetchData, interval);
+    return () => clearInterval(timer);
+  }, [failCount, fetchData]);
 
   const changeDate = (delta: number) => {
     const d = new Date(date + "T00:00:00");
@@ -433,7 +437,7 @@ export default function KioskPage() {
 
       {/* Last refresh indicator */}
       <footer className="mt-6 text-center text-sm text-slate-600">
-        Auto-refreshes every 60s
+        Auto-refreshes every {failCount >= 3 ? "5m" : "60s"}
       </footer>
     </div>
   );

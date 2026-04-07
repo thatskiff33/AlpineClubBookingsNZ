@@ -3,6 +3,8 @@
  * All templates use inline CSS for maximum email client compatibility.
  */
 
+import { LODGE_CAPACITY } from "./capacity";
+
 const BASE_URL = process.env.NEXTAUTH_URL || "http://localhost:3000";
 
 /** Escape HTML special characters to prevent injection in email templates. */
@@ -507,12 +509,12 @@ export function adminCapacityWarningTemplate(days: Array<{
 }>): string {
   const tableRowsHtml = days
     .map((d) => {
-      const pct = Math.round((d.occupiedBeds / 29) * 100);
+      const pct = Math.round((d.occupiedBeds / LODGE_CAPACITY) * 100);
       const color = d.availableBeds <= 2 ? "#dc2626" : d.availableBeds <= 5 ? "#d97706" : TEXT_COLOR;
       return `
     <tr>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDate(d.date)}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${d.occupiedBeds}/29</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${d.occupiedBeds}/${LODGE_CAPACITY}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${color}; font-weight: 700;">${d.availableBeds}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${color}; font-weight: 700;">${pct}%</td>
     </tr>`;

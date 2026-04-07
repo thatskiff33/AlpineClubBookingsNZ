@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { sendCheckinReminderEmail } from "./email";
+import { getNZSTTomorrow } from "./nzst-date";
 import logger from "@/lib/logger";
 
 /**
@@ -9,23 +10,8 @@ import logger from "@/lib/logger";
  * Skips bookings where a reminder has already been sent (checks EmailLog).
  */
 export async function sendCheckinReminders(): Promise<{ sent: number; skipped: number }> {
-  // Calculate "tomorrow" in Pacific/Auckland timezone
-  const nzFormatter = new Intl.DateTimeFormat("en-NZ", {
-    timeZone: "Pacific/Auckland",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-
   const now = new Date();
-  const parts = nzFormatter.formatToParts(now);
-  const year = parts.find((p) => p.type === "year")!.value;
-  const month = parts.find((p) => p.type === "month")!.value;
-  const day = parts.find((p) => p.type === "day")!.value;
-
-  const todayNZ = new Date(`${year}-${month}-${day}T00:00:00`);
-  const tomorrowNZ = new Date(todayNZ);
-  tomorrowNZ.setDate(tomorrowNZ.getDate() + 1);
+  const tomorrowNZ = getNZSTTomorrow();
   const dayAfterNZ = new Date(tomorrowNZ);
   dayAfterNZ.setDate(dayAfterNZ.getDate() + 1);
 
