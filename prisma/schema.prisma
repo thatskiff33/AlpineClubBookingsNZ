@@ -94,7 +94,7 @@ enum ChoreFrequencyMode {
 
 model Member {
   id            String   @id @default(cuid())
-  email         String
+  email         String   @unique
   passwordHash        String
   forcePasswordChange Boolean  @default(false)
   passwordChangedAt   DateTime?
@@ -273,12 +273,12 @@ model Booking {
   hasNonMembers      Boolean       @default(false)
   nonMemberHoldUntil DateTime?
   draftExpiresAt     DateTime?
-  notes              String?
+  notes              String?       @db.VarChar(500)
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
   // Relations
-  member           Member               @relation(fields: [memberId], references: [id])
+  member           Member               @relation(fields: [memberId], references: [id], onDelete: Cascade)
   guests           BookingGuest[]
   payment          Payment?
   choreAssignments ChoreAssignment[]
@@ -386,7 +386,7 @@ model PromoRedemption {
   // Relations
   promoCode PromoCode @relation(fields: [promoCodeId], references: [id])
   booking   Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  member    Member    @relation(fields: [memberId], references: [id])
+  member    Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@index([promoCodeId])
   @@index([memberId])

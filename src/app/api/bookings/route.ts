@@ -29,8 +29,8 @@ const createBookingSchema = z.object({
   guests: z
     .array(
       z.object({
-        firstName: z.string().min(1),
-        lastName: z.string().min(1),
+        firstName: z.string().min(1).max(100),
+        lastName: z.string().min(1).max(100),
         ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
         isMember: z.boolean(),
         memberId: z.string().optional(),
