@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * GET /api/admin/hut-leaders/eligible-members?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
- * Returns adult members who have active bookings (PENDING/CONFIRMED) overlapping the given date range.
+ * Returns adult members who have active bookings (PENDING/CONFIRMED/PAID) overlapping the given date range.
  */
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
       ageTier: "ADULT",
       memberId: { not: null },
       booking: {
-        status: { in: ["PENDING", "CONFIRMED"] },
+        status: { in: ["PENDING", "CONFIRMED", "PAID"] },
         checkIn: { lte: rangeEnd },
         checkOut: { gt: rangeStart },
       },
@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
   // Also include the booking owner (member) if they are an adult staying
   const bookings = await prisma.booking.findMany({
     where: {
-      status: { in: ["PENDING", "CONFIRMED"] },
+      status: { in: ["PENDING", "CONFIRMED", "PAID"] },
       checkIn: { lte: rangeEnd },
       checkOut: { gt: rangeStart },
     },
