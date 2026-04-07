@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { sendChildRequestApprovedEmail, sendChildRequestRejectedEmail } from "@/lib/email";
 
 const reviewRequestSchema = z.object({
   requestId: z.string().min(1),
@@ -83,7 +84,8 @@ export async function PUT(req: NextRequest) {
   const request = await prisma.familyGroupJoinRequest.findUnique({
     where: { id: requestId },
     include: {
-      requester: { select: { id: true, firstName: true, lastName: true, familyGroupId: true } },
+      requester: { select: { id: true, firstName: true, lastName: true, email: true } },
+      familyGroup: { select: { name: true } },
     },
   });
 
@@ -124,6 +126,19 @@ export async function PUT(req: NextRequest) {
       { requestId, requesterId: request.requesterId, familyGroupId: request.familyGroupId },
       "Family group join request approved"
     );
+
+    // Send approval notification for child requests
+    if (request.type === "CHILD_REQUEST" && request.requester) {
+      const childName = `${request.childFirstName ?? ""} ${request.childLastName ?? ""}`.trim();
+      sendChildRequestApprovedEmail(
+        request.requester.email,
+        request.requester.firstName,
+        childName || "your child",
+        request.familyGroup?.name ?? "your family group"
+      ).catch((err) => {
+        logger.error({ err, requestId }, "Failed to send child request approved email");
+      });
+    }
   } else {
     await prisma.familyGroupJoinRequest.update({
       where: { id: requestId },
@@ -142,6 +157,18 @@ export async function PUT(req: NextRequest) {
     });
 
     logger.info({ requestId, requesterId: request.requesterId }, "Family group join request rejected");
+
+    // Send rejection notification for child requests
+    if (request.type === "CHILD_REQUEST" && request.requester) {
+      const childName = `${request.childFirstName ?? ""} ${request.childLastName ?? ""}`.trim();
+      sendChildRequestRejectedEmail(
+        request.requester.email,
+        request.requester.firstName,
+        childName || "your child"
+      ).catch((err) => {
+        logger.error({ err, requestId }, "Failed to send child request rejected email");
+      });
+    }
   }
 
   return NextResponse.json({ success: true, action });

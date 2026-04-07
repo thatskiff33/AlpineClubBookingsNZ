@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findUnique: vi.fn() },
+    familyGroup: { findUnique: vi.fn() },
     familyGroupJoinRequest: { findFirst: vi.fn(), create: vi.fn() },
   },
 }));
@@ -16,6 +17,9 @@ vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
   rateLimiters: { familyGroupJoinRequest: {} },
+}));
+vi.mock("@/lib/email", () => ({
+  sendChildRequestSubmittedEmail: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { prisma } from "@/lib/prisma";
@@ -87,12 +91,15 @@ describe("POST /api/members/family/request-child", () => {
 
   it("creates child request successfully", async () => {
     mockedAuth.mockResolvedValue(adultSession);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue({
-      id: "adult1", firstName: "Alice", lastName: "Smith", active: true, ageTier: "ADULT",
-      familyGroupMemberships: [{ familyGroupId: "g1" }],
-    } as any);
+    vi.mocked(prisma.member.findUnique)
+      .mockResolvedValueOnce({
+        id: "adult1", firstName: "Alice", lastName: "Smith", active: true, ageTier: "ADULT",
+        familyGroupMemberships: [{ familyGroupId: "g1" }],
+      } as any)
+      .mockResolvedValueOnce({ email: "alice@test.com" } as any);
     vi.mocked(prisma.familyGroupJoinRequest.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.familyGroupJoinRequest.create).mockResolvedValue({ id: "req1" } as any);
+    vi.mocked(prisma.familyGroup.findUnique).mockResolvedValue({ name: "Smith Family" } as any);
 
     const res = await requestChild(makeRequest({
       familyGroupId: "g1", firstName: "Sam", lastName: "Smith", dateOfBirth: "2018-03-15",
@@ -115,12 +122,15 @@ describe("POST /api/members/family/request-child", () => {
 
   it("creates child request without dateOfBirth", async () => {
     mockedAuth.mockResolvedValue(adultSession);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue({
-      id: "adult1", firstName: "Alice", lastName: "Smith", active: true, ageTier: "ADULT",
-      familyGroupMemberships: [{ familyGroupId: "g1" }],
-    } as any);
+    vi.mocked(prisma.member.findUnique)
+      .mockResolvedValueOnce({
+        id: "adult1", firstName: "Alice", lastName: "Smith", active: true, ageTier: "ADULT",
+        familyGroupMemberships: [{ familyGroupId: "g1" }],
+      } as any)
+      .mockResolvedValueOnce({ email: "alice@test.com" } as any);
     vi.mocked(prisma.familyGroupJoinRequest.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.familyGroupJoinRequest.create).mockResolvedValue({ id: "req2" } as any);
+    vi.mocked(prisma.familyGroup.findUnique).mockResolvedValue({ name: "Smith Family" } as any);
 
     const res = await requestChild(makeRequest({
       familyGroupId: "g1", firstName: "Jamie", lastName: "Smith",

@@ -483,6 +483,34 @@ export async function register() {
     }, { timezone: "Pacific/Auckland" });
 
     logger.info({ job: "complete-bookings" }, "Scheduled complete bookings (daily at 1:00 AM NZST)");
+
+    // Age-up cron (daily at 6:00 AM NZST) — detect members turning 18, grant login
+    let isAgeUpRunning = false;
+    cron.default.schedule("0 6 * * *", async () => {
+      if (isAgeUpRunning) {
+        logger.info({ job: "age-up" }, "Already running, skipping");
+        return;
+      }
+      isAgeUpRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "age-up" }, "Checking for members who have turned 18");
+
+      try {
+        const { checkAgeUpMembers } = await import("./lib/cron-age-up");
+        const result = await checkAgeUpMembers();
+        logger.info({ job: "age-up", ...result }, "Age-up check complete");
+        await recordCronRun("age-up", startedAt, "SUCCESS", result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "age-up" }, "Error in age-up check");
+        Sentry.captureException(err);
+        await recordCronRun("age-up", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isAgeUpRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "age-up" }, "Scheduled age-up check (daily at 6:00 AM NZST)");
   }
 }
 

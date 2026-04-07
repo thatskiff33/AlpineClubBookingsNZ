@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { sendChildRequestSubmittedEmail } from "@/lib/email";
 
 const requestChildSchema = z.object({
   familyGroupId: z.string().min(1, "Family group ID required"),
@@ -108,6 +109,26 @@ export async function POST(req: NextRequest) {
     { requestId: request.id, requesterId: session.user.id, familyGroupId, childName: `${firstName} ${lastName}` },
     "Child/youth family group request submitted"
   );
+
+  // Send confirmation email to parent (fire-and-forget)
+  const groupInfo = await prisma.familyGroup.findUnique({
+    where: { id: familyGroupId },
+    select: { name: true },
+  });
+  const parentEmail = await prisma.member.findUnique({
+    where: { id: session.user.id },
+    select: { email: true },
+  });
+  if (parentEmail) {
+    sendChildRequestSubmittedEmail(
+      parentEmail.email,
+      requester.firstName,
+      `${firstName} ${lastName}`,
+      groupInfo?.name ?? "your family group"
+    ).catch((err) => {
+      logger.error({ err, requestId: request.id }, "Failed to send child request confirmation email");
+    });
+  }
 
   return NextResponse.json(
     {

@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { sendFamilyGroupInviteAcceptedEmail } from "@/lib/email";
 
 /**
  * GET /api/members/family/invitations
@@ -72,6 +73,7 @@ export async function PUT(req: NextRequest) {
     },
     include: {
       familyGroup: { select: { id: true, name: true } },
+      requester: { select: { id: true, firstName: true, lastName: true, email: true } },
     },
   });
 
@@ -118,6 +120,22 @@ export async function PUT(req: NextRequest) {
       { invitationId, memberId: session.user.id, familyGroupId: invitation.familyGroupId },
       "Family group invitation accepted"
     );
+
+    // Notify the inviter (fire-and-forget)
+    if (invitation.requester) {
+      const invitee = await prisma.member.findUnique({
+        where: { id: session.user.id },
+        select: { firstName: true, lastName: true },
+      });
+      const inviteeName = invitee ? `${invitee.firstName} ${invitee.lastName}` : "A member";
+      sendFamilyGroupInviteAcceptedEmail(
+        invitation.requester.email,
+        inviteeName,
+        invitation.familyGroup.name ?? "your family group"
+      ).catch((err) => {
+        logger.error({ err, invitationId }, "Failed to send invite-accepted email");
+      });
+    }
 
     return NextResponse.json({
       message: `You have joined ${invitation.familyGroup.name}.`,

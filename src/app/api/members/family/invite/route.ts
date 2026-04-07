@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { sendFamilyGroupInvitationEmail } from "@/lib/email";
 
 const inviteSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -144,7 +145,18 @@ export async function POST(req: NextRequest) {
     "Family group invitation sent"
   );
 
-  // TODO: Send email notification to invited member (Phase 6B)
+  // Send email notification to invited member (fire-and-forget)
+  const groupInfo = await prisma.familyGroup.findUnique({
+    where: { id: familyGroupId },
+    select: { name: true },
+  });
+  sendFamilyGroupInvitationEmail(
+    normalizedEmail,
+    `${requester.firstName} ${requester.lastName}`,
+    groupInfo?.name ?? "your family group"
+  ).catch((err) => {
+    logger.error({ err, invitationId: invitation.id }, "Failed to send family group invitation email");
+  });
 
   return NextResponse.json(
     {

@@ -24,6 +24,12 @@ import {
   bookingModifiedTemplate,
   accountDeletionApprovedTemplate,
   accountDeletionRejectedTemplate,
+  ageUpInvitationTemplate,
+  familyGroupInvitationTemplate,
+  familyGroupInviteAcceptedTemplate,
+  childRequestSubmittedTemplate,
+  childRequestApprovedTemplate,
+  childRequestRejectedTemplate,
 } from "./email-templates";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -491,6 +497,96 @@ export async function sendAccountDeletionRejectedEmail(
     subject: "Update on Your Account Deletion Request",
     html: accountDeletionRejectedTemplate(firstName, adminNote),
     templateName: "account-deletion-rejected",
+  });
+}
+
+// ---- Family group emails ----
+
+export async function sendFamilyGroupInvitationEmail(
+  email: string,
+  inviterName: string,
+  groupName: string
+) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const profileUrl = `${baseUrl}/profile`;
+
+  await sendEmail({
+    to: email,
+    subject: `${inviterName} invited you to join ${groupName} — TAC Bookings`,
+    html: familyGroupInvitationTemplate(inviterName, groupName, profileUrl),
+    templateName: "family-group-invitation",
+  });
+}
+
+export async function sendFamilyGroupInviteAcceptedEmail(
+  email: string,
+  inviteeName: string,
+  groupName: string
+) {
+  await sendEmail({
+    to: email,
+    subject: `${inviteeName} has joined ${groupName} — TAC Bookings`,
+    html: familyGroupInviteAcceptedTemplate(inviteeName, groupName),
+    templateName: "family-group-invite-accepted",
+  });
+}
+
+export async function sendChildRequestSubmittedEmail(
+  email: string,
+  parentName: string,
+  childName: string,
+  groupName: string
+) {
+  await sendEmail({
+    to: email,
+    subject: "Child/Youth request submitted — TAC Bookings",
+    html: childRequestSubmittedTemplate(parentName, childName, groupName),
+    templateName: "child-request-submitted",
+  });
+}
+
+export async function sendChildRequestApprovedEmail(
+  email: string,
+  parentName: string,
+  childName: string,
+  groupName: string
+) {
+  await sendEmail({
+    to: email,
+    subject: `${childName} has been added to ${groupName} — TAC Bookings`,
+    html: childRequestApprovedTemplate(parentName, childName, groupName),
+    templateName: "child-request-approved",
+  });
+}
+
+export async function sendChildRequestRejectedEmail(
+  email: string,
+  parentName: string,
+  childName: string,
+  reason?: string
+) {
+  await sendEmail({
+    to: email,
+    subject: "Child/Youth request update — TAC Bookings",
+    html: childRequestRejectedTemplate(parentName, childName, reason),
+    templateName: "child-request-rejected",
+  });
+}
+
+// Age-up invitation email (sent when youth turns 18)
+export async function sendAgeUpInvitationEmail(
+  email: string,
+  firstName: string,
+  token: string
+) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+
+  await sendEmail({
+    to: email,
+    subject: "You're 18! Set up your TAC Bookings account",
+    html: ageUpInvitationTemplate(firstName, resetUrl),
+    templateName: "age-up-invitation",
   });
 }
 

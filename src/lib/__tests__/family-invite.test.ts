@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { findUnique: vi.fn(), findFirst: vi.fn() },
+    familyGroup: { findUnique: vi.fn() },
     familyGroupJoinRequest: { findFirst: vi.fn(), create: vi.fn(), findMany: vi.fn(), update: vi.fn() },
     familyGroupMember: { upsert: vi.fn() },
     $transaction: vi.fn(),
@@ -18,6 +19,10 @@ vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
   rateLimiters: { familyGroupJoinRequest: {} },
+}));
+vi.mock("@/lib/email", () => ({
+  sendFamilyGroupInvitationEmail: vi.fn().mockResolvedValue(undefined),
+  sendFamilyGroupInviteAcceptedEmail: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { prisma } from "@/lib/prisma";
@@ -156,6 +161,7 @@ describe("POST /api/members/family/invite", () => {
     } as any);
     vi.mocked(prisma.familyGroupJoinRequest.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.familyGroupJoinRequest.create).mockResolvedValue({ id: "inv1" } as any);
+    vi.mocked(prisma.familyGroup.findUnique).mockResolvedValue({ name: "Test Family" } as any);
 
     const res = await inviteMember(makePostRequest({ email: "bob@test.com", familyGroupId: "g1" }));
     expect(res.status).toBe(201);
@@ -221,6 +227,7 @@ describe("PUT /api/members/family/invitations", () => {
       id: "inv1", familyGroupId: "g1", invitedMemberId: "adult2",
       type: "ADULT_INVITE", status: "PENDING",
       familyGroup: { id: "g1", name: "Smith Family" },
+      requester: { id: "adult1", firstName: "Jane", lastName: "Doe", email: "jane@test.com" },
     } as any);
     vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
       const tx = {
@@ -229,6 +236,9 @@ describe("PUT /api/members/family/invitations", () => {
       };
       return fn(tx);
     });
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      firstName: "Bob", lastName: "Smith",
+    } as any);
 
     const res = await respondInvitation(makePutRequest({ invitationId: "inv1", action: "accept" }));
     expect(res.status).toBe(200);

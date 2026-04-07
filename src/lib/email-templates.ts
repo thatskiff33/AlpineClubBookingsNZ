@@ -739,6 +739,98 @@ export function accountDeletionApprovedTemplate(firstName: string): string {
   `);
 }
 
+// ---- Family group email templates ----
+
+/** Sent to an adult member when they're invited to join a family group */
+export function familyGroupInvitationTemplate(
+  inviterName: string,
+  groupName: string,
+  profileUrl: string
+): string {
+  return layout(`
+    ${heading("Family Group Invitation")}
+    ${paragraph("<strong>" + escapeHtml(inviterName) + "</strong> has invited you to join the family group <strong>" + escapeHtml(groupName) + "</strong>.")}
+    ${paragraph("You can accept or decline this invitation from your profile page.")}
+    ${button("View Invitation", profileUrl)}
+    ${muted("If you weren't expecting this invitation, you can safely ignore it.")}
+  `);
+}
+
+/** Sent to the inviter when their invitation is accepted */
+export function familyGroupInviteAcceptedTemplate(
+  inviteeName: string,
+  groupName: string
+): string {
+  return layout(`
+    ${heading("Invitation Accepted")}
+    ${paragraph("<strong>" + escapeHtml(inviteeName) + "</strong> has accepted your invitation and joined <strong>" + escapeHtml(groupName) + "</strong>.")}
+    ${alertBox("Your family group has been updated.", "success")}
+    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+  `);
+}
+
+/** Sent to parent when their child/youth request is submitted (confirmation) */
+export function childRequestSubmittedTemplate(
+  parentName: string,
+  childName: string,
+  groupName: string
+): string {
+  return layout(`
+    ${heading("Child/Youth Request Submitted")}
+    ${paragraph("Hi " + escapeHtml(parentName) + ",")}
+    ${paragraph("Your request to add <strong>" + escapeHtml(childName) + "</strong> to the family group <strong>" + escapeHtml(groupName) + "</strong> has been submitted.")}
+    ${alertBox("An administrator will review your request and link the member to your family group. You'll be notified once it's been processed.", "info")}
+    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+  `);
+}
+
+/** Sent to parent when their child/youth request is approved by admin */
+export function childRequestApprovedTemplate(
+  parentName: string,
+  childName: string,
+  groupName: string
+): string {
+  return layout(`
+    ${heading("Child/Youth Added to Family Group")}
+    ${paragraph("Hi " + escapeHtml(parentName) + ",")}
+    ${paragraph("<strong>" + escapeHtml(childName) + "</strong> has been added to your family group <strong>" + escapeHtml(groupName) + "</strong>.")}
+    ${alertBox("You can now include them when making bookings.", "success")}
+    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+  `);
+}
+
+/** Sent to parent when their child/youth request is rejected by admin */
+export function childRequestRejectedTemplate(
+  parentName: string,
+  childName: string,
+  reason?: string
+): string {
+  const reasonHtml = reason
+    ? `${alertBox("Admin note: " + escapeHtml(reason), "warning")}`
+    : "";
+  return layout(`
+    ${heading("Child/Youth Request Update")}
+    ${paragraph("Hi " + escapeHtml(parentName) + ",")}
+    ${paragraph("Your request to add <strong>" + escapeHtml(childName) + "</strong> to your family group was not approved.")}
+    ${reasonHtml}
+    ${paragraph("If you have questions, please contact the club.")}
+    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+  `);
+}
+
+/** Age-up invitation — sent when a youth/child turns 18 and gets their own login */
+export function ageUpInvitationTemplate(firstName: string, resetUrl: string): string {
+  const name = escapeHtml(firstName);
+  return layout(`
+    ${heading("Welcome to Your Own Account, " + name + "!")}
+    ${paragraph("Congratulations — you've turned 18! As an adult member of the Tokoroa Alpine Club, you can now log in and book stays at the lodge yourself.")}
+    ${paragraph("Click the button below to set up your password and activate your account. This link expires in <strong>7 days</strong>.")}
+    ${button("Set Up My Password", resetUrl)}
+    ${alertBox("Once you set your password, you can log in at any time to book stays, view your bookings, and manage your profile.", "info")}
+    ${muted("If you have any questions, contact the club at support@tokoroa.org.nz.")}
+  `);
+}
+
 /** F-COMP-04: Account deletion rejected — sent to member with admin note */
 export function accountDeletionRejectedTemplate(
   firstName: string,
