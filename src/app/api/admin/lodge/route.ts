@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { z } from "zod";
 
 /**
@@ -28,12 +29,13 @@ export async function GET() {
   });
 
   if (!lodge) {
-    // Auto-create the lodge account with default credentials
-    const defaultHash = await bcrypt.hash("lodge123", 12);
+    // Auto-create the lodge account with a random password (admin must set via UI)
+    const randomPassword = crypto.randomBytes(24).toString("base64url");
+    const passwordHash = await bcrypt.hash(randomPassword, 12);
     lodge = await prisma.member.create({
       data: {
         email: "lodge@tokoroa.org.nz",
-        passwordHash: defaultHash,
+        passwordHash,
         firstName: "Lodge",
         lastName: "Kiosk",
         role: "LODGE",

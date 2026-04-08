@@ -63,7 +63,6 @@ export async function POST(
     });
   } catch (err) {
     logger.error({ err, paymentId: id }, "Failed to generate Xero invoice");
-    const message = err instanceof Error ? err.message : "Failed to generate Xero invoice";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Failed to generate Xero invoice. Check Xero connection and try again." }, { status: 500 });
   }
 }

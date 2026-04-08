@@ -97,6 +97,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
   }
 
+  // Validate guest memberIds: must be the session user or in their family group
+  const guestMemberIds = guests.map((g) => g.memberId).filter(Boolean) as string[];
+  if (guestMemberIds.length > 0) {
+    const allowedIds = new Set<string>([session.user.id]);
+    const familyLinks = await prisma.familyGroupMember.findMany({
+      where: { memberId: session.user.id },
+      select: { familyGroupId: true },
+    });
+    if (familyLinks.length > 0) {
+      const groupIds = familyLinks.map((l) => l.familyGroupId);
+      const familyMembers = await prisma.familyGroupMember.findMany({
+        where: { familyGroupId: { in: groupIds } },
+        select: { memberId: true },
+      });
+      for (const fm of familyMembers) allowedIds.add(fm.memberId);
+    }
+    for (const id of guestMemberIds) {
+      if (!allowedIds.has(id)) {
+        return NextResponse.json({ error: "Invalid guest member reference" }, { status: 403 });
+      }
+    }
+  }
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   if (checkIn < today) {

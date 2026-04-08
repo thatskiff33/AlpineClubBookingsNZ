@@ -57,6 +57,7 @@ export default function SubscriptionsPage() {
   const [syncMessage, setSyncMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   async function handleSync() {
+    if (!confirm(`Sync subscriptions for ${seasonYear}-${seasonYear + 1} from Xero? This may take a few minutes for large member lists.`)) return;
     setSyncing(true);
     setSyncMessage(null);
     try {

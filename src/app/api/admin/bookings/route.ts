@@ -25,11 +25,15 @@ export async function GET(request: NextRequest) {
   const monthStart = new Date(year, month - 1, 1);
   const monthEnd = new Date(year, month, 0); // last day of month
 
+  const VALID_STATUSES = new Set(["DRAFT", "PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED"]);
   const statusParam = request.nextUrl.searchParams.get("status");
   const statusFilter: Record<string, unknown> = {};
   if (statusParam && statusParam !== "all") {
     const statuses = statusParam.split(",").map((s) => s.trim()).filter(Boolean);
-    statusFilter.status = statuses.length === 1 ? statuses[0] : { in: statuses };
+    const validStatuses = statuses.filter((s) => VALID_STATUSES.has(s));
+    if (validStatuses.length > 0) {
+      statusFilter.status = validStatuses.length === 1 ? validStatuses[0] : { in: validStatuses };
+    }
   } else {
     statusFilter.status = { notIn: ["DRAFT", "CANCELLED"] };
   }
