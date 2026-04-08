@@ -18,6 +18,9 @@ const ChargeSavedMethodSchema = z.object({
  * or by admin to manually confirm a pending booking.
  */
 export async function POST(request: NextRequest) {
+  // Track bookingId outside try so catch block can revert status on charge failure
+  let claimedBookingId: string | null = null;
+
   try {
     // This endpoint is called by internal cron or admin
     const cronSecret = request.headers.get("x-cron-secret");
@@ -82,6 +85,7 @@ export async function POST(request: NextRequest) {
         { status: 409 }
       );
     }
+    claimedBookingId = bookingId;
 
     // Charge the saved payment method
     const paymentIntent = await chargePaymentMethod({
@@ -119,6 +123,7 @@ export async function POST(request: NextRequest) {
           data: { status: "PENDING" },
         }),
       ]);
+      claimedBookingId = null; // Already reverted
       // Alert admins so they can contact the member to complete payment manually
       logger.warn(
         { bookingId: booking.id, piStatus: paymentIntent.status, memberId: booking.memberId },
@@ -146,6 +151,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    claimedBookingId = null; // Success — no revert needed
     return NextResponse.json({
       success: true,
       paymentIntentId: paymentIntent.id,
@@ -153,6 +159,20 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     logger.error({ err: error }, "Error charging saved method");
+
+    // Revert booking from CONFIRMED back to PENDING if we claimed it but the charge failed
+    if (claimedBookingId) {
+      try {
+        await prisma.booking.updateMany({
+          where: { id: claimedBookingId, status: "CONFIRMED" },
+          data: { status: "PENDING" },
+        });
+        logger.info({ bookingId: claimedBookingId }, "Reverted booking to PENDING after charge failure");
+      } catch (revertErr) {
+        logger.error({ err: revertErr, bookingId: claimedBookingId }, "Failed to revert booking status after charge failure");
+      }
+    }
+
     return NextResponse.json(
       { error: "Failed to charge saved payment method" },
       { status: 500 }

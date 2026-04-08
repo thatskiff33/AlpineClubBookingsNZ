@@ -188,36 +188,6 @@ export async function register() {
       } finally {
         isBackupRunning = false;
       }
-
-      // Delete expired DRAFT bookings (and their promo redemptions via cascade)
-      try {
-        const expiredDrafts = await prisma.booking.findMany({
-          where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
-          select: { id: true, promoRedemption: { select: { id: true, promoCodeId: true } } },
-        });
-        if (expiredDrafts.length > 0) {
-          // Wrap promo decrement + booking delete in a transaction to avoid partial cleanup
-          await prisma.$transaction(async (tx) => {
-            const promoDecrements = expiredDrafts
-              .filter((d) => d.promoRedemption)
-              .map((d) =>
-                tx.promoCode.update({
-                  where: { id: d.promoRedemption!.promoCodeId },
-                  data: { currentRedemptions: { decrement: 1 } },
-                })
-              );
-            if (promoDecrements.length > 0) {
-              await Promise.all(promoDecrements);
-            }
-            await tx.booking.deleteMany({
-              where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
-            });
-          });
-          logger.info({ job: "backup", deletedDrafts: expiredDrafts.length }, "Deleted expired draft bookings");
-        }
-      } catch (err) {
-        logger.error({ err }, "Failed to delete expired draft bookings");
-      }
     }, { timezone: "Pacific/Auckland" });
 
     logger.info({ job: "backup", schedule: backupSchedule }, "Scheduled database backup");
@@ -261,7 +231,48 @@ export async function register() {
       }
     }, { timezone: "Pacific/Auckland" });
 
-    logger.info({ job: "data-pruning" }, "Scheduled data pruning (daily at 3:00 AM NZST)");
+    logger.info({ job: "data-pruning" }, "Scheduled data pruning (daily at 3:30 AM NZST)");
+
+    // Draft expiry cleanup (daily at 4:00 AM NZST)
+    let isDraftCleanupRunning = false;
+    cron.default.schedule("0 4 * * *", async () => {
+      if (isDraftCleanupRunning) {
+        logger.info({ job: "draft-cleanup" }, "Already running, skipping");
+        return;
+      }
+      isDraftCleanupRunning = true;
+      try {
+        const expiredDrafts = await prisma.booking.findMany({
+          where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
+          select: { id: true, promoRedemption: { select: { id: true, promoCodeId: true } } },
+        });
+        if (expiredDrafts.length > 0) {
+          await prisma.$transaction(async (tx) => {
+            const promoDecrements = expiredDrafts
+              .filter((d) => d.promoRedemption)
+              .map((d) =>
+                tx.promoCode.update({
+                  where: { id: d.promoRedemption!.promoCodeId },
+                  data: { currentRedemptions: { decrement: 1 } },
+                })
+              );
+            if (promoDecrements.length > 0) {
+              await Promise.all(promoDecrements);
+            }
+            await tx.booking.deleteMany({
+              where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
+            });
+          });
+          logger.info({ job: "draft-cleanup", deletedDrafts: expiredDrafts.length }, "Deleted expired draft bookings");
+        }
+      } catch (err) {
+        logger.error({ err, job: "draft-cleanup" }, "Failed to delete expired draft bookings");
+      } finally {
+        isDraftCleanupRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "draft-cleanup" }, "Scheduled draft cleanup (daily at 4:00 AM NZST)");
 
     // N-06: Cron job - Pending deadline alerts (daily at 8:00 AM NZST)
     let isPendingDeadlineRunning = false;
