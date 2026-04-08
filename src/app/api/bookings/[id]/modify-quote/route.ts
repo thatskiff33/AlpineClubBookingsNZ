@@ -123,6 +123,14 @@ export async function POST(
 
   const totalGuestCount = guestsForPricing.length;
 
+  // Minimum stay policy validation (skip for admins)
+  let minimumStayViolations: { policyName: string; triggerDay: string; minimumNights: number; actualNights: number }[] = [];
+  if (session.user.role !== "ADMIN") {
+    const { validateMinimumStay } = await import("@/lib/booking-policies");
+    const stayResult = await validateMinimumStay(newCheckIn, newCheckOut);
+    minimumStayViolations = stayResult.violations;
+  }
+
   // Capacity check (exclude current booking)
   const capacity = await checkCapacity(
     newCheckIn,
@@ -378,6 +386,8 @@ export async function POST(
     changeFeeCents,
     netChargeCents,
     capacityAvailable: capacity.available,
+    minimumStayValid: minimumStayViolations.length === 0,
+    minimumStayViolations,
     promoStillValid,
     promoValidation,
     itemizedChanges,

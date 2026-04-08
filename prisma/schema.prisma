@@ -505,6 +505,25 @@ model BookingDefaults {
 }
 
 // ---------------------------------------------------------------------------
+// Minimum Stay Policies
+// ---------------------------------------------------------------------------
+
+model MinimumStayPolicy {
+  id            String   @id @default(cuid())
+  name          String   // e.g. "Winter Saturday Minimum Stay"
+  startDate     DateTime @db.Date
+  endDate       DateTime @db.Date
+  triggerDays   Int[]    // Days of week: 0=Sunday, 1=Monday, ..., 6=Saturday
+  minimumNights Int
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([startDate, endDate])
+  @@index([active])
+}
+
+// ---------------------------------------------------------------------------
 // Xero OAuth Token (single row)
 // ---------------------------------------------------------------------------
 

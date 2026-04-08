@@ -180,7 +180,7 @@ describe("QF-4: Audit Log URL Resolution", () => {
     if (action.startsWith("member.") || action.startsWith("MEMBER_")) return `/admin/members/${targetId}`;
     if (action.startsWith("season.")) return `/admin/seasons`;
     if (action.startsWith("FAMILY_GROUP_")) return `/admin/members`;
-    if (action.startsWith("cancellation-policy.")) return `/admin/cancellation-policy`;
+    if (action.startsWith("cancellation-policy.") || action.startsWith("minimum-stay-policy.")) return `/admin/booking-policies`;
     if (action.startsWith("promo")) return `/admin/promo-codes`;
     if (action.startsWith("chore")) return `/admin/chores`;
     if (action.startsWith("payment")) return `/admin/payments`;
@@ -213,7 +213,7 @@ describe("QF-4: Audit Log URL Resolution", () => {
   });
 
   it("resolves cancellation policy actions", () => {
-    expect(getTargetUrl("cancellation-policy.update", "cp-1")).toBe("/admin/cancellation-policy");
+    expect(getTargetUrl("cancellation-policy.update", "cp-1")).toBe("/admin/booking-policies");
   });
 
   it("resolves promo actions", () => {

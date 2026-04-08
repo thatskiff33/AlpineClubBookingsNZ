@@ -107,6 +107,19 @@ export default function BookPage() {
       const data = await res.json();
       setAvailableBeds(data.minAvailable);
     }
+
+    // Check minimum stay policies
+    const ciStr = ci.toISOString().split("T")[0];
+    const coStr = co.toISOString().split("T")[0];
+    const policyRes = await fetch(`/api/booking-policies/check?checkIn=${ciStr}&checkOut=${coStr}`);
+    if (policyRes.ok) {
+      const policyData = await policyRes.json();
+      if (!policyData.valid) {
+        setError(policyData.message);
+        return;
+      }
+    }
+
     setStep("guests");
   }
 

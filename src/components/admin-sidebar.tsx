@@ -81,7 +81,7 @@ const navSections: NavSection[] = [
     items: [
       { href: "/admin/seasons", label: "Hut Fees & Seasons", icon: CalendarRange },
       { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
-      { href: "/admin/cancellation-policy", label: "Booking Policies", icon: XCircle },
+      { href: "/admin/booking-policies", label: "Booking Policies", icon: XCircle },
       { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
       { href: "/admin/xero", label: "Xero", icon: RefreshCw },
     ],

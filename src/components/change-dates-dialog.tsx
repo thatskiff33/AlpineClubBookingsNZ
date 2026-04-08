@@ -18,6 +18,13 @@ import { formatCents } from "@/lib/utils";
 import StripeProvider from "@/components/stripe/StripeProvider";
 import PaymentForm from "@/components/stripe/PaymentForm";
 
+interface MinStayViolation {
+  policyName: string;
+  triggerDay: string;
+  minimumNights: number;
+  actualNights: number;
+}
+
 interface QuoteResult {
   newTotalPriceCents: number;
   newDiscountCents: number;
@@ -25,6 +32,8 @@ interface QuoteResult {
   priceDiffCents: number;
   changeFeeCents: number;
   capacityAvailable: boolean;
+  minimumStayValid?: boolean;
+  minimumStayViolations?: MinStayViolation[];
   promoStillValid: boolean;
   nightDetails?: { date: string; availableBeds: number }[];
 }
@@ -251,7 +260,18 @@ export function ChangeDatesDialog({
               </div>
             )}
 
-            {quote && (
+            {quote && quote.minimumStayValid === false && quote.minimumStayViolations && quote.minimumStayViolations.length > 0 && (
+              <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+                <p className="font-medium">Minimum stay requirement not met</p>
+                {quote.minimumStayViolations.map((v, i) => (
+                  <p key={i} className="mt-1">
+                    Bookings including a {v.triggerDay} night require a minimum of {v.minimumNights} nights ({v.policyName}). Your booking is {v.actualNights} night{v.actualNights === 1 ? "" : "s"}.
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {quote && (quote.minimumStayValid !== false) && (
               <div className="space-y-3">
                 {!quote.capacityAvailable ? (
                   <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
@@ -328,7 +348,7 @@ export function ChangeDatesDialog({
             </Button>
             <Button
               onClick={handleConfirm}
-              disabled={!quote || !quote.capacityAvailable || confirming}
+              disabled={!quote || !quote.capacityAvailable || quote.minimumStayValid === false || confirming}
             >
               {confirming ? "Updating..." : "Confirm Date Change"}
             </Button>

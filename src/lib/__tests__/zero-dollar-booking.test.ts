@@ -90,6 +90,10 @@ vi.mock("@/lib/pricing", () => ({
   calculateBookingPrice: vi.fn(),
   calculatePromoDiscount: vi.fn(),
 }));
+vi.mock("@/lib/booking-policies", () => ({
+  validateMinimumStay: vi.fn().mockResolvedValue({ valid: true, violations: [] }),
+  formatViolationsDetail: vi.fn().mockReturnValue(""),
+}));
 
 const mockCheckCapacity = vi.fn();
 vi.mock("@/lib/capacity", () => ({

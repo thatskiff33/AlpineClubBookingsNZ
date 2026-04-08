@@ -7,6 +7,20 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const
+const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const
+
+interface MinStayPolicy {
+  id: string
+  name: string
+  startDate: string
+  endDate: string
+  triggerDays: number[]
+  minimumNights: number
+  active: boolean
+}
 
 interface PolicyRule {
   id?: string
@@ -186,6 +200,18 @@ export default function BookingPoliciesPage() {
   ])
   const [savingPeriod, setSavingPeriod] = useState(false)
 
+  // Minimum stay state
+  const [minStayPolicies, setMinStayPolicies] = useState<MinStayPolicy[]>([])
+  const [loadingMinStay, setLoadingMinStay] = useState(true)
+  const [showMinStayForm, setShowMinStayForm] = useState(false)
+  const [editingMinStayId, setEditingMinStayId] = useState<string | null>(null)
+  const [msName, setMsName] = useState("")
+  const [msStart, setMsStart] = useState("")
+  const [msEnd, setMsEnd] = useState("")
+  const [msTriggerDays, setMsTriggerDays] = useState<number[]>([6]) // default Saturday
+  const [msMinNights, setMsMinNights] = useState(2)
+  const [savingMinStay, setSavingMinStay] = useState(false)
+
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
 
@@ -193,7 +219,7 @@ export default function BookingPoliciesPage() {
 
   const fetchDefaults = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/cancellation-policy")
+      const res = await fetch("/api/admin/booking-policies/cancellation")
       if (!res.ok) throw new Error("Failed to fetch policy")
       const data = await res.json()
       if (data.rules && data.rules.length > 0) {
@@ -215,7 +241,7 @@ export default function BookingPoliciesPage() {
 
   const fetchPeriods = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/booking-periods")
+      const res = await fetch("/api/admin/booking-policies/periods")
       if (!res.ok) throw new Error("Failed to fetch periods")
       const data = await res.json()
       setPeriods(data)
@@ -226,10 +252,24 @@ export default function BookingPoliciesPage() {
     }
   }, [])
 
+  const fetchMinStay = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/booking-policies/minimum-stay")
+      if (!res.ok) throw new Error("Failed to fetch minimum stay policies")
+      const data = await res.json()
+      setMinStayPolicies(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error")
+    } finally {
+      setLoadingMinStay(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchDefaults()
     fetchPeriods()
-  }, [fetchDefaults, fetchPeriods])
+    fetchMinStay()
+  }, [fetchDefaults, fetchPeriods, fetchMinStay])
 
   // ─── Save defaults ────────────────────────────────────────────────────────
 
@@ -238,7 +278,7 @@ export default function BookingPoliciesPage() {
     setError("")
     setSuccess("")
     try {
-      const res = await fetch("/api/admin/cancellation-policy", {
+      const res = await fetch("/api/admin/booking-policies/cancellation", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -293,8 +333,8 @@ export default function BookingPoliciesPage() {
     setSuccess("")
     try {
       const url = editingPeriodId
-        ? `/api/admin/booking-periods/${editingPeriodId}`
-        : "/api/admin/booking-periods"
+        ? `/api/admin/booking-policies/periods/${editingPeriodId}`
+        : "/api/admin/booking-policies/periods"
       const method = editingPeriodId ? "PUT" : "POST"
 
       const res = await fetch(url, {
@@ -325,7 +365,7 @@ export default function BookingPoliciesPage() {
   async function handleDeletePeriod(id: string) {
     if (!confirm("Delete this booking period?")) return
     try {
-      const res = await fetch(`/api/admin/booking-periods/${id}`, { method: "DELETE" })
+      const res = await fetch(`/api/admin/booking-policies/periods/${id}`, { method: "DELETE" })
       if (!res.ok) throw new Error("Failed to delete")
       fetchPeriods()
       setSuccess("Period deleted")
@@ -336,7 +376,7 @@ export default function BookingPoliciesPage() {
 
   async function handleTogglePeriod(period: BookingPeriod) {
     try {
-      const res = await fetch(`/api/admin/booking-periods/${period.id}`, {
+      const res = await fetch(`/api/admin/booking-policies/periods/${period.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ active: !period.active }),
@@ -348,7 +388,96 @@ export default function BookingPoliciesPage() {
     }
   }
 
-  if (loadingDefaults || loadingPeriods) {
+  // ─── Minimum Stay CRUD ─────────────────────────────────────────────────
+
+  function resetMinStayForm() {
+    setShowMinStayForm(false)
+    setEditingMinStayId(null)
+    setMsName("")
+    setMsStart("")
+    setMsEnd("")
+    setMsTriggerDays([6])
+    setMsMinNights(2)
+  }
+
+  function startEditMinStay(policy: MinStayPolicy) {
+    setEditingMinStayId(policy.id)
+    setMsName(policy.name)
+    setMsStart(policy.startDate.split("T")[0])
+    setMsEnd(policy.endDate.split("T")[0])
+    setMsTriggerDays(policy.triggerDays)
+    setMsMinNights(policy.minimumNights)
+    setShowMinStayForm(true)
+  }
+
+  function toggleTriggerDay(day: number) {
+    setMsTriggerDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort()
+    )
+  }
+
+  async function handleSaveMinStay() {
+    setSavingMinStay(true)
+    setError("")
+    setSuccess("")
+    try {
+      const url = editingMinStayId
+        ? `/api/admin/booking-policies/minimum-stay/${editingMinStayId}`
+        : "/api/admin/booking-policies/minimum-stay"
+      const method = editingMinStayId ? "PUT" : "POST"
+
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: msName,
+          startDate: msStart,
+          endDate: msEnd,
+          triggerDays: msTriggerDays,
+          minimumNights: msMinNights,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to save")
+      }
+      resetMinStayForm()
+      fetchMinStay()
+      setSuccess(editingMinStayId ? "Minimum stay policy updated" : "Minimum stay policy created")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error")
+    } finally {
+      setSavingMinStay(false)
+    }
+  }
+
+  async function handleDeleteMinStay(id: string) {
+    if (!confirm("Deactivate this minimum stay policy?")) return
+    try {
+      const res = await fetch(`/api/admin/booking-policies/minimum-stay/${id}`, { method: "DELETE" })
+      if (!res.ok) throw new Error("Failed to deactivate")
+      fetchMinStay()
+      setSuccess("Minimum stay policy deactivated")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error")
+    }
+  }
+
+  async function handleToggleMinStay(policy: MinStayPolicy) {
+    try {
+      const res = await fetch(`/api/admin/booking-policies/minimum-stay/${policy.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: !policy.active }),
+      })
+      if (!res.ok) throw new Error("Failed to update")
+      fetchMinStay()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error")
+    }
+  }
+
+  if (loadingDefaults || loadingPeriods || loadingMinStay) {
     return <div className="text-center py-8">Loading...</div>
   }
 
@@ -357,7 +486,7 @@ export default function BookingPoliciesPage() {
       <div>
         <h1 className="text-3xl font-bold">Booking Policies</h1>
         <p className="text-muted-foreground mt-1">
-          Configure default cancellation rules and date-specific overrides for school holidays and peak periods
+          Configure cancellation refund rules, date-specific overrides, and minimum night stay requirements
         </p>
       </div>
 
@@ -552,6 +681,158 @@ export default function BookingPoliciesPage() {
                       </div>
                     </div>
                     <PolicyPreview rules={period.cancellationRules} />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Minimum Night Stay Policies ───────────────────────────────────── */}
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Minimum Night Stay</CardTitle>
+              <CardDescription>
+                Require a minimum number of nights when a booking touches specific days of the week
+                within a date range. Admins can override these rules.
+              </CardDescription>
+            </div>
+            {!showMinStayForm && (
+              <Button onClick={() => setShowMinStayForm(true)}>Add Policy</Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Min Stay Form */}
+          {showMinStayForm && (
+            <Card className="border-blue-200 bg-blue-50/30">
+              <CardContent className="pt-6 space-y-4">
+                <h3 className="font-semibold">
+                  {editingMinStayId ? "Edit Policy" : "New Minimum Stay Policy"}
+                </h3>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="msName">Policy Name</Label>
+                    <Input
+                      id="msName"
+                      value={msName}
+                      onChange={(e) => setMsName(e.target.value)}
+                      placeholder="e.g. Winter Saturday Minimum Stay"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="msMinNights">Minimum Nights</Label>
+                    <Input
+                      id="msMinNights"
+                      type="number"
+                      min="2"
+                      value={msMinNights}
+                      onChange={(e) => setMsMinNights(parseInt(e.target.value) || 2)}
+                      className="w-24"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="msStart">Start Date</Label>
+                    <Input
+                      id="msStart"
+                      type="date"
+                      value={msStart}
+                      onChange={(e) => setMsStart(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="msEnd">End Date</Label>
+                    <Input
+                      id="msEnd"
+                      type="date"
+                      value={msEnd}
+                      onChange={(e) => setMsEnd(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Trigger Days</Label>
+                  <p className="text-xs text-muted-foreground">
+                    The minimum stay applies when a booking includes any of these days within the date range.
+                  </p>
+                  <div className="flex flex-wrap gap-3">
+                    {DAY_LABELS.map((label, i) => (
+                      <label key={i} className="flex items-center gap-1.5 text-sm">
+                        <Checkbox
+                          checked={msTriggerDays.includes(i)}
+                          onCheckedChange={() => toggleTriggerDay(i)}
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex space-x-3">
+                  <Button
+                    onClick={handleSaveMinStay}
+                    disabled={savingMinStay || !msName || !msStart || !msEnd || msTriggerDays.length === 0}
+                  >
+                    {savingMinStay ? "Saving..." : editingMinStayId ? "Update Policy" : "Create Policy"}
+                  </Button>
+                  <Button variant="outline" onClick={resetMinStayForm}>Cancel</Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Min Stay List */}
+          {minStayPolicies.length === 0 && !showMinStayForm ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              No minimum night stay policies configured. Members can book any number of nights.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {minStayPolicies.map((policy) => (
+                <Card key={policy.id} className={!policy.active ? "opacity-60" : ""}>
+                  <CardContent className="pt-4">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-semibold">{policy.name}</h4>
+                          <Badge variant={policy.active ? "default" : "outline"}>
+                            {policy.active ? "Active" : "Inactive"}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {new Date(policy.startDate).toLocaleDateString("en-NZ")} &mdash;{" "}
+                          {new Date(policy.endDate).toLocaleDateString("en-NZ")}
+                        </p>
+                      </div>
+                      <div className="flex space-x-2">
+                        <Button variant="outline" size="sm" onClick={() => handleToggleMinStay(policy)}>
+                          {policy.active ? "Deactivate" : "Activate"}
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => startEditMinStay(policy)}>
+                          Edit
+                        </Button>
+                        {policy.active && (
+                          <Button variant="destructive" size="sm" onClick={() => handleDeleteMinStay(policy.id)}>
+                            Deactivate
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-muted-foreground">Trigger days:</span>
+                      {policy.triggerDays.map((d) => (
+                        <Badge key={d} variant="secondary">{DAY_LABELS[d]}</Badge>
+                      ))}
+                      <span className="ml-2 text-muted-foreground">
+                        Min <strong>{policy.minimumNights}</strong> nights
+                      </span>
+                    </div>
                   </CardContent>
                 </Card>
               ))}

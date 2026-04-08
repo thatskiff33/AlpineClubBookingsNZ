@@ -183,6 +183,23 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Minimum stay policy validation (skip for admins)
+  if (session.user.role !== "ADMIN") {
+    const { validateMinimumStay, formatViolationsDetail } = await import("@/lib/booking-policies");
+    const stayResult = await validateMinimumStay(checkIn, checkOut);
+    if (!stayResult.valid) {
+      return NextResponse.json(
+        {
+          error: "Booking does not meet minimum stay requirement",
+          details: formatViolationsDetail(stayResult.violations),
+          code: "MINIMUM_STAY_VIOLATION",
+          violations: stayResult.violations,
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   // Issue 7: Draft booking — skip capacity, payment, Xero, emails
   if (draft) {
     const draftExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);

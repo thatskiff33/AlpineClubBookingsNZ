@@ -108,6 +108,18 @@ export async function PUT(
         throw new ApiError("Check-in cannot be in the past", 400);
       }
 
+      // Minimum stay policy validation (skip for admins)
+      if (session.user.role !== "ADMIN") {
+        const { validateMinimumStay, formatViolationsDetail } = await import("@/lib/booking-policies");
+        const stayResult = await validateMinimumStay(newCheckIn, newCheckOut);
+        if (!stayResult.valid) {
+          throw new ApiError(
+            formatViolationsDetail(stayResult.violations),
+            400
+          );
+        }
+      }
+
       // Capacity check excluding this booking
       const capacity = await checkCapacity(
         newCheckIn,
