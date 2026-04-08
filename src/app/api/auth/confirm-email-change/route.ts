@@ -5,10 +5,11 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 
 export async function GET(request: NextRequest) {
+  const baseUrl = process.env.NEXTAUTH_URL || request.url;
   const token = request.nextUrl.searchParams.get("token");
 
   if (!token) {
-    return NextResponse.redirect(new URL("/profile?emailChangeError=missing", request.url));
+    return NextResponse.redirect(new URL("/profile?emailChangeError=missing", baseUrl));
   }
 
   try {
@@ -22,12 +23,12 @@ export async function GET(request: NextRequest) {
     });
 
     if (!record) {
-      return NextResponse.redirect(new URL("/profile?emailChangeError=invalid", request.url));
+      return NextResponse.redirect(new URL("/profile?emailChangeError=invalid", baseUrl));
     }
 
     if (record.expiresAt < new Date()) {
       await prisma.emailChangeToken.delete({ where: { id: record.id } });
-      return NextResponse.redirect(new URL("/profile?emailChangeError=expired", request.url));
+      return NextResponse.redirect(new URL("/profile?emailChangeError=expired", baseUrl));
     }
 
     const oldEmail = record.member.email;
@@ -54,11 +55,11 @@ export async function GET(request: NextRequest) {
       });
     } catch (err) {
       if (err instanceof Error && err.message === "EMAIL_TAKEN") {
-        return NextResponse.redirect(new URL("/profile?emailChangeError=taken", request.url));
+        return NextResponse.redirect(new URL("/profile?emailChangeError=taken", baseUrl));
       }
       // Handle Prisma unique constraint violation (P2002) as backup
       if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "P2002") {
-        return NextResponse.redirect(new URL("/profile?emailChangeError=taken", request.url));
+        return NextResponse.redirect(new URL("/profile?emailChangeError=taken", baseUrl));
       }
       throw err;
     }
@@ -87,9 +88,9 @@ export async function GET(request: NextRequest) {
       details: JSON.stringify({ oldEmail, newEmail: record.newEmail }),
     });
 
-    return NextResponse.redirect(new URL("/profile?emailChanged=true", request.url));
+    return NextResponse.redirect(new URL("/profile?emailChanged=true", baseUrl));
   } catch (err) {
     logger.error({ err }, "Error confirming email change");
-    return NextResponse.redirect(new URL("/profile?emailChangeError=error", request.url));
+    return NextResponse.redirect(new URL("/profile?emailChangeError=error", baseUrl));
   }
 }

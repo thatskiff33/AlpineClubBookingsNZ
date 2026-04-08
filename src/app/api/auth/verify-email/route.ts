@@ -3,10 +3,11 @@ import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
 export async function GET(request: NextRequest) {
+  const baseUrl = process.env.NEXTAUTH_URL || request.url;
   const token = request.nextUrl.searchParams.get("token");
 
   if (!token) {
-    return NextResponse.redirect(new URL("/login?verifyError=missing", request.url));
+    return NextResponse.redirect(new URL("/login?verifyError=missing", baseUrl));
   }
 
   try {
@@ -16,19 +17,19 @@ export async function GET(request: NextRequest) {
     });
 
     if (!record) {
-      return NextResponse.redirect(new URL("/login?verifyError=invalid", request.url));
+      return NextResponse.redirect(new URL("/login?verifyError=invalid", baseUrl));
     }
 
     if (record.expiresAt < new Date()) {
       // Clean up expired token
       await prisma.emailVerificationToken.delete({ where: { id: record.id } });
-      return NextResponse.redirect(new URL("/login?verifyError=expired", request.url));
+      return NextResponse.redirect(new URL("/login?verifyError=expired", baseUrl));
     }
 
     if (record.member.emailVerified) {
       // Already verified - clean up token and redirect to login
       await prisma.emailVerificationToken.delete({ where: { id: record.id } });
-      return NextResponse.redirect(new URL("/login?verified=true", request.url));
+      return NextResponse.redirect(new URL("/login?verified=true", baseUrl));
     }
 
     // Verify the email and delete the token
@@ -40,9 +41,9 @@ export async function GET(request: NextRequest) {
       prisma.emailVerificationToken.delete({ where: { id: record.id } }),
     ]);
 
-    return NextResponse.redirect(new URL("/login?verified=true", request.url));
+    return NextResponse.redirect(new URL("/login?verified=true", baseUrl));
   } catch (err) {
     logger.error({ err }, "Error verifying email");
-    return NextResponse.redirect(new URL("/login?verifyError=error", request.url));
+    return NextResponse.redirect(new URL("/login?verifyError=error", baseUrl));
   }
 }
