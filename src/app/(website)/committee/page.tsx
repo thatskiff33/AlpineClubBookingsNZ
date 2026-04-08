@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Phone, Mail } from "lucide-react";
-import committeeMembers from "@/data/committee";
+import { prisma } from "@/lib/prisma";
 
 export const metadata: Metadata = {
   title: "Committee",
@@ -11,7 +11,14 @@ export const metadata: Metadata = {
     "Meet the Tokoroa Alpine Club committee members who volunteer their time to run the club and maintain the lodge.",
 };
 
-export default function CommitteePage() {
+export const dynamic = "force-dynamic";
+
+export default async function CommitteePage() {
+  const committeeMembers = await prisma.committeeMember.findMany({
+    where: { active: true },
+    orderBy: { sortOrder: "asc" },
+  });
+
   if (committeeMembers.length === 0) {
     return (
       <>
@@ -51,7 +58,7 @@ export default function CommitteePage() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {committeeMembers.map((member) => (
-              <Card key={member.role} className="border-slate-200">
+              <Card key={member.id} className="border-slate-200">
                 <CardContent className="pt-6">
                   <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide mb-1">
                     {member.role}

@@ -28,6 +28,7 @@ import {
   Sliders,
   House,
   Tablet,
+  UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -85,6 +86,7 @@ const navSections: NavSection[] = [
       { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
       { href: "/admin/booking-policies", label: "Booking Policies", icon: XCircle },
       { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
+      { href: "/admin/committee", label: "Committee", icon: UsersRound },
       { href: "/admin/xero", label: "Xero", icon: RefreshCw },
     ],
   },
