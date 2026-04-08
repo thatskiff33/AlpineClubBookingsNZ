@@ -200,8 +200,8 @@ describe("Admin Payments API", () => {
     await getPayments(req);
 
     const callArgs = vi.mocked(prisma.payment.findMany).mock.calls[0][0] as any;
-    expect(callArgs.where.booking.checkIn.gte).toEqual(new Date("2026-04-01T00:00:00"));
-    expect(callArgs.where.booking.checkIn.lte).toEqual(new Date("2026-04-30T23:59:59"));
+    expect(callArgs.where.createdAt.gte).toEqual(new Date("2026-04-01T00:00:00"));
+    expect(callArgs.where.createdAt.lte).toEqual(new Date("2026-04-30T23:59:59"));
   });
 });
 

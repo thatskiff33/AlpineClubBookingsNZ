@@ -44,6 +44,7 @@ interface ReportData {
   };
   statusBreakdown: {
     confirmed: number;
+    paid: number;
     completed: number;
     pending: number;
     cancelled: number;
@@ -71,7 +72,7 @@ interface ReportData {
 }
 
 const PIE_COLORS = ["#3b82f6", "#ef4444"];
-const STATUS_COLORS = ["#22c55e", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6"];
+const STATUS_COLORS = ["#22c55e", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#f97316"];
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -121,6 +122,7 @@ export default function ReportsPage() {
   const statusPieData = data
     ? [
         { name: "Confirmed", value: data.statusBreakdown.confirmed },
+        { name: "Paid", value: data.statusBreakdown.paid },
         { name: "Completed", value: data.statusBreakdown.completed },
         { name: "Pending", value: data.statusBreakdown.pending },
         { name: "Cancelled", value: data.statusBreakdown.cancelled },

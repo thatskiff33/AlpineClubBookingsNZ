@@ -9,9 +9,9 @@ import type { CancellationRule } from "../cancellation";
 function getRefundTier(
   daysUntilCheckIn: number,
   policyRules: CancellationRule[]
-): { refundPercentage: number; daysBeforeStay: number } {
+): { refundPercentage: number; creditRefundPercentage: number; daysBeforeStay: number } {
   if (policyRules.length === 0) {
-    return { refundPercentage: 0, daysBeforeStay: 0 };
+    return { refundPercentage: 0, creditRefundPercentage: 0, daysBeforeStay: 0 };
   }
 
   const sortedRules = [...policyRules].sort(
@@ -22,12 +22,13 @@ function getRefundTier(
     if (daysUntilCheckIn >= rule.daysBeforeStay) {
       return {
         refundPercentage: rule.refundPercentage,
+        creditRefundPercentage: rule.creditRefundPercentage ?? rule.refundPercentage,
         daysBeforeStay: rule.daysBeforeStay,
       };
     }
   }
 
-  return { refundPercentage: 0, daysBeforeStay: 0 };
+  return { refundPercentage: 0, creditRefundPercentage: 0, daysBeforeStay: 0 };
 }
 
 function calculateRefundAmount(
@@ -48,15 +49,16 @@ function daysUntilDate(checkIn: Date, now: Date = new Date()): number {
 }
 
 const standardPolicy: CancellationRule[] = [
-  { daysBeforeStay: 14, refundPercentage: 100 },
-  { daysBeforeStay: 7, refundPercentage: 50 },
-  { daysBeforeStay: 0, refundPercentage: 0 },
+  { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100 },
+  { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50 },
+  { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
 ];
 
 describe("getRefundTier", () => {
   it("returns 100% for 15 days before (above highest tier)", () => {
     expect(getRefundTier(15, standardPolicy)).toEqual({
       refundPercentage: 100,
+      creditRefundPercentage: 100,
       daysBeforeStay: 14,
     });
   });
@@ -64,6 +66,7 @@ describe("getRefundTier", () => {
   it("returns 100% for exactly 14 days (exact boundary)", () => {
     expect(getRefundTier(14, standardPolicy)).toEqual({
       refundPercentage: 100,
+      creditRefundPercentage: 100,
       daysBeforeStay: 14,
     });
   });
@@ -71,6 +74,7 @@ describe("getRefundTier", () => {
   it("returns 50% for 10 days (between tiers)", () => {
     expect(getRefundTier(10, standardPolicy)).toEqual({
       refundPercentage: 50,
+      creditRefundPercentage: 50,
       daysBeforeStay: 7,
     });
   });
@@ -78,6 +82,7 @@ describe("getRefundTier", () => {
   it("returns 50% for exactly 7 days (exact boundary)", () => {
     expect(getRefundTier(7, standardPolicy)).toEqual({
       refundPercentage: 50,
+      creditRefundPercentage: 50,
       daysBeforeStay: 7,
     });
   });
@@ -85,6 +90,7 @@ describe("getRefundTier", () => {
   it("returns 0% for 5 days (below 7-day tier)", () => {
     expect(getRefundTier(5, standardPolicy)).toEqual({
       refundPercentage: 0,
+      creditRefundPercentage: 0,
       daysBeforeStay: 0,
     });
   });
@@ -92,6 +98,7 @@ describe("getRefundTier", () => {
   it("returns 0% for 0 days (exact lowest boundary)", () => {
     expect(getRefundTier(0, standardPolicy)).toEqual({
       refundPercentage: 0,
+      creditRefundPercentage: 0,
       daysBeforeStay: 0,
     });
   });
@@ -99,30 +106,32 @@ describe("getRefundTier", () => {
   it("returns 0% for empty policy", () => {
     expect(getRefundTier(15, [])).toEqual({
       refundPercentage: 0,
+      creditRefundPercentage: 0,
       daysBeforeStay: 0,
     });
   });
 
   it("handles single-rule policy", () => {
     expect(
-      getRefundTier(5, [{ daysBeforeStay: 3, refundPercentage: 75 }])
-    ).toEqual({ refundPercentage: 75, daysBeforeStay: 3 });
+      getRefundTier(5, [{ daysBeforeStay: 3, refundPercentage: 75, creditRefundPercentage: 75 }])
+    ).toEqual({ refundPercentage: 75, creditRefundPercentage: 75, daysBeforeStay: 3 });
   });
 
   it("returns 0% when below single-rule threshold", () => {
     expect(
-      getRefundTier(2, [{ daysBeforeStay: 3, refundPercentage: 75 }])
-    ).toEqual({ refundPercentage: 0, daysBeforeStay: 0 });
+      getRefundTier(2, [{ daysBeforeStay: 3, refundPercentage: 75, creditRefundPercentage: 75 }])
+    ).toEqual({ refundPercentage: 0, creditRefundPercentage: 0, daysBeforeStay: 0 });
   });
 
   it("handles unsorted policy rules", () => {
     const unsorted: CancellationRule[] = [
-      { daysBeforeStay: 0, refundPercentage: 0 },
-      { daysBeforeStay: 14, refundPercentage: 100 },
-      { daysBeforeStay: 7, refundPercentage: 50 },
+      { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
+      { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100 },
+      { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50 },
     ];
     expect(getRefundTier(10, unsorted)).toEqual({
       refundPercentage: 50,
+      creditRefundPercentage: 50,
       daysBeforeStay: 7,
     });
   });
@@ -130,6 +139,7 @@ describe("getRefundTier", () => {
   it("returns 0% for negative days", () => {
     expect(getRefundTier(-1, standardPolicy)).toEqual({
       refundPercentage: 0,
+      creditRefundPercentage: 0,
       daysBeforeStay: 0,
     });
   });
@@ -137,6 +147,7 @@ describe("getRefundTier", () => {
   it("returns highest tier for very large days", () => {
     expect(getRefundTier(365, standardPolicy)).toEqual({
       refundPercentage: 100,
+      creditRefundPercentage: 100,
       daysBeforeStay: 14,
     });
   });
@@ -193,7 +204,7 @@ describe("calculateRefundAmount", () => {
 
   it("handles single rule policy", () => {
     const policy: CancellationRule[] = [
-      { daysBeforeStay: 0, refundPercentage: 50 },
+      { daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 50 },
     ];
     const result = calculateRefundAmount(10000, 5, policy);
     expect(result.refundAmountCents).toBe(5000);
@@ -202,7 +213,7 @@ describe("calculateRefundAmount", () => {
 
   it("correctly rounds refund amounts for odd percentages", () => {
     const policy: CancellationRule[] = [
-      { daysBeforeStay: 0, refundPercentage: 33 },
+      { daysBeforeStay: 0, refundPercentage: 33, creditRefundPercentage: 33 },
     ];
     const result = calculateRefundAmount(10000, 5, policy);
     expect(result.refundAmountCents).toBe(3300);
@@ -211,7 +222,7 @@ describe("calculateRefundAmount", () => {
 
   it("correctly rounds fractional cents", () => {
     const policy: CancellationRule[] = [
-      { daysBeforeStay: 0, refundPercentage: 33 },
+      { daysBeforeStay: 0, refundPercentage: 33, creditRefundPercentage: 33 },
     ];
     // 333 * 33 / 100 = 109.89 -> rounds to 110
     const result = calculateRefundAmount(333, 5, policy);
@@ -220,9 +231,9 @@ describe("calculateRefundAmount", () => {
 
   it("handles unsorted policy rules correctly", () => {
     const unsortedPolicy: CancellationRule[] = [
-      { daysBeforeStay: 0, refundPercentage: 0 },
-      { daysBeforeStay: 14, refundPercentage: 100 },
-      { daysBeforeStay: 7, refundPercentage: 50 },
+      { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
+      { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100 },
+      { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50 },
     ];
     const result = calculateRefundAmount(10000, 10, unsortedPolicy);
     expect(result.refundAmountCents).toBe(5000);
@@ -231,7 +242,7 @@ describe("calculateRefundAmount", () => {
 
   it("handles generous policy (always 100%)", () => {
     const policy: CancellationRule[] = [
-      { daysBeforeStay: 0, refundPercentage: 100 },
+      { daysBeforeStay: 0, refundPercentage: 100, creditRefundPercentage: 100 },
     ];
     const result = calculateRefundAmount(5000, 1, policy);
     expect(result.refundAmountCents).toBe(5000);

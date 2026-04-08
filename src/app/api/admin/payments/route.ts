@@ -47,12 +47,12 @@ export async function GET(request: NextRequest) {
     }
 
     if (from || to) {
-      where.booking = {};
+      where.createdAt = {};
       if (from) {
-        where.booking.checkIn = { ...(where.booking.checkIn || {}), gte: new Date(from + "T00:00:00") };
+        where.createdAt.gte = new Date(from + "T00:00:00");
       }
       if (to) {
-        where.booking.checkIn = { ...(where.booking.checkIn || {}), lte: new Date(to + "T23:59:59") };
+        where.createdAt.lte = new Date(to + "T23:59:59");
       }
     }
 
