@@ -26,6 +26,10 @@ const STATUS_COLORS: Record<string, string> = {
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+const CELL_HEIGHT = 80;
+const BAR_HEIGHT = 18;
+const BAR_TOP_OFFSET = 22; // space for day number row
+
 function getMonthDays(year: number, month: number) {
   // month is 0-indexed
   const firstDay = new Date(year, month, 1);
@@ -169,7 +173,7 @@ export function AdminBookingCalendar() {
       {/* Day headers */}
       <div className="grid grid-cols-7 border-b">
         {DAY_LABELS.map((d) => (
-          <div key={d} className="text-center text-xs font-medium text-slate-500 py-1 border-r last:border-r-0">
+          <div key={d} className="text-center text-xs font-medium text-slate-500 py-1.5 border-r last:border-r-0">
             {d}
           </div>
         ))}
@@ -189,31 +193,32 @@ export function AdminBookingCalendar() {
             return (
               <div
                 key={i}
-                className={`border-r border-b last:border-r-0 min-h-[28px] relative ${
+                className={`border-r border-b last:border-r-0 relative ${
                   isValidDay ? bedsBg : "bg-slate-50"
                 }`}
+                style={{ minHeight: `${CELL_HEIGHT}px` }}
               >
                 {isValidDay && (
-                  <>
+                  <div className="flex items-center justify-between px-1.5 pt-1">
                     <span
-                      className={`absolute top-0.5 left-1 text-[10px] leading-none ${
+                      className={`text-xs leading-none ${
                         isToday
-                          ? "font-bold text-blue-600 bg-blue-100 rounded-full px-1"
-                          : "text-slate-400"
+                          ? "font-bold text-blue-600 bg-blue-100 rounded-full px-1.5 py-0.5"
+                          : "text-slate-500"
                       }`}
                     >
                       {dayNum}
                     </span>
                     {beds !== undefined && (
                       <span
-                        className={`absolute top-0.5 right-1 text-[9px] leading-none font-medium ${
+                        className={`text-[11px] leading-none font-medium ${
                           beds === 0 ? "text-red-600" : beds <= 5 ? "text-red-500" : beds <= 15 ? "text-amber-600" : "text-green-600"
                         }`}
                       >
-                        {beds}
+                        {beds} bed{beds !== 1 ? "s" : ""}
                       </span>
                     )}
-                  </>
+                  </div>
                 )}
               </div>
             );
@@ -233,34 +238,45 @@ export function AdminBookingCalendar() {
               const endRow = Math.floor(endCell / 7);
 
               // If booking spans multiple rows, render segments per row
-              const segments: Array<{ row: number; colStart: number; colEnd: number }> = [];
+              const segments: Array<{ row: number; colStart: number; colEnd: number; isFirst: boolean }> = [];
               for (let r = startRow; r <= endRow; r++) {
                 segments.push({
                   row: r,
                   colStart: r === startRow ? startCol : 0,
                   colEnd: r === endRow ? endCol : 6,
+                  isFirst: r === startRow,
                 });
               }
 
+              const spanDays = end - start + 1;
+
               return segments.map((seg, si) => {
-                const left = `${(seg.colStart / 7) * 100}%`;
-                const width = `${((seg.colEnd - seg.colStart + 1) / 7) * 100}%`;
-                const top = seg.row * 28 + 14 + laneIdx * 14;
+                const leftPct = (seg.colStart / 7) * 100;
+                const widthPct = ((seg.colEnd - seg.colStart + 1) / 7) * 100;
+                const top = seg.row * CELL_HEIGHT + BAR_TOP_OFFSET + laneIdx * (BAR_HEIGHT + 2);
 
                 return (
                   <div
                     key={`${booking.id}-${si}`}
-                    className={`absolute h-[12px] rounded-sm pointer-events-auto cursor-pointer hover:opacity-80 ${
+                    className={`absolute rounded pointer-events-auto cursor-pointer hover:brightness-110 transition-all flex items-center overflow-hidden ${
                       STATUS_COLORS[booking.status] || "bg-gray-400"
                     }`}
                     style={{
-                      left,
-                      width,
+                      left: `calc(${leftPct}% + 2px)`,
+                      width: `calc(${widthPct}% - 4px)`,
                       top: `${top}px`,
+                      height: `${BAR_HEIGHT}px`,
                     }}
                     title={`${booking.memberName} (${booking.status}) — ${booking.checkIn} to ${booking.checkOut}, ${booking.guestCount} guest(s)`}
                     onClick={() => router.push(`/bookings/${booking.id}`)}
-                  />
+                  >
+                    {seg.isFirst && (
+                      <span className="text-white text-[11px] font-medium leading-none truncate px-1.5">
+                        {booking.memberName}
+                        {spanDays > 2 && ` · ${booking.guestCount}g`}
+                      </span>
+                    )}
+                  </div>
                 );
               });
             })
@@ -269,11 +285,11 @@ export function AdminBookingCalendar() {
       </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap gap-3 px-3 py-2 border-t text-[10px]">
+      <div className="flex flex-wrap gap-4 px-3 py-2.5 border-t text-xs">
         {Object.entries(STATUS_COLORS).map(([status, color]) => (
-          <div key={status} className="flex items-center gap-1">
-            <div className={`w-3 h-2 rounded-sm ${color}`} />
-            <span className="text-slate-500">{status}</span>
+          <div key={status} className="flex items-center gap-1.5">
+            <div className={`w-3.5 h-2.5 rounded-sm ${color}`} />
+            <span className="text-slate-600">{status}</span>
           </div>
         ))}
       </div>
