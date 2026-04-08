@@ -344,6 +344,7 @@ model Payment {
   additionalPaymentIntentId   String?       @unique
   additionalAmountCents       Int           @default(0)
   additionalPaymentStatus     String?       // PENDING, SUCCEEDED, FAILED
+  xeroRefundCreditNoteId      String?       // Track Xero credit note to prevent duplicates
   createdAt                   DateTime      @default(now())
   updatedAt                   DateTime      @updatedAt
 

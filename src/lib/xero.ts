@@ -1605,6 +1605,12 @@ export async function createXeroCreditNote(
     throw new Error(`No Xero invoice linked to payment: ${paymentId}`);
   }
 
+  // Idempotency guard: skip if credit note already created for this payment
+  if (payment.xeroRefundCreditNoteId) {
+    logger.info({ paymentId, creditNoteId: payment.xeroRefundCreditNoteId }, "Xero credit note already exists, skipping");
+    return payment.xeroRefundCreditNoteId;
+  }
+
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   // Ensure the member has a Xero contact
@@ -1641,6 +1647,12 @@ export async function createXeroCreditNote(
     throw new Error("Failed to create Xero credit note");
   }
 
+  // Save credit note ID to prevent duplicate creation
+  await prisma.payment.update({
+    where: { id: paymentId },
+    data: { xeroRefundCreditNoteId: createdNote.creditNoteID },
+  });
+
   // Allocate credit note against the original invoice
   await xero.accountingApi.createCreditNoteAllocation(
     tenantId,
@@ -1655,6 +1667,27 @@ export async function createXeroCreditNote(
       ],
     }
   );
+
+  // QF-3: Create refund payment against Stripe bank account for auto-reconciliation
+  try {
+    const bankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+    await xero.accountingApi.createPayments(tenantId, {
+      payments: [
+        {
+          invoice: { invoiceID: payment.xeroInvoiceId },
+          account: { code: bankCode },
+          amount: refundAmountCents / 100,
+          date: formatDate(new Date()),
+          reference: `Stripe Refund - Booking ${payment.booking.id.slice(0, 8)}`,
+          isReconciled: false,
+        },
+      ],
+    });
+    logger.info({ paymentId, creditNoteId: createdNote.creditNoteID }, "Xero refund payment created against Stripe bank account");
+  } catch (refundPaymentErr) {
+    logger.error({ err: refundPaymentErr, paymentId }, "Failed to create Xero refund payment against Stripe bank account");
+    // Don't fail the whole operation — credit note was already created and allocated
+  }
 
   return createdNote.creditNoteID;
 }

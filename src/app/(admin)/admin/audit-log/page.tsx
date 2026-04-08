@@ -21,7 +21,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import Link from "next/link";
 
 interface AuditEntry {
   id: string;
@@ -68,6 +69,24 @@ export default function AuditLogPage() {
     if (!details) return "";
     try { return JSON.stringify(JSON.parse(details), null, 2); }
     catch { return details; }
+  }
+
+  function getTargetUrl(action: string, targetId: string | null): string | null {
+    if (!targetId) return null;
+    if (action.startsWith("booking.")) return `/bookings/${targetId}`;
+    if (action.startsWith("member.") || action.startsWith("MEMBER_")) return `/admin/members/${targetId}`;
+    if (action.startsWith("season.")) return `/admin/seasons`;
+    if (action.startsWith("FAMILY_GROUP_")) return `/admin/members`;
+    if (action.startsWith("cancellation-policy.")) return `/admin/cancellation-policy`;
+    if (action.startsWith("promo")) return `/admin/promo-codes`;
+    if (action.startsWith("chore")) return `/admin/chores`;
+    if (action.startsWith("payment")) return `/admin/payments`;
+    if (action.startsWith("deletion")) return `/admin/deletion-requests`;
+    if (action.startsWith("hut-leader")) return `/admin/hut-leaders`;
+    if (action.startsWith("xero")) return `/admin/xero`;
+    if (action.startsWith("age-tier")) return `/admin/age-tiers`;
+    if (action.startsWith("communication")) return `/admin/communications`;
+    return null;
   }
 
   return (
@@ -122,7 +141,19 @@ export default function AuditLogPage() {
                       <TableCell className="text-sm">{format(new Date(entry.createdAt), "d MMM yyyy HH:mm:ss")}</TableCell>
                       <TableCell>{entry.memberId ? <span className="text-xs font-mono">{entry.memberId.slice(0, 8)}...</span> : <span className="text-slate-400">System</span>}</TableCell>
                       <TableCell><span className="font-medium">{entry.action}</span></TableCell>
-                      <TableCell className="text-xs font-mono text-slate-500">{entry.targetId ? entry.targetId.slice(0, 12) + "..." : "\u2014"}</TableCell>
+                      <TableCell className="text-xs font-mono text-slate-500">
+                        {entry.targetId ? (() => {
+                          const url = getTargetUrl(entry.action, entry.targetId);
+                          return url ? (
+                            <Link href={url} className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline" onClick={(e) => e.stopPropagation()}>
+                              {entry.targetId.slice(0, 12)}...
+                              <ExternalLink className="h-3 w-3" />
+                            </Link>
+                          ) : (
+                            <span>{entry.targetId.slice(0, 12)}...</span>
+                          );
+                        })() : "\u2014"}
+                      </TableCell>
                       <TableCell className="text-xs text-slate-500">{entry.ipAddress || "\u2014"}</TableCell>
                     </TableRow>
                     {expandedId === entry.id && entry.details && (

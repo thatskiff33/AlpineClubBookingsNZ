@@ -432,11 +432,11 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
 
   logger.info({ paymentId: payment.id, refundedAmount, isFullRefund }, "Refund processed for payment");
 
-  // Create Xero credit note if connected
+  // Create Xero credit note if connected (idempotency: createXeroCreditNote checks xeroRefundCreditNoteId)
   try {
     if (await isXeroConnected()) {
-      await createXeroCreditNote(payment.id, refundedAmount);
-      logger.info({ paymentId: payment.id }, "Xero credit note created for payment");
+      const creditNoteId = await createXeroCreditNote(payment.id, refundedAmount);
+      logger.info({ paymentId: payment.id, creditNoteId }, "Xero credit note processed for payment");
     }
   } catch (xeroErr) {
     logger.error({ err: xeroErr, paymentId: payment.id }, "Failed to create Xero credit note for payment");
