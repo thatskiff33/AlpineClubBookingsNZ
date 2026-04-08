@@ -110,11 +110,12 @@ export async function GET(request: NextRequest) {
     // 3. Booking trends by week
     const bookingsByWeek: Record<string, { total: number; confirmed: number; cancelled: number; bumped: number; pending: number }> = {};
     for (const b of bookings) {
-      // ISO week start (Monday)
+      // ISO week start (Monday) - use a copy to avoid mutation
       const d = new Date(b.createdAt);
       const day = d.getDay();
-      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-      const weekStart = new Date(d.setDate(diff));
+      const diff = day === 0 ? -6 : 1 - day; // days to subtract to reach Monday
+      const weekStart = new Date(d);
+      weekStart.setDate(d.getDate() + diff);
       const weekKey = format(weekStart, "yyyy-MM-dd");
 
       if (!bookingsByWeek[weekKey]) {

@@ -1,2 +1,2 @@
 -- AlterTable: Add expectedArrivalTime to Booking
-ALTER TABLE "Booking" ADD COLUMN "expectedArrivalTime" VARCHAR(5);
+ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "expectedArrivalTime" VARCHAR(5);
