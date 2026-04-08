@@ -295,7 +295,7 @@ describe("checkAgeUpMembers", () => {
 
     // Verify cutoff date is 18 years before season start (April 1, 2026)
     // Cutoff should be April 1, 2008
-    const cutoff = mockedFindMany.mock.calls[0][0].where!.dateOfBirth as any;
+    const cutoff = (mockedFindMany.mock.calls[0]![0] as any).where.dateOfBirth;
     const cutoffDate = cutoff.lte as Date;
     expect(cutoffDate.getFullYear()).toBe(2008);
     expect(cutoffDate.getMonth()).toBe(3); // April

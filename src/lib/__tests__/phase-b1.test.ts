@@ -319,10 +319,11 @@ describe("#31: Expected Arrival Time", () => {
         expectedArrivalTime: "14:00",
       });
 
+      const { NextRequest } = await import("next/server");
       const { PUT } = await import(
         "@/app/api/bookings/[id]/arrival-time/route"
       );
-      const req = new Request("http://localhost/api/bookings/booking-1/arrival-time", {
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expectedArrivalTime: "14:00" }),
@@ -342,10 +343,11 @@ describe("#31: Expected Arrival Time", () => {
         checkIn: new Date("2026-04-15"),
       });
 
+      const { NextRequest } = await import("next/server");
       const { PUT } = await import(
         "@/app/api/bookings/[id]/arrival-time/route"
       );
-      const req = new Request("http://localhost/api/bookings/booking-1/arrival-time", {
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expectedArrivalTime: "14:15" }), // not 30-min increment
@@ -363,10 +365,11 @@ describe("#31: Expected Arrival Time", () => {
         checkIn: new Date("2026-04-15"),
       });
 
+      const { NextRequest } = await import("next/server");
       const { PUT } = await import(
         "@/app/api/bookings/[id]/arrival-time/route"
       );
-      const req = new Request("http://localhost/api/bookings/booking-1/arrival-time", {
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expectedArrivalTime: "14:00" }),
@@ -388,10 +391,11 @@ describe("#31: Expected Arrival Time", () => {
         expectedArrivalTime: "16:30",
       });
 
+      const { NextRequest } = await import("next/server");
       const { PUT } = await import(
         "@/app/api/bookings/[id]/arrival-time/route"
       );
-      const req = new Request("http://localhost/api/bookings/booking-1/arrival-time", {
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expectedArrivalTime: "16:30" }),
@@ -409,10 +413,11 @@ describe("#31: Expected Arrival Time", () => {
         checkIn: new Date("2026-04-01"), // past date
       });
 
+      const { NextRequest } = await import("next/server");
       const { PUT } = await import(
         "@/app/api/bookings/[id]/arrival-time/route"
       );
-      const req = new Request("http://localhost/api/bookings/booking-1/arrival-time", {
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expectedArrivalTime: "14:00" }),
@@ -427,10 +432,11 @@ describe("#31: Expected Arrival Time", () => {
       });
       mockPrisma.booking.findUnique.mockResolvedValue(null);
 
+      const { NextRequest } = await import("next/server");
       const { PUT } = await import(
         "@/app/api/bookings/[id]/arrival-time/route"
       );
-      const req = new Request("http://localhost/api/bookings/booking-1/arrival-time", {
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expectedArrivalTime: "14:00" }),
@@ -454,10 +460,11 @@ describe("#31: Expected Arrival Time", () => {
         expectedArrivalTime: null,
       });
 
+      const { NextRequest } = await import("next/server");
       const { DELETE } = await import(
         "@/app/api/bookings/[id]/arrival-time/route"
       );
-      const req = new Request("http://localhost/api/bookings/booking-1/arrival-time", {
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
         method: "DELETE",
       });
       const res = await DELETE(req, { params: Promise.resolve({ id: "booking-1" }) });
@@ -475,10 +482,11 @@ describe("#31: Expected Arrival Time", () => {
         checkIn: new Date("2026-04-01"),
       });
 
+      const { NextRequest } = await import("next/server");
       const { DELETE } = await import(
         "@/app/api/bookings/[id]/arrival-time/route"
       );
-      const req = new Request("http://localhost/api/bookings/booking-1/arrival-time", {
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
         method: "DELETE",
       });
       const res = await DELETE(req, { params: Promise.resolve({ id: "booking-1" }) });
@@ -503,10 +511,11 @@ describe("#31: Expected Arrival Time", () => {
           expectedArrivalTime: time,
         });
 
+        const { NextRequest } = await import("next/server");
         const { PUT } = await import(
           "@/app/api/bookings/[id]/arrival-time/route"
         );
-        const req = new Request("http://localhost/api/bookings/booking-1/arrival-time", {
+        const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ expectedArrivalTime: time }),
@@ -528,10 +537,11 @@ describe("#31: Expected Arrival Time", () => {
           checkIn: new Date("2026-04-15"),
         });
 
+        const { NextRequest } = await import("next/server");
         const { PUT } = await import(
           "@/app/api/bookings/[id]/arrival-time/route"
         );
-        const req = new Request("http://localhost/api/bookings/booking-1/arrival-time", {
+        const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ expectedArrivalTime: time }),
