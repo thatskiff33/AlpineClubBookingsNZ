@@ -401,7 +401,7 @@ export default function KioskPage() {
                             </span>
                           )}
                           {/* Arrival/Departure toggle buttons - hidden for staying-guest tier */}
-                          {canMarkAttendance && guest.isArriving && !guest.departedAt && (
+                          {canMarkAttendance && !guest.departedAt && (
                             <button
                               onClick={() => toggleArrival(guest.id)}
                               className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
@@ -413,7 +413,7 @@ export default function KioskPage() {
                               {guest.arrivedAt ? "Arrived" : "Mark Arrived"}
                             </button>
                           )}
-                          {canMarkAttendance && guest.isDeparting && (
+                          {canMarkAttendance && (guest.arrivedAt || guest.departedAt) && (
                             <button
                               onClick={() => toggleDeparture(guest.id)}
                               className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
@@ -496,13 +496,10 @@ export default function KioskPage() {
                                 <button
                                   key={a.id}
                                   onClick={() => toggleChore(a.id, a.status)}
-                                  disabled={a.status === "SUGGESTED"}
                                   className={`w-full flex items-center gap-3 rounded-lg px-4 py-3 min-h-[56px] text-left transition-colors ${
                                     a.status === "COMPLETED"
                                       ? "bg-green-800/40 text-green-200"
-                                      : a.status === "CONFIRMED"
-                                        ? "bg-slate-700/50 hover:bg-slate-600/50 active:bg-slate-500/50"
-                                        : "bg-slate-700/30 text-slate-500 cursor-default"
+                                      : "bg-slate-700/50 hover:bg-slate-600/50 active:bg-slate-500/50"
                                   }`}
                                 >
                                   <div
