@@ -9,6 +9,9 @@ interface CancelPreview {
   keptAmountCents: number;
   changeFeeCents: number;
   refundPercentage: number;
+  creditRefundAmountCents: number;
+  creditRefundPercentage: number;
+  creditRestoredCents: number;
   totalPaidCents: number;
   hasPayment: boolean;
 }
@@ -20,8 +23,9 @@ function formatDollars(cents: number): string {
 export function CancelBookingButton({ bookingId }: { bookingId: string }) {
   const [step, setStep] = useState<"idle" | "loading" | "preview" | "cancelling" | "success" | "error">("idle");
   const [preview, setPreview] = useState<CancelPreview | null>(null);
-  const [result, setResult] = useState<{ refundAmountCents: number } | null>(null);
+  const [result, setResult] = useState<{ refundAmountCents: number; refundMethod: string; creditAmountCents?: number; creditRestoredCents?: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [refundMethod, setRefundMethod] = useState<"card" | "credit">("card");
   const router = useRouter();
 
   async function handleShowPreview() {
@@ -36,6 +40,7 @@ export function CancelBookingButton({ bookingId }: { bookingId: string }) {
       }
       const data: CancelPreview = await res.json();
       setPreview(data);
+      setRefundMethod("card");
       setStep("preview");
     } catch {
       setErrorMsg("Failed to load cancellation details");
@@ -48,10 +53,17 @@ export function CancelBookingButton({ bookingId }: { bookingId: string }) {
     try {
       const res = await fetch(`/api/bookings/${bookingId}/cancel`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refundMethod }),
       });
       if (res.ok) {
         const data = await res.json();
-        setResult({ refundAmountCents: data.refundAmountCents || 0 });
+        setResult({
+          refundAmountCents: data.refundAmountCents || 0,
+          refundMethod: data.refundMethod || "card",
+          creditAmountCents: data.creditAmountCents,
+          creditRestoredCents: data.creditRestoredCents,
+        });
         setStep("success");
         router.refresh();
       } else {
@@ -83,10 +95,20 @@ export function CancelBookingButton({ bookingId }: { bookingId: string }) {
 
   if (step === "success") {
     const refund = result?.refundAmountCents || 0;
+    const isCredit = result?.refundMethod === "credit";
     return (
       <div className="rounded-md border border-green-200 bg-green-50 p-4 space-y-1">
         <p className="text-sm font-medium text-green-800">Booking cancelled successfully</p>
-        {refund > 0 ? (
+        {result?.creditRestoredCents && result.creditRestoredCents > 0 && (
+          <p className="text-sm text-green-700">
+            {formatDollars(result.creditRestoredCents)} of previously applied credit has been restored to your account.
+          </p>
+        )}
+        {refund > 0 && isCredit ? (
+          <p className="text-sm text-green-700">
+            A credit of {formatDollars(refund)} has been added to your account for future bookings.
+          </p>
+        ) : refund > 0 ? (
           <p className="text-sm text-green-700">
             Your refund of {formatDollars(refund)} has been processed to your original payment method. You will receive a confirmation email shortly.
           </p>
@@ -112,6 +134,8 @@ export function CancelBookingButton({ bookingId }: { bookingId: string }) {
 
   // Preview step
   if (step === "preview" && preview) {
+    const hasRefund = preview.refundAmountCents > 0 || preview.creditRefundAmountCents > 0;
+
     return (
       <div className="rounded-md border border-red-200 bg-red-50 p-4 space-y-3">
         <p className="text-sm font-medium text-red-800">Cancellation Summary</p>
@@ -120,30 +144,89 @@ export function CancelBookingButton({ bookingId }: { bookingId: string }) {
           <p className="text-sm text-slate-700">
             No payment has been taken for this booking. No refund applies.
           </p>
-        ) : preview.refundAmountCents === 0 ? (
+        ) : !hasRefund ? (
           <p className="text-sm text-slate-700">
             No refund applies per cancellation policy.
           </p>
         ) : (
-          <div className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <span className="text-slate-600">Refund to original payment method:</span>
-              <span className="font-medium text-green-700">{formatDollars(preview.refundAmountCents)}</span>
+          <div className="space-y-3 text-sm">
+            {/* Refund method selection */}
+            <div className="space-y-2">
+              <p className="font-medium text-slate-700">Choose refund method:</p>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="refundMethod"
+                  value="card"
+                  checked={refundMethod === "card"}
+                  onChange={() => setRefundMethod("card")}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium text-slate-800">
+                    Refund {formatDollars(preview.refundAmountCents)} to original payment method
+                  </span>
+                  <span className="text-slate-500 ml-1">({preview.refundPercentage}% refund)</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="refundMethod"
+                  value="credit"
+                  checked={refundMethod === "credit"}
+                  onChange={() => setRefundMethod("credit")}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium text-green-700">
+                    Hold {formatDollars(preview.creditRefundAmountCents)} as account credit
+                  </span>
+                  <span className="text-slate-500 ml-1">({preview.creditRefundPercentage}% refund)</span>
+                  {preview.creditRefundAmountCents > preview.refundAmountCents && (
+                    <span className="ml-1 text-xs text-green-600 font-medium">
+                      +{formatDollars(preview.creditRefundAmountCents - preview.refundAmountCents)} more
+                    </span>
+                  )}
+                </span>
+              </label>
             </div>
-            {preview.keptAmountCents > 0 && (
+
+            {/* Amount summary */}
+            <div className="border-t border-red-100 pt-2 space-y-1">
               <div className="flex justify-between">
                 <span className="text-slate-600">
-                  Amount kept (cancellation policy {preview.refundPercentage}% refund):
+                  {refundMethod === "credit" ? "Credit to account:" : "Refund to card:"}
                 </span>
-                <span className="font-medium text-slate-700">{formatDollars(preview.keptAmountCents)}</span>
+                <span className="font-medium text-green-700">
+                  {formatDollars(
+                    refundMethod === "credit"
+                      ? preview.creditRefundAmountCents
+                      : preview.refundAmountCents
+                  )}
+                </span>
               </div>
-            )}
-            {preview.changeFeeCents > 0 && (
-              <div className="flex justify-between">
-                <span className="text-slate-600">Change fees (non-refundable):</span>
-                <span className="font-medium text-slate-700">{formatDollars(preview.changeFeeCents)}</span>
-              </div>
-            )}
+              {preview.keptAmountCents > 0 && refundMethod === "card" && (
+                <div className="flex justify-between">
+                  <span className="text-slate-600">
+                    Amount kept ({preview.refundPercentage}% refund):
+                  </span>
+                  <span className="font-medium text-slate-700">{formatDollars(preview.keptAmountCents)}</span>
+                </div>
+              )}
+              {preview.changeFeeCents > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Change fees (non-refundable):</span>
+                  <span className="font-medium text-slate-700">{formatDollars(preview.changeFeeCents)}</span>
+                </div>
+              )}
+              {preview.creditRestoredCents > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-slate-600">Previously applied credit restored:</span>
+                  <span className="font-medium text-green-700">{formatDollars(preview.creditRestoredCents)}</span>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

@@ -251,12 +251,23 @@ export function bookingCancelledTemplate(
   firstName: string,
   checkIn: Date,
   checkOut: Date,
-  refundCents: number
+  refundCents: number,
+  refundMethod: "card" | "credit" = "card"
 ): string {
-  const refundInfo =
-    refundCents > 0
-      ? alertBox("A refund of " + formatCents(refundCents) + " has been processed to your original payment method.", "success")
-      : alertBox("No refund was applicable based on the cancellation policy.", "info");
+  let refundInfo: string;
+  if (refundCents > 0 && refundMethod === "credit") {
+    refundInfo = alertBox(
+      "A credit of " + formatCents(refundCents) + " has been added to your account for future bookings.",
+      "success"
+    );
+  } else if (refundCents > 0) {
+    refundInfo = alertBox(
+      "A refund of " + formatCents(refundCents) + " has been processed to your original payment method.",
+      "success"
+    );
+  } else {
+    refundInfo = alertBox("No refund was applicable based on the cancellation policy.", "info");
+  }
 
   return layout(`
     ${heading("Booking Cancelled")}
@@ -268,6 +279,25 @@ export function bookingCancelledTemplate(
     ${refundInfo}
     ${paragraph("You can make a new booking at any time from your account.")}
     ${button("Make a New Booking", BASE_URL + "/book")}
+  `);
+}
+
+export function creditAppliedToBookingTemplate(
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date,
+  creditUsedCents: number,
+  remainingCreditCents: number
+): string {
+  return layout(`
+    ${heading("Account Credit Applied")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", account credit was applied to your booking.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(checkIn) },
+      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Credit applied", value: formatCents(creditUsedCents) },
+      { label: "Remaining credit", value: formatCents(remainingCreditCents) },
+    ])}
   `);
 }
 

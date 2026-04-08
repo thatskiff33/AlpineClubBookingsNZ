@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { calculateBookingPrice, type SeasonRateData } from "@/lib/pricing";
+import { getMemberCreditBalance } from "@/lib/member-credit";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
 
@@ -64,7 +65,8 @@ export async function POST(request: NextRequest) {
 
   try {
     const price = calculateBookingPrice(checkIn, checkOut, guests, seasonData);
-    return NextResponse.json(price);
+    const availableCreditCents = await getMemberCreditBalance(session.user.id);
+    return NextResponse.json({ ...price, availableCreditCents });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to calculate price";
     return NextResponse.json({ error: message }, { status: 400 });

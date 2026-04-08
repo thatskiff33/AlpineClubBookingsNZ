@@ -20,6 +20,7 @@ import { calculatePromoDiscount } from "@/lib/pricing";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBookingAlert } from "@/lib/email";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
+import { getMemberCreditBalance, applyCreditToBooking } from "@/lib/member-credit";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
 
@@ -42,6 +43,7 @@ const createBookingSchema = z.object({
   promoCode: z.string().max(50).optional(),
   draft: z.boolean().optional(),
   expectedArrivalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]0$/).optional(),
+  applyCreditCents: z.number().int().min(0).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -459,6 +461,22 @@ export async function POST(request: NextRequest) {
 
       const finalPriceCents = price.totalPriceCents - discountCents;
 
+      // Apply account credit if requested
+      let creditAppliedCents = 0;
+      const requestedCredit = parsed.data.applyCreditCents || 0;
+      if (requestedCredit > 0 && status === BookingStatus.CONFIRMED) {
+        const creditBalance = await getMemberCreditBalance(session.user.id, tx);
+        if (requestedCredit > creditBalance) {
+          throw new Error(`Insufficient credit: ${creditBalance} cents available, ${requestedCredit} requested`);
+        }
+        if (requestedCredit > finalPriceCents) {
+          throw new Error(`Credit amount (${requestedCredit}) exceeds booking price (${finalPriceCents})`);
+        }
+        creditAppliedCents = requestedCredit;
+      }
+
+      const effectivePriceCents = finalPriceCents - creditAppliedCents;
+
       const nonMemberHoldUntil = shouldBePending
         ? new Date(checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000)
         : null;
@@ -501,16 +519,27 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Zero-dollar CONFIRMED booking: create a SUCCEEDED Payment and set status to PAID.
+      // Apply credit deduction within the transaction
+      if (creditAppliedCents > 0) {
+        await applyCreditToBooking(
+          session.user.id,
+          creditAppliedCents,
+          newBooking.id,
+          tx
+        );
+      }
+
+      // Zero-dollar or credit-covered CONFIRMED booking: create a SUCCEEDED Payment and set status to PAID.
       // Only applies when the booking would normally be CONFIRMED (all-members or check-in
       // within hold window). PENDING $0 bookings (non-member, far-future) are handled by the
       // cron job so the non-member bumping system remains intact.
-      if (finalPriceCents === 0 && status === BookingStatus.CONFIRMED) {
+      if (effectivePriceCents === 0 && status === BookingStatus.CONFIRMED) {
         isZeroDollarConfirmed = true;
         await tx.payment.create({
           data: {
             bookingId: newBooking.id,
             amountCents: 0,
+            creditAppliedCents,
             status: "SUCCEEDED",
           },
         });

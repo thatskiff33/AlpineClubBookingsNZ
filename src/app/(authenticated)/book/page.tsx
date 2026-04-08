@@ -29,6 +29,7 @@ interface PriceQuote {
     priceCents: number;
   }[];
   totalPriceCents: number;
+  availableCreditCents?: number;
 }
 
 interface SubscriptionStatus {
@@ -53,6 +54,7 @@ export default function BookPage() {
   const [availableBeds, setAvailableBeds] = useState(LODGE_CAPACITY);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
+  const [useCredit, setUseCredit] = useState(false);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
@@ -166,6 +168,7 @@ export default function BookPage() {
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
+        applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
       }),
     });
 
@@ -201,6 +204,7 @@ export default function BookPage() {
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
+        applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         draft: true,
       }),
     });
@@ -222,6 +226,15 @@ export default function BookPage() {
   function formatCents(cents: number) {
     return `$${(cents / 100).toFixed(2)}`;
   }
+
+  const availableCreditCents = priceQuote?.availableCreditCents ?? 0;
+  const finalPriceBeforeCredit = priceQuote
+    ? priceQuote.totalPriceCents - (appliedPromo?.discountCents ?? 0)
+    : 0;
+  const appliedCreditCents = useCredit
+    ? Math.min(availableCreditCents, finalPriceBeforeCredit)
+    : 0;
+  const remainingToPay = finalPriceBeforeCredit - appliedCreditCents;
 
   const subscriptionUnpaid =
     subscriptionStatus &&
@@ -416,15 +429,57 @@ export default function BookPage() {
                     <span>Discount ({appliedPromo.code})</span>
                     <span>-{formatCents(appliedPromo.discountCents)}</span>
                   </div>
+                  {appliedCreditCents > 0 && (
+                    <div className="flex justify-between text-sm text-green-600">
+                      <span>Account credit</span>
+                      <span>-{formatCents(appliedCreditCents)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between font-bold text-lg">
-                    <span>Total</span>
-                    <span>{formatCents(priceQuote.totalPriceCents - appliedPromo.discountCents)}</span>
+                    <span>{appliedCreditCents > 0 ? "Remaining to pay" : "Total"}</span>
+                    <span>{formatCents(remainingToPay)}</span>
                   </div>
                 </>
               ) : (
-                <div className="border-t pt-4 flex justify-between font-bold text-lg">
-                  <span>Total</span>
-                  <span>{formatCents(priceQuote.totalPriceCents)}</span>
+                <>
+                  {appliedCreditCents > 0 && (
+                    <>
+                      <div className="border-t pt-4 flex justify-between text-sm">
+                        <span>Subtotal</span>
+                        <span>{formatCents(priceQuote.totalPriceCents)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm text-green-600">
+                        <span>Account credit</span>
+                        <span>-{formatCents(appliedCreditCents)}</span>
+                      </div>
+                    </>
+                  )}
+                  <div className={`${appliedCreditCents === 0 ? "border-t pt-4 " : ""}flex justify-between font-bold text-lg`}>
+                    <span>{appliedCreditCents > 0 ? "Remaining to pay" : "Total"}</span>
+                    <span>{formatCents(remainingToPay)}</span>
+                  </div>
+                </>
+              )}
+
+              {availableCreditCents > 0 && (
+                <div className="rounded-md bg-green-50 border border-green-200 p-4 mt-2">
+                  <p className="text-sm text-green-800 mb-2">
+                    You have <strong>{formatCents(availableCreditCents)}</strong> in account credit
+                  </p>
+                  <label className="flex items-center gap-2 text-sm text-green-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useCredit}
+                      onChange={(e) => setUseCredit(e.target.checked)}
+                      className="rounded border-green-300"
+                    />
+                    Apply credit to this booking
+                  </label>
+                  {useCredit && remainingToPay === 0 && (
+                    <p className="mt-2 text-sm font-medium text-green-700">
+                      Credit covers entire booking — no card payment needed
+                    </p>
+                  )}
                 </div>
               )}
             </CardContent>

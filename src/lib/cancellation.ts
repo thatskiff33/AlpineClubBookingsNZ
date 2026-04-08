@@ -3,6 +3,7 @@ import { prisma } from "./prisma";
 export interface CancellationRule {
   daysBeforeStay: number;
   refundPercentage: number;
+  creditRefundPercentage: number; // Typically >= refundPercentage (no Stripe fees)
 }
 
 /**
@@ -45,9 +46,9 @@ export async function getNonMemberHoldDays(checkIn: Date): Promise<number> {
 export function getRefundTier(
   daysUntilCheckIn: number,
   policyRules: CancellationRule[]
-): { refundPercentage: number; daysBeforeStay: number } {
+): { refundPercentage: number; creditRefundPercentage: number; daysBeforeStay: number } {
   if (policyRules.length === 0) {
-    return { refundPercentage: 0, daysBeforeStay: 0 };
+    return { refundPercentage: 0, creditRefundPercentage: 0, daysBeforeStay: 0 };
   }
 
   const sortedRules = [...policyRules].sort(
@@ -58,12 +59,13 @@ export function getRefundTier(
     if (daysUntilCheckIn >= rule.daysBeforeStay) {
       return {
         refundPercentage: rule.refundPercentage,
+        creditRefundPercentage: rule.creditRefundPercentage,
         daysBeforeStay: rule.daysBeforeStay,
       };
     }
   }
 
-  return { refundPercentage: 0, daysBeforeStay: 0 };
+  return { refundPercentage: 0, creditRefundPercentage: 0, daysBeforeStay: 0 };
 }
 
 /**
@@ -79,13 +81,44 @@ export function getRefundTier(
 export function calculateRefundAmount(
   paidAmountCents: number,
   daysUntilCheckIn: number,
-  policyRules: CancellationRule[]
+  policyRules: CancellationRule[],
+  refundMethod: "card" | "credit" = "card"
 ): { refundAmountCents: number; refundPercentage: number } {
-  const { refundPercentage } = getRefundTier(daysUntilCheckIn, policyRules);
+  const tier = getRefundTier(daysUntilCheckIn, policyRules);
+  const refundPercentage =
+    refundMethod === "credit"
+      ? tier.creditRefundPercentage
+      : tier.refundPercentage;
   const refundAmountCents = Math.round(
     (paidAmountCents * refundPercentage) / 100
   );
   return { refundAmountCents, refundPercentage };
+}
+
+/**
+ * Calculate both card and credit refund amounts for a cancel preview.
+ */
+export function calculateDualRefundAmounts(
+  paidAmountCents: number,
+  daysUntilCheckIn: number,
+  policyRules: CancellationRule[]
+): {
+  cardRefundAmountCents: number;
+  cardRefundPercentage: number;
+  creditRefundAmountCents: number;
+  creditRefundPercentage: number;
+} {
+  const tier = getRefundTier(daysUntilCheckIn, policyRules);
+  return {
+    cardRefundAmountCents: Math.round(
+      (paidAmountCents * tier.refundPercentage) / 100
+    ),
+    cardRefundPercentage: tier.refundPercentage,
+    creditRefundAmountCents: Math.round(
+      (paidAmountCents * tier.creditRefundPercentage) / 100
+    ),
+    creditRefundPercentage: tier.creditRefundPercentage,
+  };
 }
 
 /**
@@ -107,8 +140,18 @@ export async function loadCancellationPolicy(
   if (checkIn) {
     const period = await getBookingPeriodForDate(checkIn);
     if (period) {
-      const rules = period.cancellationRules as unknown as CancellationRule[];
-      return [...rules].sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
+      const rawRules = period.cancellationRules as unknown as Array<{
+        daysBeforeStay: number;
+        refundPercentage: number;
+        creditRefundPercentage?: number;
+      }>;
+      return rawRules
+        .map((r) => ({
+          daysBeforeStay: r.daysBeforeStay,
+          refundPercentage: r.refundPercentage,
+          creditRefundPercentage: r.creditRefundPercentage ?? r.refundPercentage,
+        }))
+        .sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
     }
   }
 
@@ -119,6 +162,7 @@ export async function loadCancellationPolicy(
   return rules.map((r) => ({
     daysBeforeStay: r.daysBeforeStay,
     refundPercentage: r.refundPercentage,
+    creditRefundPercentage: r.creditRefundPercentage ?? r.refundPercentage,
   }));
 }
 
