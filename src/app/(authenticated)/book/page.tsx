@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { BookingCalendar } from "@/components/booking-calendar";
 import { GuestForm, type GuestData } from "@/components/guest-form";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ interface SubscriptionStatus {
 
 export default function BookPage() {
   const router = useRouter();
+  const { data: session } = useSession();
   const [step, setStep] = useState<"dates" | "guests" | "review">("dates");
   const [checkIn, setCheckIn] = useState<Date | null>(null);
   const [checkOut, setCheckOut] = useState<Date | null>(null);
@@ -61,6 +63,13 @@ export default function BookPage() {
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
+
+  // Redirect admins to the admin booking page — admins must book on behalf of members
+  useEffect(() => {
+    if (session?.user?.role === "ADMIN") {
+      router.replace("/admin/book");
+    }
+  }, [session, router]);
 
   useEffect(() => {
     fetch("/api/members/family")

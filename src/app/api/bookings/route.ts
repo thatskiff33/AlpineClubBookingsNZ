@@ -73,12 +73,20 @@ export async function POST(request: NextRequest) {
   let effectiveMemberId = session.user.id;
   let isOnBehalf = false;
 
+  // Admins must always use forMemberId to book on behalf — they cannot book for themselves
+  if (session.user.role === "ADMIN" && !parsed.data.forMemberId) {
+    return NextResponse.json(
+      { error: "Admins must book on behalf of a member. Use the admin booking page.", code: "ADMIN_MUST_BOOK_ON_BEHALF" },
+      { status: 403 }
+    );
+  }
+
   if (parsed.data.forMemberId) {
     if (session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Only admins can book on behalf of another member" }, { status: 403 });
     }
     if (parsed.data.forMemberId === session.user.id) {
-      return NextResponse.json({ error: "Admins cannot book for themselves — use your personal member account" }, { status: 400 });
+      return NextResponse.json({ error: "Admins cannot book for themselves — use the admin booking page to book on behalf of a member" }, { status: 400 });
     }
     const targetMember = await prisma.member.findUnique({
       where: { id: parsed.data.forMemberId },

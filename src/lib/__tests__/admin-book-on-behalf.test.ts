@@ -106,6 +106,17 @@ describe("Admin Book on Behalf", () => {
     vi.clearAllMocks();
   });
 
+  it("rejects admin booking without forMemberId (must book on behalf)", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+
+    const req = makeRequest(baseBookingPayload);
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.code).toBe("ADMIN_MUST_BOOK_ON_BEHALF");
+    expect(body.error).toContain("Admins must book on behalf");
+  });
+
   it("rejects forMemberId from non-admin users", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
     (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({

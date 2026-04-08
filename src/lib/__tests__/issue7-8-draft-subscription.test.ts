@@ -64,6 +64,9 @@ vi.mock("@/lib/prisma", () => ({
       count: vi.fn(),
       create: vi.fn(),
     },
+    auditLog: {
+      create: vi.fn().mockResolvedValue({}),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -440,21 +443,25 @@ describe("Issue 10: Subscription check on booking creation", () => {
     expect(res.status).toBe(201);
   });
 
-  it("admin bypasses subscription check", async () => {
+  it("admin bypasses subscription check (booking on behalf)", async () => {
     mockAuth.mockResolvedValue(adminSession());
     // Even if memberSubscription returns null, admin should not be blocked
     mockPrisma.memberSubscription.findFirst.mockResolvedValue(null);
+    // Target member must be active for on-behalf booking
+    mockPrisma.member.findUnique.mockResolvedValue({ active: true });
 
-    const confirmedBooking = {
+    const draftBooking = {
       id: "booking-1",
-      status: "CONFIRMED",
+      status: "DRAFT",
       finalPriceCents: 10000,
       nonMemberHoldUntil: null,
+      draftExpiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000),
       guests: [{ id: "g1" }],
     };
-    mockTx.booking.create.mockResolvedValue(confirmedBooking);
+    mockPrisma.booking.create.mockResolvedValue(draftBooking);
 
-    const res = await createBooking(makeBookingBody());
+    // Admin must use forMemberId to book on behalf (use draft to skip capacity tx)
+    const res = await createBooking(makeBookingBody({ forMemberId: "target-member-1", draft: true }));
     // Admin should get through — subscription check skipped
     expect(res.status).toBe(201);
     // memberSubscription.findFirst should NOT have been called for admin
