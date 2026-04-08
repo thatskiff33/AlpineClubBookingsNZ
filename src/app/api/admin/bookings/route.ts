@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getMonthAvailability, LODGE_CAPACITY } from "@/lib/capacity";
+import logger from "@/lib/logger";
 
 /**
  * GET /api/admin/bookings?calendarMonth=YYYY-MM
@@ -38,36 +39,41 @@ export async function GET(request: NextRequest) {
     statusFilter.status = { notIn: ["DRAFT", "CANCELLED"] };
   }
 
-  const [bookings, occupancyMap] = await Promise.all([
-    prisma.booking.findMany({
-      where: {
-        ...statusFilter,
-        checkIn: { lte: monthEnd },
-        checkOut: { gte: monthStart },
-      },
-      include: {
-        member: { select: { firstName: true, lastName: true } },
-        _count: { select: { guests: true } },
-      },
-      orderBy: { checkIn: "asc" },
-    }),
-    getMonthAvailability(year, month - 1), // month is 0-indexed in getMonthAvailability
-  ]);
+  try {
+    const [bookings, occupancyMap] = await Promise.all([
+      prisma.booking.findMany({
+        where: {
+          ...statusFilter,
+          checkIn: { lte: monthEnd },
+          checkOut: { gte: monthStart },
+        },
+        include: {
+          member: { select: { firstName: true, lastName: true } },
+          _count: { select: { guests: true } },
+        },
+        orderBy: { checkIn: "asc" },
+      }),
+      getMonthAvailability(year, month - 1), // month is 0-indexed in getMonthAvailability
+    ]);
 
-  const result = bookings.map((b) => ({
-    id: b.id,
-    memberName: `${b.member.firstName} ${b.member.lastName}`,
-    checkIn: b.checkIn.toISOString().split("T")[0],
-    checkOut: b.checkOut.toISOString().split("T")[0],
-    status: b.status,
-    guestCount: b._count.guests,
-  }));
+    const result = bookings.map((b) => ({
+      id: b.id,
+      memberName: `${b.member.firstName} ${b.member.lastName}`,
+      checkIn: b.checkIn.toISOString().split("T")[0],
+      checkOut: b.checkOut.toISOString().split("T")[0],
+      status: b.status,
+      guestCount: b._count.guests,
+    }));
 
-  // Convert occupancy map to availability object: { "2026-04-01": 25, ... }
-  const availability: Record<string, number> = {};
-  for (const [date, occupied] of occupancyMap.entries()) {
-    availability[date] = LODGE_CAPACITY - occupied;
+    // Convert occupancy map to availability object: { "2026-04-01": 25, ... }
+    const availability: Record<string, number> = {};
+    for (const [date, occupied] of occupancyMap.entries()) {
+      availability[date] = LODGE_CAPACITY - occupied;
+    }
+
+    return NextResponse.json({ bookings: result, availability });
+  } catch (err) {
+    logger.error({ err }, "Error fetching admin bookings");
+    return NextResponse.json({ error: "Failed to fetch bookings" }, { status: 500 });
   }
-
-  return NextResponse.json({ bookings: result, availability });
 }

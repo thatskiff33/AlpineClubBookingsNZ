@@ -97,9 +97,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
   }
 
-  // Validate guest memberIds: must be the session user or in their family group
+  // Validate and verify guest memberIds and pricing attributes
   const guestMemberIds = guests.map((g) => g.memberId).filter(Boolean) as string[];
   if (guestMemberIds.length > 0) {
+    // Authorization: memberIds must be self or family group members
     const allowedIds = new Set<string>([session.user.id]);
     const familyLinks = await prisma.familyGroupMember.findMany({
       where: { memberId: session.user.id },
@@ -117,6 +118,31 @@ export async function POST(request: NextRequest) {
       if (!allowedIds.has(id)) {
         return NextResponse.json({ error: "Invalid guest member reference" }, { status: 403 });
       }
+    }
+
+    // Verify isMember and ageTier from DB for linked members (don't trust client)
+    const linkedMembers = await prisma.member.findMany({
+      where: { id: { in: guestMemberIds }, active: true },
+      select: { id: true, ageTier: true },
+    });
+    const memberMap = new Map(linkedMembers.map((m) => [m.id, m]));
+    for (const g of guests) {
+      if (g.memberId) {
+        const dbMember = memberMap.get(g.memberId);
+        if (!dbMember) {
+          return NextResponse.json({ error: "Linked member is inactive or not found" }, { status: 400 });
+        }
+        g.isMember = true;
+        g.ageTier = dbMember.ageTier;
+      } else {
+        // Guests without a memberId cannot claim member pricing
+        g.isMember = false;
+      }
+    }
+  } else {
+    // No linked members — enforce isMember=false for all guests
+    for (const g of guests) {
+      g.isMember = false;
     }
   }
 
@@ -282,9 +308,7 @@ export async function POST(request: NextRequest) {
     const booking = await prisma.$transaction(async (tx) => {
       // Advisory lock to serialize all booking creation and prevent double-booking.
       // Uses a fixed key so overlapping date ranges are protected.
-      await tx.$executeRawUnsafe(
-        `SELECT pg_advisory_xact_lock(1)`
-      );
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
       // Check capacity
       const nights = eachDayOfInterval({
