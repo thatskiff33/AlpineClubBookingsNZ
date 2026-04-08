@@ -11,6 +11,8 @@ services:
       POSTGRES_USER: tac
       POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
       POSTGRES_DB: tacbookings
+      TZ: Pacific/Auckland
+      PGTZ: Pacific/Auckland
     command:
       - "postgres"
       - "-c"
@@ -49,6 +51,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      TZ: Pacific/Auckland
       DATABASE_URL: postgresql://tac:${DB_PASSWORD:-password}@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
@@ -133,6 +136,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      TZ: Pacific/Auckland
       DATABASE_URL: postgresql://tac:${DB_PASSWORD:-password}@postgres:5432/tacbookings
     command: ./node_modules/.bin/prisma migrate deploy
 
