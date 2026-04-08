@@ -11,14 +11,14 @@ import { LODGE_CAPACITY } from "@/lib/capacity";
 
 describe("bookingStatusClasses", () => {
   it("defines all booking statuses", () => {
-    const statuses = ["DRAFT", "PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED"];
+    const statuses = ["DRAFT", "PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"];
     for (const s of statuses) {
       expect(bookingStatusClasses[s], `missing class for ${s}`).toBeTruthy();
     }
   });
 
   it("each booking status has a unique colour class", () => {
-    const statuses = ["DRAFT", "PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED"];
+    const statuses = ["DRAFT", "PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"];
     const classes = statuses.map((s) => bookingStatusClasses[s]);
     const unique = new Set(classes);
     expect(unique.size).toBe(statuses.length);

@@ -31,6 +31,8 @@ export const stripe = new Proxy({} as Stripe, {
  * Create a PaymentIntent for confirmed bookings (immediate charge).
  * Used when all guests are members OR check-in is <= 7 days away.
  */
+export const STRIPE_MINIMUM_AMOUNT_CENTS = 50; // Stripe NZD minimum charge
+
 export async function createPaymentIntent({
   amountCents,
   currency = "nzd",
@@ -44,6 +46,9 @@ export async function createPaymentIntent({
   metadata?: Record<string, string>;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
+  if (amountCents > 0 && amountCents < STRIPE_MINIMUM_AMOUNT_CENTS) {
+    throw new Error(`Amount ${amountCents} cents is below Stripe minimum (${STRIPE_MINIMUM_AMOUNT_CENTS} cents)`);
+  }
   return stripe.paymentIntents.create(
     {
       amount: amountCents,
@@ -92,6 +97,9 @@ export async function chargePaymentMethod({
   metadata?: Record<string, string>;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
+  if (amountCents > 0 && amountCents < STRIPE_MINIMUM_AMOUNT_CENTS) {
+    throw new Error(`Amount ${amountCents} cents is below Stripe minimum (${STRIPE_MINIMUM_AMOUNT_CENTS} cents)`);
+  }
   return stripe.paymentIntents.create(
     {
       amount: amountCents,

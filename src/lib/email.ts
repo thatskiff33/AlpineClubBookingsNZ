@@ -31,6 +31,10 @@ import {
   childRequestApprovedTemplate,
   childRequestRejectedTemplate,
   setupIntentFailedTemplate,
+  waitlistConfirmationTemplate,
+  waitlistOfferTemplate,
+  waitlistOfferExpiredTemplate,
+  adminWaitlistOfferTemplate,
 } from "./email-templates";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -450,6 +454,7 @@ const CATEGORY_TO_PREFERENCE: Record<string, keyof Omit<
   bookingBumped: "bookingBumped",
   bookingCancelled: "bookingCancelled",
   choreRoster: "choreRoster",
+  bookingWaitlist: "bookingWaitlist",
   marketingEmails: "marketingEmails",
 };
 
@@ -628,5 +633,69 @@ export async function sendSetupIntentFailedEmail(params: {
     subject: "Card Setup Failed - TAC Lodge Booking",
     html: setupIntentFailedTemplate(params),
     templateName: "setup-intent-failed",
+  });
+}
+
+// ---- Waitlist emails ----
+
+export async function sendWaitlistConfirmationEmail(
+  email: string,
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date,
+  guestCount: number,
+  position: number
+) {
+  await sendEmail({
+    to: email,
+    subject: "Waitlist Confirmation - TAC Lodge",
+    html: waitlistConfirmationTemplate(firstName, checkIn, checkOut, guestCount, position),
+    templateName: "waitlist-confirmation",
+  });
+}
+
+export async function sendWaitlistOfferEmail(
+  email: string,
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date,
+  guestCount: number,
+  expiresAt: Date,
+  bookingId: string
+) {
+  await sendEmail({
+    to: email,
+    subject: "Spot Available! - TAC Lodge",
+    html: waitlistOfferTemplate(firstName, checkIn, checkOut, guestCount, expiresAt, bookingId),
+    templateName: "waitlist-offer",
+  });
+}
+
+export async function sendWaitlistOfferExpiredEmail(
+  email: string,
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date,
+  position: number
+) {
+  await sendEmail({
+    to: email,
+    subject: "Waitlist Offer Expired - TAC Lodge",
+    html: waitlistOfferExpiredTemplate(firstName, checkIn, checkOut, position),
+    templateName: "waitlist-offer-expired",
+  });
+}
+
+export async function sendAdminWaitlistOfferAlert(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  position: number;
+}) {
+  await sendToAdmins({
+    subject: `Waitlist Offer: ${data.memberName}`,
+    html: adminWaitlistOfferTemplate(data),
+    templateName: "admin-waitlist-offer",
   });
 }

@@ -286,13 +286,12 @@ describe("#24: Lodge Auth Tier-Based Restrictions", () => {
 // #24: Auth.ts LODGE JWT Duration
 // ---------------------------------------------------------------------------
 
-describe("#24: LODGE JWT 180-day expiry", () => {
-  it("auth.ts contains 180 * 24 * 60 * 60 for LODGE role", async () => {
+describe("#24: LODGE JWT 30-day expiry", () => {
+  it("auth.ts contains 30 * 24 * 60 * 60 for LODGE role", async () => {
     // Read the auth file and verify the duration
     const fs = await import("fs");
     const content = fs.readFileSync("src/lib/auth.ts", "utf-8");
-    expect(content).toContain("180 * 24 * 60 * 60");
-    expect(content).not.toContain("30 * 24 * 60 * 60");
+    expect(content).toContain("30 * 24 * 60 * 60");
   });
 });
 

@@ -32,6 +32,7 @@ export async function register() {
     // Overlap guards: prevent concurrent execution of the same cron job
     let isPendingCronRunning = false;
     let isXeroCronRunning = false;
+    let isWaitlistCronRunning = false;
 
     // Helper: record a cron job run
     async function recordCronRun(
@@ -195,22 +196,24 @@ export async function register() {
           select: { id: true, promoRedemption: { select: { id: true, promoCodeId: true } } },
         });
         if (expiredDrafts.length > 0) {
-          // Decrement promo code redemption counts for expired drafts (parallel)
-          const promoDecrements = expiredDrafts
-            .filter((d) => d.promoRedemption)
-            .map((d) =>
-              prisma.promoCode.update({
-                where: { id: d.promoRedemption!.promoCodeId },
-                data: { currentRedemptions: { decrement: 1 } },
-              })
-            );
-          if (promoDecrements.length > 0) {
-            await Promise.all(promoDecrements);
-          }
-          const { count } = await prisma.booking.deleteMany({
-            where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
+          // Wrap promo decrement + booking delete in a transaction to avoid partial cleanup
+          await prisma.$transaction(async (tx) => {
+            const promoDecrements = expiredDrafts
+              .filter((d) => d.promoRedemption)
+              .map((d) =>
+                tx.promoCode.update({
+                  where: { id: d.promoRedemption!.promoCodeId },
+                  data: { currentRedemptions: { decrement: 1 } },
+                })
+              );
+            if (promoDecrements.length > 0) {
+              await Promise.all(promoDecrements);
+            }
+            await tx.booking.deleteMany({
+              where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
+            });
           });
-          logger.info({ job: "backup", deletedDrafts: count }, "Deleted expired draft bookings");
+          logger.info({ job: "backup", deletedDrafts: expiredDrafts.length }, "Deleted expired draft bookings");
         }
       } catch (err) {
         logger.error({ err }, "Failed to delete expired draft bookings");
@@ -219,9 +222,9 @@ export async function register() {
 
     logger.info({ job: "backup", schedule: backupSchedule }, "Scheduled database backup");
 
-    // Data pruning cron (daily at 3:00 AM NZST)
+    // Data pruning cron (daily at 3:30 AM NZST — staggered from backup at 3:00 AM)
     let isPruningRunning = false;
-    cron.default.schedule("0 3 * * *", async () => {
+    cron.default.schedule("30 3 * * *", async () => {
       if (isPruningRunning) {
         logger.info({ job: "data-pruning" }, "Already running, skipping");
         return;
@@ -395,6 +398,7 @@ export async function register() {
 
     // N-11: Cron job - Email retry (every 30 minutes)
     let isEmailRetryRunning = false;
+    // Note: no timezone needed — runs every 30 min regardless of TZ
     cron.default.schedule("*/30 * * * *", async () => {
       if (isEmailRetryRunning) {
         logger.info({ job: "email-retry" }, "Already running, skipping");
@@ -577,6 +581,40 @@ export async function register() {
     }, { timezone: "Pacific/Auckland" });
 
     logger.info({ job: "credit-reconciliation" }, "Scheduled credit reconciliation (daily at 5:00 AM NZST)");
+
+    // Waitlist processor (every 30 minutes)
+    cron.default.schedule("*/30 * * * *", async () => {
+      if (isWaitlistCronRunning) {
+        logger.info({ job: "waitlist-processor" }, "Already running, skipping");
+        return;
+      }
+      isWaitlistCronRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "waitlist-processor" }, "Processing waitlist offers");
+
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "waitlist-processor", status: "in_progress" },
+        { schedule: { type: "crontab", value: "*/30 * * * *" } }
+      );
+
+      try {
+        const { processWaitlistCron } = await import("@/lib/cron-waitlist");
+        const result = await processWaitlistCron();
+        logger.info({ job: "waitlist-processor", ...result }, "Waitlist processing complete");
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "waitlist-processor", status: "ok" });
+        await recordCronRun("waitlist-processor", startedAt, "SUCCESS", result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "waitlist-processor" }, "Error processing waitlist");
+        Sentry.captureException(err);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "waitlist-processor", status: "error" });
+        await recordCronRun("waitlist-processor", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isWaitlistCronRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "waitlist-processor" }, "Scheduled waitlist processor (every 30 minutes)");
   }
 }
 

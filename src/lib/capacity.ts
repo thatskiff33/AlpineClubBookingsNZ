@@ -1,6 +1,9 @@
 import { prisma } from "./prisma";
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, Prisma } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
+
+type PrismaClient = typeof prisma;
+type TransactionClient = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
 
 export const LODGE_CAPACITY = 29;
 
@@ -63,14 +66,16 @@ export async function checkCapacity(
   checkIn: Date,
   checkOut: Date,
   guestCount: number,
-  excludeBookingId?: string
+  excludeBookingId?: string,
+  tx?: TransactionClient
 ): Promise<{ available: boolean; minAvailable: number; nightDetails: NightAvailability[] }> {
+  const db = tx ?? prisma;
   const nights = eachDayOfInterval({
     start: checkIn,
     end: subDays(checkOut, 1),
   });
 
-  const overlappingBookings = await prisma.booking.findMany({
+  const overlappingBookings = await db.booking.findMany({
     where: {
       checkIn: { lt: checkOut },
       checkOut: { gt: checkIn },

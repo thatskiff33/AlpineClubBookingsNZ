@@ -5,7 +5,7 @@
 ```bash
 npm install
 npx prisma generate
-npm test              # 948 tests pass (45 test files)
+npm test              # 1258 tests pass (46 test files)
 npm run build         # builds successfully
 npm run dev           # development server
 
@@ -26,12 +26,12 @@ npm run db:seed
 
 ## Current State
 
-All 9 build phases + all Delivery Phases (1–12) + post-launch bugfix rounds complete. Security audit + 5 integration reviews done. 948 tests pass, build succeeds.
+All 9 build phases + all Delivery Phases (1–12) + post-launch bugfix rounds complete. Security audit + 5 integration reviews done. Waitlist feature added. 1258 tests pass, build succeeds.
 
 **What works today:**
 - Auth: login, register, password reset, JWT sessions (8h expiry), admin role guard, email verification on registration, email change with verification
 - Family/dependents: parentMemberId self-referencing FK, shared email support, Xero import creates dependents, profile management, booking wizard quick-add, admin type filter
-- Booking: availability calendar, booking wizard (with family member quick-add), guest forms, pricing engine, advisory lock concurrency
+- Booking: availability calendar, booking wizard (with family member quick-add), guest forms, pricing engine, advisory lock concurrency, waitlist (FIFO queue with 48h offers)
 - Payments: Stripe PaymentIntents (confirmed), SetupIntents (pending), webhook handler, policy-based refunds
 - Non-member flow: PENDING status, 7-day hold, cron auto-confirm, FIFO bumping algorithm
 - Xero: OAuth2 connect, encrypted tokens, invoice creation, credit notes, contact sync, membership verification, daily cron
@@ -48,7 +48,7 @@ All 9 build phases + all Delivery Phases (1–12) + post-launch bugfix rounds co
 - Docker: log rotation (json-file, 10m x 5) on all services
 - Sentry: server-side + client-side error tracking, cron monitoring, performance tracing
 - Observability: API request logging middleware, webhook delivery monitoring (`WebhookLog`), admin health dashboard
-- Notifications: EmailLog tracking, check-in reminders, admin alerts (new booking, payment failure, pending deadline, bumped, Xero errors, capacity warnings), notification preferences, email retry with backoff, admin daily digest, bulk member communication (rate-limited, preference-gated), post-stay feedback requests
+- Notifications: EmailLog tracking, check-in reminders, admin alerts (new booking, payment failure, pending deadline, bumped, Xero errors, capacity warnings), notification preferences, email retry with backoff, admin daily digest, bulk member communication (rate-limited, preference-gated), post-stay feedback requests, waitlist offer/expiry/confirmation emails
 - Booking notes: members and admins can add/edit notes on bookings (HTML stripped, 500 char limit)
 - Admin member management: pagination, advanced filtering/sorting, CSV export/import, bulk deactivate/role-change, member detail page with full booking history and stats, member detail edit (name, email, role, DOB, active, force password reset), Xero contact sync on update
 - Xero phone sync: `formatXeroPhone()`/`getXeroContactPhone()` read structured phone from Xero (mobile preferred), phone backfill in `syncContactsFromXero()` for already-linked contacts
@@ -58,7 +58,7 @@ All 9 build phases + all Delivery Phases (1–12) + post-launch bugfix rounds co
 - Subscription enforcement: members with unpaid/overdue subscription blocked from creating new bookings (403)
 - Configurable age tiers: `AgeTierSetting` model, admin UI at `/admin/age-tiers`; default CHILD <10 / YOUTH 10–17 / ADULT 18+; season start date (Apr 1) used as age reference
 - Calendar UI: bed count per day, color-coded availability tiers, season boundary indicators
-- Status colors: centralized utility `src/lib/status-colors.ts`; unique color per status; PAID=blue, DRAFT=grey/slate
+- Status colors: centralized utility `src/lib/status-colors.ts`; unique color per status; PAID=blue, DRAFT=grey/slate, WAITLISTED=purple, WAITLIST_OFFERED=teal
 - Navigation: admin Home link → `/dashboard`, branding link → public homepage, all 6 KPI cards link to filtered admin pages
 - Content pages: about/committee/join/FAQ/rules/contact/privacy/terms; Waldvogel Lodge caption, catering info, tokoroa.org.nz links
 - Family group multi-membership: `FamilyGroupMember` join table (members can belong to multiple groups); click-through edit from member list badge
@@ -594,9 +594,61 @@ All 9 build phases + all Delivery Phases (1–12) + post-launch bugfix rounds co
 **New files:**
 - `src/lib/member-email.ts` - `getEffectiveEmail()` helper
 
+### Waitlist Feature - COMPLETED
+
+**Date:** 2026-04-09
+**Branch:** feature/waitlist
+**Tests:** 1258 (was 948, +310 across waitlist + admin-book-on-behalf + security hardening)
+
+**Features built:**
+1. **Schema**: `WAITLISTED` and `WAITLIST_OFFERED` added to `BookingStatus` enum; `waitlistPosition`, `waitlistOfferedAt`, `waitlistOfferExpiresAt` fields on `Booking`; `bookingWaitlist` preference on `NotificationPreference`; composite index for efficient waitlist queries
+2. **Core logic** (`src/lib/waitlist.ts`): FIFO queue with advisory lock serialization; `getWaitlistPosition`, `getWaitlistForDates`, `processWaitlistForDates` (main orchestrator), `confirmWaitlistOffer`, `expireStaleOffers`, `updateWaitlistPositions`
+3. **Booking creation**: 409 response with `canWaitlist: true` when capacity exceeded; `waitlist: true` flag creates WAITLISTED booking with pricing/promo locked in
+4. **Capacity release triggers**: cancellation, date modification, and pending-booking bumping all fire `processWaitlistForDates()` to offer freed capacity to the next waitlisted member
+5. **Offer flow**: 48-hour time-limited offers (configurable via `WAITLIST_OFFER_HOURS` env var); expired offers revert to WAITLISTED and cascade to next candidate
+6. **Member confirmation**: `POST /api/bookings/[id]/waitlist-confirm` — re-checks capacity, transitions to CONFIRMED/PENDING, handles $0 bookings
+7. **Admin force-confirm**: `POST /api/admin/bookings/[id]/force-confirm` — with overbook detection and `allowOverbook` option
+8. **Admin waitlist page**: `/admin/waitlist` with table, force-confirm buttons, overbook dialog
+9. **Cron** (`src/lib/cron-waitlist.ts`): every 30 min, expires stale offers and auto-cancels past-date waitlist entries
+10. **Emails**: 4 new templates (waitlist confirmation, offer, offer expired, admin alert); preference-gated via `bookingWaitlist`
+11. **UI**: booking wizard shows waitlist prompt on capacity exceeded; booking detail shows position or offer countdown with `WaitlistOfferCard` component
+
+**New files:**
+- `src/lib/waitlist.ts` - Core waitlist service module
+- `src/lib/cron-waitlist.ts` - Waitlist cron job
+- `src/app/api/bookings/[id]/waitlist-confirm/route.ts` - Member offer confirmation
+- `src/app/api/admin/bookings/[id]/force-confirm/route.ts` - Admin force-confirm
+- `src/app/api/admin/waitlist/route.ts` - Admin waitlist listing
+- `src/app/(admin)/admin/waitlist/page.tsx` - Admin waitlist page
+- `src/components/waitlist-offer-card.tsx` - Offer countdown component
+- `src/lib/__tests__/waitlist.test.ts` - 25 waitlist tests
+
+**New Prisma fields (require migration):**
+- `Booking.waitlistPosition` (Int?) — FIFO position
+- `Booking.waitlistOfferedAt` (DateTime?) — when offer was made
+- `Booking.waitlistOfferExpiresAt` (DateTime?) — offer deadline
+- `NotificationPreference.bookingWaitlist` (Boolean, default true)
+
+**New env vars:**
+- `WAITLIST_OFFER_HOURS` - Hours before waitlist offer expires (default: 48)
+
+**Modified files:**
+- `prisma/schema.prisma` - New fields, enum values, index
+- `src/app/api/bookings/route.ts` - Waitlist path in booking creation
+- `src/lib/booking-cancel.ts` - Waitlist cancellation + capacity release triggers
+- `src/lib/cron-confirm-pending.ts` - Waitlist trigger after bumping
+- `src/app/api/bookings/[id]/modify-dates/route.ts` - Waitlist trigger after date change
+- `src/lib/email-templates.ts` - 4 new templates
+- `src/lib/email.ts` - 4 new send functions + preference mapping
+- `src/lib/status-colors.ts` - WAITLISTED (purple) and WAITLIST_OFFERED (teal)
+- `src/components/admin-sidebar.tsx` - Waitlist nav entry
+- `src/instrumentation.ts` - Waitlist cron registration
+- `src/app/(authenticated)/book/page.tsx` - Waitlist prompt UI
+- `src/app/(authenticated)/bookings/[id]/page.tsx` - Waitlist status display
+
 ## What's Next
 
-All delivery phases (1–12) and post-launch bugfix rounds are complete. The system is ready for UAT testing and production deployment.
+All delivery phases (1–12), post-launch bugfix rounds, and waitlist feature are complete. The system is ready for UAT testing and production deployment.
 
 **Recommended next steps:**
 1. UAT: Club committee tests with real member data against the staging/production instance
@@ -747,7 +799,9 @@ TACBookings/
 │   │   ├── audit.ts               # Audit logging helper
 │   │   ├── backup.ts              # Automated pg_dump to S3
 │   │   ├── api-logger.ts          # API request logging middleware
-│   │   └── webhook-log.ts         # Webhook delivery monitoring
+│   │   ├── webhook-log.ts         # Webhook delivery monitoring
+│   │   ├── waitlist.ts            # Waitlist FIFO queue logic
+│   │   └── cron-waitlist.ts       # Waitlist offer expiry cron
 │   ├── instrumentation.ts        # Cron job scheduling
 │   └── components/
 │       ├── ui/                    # shadcn/ui components
@@ -795,8 +849,9 @@ SeasonRate: id, seasonId, ageTier, isMember, pricePerNightCents
 **Booking / BookingGuest** - Stays at the lodge
 ```
 Booking: id, memberId, checkIn, checkOut, notes
-  status (DRAFT|PENDING|CONFIRMED|PAID|BUMPED|CANCELLED|COMPLETED)
+  status (DRAFT|PENDING|CONFIRMED|PAID|BUMPED|CANCELLED|COMPLETED|WAITLISTED|WAITLIST_OFFERED)
   totalPriceCents, discountCents, finalPriceCents, hasNonMembers, nonMemberHoldUntil
+  waitlistPosition, waitlistOfferedAt, waitlistOfferExpiresAt
 BookingGuest: id, bookingId, firstName, lastName, ageTier, isMember, memberId, priceCents
 ```
 Note: DRAFT bookings expire 72h after creation. PAID is set for $0 bookings (no Stripe charge).
@@ -840,6 +895,7 @@ ChoreAssignment: choreTemplateId, bookingId, bookingGuestId, date, status (SUGGE
 5. Member optionally applies promo code
 6. **If all guests are members OR checkIn <= 7 days away**: status = CONFIRMED, collect Stripe payment immediately
 7. **If any guest is non-member AND checkIn > 7 days away**: status = PENDING, collect card details via Stripe SetupIntent (no charge yet), set `nonMemberHoldUntil = checkIn - 7 days`
+8. **If capacity exceeded on any night**: return 409 with `canWaitlist: true`; member can re-submit with `waitlist: true` to join FIFO waitlist (status = WAITLISTED, no payment collected)
 
 ### 2. Non-Member Priority Bumping (FIFO - last booked = first bumped)
 When a member creates a booking that would fill the lodge past 29 beds on any night:
@@ -891,6 +947,10 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 | Admin: new booking | Admin | Implemented |
 | Admin: capacity warning | Admin | Implemented |
 | Admin: pending approaching deadline | Admin | Implemented |
+| Waitlist confirmation | Booking member | Implemented |
+| Waitlist offer (spot opened) | Booking member | Implemented |
+| Waitlist offer expired | Booking member | Implemented |
+| Admin: waitlist offer made | Admin | Implemented |
 
 ## Deployment (AWS Lightsail)
 
@@ -921,6 +981,7 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 - **$0 bookings skip Stripe** - When finalPriceCents=0 (e.g. 100% promo), booking goes straight to PAID status with a SUCCEEDED Payment record; Xero invoice still created
 - **Family multi-membership via join table** - FamilyGroupMember replaces familyGroupId FK; members can be in multiple groups; legacy FK preserved as fallback
 - **Email inheritance for dependents** - inheritEmailFromId on Member; getEffectiveEmail() used for all notification sends so dependent members receive emails via parent's address
+- **Waitlist uses FIFO ordering** - `createdAt ASC` determines queue position; WAITLISTED/WAITLIST_OFFERED bookings do NOT count toward capacity (only CONFIRMED/PAID/PENDING do); 48h offer window (configurable via `WAITLIST_OFFER_HOURS`); no payment collected until offer confirmed; full-range-only offers (all requested nights must have capacity)
 
 ## Verification & Testing
 
@@ -932,4 +993,4 @@ When a member creates a booking that would fill the lodge past 29 beds on any ni
 
 ## Build History Summary
 
-9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1–11 completed 2026-04-06 to 2026-04-07. Phase 12 (Xero Phone Sync) and all post-launch bugfix rounds completed 2026-04-07. 948 tests pass across 45 test files. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.
+9 build phases + security audit + 5 integration reviews completed 2026-04-03. Delivery Phases 1–11 completed 2026-04-06 to 2026-04-07. Phase 12 (Xero Phone Sync) and all post-launch bugfix rounds completed 2026-04-07. Waitlist feature added 2026-04-09. 1258 tests pass across 46 test files. All critical/high issues resolved. See `docs/BUILD_HISTORY.md` for full details. Original build workflow documented in `docs/DEVELOPMENT_WORKFLOW.md`.

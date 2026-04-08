@@ -88,12 +88,13 @@ export async function POST(
 
       const totalGuestCount = booking.guests.length + newGuests.length;
 
-      // Capacity check excluding this booking
+      // Capacity check excluding this booking (using tx to participate in advisory lock)
       const capacity = await checkCapacity(
         booking.checkIn,
         booking.checkOut,
         totalGuestCount,
-        bookingId
+        bookingId,
+        tx
       );
 
       if (!capacity.available) {
@@ -119,6 +120,24 @@ export async function POST(
           pricePerNightCents: r.pricePerNightCents,
         })),
       }));
+
+      // Verify isMember claims against DB for guests with a memberId
+      for (const g of newGuests) {
+        if (g.memberId && g.isMember) {
+          const linked = await tx.member.findUnique({
+            where: { id: g.memberId },
+            select: { id: true, active: true, ageTier: true },
+          });
+          if (!linked || !linked.active) {
+            throw new ApiError(
+              `Member ${g.memberId} not found or inactive`,
+              400
+            );
+          }
+          // Server-side override: use DB ageTier as authoritative
+          g.ageTier = linked.ageTier;
+        }
+      }
 
       // Calculate price for new guests
       const newGuestInputs = newGuests.map((g) => ({

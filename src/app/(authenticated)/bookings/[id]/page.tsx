@@ -13,6 +13,7 @@ import { BookingEditor, type BookingEditorData } from "@/components/booking-edit
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
+import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 
 export default async function BookingDetailPage({
   params,
@@ -53,9 +54,11 @@ export default async function BookingDetailPage({
   );
 
   const isDraft = booking.status === "DRAFT";
-  const canCancel = ["CONFIRMED", "PAID", "PENDING"].includes(booking.status);
+  const isWaitlisted = booking.status === "WAITLISTED";
+  const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
+  const canCancel = ["CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
   const isFutureCheckIn = new Date(booking.checkIn) > new Date();
-  const canModify = canCancel && isFutureCheckIn;
+  const canModify = ["CONFIRMED", "PAID", "PENDING"].includes(booking.status) && isFutureCheckIn;
 
   const editorData: BookingEditorData = {
     id: booking.id,
@@ -142,6 +145,34 @@ export default async function BookingDetailPage({
             />
           </CardContent>
         </Card>
+      )}
+
+      {/* Waitlisted booking: show position */}
+      {isWaitlisted && (
+        <Card className="border-purple-200 bg-purple-50">
+          <CardHeader>
+            <CardTitle className="text-purple-900">On the Waitlist</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {booking.waitlistPosition && (
+              <p className="text-sm font-medium text-purple-800">
+                Position: #{booking.waitlistPosition}
+              </p>
+            )}
+            <p className="text-sm text-purple-700">
+              We&apos;ll email you when a spot opens up. You&apos;ll have 48 hours to confirm your booking.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Waitlist offered: show confirm button with countdown */}
+      {isWaitlistOffered && booking.waitlistOfferExpiresAt && (
+        <WaitlistOfferCard
+          bookingId={booking.id}
+          expiresAt={booking.waitlistOfferExpiresAt.toISOString()}
+          finalPriceCents={booking.finalPriceCents}
+        />
       )}
 
       {/* Show payment form if payment hasn't been completed */}

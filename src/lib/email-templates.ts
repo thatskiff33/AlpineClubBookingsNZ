@@ -879,6 +879,93 @@ export function accountDeletionRejectedTemplate(
   `);
 }
 
+// ---- Waitlist templates ----
+
+export function waitlistConfirmationTemplate(
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date,
+  guestCount: number,
+  position: number
+): string {
+  return layout(`
+    ${heading("You're on the Waitlist")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", the lodge is currently fully booked for your requested dates, but you've been added to the waitlist.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(checkIn) },
+      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Guests", value: String(guestCount) },
+      { label: "Waitlist Position", value: "#" + String(position) },
+    ])}
+    ${alertBox("We'll email you as soon as a spot opens up. You'll have 48 hours to confirm your booking.", "info")}
+    ${button("View Booking", BASE_URL + "/bookings")}
+    ${muted("You can cancel your waitlist entry at any time from your booking page.")}
+  `);
+}
+
+export function waitlistOfferTemplate(
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date,
+  guestCount: number,
+  expiresAt: Date,
+  bookingId: string
+): string {
+  return layout(`
+    ${heading("A Spot Has Opened Up!")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", great news — a spot has become available for your waitlisted booking.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(checkIn) },
+      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Guests", value: String(guestCount) },
+    ])}
+    ${alertBox("This offer expires on " + expiresAt.toLocaleString("en-NZ", { dateStyle: "medium", timeStyle: "short", timeZone: "Pacific/Auckland" }) + ". If you don't confirm in time, the spot will be offered to the next person in line.", "warning")}
+    ${button("Confirm Booking", BASE_URL + "/bookings/" + bookingId)}
+    ${muted("If you no longer need this booking, you can decline from your booking page.")}
+  `);
+}
+
+export function waitlistOfferExpiredTemplate(
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date,
+  position: number
+): string {
+  return layout(`
+    ${heading("Waitlist Offer Expired")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", your waitlist offer for the dates below has expired.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(checkIn) },
+      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "New Position", value: "#" + String(position) },
+    ])}
+    ${paragraph("You've been returned to the waitlist. We'll notify you again if another spot opens up.")}
+    ${button("View Booking", BASE_URL + "/bookings")}
+  `);
+}
+
+export function adminWaitlistOfferTemplate(data: {
+  memberName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  position: number;
+}): string {
+  return layout(`
+    ${heading("Waitlist Offer Made")}
+    ${paragraph("A waitlist offer has been sent to " + escapeHtml(data.memberName) + ".")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Queue Position", value: "#" + String(data.position) },
+    ])}
+    ${paragraph("The member has 48 hours to confirm their booking.")}
+    ${button("View Waitlist", BASE_URL + "/admin/waitlist")}
+  `);
+}
+
 export function setupIntentFailedTemplate(data: {
   firstName: string;
   checkIn: Date;

@@ -8,6 +8,7 @@ import {
   Users,
   CalendarRange,
   BookOpen,
+  Clock,
   Tag,
   CheckSquare,
   ClipboardList,
@@ -53,6 +54,7 @@ const navSections: NavSection[] = [
     label: "Bookings & Payments",
     items: [
       { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
+      { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
       { href: "/admin/payments", label: "Payments", icon: CreditCard },
       { href: "/admin/reports", label: "Reports", icon: BarChart2 },
     ],

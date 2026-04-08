@@ -22,6 +22,7 @@ import {
   createXeroSupplementaryInvoice,
   createXeroCreditNoteForModification,
 } from "@/lib/xero";
+import { processWaitlistForDates } from "@/lib/waitlist";
 import logger from "@/lib/logger";
 import { z } from "zod";
 
@@ -120,12 +121,13 @@ export async function PUT(
         }
       }
 
-      // Capacity check excluding this booking
+      // Capacity check excluding this booking (using tx to participate in advisory lock)
       const capacity = await checkCapacity(
         newCheckIn,
         newCheckOut,
         booking.guests.length,
-        bookingId
+        bookingId,
+        tx
       );
 
       if (!capacity.available) {
@@ -261,24 +263,26 @@ export async function PUT(
         ["CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
 
-      if (hasSucceededPayment && booking.payment) {
-        if (priceDiffCents < 0) {
-          // Price decrease - refund the difference
-          refundAmountCents = Math.abs(priceDiffCents);
-          if (
-            booking.payment.stripePaymentIntentId &&
-            refundAmountCents > 0
-          ) {
-            const refund = await processRefund({
-              paymentIntentId: booking.payment.stripePaymentIntentId,
-              amountCents: refundAmountCents,
-              metadata: {
-                bookingId: booking.id,
-                reason: "date_change_price_decrease",
-              },
-            });
-            stripeRefundId = refund.id;
+      // Capture refund/charge info for Stripe calls after transaction commits
+      // (avoids holding advisory lock during external API calls)
+      let stripePaymentIntentId: string | null = null;
+      let pendingRefundAmountCents = 0;
 
+      if (hasSucceededPayment && booking.payment) {
+        stripePaymentIntentId = booking.payment.stripePaymentIntentId;
+
+        // Net the price difference against any change fee:
+        // e.g. price drops $20 but $15 change fee → net refund $5
+        // e.g. price drops $10 but $15 change fee → net charge $5
+        const netAmountCents = priceDiffCents + changeFeeCents;
+
+        if (netAmountCents < 0) {
+          // Net effect is a refund (price decrease exceeds change fee)
+          refundAmountCents = Math.abs(netAmountCents);
+          pendingRefundAmountCents = refundAmountCents;
+
+          if (stripePaymentIntentId && refundAmountCents > 0) {
+            // Pre-update payment record with expected refund state
             const newRefundedTotal =
               booking.payment.refundedAmountCents + refundAmountCents;
             await tx.payment.update({
@@ -289,10 +293,11 @@ export async function PUT(
               },
             });
           }
-        } else if (priceDiffCents > 0 || changeFeeCents > 0) {
-          // Price increase - will create Stripe PI after transaction
-          additionalAmountCents = priceDiffCents + changeFeeCents;
+        } else if (netAmountCents > 0) {
+          // Net effect is a charge (price increase and/or change fee exceeds any decrease)
+          additionalAmountCents = netAmountCents;
         }
+        // netAmountCents === 0: price decrease exactly equals change fee, no Stripe action needed
 
         // Track change fee on payment record
         if (changeFeeCents > 0) {
@@ -399,7 +404,8 @@ export async function PUT(
         changeFeeCents,
         refundAmountCents,
         additionalAmountCents,
-        stripeRefundId,
+        pendingRefundAmountCents,
+        stripePaymentIntentId,
         promoRemoved,
         choreWarnings,
         oldCheckIn,
@@ -412,6 +418,26 @@ export async function PUT(
         memberId: booking.memberId,
       };
     });
+
+    // Process Stripe refund outside transaction (avoids holding advisory lock during API call)
+    let stripeRefundId: string | undefined;
+    if (result.pendingRefundAmountCents > 0 && result.stripePaymentIntentId) {
+      try {
+        const refund = await processRefund({
+          paymentIntentId: result.stripePaymentIntentId,
+          amountCents: result.pendingRefundAmountCents,
+          metadata: {
+            bookingId,
+            reason: "date_change_price_decrease",
+          },
+        });
+        stripeRefundId = refund.id;
+      } catch (refundErr) {
+        // DB already updated with expected refund state; log error for manual reconciliation
+        logger.error({ err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
+          "Stripe refund failed after date change - requires manual reconciliation");
+      }
+    }
 
     // Create additional PaymentIntent for price increases (outside transaction to avoid holding advisory lock)
     let additionalPaymentClientSecret: string | undefined;
@@ -518,6 +544,20 @@ export async function PUT(
       );
     }
 
+    // If dates changed, trigger waitlist processing for the old date range
+    // (which may have freed capacity)
+    if (
+      result.oldCheckIn.getTime() !== result.booking.checkIn.getTime() ||
+      result.oldCheckOut.getTime() !== result.booking.checkOut.getTime()
+    ) {
+      processWaitlistForDates({
+        checkIn: result.oldCheckIn,
+        checkOut: result.oldCheckOut,
+      }).catch((err) =>
+        logger.error({ err, bookingId }, "Failed to process waitlist after date modification")
+      );
+    }
+
     return NextResponse.json({
       booking: result.booking,
       priceDiffCents: result.priceDiffCents,
@@ -525,7 +565,7 @@ export async function PUT(
       refundAmountCents: result.refundAmountCents,
       additionalAmountCents: result.additionalAmountCents,
       additionalPaymentClientSecret: additionalPaymentClientSecret ?? null,
-      stripeRefundId: result.stripeRefundId,
+      stripeRefundId: stripeRefundId ?? null,
       promoRemoved: result.promoRemoved,
       choreWarnings: result.choreWarnings,
     });

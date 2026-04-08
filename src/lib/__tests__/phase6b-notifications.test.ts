@@ -320,9 +320,11 @@ describe("N-13: sendAdminDigest", () => {
   });
 
   it("sends digest with alert counts from past 24h", async () => {
-    mockPrisma.emailLog.groupBy.mockResolvedValue([
-      { templateName: "admin-new-booking", _count: { id: 3 } },
-      { templateName: "admin-payment-failure", _count: { id: 1 } },
+    mockPrisma.emailLog.findMany.mockResolvedValue([
+      { templateName: "admin-new-booking", subject: "New booking: Alice" },
+      { templateName: "admin-new-booking", subject: "New booking: Bob" },
+      { templateName: "admin-new-booking", subject: "New booking: Carol" },
+      { templateName: "admin-payment-failure", subject: "Payment failed: xyz" },
     ]);
 
     const { sendAdminDigest } = await import("../cron-admin-digest");
@@ -338,7 +340,7 @@ describe("N-13: sendAdminDigest", () => {
   });
 
   it("sends digest even when no alerts occurred", async () => {
-    mockPrisma.emailLog.groupBy.mockResolvedValue([]);
+    mockPrisma.emailLog.findMany.mockResolvedValue([]);
 
     const { sendAdminDigest } = await import("../cron-admin-digest");
     const result = await sendAdminDigest();

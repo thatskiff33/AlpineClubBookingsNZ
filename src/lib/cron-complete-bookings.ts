@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
+import { getNZSTToday } from "@/lib/nzst-date";
 import logger from "@/lib/logger";
 
 export interface CompleteBookingsResult {
@@ -13,8 +14,7 @@ export interface CompleteBookingsResult {
  * and it's too late to amend) once checkIn <= today.
  */
 export async function completeBookings(): Promise<CompleteBookingsResult> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = getNZSTToday();
 
   const bookingsToComplete = await prisma.booking.findMany({
     where: {

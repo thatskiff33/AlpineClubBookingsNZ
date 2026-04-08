@@ -156,28 +156,31 @@ async function saveXeroTokens(tokens: TokenData): Promise<void> {
   const encryptedAccess = encryptToken(tokens.accessToken);
   const encryptedRefresh = encryptToken(tokens.refreshToken);
 
-  // Upsert: we only keep a single row in XeroToken
-  const existing = await prisma.xeroToken.findFirst();
-  if (existing) {
-    await prisma.xeroToken.update({
-      where: { id: existing.id },
-      data: {
-        accessToken: encryptedAccess,
-        refreshToken: encryptedRefresh,
-        expiresAt: tokens.expiresAt,
-        tenantId: tokens.tenantId ?? existing.tenantId,
-      },
-    });
-  } else {
-    await prisma.xeroToken.create({
-      data: {
-        accessToken: encryptedAccess,
-        refreshToken: encryptedRefresh,
-        expiresAt: tokens.expiresAt,
-        tenantId: tokens.tenantId ?? null,
-      },
-    });
-  }
+  // Atomic upsert via transaction to prevent concurrent token refresh race conditions.
+  // Two concurrent refreshes could both read the same row and overwrite each other.
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.xeroToken.findFirst();
+    if (existing) {
+      await tx.xeroToken.update({
+        where: { id: existing.id },
+        data: {
+          accessToken: encryptedAccess,
+          refreshToken: encryptedRefresh,
+          expiresAt: tokens.expiresAt,
+          tenantId: tokens.tenantId ?? existing.tenantId,
+        },
+      });
+    } else {
+      await tx.xeroToken.create({
+        data: {
+          accessToken: encryptedAccess,
+          refreshToken: encryptedRefresh,
+          expiresAt: tokens.expiresAt,
+          tenantId: tokens.tenantId ?? null,
+        },
+      });
+    }
+  });
 }
 
 async function loadXeroTokens(): Promise<(TokenData & { id: string }) | null> {
@@ -278,6 +281,9 @@ export async function disconnectXero(): Promise<void> {
 // Authenticated Xero client (with auto-refresh)
 // ---------------------------------------------------------------------------
 
+// Simple mutex to prevent concurrent token refreshes from using the same refresh token
+let _tokenRefreshPromise: Promise<{ xero: XeroClient; tenantId: string }> | null = null;
+
 /**
  * Get an authenticated XeroClient with valid tokens.
  * Automatically refreshes if token is about to expire.
@@ -302,40 +308,49 @@ export async function getAuthenticatedXeroClient(): Promise<{
   const expiresAt = tokens.expiresAt.getTime();
 
   if (now >= expiresAt - TOKEN_REFRESH_BUFFER_MS) {
-    // Token expired or about to expire - refresh it
-    xero.setTokenSet({
-      access_token: tokens.accessToken,
-      refresh_token: tokens.refreshToken,
-      token_type: "Bearer",
-    });
-    const config = getXeroConfig();
-    try {
-      const newTokenSet = await xero.refreshWithRefreshToken(
-        config.clientId,
-        config.clientSecret,
-        tokens.refreshToken
-      );
-
-      await saveXeroTokens({
-        accessToken: newTokenSet.access_token!,
-        refreshToken: newTokenSet.refresh_token!,
-        expiresAt: new Date(Date.now() + (newTokenSet.expires_in ?? 1800) * 1000),
-        tenantId: tokens.tenantId,
-      });
-
-      return { xero, tenantId: tokens.tenantId };
-    } catch (err) {
-      logger.error({ err }, "Xero token refresh failed");
-      // N-05: Fire-and-forget Xero error alert
-      import("./xero-error-alert").then(({ notifyXeroSyncError }) =>
-        notifyXeroSyncError({
-          errorType: "Token Refresh Failure",
-          operation: "getAuthenticatedXeroClient",
-          errorMessage: err instanceof Error ? err.message : String(err),
-        })
-      ).catch(() => {});
-      throw new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
+    // Mutex: if a refresh is already in progress, wait for it instead of double-refreshing
+    if (_tokenRefreshPromise) {
+      return _tokenRefreshPromise;
     }
+    // Token expired or about to expire - refresh it (wrapped in mutex)
+    const refreshWork = (async () => {
+      xero.setTokenSet({
+        access_token: tokens.accessToken,
+        refresh_token: tokens.refreshToken,
+        token_type: "Bearer",
+      });
+      const config = getXeroConfig();
+      try {
+        const newTokenSet = await xero.refreshWithRefreshToken(
+          config.clientId,
+          config.clientSecret,
+          tokens.refreshToken
+        );
+
+        await saveXeroTokens({
+          accessToken: newTokenSet.access_token!,
+          refreshToken: newTokenSet.refresh_token!,
+          expiresAt: new Date(Date.now() + (newTokenSet.expires_in ?? 1800) * 1000),
+          tenantId: tokens.tenantId,
+        });
+
+        return { xero, tenantId: tokens.tenantId! };
+      } catch (err) {
+        logger.error({ err }, "Xero token refresh failed");
+        import("./xero-error-alert").then(({ notifyXeroSyncError }) =>
+          notifyXeroSyncError({
+            errorType: "Token Refresh Failure",
+            operation: "getAuthenticatedXeroClient",
+            errorMessage: err instanceof Error ? err.message : String(err),
+          })
+        ).catch(() => {});
+        throw new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
+      } finally {
+        _tokenRefreshPromise = null;
+      }
+    })();
+    _tokenRefreshPromise = refreshWork;
+    return refreshWork;
   }
 
   // Token still valid
@@ -384,7 +399,7 @@ export async function findOrCreateXeroContact(memberId: string): Promise<string>
       const contactsResponse = await xero.accountingApi.getContacts(
         tenantId,
         undefined, // ifModifiedSince
-        `EmailAddress="${member.email}"` // where
+        `EmailAddress="${member.email.replace(/"/g, "")}"` // where (strip quotes for OData safety)
       );
       const contacts = contactsResponse.body.contacts;
       if (contacts && contacts.length > 0) {
@@ -1211,12 +1226,15 @@ export async function checkMembershipStatus(
   const year = seasonYear ?? getSeasonYear(new Date());
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
-  // Fetch invoices for this contact (with retry on 429 rate limit)
+  // Fetch invoices for this contact, filtered to the season year to avoid pagination issues.
+  // Season year runs April to March, so filter invoices from season start to end.
+  const seasonStart = `${year}-04-01`;
+  const seasonEnd = `${year + 1}-03-31`;
   const response = await withXeroRetry(
     () => xero.accountingApi.getInvoices(
       tenantId,
       undefined, // ifModifiedSince
-      `Contact.ContactID=guid("${member.xeroContactId}")`, // where
+      `Contact.ContactID=guid("${member.xeroContactId}") AND Date >= DateTime(${year},4,1) AND Date <= DateTime(${year + 1},3,31)`, // where
       undefined, // order
       undefined, // iDs
       undefined, // invoiceNumbers
@@ -1403,6 +1421,16 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
         updated++;
       }
     } catch (err) {
+      // Abort immediately on daily limit — continuing would just burn through retries
+      if (err instanceof XeroDailyLimitError) {
+        logger.warn(
+          { job: "xero-membership-refresh", checked, errors },
+          "Aborting membership refresh: Xero daily API limit reached"
+        );
+        errorDetails.push({ member: "SYSTEM", error: "Xero daily API limit reached — aborting remaining members" });
+        errors++;
+        break;
+      }
       errors++;
       const memberLabel = `${member.firstName} ${member.lastName} (${member.email})`;
       errorDetails.push({ member: memberLabel, error: parseXeroError(err) });
@@ -1859,6 +1887,24 @@ export async function createXeroSupplementaryInvoice(params: {
   const created = response.body.invoices?.[0];
   if (!created?.invoiceID) {
     throw new Error("Failed to create supplementary Xero invoice");
+  }
+
+  // Record Stripe payment against the supplementary invoice so it doesn't show as unpaid in Xero
+  try {
+    const stripeBankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+    const totalCents = priceDiffCents + changeFeeCents;
+    await xero.accountingApi.createPayments(tenantId, {
+      payments: [{
+        invoice: { invoiceID: created.invoiceID },
+        account: { code: stripeBankCode },
+        amount: totalCents / 100,
+        date: formatDate(new Date()),
+        reference: `Stripe payment for booking modification ${bookingId.slice(0, 8)}`,
+      }],
+    });
+  } catch (payErr) {
+    // Non-fatal: invoice exists, payment recording is for reconciliation convenience
+    logger.warn({ err: payErr, invoiceId: created.invoiceID }, "Failed to record Xero payment for supplementary invoice");
   }
 
   return created.invoiceID;

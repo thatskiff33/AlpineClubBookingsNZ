@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { eachDayOfInterval, addDays } from "date-fns";
 import { calculateOverlapDays } from "./hut-leader-overlap";
+import { getNZSTToday } from "@/lib/nzst-date";
 import logger from "./logger";
 
 /**
@@ -12,8 +13,7 @@ export async function autoAssignHutLeaders(): Promise<{
   assignedCount: number;
   assignedDates: string[];
 }> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = getNZSTToday();
   const endDate = addDays(today, 14);
   const days = eachDayOfInterval({ start: today, end: endDate });
 

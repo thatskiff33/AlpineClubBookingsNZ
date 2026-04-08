@@ -8,6 +8,7 @@ import {
   sendBookingBumpedEmail,
   sendAdminPaymentFailureAlert,
 } from "./email";
+import { processWaitlistForDates } from "./waitlist";
 import logger from "@/lib/logger";
 
 export interface CronConfirmResult {
@@ -83,6 +84,10 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         } catch (emailErr) {
           logger.error({ err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send bumped email");
         }
+
+        // Trigger waitlist processing for dates freed by bumping
+        processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+          .catch((err) => logger.error({ err, bookingId: booking.id }, "Failed to process waitlist after cron bump"));
 
         continue;
       }

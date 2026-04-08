@@ -6,6 +6,7 @@ import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import { auth } from "@/lib/auth";
 import { z } from "zod";
 import logger from "@/lib/logger";
+import { sendAdminPaymentFailureAlert } from "@/lib/email";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -104,6 +105,7 @@ export async function POST(request: NextRequest) {
         },
       });
     } else {
+      // Payment requires additional action (e.g. 3D Secure/SCA) — revert to PENDING
       await prisma.$transaction([
         prisma.payment.update({
           where: { bookingId: booking.id },
@@ -117,6 +119,19 @@ export async function POST(request: NextRequest) {
           data: { status: "PENDING" },
         }),
       ]);
+      // Alert admins so they can contact the member to complete payment manually
+      logger.warn(
+        { bookingId: booking.id, piStatus: paymentIntent.status, memberId: booking.memberId },
+        "Off-session charge requires additional authentication (SCA/3DS) — booking reverted to PENDING"
+      );
+      sendAdminPaymentFailureAlert({
+        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+        amountCents: booking.finalPriceCents,
+        errorMessage: "Card requires 3D Secure authentication — member must complete payment manually",
+        paymentIntentId: paymentIntent.id,
+      }).catch(() => {});
     }
 
     // Create Xero invoice if connected and payment succeeded

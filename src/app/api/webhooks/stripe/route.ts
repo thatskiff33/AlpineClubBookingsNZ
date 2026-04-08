@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { isXeroConnected, createXeroInvoiceForBooking, createXeroCreditNote } from "@/lib/xero";
-import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupIntentFailedEmail } from "@/lib/email";
+import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupIntentFailedEmail, sendAdminXeroSyncErrorAlert } from "@/lib/email";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
@@ -178,8 +178,8 @@ async function handlePaymentIntentSucceeded(
     );
   }
 
-  await prisma.$transaction([
-    prisma.payment.update({
+  await prisma.$transaction(async (tx) => {
+    await tx.payment.update({
       where: { bookingId },
       data: {
         stripePaymentIntentId: paymentIntent.id,
@@ -190,12 +190,24 @@ async function handlePaymentIntentSucceeded(
         status: "SUCCEEDED",
         amountCents: paymentIntent.amount,
       },
-    }),
-    prisma.booking.update({
-      where: { id: bookingId },
+    });
+    // Only transition to PAID if booking is in a valid pre-payment state.
+    // Prevents reactivating a cancelled or completed booking on late webhook delivery.
+    const updated = await tx.booking.updateMany({
+      where: {
+        id: bookingId,
+        status: { in: ["CONFIRMED", "PENDING", "DRAFT"] },
+      },
       data: { status: "PAID" },
-    }),
-  ]);
+    });
+    if (updated.count === 0) {
+      const current = await tx.booking.findUnique({ where: { id: bookingId }, select: { status: true } });
+      logger.warn(
+        { bookingId, currentStatus: current?.status, paymentIntentId: paymentIntent.id },
+        "Stripe webhook: booking not transitioned to PAID (already in terminal state)"
+      );
+    }
+  });
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Booking paid via PaymentIntent");
 
@@ -230,6 +242,13 @@ async function handlePaymentIntentSucceeded(
     }
   } catch (xeroErr) {
     logger.error({ err: xeroErr, bookingId }, "Failed to create Xero invoice for booking");
+    // Alert admins so they can manually create the invoice in Xero
+    sendAdminXeroSyncErrorAlert({
+      errorType: "INVOICE_CREATION",
+      operation: `Create invoice for booking ${bookingId}`,
+      errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
+      timestamp: new Date(),
+    }).catch(() => {});
   }
 }
 

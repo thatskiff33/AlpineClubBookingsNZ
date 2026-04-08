@@ -87,11 +87,11 @@ describe("rate-limit", () => {
   });
 
   describe("getClientIp", () => {
-    it("extracts IP from x-forwarded-for", () => {
+    it("extracts last IP from x-forwarded-for (rightmost = closest trusted proxy)", () => {
       const req = new Request("http://localhost", {
         headers: { "x-forwarded-for": "1.2.3.4, 5.6.7.8" },
       });
-      expect(getClientIp(req)).toBe("1.2.3.4");
+      expect(getClientIp(req)).toBe("5.6.7.8");
     });
 
     it("extracts IP from x-real-ip", () => {

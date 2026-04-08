@@ -10,7 +10,9 @@ export const bookingStatusClasses: Record<string, string> = {
   PAID:      "bg-blue-100 text-blue-800",
   COMPLETED: "bg-slate-100 text-slate-600",
   CANCELLED: "bg-red-100 text-red-800",
-  BUMPED:    "bg-orange-100 text-orange-800",
+  BUMPED:          "bg-orange-100 text-orange-800",
+  WAITLISTED:      "bg-purple-100 text-purple-800",
+  WAITLIST_OFFERED: "bg-teal-100 text-teal-800",
 };
 
 export const paymentStatusClasses: Record<string, string> = {

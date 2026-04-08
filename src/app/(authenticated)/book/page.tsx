@@ -51,6 +51,9 @@ export default function BookPage() {
   const [subscriptionInvoiceNumber, setSubscriptionInvoiceNumber] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [showWaitlistPrompt, setShowWaitlistPrompt] = useState(false);
+  const [waitlistFullNights, setWaitlistFullNights] = useState<string[]>([]);
+  const [joiningWaitlist, setJoiningWaitlist] = useState(false);
   const [availableBeds, setAvailableBeds] = useState(LODGE_CAPACITY);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
@@ -170,6 +173,7 @@ export default function BookPage() {
   async function handleSubmit() {
     setSubmitting(true);
     setError("");
+    setShowWaitlistPrompt(false);
 
     const res = await fetch("/api/bookings", {
       method: "POST",
@@ -190,16 +194,50 @@ export default function BookPage() {
       router.push(`/bookings/${data.id}`);
     } else {
       const data = await res.json();
-      setError(data.error || "Failed to create booking");
-      if (data.code === "SUBSCRIPTION_REQUIRED") {
-        if (data.invoiceUrl) {
-          setSubscriptionInvoiceUrl(data.invoiceUrl);
-        }
-        if (data.invoiceNumber) {
-          setSubscriptionInvoiceNumber(data.invoiceNumber);
+      if (data.code === "CAPACITY_EXCEEDED" && data.canWaitlist) {
+        setShowWaitlistPrompt(true);
+        setWaitlistFullNights(data.fullNights || []);
+        setError("");
+      } else {
+        setError(data.error || "Failed to create booking");
+        if (data.code === "SUBSCRIPTION_REQUIRED") {
+          if (data.invoiceUrl) {
+            setSubscriptionInvoiceUrl(data.invoiceUrl);
+          }
+          if (data.invoiceNumber) {
+            setSubscriptionInvoiceNumber(data.invoiceNumber);
+          }
         }
       }
       setSubmitting(false);
+    }
+  }
+
+  async function handleJoinWaitlist() {
+    setJoiningWaitlist(true);
+    setError("");
+
+    const res = await fetch("/api/bookings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        checkIn: checkIn!.toISOString(),
+        checkOut: checkOut!.toISOString(),
+        guests,
+        notes: notes || undefined,
+        promoCode: appliedPromo?.code || undefined,
+        expectedArrivalTime: expectedArrivalTime || undefined,
+        waitlist: true,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      router.push(`/bookings/${data.id}`);
+    } else {
+      const data = await res.json();
+      setError(data.error || "Failed to join waitlist");
+      setJoiningWaitlist(false);
     }
   }
 
@@ -287,6 +325,46 @@ export default function BookPage() {
             </p>
           ) : null}
         </div>
+      )}
+
+      {showWaitlistPrompt && (
+        <Card className="border-purple-200 bg-purple-50">
+          <CardContent className="pt-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-purple-100 p-2 mt-0.5">
+                <svg className="h-5 w-5 text-purple-600" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-semibold text-purple-900">Lodge is fully booked</h3>
+                <p className="text-sm text-purple-700 mt-1">
+                  The lodge is at capacity on{" "}
+                  {waitlistFullNights.length === 1
+                    ? waitlistFullNights[0]
+                    : `${waitlistFullNights.length} nights`}
+                  . You can join the waitlist and we&apos;ll email you when a spot opens up.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <Button
+                variant="outline"
+                onClick={() => setShowWaitlistPrompt(false)}
+                disabled={joiningWaitlist}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleJoinWaitlist}
+                disabled={joiningWaitlist}
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                {joiningWaitlist ? "Joining waitlist..." : "Join Waitlist"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Step indicator */}

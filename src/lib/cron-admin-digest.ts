@@ -31,16 +31,15 @@ const TEMPLATE_TO_SECTION: Record<TemplateName, string> = {
 export async function sendAdminDigest(): Promise<{ totalAlerts: number; sent: boolean }> {
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  // Count admin alert emails from the past 24 hours
-  // We count unique emails per template (each admin gets one copy, so group by template+subject to avoid double-counting per admin)
-  const alertLogs = await prisma.emailLog.groupBy({
-    by: ["templateName"],
+  // Count distinct events per template (dedup per-admin sends by grouping on templateName+subject)
+  const alertLogs = await prisma.emailLog.findMany({
     where: {
       templateName: { in: [...ADMIN_TEMPLATE_NAMES] },
       createdAt: { gte: twentyFourHoursAgo },
       status: { in: ["SENT", "QUEUED"] },
     },
-    _count: { id: true },
+    distinct: ["templateName", "subject"],
+    select: { templateName: true, subject: true },
   });
 
   const sections = {
@@ -53,10 +52,10 @@ export async function sendAdminDigest(): Promise<{ totalAlerts: number; sent: bo
     totalAlerts: 0,
   };
 
-  for (const group of alertLogs) {
-    const sectionKey = TEMPLATE_TO_SECTION[group.templateName as TemplateName];
+  for (const row of alertLogs) {
+    const sectionKey = TEMPLATE_TO_SECTION[row.templateName as TemplateName];
     if (sectionKey && sectionKey in sections) {
-      (sections as Record<string, number>)[sectionKey] = group._count.id;
+      (sections as Record<string, number>)[sectionKey]++;
     }
   }
 

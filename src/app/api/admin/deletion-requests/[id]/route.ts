@@ -143,48 +143,50 @@ export async function POST(
       }
     }
 
-    // 3. Anonymise the member record
+    // 3-6: Anonymise atomically in a single transaction
     const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@deleted.invalid`;
-    await prisma.member.update({
-      where: { id: member.id },
-      data: {
-        firstName: "Deleted",
-        lastName: "Member",
-        email: anonymisedEmail,
-        phone: null,
-        dateOfBirth: null,
-        passwordHash: "DELETED_ACCOUNT",
-        active: false,
-        xeroContactId: null,
-        // Unlink from family structures
-        inheritEmailFromId: null,
-      },
-    });
+    await prisma.$transaction(async (tx) => {
+      // 3. Anonymise the member record
+      await tx.member.update({
+        where: { id: member.id },
+        data: {
+          firstName: "Deleted",
+          lastName: "Member",
+          email: anonymisedEmail,
+          phone: null,
+          dateOfBirth: null,
+          passwordHash: "DELETED_ACCOUNT",
+          active: false,
+          xeroContactId: null,
+          inheritEmailFromId: null,
+        },
+      });
 
-    // 4. Remove from all family groups
-    await prisma.familyGroupMember.deleteMany({
-      where: { memberId: member.id },
-    });
+      // 4. Remove from all family groups
+      await tx.familyGroupMember.deleteMany({
+        where: { memberId: member.id },
+      });
 
-    // 5. Anonymise BookingGuest names for this member's guest appearances
-    await prisma.bookingGuest.updateMany({
-      where: { memberId: member.id },
-      data: {
-        firstName: "Deleted",
-        lastName: "Member",
-        memberId: null,
-      },
-    });
+      // 5. Anonymise BookingGuest names for this member's guest appearances
+      await tx.bookingGuest.updateMany({
+        where: { memberId: member.id },
+        data: {
+          firstName: "Deleted",
+          lastName: "Member",
+          memberId: null,
+        },
+      });
 
-    // 6. Mark deletion request as approved
-    await prisma.deletionRequest.update({
-      where: { id },
-      data: {
-        status: "APPROVED",
-        adminNote: body.note ?? null,
-        reviewedBy: session.user.id,
-        reviewedAt: new Date(),
-      },
+      // 6. Mark deletion request as approved
+      await tx.deletionRequest.update({
+        where: { id },
+        data: {
+          status: "APPROVED",
+          adminNote: body.note ?? null,
+          reviewedBy: session.user.id,
+          reviewedAt: new Date(),
+        },
+      });
     });
 
     logAudit({

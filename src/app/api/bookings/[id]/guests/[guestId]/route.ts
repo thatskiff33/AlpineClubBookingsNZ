@@ -183,29 +183,18 @@ export async function DELETE(
       const newFinalPriceCents = newTotalPriceCents - newDiscountCents;
       const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
-      // Handle refund for price decrease
+      // Handle refund for price decrease (Stripe call deferred to after tx)
       let refundAmountCents = 0;
-      let stripeRefundId: string | undefined;
+      let pendingRefundPaymentIntentId: string | null = null;
       const hasSucceededPayment =
-        booking.status === "CONFIRMED" &&
+        ["CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
 
       if (hasSucceededPayment && priceDiffCents < 0 && booking.payment) {
         refundAmountCents = Math.abs(priceDiffCents);
-        if (
-          booking.payment.stripePaymentIntentId &&
-          refundAmountCents > 0
-        ) {
-          const refund = await processRefund({
-            paymentIntentId: booking.payment.stripePaymentIntentId,
-            amountCents: refundAmountCents,
-            metadata: {
-              bookingId: booking.id,
-              reason: "guest_removed_price_decrease",
-            },
-          });
-          stripeRefundId = refund.id;
-
+        pendingRefundPaymentIntentId = booking.payment.stripePaymentIntentId;
+        if (pendingRefundPaymentIntentId && refundAmountCents > 0) {
+          // Pre-update payment record with expected refund state
           const newRefundedTotal =
             booking.payment.refundedAmountCents + refundAmountCents;
           await tx.payment.update({
@@ -283,12 +272,31 @@ export async function DELETE(
         removedGuest: guestToRemove,
         priceDiffCents,
         refundAmountCents,
-        stripeRefundId,
+        pendingRefundPaymentIntentId,
         promoRemoved,
         choreWarnings,
         oldGuestCount: booking.guests.length,
       };
     });
+
+    // Process Stripe refund outside transaction (avoids holding advisory lock during API call)
+    let stripeRefundId: string | undefined;
+    if (result.refundAmountCents > 0 && result.pendingRefundPaymentIntentId) {
+      try {
+        const refund = await processRefund({
+          paymentIntentId: result.pendingRefundPaymentIntentId,
+          amountCents: result.refundAmountCents,
+          metadata: {
+            bookingId,
+            reason: "guest_removed_price_decrease",
+          },
+        });
+        stripeRefundId = refund.id;
+      } catch (refundErr) {
+        logger.error({ err: refundErr, bookingId, amount: result.refundAmountCents },
+          "Stripe refund failed after guest removal - requires manual reconciliation");
+      }
+    }
 
     // Audit log
     logAudit({
@@ -344,7 +352,7 @@ export async function DELETE(
       removedGuest: result.removedGuest,
       priceDiffCents: result.priceDiffCents,
       refundAmountCents: result.refundAmountCents,
-      stripeRefundId: result.stripeRefundId,
+      stripeRefundId: stripeRefundId ?? null,
       promoRemoved: result.promoRemoved,
       choreWarnings: result.choreWarnings,
     });

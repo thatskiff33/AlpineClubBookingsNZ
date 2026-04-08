@@ -125,18 +125,18 @@ model Member {
   // Family/dependent support: dependents can share parent's email or have their own
   parentMemberId      String?
   inheritParentEmail  Boolean  @default(true) // When true, dependent uses parent's email
-  parent              Member?  @relation("FamilyMembers", fields: [parentMemberId], references: [id])
+  parent              Member?  @relation("FamilyMembers", fields: [parentMemberId], references: [id], onDelete: SetNull)
   dependents          Member[] @relation("FamilyMembers")
 
   // Secondary parent for split families (e.g. child with separated parents)
   secondaryParentId String?
-  secondaryParent   Member?  @relation("SecondaryFamily", fields: [secondaryParentId], references: [id])
+  secondaryParent   Member?  @relation("SecondaryFamily", fields: [secondaryParentId], references: [id], onDelete: SetNull)
   secondaryDependents Member[] @relation("SecondaryFamily")
 
   // Flexible email inheritance: use any adult's email for communications.
   // Takes precedence over the inheritParentEmail + parentMemberId mechanism.
   inheritEmailFromId  String?
-  inheritEmailFrom    Member?  @relation("EmailInheritance", fields: [inheritEmailFromId], references: [id])
+  inheritEmailFrom    Member?  @relation("EmailInheritance", fields: [inheritEmailFromId], references: [id], onDelete: SetNull)
   emailInheritanceFor Member[] @relation("EmailInheritance")
 
   // Family group: links primary adult members (e.g. spouses) for shared booking quick-add
@@ -301,7 +301,7 @@ model Booking {
 
   // Relations
   member           Member               @relation(fields: [memberId], references: [id], onDelete: Restrict)
-  createdBy        Member?              @relation("BookingsCreatedBy", fields: [createdById], references: [id])
+  createdBy        Member?              @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   guests           BookingGuest[]
   payment          Payment?
   choreAssignments ChoreAssignment[]
@@ -334,7 +334,7 @@ model BookingGuest {
 
   // Relations
   booking          Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  member           Member?           @relation(fields: [memberId], references: [id])
+  member           Member?           @relation(fields: [memberId], references: [id], onDelete: SetNull)
   choreAssignments ChoreAssignment[]
   choreTokens      GuestChoreToken[]
 
@@ -414,7 +414,7 @@ model PromoRedemption {
   createdAt     DateTime @default(now())
 
   // Relations
-  promoCode PromoCode @relation(fields: [promoCodeId], references: [id])
+  promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
   booking   Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   member    Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
@@ -462,12 +462,13 @@ model ChoreAssignment {
   updatedAt        DateTime    @updatedAt
 
   // Relations
-  choreTemplate ChoreTemplate @relation(fields: [choreTemplateId], references: [id])
+  choreTemplate ChoreTemplate @relation(fields: [choreTemplateId], references: [id], onDelete: Restrict)
   booking       Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  bookingGuest  BookingGuest? @relation(fields: [bookingGuestId], references: [id])
+  bookingGuest  BookingGuest? @relation(fields: [bookingGuestId], references: [id], onDelete: SetNull)
 
   @@index([date])
   @@index([bookingId])
+  @@index([bookingGuestId])
   @@index([choreTemplateId])
 }
 
@@ -780,7 +781,7 @@ model FamilyGroupJoinRequest {
   linkedMember      Member?   @relation("FamilyGroupLinkedMember", fields: [linkedMemberId], references: [id])
 
   familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
-  requester   Member      @relation("FamilyGroupRequester", fields: [requesterId], references: [id])
+  requester   Member      @relation("FamilyGroupRequester", fields: [requesterId], references: [id], onDelete: Cascade)
 
   @@index([familyGroupId])
   @@index([requesterId])
@@ -841,7 +842,7 @@ model DeletionRequest {
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
 
-  member Member @relation(fields: [memberId], references: [id])
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
   @@index([memberId])
   @@index([status])
@@ -864,8 +865,8 @@ model MemberCredit {
   createdAt          DateTime   @default(now())
 
   member           Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  sourceBooking    Booking? @relation("CreditSource", fields: [sourceBookingId], references: [id])
-  appliedToBooking Booking? @relation("CreditApplied", fields: [appliedToBookingId], references: [id])
+  sourceBooking    Booking? @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: SetNull)
+  appliedToBooking Booking? @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: SetNull)
 
   @@index([memberId])
   @@index([sourceBookingId])

@@ -104,7 +104,10 @@ export function checkRateLimit(
 export function getClientIp(request: Request): string {
   const forwarded = request.headers.get("x-forwarded-for");
   if (forwarded) {
-    return forwarded.split(",")[0].trim();
+    // Use the LAST IP in the chain — Caddy (our reverse proxy) appends the real client IP,
+    // so the first value is attacker-controllable but the last one is trustworthy.
+    const parts = forwarded.split(",").map((s) => s.trim()).filter(Boolean);
+    return parts[parts.length - 1] || "unknown";
   }
   const realIp = request.headers.get("x-real-ip");
   if (realIp) {

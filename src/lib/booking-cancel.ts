@@ -9,6 +9,7 @@ import {
 import { sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { createCancellationCredit, restoreCreditFromBooking } from "./member-credit";
+import { processWaitlistForDates } from "./waitlist";
 import logger from "@/lib/logger";
 
 export interface CancelBookingResult {
@@ -53,10 +54,60 @@ export async function cancelBooking(
     return { status: 403, error: "Forbidden" };
   }
 
-  if (!["PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
+  if (!["PENDING", "CONFIRMED", "PAID", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status)) {
     return {
       status: 400,
-      error: "Only PENDING, CONFIRMED, or PAID bookings can be cancelled",
+      error: "Only PENDING, CONFIRMED, PAID, WAITLISTED, or WAITLIST_OFFERED bookings can be cancelled",
+    };
+  }
+
+  // Handle WAITLISTED / WAITLIST_OFFERED bookings (no payment taken)
+  if (booking.status === "WAITLISTED" || booking.status === "WAITLIST_OFFERED") {
+    const wasOffered = booking.status === "WAITLIST_OFFERED";
+
+    await prisma.booking.update({
+      where: { id: bookingId },
+      data: {
+        status: "CANCELLED",
+        waitlistOfferedAt: null,
+        waitlistOfferExpiresAt: null,
+        waitlistPosition: null,
+      },
+    });
+    await cleanupPromoRedemption(bookingId);
+
+    logAudit({
+      action: "booking.cancel",
+      memberId: sessionUserId,
+      targetId: bookingId,
+      details: `Waitlisted booking cancelled (was ${wasOffered ? "WAITLIST_OFFERED" : "WAITLISTED"})`,
+      ipAddress,
+    });
+
+    sendBookingCancelledEmail(
+      booking.member.email,
+      booking.member.firstName,
+      booking.checkIn,
+      booking.checkOut,
+      0,
+      "card"
+    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email for waitlisted booking"));
+
+    // If the booking was WAITLIST_OFFERED, re-process waitlist for these dates
+    if (wasOffered) {
+      processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+        .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after offer cancellation"));
+    }
+
+    return {
+      status: 200,
+      data: {
+        success: true,
+        refundAmountCents: 0,
+        refundPercentage: 0,
+        refundMethod: "card" as const,
+        message: "Waitlisted booking cancelled successfully",
+      },
     };
   }
 
@@ -83,6 +134,10 @@ export async function cancelBooking(
       booking.checkOut,
       0
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+
+    // Trigger waitlist processing for freed dates
+    processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+      .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after pending cancellation"));
 
     return {
       status: 200,
@@ -119,6 +174,10 @@ export async function cancelBooking(
       booking.checkOut,
       0
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+
+    // Trigger waitlist processing for freed dates
+    processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+      .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after confirmed cancellation"));
 
     return {
       status: 200,
@@ -229,6 +288,10 @@ export async function cancelBooking(
       "credit"
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
+    // Trigger waitlist processing for freed dates
+    processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+      .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after credit cancellation"));
+
     return {
       status: 200,
       data: {
@@ -306,6 +369,10 @@ export async function cancelBooking(
       "card"
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
+    // Trigger waitlist processing for freed dates
+    processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+      .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after card refund cancellation"));
+
     return {
       status: 200,
       data: {
@@ -343,6 +410,10 @@ export async function cancelBooking(
     0,
     "card"
   ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+
+  // Trigger waitlist processing for freed dates
+  processWaitlistForDates({ checkIn: booking.checkIn, checkOut: booking.checkOut })
+    .catch((err) => logger.error({ err, bookingId }, "Failed to process waitlist after no-refund cancellation"));
 
   return {
     status: 200,

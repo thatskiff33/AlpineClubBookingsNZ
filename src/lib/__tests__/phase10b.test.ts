@@ -54,6 +54,7 @@ vi.mock("@/lib/prisma", () => ({
     familyGroupMember: {
       deleteMany: vi.fn(),
     },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -436,7 +437,10 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
 
     mockedPrisma.member.update.mockResolvedValue({} as any);
     mockedPrisma.bookingGuest.updateMany.mockResolvedValue({ count: 0 } as any);
+    mockedPrisma.familyGroupMember.deleteMany.mockResolvedValue({ count: 0 } as any);
     mockedPrisma.deletionRequest.update.mockResolvedValue({} as any);
+    // $transaction executes the callback with the same mock prisma as tx
+    mockedPrisma.$transaction.mockImplementation((cb: any) => cb(mockedPrisma));
 
     const { cancelBooking } = await import("@/lib/booking-cancel");
     const { sendAccountDeletionApprovedEmail } = await import("@/lib/email");

@@ -33,7 +33,10 @@ export async function POST(request: NextRequest) {
     .update(body)
     .digest("base64");
 
-  if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+  // timingSafeEqual requires equal-length buffers; reject mismatches as invalid
+  const sigBuf = Buffer.from(signature);
+  const expectedBuf = Buffer.from(expectedSignature);
+  if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
     // Xero requires a 401 response for invalid signatures
     return new NextResponse(null, { status: 401 });
   }

@@ -22,11 +22,15 @@ const FROM = process.env.EMAIL_FROM || "support@tokoroa.org.nz";
  * Runs every 30 minutes.
  */
 export async function retryFailedEmails(): Promise<{ retried: number; succeeded: number; failed: number }> {
+  // Backoff: don't retry emails until at least 15 minutes after the last attempt
+  const backoffThreshold = new Date(Date.now() - 15 * 60 * 1000);
+
   const failedEmails = await prisma.emailLog.findMany({
     where: {
       status: "FAILED",
       attempts: { lt: MAX_ATTEMPTS },
       htmlBody: { not: null },
+      lastAttemptAt: { not: { gte: backoffThreshold } },
     },
     orderBy: { createdAt: "asc" },
     take: 50, // Process in batches to avoid overload

@@ -37,6 +37,11 @@ export async function POST(req: NextRequest) {
       // Password reset: 2h expiry (allows time for email delivery delays)
       const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours
 
+      // Invalidate any existing reset tokens for this member
+      await prisma.passwordResetToken.deleteMany({
+        where: { memberId: member.id },
+      });
+
       await prisma.passwordResetToken.create({
         data: {
           token,

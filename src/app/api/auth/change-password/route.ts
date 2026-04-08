@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, "Current password is required"),
-  newPassword: z.string().min(12, "Password must be at least 12 characters"),
+  newPassword: z.string().min(12, "Password must be at least 12 characters").max(128, "Password must be at most 128 characters"),
 });
 
 export async function POST(req: NextRequest) {
