@@ -29,9 +29,16 @@ interface EligibleMember {
   suggestedEndDate: string;
 }
 
+interface UnassignedDate {
+  date: string;
+  bookingCount: number;
+  guestCount: number;
+}
+
 export default function HutLeadersPage() {
   const [assignments, setAssignments] = useState<HutLeaderAssignment[]>([]);
   const [eligibleMembers, setEligibleMembers] = useState<EligibleMember[]>([]);
+  const [unassignedDates, setUnassignedDates] = useState<UnassignedDate[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [loadingMembers, setLoadingMembers] = useState(false);
@@ -56,9 +63,22 @@ export default function HutLeadersPage() {
     }
   }, []);
 
+  const fetchUnassignedDates = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/hut-leaders/unassigned-dates");
+      if (res.ok) {
+        const data = await res.json();
+        setUnassignedDates(data.unassignedDates);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
     fetchAssignments();
-  }, [fetchAssignments]);
+    fetchUnassignedDates();
+  }, [fetchAssignments, fetchUnassignedDates]);
 
   // Fetch eligible members when dates change
   useEffect(() => {
@@ -112,6 +132,7 @@ export default function HutLeadersPage() {
       setShowForm(false);
       setEditingMember(null);
       fetchAssignments();
+      fetchUnassignedDates();
     } finally {
       setCreating(false);
     }
@@ -139,6 +160,7 @@ export default function HutLeadersPage() {
       setShowForm(false);
       setEditingMember(null);
       fetchAssignments();
+      fetchUnassignedDates();
     } finally {
       setCreating(false);
     }
@@ -158,7 +180,14 @@ export default function HutLeadersPage() {
     const res = await fetch(`/api/admin/hut-leaders/${id}`, { method: "DELETE" });
     if (res.ok) {
       fetchAssignments();
+      fetchUnassignedDates();
     }
+  }
+
+  function handleAssignForDate(date: string) {
+    setShowForm(true);
+    setFormData({ memberId: "", startDate: date, endDate: date });
+    setEditingMember(null);
   }
 
   const today = new Date().toISOString().split("T")[0];
@@ -178,6 +207,42 @@ export default function HutLeadersPage() {
           New Assignment
         </Button>
       </div>
+
+      {unassignedDates.length > 0 && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base text-amber-800 flex items-center gap-2">
+              <CalendarDays className="h-5 w-5" />
+              Upcoming Dates Without Hut Leader ({unassignedDates.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+              {unassignedDates.map((d) => (
+                <div
+                  key={d.date}
+                  className="flex items-center justify-between rounded-lg border border-amber-200 bg-white px-3 py-2"
+                >
+                  <div>
+                    <p className="font-medium text-sm text-slate-800">{d.date}</p>
+                    <p className="text-xs text-slate-500">
+                      {d.bookingCount} booking{d.bookingCount !== 1 ? "s" : ""}, {d.guestCount} guest{d.guestCount !== 1 ? "s" : ""}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleAssignForDate(d.date)}
+                    className="text-xs"
+                  >
+                    Assign
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {showForm && (
         <Card>
