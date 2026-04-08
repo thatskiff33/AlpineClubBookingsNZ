@@ -473,7 +473,7 @@ describe("F6: POST /api/lodge/roster/[date]/generate", () => {
         ageRestriction: "ANY",
         minAge: 0,
         sortOrder: 1,
-        timeOfDay: "MORNING",
+        timeOfDay: "ANYTIME",
         frequencyMode: "DAILY",
         frequencyDays: null,
         frequencyDaysOfWeek: [],
