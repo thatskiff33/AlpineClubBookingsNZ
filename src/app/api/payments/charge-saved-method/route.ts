@@ -91,6 +91,7 @@ export async function POST(request: NextRequest) {
         bookingId: booking.id,
         memberId: booking.memberId,
       },
+      idempotencyKey: `charge_${booking.id}`,
     });
 
     // Update payment record and revert booking status if payment not yet succeeded

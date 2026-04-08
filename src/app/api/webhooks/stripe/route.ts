@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { isXeroConnected, createXeroInvoiceForBooking, createXeroCreditNote } from "@/lib/xero";
-import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert } from "@/lib/email";
+import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupIntentFailedEmail } from "@/lib/email";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
@@ -381,7 +381,22 @@ async function handleSetupIntentFailed(
 
   logger.info({ bookingId, setupIntentId: setupIntent.id }, "SetupIntent failed for booking");
 
-  // TODO: Notify member that card setup failed
+  // Notify member that card setup failed
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: { member: { select: { email: true, firstName: true } } },
+  });
+
+  if (booking?.member?.email) {
+    sendSetupIntentFailedEmail({
+      email: booking.member.email,
+      firstName: booking.member.firstName,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+    }).catch((err) =>
+      logger.error({ err, bookingId }, "Failed to send setup intent failed email")
+    );
+  }
 }
 
 /**

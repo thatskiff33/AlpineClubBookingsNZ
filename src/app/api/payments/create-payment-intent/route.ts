@@ -160,6 +160,7 @@ export async function POST(request: NextRequest) {
         bookingId: booking.id,
         memberId: booking.memberId,
       },
+      idempotencyKey: `pi_${booking.id}`,
     });
 
     // Create or update Payment record

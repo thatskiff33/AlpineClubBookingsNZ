@@ -36,19 +36,24 @@ export async function createPaymentIntent({
   currency = "nzd",
   customerId,
   metadata,
+  idempotencyKey,
 }: {
   amountCents: number;
   currency?: string;
   customerId?: string;
   metadata?: Record<string, string>;
+  idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
-  return stripe.paymentIntents.create({
-    amount: amountCents,
-    currency,
-    customer: customerId,
-    metadata: metadata ?? {},
-    automatic_payment_methods: { enabled: true },
-  });
+  return stripe.paymentIntents.create(
+    {
+      amount: amountCents,
+      currency,
+      customer: customerId,
+      metadata: metadata ?? {},
+      automatic_payment_methods: { enabled: true },
+    },
+    idempotencyKey ? { idempotencyKey } : undefined,
+  );
 }
 
 /**
@@ -78,22 +83,27 @@ export async function chargePaymentMethod({
   customerId,
   paymentMethodId,
   metadata,
+  idempotencyKey,
 }: {
   amountCents: number;
   currency?: string;
   customerId: string;
   paymentMethodId: string;
   metadata?: Record<string, string>;
+  idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
-  return stripe.paymentIntents.create({
-    amount: amountCents,
-    currency,
-    customer: customerId,
-    payment_method: paymentMethodId,
-    off_session: true,
-    confirm: true,
-    metadata: metadata ?? {},
-  });
+  return stripe.paymentIntents.create(
+    {
+      amount: amountCents,
+      currency,
+      customer: customerId,
+      payment_method: paymentMethodId,
+      off_session: true,
+      confirm: true,
+      metadata: metadata ?? {},
+    },
+    idempotencyKey ? { idempotencyKey } : undefined,
+  );
 }
 
 /**

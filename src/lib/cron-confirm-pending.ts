@@ -166,6 +166,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           bookingId: booking.id,
           memberId: booking.memberId,
         },
+        idempotencyKey: `confirm_${booking.id}`,
       });
 
       if (paymentIntent.status === "succeeded") {

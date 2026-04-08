@@ -71,13 +71,16 @@ describe("Stripe library", () => {
         metadata: { bookingId: "booking_1" },
       });
 
-      expect(mockPaymentIntentsCreate).toHaveBeenCalledWith({
-        amount: 5000,
-        currency: "nzd",
-        customer: "cus_test",
-        metadata: { bookingId: "booking_1" },
-        automatic_payment_methods: { enabled: true },
-      });
+      expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
+        {
+          amount: 5000,
+          currency: "nzd",
+          customer: "cus_test",
+          metadata: { bookingId: "booking_1" },
+          automatic_payment_methods: { enabled: true },
+        },
+        undefined,
+      );
       expect(result.id).toBe("pi_test_123");
     });
 
@@ -87,7 +90,8 @@ describe("Stripe library", () => {
       await createPaymentIntent({ amountCents: 1000 });
 
       expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ currency: "nzd" })
+        expect.objectContaining({ currency: "nzd" }),
+        undefined,
       );
     });
 
@@ -97,7 +101,8 @@ describe("Stripe library", () => {
       await createPaymentIntent({ amountCents: 1000, currency: "aud" });
 
       expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ currency: "aud" })
+        expect.objectContaining({ currency: "aud" }),
+        undefined,
       );
     });
   });
@@ -136,15 +141,18 @@ describe("Stripe library", () => {
         metadata: { bookingId: "booking_2" },
       });
 
-      expect(mockPaymentIntentsCreate).toHaveBeenCalledWith({
-        amount: 8000,
-        currency: "nzd",
-        customer: "cus_test",
-        payment_method: "pm_test",
-        off_session: true,
-        confirm: true,
-        metadata: { bookingId: "booking_2" },
-      });
+      expect(mockPaymentIntentsCreate).toHaveBeenCalledWith(
+        {
+          amount: 8000,
+          currency: "nzd",
+          customer: "cus_test",
+          payment_method: "pm_test",
+          off_session: true,
+          confirm: true,
+          metadata: { bookingId: "booking_2" },
+        },
+        undefined,
+      );
       expect(result.id).toBe("pi_charge_123");
     });
   });

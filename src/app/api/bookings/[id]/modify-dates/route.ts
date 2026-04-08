@@ -423,6 +423,7 @@ export async function PUT(
             type: "modification_additional",
             reason: "date_change_price_increase",
           },
+          idempotencyKey: `mod_dates_${bookingId}_${Date.now()}`,
         });
 
         await prisma.payment.update({

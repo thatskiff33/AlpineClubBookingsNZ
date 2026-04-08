@@ -848,3 +848,19 @@ export function accountDeletionRejectedTemplate(
     ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
   `);
 }
+
+export function setupIntentFailedTemplate(data: {
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+}): string {
+  const dates = `${data.checkIn.toLocaleDateString("en-NZ")} – ${data.checkOut.toLocaleDateString("en-NZ")}`;
+  return layout(`
+    ${heading("Card Setup Failed")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
+    ${alertBox("We were unable to save your card details for your upcoming booking (" + dates + "). Your booking is still held, but we won't be able to charge you automatically when it's confirmed.", "warning")}
+    ${paragraph("Please log in and update your payment method to avoid your booking being cancelled.")}
+    ${button("Update Payment Method", (process.env.NEXTAUTH_URL || "http://localhost:3000") + "/bookings")}
+    ${muted("If you need help, contact the club at support@tokoroa.org.nz")}
+  `);
+}

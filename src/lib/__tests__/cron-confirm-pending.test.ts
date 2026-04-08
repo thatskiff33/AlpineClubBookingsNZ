@@ -146,6 +146,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       customerId: "cus_b1",
       paymentMethodId: "pm_b1",
       metadata: { bookingId: "b1", memberId: "member_b1" },
+      idempotencyKey: "confirm_b1",
     });
 
     expect(mockSendConfirmedEmail).toHaveBeenCalledWith(

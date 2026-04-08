@@ -338,6 +338,7 @@ export async function POST(
             type: "modification_additional",
             reason: "guest_add_price_increase",
           },
+          idempotencyKey: `mod_guest_${bookingId}_${Date.now()}`,
         });
 
         await prisma.payment.update({

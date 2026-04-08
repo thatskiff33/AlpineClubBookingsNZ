@@ -30,6 +30,7 @@ import {
   childRequestSubmittedTemplate,
   childRequestApprovedTemplate,
   childRequestRejectedTemplate,
+  setupIntentFailedTemplate,
 } from "./email-templates";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -612,5 +613,19 @@ export async function sendBookingModifiedEmail(params: {
     subject: "Booking Modified - TAC Lodge",
     html: bookingModifiedTemplate(params),
     templateName: "booking-modified",
+  });
+}
+
+export async function sendSetupIntentFailedEmail(params: {
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: "Card Setup Failed - TAC Lodge Booking",
+    html: setupIntentFailedTemplate(params),
+    templateName: "setup-intent-failed",
   });
 }

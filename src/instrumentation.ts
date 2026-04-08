@@ -220,7 +220,13 @@ export async function register() {
     logger.info({ job: "backup", schedule: backupSchedule }, "Scheduled database backup");
 
     // Data pruning cron (daily at 3:00 AM NZST)
+    let isPruningRunning = false;
     cron.default.schedule("0 3 * * *", async () => {
+      if (isPruningRunning) {
+        logger.info({ job: "data-pruning" }, "Already running, skipping");
+        return;
+      }
+      isPruningRunning = true;
       const startedAt = new Date();
       try {
         const { pruneCronRuns } = await import("./lib/cron-job-run");
@@ -247,6 +253,8 @@ export async function register() {
         logger.error({ err, job: "data-pruning" }, "Error in data pruning");
         Sentry.captureException(err);
         await recordCronRun("data-pruning", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isPruningRunning = false;
       }
     }, { timezone: "Pacific/Auckland" });
 

@@ -160,6 +160,8 @@ model Member {
   @@index([secondaryParentId])
   @@index([familyGroupId])
   @@index([inheritEmailFromId])
+  @@index([canLogin])
+  @@index([active])
 }
 
 model PasswordResetToken {
@@ -380,6 +382,7 @@ model PromoCode {
   redemptions PromoRedemption[]
 
   @@index([code])
+  @@index([active])
 }
 
 model PromoRedemption {
