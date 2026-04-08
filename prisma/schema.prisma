@@ -69,6 +69,12 @@ enum ChoreStatus {
   COMPLETED
 }
 
+enum CreditType {
+  CANCELLATION_REFUND
+  ADMIN_ADJUSTMENT
+  BOOKING_APPLIED
+}
+
 enum AgeRestriction {
   ANY
   ADULTS_ONLY
@@ -153,6 +159,7 @@ model Member {
   familyGroupInvitations     FamilyGroupJoinRequest[] @relation("FamilyGroupInvitedMember")
   familyGroupLinkedRequests  FamilyGroupJoinRequest[] @relation("FamilyGroupLinkedMember")
   deletionRequests           DeletionRequest[]
+  credits                    MemberCredit[]
 
   @@index([email])
   @@index([xeroContactId])
@@ -292,6 +299,8 @@ model Booking {
   choreAssignments ChoreAssignment[]
   promoRedemption  PromoRedemption?
   modifications    BookingModification[]
+  creditsFromCancellation MemberCredit[] @relation("CreditSource")
+  creditsApplied          MemberCredit[] @relation("CreditApplied")
 
   @@index([memberId])
   @@index([checkIn, checkOut])
@@ -345,6 +354,7 @@ model Payment {
   additionalAmountCents       Int           @default(0)
   additionalPaymentStatus     String?       // PENDING, SUCCEEDED, FAILED
   xeroRefundCreditNoteId      String?       // Track Xero credit note to prevent duplicates
+  creditAppliedCents          Int           @default(0) // Account credit applied to this booking
   createdAt                   DateTime      @default(now())
   updatedAt                   DateTime      @updatedAt
 
@@ -457,11 +467,12 @@ model ChoreAssignment {
 // ---------------------------------------------------------------------------
 
 model CancellationPolicy {
-  id               String   @id @default(cuid())
-  daysBeforeStay   Int
-  refundPercentage Int
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                      String   @id @default(cuid())
+  daysBeforeStay          Int
+  refundPercentage        Int      // Card refund percentage
+  creditRefundPercentage  Int?     // Credit refund percentage (null = same as refundPercentage)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 
   @@unique([daysBeforeStay])
 }
@@ -806,4 +817,28 @@ model DeletionRequest {
   @@index([memberId])
   @@index([status])
   @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Account Credits (Issue #37)
+// ---------------------------------------------------------------------------
+
+model MemberCredit {
+  id                 String     @id @default(cuid())
+  memberId           String
+  amountCents        Int        // Positive = credit added, negative = credit used
+  type               CreditType
+  description        String     // Human-readable reason
+  sourceBookingId    String?    // Booking that generated the credit (cancellation)
+  appliedToBookingId String?    // Booking where credit was spent
+  xeroCreditNoteId   String?    // Linked Xero credit note ID
+  createdAt          DateTime   @default(now())
+
+  member           Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  sourceBooking    Booking? @relation("CreditSource", fields: [sourceBookingId], references: [id])
+  appliedToBooking Booking? @relation("CreditApplied", fields: [appliedToBookingId], references: [id])
+
+  @@index([memberId])
+  @@index([sourceBookingId])
+  @@index([appliedToBookingId])
 }

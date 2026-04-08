@@ -7,6 +7,7 @@ import { ProfileForm } from "./profile-form";
 import { ChangeEmailForm } from "./change-email-form";
 import { NotificationPreferences } from "./notification-preferences";
 import { FamilyGroupSection } from "./family-group-section";
+import { AccountCreditSection } from "./account-credit-section";
 import { DataExportButton } from "./data-export-button";
 import { DeleteAccountButton } from "./delete-account-button";
 import {
@@ -201,6 +202,19 @@ export default async function ProfilePage() {
               })}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Account Credit */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Account Credit</CardTitle>
+          <CardDescription>
+            Your credit balance and transaction history
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AccountCreditSection />
         </CardContent>
       </Card>
 

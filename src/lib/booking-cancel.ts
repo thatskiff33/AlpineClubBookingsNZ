@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { processRefund } from "./stripe";
-import { isXeroConnected, createXeroCreditNote } from "./xero";
+import { isXeroConnected, createXeroCreditNote, createUnappliedXeroCreditNote } from "./xero";
 import {
   calculateRefundAmount,
   daysUntilDate,
@@ -8,12 +8,16 @@ import {
 } from "./cancellation";
 import { sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
+import { createCancellationCredit, restoreCreditFromBooking } from "./member-credit";
 import logger from "@/lib/logger";
 
 export interface CancelBookingResult {
   success: boolean;
   refundAmountCents: number;
   refundPercentage: number;
+  refundMethod: "card" | "credit";
+  creditAmountCents?: number;
+  creditRestoredCents?: number;
   stripeRefundId?: string;
   message: string;
 }
@@ -27,7 +31,8 @@ export async function cancelBooking(
   bookingId: string,
   sessionUserId: string,
   sessionUserRole: string,
-  ipAddress: string
+  ipAddress: string,
+  refundMethod: "card" | "credit" = "card"
 ): Promise<
   | { status: 401; error: string }
   | { status: 403; error: string }
@@ -85,6 +90,7 @@ export async function cancelBooking(
         success: true,
         refundAmountCents: 0,
         refundPercentage: 0,
+        refundMethod: "card",
         message: "Pending booking cancelled. No payment was taken.",
       },
     };
@@ -120,9 +126,23 @@ export async function cancelBooking(
         success: true,
         refundAmountCents: 0,
         refundPercentage: 0,
+        refundMethod: "card",
         message: "Booking cancelled. No refund applicable.",
       },
     };
+  }
+
+  // Restore any previously applied credit regardless of refund method
+  let creditRestoredCents = 0;
+  if (booking.payment.creditAppliedCents > 0) {
+    creditRestoredCents = await restoreCreditFromBooking(
+      booking.memberId,
+      bookingId
+    );
+    logger.info(
+      { bookingId, creditRestoredCents },
+      "Restored previously applied credit on cancellation"
+    );
   }
 
   // Calculate refund based on cancellation policy
@@ -135,10 +155,95 @@ export async function cancelBooking(
   const { refundAmountCents, refundPercentage } = calculateRefundAmount(
     refundableBaseCents,
     days,
-    policy
+    policy,
+    refundMethod
   );
 
-  // Process Stripe refund if applicable
+  // Process refund based on method
+  if (refundAmountCents > 0 && refundMethod === "credit") {
+    // ── Credit path: skip Stripe, create MemberCredit record ──────────
+
+    const newRefundedTotal =
+      booking.payment.refundedAmountCents + refundAmountCents;
+    const newStatus =
+      newRefundedTotal >= booking.payment.amountCents
+        ? "REFUNDED"
+        : "PARTIALLY_REFUNDED";
+
+    await prisma.$transaction([
+      prisma.payment.update({
+        where: { bookingId: booking.id },
+        data: {
+          refundedAmountCents: newRefundedTotal,
+          status: newStatus,
+        },
+      }),
+      prisma.booking.update({
+        where: { id: bookingId },
+        data: { status: "CANCELLED" },
+      }),
+    ]);
+
+    // Create unapplied Xero credit note (stays as open credit)
+    let xeroCreditNoteId: string | undefined;
+    try {
+      if (await isXeroConnected()) {
+        xeroCreditNoteId = await createUnappliedXeroCreditNote(
+          booking.payment.id,
+          refundAmountCents
+        );
+      }
+    } catch (xeroErr) {
+      logger.error(
+        { err: xeroErr, bookingId, paymentId: booking.payment.id },
+        "Failed to create unapplied Xero credit note"
+      );
+    }
+
+    // Create account credit record
+    await createCancellationCredit(
+      booking.memberId,
+      refundAmountCents,
+      bookingId,
+      xeroCreditNoteId
+    );
+
+    await cleanupPromoRedemption(bookingId);
+
+    logAudit({
+      action: "booking.cancel",
+      memberId: sessionUserId,
+      targetId: bookingId,
+      details: booking.payment.changeFeeCents > 0
+        ? `Credit ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${booking.payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents as account credit`
+        : `Credit ${refundPercentage}% = ${refundAmountCents} cents as account credit`,
+      ipAddress,
+    });
+
+    sendBookingCancelledEmail(
+      booking.member.email,
+      booking.member.firstName,
+      booking.checkIn,
+      booking.checkOut,
+      refundAmountCents,
+      "credit"
+    ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
+
+    return {
+      status: 200,
+      data: {
+        success: true,
+        refundAmountCents,
+        refundPercentage,
+        refundMethod: "credit",
+        creditAmountCents: refundAmountCents,
+        creditRestoredCents: creditRestoredCents || undefined,
+        message: `Booking cancelled. ${refundPercentage}% credit of $${(refundAmountCents / 100).toFixed(2)} added to your account.`,
+      },
+    };
+  }
+
+  // ── Card path: Stripe refund (existing flow) ──────────────────────
   if (refundAmountCents > 0 && booking.payment.stripePaymentIntentId) {
     const refund = await processRefund({
       paymentIntentId: booking.payment.stripePaymentIntentId,
@@ -171,7 +276,7 @@ export async function cancelBooking(
       }),
     ]);
 
-    // Create Xero credit note if connected
+    // Create Xero credit note if connected (allocated against invoice)
     try {
       if (await isXeroConnected()) {
         await createXeroCreditNote(booking.payment.id, refundAmountCents);
@@ -197,7 +302,8 @@ export async function cancelBooking(
       booking.member.firstName,
       booking.checkIn,
       booking.checkOut,
-      refundAmountCents
+      refundAmountCents,
+      "card"
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
     return {
@@ -206,6 +312,8 @@ export async function cancelBooking(
         success: true,
         refundAmountCents,
         refundPercentage,
+        refundMethod: "card",
+        creditRestoredCents: creditRestoredCents || undefined,
         stripeRefundId: refund.id,
         message: `Booking cancelled. ${refundPercentage}% refund of $${(refundAmountCents / 100).toFixed(2)} processed.`,
       },
@@ -232,7 +340,8 @@ export async function cancelBooking(
     booking.member.firstName,
     booking.checkIn,
     booking.checkOut,
-    0
+    0,
+    "card"
   ).catch((err) => logger.error({ err, bookingId }, "Failed to send cancellation email"));
 
   return {
@@ -241,6 +350,8 @@ export async function cancelBooking(
       success: true,
       refundAmountCents: 0,
       refundPercentage: 0,
+      refundMethod: "card",
+      creditRestoredCents: creditRestoredCents || undefined,
       message:
         "Booking cancelled. No refund applicable per cancellation policy.",
     },

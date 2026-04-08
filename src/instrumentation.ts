@@ -547,6 +547,36 @@ export async function register() {
     }, { timezone: "Pacific/Auckland" });
 
     logger.info({ job: "age-up" }, "Scheduled age-up check (daily at 6:30 AM NZST)");
+
+    // ── Credit reconciliation (daily at 5:00 AM NZST) ──────────────────
+
+    let isCreditReconRunning = false;
+
+    cron.default.schedule("0 5 * * *", async () => {
+      if (isCreditReconRunning) {
+        logger.info({ job: "credit-reconciliation" }, "Already running, skipping");
+        return;
+      }
+      isCreditReconRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "credit-reconciliation" }, "Starting credit balance reconciliation");
+
+      try {
+        const { reconcileCreditBalances } = await import("./lib/cron-credit-reconciliation");
+        const result = await reconcileCreditBalances();
+        logger.info({ job: "credit-reconciliation", ...result }, "Credit reconciliation complete");
+        await recordCronRun("credit-reconciliation", startedAt, "SUCCESS", result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "credit-reconciliation" }, "Error in credit reconciliation");
+        Sentry.captureException(err);
+        await recordCronRun("credit-reconciliation", startedAt, "FAILURE", undefined, message);
+      } finally {
+        isCreditReconRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info({ job: "credit-reconciliation" }, "Scheduled credit reconciliation (daily at 5:00 AM NZST)");
   }
 }
 

@@ -12,6 +12,7 @@ interface PolicyRule {
   id?: string
   daysBeforeStay: number
   refundPercentage: number
+  creditRefundPercentage: number
 }
 
 interface BookingPeriod {
@@ -34,7 +35,7 @@ function CancellationRulesEditor({
   onChange: (rules: PolicyRule[]) => void
 }) {
   function addRule() {
-    onChange([...rules, { daysBeforeStay: 0, refundPercentage: 0 }])
+    onChange([...rules, { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 }])
   }
   function removeRule(index: number) {
     onChange(rules.filter((_, i) => i !== index))
@@ -49,7 +50,8 @@ function CancellationRulesEditor({
         <TableHeader>
           <TableRow>
             <TableHead>Days Before Stay (min)</TableHead>
-            <TableHead>Refund %</TableHead>
+            <TableHead>Card Refund %</TableHead>
+            <TableHead>Credit Refund %</TableHead>
             <TableHead className="w-20"></TableHead>
           </TableRow>
         </TableHeader>
@@ -86,6 +88,21 @@ function CancellationRulesEditor({
                 </div>
               </TableCell>
               <TableCell>
+                <div className="flex items-center space-x-2">
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={rule.creditRefundPercentage}
+                    onChange={(e) =>
+                      updateRule(index, "creditRefundPercentage", parseInt(e.target.value) || 0)
+                    }
+                    className="w-24"
+                  />
+                  <span className="text-sm text-muted-foreground">%</span>
+                </div>
+              </TableCell>
+              <TableCell>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -113,15 +130,19 @@ function PolicyPreview({ rules }: { rules: PolicyRule[] }) {
   return (
     <ul className="space-y-1">
       {sortedRules.map((rule, index) => {
-        let description: string
+        let prefix: string
         if (index === 0) {
-          description = `${rule.daysBeforeStay}+ days before stay: ${rule.refundPercentage}% refund`
+          prefix = `${rule.daysBeforeStay}+ days before stay:`
         } else if (rule.daysBeforeStay === 0 && index === sortedRules.length - 1) {
-          description = `Less than ${sortedRules[index - 1]?.daysBeforeStay ?? 0} days: ${rule.refundPercentage}% refund`
+          prefix = `Less than ${sortedRules[index - 1]?.daysBeforeStay ?? 0} days:`
         } else {
           const prevDays = sortedRules[index - 1]?.daysBeforeStay ?? 0
-          description = `${rule.daysBeforeStay}-${prevDays - 1} days: ${rule.refundPercentage}% refund`
+          prefix = `${rule.daysBeforeStay}-${prevDays - 1} days:`
         }
+        const creditDiffers = rule.creditRefundPercentage !== rule.refundPercentage
+        const description = creditDiffers
+          ? `${prefix} ${rule.refundPercentage}% card / ${rule.creditRefundPercentage}% credit`
+          : `${prefix} ${rule.refundPercentage}% refund`
         return (
           <li key={index} className="flex items-center space-x-2">
             <div
@@ -159,9 +180,9 @@ export default function BookingPoliciesPage() {
   const [periodEnd, setPeriodEnd] = useState("")
   const [periodHoldDays, setPeriodHoldDays] = useState(5)
   const [periodRules, setPeriodRules] = useState<PolicyRule[]>([
-    { daysBeforeStay: 21, refundPercentage: 100 },
-    { daysBeforeStay: 14, refundPercentage: 50 },
-    { daysBeforeStay: 0, refundPercentage: 0 },
+    { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100 },
+    { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50 },
+    { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
   ])
   const [savingPeriod, setSavingPeriod] = useState(false)
 
@@ -179,9 +200,9 @@ export default function BookingPoliciesPage() {
         setDefaultRules(data.rules)
       } else {
         setDefaultRules([
-          { daysBeforeStay: 14, refundPercentage: 100 },
-          { daysBeforeStay: 7, refundPercentage: 50 },
-          { daysBeforeStay: 0, refundPercentage: 0 },
+          { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100 },
+          { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50 },
+          { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
         ])
       }
       setDefaultHoldDays(data.nonMemberHoldDays ?? 7)
@@ -250,9 +271,9 @@ export default function BookingPoliciesPage() {
     setPeriodEnd("")
     setPeriodHoldDays(5)
     setPeriodRules([
-      { daysBeforeStay: 21, refundPercentage: 100 },
-      { daysBeforeStay: 14, refundPercentage: 50 },
-      { daysBeforeStay: 0, refundPercentage: 0 },
+      { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100 },
+      { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50 },
+      { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
     ])
   }
 

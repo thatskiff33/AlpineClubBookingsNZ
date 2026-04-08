@@ -1693,6 +1693,98 @@ export async function createXeroCreditNote(
   return createdNote.creditNoteID;
 }
 
+/**
+ * Create an UNAPPLIED Xero credit note for account credit refunds.
+ * Unlike createXeroCreditNote(), this:
+ * - Does NOT allocate against the original invoice
+ * - Does NOT create a cash refund payment
+ * The credit note stays as open credit on the member's Xero contact.
+ */
+export async function createUnappliedXeroCreditNote(
+  paymentId: string,
+  refundAmountCents: number
+): Promise<string> {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    include: {
+      booking: {
+        include: { member: true },
+      },
+    },
+  });
+
+  if (!payment) throw new Error(`Payment not found: ${paymentId}`);
+
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const contactId = await findOrCreateXeroContact(payment.booking.memberId);
+  const refundCode = (await getAccountMapping("hutFeeRefunds")) ?? "200";
+
+  const creditNote: CreditNote = {
+    type: CreditNote.TypeEnum.ACCRECCREDIT,
+    contact: { contactID: contactId },
+    date: formatDate(new Date()),
+    lineAmountTypes: LineAmountTypes.Inclusive,
+    lineItems: [
+      {
+        description: `Account credit from booking ${payment.booking.id.slice(0, 8)} (${formatDate(new Date(payment.booking.checkIn))} - ${formatDate(new Date(payment.booking.checkOut))})`,
+        quantity: 1,
+        unitAmount: refundAmountCents / 100,
+        accountCode: refundCode,
+        taxType: "OUTPUT2",
+      },
+    ],
+    reference: `Account Credit - Booking ${payment.booking.id.slice(0, 8)}`,
+    status: CreditNote.StatusEnum.AUTHORISED,
+  };
+
+  const response = await xero.accountingApi.createCreditNotes(tenantId, {
+    creditNotes: [creditNote],
+  });
+
+  const createdNote = response.body.creditNotes?.[0];
+  if (!createdNote?.creditNoteID) {
+    throw new Error("Failed to create unapplied Xero credit note");
+  }
+
+  logger.info(
+    { paymentId, creditNoteId: createdNote.creditNoteID },
+    "Created unapplied Xero credit note for account credit"
+  );
+
+  return createdNote.creditNoteID;
+}
+
+/**
+ * Allocate an existing Xero credit note against an invoice.
+ * Used when account credit (backed by a Xero credit note) is applied to a new booking.
+ */
+export async function allocateCreditNoteToInvoice(
+  creditNoteId: string,
+  invoiceId: string,
+  amountCents: number
+): Promise<void> {
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+
+  await xero.accountingApi.createCreditNoteAllocation(
+    tenantId,
+    creditNoteId,
+    {
+      allocations: [
+        {
+          invoice: { invoiceID: invoiceId },
+          amount: amountCents / 100,
+          date: formatDate(new Date()),
+        },
+      ],
+    }
+  );
+
+  logger.info(
+    { creditNoteId, invoiceId, amountCents },
+    "Allocated Xero credit note against invoice"
+  );
+}
+
 // ---------------------------------------------------------------------------
 // XER-01: Xero Invoice Adjustment on Booking Modification
 // ---------------------------------------------------------------------------

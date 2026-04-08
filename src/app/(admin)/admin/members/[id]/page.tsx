@@ -33,6 +33,16 @@ interface MemberDetail {
   stats: { totalBookings: number; totalSpendCents: number; lastStay: string | null }
 }
 
+interface CreditHistoryItem {
+  id: string
+  amountCents: number
+  type: "CANCELLATION_REFUND" | "ADMIN_ADJUSTMENT" | "BOOKING_APPLIED"
+  description: string
+  createdAt: string
+  sourceBooking: { id: string; checkIn: string; checkOut: string } | null
+  appliedToBooking: { id: string; checkIn: string; checkOut: string } | null
+}
+
 interface EditForm {
   firstName: string; lastName: string; email: string; phone: string
   dateOfBirth: string; role: "MEMBER" | "ADMIN"; active: boolean; forcePasswordChange: boolean
@@ -51,6 +61,17 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", active: true, forcePasswordChange: false, inheritEmailFromId: null })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState("")
+  // Account credit state
+  const [creditBalance, setCreditBalance] = useState<number>(0)
+  const [creditHistory, setCreditHistory] = useState<CreditHistoryItem[]>([])
+  const [creditLoading, setCreditLoading] = useState(true)
+  const [creditError, setCreditError] = useState("")
+  const [showAdjustmentForm, setShowAdjustmentForm] = useState(false)
+  const [adjustmentAmount, setAdjustmentAmount] = useState("")
+  const [adjustmentDescription, setAdjustmentDescription] = useState("")
+  const [adjustmentSaving, setAdjustmentSaving] = useState(false)
+  const [adjustmentError, setAdjustmentError] = useState("")
+
   // Xero link/push state
   const [xeroSearchOpen, setXeroSearchOpen] = useState(false)
   const [xeroSearchQuery, setXeroSearchQuery] = useState("")
@@ -68,7 +89,41 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     finally { setLoading(false) }
   }
 
-  useEffect(() => { fetchMember() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const fetchCredits = async () => {
+    setCreditLoading(true); setCreditError("")
+    try {
+      const res = await fetch(`/api/admin/members/${id}/credits`)
+      if (!res.ok) { setCreditError("Failed to load credits"); return }
+      const data = await res.json()
+      setCreditBalance(data.balanceCents)
+      setCreditHistory(data.history)
+    } catch { setCreditError("Failed to load credits") }
+    finally { setCreditLoading(false) }
+  }
+
+  const handleAdjustmentSubmit = async () => {
+    const cents = Math.round(parseFloat(adjustmentAmount) * 100)
+    if (isNaN(cents) || cents === 0) { setAdjustmentError("Enter a non-zero amount"); return }
+    if (!adjustmentDescription.trim()) { setAdjustmentError("Description is required"); return }
+    setAdjustmentSaving(true); setAdjustmentError("")
+    try {
+      const res = await fetch(`/api/admin/members/${id}/credits`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amountCents: cents, description: adjustmentDescription.trim() }),
+      })
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to save adjustment") }
+      setShowAdjustmentForm(false)
+      setAdjustmentAmount("")
+      setAdjustmentDescription("")
+      setSuccess("Credit adjustment applied")
+      setTimeout(() => setSuccess(""), 3000)
+      await fetchCredits()
+    } catch (err) { setAdjustmentError(err instanceof Error ? err.message : "Failed to save adjustment") }
+    finally { setAdjustmentSaving(false) }
+  }
+
+  useEffect(() => { fetchMember(); fetchCredits() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openEditDialog = () => {
     if (!member) return
@@ -238,6 +293,37 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           <div className="space-y-3">{member.auditLogs.map((log) => (
             <div key={log.id} className="flex items-start justify-between border-b border-slate-100 pb-2 last:border-0"><div><p className="text-sm font-medium text-slate-700">{log.action}</p>{log.details && <p className="text-xs text-slate-500 mt-0.5">{log.details}</p>}</div><span className="text-xs text-slate-400 whitespace-nowrap ml-4">{fmtDate(log.createdAt)}</span></div>
           ))}</div>)}
+      </CardContent></Card>
+
+      <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-base font-medium">Account Credit</CardTitle><div className="flex items-center gap-3"><span className={`text-lg font-semibold ${creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"}`}>{`$${(creditBalance / 100).toFixed(2)}`}</span><Button size="sm" variant="outline" onClick={() => { setShowAdjustmentForm(!showAdjustmentForm); setAdjustmentError("") }}>{showAdjustmentForm ? "Cancel" : "Add Adjustment"}</Button></div></CardHeader><CardContent>
+        {showAdjustmentForm && (
+          <div className="mb-4 p-4 border border-slate-200 rounded-md bg-slate-50 space-y-3">
+            {adjustmentError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{adjustmentError}</div>}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="adj-amount">Amount ($)</Label>
+                <Input id="adj-amount" type="number" step="0.01" placeholder="e.g. 25.00 or -10.00" value={adjustmentAmount} onChange={e => setAdjustmentAmount(e.target.value)} />
+                <p className="text-xs text-slate-500">Positive = add credit, negative = deduct</p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="adj-desc">Description *</Label>
+                <Input id="adj-desc" placeholder="Reason for adjustment" value={adjustmentDescription} onChange={e => setAdjustmentDescription(e.target.value)} maxLength={500} />
+              </div>
+            </div>
+            <Button size="sm" onClick={handleAdjustmentSubmit} disabled={adjustmentSaving}>{adjustmentSaving ? "Saving..." : "Submit Adjustment"}</Button>
+          </div>
+        )}
+        {creditLoading ? <p className="text-sm text-slate-500">Loading credit history...</p> : creditError ? <p className="text-sm text-red-600">{creditError}</p> : creditHistory.length === 0 ? <p className="text-sm text-slate-500">No credit transactions</p> : (
+          <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Booking Ref</TableHead></TableRow></TableHeader><TableBody>{creditHistory.map((item) => (
+            <TableRow key={item.id}>
+              <TableCell className="text-sm">{fmtDate(item.createdAt)}</TableCell>
+              <TableCell><Badge variant="secondary" className={item.type === "CANCELLATION_REFUND" ? "bg-orange-100 text-orange-800 border-orange-200" : item.type === "ADMIN_ADJUSTMENT" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-purple-100 text-purple-800 border-purple-200"}>{item.type.replace(/_/g, " ")}</Badge></TableCell>
+              <TableCell className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}>{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
+              <TableCell className="text-sm text-slate-600 max-w-[200px] truncate">{item.description}</TableCell>
+              <TableCell className="text-sm">{item.sourceBooking ? <span className="text-blue-600">{fmtDate(item.sourceBooking.checkIn)} - {fmtDate(item.sourceBooking.checkOut)}</span> : item.appliedToBooking ? <span className="text-purple-600">{fmtDate(item.appliedToBooking.checkIn)} - {fmtDate(item.appliedToBooking.checkOut)}</span> : "-"}</TableCell>
+            </TableRow>
+          ))}</TableBody></Table>
+        )}
       </CardContent></Card>
 
       <Dialog open={xeroSearchOpen} onOpenChange={setXeroSearchOpen}>

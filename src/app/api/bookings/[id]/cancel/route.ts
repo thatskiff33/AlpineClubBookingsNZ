@@ -15,11 +15,23 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
     }
 
+    // Parse optional refundMethod from request body
+    let refundMethod: "card" | "credit" = "card";
+    try {
+      const body = await request.json();
+      if (body.refundMethod === "credit") {
+        refundMethod = "credit";
+      }
+    } catch {
+      // No body or invalid JSON — default to "card"
+    }
+
     const result = await cancelBooking(
       id,
       session.user.id,
       session.user.role,
-      getClientIp(request)
+      getClientIp(request),
+      refundMethod
     );
 
     if (result.status === 200) {

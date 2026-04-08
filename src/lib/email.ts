@@ -237,12 +237,13 @@ export async function sendBookingCancelledEmail(
   firstName: string,
   checkIn: Date,
   checkOut: Date,
-  refundCents: number
+  refundCents: number,
+  refundMethod: "card" | "credit" = "card"
 ) {
   await sendEmail({
     to: email,
     subject: "Booking Cancelled - TAC Lodge",
-    html: bookingCancelledTemplate(firstName, checkIn, checkOut, refundCents),
+    html: bookingCancelledTemplate(firstName, checkIn, checkOut, refundCents, refundMethod),
     templateName: "booking-cancelled",
   });
 }

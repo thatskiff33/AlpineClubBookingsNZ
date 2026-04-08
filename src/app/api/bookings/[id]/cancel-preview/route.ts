@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
-  calculateRefundAmount,
+  calculateDualRefundAmounts,
   daysUntilDate,
   loadCancellationPolicy,
 } from "@/lib/cancellation";
@@ -58,6 +58,9 @@ export async function GET(
         keptAmountCents: 0,
         changeFeeCents: 0,
         refundPercentage: 0,
+        creditRefundAmountCents: 0,
+        creditRefundPercentage: 0,
+        creditRestoredCents: 0,
         totalPaidCents: 0,
         hasPayment: false,
       });
@@ -70,19 +73,26 @@ export async function GET(
     const refundableBaseCents = paidAmountCents - changeFeeCents;
     const days = daysUntilDate(booking.checkIn);
     const policy = await loadCancellationPolicy(booking.checkIn);
-    const { refundAmountCents, refundPercentage } = calculateRefundAmount(
-      refundableBaseCents,
-      days,
-      policy
-    );
+    const {
+      cardRefundAmountCents,
+      cardRefundPercentage,
+      creditRefundAmountCents,
+      creditRefundPercentage,
+    } = calculateDualRefundAmounts(refundableBaseCents, days, policy);
 
-    const keptAmountCents = paidAmountCents - refundAmountCents;
+    // Credit that would be restored if this booking had credit applied
+    const creditRestoredCents = booking.payment.creditAppliedCents || 0;
+
+    const keptAmountCents = paidAmountCents - cardRefundAmountCents;
 
     return NextResponse.json({
-      refundAmountCents,
+      refundAmountCents: cardRefundAmountCents,
       keptAmountCents,
       changeFeeCents,
-      refundPercentage,
+      refundPercentage: cardRefundPercentage,
+      creditRefundAmountCents,
+      creditRefundPercentage,
+      creditRestoredCents,
       totalPaidCents: paidAmountCents,
       hasPayment: true,
     });
