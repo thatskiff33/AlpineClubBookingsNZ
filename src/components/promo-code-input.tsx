@@ -20,6 +20,7 @@ interface PromoCodeInputProps {
   guests: { ageTier: string; isMember: boolean }[];
   onPromoApplied: (result: PromoResult | null) => void;
   appliedPromo: PromoResult | null;
+  forMemberId?: string;
 }
 
 export function PromoCodeInput({
@@ -28,6 +29,7 @@ export function PromoCodeInput({
   guests,
   onPromoApplied,
   appliedPromo,
+  forMemberId,
 }: PromoCodeInputProps) {
   const [code, setCode] = useState(appliedPromo?.code || "");
   const [validating, setValidating] = useState(false);
@@ -51,6 +53,7 @@ export function PromoCodeInput({
           checkIn: checkIn.toISOString(),
           checkOut: checkOut.toISOString(),
           guests: guests.map((g) => ({ ageTier: g.ageTier, isMember: g.isMember })),
+          ...(forMemberId ? { forMemberId } : {}),
         }),
       });
 

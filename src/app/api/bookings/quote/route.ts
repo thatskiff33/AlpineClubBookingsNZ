@@ -15,6 +15,7 @@ const quoteSchema = z.object({
       isMember: z.boolean(),
     })
   ).min(1),
+  forMemberId: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -65,7 +66,11 @@ export async function POST(request: NextRequest) {
 
   try {
     const price = calculateBookingPrice(checkIn, checkOut, guests, seasonData);
-    const availableCreditCents = await getMemberCreditBalance(session.user.id);
+    // Use target member's credit balance for admin on-behalf bookings
+    const creditMemberId = (parsed.data.forMemberId && session.user.role === "ADMIN")
+      ? parsed.data.forMemberId
+      : session.user.id;
+    const availableCreditCents = await getMemberCreditBalance(creditMemberId);
     return NextResponse.json({ ...price, availableCreditCents });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to calculate price";

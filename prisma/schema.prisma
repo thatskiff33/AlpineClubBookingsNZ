@@ -46,6 +46,8 @@ enum BookingStatus {
   BUMPED
   CANCELLED
   COMPLETED
+  WAITLISTED
+  WAITLIST_OFFERED
 }
 
 enum PaymentStatus {
@@ -160,6 +162,7 @@ model Member {
   familyGroupLinkedRequests  FamilyGroupJoinRequest[] @relation("FamilyGroupLinkedMember")
   deletionRequests           DeletionRequest[]
   credits                    MemberCredit[]
+  bookingsCreatedOnBehalf    Booking[]       @relation("BookingsCreatedBy")
 
   @@index([email])
   @@index([xeroContactId])
@@ -289,11 +292,16 @@ model Booking {
   draftExpiresAt     DateTime?
   notes              String?       @db.VarChar(500)
   expectedArrivalTime String?      @db.VarChar(5)
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  createdById             String?       // Admin who created this booking on behalf of the member
+  waitlistPosition        Int?
+  waitlistOfferedAt       DateTime?
+  waitlistOfferExpiresAt  DateTime?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
 
   // Relations
-  member           Member               @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  member           Member               @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  createdBy        Member?              @relation("BookingsCreatedBy", fields: [createdById], references: [id])
   guests           BookingGuest[]
   payment          Payment?
   choreAssignments ChoreAssignment[]
@@ -308,6 +316,7 @@ model Booking {
   @@index([memberId, status])
   @@index([memberId, status, checkIn])
   @@index([status, createdAt])
+  @@index([status, checkIn, checkOut, createdAt])
 }
 
 model BookingGuest {
@@ -653,6 +662,7 @@ model NotificationPreference {
   bookingReminder      Boolean  @default(true)
   bookingBumped        Boolean  @default(true)
   bookingCancelled     Boolean  @default(true)
+  bookingWaitlist      Boolean  @default(true)
   choreRoster          Boolean  @default(true)
   marketingEmails      Boolean  @default(false)
   createdAt            DateTime @default(now())

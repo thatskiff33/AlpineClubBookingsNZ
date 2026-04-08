@@ -74,7 +74,15 @@ export default async function AdminBookingsPage({
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">All Bookings</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">All Bookings</h1>
+        <Link
+          href="/admin/book"
+          className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          + Create Booking
+        </Link>
+      </div>
 
       <BookingFilters />
 

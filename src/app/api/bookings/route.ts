@@ -18,11 +18,13 @@ import {
 } from "@/lib/promo";
 import { calculatePromoDiscount } from "@/lib/pricing";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBookingAlert } from "@/lib/email";
+import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBookingAlert, sendWaitlistConfirmationEmail } from "@/lib/email";
+import { getWaitlistPosition, updateWaitlistPositions } from "@/lib/waitlist";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import { getMemberCreditBalance, applyCreditToBooking } from "@/lib/member-credit";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
+import { logAudit } from "@/lib/audit";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -42,8 +44,10 @@ const createBookingSchema = z.object({
   notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
   draft: z.boolean().optional(),
+  waitlist: z.boolean().optional(),
   expectedArrivalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]0$/).optional(),
   applyCreditCents: z.number().int().min(0).optional(),
+  forMemberId: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -53,34 +57,6 @@ export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
-  }
-
-  // Verify member is still active (session JWT may outlive deactivation)
-  const member = await prisma.member.findUnique({
-    where: { id: session.user.id },
-    select: { active: true, emailVerified: true, xeroContactId: true },
-  });
-  if (!member?.active) {
-    return NextResponse.json(
-      { error: "Account is deactivated" },
-      { status: 403 }
-    );
-  }
-
-  // Gate: email must be verified before booking
-  if (!member?.emailVerified) {
-    return NextResponse.json({ error: "Email not verified" }, { status: 403 });
-  }
-
-  // Gate: member must be linked to a Xero contact
-  if (!member?.xeroContactId && session.user.role !== "ADMIN") {
-    return NextResponse.json(
-      {
-        error: "Your account is not yet linked to Xero. Please contact the club administrator to link your membership before booking.",
-        code: "XERO_CONTACT_REQUIRED",
-      },
-      { status: 403 }
-    );
   }
 
   const body = await request.json();
@@ -93,7 +69,59 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { checkIn, checkOut, guests, notes, promoCode: promoCodeStr, draft, expectedArrivalTime } = parsed.data;
+  // Resolve effective member: admin booking on behalf of another member
+  let effectiveMemberId = session.user.id;
+  let isOnBehalf = false;
+
+  if (parsed.data.forMemberId) {
+    if (session.user.role !== "ADMIN") {
+      return NextResponse.json({ error: "Only admins can book on behalf of another member" }, { status: 403 });
+    }
+    if (parsed.data.forMemberId === session.user.id) {
+      return NextResponse.json({ error: "Admins cannot book for themselves — use your personal member account" }, { status: 400 });
+    }
+    const targetMember = await prisma.member.findUnique({
+      where: { id: parsed.data.forMemberId },
+      select: { active: true },
+    });
+    if (!targetMember?.active) {
+      return NextResponse.json({ error: "Target member not found or inactive" }, { status: 400 });
+    }
+    effectiveMemberId = parsed.data.forMemberId;
+    isOnBehalf = true;
+  }
+
+  // Verify the effective member (booking owner) is still active
+  if (!isOnBehalf) {
+    const member = await prisma.member.findUnique({
+      where: { id: session.user.id },
+      select: { active: true, emailVerified: true, xeroContactId: true },
+    });
+    if (!member?.active) {
+      return NextResponse.json(
+        { error: "Account is deactivated" },
+        { status: 403 }
+      );
+    }
+
+    // Gate: email must be verified before booking
+    if (!member?.emailVerified) {
+      return NextResponse.json({ error: "Email not verified" }, { status: 403 });
+    }
+
+    // Gate: member must be linked to a Xero contact
+    if (!member?.xeroContactId && session.user.role !== "ADMIN") {
+      return NextResponse.json(
+        {
+          error: "Your account is not yet linked to Xero. Please contact the club administrator to link your membership before booking.",
+          code: "XERO_CONTACT_REQUIRED",
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  const { checkIn, checkOut, guests, notes, promoCode: promoCodeStr, draft, waitlist, expectedArrivalTime } = parsed.data;
 
   if (checkOut <= checkIn) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
@@ -103,22 +131,25 @@ export async function POST(request: NextRequest) {
   const guestMemberIds = guests.map((g) => g.memberId).filter(Boolean) as string[];
   if (guestMemberIds.length > 0) {
     // Authorization: memberIds must be self or family group members
-    const allowedIds = new Set<string>([session.user.id]);
-    const familyLinks = await prisma.familyGroupMember.findMany({
-      where: { memberId: session.user.id },
-      select: { familyGroupId: true },
-    });
-    if (familyLinks.length > 0) {
-      const groupIds = familyLinks.map((l) => l.familyGroupId);
-      const familyMembers = await prisma.familyGroupMember.findMany({
-        where: { familyGroupId: { in: groupIds } },
-        select: { memberId: true },
+    // Admin booking on-behalf skips this restriction — admin can add any member as guest
+    if (!isOnBehalf) {
+      const allowedIds = new Set<string>([session.user.id]);
+      const familyLinks = await prisma.familyGroupMember.findMany({
+        where: { memberId: session.user.id },
+        select: { familyGroupId: true },
       });
-      for (const fm of familyMembers) allowedIds.add(fm.memberId);
-    }
-    for (const id of guestMemberIds) {
-      if (!allowedIds.has(id)) {
-        return NextResponse.json({ error: "Invalid guest member reference" }, { status: 403 });
+      if (familyLinks.length > 0) {
+        const groupIds = familyLinks.map((l) => l.familyGroupId);
+        const familyMembers = await prisma.familyGroupMember.findMany({
+          where: { familyGroupId: { in: groupIds } },
+          select: { memberId: true },
+        });
+        for (const fm of familyMembers) allowedIds.add(fm.memberId);
+      }
+      for (const id of guestMemberIds) {
+        if (!allowedIds.has(id)) {
+          return NextResponse.json({ error: "Invalid guest member reference" }, { status: 403 });
+        }
       }
     }
 
@@ -155,11 +186,12 @@ export async function POST(request: NextRequest) {
   }
 
   // Issue 10: Subscription check — non-admins must have a PAID subscription for the check-in season
+  // Admin booking on-behalf skips this (admin is trusted to make this decision)
   if (session.user.role !== "ADMIN") {
     const seasonYear = getSeasonYear(checkIn);
     const paidSub = await prisma.memberSubscription.findFirst({
       where: {
-        memberId: session.user.id,
+        memberId: effectiveMemberId,
         seasonYear,
         status: "PAID",
       },
@@ -167,7 +199,7 @@ export async function POST(request: NextRequest) {
     if (!paidSub) {
       // Fetch subscription to get invoice URL for member payment
       const subscription = await prisma.memberSubscription.findFirst({
-        where: { memberId: session.user.id, seasonYear },
+        where: { memberId: effectiveMemberId, seasonYear },
         orderBy: { updatedAt: "desc" },
       });
       const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
@@ -241,12 +273,12 @@ export async function POST(request: NextRequest) {
       let memberRedemptionCount = 0;
       if (promoCode?.singleUse) {
         memberRedemptionCount = await prisma.promoRedemption.count({
-          where: { promoCodeId: promoCode.id, memberId: session.user.id },
+          where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
         });
       }
       const validationError = validatePromoCodeRules(
         promoCode,
-        { memberId: session.user.id },
+        { memberId: effectiveMemberId },
         new Date(),
         memberRedemptionCount
       );
@@ -272,7 +304,7 @@ export async function POST(request: NextRequest) {
 
     const newBooking = await prisma.booking.create({
       data: {
-        memberId: session.user.id,
+        memberId: effectiveMemberId,
         checkIn,
         checkOut,
         status: BookingStatus.DRAFT,
@@ -284,6 +316,7 @@ export async function POST(request: NextRequest) {
         draftExpiresAt,
         notes: notes || null,
         expectedArrivalTime: expectedArrivalTime || null,
+        createdById: isOnBehalf ? session.user.id : null,
         guests: {
           create: guests.map((g, i) => ({
             firstName: g.firstName,
@@ -303,9 +336,18 @@ export async function POST(request: NextRequest) {
         prisma,
         promoCodeRecord.id,
         newBooking.id,
-        session.user.id,
+        effectiveMemberId,
         discountCents
       );
+    }
+
+    if (isOnBehalf) {
+      logAudit({
+        action: "booking.created_on_behalf",
+        memberId: session.user.id,
+        targetId: newBooking.id,
+        details: `Admin created draft booking on behalf of member ${effectiveMemberId}`,
+      });
     }
 
     return NextResponse.json(newBooking, { status: 201 });
@@ -344,7 +386,8 @@ export async function POST(request: NextRequest) {
         include: { guests: true },
       });
 
-      // Calculate current max occupancy across all nights
+      // Calculate per-night occupancy
+      const nightDetails: Array<{ date: string; occupiedBeds: number; availableBeds: number }> = [];
       let capacityExceeded = false;
       for (const night of nights) {
         const nightTime = night.getTime();
@@ -358,15 +401,20 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        nightDetails.push({
+          date: night.toISOString().split("T")[0],
+          occupiedBeds,
+          availableBeds: LODGE_CAPACITY - occupiedBeds,
+        });
+
         if (occupiedBeds + guests.length > LODGE_CAPACITY) {
           capacityExceeded = true;
-          break;
         }
       }
 
       if (capacityExceeded) {
         // If this is a member-only booking (CONFIRMED), try bumping PENDING non-member bookings
-        if (allMembers || daysUntilCheckIn <= 7) {
+        if (allMembers || daysUntilCheckIn <= holdDays) {
           // Only member-only bookings can trigger bumping
           if (!allMembers) {
             // Non-member booking within 7 days can't bump anyone
@@ -383,17 +431,24 @@ export async function POST(request: NextRequest) {
           );
 
           if (!bumpResult.capacityRestored) {
-            throw new Error(
-              "Not enough beds available even after checking pending bookings. The lodge is fully booked by members for your selected dates."
-            );
+            // Even bumping couldn't free enough space — offer waitlist
+            const fullNights = nightDetails.filter((n) => n.availableBeds < guests.length);
+            throw Object.assign(new Error("CAPACITY_EXCEEDED"), {
+              code: "CAPACITY_EXCEEDED",
+              fullNights: fullNights.map((n) => n.date),
+              canWaitlist: true,
+            });
           }
 
           bumpedBookingIds = bumpResult.bumpedBookingIds;
         } else {
-          // This is a PENDING (non-member) booking and capacity is full
-          throw new Error(
-            "Not enough beds available for your dates."
-          );
+          // Capacity is full — offer waitlist
+          const fullNights = nightDetails.filter((n) => n.availableBeds < guests.length);
+          throw Object.assign(new Error("CAPACITY_EXCEEDED"), {
+            code: "CAPACITY_EXCEEDED",
+            fullNights: fullNights.map((n) => n.date),
+            canWaitlist: true,
+          });
         }
       }
 
@@ -437,20 +492,20 @@ export async function POST(request: NextRequest) {
         `;
         const promoCode = lockedRows.length > 0 ? lockedRows[0] : null;
 
-        // Check single-use
+        // Check single-use (against effective member, not admin)
         let memberRedemptionCount = 0;
         if (promoCode?.singleUse) {
           memberRedemptionCount = await tx.promoRedemption.count({
             where: {
               promoCodeId: promoCode.id,
-              memberId: session.user.id,
+              memberId: effectiveMemberId,
             },
           });
         }
 
         const validationError = validatePromoCodeRules(
           promoCode,
-          { memberId: session.user.id },
+          { memberId: effectiveMemberId },
           new Date(),
           memberRedemptionCount
         );
@@ -482,7 +537,7 @@ export async function POST(request: NextRequest) {
       let creditAppliedCents = 0;
       const requestedCredit = parsed.data.applyCreditCents || 0;
       if (requestedCredit > 0 && status === BookingStatus.CONFIRMED) {
-        const creditBalance = await getMemberCreditBalance(session.user.id, tx);
+        const creditBalance = await getMemberCreditBalance(effectiveMemberId, tx);
         if (requestedCredit > creditBalance) {
           throw new Error(`Insufficient credit: ${creditBalance} cents available, ${requestedCredit} requested`);
         }
@@ -500,7 +555,7 @@ export async function POST(request: NextRequest) {
 
       const newBooking = await tx.booking.create({
         data: {
-          memberId: session.user.id,
+          memberId: effectiveMemberId,
           checkIn,
           checkOut,
           status,
@@ -511,6 +566,7 @@ export async function POST(request: NextRequest) {
           nonMemberHoldUntil,
           notes: notes || null,
           expectedArrivalTime: expectedArrivalTime || null,
+          createdById: isOnBehalf ? session.user.id : null,
           guests: {
             create: guests.map((g, i) => ({
               firstName: g.firstName,
@@ -531,7 +587,7 @@ export async function POST(request: NextRequest) {
           tx,
           promoCodeRecord.id,
           newBooking.id,
-          session.user.id,
+          effectiveMemberId,
           discountCents
         );
       }
@@ -539,7 +595,7 @@ export async function POST(request: NextRequest) {
       // Apply credit deduction within the transaction
       if (creditAppliedCents > 0) {
         await applyCreditToBooking(
-          session.user.id,
+          effectiveMemberId,
           creditAppliedCents,
           newBooking.id,
           tx
@@ -570,9 +626,19 @@ export async function POST(request: NextRequest) {
       return newBooking;
     });
 
+    // Audit log for on-behalf bookings
+    if (isOnBehalf) {
+      logAudit({
+        action: "booking.created_on_behalf",
+        memberId: session.user.id,
+        targetId: booking.id,
+        details: `Admin created booking on behalf of member ${effectiveMemberId}`,
+      });
+    }
+
     // Send bumped notification emails AFTER transaction commits
     if (bumpedBookingIds.length > 0) {
-      const triggeringMember = await prisma.member.findUnique({ where: { id: session.user.id } });
+      const triggeringMember = await prisma.member.findUnique({ where: { id: effectiveMemberId } });
       const triggeringName = triggeringMember
         ? `${triggeringMember.firstName} ${triggeringMember.lastName}`
         : "Unknown";
@@ -616,7 +682,7 @@ export async function POST(request: NextRequest) {
 
     // Send pending booking email if applicable
     if (booking.status === BookingStatus.PENDING && booking.nonMemberHoldUntil) {
-      const member = await prisma.member.findUnique({ where: { id: session.user.id } });
+      const member = await prisma.member.findUnique({ where: { id: effectiveMemberId } });
       if (member) {
         sendBookingPendingEmail(
           member.email,
@@ -630,7 +696,7 @@ export async function POST(request: NextRequest) {
     }
 
     // N-02: Send admin alert for new booking (fire-and-forget)
-    const bookingMember = await prisma.member.findUnique({ where: { id: session.user.id } });
+    const bookingMember = await prisma.member.findUnique({ where: { id: effectiveMemberId } });
     if (bookingMember) {
       sendAdminNewBookingAlert({
         memberName: `${bookingMember.firstName} ${bookingMember.lastName}`,
@@ -643,8 +709,199 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(booking, { status: 201 });
-  } catch (err) {
+  } catch (err: unknown) {
+    // Handle capacity exceeded — offer waitlist or create waitlisted booking
+    const capErr = err as { code?: string; fullNights?: string[]; canWaitlist?: boolean };
+    if (capErr.code === "CAPACITY_EXCEEDED" && capErr.canWaitlist) {
+      if (!waitlist) {
+        // Return 409 so the UI can offer the waitlist option
+        return NextResponse.json(
+          {
+            error: "The lodge is fully booked on some of your requested dates.",
+            code: "CAPACITY_EXCEEDED",
+            fullNights: capErr.fullNights,
+            canWaitlist: true,
+          },
+          { status: 409 }
+        );
+      }
+
+      // Create a WAITLISTED booking
+      try {
+        return await createWaitlistedBooking({
+          effectiveMemberId,
+          checkIn,
+          checkOut,
+          guests,
+          notes,
+          promoCodeStr,
+          expectedArrivalTime,
+          isOnBehalf,
+          sessionUserId: session!.user.id,
+        });
+      } catch (waitlistErr) {
+        logger.error({ err: waitlistErr }, "Failed to create waitlisted booking");
+        return NextResponse.json({ error: "Failed to create waitlisted booking" }, { status: 500 });
+      }
+    }
+
     const message = err instanceof Error ? err.message : "Failed to create booking";
     return NextResponse.json({ error: message }, { status: 400 });
   }
+}
+
+/**
+ * Create a WAITLISTED booking when capacity is full and the user opts in.
+ */
+async function createWaitlistedBooking(params: {
+  effectiveMemberId: string;
+  checkIn: Date;
+  checkOut: Date;
+  guests: Array<{ firstName: string; lastName: string; ageTier: string; isMember: boolean; memberId?: string }>;
+  notes?: string;
+  promoCodeStr?: string;
+  expectedArrivalTime?: string;
+  isOnBehalf: boolean;
+  sessionUserId: string;
+}) {
+  const { effectiveMemberId, checkIn, checkOut, guests, notes, promoCodeStr, expectedArrivalTime, isOnBehalf, sessionUserId } = params;
+
+  // Calculate pricing (locked in at waitlist time)
+  const seasons = await prisma.season.findMany({
+    where: { active: true, startDate: { lte: checkOut }, endDate: { gte: checkIn } },
+    include: { rates: true },
+  });
+
+  const seasonData: SeasonRateData[] = seasons.map((s) => ({
+    seasonId: s.id,
+    startDate: s.startDate,
+    endDate: s.endDate,
+    rates: s.rates.map((r) => ({
+      ageTier: r.ageTier,
+      isMember: r.isMember,
+      pricePerNightCents: r.pricePerNightCents,
+    })),
+  }));
+
+  const guestInputs = guests.map((g) => ({
+    ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+    isMember: g.isMember,
+  }));
+
+  const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData);
+
+  let discountCents = 0;
+  let promoCodeRecord: { id: string; type: string; valueCents: number | null; percentOff: number | null; freeNights: number | null } | null = null;
+
+  if (promoCodeStr) {
+    const normalizedCode = promoCodeStr.toUpperCase().trim();
+    const promoCode = await prisma.promoCode.findUnique({ where: { code: normalizedCode } });
+    let memberRedemptionCount = 0;
+    if (promoCode?.singleUse) {
+      memberRedemptionCount = await prisma.promoRedemption.count({
+        where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
+      });
+    }
+    const validationError = validatePromoCodeRules(
+      promoCode,
+      { memberId: effectiveMemberId },
+      new Date(),
+      memberRedemptionCount
+    );
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 });
+    }
+    const allPerNightRates = price.guests.flatMap((g) => g.perNightCents);
+    discountCents = calculatePromoDiscount(
+      {
+        type: promoCode!.type,
+        valueCents: promoCode!.valueCents,
+        percentOff: promoCode!.percentOff,
+        freeNights: promoCode!.freeNights,
+      },
+      price.totalPriceCents,
+      allPerNightRates
+    );
+    promoCodeRecord = promoCode!;
+  }
+
+  const finalPriceCents = price.totalPriceCents - discountCents;
+  const hasNonMembers = guests.some((g) => !g.isMember);
+
+  const newBooking = await prisma.booking.create({
+    data: {
+      memberId: effectiveMemberId,
+      checkIn,
+      checkOut,
+      status: BookingStatus.WAITLISTED,
+      totalPriceCents: price.totalPriceCents,
+      discountCents,
+      finalPriceCents,
+      hasNonMembers,
+      nonMemberHoldUntil: null,
+      notes: notes || null,
+      expectedArrivalTime: expectedArrivalTime || null,
+      createdById: isOnBehalf ? sessionUserId : null,
+      guests: {
+        create: guests.map((g, i) => ({
+          firstName: g.firstName,
+          lastName: g.lastName,
+          ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+          isMember: g.isMember,
+          memberId: g.memberId || null,
+          priceCents: price.guests[i].priceCents,
+        })),
+      },
+    },
+    include: { guests: true },
+  });
+
+  if (promoCodeRecord && discountCents > 0) {
+    await redeemPromoCode(
+      prisma,
+      promoCodeRecord.id,
+      newBooking.id,
+      effectiveMemberId,
+      discountCents
+    );
+  }
+
+  // Calculate and save waitlist position
+  const position = await getWaitlistPosition(newBooking.id);
+  await prisma.booking.update({
+    where: { id: newBooking.id },
+    data: { waitlistPosition: position },
+  });
+  newBooking.waitlistPosition = position;
+
+  // Send emails (fire-and-forget)
+  const member = await prisma.member.findUnique({ where: { id: effectiveMemberId } });
+  if (member) {
+    sendWaitlistConfirmationEmail(
+      member.email,
+      member.firstName,
+      checkIn,
+      checkOut,
+      newBooking.guests.length,
+      position
+    ).catch((err) => logger.error({ err }, "Failed to send waitlist confirmation email"));
+
+    sendAdminNewBookingAlert({
+      memberName: `${member.firstName} ${member.lastName}`,
+      checkIn: newBooking.checkIn,
+      checkOut: newBooking.checkOut,
+      guestCount: newBooking.guests.length,
+      totalCents: newBooking.finalPriceCents,
+      status: newBooking.status,
+    }).catch((err) => logger.error({ err }, "Failed to send admin alert for waitlisted booking"));
+  }
+
+  logAudit({
+    action: "booking.waitlisted",
+    memberId: effectiveMemberId,
+    targetId: newBooking.id,
+    details: `Booking added to waitlist at position #${position}`,
+  });
+
+  return NextResponse.json(newBooking, { status: 201 });
 }

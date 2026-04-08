@@ -36,6 +36,9 @@ export default async function BookingDetailPage({
       modifications: {
         orderBy: { createdAt: "desc" },
       },
+      createdBy: {
+        select: { firstName: true, lastName: true },
+      },
     },
   });
 
@@ -92,6 +95,12 @@ export default async function BookingDetailPage({
       </div>
 
       <BookingEditor booking={editorData} canModify={canModify} />
+
+      {booking.createdBy && (
+        <div className="rounded-md bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-600">
+          Created by <strong>{booking.createdBy.firstName} {booking.createdBy.lastName}</strong> (admin) on behalf of this member
+        </div>
+      )}
 
       {/* Expected Arrival Time */}
       <Card>

@@ -18,6 +18,7 @@ const validateSchema = z.object({
       })
     )
     .min(1),
+  forMemberId: z.string().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -42,25 +43,30 @@ export async function POST(req: NextRequest) {
   const { code, checkIn, checkOut, guests } = parsed.data;
   const normalizedCode = code.toUpperCase().trim();
 
+  // Use target member for admin on-behalf bookings
+  const effectiveMemberId = (parsed.data.forMemberId && session.user.role === "ADMIN")
+    ? parsed.data.forMemberId
+    : session.user.id;
+
   // Look up the promo code
   const promoCode = await prisma.promoCode.findUnique({
     where: { code: normalizedCode },
   });
 
-  // Check single-use
+  // Check single-use against effective member
   let memberRedemptionCount = 0;
   if (promoCode?.singleUse) {
     memberRedemptionCount = await prisma.promoRedemption.count({
       where: {
         promoCodeId: promoCode.id,
-        memberId: session.user.id,
+        memberId: effectiveMemberId,
       },
     });
   }
 
   const validationError = validatePromoCodeRules(
     promoCode,
-    { memberId: session.user.id },
+    { memberId: effectiveMemberId },
     new Date(),
     memberRedemptionCount
   );
