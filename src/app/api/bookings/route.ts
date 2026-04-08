@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   // Verify member is still active (session JWT may outlive deactivation)
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: { active: true, emailVerified: true },
+    select: { active: true, emailVerified: true, xeroContactId: true },
   });
   if (!member?.active) {
     return NextResponse.json(
@@ -68,6 +68,17 @@ export async function POST(request: NextRequest) {
   // Gate: email must be verified before booking
   if (!member?.emailVerified) {
     return NextResponse.json({ error: "Email not verified" }, { status: 403 });
+  }
+
+  // Gate: member must be linked to a Xero contact
+  if (!member?.xeroContactId && session.user.role !== "ADMIN") {
+    return NextResponse.json(
+      {
+        error: "Your account is not yet linked to Xero. Please contact the club administrator to link your membership before booking.",
+        code: "XERO_CONTACT_REQUIRED",
+      },
+      { status: 403 }
+    );
   }
 
   const body = await request.json();
@@ -84,6 +95,55 @@ export async function POST(request: NextRequest) {
 
   if (checkOut <= checkIn) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
+  }
+
+  // Validate and verify guest memberIds and pricing attributes
+  const guestMemberIds = guests.map((g) => g.memberId).filter(Boolean) as string[];
+  if (guestMemberIds.length > 0) {
+    // Authorization: memberIds must be self or family group members
+    const allowedIds = new Set<string>([session.user.id]);
+    const familyLinks = await prisma.familyGroupMember.findMany({
+      where: { memberId: session.user.id },
+      select: { familyGroupId: true },
+    });
+    if (familyLinks.length > 0) {
+      const groupIds = familyLinks.map((l) => l.familyGroupId);
+      const familyMembers = await prisma.familyGroupMember.findMany({
+        where: { familyGroupId: { in: groupIds } },
+        select: { memberId: true },
+      });
+      for (const fm of familyMembers) allowedIds.add(fm.memberId);
+    }
+    for (const id of guestMemberIds) {
+      if (!allowedIds.has(id)) {
+        return NextResponse.json({ error: "Invalid guest member reference" }, { status: 403 });
+      }
+    }
+
+    // Verify isMember and ageTier from DB for linked members (don't trust client)
+    const linkedMembers = await prisma.member.findMany({
+      where: { id: { in: guestMemberIds }, active: true },
+      select: { id: true, ageTier: true },
+    });
+    const memberMap = new Map(linkedMembers.map((m) => [m.id, m]));
+    for (const g of guests) {
+      if (g.memberId) {
+        const dbMember = memberMap.get(g.memberId);
+        if (!dbMember) {
+          return NextResponse.json({ error: "Linked member is inactive or not found" }, { status: 400 });
+        }
+        g.isMember = true;
+        g.ageTier = dbMember.ageTier;
+      } else {
+        // Guests without a memberId cannot claim member pricing
+        g.isMember = false;
+      }
+    }
+  } else {
+    // No linked members — enforce isMember=false for all guests
+    for (const g of guests) {
+      g.isMember = false;
+    }
   }
 
   const today = new Date();
@@ -248,9 +308,7 @@ export async function POST(request: NextRequest) {
     const booking = await prisma.$transaction(async (tx) => {
       // Advisory lock to serialize all booking creation and prevent double-booking.
       // Uses a fixed key so overlapping date ranges are protected.
-      await tx.$executeRawUnsafe(
-        `SELECT pg_advisory_xact_lock(1)`
-      );
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
       // Check capacity
       const nights = eachDayOfInterval({

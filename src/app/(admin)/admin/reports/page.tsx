@@ -188,8 +188,10 @@ export default function ReportsPage() {
     try {
       const { generateReportPDF } = await import("@/lib/report-pdf");
       await generateReportPDF(reportRef.current, { from, to });
-    } catch {
-      // silent — PDF generation may fail if html2canvas has issues
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+      // Fallback: use browser print dialog
+      window.print();
     } finally {
       setGeneratingPDF(false);
     }

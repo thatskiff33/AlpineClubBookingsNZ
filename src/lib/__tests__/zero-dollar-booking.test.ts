@@ -39,11 +39,11 @@ const mockBookingUpdate = vi.fn();
 const mockBookingUpdateMany = vi.fn();
 const mockPaymentUpdate = vi.fn();
 const mockPaymentCreate = vi.fn();
-const mockExecuteRawUnsafe = vi.fn().mockResolvedValue(undefined);
+const mockExecuteRaw = vi.fn().mockResolvedValue(undefined);
 
 // Shared tx mock used by booking route
 const mockTx = {
-  $executeRawUnsafe: mockExecuteRawUnsafe,
+  $executeRaw: mockExecuteRaw,
   booking: {
     findMany: mockTxBookingFindMany,
     create: mockTxBookingCreate,
@@ -56,8 +56,12 @@ const mockTx = {
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => mockPrismaTransaction(fn),
-    member: { findUnique: (...args: unknown[]) => mockMemberFindUnique(...args) },
+    member: {
+      findUnique: (...args: unknown[]) => mockMemberFindUnique(...args),
+      findMany: vi.fn().mockResolvedValue([{ id: "m1", ageTier: "ADULT" }]),
+    },
     memberSubscription: { findFirst: vi.fn().mockResolvedValue({ id: "sub-1", status: "PAID" }) },
+    familyGroupMember: { findMany: vi.fn().mockResolvedValue([]) },
     booking: {
       findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
       findMany: (...args: unknown[]) => mockBookingFindMany(...args),
@@ -175,6 +179,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       lastName: "Smith",
       active: true,
       emailVerified: true,
+      xeroContactId: "xero-contact-1",
     });
 
     // Transaction calls callback with tx

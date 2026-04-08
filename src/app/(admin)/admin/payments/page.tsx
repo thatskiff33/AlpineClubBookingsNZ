@@ -22,9 +22,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { DollarSign, CreditCard, TrendingUp, BarChart2, ExternalLink } from "lucide-react";
+import { DollarSign, CreditCard, TrendingUp, BarChart2, ExternalLink, FileText } from "lucide-react";
 import { paymentStatusClass } from "@/lib/status-colors";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 function formatCents(cents: number): string {
   return "$" + (cents / 100).toFixed(2);
@@ -49,6 +50,8 @@ interface PaymentRow {
 }
 
 export default function PaymentsPage() {
+  const [generatingInvoice, setGeneratingInvoice] = useState<string | null>(null);
+  const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [status, setStatus] = useState("all");
   const [from, setFrom] = useState(format(subMonths(new Date(), 3), "yyyy-MM-dd"));
   const [to, setTo] = useState(format(new Date(), "yyyy-MM-dd"));
@@ -74,6 +77,31 @@ export default function PaymentsPage() {
   }, [status, from, to, page, pageSize]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  async function handleGenerateInvoice(paymentId: string) {
+    setGeneratingInvoice(paymentId);
+    setInvoiceError(null);
+    try {
+      const res = await fetch(`/api/admin/payments/${paymentId}/generate-invoice`, { method: "POST" });
+      if (res.ok) {
+        const result = await res.json();
+        setData((prev) =>
+          prev.map((p) =>
+            p.id === paymentId
+              ? { ...p, xeroInvoiceId: result.xeroInvoiceId, xeroInvoiceNumber: result.xeroInvoiceNumber }
+              : p
+          )
+        );
+      } else {
+        const err = await res.json();
+        setInvoiceError(err.error || "Failed to generate invoice");
+      }
+    } catch {
+      setInvoiceError("Failed to generate invoice");
+    } finally {
+      setGeneratingInvoice(null);
+    }
+  }
 
   const totalPages = Math.ceil(total / pageSize);
   const successRate = summary.count > 0
@@ -112,6 +140,13 @@ export default function PaymentsPage() {
           <Input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} className="w-40" />
         </div>
       </div>
+
+      {invoiceError && (
+        <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          {invoiceError}
+          <button onClick={() => setInvoiceError(null)} className="ml-2 underline">Dismiss</button>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Total Revenue</CardTitle><DollarSign className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold">{formatCents(summary.totalRevenueCents)}</div></CardContent></Card>
@@ -168,6 +203,15 @@ export default function PaymentsPage() {
                           {p.xeroInvoiceNumber || p.xeroInvoiceId.slice(0, 8)}
                           <ExternalLink className="h-3 w-3" />
                         </a>
+                      ) : p.status === "SUCCEEDED" ? (
+                        <button
+                          onClick={() => handleGenerateInvoice(p.id)}
+                          disabled={generatingInvoice === p.id}
+                          className="text-xs text-orange-600 hover:text-orange-800 hover:underline inline-flex items-center gap-1 disabled:opacity-50"
+                        >
+                          <FileText className="h-3 w-3" />
+                          {generatingInvoice === p.id ? "Creating..." : "Generate Invoice"}
+                        </button>
                       ) : "—"}
                     </TableCell>
                     <TableCell>{p.refundedAmountCents > 0 ? formatCents(p.refundedAmountCents) : "—"}</TableCell>

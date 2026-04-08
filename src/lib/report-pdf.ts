@@ -6,11 +6,15 @@ export async function generateReportPDF(
   dateRange: { from: string; to: string }
 ): Promise<void> {
   // Capture the report content area as a high-res canvas
+  // Use foreignObjectRendering: false to avoid SVG/foreignObject issues with Recharts
   const canvas = await html2canvas(reportElement, {
     scale: 2,
     useCORS: true,
     logging: false,
     backgroundColor: "#ffffff",
+    foreignObjectRendering: false,
+    allowTaint: true,
+    removeContainer: true,
   });
 
   // A4: 210mm x 297mm

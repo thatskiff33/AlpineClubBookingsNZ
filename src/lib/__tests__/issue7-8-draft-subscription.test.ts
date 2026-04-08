@@ -7,6 +7,7 @@ import { NextRequest } from "next/server";
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockTx = {
+  $executeRaw: vi.fn().mockResolvedValue(undefined),
   $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
   booking: {
     findMany: vi.fn(),
@@ -44,9 +45,13 @@ vi.mock("@/lib/prisma", () => ({
     },
     member: {
       findUnique: vi.fn(),
+      findMany: vi.fn(),
     },
     memberSubscription: {
       findFirst: vi.fn(),
+    },
+    familyGroupMember: {
+      findMany: vi.fn(),
     },
     season: {
       findMany: vi.fn(),
@@ -136,8 +141,9 @@ const mockPrisma = prisma as unknown as {
     deleteMany: ReturnType<typeof vi.fn>;
   };
   payment: { create: ReturnType<typeof vi.fn>; upsert: ReturnType<typeof vi.fn> };
-  member: { findUnique: ReturnType<typeof vi.fn> };
+  member: { findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
   memberSubscription: { findFirst: ReturnType<typeof vi.fn> };
+  familyGroupMember: { findMany: ReturnType<typeof vi.fn> };
   season: { findMany: ReturnType<typeof vi.fn> };
   promoCode: { findUnique: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
   promoRedemption: { count: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
@@ -174,7 +180,10 @@ beforeEach(() => {
   vi.clearAllMocks();
 
   // Active, verified member by default
-  mockPrisma.member.findUnique.mockResolvedValue({ active: true, emailVerified: true });
+  mockPrisma.member.findUnique.mockResolvedValue({ active: true, emailVerified: true, xeroContactId: "xero-contact-1" });
+  // Guest memberId validation mocks
+  mockPrisma.familyGroupMember.findMany.mockResolvedValue([]);
+  mockPrisma.member.findMany.mockResolvedValue([{ id: "member-1", ageTier: "ADULT" }]);
   // Paid subscription by default
   mockPrisma.memberSubscription.findFirst.mockResolvedValue({ id: "sub-1", status: "PAID" });
   // No seasons (returns empty = price will be 0 — but pricing is mocked so doesn't matter)
@@ -185,7 +194,7 @@ beforeEach(() => {
   });
 
   // Default transaction sub-calls
-  mockTx.$executeRawUnsafe.mockResolvedValue(undefined);
+  mockTx.$executeRaw.mockResolvedValue(undefined);
   mockTx.booking.findMany.mockResolvedValue([]);
   mockTx.booking.create.mockResolvedValue({
     id: "booking-1",

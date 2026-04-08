@@ -15,6 +15,10 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
+vi.mock("@/lib/capacity", () => ({
+  getMonthAvailability: vi.fn().mockResolvedValue(new Map()),
+  LODGE_CAPACITY: 29,
+}));
 
 // ---------------------------------------------------------------------------
 // Mock auth
