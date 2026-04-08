@@ -175,6 +175,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       lastName: "Smith",
       active: true,
       emailVerified: true,
+      xeroContactId: "xero-contact-1",
     });
 
     // Transaction calls callback with tx

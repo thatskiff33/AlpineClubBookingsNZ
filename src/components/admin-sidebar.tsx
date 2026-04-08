@@ -38,32 +38,62 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
-const navItems = [
-  { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/admin/members", label: "Members", icon: Users },
-  { href: "/admin/family-groups", label: "Family Groups", icon: Users },
-  { href: "/admin/family-suggestions", label: "Family Suggestions", icon: Users },
-  { href: "/admin/seasons", label: "Hut Fees & Seasons", icon: CalendarRange },
-  { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
-  { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
-  { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
-  { href: "/admin/chores", label: "Chores", icon: CheckSquare },
-  { href: "/admin/roster", label: "Roster", icon: ClipboardList },
-  { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
+interface NavSection {
+  label?: string;
+  items: Array<{ href: string; label: string; icon: typeof LayoutDashboard }>;
+}
+
+const navSections: NavSection[] = [
   {
-    href: "/admin/cancellation-policy",
-    label: "Booking Policies",
-    icon: XCircle,
+    items: [
+      { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    ],
   },
-  { href: "/admin/payments", label: "Payments", icon: CreditCard },
-  { href: "/admin/audit-log", label: "Audit Log", icon: Shield },
-  { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
-  { href: "/admin/deletion-requests", label: "Deletion Requests", icon: Trash2 },
-  { href: "/admin/communications", label: "Communications", icon: Mail },
-  { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
-  { href: "/admin/xero", label: "Xero", icon: RefreshCw },
-  { href: "/admin/reports", label: "Reports", icon: BarChart2 },
-  { href: "/admin/health", label: "System Health", icon: Activity },
+  {
+    label: "Bookings & Payments",
+    items: [
+      { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
+      { href: "/admin/payments", label: "Payments", icon: CreditCard },
+      { href: "/admin/reports", label: "Reports", icon: BarChart2 },
+    ],
+  },
+  {
+    label: "Lodge Operations",
+    items: [
+      { href: "/admin/roster", label: "Roster", icon: ClipboardList },
+      { href: "/admin/chores", label: "Chores", icon: CheckSquare },
+      { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
+      { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
+    ],
+  },
+  {
+    label: "Members",
+    items: [
+      { href: "/admin/members", label: "Members", icon: Users },
+      { href: "/admin/family-groups", label: "Family Groups", icon: Users },
+      { href: "/admin/family-suggestions", label: "Family Suggestions", icon: Users },
+      { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
+      { href: "/admin/communications", label: "Communications", icon: Mail },
+    ],
+  },
+  {
+    label: "Configuration",
+    items: [
+      { href: "/admin/seasons", label: "Hut Fees & Seasons", icon: CalendarRange },
+      { href: "/admin/promo-codes", label: "Promo Codes", icon: Tag },
+      { href: "/admin/cancellation-policy", label: "Booking Policies", icon: XCircle },
+      { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
+      { href: "/admin/xero", label: "Xero", icon: RefreshCw },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      { href: "/admin/audit-log", label: "Audit Log", icon: Shield },
+      { href: "/admin/deletion-requests", label: "Deletion Requests", icon: Trash2 },
+      { href: "/admin/health", label: "System Health", icon: Activity },
+    ],
+  },
 ];
 
 function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
@@ -80,34 +110,43 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
         Member Dashboard
       </Link>
       <div className="my-1.5 border-t border-slate-100" />
-      {navItems.map(({ href, label, icon: Icon }) => {
-        const active =
-          href === "/admin/dashboard"
-            ? pathname === "/admin/dashboard"
-            : pathname.startsWith(href);
+      {navSections.map((section, sIdx) => (
+        <div key={sIdx}>
+          {section.label && (
+            <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+              {section.label}
+            </p>
+          )}
+          {section.items.map(({ href, label, icon: Icon }) => {
+            const active =
+              href === "/admin/dashboard"
+                ? pathname === "/admin/dashboard"
+                : pathname.startsWith(href);
 
-        return (
-          <Link
-            key={href}
-            href={href}
-            onClick={onNavigate}
-            className={cn(
-              "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
-              active
-                ? "bg-blue-50 text-blue-700"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-            )}
-          >
-            <Icon
-              className={cn(
-                "h-4 w-4 shrink-0",
-                active ? "text-blue-600" : "text-slate-400"
-              )}
-            />
-            {label}
-          </Link>
-        );
-      })}
+            return (
+              <Link
+                key={href}
+                href={href}
+                onClick={onNavigate}
+                className={cn(
+                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  active
+                    ? "bg-blue-50 text-blue-700"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                )}
+              >
+                <Icon
+                  className={cn(
+                    "h-4 w-4 shrink-0",
+                    active ? "text-blue-600" : "text-slate-400"
+                  )}
+                />
+                {label}
+              </Link>
+            );
+          })}
+        </div>
+      ))}
     </nav>
   );
 }

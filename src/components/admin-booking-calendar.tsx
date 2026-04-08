@@ -55,6 +55,7 @@ export function AdminBookingCalendar() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth()); // 0-indexed
   const [bookings, setBookings] = useState<CalendarBooking[]>([]);
+  const [availability, setAvailability] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
 
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
@@ -68,6 +69,7 @@ export function AdminBookingCalendar() {
       if (res.ok) {
         const data = await res.json();
         setBookings(data.bookings ?? []);
+        setAvailability(data.availability ?? {});
       }
     } catch {
       // silent
@@ -182,23 +184,36 @@ export function AdminBookingCalendar() {
             const isValidDay = dayNum >= 1 && dayNum <= daysInMonth;
             const dayStr = isValidDay ? `${year}-${String(month + 1).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}` : "";
             const isToday = dayStr === todayStr;
+            const beds = isValidDay ? availability[dayStr] : undefined;
+            const bedsBg = beds === undefined ? "" : beds === 0 ? "bg-red-50" : beds <= 5 ? "bg-red-50/50" : beds <= 15 ? "bg-amber-50/50" : "";
             return (
               <div
                 key={i}
                 className={`border-r border-b last:border-r-0 min-h-[28px] relative ${
-                  isValidDay ? "" : "bg-slate-50"
+                  isValidDay ? bedsBg : "bg-slate-50"
                 }`}
               >
                 {isValidDay && (
-                  <span
-                    className={`absolute top-0.5 left-1 text-[10px] leading-none ${
-                      isToday
-                        ? "font-bold text-blue-600 bg-blue-100 rounded-full px-1"
-                        : "text-slate-400"
-                    }`}
-                  >
-                    {dayNum}
-                  </span>
+                  <>
+                    <span
+                      className={`absolute top-0.5 left-1 text-[10px] leading-none ${
+                        isToday
+                          ? "font-bold text-blue-600 bg-blue-100 rounded-full px-1"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      {dayNum}
+                    </span>
+                    {beds !== undefined && (
+                      <span
+                        className={`absolute top-0.5 right-1 text-[9px] leading-none font-medium ${
+                          beds === 0 ? "text-red-600" : beds <= 5 ? "text-red-500" : beds <= 15 ? "text-amber-600" : "text-green-600"
+                        }`}
+                      >
+                        {beds}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
             );

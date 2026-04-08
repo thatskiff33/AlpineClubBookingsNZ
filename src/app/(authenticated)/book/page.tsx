@@ -47,6 +47,7 @@ export default function BookPage() {
   const [priceLoading, setPriceLoading] = useState(false);
   const [error, setError] = useState("");
   const [subscriptionInvoiceUrl, setSubscriptionInvoiceUrl] = useState<string | null>(null);
+  const [subscriptionInvoiceNumber, setSubscriptionInvoiceNumber] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [availableBeds, setAvailableBeds] = useState(LODGE_CAPACITY);
@@ -174,8 +175,13 @@ export default function BookPage() {
     } else {
       const data = await res.json();
       setError(data.error || "Failed to create booking");
-      if (data.code === "SUBSCRIPTION_REQUIRED" && data.invoiceUrl) {
-        setSubscriptionInvoiceUrl(data.invoiceUrl);
+      if (data.code === "SUBSCRIPTION_REQUIRED") {
+        if (data.invoiceUrl) {
+          setSubscriptionInvoiceUrl(data.invoiceUrl);
+        }
+        if (data.invoiceNumber) {
+          setSubscriptionInvoiceNumber(data.invoiceNumber);
+        }
       }
       setSubmitting(false);
     }
@@ -240,7 +246,7 @@ export default function BookPage() {
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>{error}</p>
-          {subscriptionInvoiceUrl && (
+          {subscriptionInvoiceUrl ? (
             <a
               href={subscriptionInvoiceUrl}
               target="_blank"
@@ -249,7 +255,11 @@ export default function BookPage() {
             >
               Pay Your Subscription
             </a>
-          )}
+          ) : subscriptionInvoiceNumber ? (
+            <p className="mt-2 text-sm">
+              Invoice reference: <strong>{subscriptionInvoiceNumber}</strong> — check your email from Xero for the payment link.
+            </p>
+          ) : null}
         </div>
       )}
 

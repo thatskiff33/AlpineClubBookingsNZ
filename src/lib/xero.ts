@@ -1361,7 +1361,7 @@ export function determineSubscriptionStatus(invoice: Invoice): {
  * Refresh membership status for all active members.
  * Called by the daily cron job.
  */
-export async function refreshAllMembershipStatuses(): Promise<{
+export async function refreshAllMembershipStatuses(seasonYear?: number): Promise<{
   checked: number;
   updated: number;
   errors: number;
@@ -1393,10 +1393,11 @@ export async function refreshAllMembershipStatuses(): Promise<{
 
   for (const member of members) {
     try {
+      const year = seasonYear ?? getSeasonYear(new Date());
       const before = await prisma.memberSubscription.findFirst({
-        where: { memberId: member.id, seasonYear: getSeasonYear(new Date()) },
+        where: { memberId: member.id, seasonYear: year },
       });
-      const result = await checkMembershipStatus(member.id);
+      const result = await checkMembershipStatus(member.id, year);
       checked++;
       if (!before || before.status !== result.status) {
         updated++;

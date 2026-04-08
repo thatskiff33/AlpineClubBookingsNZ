@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getMonthAvailability, LODGE_CAPACITY } from "@/lib/capacity";
 
 /**
  * GET /api/admin/bookings?calendarMonth=YYYY-MM
- * Returns bookings overlapping the given month for calendar view.
+ * Returns bookings overlapping the given month for calendar view,
+ * plus per-day availability data.
  */
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -32,18 +34,21 @@ export async function GET(request: NextRequest) {
     statusFilter.status = { notIn: ["DRAFT", "CANCELLED"] };
   }
 
-  const bookings = await prisma.booking.findMany({
-    where: {
-      ...statusFilter,
-      checkIn: { lte: monthEnd },
-      checkOut: { gte: monthStart },
-    },
-    include: {
-      member: { select: { firstName: true, lastName: true } },
-      _count: { select: { guests: true } },
-    },
-    orderBy: { checkIn: "asc" },
-  });
+  const [bookings, occupancyMap] = await Promise.all([
+    prisma.booking.findMany({
+      where: {
+        ...statusFilter,
+        checkIn: { lte: monthEnd },
+        checkOut: { gte: monthStart },
+      },
+      include: {
+        member: { select: { firstName: true, lastName: true } },
+        _count: { select: { guests: true } },
+      },
+      orderBy: { checkIn: "asc" },
+    }),
+    getMonthAvailability(year, month - 1), // month is 0-indexed in getMonthAvailability
+  ]);
 
   const result = bookings.map((b) => ({
     id: b.id,
@@ -54,5 +59,11 @@ export async function GET(request: NextRequest) {
     guestCount: b._count.guests,
   }));
 
-  return NextResponse.json({ bookings: result });
+  // Convert occupancy map to availability object: { "2026-04-01": 25, ... }
+  const availability: Record<string, number> = {};
+  for (const [date, occupied] of occupancyMap.entries()) {
+    availability[date] = LODGE_CAPACITY - occupied;
+  }
+
+  return NextResponse.json({ bookings: result, availability });
 }

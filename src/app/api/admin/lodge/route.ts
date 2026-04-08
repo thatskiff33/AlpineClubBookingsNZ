@@ -7,7 +7,7 @@ import { z } from "zod";
 
 /**
  * GET /api/admin/lodge
- * Returns the lodge account details.
+ * Returns the lodge account details. Auto-creates if missing.
  */
 export async function GET() {
   const session = await auth();
@@ -15,7 +15,7 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const lodge = await prisma.member.findFirst({
+  let lodge = await prisma.member.findFirst({
     where: { role: "LODGE" },
     select: {
       id: true,
@@ -28,7 +28,34 @@ export async function GET() {
   });
 
   if (!lodge) {
-    return NextResponse.json({ error: "Lodge account not found" }, { status: 404 });
+    // Auto-create the lodge account with default credentials
+    const defaultHash = await bcrypt.hash("lodge123", 12);
+    lodge = await prisma.member.create({
+      data: {
+        email: "lodge@tokoroa.org.nz",
+        passwordHash: defaultHash,
+        firstName: "Lodge",
+        lastName: "Kiosk",
+        role: "LODGE",
+        ageTier: "ADULT",
+        emailVerified: true,
+        forcePasswordChange: true,
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    logAudit({
+      action: "LODGE_ACCOUNT_CREATED",
+      memberId: session.user.id,
+      targetId: lodge.id,
+      details: "Auto-created lodge account",
+    });
   }
 
   return NextResponse.json({ lodge });

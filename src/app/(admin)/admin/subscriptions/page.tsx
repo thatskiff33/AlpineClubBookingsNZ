@@ -21,7 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Users, CheckCircle, AlertCircle, Clock, ExternalLink } from "lucide-react";
+import { Users, CheckCircle, AlertCircle, Clock, ExternalLink, RefreshCw } from "lucide-react";
 
 function getSeasonYear(date: Date): number {
   return date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
@@ -53,6 +53,27 @@ export default function SubscriptionsPage() {
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState<Summary>({ total: 0, paid: 0, unpaid: 0, overdue: 0, notInvoiced: 0 });
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const res = await fetch(`/api/admin/xero/sync-memberships?seasonYear=${seasonYear}`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setSyncMessage({ type: "success", text: `Synced ${data.checked} members (${data.updated} updated)` });
+        fetchData();
+      } else {
+        setSyncMessage({ type: "error", text: data.error || "Sync failed" });
+      }
+    } catch {
+      setSyncMessage({ type: "error", text: "Sync failed — check Xero connection" });
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -80,7 +101,7 @@ export default function SubscriptionsPage() {
       <div className="flex flex-wrap gap-3 items-end">
         <div>
           <label className="text-xs font-medium text-slate-500">Season Year</label>
-          <Select value={String(seasonYear)} onValueChange={(v) => { setSeasonYear(Number(v)); setPage(1); }}>
+          <Select value={String(seasonYear)} onValueChange={(v) => { setSeasonYear(Number(v)); setPage(1); setSyncMessage(null); }}>
             <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
             <SelectContent>
               {yearOptions.map((y) => (
@@ -102,7 +123,17 @@ export default function SubscriptionsPage() {
             </SelectContent>
           </Select>
         </div>
+        <Button variant="outline" onClick={handleSync} disabled={syncing}>
+          <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
+          {syncing ? "Syncing..." : "Sync from Xero"}
+        </Button>
       </div>
+
+      {syncMessage && (
+        <div className={`rounded-md p-3 text-sm ${syncMessage.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
+          {syncMessage.text}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Total</CardTitle><Users className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold">{summary.total}</div></CardContent></Card>

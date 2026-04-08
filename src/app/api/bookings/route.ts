@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   // Verify member is still active (session JWT may outlive deactivation)
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: { active: true, emailVerified: true },
+    select: { active: true, emailVerified: true, xeroContactId: true },
   });
   if (!member?.active) {
     return NextResponse.json(
@@ -68,6 +68,17 @@ export async function POST(request: NextRequest) {
   // Gate: email must be verified before booking
   if (!member?.emailVerified) {
     return NextResponse.json({ error: "Email not verified" }, { status: 403 });
+  }
+
+  // Gate: member must be linked to a Xero contact
+  if (!member?.xeroContactId && session.user.role !== "ADMIN") {
+    return NextResponse.json(
+      {
+        error: "Your account is not yet linked to Xero. Please contact the club administrator to link your membership before booking.",
+        code: "XERO_CONTACT_REQUIRED",
+      },
+      { status: 403 }
+    );
   }
 
   const body = await request.json();

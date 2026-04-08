@@ -174,7 +174,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 
   // Active, verified member by default
-  mockPrisma.member.findUnique.mockResolvedValue({ active: true, emailVerified: true });
+  mockPrisma.member.findUnique.mockResolvedValue({ active: true, emailVerified: true, xeroContactId: "xero-contact-1" });
   // Paid subscription by default
   mockPrisma.memberSubscription.findFirst.mockResolvedValue({ id: "sub-1", status: "PAID" });
   // No seasons (returns empty = price will be 0 — but pricing is mocked so doesn't matter)
