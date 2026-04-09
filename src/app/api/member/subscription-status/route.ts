@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
+import { checkMembershipStatus, isXeroConnected } from "@/lib/xero";
 
 export async function GET() {
   const session = await auth();
@@ -12,12 +13,45 @@ export async function GET() {
   const seasonYear = getSeasonYear(new Date());
   const seasonDisplay = `${seasonYear}/${seasonYear + 1}`;
 
-  const sub = await prisma.memberSubscription.findFirst({
+  const subscriptionSelect = {
+    status: true,
+    xeroInvoiceId: true,
+    xeroInvoiceNumber: true,
+    xeroOnlineInvoiceUrl: true,
+  } as const;
+
+  let sub = await prisma.memberSubscription.findFirst({
     where: { memberId: session.user.id, seasonYear },
-    select: { status: true },
+    select: subscriptionSelect,
   });
+
+  // Older subscription rows may be missing the online invoice URL even though
+  // Xero has one. Refresh once on demand so the member can pay immediately.
+  if (
+    sub &&
+    (sub.status === "UNPAID" || sub.status === "OVERDUE") &&
+    sub.xeroInvoiceId &&
+    !sub.xeroOnlineInvoiceUrl
+  ) {
+    try {
+      if (await isXeroConnected()) {
+        await checkMembershipStatus(session.user.id, seasonYear);
+        sub = await prisma.memberSubscription.findFirst({
+          where: { memberId: session.user.id, seasonYear },
+          select: subscriptionSelect,
+        });
+      }
+    } catch {
+      // Non-critical: keep the local subscription status if Xero refresh fails.
+    }
+  }
 
   const status = sub?.status ?? "NOT_INVOICED";
 
-  return NextResponse.json({ status, seasonDisplay });
+  return NextResponse.json({
+    status,
+    seasonDisplay,
+    invoiceUrl: sub?.xeroOnlineInvoiceUrl ?? null,
+    invoiceNumber: sub?.xeroInvoiceNumber ?? null,
+  });
 }

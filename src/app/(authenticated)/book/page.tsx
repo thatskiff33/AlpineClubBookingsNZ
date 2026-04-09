@@ -36,6 +36,8 @@ interface PriceQuote {
 interface SubscriptionStatus {
   status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED" | "UNKNOWN";
   seasonDisplay: string;
+  invoiceUrl: string | null;
+  invoiceNumber: string | null;
 }
 
 export default function BookPage() {
@@ -84,10 +86,31 @@ export default function BookPage() {
     fetch("/api/member/subscription-status")
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
-        if (data) setSubscriptionStatus(data);
-        else setSubscriptionStatus({ status: "UNKNOWN", seasonDisplay: "" });
+        if (data) {
+          setSubscriptionStatus(data);
+          setSubscriptionInvoiceUrl(data.invoiceUrl ?? null);
+          setSubscriptionInvoiceNumber(data.invoiceNumber ?? null);
+        } else {
+          setSubscriptionStatus({
+            status: "UNKNOWN",
+            seasonDisplay: "",
+            invoiceUrl: null,
+            invoiceNumber: null,
+          });
+          setSubscriptionInvoiceUrl(null);
+          setSubscriptionInvoiceNumber(null);
+        }
       })
-      .catch(() => setSubscriptionStatus({ status: "UNKNOWN", seasonDisplay: "" }))
+      .catch(() => {
+        setSubscriptionStatus({
+          status: "UNKNOWN",
+          seasonDisplay: "",
+          invoiceUrl: null,
+          invoiceNumber: null,
+        });
+        setSubscriptionInvoiceUrl(null);
+        setSubscriptionInvoiceNumber(null);
+      })
       .finally(() => setSubscriptionLoading(false));
   }, []);
 
@@ -307,12 +330,36 @@ export default function BookPage() {
       {/* Subscription warning banner */}
       {!subscriptionLoading && subscriptionUnpaid && (
         <div className="rounded-md bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
-          <strong>Subscription unpaid:</strong> Your subscription for the{" "}
-          {subscriptionStatus!.seasonDisplay} season is unpaid. Please{" "}
-          <Link href="/profile" className="underline font-medium">
-            contact the club
-          </Link>{" "}
-          before booking.
+          <p>
+            <strong>Subscription unpaid:</strong> Your subscription for the{" "}
+            {subscriptionStatus!.seasonDisplay} season is unpaid.{" "}
+            {subscriptionInvoiceUrl ? (
+              <>Use the payment link below to pay it before booking.</>
+            ) : (
+              <>
+                Please{" "}
+                <Link href="/profile" className="underline font-medium">
+                  contact the club
+                </Link>{" "}
+                before booking.
+              </>
+            )}
+          </p>
+          {subscriptionInvoiceUrl ? (
+            <Button asChild className="mt-3">
+              <a
+                href={subscriptionInvoiceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Pay Your Subscription
+              </a>
+            </Button>
+          ) : subscriptionInvoiceNumber ? (
+            <p className="mt-2">
+              Invoice reference: <strong>{subscriptionInvoiceNumber}</strong> — check your email from Xero for the payment link.
+            </p>
+          ) : null}
         </div>
       )}
 
