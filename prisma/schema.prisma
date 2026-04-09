@@ -904,7 +904,7 @@ model CommitteeMember {
   name        String   // Display name
   phone       String   // Contact phone number
   email       String?  // Optional email address
-  contactKey  String?  // Maps to /contact?recipient=key
+  contactKey  String?  @unique // Maps to /contact?recipient=key
   description String   // Role description
   sortOrder   Int      @default(0) // Display order on public page
   active      Boolean  @default(true)

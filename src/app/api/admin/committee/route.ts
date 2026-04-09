@@ -58,6 +58,19 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const contactKey = parsed.data.contactKey ?? null;
+  if (contactKey) {
+    const existing = await prisma.committeeMember.findUnique({
+      where: { contactKey },
+    });
+    if (existing) {
+      return NextResponse.json(
+        { error: `Contact key "${contactKey}" is already in use` },
+        { status: 409 }
+      );
+    }
+  }
+
   try {
     const member = await prisma.committeeMember.create({
       data: {
@@ -65,7 +78,7 @@ export async function POST(req: NextRequest) {
         name: parsed.data.name,
         phone: parsed.data.phone,
         email: parsed.data.email ?? null,
-        contactKey: parsed.data.contactKey ?? null,
+        contactKey,
         description: parsed.data.description,
         sortOrder: parsed.data.sortOrder,
         active: parsed.data.active,

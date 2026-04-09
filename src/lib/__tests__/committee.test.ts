@@ -123,8 +123,30 @@ describe("Committee Admin API - POST /api/admin/committee", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns 409 when contactKey is already in use", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeMember.findUnique).mockResolvedValue(sampleMember as any);
+
+    const req = new NextRequest("http://localhost/api/admin/committee", {
+      method: "POST",
+      body: JSON.stringify({
+        role: "Vice President",
+        name: "Duplicate Key",
+        phone: "+64 21 000 0000",
+        contactKey: "president",
+        description: "Duplicate contactKey.",
+      }),
+    });
+
+    const res = await createMember(req);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("already in use");
+  });
+
   it("creates a committee member with valid data", async () => {
     mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.committeeMember.findUnique).mockResolvedValue(null);
     vi.mocked(prisma.committeeMember.create).mockResolvedValue(sampleMember as any);
 
     const req = new NextRequest("http://localhost/api/admin/committee", {
@@ -242,6 +264,23 @@ describe("Committee Admin API - PUT /api/admin/committee/[id]", () => {
     });
     const res = await updateMember(req, { params: makeParams("cm1") });
     expect(res.status).toBe(400);
+  });
+
+  it("returns 409 when updating contactKey to one already in use", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    // First call: find existing member by id; second call: find conflict by contactKey
+    vi.mocked(prisma.committeeMember.findUnique)
+      .mockResolvedValueOnce(sampleMember as any)
+      .mockResolvedValueOnce({ ...sampleMember, id: "cm2", contactKey: "secretary" } as any);
+
+    const req = new NextRequest("http://localhost/api/admin/committee/cm1", {
+      method: "PUT",
+      body: JSON.stringify({ contactKey: "secretary" }),
+    });
+    const res = await updateMember(req, { params: makeParams("cm1") });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("already in use");
   });
 });
 

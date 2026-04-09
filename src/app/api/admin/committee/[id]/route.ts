@@ -51,6 +51,20 @@ export async function PUT(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // Check contactKey uniqueness if being changed
+  const newContactKey = parsed.data.contactKey;
+  if (newContactKey !== undefined && newContactKey !== null && newContactKey !== existing.contactKey) {
+    const conflict = await prisma.committeeMember.findUnique({
+      where: { contactKey: newContactKey },
+    });
+    if (conflict) {
+      return NextResponse.json(
+        { error: `Contact key "${newContactKey}" is already in use` },
+        { status: 409 }
+      );
+    }
+  }
+
   try {
     const member = await prisma.committeeMember.update({
       where: { id },
