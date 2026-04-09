@@ -313,6 +313,84 @@ async function main() {
   }
   console.log("Age tier settings seeded");
 
+  // Seed committee members (replaces hardcoded src/data/committee.ts)
+  const committeeData = [
+    {
+      role: "President",
+      name: "Michael Higgins",
+      phone: "+64 20 4079 4310",
+      email: "president@tokoroa.org.nz",
+      contactKey: "president",
+      description: "Chairs meetings and oversees club operations.",
+      sortOrder: 0,
+    },
+    {
+      role: "Secretary",
+      name: "Sally Woodfield",
+      phone: "+64 21 686 020",
+      email: "secretary@tokoroa.org.nz",
+      contactKey: "secretary",
+      description: "Manages club correspondence and meeting minutes.",
+      sortOrder: 1,
+    },
+    {
+      role: "Treasurer",
+      name: "Jordan Hartley-Smith",
+      phone: "+64 27 422 4115",
+      email: "treasurer@tokoroa.org.nz",
+      contactKey: "treasurer",
+      description: "Manages club finances, subscriptions, and accounts.",
+      sortOrder: 2,
+    },
+    {
+      role: "Booking Officer",
+      name: "Chris Duyvestyn",
+      phone: "+64 27 472 1328",
+      email: "bookings@tokoroa.org.nz",
+      contactKey: "bookings",
+      description: "Manages lodge bookings, confirms non-member stays, and handles booking enquiries.",
+      sortOrder: 3,
+    },
+    {
+      role: "Communications Officer",
+      name: "Wayne Peterson",
+      phone: "+64 21 832 118",
+      email: "communications@tokoroa.org.nz",
+      contactKey: "communications",
+      description: "Manages club communications, newsletters, and public information.",
+      sortOrder: 4,
+    },
+    {
+      role: "Lodge Maintenance Officer",
+      name: "Lance Pilcher",
+      phone: "+64 27 699 2688",
+      email: null,
+      contactKey: null,
+      description: "Coordinates lodge maintenance, working bees, and improvement projects.",
+      sortOrder: 5,
+    },
+  ];
+
+  for (const cm of committeeData) {
+    await prisma.committeeMember.upsert({
+      where: { id: `seed-committee-${cm.sortOrder}` },
+      update: {
+        role: cm.role,
+        name: cm.name,
+        phone: cm.phone,
+        email: cm.email,
+        contactKey: cm.contactKey,
+        description: cm.description,
+        sortOrder: cm.sortOrder,
+      },
+      create: {
+        id: `seed-committee-${cm.sortOrder}`,
+        ...cm,
+      },
+    });
+  }
+  console.log(`Committee members seeded: ${committeeData.length} members`);
+
   console.log("Seeding complete!");
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { MapPin, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,26 +16,57 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const RECIPIENTS: Record<string, string> = {
-  general: "General Enquiry",
-  president: "President — Michael Higgins",
-  secretary: "Secretary — Sally Woodfield",
-  treasurer: "Treasurer — Jordan Hartley-Smith",
-  bookings: "Booking Officer — Chris Duyvestyn",
-  communications: "Communications — Wayne Peterson",
-};
+interface CommitteeMember {
+  id: string;
+  role: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  contactKey: string | null;
+}
 
 export default function ContactPage() {
   const searchParams = useSearchParams();
   const initialRecipient = searchParams.get("recipient") || "general";
   const [form, setForm] = useState({ name: "", email: "", message: "" });
-  const [recipient, setRecipient] = useState(
-    RECIPIENTS[initialRecipient] ? initialRecipient : "general"
-  );
+  const [recipient, setRecipient] = useState(initialRecipient);
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">(
     "idle"
   );
   const [errorMessage, setErrorMessage] = useState("");
+  const [members, setMembers] = useState<CommitteeMember[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/committee")
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((data) => {
+        setMembers(data.members);
+        // Validate initial recipient against loaded data
+        const validKeys = data.members
+          .filter((m: CommitteeMember) => m.contactKey)
+          .map((m: CommitteeMember) => m.contactKey);
+        if (initialRecipient !== "general" && !validKeys.includes(initialRecipient)) {
+          setRecipient("general");
+        }
+      })
+      .catch(() => setMembers([]))
+      .finally(() => setLoadingMembers(false));
+  }, [initialRecipient]);
+
+  // Build recipient options from loaded committee members
+  const recipientOptions: Array<{ key: string; label: string }> = [
+    { key: "general", label: "General Enquiry" },
+    ...members
+      .filter((m) => m.contactKey)
+      .map((m) => ({
+        key: m.contactKey!,
+        label: `${m.role} — ${m.name}`,
+      })),
+  ];
+
+  // Find the booking officer for the sidebar (or first member with contactKey "bookings")
+  const bookingOfficer = members.find((m) => m.contactKey === "bookings");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -114,12 +145,16 @@ export default function ContactPage() {
                 <form onSubmit={handleSubmit} className="space-y-5">
                   <div>
                     <Label htmlFor="recipient">Send to</Label>
-                    <Select value={recipient} onValueChange={setRecipient}>
+                    <Select
+                      value={recipient}
+                      onValueChange={setRecipient}
+                      disabled={loadingMembers}
+                    >
                       <SelectTrigger className="mt-1">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {Object.entries(RECIPIENTS).map(([key, label]) => (
+                        {recipientOptions.map(({ key, label }) => (
                           <SelectItem key={key} value={key}>
                             {label}
                           </SelectItem>
@@ -188,21 +223,25 @@ export default function ContactPage() {
 
               <Card>
                 <CardContent className="pt-6 space-y-4">
-                  <div className="flex items-start gap-3">
-                    <Phone className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
-                    <div>
-                      <p className="font-medium text-slate-900 text-sm">
-                        Booking Officer
-                      </p>
-                      <p className="text-sm text-slate-600">Chris Duyvestyn</p>
-                      <a
-                        href="tel:+64274721328"
-                        className="text-sm text-blue-600 hover:underline"
-                      >
-                        +64 27 472 1328
-                      </a>
+                  {bookingOfficer && (
+                    <div className="flex items-start gap-3">
+                      <Phone className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-medium text-slate-900 text-sm">
+                          {bookingOfficer.role}
+                        </p>
+                        <p className="text-sm text-slate-600">
+                          {bookingOfficer.name}
+                        </p>
+                        <a
+                          href={`tel:${bookingOfficer.phone.replace(/\s/g, "")}`}
+                          className="text-sm text-blue-600 hover:underline"
+                        >
+                          {bookingOfficer.phone}
+                        </a>
+                      </div>
                     </div>
-                  </div>
+                  )}
                   <div className="flex items-start gap-3">
                     <MapPin className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
                     <div>

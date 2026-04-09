@@ -3,6 +3,7 @@ import { z } from "zod";
 import { sendEmail } from "@/lib/email";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { escapeHtml } from "@/lib/email-templates";
+import { prisma } from "@/lib/prisma";
 
 const contactSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
@@ -13,14 +14,6 @@ const contactSchema = z.object({
 
 const CONTACT_EMAIL =
   process.env.CONTACT_EMAIL || "bookings@tokoroa.org.nz";
-
-const RECIPIENT_MAP: Record<string, string> = {
-  president: "president@tokoroa.org.nz",
-  secretary: "secretary@tokoroa.org.nz",
-  treasurer: "treasurer@tokoroa.org.nz",
-  bookings: "bookings@tokoroa.org.nz",
-  communications: "communications@tokoroa.org.nz",
-};
 
 export async function POST(request: Request) {
   // Rate limit: 5 per hour
@@ -39,8 +32,22 @@ export async function POST(request: Request) {
     }
 
     const { name, email, message, recipient } = result.data;
-    const toEmail = (recipient && RECIPIENT_MAP[recipient]) || CONTACT_EMAIL;
-    const recipientLabel = recipient ? ` (to ${recipient})` : "";
+
+    // Look up recipient email from committee members in the database
+    let toEmail = CONTACT_EMAIL;
+    let recipientLabel = "";
+
+    if (recipient) {
+      const committeeMember = await prisma.committeeMember.findFirst({
+        where: { contactKey: recipient, active: true },
+        select: { email: true, role: true },
+      });
+
+      if (committeeMember?.email) {
+        toEmail = committeeMember.email;
+      }
+      recipientLabel = ` (to ${recipient})`;
+    }
 
     await sendEmail({
       to: toEmail,

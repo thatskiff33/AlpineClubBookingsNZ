@@ -6,6 +6,7 @@ vi.mock("@/lib/prisma", () => ({
     committeeMember: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
@@ -18,9 +19,16 @@ vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+vi.mock("@/lib/email", () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/lib/rate-limit", () => ({
+  applyRateLimit: vi.fn().mockReturnValue(null),
+  rateLimiters: { contact: { limit: 10, windowSeconds: 3600, prefix: "contact" } },
+}));
+vi.mock("@/lib/email-templates", () => ({ escapeHtml: vi.fn((s: string) => s) }));
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { sendEmail } from "@/lib/email";
 import { GET as listMembers, POST as createMember } from "@/app/api/admin/committee/route";
 import { PUT as updateMember, DELETE as deleteMember } from "@/app/api/admin/committee/[id]/route";
 
@@ -288,6 +296,91 @@ describe("Committee Public API - GET /api/committee", () => {
     // Verify the query filtered by active
     expect(prisma.committeeMember.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { active: true } })
+    );
+  });
+});
+
+describe("Contact API - recipient lookup from database", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it("sends to committee member email when recipient matches contactKey", async () => {
+    const { POST } = await import("@/app/api/contact/route");
+    vi.mocked(prisma.committeeMember.findFirst).mockResolvedValue({
+      email: "president@tokoroa.org.nz",
+      role: "President",
+    } as any);
+
+    const req = new Request("http://localhost/api/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Test User",
+        email: "test@example.com",
+        message: "Hello",
+        recipient: "president",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    // Verify DB lookup was called with correct contactKey
+    expect(prisma.committeeMember.findFirst).toHaveBeenCalledWith({
+      where: { contactKey: "president", active: true },
+      select: { email: true, role: true },
+    });
+
+    // Verify email was sent to the committee member's email
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "president@tokoroa.org.nz" })
+    );
+  });
+
+  it("falls back to CONTACT_EMAIL when no matching committee member", async () => {
+    const { POST } = await import("@/app/api/contact/route");
+    vi.mocked(prisma.committeeMember.findFirst).mockResolvedValue(null);
+
+    const req = new Request("http://localhost/api/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Test User",
+        email: "test@example.com",
+        message: "Hello",
+        recipient: "unknown",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    // Falls back to default CONTACT_EMAIL
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "bookings@tokoroa.org.nz" })
+    );
+  });
+
+  it("sends to default email when no recipient specified", async () => {
+    const { POST } = await import("@/app/api/contact/route");
+
+    const req = new Request("http://localhost/api/contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Test User",
+        email: "test@example.com",
+        message: "Hello",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    // No DB lookup when no recipient
+    expect(prisma.committeeMember.findFirst).not.toHaveBeenCalled();
+
+    expect(sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "bookings@tokoroa.org.nz" })
     );
   });
 });

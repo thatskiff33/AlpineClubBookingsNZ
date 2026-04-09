@@ -1,51 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import committeeMembers from "@/data/committee";
 import faqSections from "@/data/faq";
 import { checkRateLimit, _testStore } from "@/lib/rate-limit";
 import { rateLimiters } from "@/lib/rate-limit";
 
-// ─── Committee data ────────────────────────────────────────────────────────
-
-describe("committee data (F-PUB-01)", () => {
-  it("exports an array of committee members", () => {
-    expect(Array.isArray(committeeMembers)).toBe(true);
-    expect(committeeMembers.length).toBeGreaterThan(0);
-  });
-
-  it("every member has required fields", () => {
-    for (const member of committeeMembers) {
-      expect(typeof member.role).toBe("string");
-      expect(member.role.length).toBeGreaterThan(0);
-      expect(typeof member.name).toBe("string");
-      expect(member.name.length).toBeGreaterThan(0);
-      expect(typeof member.phone).toBe("string");
-      expect(member.phone.length).toBeGreaterThan(0);
-      expect(typeof member.description).toBe("string");
-      expect(member.description.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("contactKey is optional and is a string when present", () => {
-    for (const member of committeeMembers) {
-      if (member.contactKey !== undefined) {
-        expect(typeof member.contactKey).toBe("string");
-        expect(member.contactKey.length).toBeGreaterThan(0);
-      }
-    }
-  });
-
-  it("role names are unique", () => {
-    const roles = committeeMembers.map((m) => m.role);
-    const unique = new Set(roles);
-    expect(unique.size).toBe(roles.length);
-  });
-
-  it("falls back gracefully when no committee data — empty array is valid", () => {
-    // Ensure the interface allows an empty export; the page handles it.
-    const empty: typeof committeeMembers = [];
-    expect(empty.length).toBe(0);
-  });
-});
+// Note: Committee data tests moved to committee.test.ts (now database-driven)
 
 // ─── FAQ data ──────────────────────────────────────────────────────────────
 
