@@ -15,7 +15,8 @@ import { Users, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, X, Download, Uplo
 
 interface Member {
   id: string; firstName: string; lastName: string; email: string
-  phone: string | null; dateOfBirth: string | null
+  phoneCountryCode: string | null; phoneAreaCode: string | null; phoneNumber: string | null
+  dateOfBirth: string | null
   role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
   active: boolean; xeroContactId: string | null
   subscriptionStatus: "NOT_INVOICED" | "UNPAID" | "PAID" | "OVERDUE" | null
@@ -26,7 +27,8 @@ interface Member {
 }
 
 interface MemberForm {
-  firstName: string; lastName: string; email: string; phone: string
+  firstName: string; lastName: string; email: string
+  phoneCountryCode: string; phoneAreaCode: string; phoneNumber: string
   dateOfBirth: string; role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
   active: boolean; sendInvite: boolean; forcePasswordChange: boolean
   joinedDate: string; canLogin: boolean
@@ -36,7 +38,7 @@ interface MemberForm {
 interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string; type: string }
 interface ImportRow { firstName: string; lastName: string; email: string; phone?: string; dateOfBirth?: string; role?: string }
 
-const emptyForm: MemberForm = { firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", ageTier: "ADULT", active: true, sendInvite: false, forcePasswordChange: false, joinedDate: "", canLogin: true }
+const emptyForm: MemberForm = { firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", role: "MEMBER", ageTier: "ADULT", active: true, sendInvite: false, forcePasswordChange: false, joinedDate: "", canLogin: true }
 const emptyFilters: Filters = { role: "", active: "", ageTier: "", xeroLinked: "", subscription: "", type: "" }
 function parseCsvLine(line: string): string[] {
   const result: string[] = []; let current = ""; let inQuotes = false
@@ -137,13 +139,13 @@ export default function MembersPage() {
   const toggleSelect = (id: string) => setSelectedIds(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const toggleSelectAll = () => { if (selectedIds.size === members.length) setSelectedIds(new Set()); else setSelectedIds(new Set(members.map(m => m.id))) }
   const openCreateDialog = () => { setEditingMember(null); setForm(emptyForm); setFormError(""); setDialogOpen(true) }
-  const openEditDialog = (member: Member) => { setEditingMember(member); setForm({ firstName: member.firstName, lastName: member.lastName, email: member.email, phone: member.phone || "", dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "", role: member.role, ageTier: member.ageTier, active: member.active, sendInvite: false, forcePasswordChange: member.forcePasswordChange, joinedDate: member.joinedDate ? new Date(member.joinedDate).toISOString().split("T")[0] : "", canLogin: member.canLogin }); setFormError(""); setDialogOpen(true) }
+  const openEditDialog = (member: Member) => { setEditingMember(member); setForm({ firstName: member.firstName, lastName: member.lastName, email: member.email, phoneCountryCode: member.phoneCountryCode || "", phoneAreaCode: member.phoneAreaCode || "", phoneNumber: member.phoneNumber || "", dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "", role: member.role, ageTier: member.ageTier, active: member.active, sendInvite: false, forcePasswordChange: member.forcePasswordChange, joinedDate: member.joinedDate ? new Date(member.joinedDate).toISOString().split("T")[0] : "", canLogin: member.canLogin }); setFormError(""); setDialogOpen(true) }
 
   const handleSave = async () => {
     setSaving(true); setFormError("")
     try {
       const url = editingMember ? `/api/admin/members/${editingMember.id}` : "/api/admin/members"
-      const body: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, phone: form.phone || null, dateOfBirth: form.dateOfBirth || null, role: form.role, ageTier: form.ageTier, active: form.active, canLogin: form.canLogin }
+      const body: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, phoneCountryCode: form.phoneCountryCode || null, phoneAreaCode: form.phoneAreaCode || null, phoneNumber: form.phoneNumber || null, dateOfBirth: form.dateOfBirth || null, role: form.role, ageTier: form.ageTier, active: form.active, canLogin: form.canLogin }
       if (editingMember) {
         body.forcePasswordChange = form.forcePasswordChange
         body.joinedDate = form.joinedDate || null
@@ -280,7 +282,7 @@ export default function MembersPage() {
         <div className="flex items-center gap-2"><input type="checkbox" id="canLogin" checked={form.canLogin} onChange={e => setForm(f => ({ ...f, canLogin: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="canLogin">Can Login</Label><p className="text-xs text-muted-foreground ml-2">Adults who can sign in and make bookings. Uncheck for children/youth managed by family group.</p></div>
         <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label htmlFor="firstName">First Name *</Label><Input id="firstName" value={form.firstName} onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="lastName">Last Name *</Label><Input id="lastName" value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} /></div></div>
         <div className="space-y-2"><Label htmlFor="email">Email *</Label><Input id="email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
-        <div className="space-y-2"><Label htmlFor="phone">Phone</Label><Input id="phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></div>
+        <div className="space-y-2"><Label>Phone</Label><div className="flex gap-2"><Input className="w-20" placeholder="64" value={form.phoneCountryCode} onChange={e => setForm(f => ({ ...f, phoneCountryCode: e.target.value }))} maxLength={5} aria-label="Country code" /><Input className="w-20" placeholder="27" value={form.phoneAreaCode} onChange={e => setForm(f => ({ ...f, phoneAreaCode: e.target.value }))} maxLength={5} aria-label="Area code" /><Input className="flex-1" placeholder="4224115" value={form.phoneNumber} onChange={e => setForm(f => ({ ...f, phoneNumber: e.target.value }))} maxLength={15} aria-label="Phone number" /></div></div>
         <div className="space-y-2"><Label htmlFor="dateOfBirth">Date of Birth</Label><Input id="dateOfBirth" type="date" value={form.dateOfBirth} onChange={e => setForm(f => ({ ...f, dateOfBirth: e.target.value }))} /><p className="text-xs text-muted-foreground">Age tier is calculated automatically from date of birth.</p></div>
         <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label>Role</Label><Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as "MEMBER" | "ADMIN" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="MEMBER">Member</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>Age Tier</Label><Select value={form.ageTier} onValueChange={v => setForm(f => ({ ...f, ageTier: v as "ADULT" | "YOUTH" | "CHILD" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ADULT">Adult</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="CHILD">Child</SelectItem></SelectContent></Select></div></div>
         {editingMember && <div className="space-y-2"><Label htmlFor="joinedDate">Joined Date</Label><Input id="joinedDate" type="date" value={form.joinedDate} onChange={e => setForm(f => ({ ...f, joinedDate: e.target.value }))} /><p className="text-xs text-muted-foreground">Populated from Xero first invoice date, or set manually.</p></div>}

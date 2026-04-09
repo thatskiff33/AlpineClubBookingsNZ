@@ -16,7 +16,9 @@ interface FormData {
   password: string;
   confirmPassword: string;
   dateOfBirth: string;
-  phone: string;
+  phoneCountryCode: string;
+  phoneAreaCode: string;
+  phoneNumber: string;
 }
 
 export default function RegisterPage() {
@@ -28,7 +30,9 @@ export default function RegisterPage() {
     password: "",
     confirmPassword: "",
     dateOfBirth: "",
-    phone: "",
+    phoneCountryCode: "",
+    phoneAreaCode: "",
+    phoneNumber: "",
   });
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormData, string>>>({});
@@ -77,7 +81,9 @@ export default function RegisterPage() {
           firstName: form.firstName,
           lastName: form.lastName,
           dateOfBirth: form.dateOfBirth || undefined,
-          phone: form.phone || undefined,
+          phoneCountryCode: form.phoneCountryCode || undefined,
+          phoneAreaCode: form.phoneAreaCode || undefined,
+          phoneNumber: form.phoneNumber || undefined,
         }),
       });
 
@@ -226,18 +232,16 @@ export default function RegisterPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="phone">
+              <Label>
                 Phone{" "}
                 <span className="text-muted-foreground font-normal">(optional)</span>
               </Label>
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="+64 21 000 0000"
-                value={form.phone}
-                onChange={updateField("phone")}
-                autoComplete="tel"
-              />
+              <div className="flex gap-2">
+                <Input className="w-20" placeholder="64" value={form.phoneCountryCode} onChange={updateField("phoneCountryCode")} maxLength={5} aria-label="Country code" />
+                <Input className="w-20" placeholder="27" value={form.phoneAreaCode} onChange={updateField("phoneAreaCode")} maxLength={5} aria-label="Area code" />
+                <Input className="flex-1" placeholder="4224115" value={form.phoneNumber} onChange={updateField("phoneNumber")} maxLength={15} aria-label="Phone number" />
+              </div>
+              <p className="text-xs text-muted-foreground">Country code, area code, and number</p>
             </div>
           </div>
         </CardContent>

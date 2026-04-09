@@ -35,8 +35,22 @@ export default async function ProfilePage() {
       email: true,
       firstName: true,
       lastName: true,
-      phone: true,
+      phoneCountryCode: true,
+      phoneAreaCode: true,
+      phoneNumber: true,
       dateOfBirth: true,
+      streetAddressLine1: true,
+      streetAddressLine2: true,
+      streetCity: true,
+      streetRegion: true,
+      streetPostalCode: true,
+      streetCountry: true,
+      postalAddressLine1: true,
+      postalAddressLine2: true,
+      postalCity: true,
+      postalRegion: true,
+      postalPostalCode: true,
+      postalCountry: true,
       role: true,
       ageTier: true,
       active: true,
@@ -271,7 +285,7 @@ export default async function ProfilePage() {
         <CardHeader>
           <CardTitle>Personal Details</CardTitle>
           <CardDescription>
-            Update your name, phone number, and date of birth
+            Update your name, phone, address, and date of birth. Changes are synced with Xero.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -280,10 +294,24 @@ export default async function ProfilePage() {
               id: member.id,
               firstName: member.firstName,
               lastName: member.lastName,
-              phone: member.phone ?? "",
+              phoneCountryCode: member.phoneCountryCode ?? "",
+              phoneAreaCode: member.phoneAreaCode ?? "",
+              phoneNumber: member.phoneNumber ?? "",
               dateOfBirth: member.dateOfBirth
                 ? member.dateOfBirth.toISOString().substring(0, 10)
                 : "",
+              streetAddressLine1: member.streetAddressLine1 ?? "",
+              streetAddressLine2: member.streetAddressLine2 ?? "",
+              streetCity: member.streetCity ?? "",
+              streetRegion: member.streetRegion ?? "",
+              streetPostalCode: member.streetPostalCode ?? "",
+              streetCountry: member.streetCountry ?? "",
+              postalAddressLine1: member.postalAddressLine1 ?? "",
+              postalAddressLine2: member.postalAddressLine2 ?? "",
+              postalCity: member.postalCity ?? "",
+              postalRegion: member.postalRegion ?? "",
+              postalPostalCode: member.postalPostalCode ?? "",
+              postalCountry: member.postalCountry ?? "",
             }}
           />
         </CardContent>

@@ -15,7 +15,10 @@ const importRowSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100),
   lastName: z.string().min(1, "Last name is required").max(100),
   email: z.string().email("Invalid email address"),
-  phone: z.string().max(20).optional().nullable(),
+  phone: z.string().max(20).optional().nullable(), // Legacy: single phone string (will be put in phoneNumber)
+  phoneCountryCode: z.string().max(5).optional().nullable(),
+  phoneAreaCode: z.string().max(5).optional().nullable(),
+  phoneNumber: z.string().max(15).optional().nullable(),
   dateOfBirth: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)")
@@ -101,7 +104,9 @@ export async function POST(req: NextRequest) {
     email: string;
     firstName: string;
     lastName: string;
-    phone: string | null;
+    phoneCountryCode: string | null;
+    phoneAreaCode: string | null;
+    phoneNumber: string | null;
     dateOfBirth: Date | null;
     ageTier: "ADULT" | "YOUTH" | "CHILD";
     role: "MEMBER" | "ADMIN";
@@ -140,7 +145,9 @@ export async function POST(req: NextRequest) {
       email,
       firstName: row.firstName.trim(),
       lastName: row.lastName.trim(),
-      phone: row.phone?.trim() || null,
+      phoneCountryCode: row.phoneCountryCode?.trim() || null,
+      phoneAreaCode: row.phoneAreaCode?.trim() || null,
+      phoneNumber: row.phoneNumber?.trim() || row.phone?.trim() || null,
       dateOfBirth,
       ageTier,
       role: (row.role || "MEMBER") as "MEMBER" | "ADMIN",
@@ -165,7 +172,9 @@ export async function POST(req: NextRequest) {
             email: row.email,
             firstName: row.firstName,
             lastName: row.lastName,
-            phone: row.phone,
+            phoneCountryCode: row.phoneCountryCode,
+            phoneAreaCode: row.phoneAreaCode,
+            phoneNumber: row.phoneNumber,
             dateOfBirth: row.dateOfBirth,
             role: row.role,
             ageTier: row.ageTier,

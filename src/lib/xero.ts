@@ -5,7 +5,7 @@
  * contact sync, and membership subscription verification.
  */
 
-import { XeroClient, Contact, ContactGroup, Invoice, LineItem, LineAmountTypes, CreditNote, Payment as XeroPayment, Phone } from "xero-node";
+import { XeroClient, Contact, ContactGroup, Invoice, LineItem, LineAmountTypes, CreditNote, Payment as XeroPayment, Phone, Address } from "xero-node";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { prisma } from "./prisma";
@@ -420,9 +420,10 @@ export async function findOrCreateXeroContact(memberId: string): Promise<string>
       firstName: member.firstName,
       lastName: member.lastName,
       emailAddress: member.email,
-      phones: member.phone
-        ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneNumber: member.phone }]
+      phones: member.phoneNumber
+        ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneCountryCode: member.phoneCountryCode || "", phoneAreaCode: member.phoneAreaCode || "", phoneNumber: member.phoneNumber }]
         : [],
+      addresses: buildXeroAddresses(member),
     };
 
     const response = await xero.accountingApi.createContacts(tenantId, { contacts: [contact] });
@@ -614,12 +615,35 @@ export async function syncContactsFromXero(): Promise<SyncReport> {
           }
 
           // Backfill phone if missing
-          if (!alreadyLinked.phone) {
-            const phone = getXeroContactPhone(contact.phones);
+          if (!alreadyLinked.phoneNumber) {
+            const phone = getXeroContactPhoneStructured(contact.phones);
             if (phone) {
-              updateData.phone = phone;
-              changes.push(`Phone set to ${phone}`);
+              updateData.phoneCountryCode = phone.phoneCountryCode;
+              updateData.phoneAreaCode = phone.phoneAreaCode;
+              updateData.phoneNumber = phone.phoneNumber;
+              changes.push(`Phone set to ${formatXeroPhone(phone) ?? phone.phoneNumber}`);
             }
+          }
+
+          // Backfill addresses if missing
+          const addrs = getXeroContactAddresses(contact.addresses);
+          if (!alreadyLinked.streetAddressLine1 && addrs.street) {
+            updateData.streetAddressLine1 = addrs.street.addressLine1;
+            updateData.streetAddressLine2 = addrs.street.addressLine2;
+            updateData.streetCity = addrs.street.city;
+            updateData.streetRegion = addrs.street.region;
+            updateData.streetPostalCode = addrs.street.postalCode;
+            updateData.streetCountry = addrs.street.country;
+            changes.push("Street address set from Xero");
+          }
+          if (!alreadyLinked.postalAddressLine1 && addrs.postal) {
+            updateData.postalAddressLine1 = addrs.postal.addressLine1;
+            updateData.postalAddressLine2 = addrs.postal.addressLine2;
+            updateData.postalCity = addrs.postal.city;
+            updateData.postalRegion = addrs.postal.region;
+            updateData.postalPostalCode = addrs.postal.postalCode;
+            updateData.postalCountry = addrs.postal.country;
+            changes.push("Postal address set from Xero");
           }
 
           if (Object.keys(updateData).length > 0) {
@@ -667,12 +691,35 @@ export async function syncContactsFromXero(): Promise<SyncReport> {
             await throttle(1500);
           }
           // Backfill phone if missing
-          if (!member.phone) {
-            const phone = getXeroContactPhone(contact.phones);
+          if (!member.phoneNumber) {
+            const phone = getXeroContactPhoneStructured(contact.phones);
             if (phone) {
-              updateData.phone = phone;
-              changes.push(`Phone set to ${phone}`);
+              updateData.phoneCountryCode = phone.phoneCountryCode;
+              updateData.phoneAreaCode = phone.phoneAreaCode;
+              updateData.phoneNumber = phone.phoneNumber;
+              changes.push(`Phone set to ${formatXeroPhone(phone) ?? phone.phoneNumber}`);
             }
+          }
+
+          // Backfill addresses if missing
+          const memberAddrs = getXeroContactAddresses(contact.addresses);
+          if (!member.streetAddressLine1 && memberAddrs.street) {
+            updateData.streetAddressLine1 = memberAddrs.street.addressLine1;
+            updateData.streetAddressLine2 = memberAddrs.street.addressLine2;
+            updateData.streetCity = memberAddrs.street.city;
+            updateData.streetRegion = memberAddrs.street.region;
+            updateData.streetPostalCode = memberAddrs.street.postalCode;
+            updateData.streetCountry = memberAddrs.street.country;
+            changes.push("Street address set from Xero");
+          }
+          if (!member.postalAddressLine1 && memberAddrs.postal) {
+            updateData.postalAddressLine1 = memberAddrs.postal.addressLine1;
+            updateData.postalAddressLine2 = memberAddrs.postal.addressLine2;
+            updateData.postalCity = memberAddrs.postal.city;
+            updateData.postalRegion = memberAddrs.postal.region;
+            updateData.postalPostalCode = memberAddrs.postal.postalCode;
+            updateData.postalCountry = memberAddrs.postal.country;
+            changes.push("Postal address set from Xero");
           }
 
           if (Object.keys(updateData).length > 0) {
@@ -768,7 +815,7 @@ export async function getXeroContactGroups(): Promise<
  * Assemble a full phone number from Xero's split fields (countryCode, areaCode, number).
  * e.g. countryCode="64", areaCode="27", number="4224115" → "+64 27 4224115"
  */
-function formatXeroPhone(phone: { phoneCountryCode?: string; phoneAreaCode?: string; phoneNumber?: string }): string | null {
+function formatXeroPhone(phone: { phoneCountryCode?: string | null; phoneAreaCode?: string | null; phoneNumber?: string | null }): string | null {
   if (!phone.phoneNumber) return null;
   const parts: string[] = [];
   if (phone.phoneCountryCode) parts.push(`+${phone.phoneCountryCode.replace(/^\+/, '')}`);
@@ -778,16 +825,130 @@ function formatXeroPhone(phone: { phoneCountryCode?: string; phoneAreaCode?: str
 }
 
 /**
- * Find the best phone number from a Xero contact's phones array.
+ * Find the best phone from a Xero contact's phones array and return structured fields.
  * Prefers MOBILE, falls back to any phone with a number.
  */
-function getXeroContactPhone(phones?: Array<{ phoneType?: Phone.PhoneTypeEnum; phoneCountryCode?: string; phoneAreaCode?: string; phoneNumber?: string }>): string | null {
+function getXeroContactPhoneStructured(phones?: Array<{ phoneType?: Phone.PhoneTypeEnum; phoneCountryCode?: string; phoneAreaCode?: string; phoneNumber?: string }>): { phoneCountryCode: string | null; phoneAreaCode: string | null; phoneNumber: string } | null {
   if (!phones) return null;
   const mobile = phones.find((p) => p.phoneNumber && p.phoneType === Phone.PhoneTypeEnum.MOBILE);
-  if (mobile) return formatXeroPhone(mobile);
-  const any = phones.find((p) => p.phoneNumber);
-  if (any) return formatXeroPhone(any);
-  return null;
+  const best = mobile || phones.find((p) => p.phoneNumber);
+  if (!best || !best.phoneNumber) return null;
+  return {
+    phoneCountryCode: best.phoneCountryCode || null,
+    phoneAreaCode: best.phoneAreaCode || null,
+    phoneNumber: best.phoneNumber,
+  };
+}
+
+/**
+ * Extract structured address data from a Xero contact's addresses array.
+ * Returns STREET and POBOX addresses separately.
+ */
+function getXeroContactAddresses(addresses?: Array<{
+  addressType?: Address.AddressTypeEnum;
+  addressLine1?: string; addressLine2?: string;
+  city?: string; region?: string; postalCode?: string; country?: string;
+}>): {
+  street: { addressLine1: string | null; addressLine2: string | null; city: string | null; region: string | null; postalCode: string | null; country: string | null } | null;
+  postal: { addressLine1: string | null; addressLine2: string | null; city: string | null; region: string | null; postalCode: string | null; country: string | null } | null;
+} {
+  if (!addresses) return { street: null, postal: null };
+
+  const extract = (addr: typeof addresses[0]) => ({
+    addressLine1: addr.addressLine1 || null,
+    addressLine2: addr.addressLine2 || null,
+    city: addr.city || null,
+    region: addr.region || null,
+    postalCode: addr.postalCode || null,
+    country: addr.country || null,
+  });
+
+  const streetAddr = addresses.find((a) => a.addressType === Address.AddressTypeEnum.STREET && a.addressLine1);
+  const postalAddr = addresses.find((a) => a.addressType === Address.AddressTypeEnum.POBOX && a.addressLine1);
+
+  return {
+    street: streetAddr ? extract(streetAddr) : null,
+    postal: postalAddr ? extract(postalAddr) : null,
+  };
+}
+
+/**
+ * Build Xero addresses array from a member's address fields.
+ */
+function buildXeroAddresses(member: {
+  streetAddressLine1?: string | null; streetAddressLine2?: string | null;
+  streetCity?: string | null; streetRegion?: string | null;
+  streetPostalCode?: string | null; streetCountry?: string | null;
+  postalAddressLine1?: string | null; postalAddressLine2?: string | null;
+  postalCity?: string | null; postalRegion?: string | null;
+  postalPostalCode?: string | null; postalCountry?: string | null;
+}): Address[] {
+  const addresses: Address[] = [];
+  if (member.streetAddressLine1) {
+    addresses.push({
+      addressType: Address.AddressTypeEnum.STREET,
+      addressLine1: member.streetAddressLine1,
+      addressLine2: member.streetAddressLine2 || "",
+      city: member.streetCity || "",
+      region: member.streetRegion || "",
+      postalCode: member.streetPostalCode || "",
+      country: member.streetCountry || "",
+    });
+  }
+  if (member.postalAddressLine1) {
+    addresses.push({
+      addressType: Address.AddressTypeEnum.POBOX,
+      addressLine1: member.postalAddressLine1,
+      addressLine2: member.postalAddressLine2 || "",
+      city: member.postalCity || "",
+      region: member.postalRegion || "",
+      postalCode: member.postalPostalCode || "",
+      country: member.postalCountry || "",
+    });
+  }
+  return addresses;
+}
+
+/**
+ * Convenience: extract structured phone fields from Xero phones array for Prisma create/update spread.
+ */
+function spreadPhoneFromXero(phones?: Array<{ phoneType?: Phone.PhoneTypeEnum; phoneCountryCode?: string; phoneAreaCode?: string; phoneNumber?: string }>): Record<string, string | null> {
+  const phone = getXeroContactPhoneStructured(phones);
+  if (!phone) return {};
+  return {
+    phoneCountryCode: phone.phoneCountryCode,
+    phoneAreaCode: phone.phoneAreaCode,
+    phoneNumber: phone.phoneNumber,
+  };
+}
+
+/**
+ * Convenience: extract structured address fields from Xero addresses array for Prisma create/update spread.
+ */
+function spreadAddressesFromXero(addresses?: Array<{
+  addressType?: Address.AddressTypeEnum;
+  addressLine1?: string; addressLine2?: string;
+  city?: string; region?: string; postalCode?: string; country?: string;
+}>): Record<string, string | null> {
+  const addrs = getXeroContactAddresses(addresses);
+  const result: Record<string, string | null> = {};
+  if (addrs.street) {
+    result.streetAddressLine1 = addrs.street.addressLine1;
+    result.streetAddressLine2 = addrs.street.addressLine2;
+    result.streetCity = addrs.street.city;
+    result.streetRegion = addrs.street.region;
+    result.streetPostalCode = addrs.street.postalCode;
+    result.streetCountry = addrs.street.country;
+  }
+  if (addrs.postal) {
+    result.postalAddressLine1 = addrs.postal.addressLine1;
+    result.postalAddressLine2 = addrs.postal.addressLine2;
+    result.postalCity = addrs.postal.city;
+    result.postalRegion = addrs.postal.region;
+    result.postalPostalCode = addrs.postal.postalCode;
+    result.postalCountry = addrs.postal.country;
+  }
+  return result;
 }
 
 /**
@@ -945,9 +1106,31 @@ export async function importMembersFromXeroGroups(
                   }
                 }
               }
-              if (!existingPrimary.phone) {
-                const phone = getXeroContactPhone(contact.phones);
-                if (phone) updates.phone = phone;
+              if (!existingPrimary.phoneNumber) {
+                const phone = getXeroContactPhoneStructured(contact.phones);
+                if (phone) {
+                  updates.phoneCountryCode = phone.phoneCountryCode;
+                  updates.phoneAreaCode = phone.phoneAreaCode;
+                  updates.phoneNumber = phone.phoneNumber;
+                }
+              }
+              // Backfill addresses if missing
+              const existAddrs = getXeroContactAddresses(contact.addresses);
+              if (!existingPrimary.streetAddressLine1 && existAddrs.street) {
+                updates.streetAddressLine1 = existAddrs.street.addressLine1;
+                updates.streetAddressLine2 = existAddrs.street.addressLine2;
+                updates.streetCity = existAddrs.street.city;
+                updates.streetRegion = existAddrs.street.region;
+                updates.streetPostalCode = existAddrs.street.postalCode;
+                updates.streetCountry = existAddrs.street.country;
+              }
+              if (!existingPrimary.postalAddressLine1 && existAddrs.postal) {
+                updates.postalAddressLine1 = existAddrs.postal.addressLine1;
+                updates.postalAddressLine2 = existAddrs.postal.addressLine2;
+                updates.postalCity = existAddrs.postal.city;
+                updates.postalRegion = existAddrs.postal.region;
+                updates.postalPostalCode = existAddrs.postal.postalCode;
+                updates.postalCountry = existAddrs.postal.country;
               }
               // Backfill joinedDate from first invoice
               if (!existingPrimary.joinedDate && contact.contactID) {
@@ -1019,7 +1202,8 @@ export async function importMembersFromXeroGroups(
                 ageTier: mapping.ageTier,
                 dateOfBirth: depDob,
                 xeroContactId: contact.contactID || null,
-                phone: getXeroContactPhone(contact.phones),
+                ...spreadPhoneFromXero(contact.phones),
+                ...spreadAddressesFromXero(contact.addresses),
                 active: true,
                 emailVerified: true,
                 canLogin: false,
@@ -1101,7 +1285,8 @@ export async function importMembersFromXeroGroups(
               ageTier: mapping.ageTier,
               dateOfBirth,
               xeroContactId: contact.contactID || null,
-              phone: getXeroContactPhone(contact.phones),
+              ...spreadPhoneFromXero(contact.phones),
+              ...spreadAddressesFromXero(contact.addresses),
               active: true,
               emailVerified: true, // Xero-synced members don't need email verification
               joinedDate: memberJoinedDate,
@@ -1173,12 +1358,33 @@ export async function importMembersFromXeroGroups(
 // Contact update (TAC -> Xero)
 // ---------------------------------------------------------------------------
 
+export interface XeroContactUpdateData {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phoneCountryCode?: string | null;
+  phoneAreaCode?: string | null;
+  phoneNumber?: string | null;
+  streetAddressLine1?: string | null;
+  streetAddressLine2?: string | null;
+  streetCity?: string | null;
+  streetRegion?: string | null;
+  streetPostalCode?: string | null;
+  streetCountry?: string | null;
+  postalAddressLine1?: string | null;
+  postalAddressLine2?: string | null;
+  postalCity?: string | null;
+  postalRegion?: string | null;
+  postalPostalCode?: string | null;
+  postalCountry?: string | null;
+}
+
 /**
  * Update a Xero contact's details when a member is edited in TACBookings.
  */
 export async function updateXeroContact(
   xeroContactId: string,
-  data: { firstName: string; lastName: string; email: string; phone?: string | null }
+  data: XeroContactUpdateData,
 ): Promise<void> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
@@ -1188,9 +1394,10 @@ export async function updateXeroContact(
     firstName: data.firstName,
     lastName: data.lastName,
     emailAddress: data.email,
-    phones: data.phone
-      ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneNumber: data.phone }]
+    phones: data.phoneNumber
+      ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneCountryCode: data.phoneCountryCode || "", phoneAreaCode: data.phoneAreaCode || "", phoneNumber: data.phoneNumber }]
       : [],
+    addresses: buildXeroAddresses(data),
   };
 
   await xero.accountingApi.updateContact(tenantId, xeroContactId, { contacts: [contact] });

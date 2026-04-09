@@ -17,7 +17,14 @@ export async function GET(request: NextRequest) {
       where: { token },
       include: {
         member: {
-          select: { id: true, email: true, firstName: true, lastName: true, phone: true, xeroContactId: true },
+          select: {
+            id: true, email: true, firstName: true, lastName: true, xeroContactId: true,
+            phoneCountryCode: true, phoneAreaCode: true, phoneNumber: true,
+            streetAddressLine1: true, streetAddressLine2: true, streetCity: true,
+            streetRegion: true, streetPostalCode: true, streetCountry: true,
+            postalAddressLine1: true, postalAddressLine2: true, postalCity: true,
+            postalRegion: true, postalPostalCode: true, postalCountry: true,
+          },
         },
       },
     });
@@ -73,7 +80,21 @@ export async function GET(request: NextRequest) {
               firstName: record.member.firstName,
               lastName: record.member.lastName,
               email: record.newEmail,
-              phone: record.member.phone,
+              phoneCountryCode: record.member.phoneCountryCode,
+              phoneAreaCode: record.member.phoneAreaCode,
+              phoneNumber: record.member.phoneNumber,
+              streetAddressLine1: record.member.streetAddressLine1,
+              streetAddressLine2: record.member.streetAddressLine2,
+              streetCity: record.member.streetCity,
+              streetRegion: record.member.streetRegion,
+              streetPostalCode: record.member.streetPostalCode,
+              streetCountry: record.member.streetCountry,
+              postalAddressLine1: record.member.postalAddressLine1,
+              postalAddressLine2: record.member.postalAddressLine2,
+              postalCity: record.member.postalCity,
+              postalRegion: record.member.postalRegion,
+              postalPostalCode: record.member.postalPostalCode,
+              postalCountry: record.member.postalCountry,
             });
           }
         })

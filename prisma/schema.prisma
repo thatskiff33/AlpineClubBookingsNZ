@@ -112,7 +112,28 @@ model Member {
   firstName           String
   lastName            String
   dateOfBirth   DateTime?
-  phone         String?
+
+  // Structured phone (matches Xero's countryCode/areaCode/number format)
+  phoneCountryCode  String?   // e.g. "64"
+  phoneAreaCode     String?   // e.g. "27"
+  phoneNumber       String?   // e.g. "4224115"
+
+  // Physical address (Xero STREET type)
+  streetAddressLine1  String?
+  streetAddressLine2  String?
+  streetCity          String?
+  streetRegion        String?
+  streetPostalCode    String?
+  streetCountry       String?
+
+  // Postal address (Xero POBOX type)
+  postalAddressLine1  String?
+  postalAddressLine2  String?
+  postalCity          String?
+  postalRegion        String?
+  postalPostalCode    String?
+  postalCountry       String?
+
   role          Role     @default(MEMBER)
   ageTier       AgeTier  @default(ADULT)
   xeroContactId String?  @unique
