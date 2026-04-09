@@ -8,6 +8,7 @@ import { getSeasonYear } from "@/lib/utils";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { createEmailVerificationToken } from "@/lib/verification-tokens";
 import { AgeTier } from "@prisma/client";
+import { isXeroConnected, findOrCreateXeroContact } from "@/lib/xero";
 import logger from "@/lib/logger";
 
 const registerSchema = z.object({
@@ -16,7 +17,9 @@ const registerSchema = z.object({
   firstName: z.string().min(1, "First name is required").transform((s) => s.replace(/[\r\n]/g, " ").trim()),
   lastName: z.string().min(1, "Last name is required").transform((s) => s.replace(/[\r\n]/g, " ").trim()),
   dateOfBirth: z.string().optional(),
-  phone: z.string().optional(),
+  phoneCountryCode: z.string().max(5).optional(),
+  phoneAreaCode: z.string().max(5).optional(),
+  phoneNumber: z.string().max(15).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -34,7 +37,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email, password, firstName, lastName, dateOfBirth, phone } = parsed.data;
+    const { email, password, firstName, lastName, dateOfBirth, phoneCountryCode, phoneAreaCode, phoneNumber } = parsed.data;
 
     const existing = await prisma.member.findFirst({
       where: { email: email.toLowerCase(), canLogin: true },
@@ -62,7 +65,9 @@ export async function POST(req: NextRequest) {
         ageTier,
         canLogin: true,
         dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-        phone: phone || null,
+        phoneCountryCode: phoneCountryCode?.trim() || null,
+        phoneAreaCode: phoneAreaCode?.trim() || null,
+        phoneNumber: phoneNumber?.trim() || null,
       },
     });
 
@@ -77,6 +82,15 @@ export async function POST(req: NextRequest) {
     sendWelcomeEmail(member.email, member.firstName).catch((err) => {
       logger.error({ err }, "Failed to send welcome email");
     });
+
+    // Fire-and-forget: create Xero contact for new member (if Xero is connected)
+    isXeroConnected().then(connected => {
+      if (connected) {
+        findOrCreateXeroContact(member.id).catch(err => {
+          logger.warn({ err, memberId: member.id }, "Failed to auto-create Xero contact on registration");
+        });
+      }
+    }).catch(() => {});
 
     return NextResponse.json({ success: true, memberId: member.id }, { status: 201 });
   } catch (err) {

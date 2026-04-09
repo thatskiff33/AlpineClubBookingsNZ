@@ -38,7 +38,7 @@ const memberSession = { user: { id: "m1", role: "MEMBER" } } as any;
 
 const baseMember = {
   id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
-  phone: "021-123", dateOfBirth: new Date("1990-01-15"),
+  phoneCountryCode: null, phoneAreaCode: null, phoneNumber: "021-123", dateOfBirth: new Date("1990-01-15"),
   role: "MEMBER", ageTier: "ADULT", active: true, forcePasswordChange: false,
   xeroContactId: null, joinedDate: null, createdAt: new Date("2025-01-01"),
   canLogin: true,

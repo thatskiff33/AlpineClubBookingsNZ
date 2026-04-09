@@ -20,7 +20,8 @@ interface XeroSearchResult {
 
 interface MemberDetail {
   id: string; firstName: string; lastName: string; email: string
-  phone: string | null; dateOfBirth: string | null
+  phoneCountryCode: string | null; phoneAreaCode: string | null; phoneNumber: string | null
+  dateOfBirth: string | null
   role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
   active: boolean; forcePasswordChange: boolean; xeroContactId: string | null; joinedDate: string | null; createdAt: string
   canLogin: boolean
@@ -31,6 +32,10 @@ interface MemberDetail {
   bookings: Array<{ id: string; checkIn: string; checkOut: string; status: string; finalPriceCents: number; _count: { guests: number } }>
   auditLogs: Array<{ id: string; action: string; details: string | null; createdAt: string }>
   stats: { totalBookings: number; totalSpendCents: number; lastStay: string | null }
+  streetAddressLine1: string | null; streetAddressLine2: string | null; streetCity: string | null
+  streetRegion: string | null; streetPostalCode: string | null; streetCountry: string | null
+  postalAddressLine1: string | null; postalAddressLine2: string | null; postalCity: string | null
+  postalRegion: string | null; postalPostalCode: string | null; postalCountry: string | null
 }
 
 interface CreditHistoryItem {
@@ -44,9 +49,14 @@ interface CreditHistoryItem {
 }
 
 interface EditForm {
-  firstName: string; lastName: string; email: string; phone: string
+  firstName: string; lastName: string; email: string
+  phoneCountryCode: string; phoneAreaCode: string; phoneNumber: string
   dateOfBirth: string; role: "MEMBER" | "ADMIN"; active: boolean; forcePasswordChange: boolean
   inheritEmailFromId: string | null
+  streetAddressLine1: string; streetAddressLine2: string; streetCity: string
+  streetRegion: string; streetPostalCode: string; streetCountry: string
+  postalAddressLine1: string; postalAddressLine2: string; postalCity: string
+  postalRegion: string; postalPostalCode: string; postalCountry: string
 }
 
 export default function MemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -58,7 +68,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [editOpen, setEditOpen] = useState(false)
-  const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phone: "", dateOfBirth: "", role: "MEMBER", active: true, forcePasswordChange: false, inheritEmailFromId: null })
+  const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", role: "MEMBER", active: true, forcePasswordChange: false, inheritEmailFromId: null, streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: "", postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: "" })
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState("")
   // Account credit state
@@ -131,12 +141,26 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       firstName: member.firstName,
       lastName: member.lastName,
       email: member.email,
-      phone: member.phone || "",
+      phoneCountryCode: member.phoneCountryCode || "",
+      phoneAreaCode: member.phoneAreaCode || "",
+      phoneNumber: member.phoneNumber || "",
       dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "",
       role: member.role,
       active: member.active,
       forcePasswordChange: member.forcePasswordChange,
       inheritEmailFromId: member.inheritEmailFromId,
+      streetAddressLine1: member.streetAddressLine1 || "",
+      streetAddressLine2: member.streetAddressLine2 || "",
+      streetCity: member.streetCity || "",
+      streetRegion: member.streetRegion || "",
+      streetPostalCode: member.streetPostalCode || "",
+      streetCountry: member.streetCountry || "",
+      postalAddressLine1: member.postalAddressLine1 || "",
+      postalAddressLine2: member.postalAddressLine2 || "",
+      postalCity: member.postalCity || "",
+      postalRegion: member.postalRegion || "",
+      postalPostalCode: member.postalPostalCode || "",
+      postalCountry: member.postalCountry || "",
     })
     setFormError("")
     setEditOpen(true)
@@ -152,12 +176,26 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           firstName: form.firstName,
           lastName: form.lastName,
           email: form.email,
-          phone: form.phone || null,
+          phoneCountryCode: form.phoneCountryCode || null,
+          phoneAreaCode: form.phoneAreaCode || null,
+          phoneNumber: form.phoneNumber || null,
           dateOfBirth: form.dateOfBirth || null,
           role: form.role,
           active: form.active,
           forcePasswordChange: form.forcePasswordChange,
           inheritEmailFromId: form.inheritEmailFromId || null,
+          streetAddressLine1: form.streetAddressLine1 || null,
+          streetAddressLine2: form.streetAddressLine2 || null,
+          streetCity: form.streetCity || null,
+          streetRegion: form.streetRegion || null,
+          streetPostalCode: form.streetPostalCode || null,
+          streetCountry: form.streetCountry || null,
+          postalAddressLine1: form.postalAddressLine1 || null,
+          postalAddressLine2: form.postalAddressLine2 || null,
+          postalCity: form.postalCity || null,
+          postalRegion: form.postalRegion || null,
+          postalPostalCode: form.postalPostalCode || null,
+          postalCountry: form.postalCountry || null,
         }),
       })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Save failed") }
@@ -266,7 +304,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       </div>
 
       <Card><CardHeader><CardTitle className="text-base font-medium">Member Information</CardTitle></CardHeader><CardContent><dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
-        <div><dt className="text-slate-500">Phone</dt><dd className="font-medium">{member.phone || "Not provided"}</dd></div>
+        <div><dt className="text-slate-500">Phone</dt><dd className="font-medium">{member.phoneNumber ? [member.phoneCountryCode ? `+${member.phoneCountryCode}` : null, member.phoneAreaCode, member.phoneNumber].filter(Boolean).join(" ") : "Not provided"}</dd></div>
         <div><dt className="text-slate-500">Member Since</dt><dd className="font-medium">{fmtDate(member.joinedDate || member.createdAt)}{member.joinedDate && <span className="text-xs text-slate-400 ml-1">(from Xero)</span>}</dd></div>
         <div><dt className="text-slate-500">Login</dt><dd className="font-medium">{member.canLogin ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Can Login</Badge> : <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Non-Login</Badge>}</dd></div>
         <div><dt className="text-slate-500">Email Inheritance</dt><dd className="font-medium">{member.inheritEmailFrom ? <span className="text-xs">{member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} <span className="text-slate-400">({member.inheritEmailFrom.email})</span></span> : <span className="text-xs text-slate-500">Own email</span>}</dd></div>
@@ -391,8 +429,12 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               <Input id="edit-email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-phone">Phone</Label>
-              <Input id="edit-phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+              <Label>Phone</Label>
+              <div className="flex gap-2">
+                <Input className="w-20" placeholder="64" value={form.phoneCountryCode} onChange={e => setForm(f => ({ ...f, phoneCountryCode: e.target.value }))} maxLength={5} aria-label="Country code" />
+                <Input className="w-20" placeholder="27" value={form.phoneAreaCode} onChange={e => setForm(f => ({ ...f, phoneAreaCode: e.target.value }))} maxLength={5} aria-label="Area code" />
+                <Input className="flex-1" placeholder="4224115" value={form.phoneNumber} onChange={e => setForm(f => ({ ...f, phoneNumber: e.target.value }))} maxLength={15} aria-label="Phone number" />
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-dateOfBirth">Date of Birth</Label>
@@ -437,6 +479,32 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 )}
               </div>
             )}
+            <fieldset className="space-y-2 pt-2 border-t">
+              <legend className="text-sm font-medium">Physical Address</legend>
+              <Input placeholder="Address line 1" value={form.streetAddressLine1} onChange={e => setForm(f => ({ ...f, streetAddressLine1: e.target.value }))} maxLength={200} />
+              <Input placeholder="Address line 2" value={form.streetAddressLine2} onChange={e => setForm(f => ({ ...f, streetAddressLine2: e.target.value }))} maxLength={200} />
+              <div className="grid grid-cols-2 gap-2">
+                <Input placeholder="City" value={form.streetCity} onChange={e => setForm(f => ({ ...f, streetCity: e.target.value }))} maxLength={200} />
+                <Input placeholder="Region" value={form.streetRegion} onChange={e => setForm(f => ({ ...f, streetRegion: e.target.value }))} maxLength={200} />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Input placeholder="Postal code" value={form.streetPostalCode} onChange={e => setForm(f => ({ ...f, streetPostalCode: e.target.value }))} maxLength={20} />
+                <Input placeholder="Country" value={form.streetCountry} onChange={e => setForm(f => ({ ...f, streetCountry: e.target.value }))} maxLength={100} />
+              </div>
+            </fieldset>
+            <fieldset className="space-y-2 pt-2 border-t">
+              <legend className="text-sm font-medium">Postal Address</legend>
+              <Input placeholder="Address line 1" value={form.postalAddressLine1} onChange={e => setForm(f => ({ ...f, postalAddressLine1: e.target.value }))} maxLength={200} />
+              <Input placeholder="Address line 2" value={form.postalAddressLine2} onChange={e => setForm(f => ({ ...f, postalAddressLine2: e.target.value }))} maxLength={200} />
+              <div className="grid grid-cols-2 gap-2">
+                <Input placeholder="City" value={form.postalCity} onChange={e => setForm(f => ({ ...f, postalCity: e.target.value }))} maxLength={200} />
+                <Input placeholder="Region" value={form.postalRegion} onChange={e => setForm(f => ({ ...f, postalRegion: e.target.value }))} maxLength={200} />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Input placeholder="Postal code" value={form.postalPostalCode} onChange={e => setForm(f => ({ ...f, postalPostalCode: e.target.value }))} maxLength={20} />
+                <Input placeholder="Country" value={form.postalCountry} onChange={e => setForm(f => ({ ...f, postalCountry: e.target.value }))} maxLength={100} />
+              </div>
+            </fieldset>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>Cancel</Button>

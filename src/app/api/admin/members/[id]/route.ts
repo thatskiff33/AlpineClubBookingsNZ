@@ -7,11 +7,15 @@ import { getSeasonYear } from "@/lib/utils";
 import { isXeroConnected, updateXeroContact } from "@/lib/xero";
 import logger from "@/lib/logger";
 
+const maxStr = (len: number) => z.string().max(len).optional().nullable();
+
 const updateMemberSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100).transform((s) => s.replace(/[\r\n]/g, " ").trim()).optional(),
   lastName: z.string().min(1, "Last name is required").max(100).transform((s) => s.replace(/[\r\n]/g, " ").trim()).optional(),
   email: z.string().email("Invalid email address").optional(),
-  phone: z.string().max(20).optional().nullable(),
+  phoneCountryCode: z.string().max(5).optional().nullable(),
+  phoneAreaCode: z.string().max(5).optional().nullable(),
+  phoneNumber: z.string().max(15).optional().nullable(),
   dateOfBirth: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
@@ -29,7 +33,26 @@ const updateMemberSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
+  // Addresses
+  streetAddressLine1: maxStr(200),
+  streetAddressLine2: maxStr(200),
+  streetCity: maxStr(200),
+  streetRegion: maxStr(200),
+  streetPostalCode: maxStr(20),
+  streetCountry: maxStr(100),
+  postalAddressLine1: maxStr(200),
+  postalAddressLine2: maxStr(200),
+  postalCity: maxStr(200),
+  postalRegion: maxStr(200),
+  postalPostalCode: maxStr(20),
+  postalCountry: maxStr(100),
 });
+
+const PHONE_FIELDS = ["phoneCountryCode", "phoneAreaCode", "phoneNumber"] as const;
+const ADDRESS_FIELDS = [
+  "streetAddressLine1", "streetAddressLine2", "streetCity", "streetRegion", "streetPostalCode", "streetCountry",
+  "postalAddressLine1", "postalAddressLine2", "postalCity", "postalRegion", "postalPostalCode", "postalCountry",
+] as const;
 
 /**
  * GET /api/admin/members/[id]
@@ -54,7 +77,9 @@ export async function GET(
         firstName: true,
         lastName: true,
         email: true,
-        phone: true,
+        phoneCountryCode: true,
+        phoneAreaCode: true,
+        phoneNumber: true,
         dateOfBirth: true,
         role: true,
         ageTier: true,
@@ -64,6 +89,18 @@ export async function GET(
         xeroContactId: true,
         joinedDate: true,
         createdAt: true,
+        streetAddressLine1: true,
+        streetAddressLine2: true,
+        streetCity: true,
+        streetRegion: true,
+        streetPostalCode: true,
+        streetCountry: true,
+        postalAddressLine1: true,
+        postalAddressLine2: true,
+        postalCity: true,
+        postalRegion: true,
+        postalPostalCode: true,
+        postalCountry: true,
         familyGroupMemberships: {
           select: {
             familyGroupId: true,
@@ -181,7 +218,12 @@ export async function PUT(
   const updateData: Record<string, unknown> = {};
   if (data.firstName !== undefined) updateData.firstName = data.firstName.trim();
   if (data.lastName !== undefined) updateData.lastName = data.lastName.trim();
-  if (data.phone !== undefined) updateData.phone = data.phone?.trim() || null;
+  for (const f of PHONE_FIELDS) {
+    if (data[f] !== undefined) updateData[f] = data[f]?.trim() || null;
+  }
+  for (const f of ADDRESS_FIELDS) {
+    if (data[f] !== undefined) updateData[f] = data[f]?.trim() || null;
+  }
   if (data.role !== undefined) updateData.role = data.role;
   if (data.active !== undefined) updateData.active = data.active;
   if (data.canLogin !== undefined) updateData.canLogin = data.canLogin;
@@ -232,7 +274,9 @@ export async function PUT(
         firstName: true,
         lastName: true,
         email: true,
-        phone: true,
+        phoneCountryCode: true,
+        phoneAreaCode: true,
+        phoneNumber: true,
         dateOfBirth: true,
         role: true,
         ageTier: true,
@@ -241,6 +285,18 @@ export async function PUT(
         xeroContactId: true,
         joinedDate: true,
         createdAt: true,
+        streetAddressLine1: true,
+        streetAddressLine2: true,
+        streetCity: true,
+        streetRegion: true,
+        streetPostalCode: true,
+        streetCountry: true,
+        postalAddressLine1: true,
+        postalAddressLine2: true,
+        postalCity: true,
+        postalRegion: true,
+        postalPostalCode: true,
+        postalCountry: true,
       },
     });
 
@@ -252,7 +308,21 @@ export async function PUT(
             firstName: updated.firstName,
             lastName: updated.lastName,
             email: updated.email,
-            phone: updated.phone,
+            phoneCountryCode: updated.phoneCountryCode,
+            phoneAreaCode: updated.phoneAreaCode,
+            phoneNumber: updated.phoneNumber,
+            streetAddressLine1: updated.streetAddressLine1,
+            streetAddressLine2: updated.streetAddressLine2,
+            streetCity: updated.streetCity,
+            streetRegion: updated.streetRegion,
+            streetPostalCode: updated.streetPostalCode,
+            streetCountry: updated.streetCountry,
+            postalAddressLine1: updated.postalAddressLine1,
+            postalAddressLine2: updated.postalAddressLine2,
+            postalCity: updated.postalCity,
+            postalRegion: updated.postalRegion,
+            postalPostalCode: updated.postalPostalCode,
+            postalCountry: updated.postalCountry,
           });
         }
       } catch (xeroErr) {

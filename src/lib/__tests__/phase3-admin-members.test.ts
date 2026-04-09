@@ -218,7 +218,7 @@ describe("Phase 3: Admin Member Management", () => {
       vi.mocked(prisma.member.findMany).mockResolvedValue([
         {
           firstName: "Alice", lastName: "Smith", email: "alice@test.com",
-          phone: "021-123", dateOfBirth: new Date("1990-01-15"),
+          phoneCountryCode: null, phoneAreaCode: null, phoneNumber: "021-123", dateOfBirth: new Date("1990-01-15"),
           role: "MEMBER", ageTier: "ADULT", active: true,
           xeroContactId: "xc1", createdAt: new Date("2025-01-01"),
           subscriptions: [{ status: "PAID" }],
@@ -233,7 +233,7 @@ describe("Phase 3: Admin Member Management", () => {
 
       const csv = await res.text();
       const lines = csv.split("\r\n");
-      expect(lines[0]).toBe("First Name,Last Name,Email,Phone,Date of Birth,Role,Age Tier,Active,Xero Contact ID,Subscription Status,Created At");
+      expect(lines[0]).toBe("First Name,Last Name,Email,Phone Country Code,Phone Area Code,Phone Number,Date of Birth,Role,Age Tier,Active,Xero Contact ID,Subscription Status,Created At");
       expect(lines[1]).toContain("Alice");
       expect(lines[1]).toContain("PAID");
     });
@@ -243,7 +243,7 @@ describe("Phase 3: Admin Member Management", () => {
       vi.mocked(prisma.member.findMany).mockResolvedValue([
         {
           firstName: 'O"Brien', lastName: "Smith, Jr.", email: "test@test.com",
-          phone: null, dateOfBirth: null, role: "MEMBER", ageTier: "ADULT",
+          phoneCountryCode: null, phoneAreaCode: null, phoneNumber: null, dateOfBirth: null, role: "MEMBER", ageTier: "ADULT",
           active: true, xeroContactId: null, createdAt: new Date("2025-01-01"),
           subscriptions: [],
         },
