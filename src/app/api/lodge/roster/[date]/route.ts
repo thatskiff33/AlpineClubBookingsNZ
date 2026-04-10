@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { assignmentExistsForDate } from "@/lib/lodge-date-scoping";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
@@ -106,6 +107,10 @@ export async function PUT(
   if (!dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
+  const date = parseDateOnly(dateStr);
+  if (isNaN(date.getTime())) {
+    return NextResponse.json({ error: "Invalid date" }, { status: 400 });
+  }
 
   let body: unknown;
   try {
@@ -125,6 +130,14 @@ export async function PUT(
   const data = parsed.data;
 
   try {
+    const assignmentExists = await assignmentExistsForDate(data.assignmentId, date);
+    if (!assignmentExists) {
+      return NextResponse.json(
+        { error: "Assignment not found for this date" },
+        { status: 404 }
+      );
+    }
+
     if (data.action === "complete") {
       await prisma.choreAssignment.update({
         where: { id: data.assignmentId },

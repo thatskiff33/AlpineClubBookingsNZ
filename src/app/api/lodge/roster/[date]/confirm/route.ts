@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
 import { parseDateOnly } from "@/lib/date-only";
+import { validateRosterAllocationsForDate } from "@/lib/lodge-date-scoping";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -63,6 +64,20 @@ export async function POST(
   }
 
   try {
+    const allocationsAreValid = await validateRosterAllocationsForDate(
+      parsed.data.allocations,
+      date
+    );
+    if (!allocationsAreValid) {
+      return NextResponse.json(
+        {
+          error:
+            "Allocations must reference guests staying on this date for the matching booking",
+        },
+        { status: 400 }
+      );
+    }
+
     // Check for existing confirmed/completed assignments
     const existingConfirmed = await prisma.choreAssignment.count({
       where: {

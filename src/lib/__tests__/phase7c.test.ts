@@ -6,9 +6,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockPrisma = {
   booking: { findMany: vi.fn(), count: vi.fn() },
-  bookingGuest: { findUnique: vi.fn(), update: vi.fn() },
+  bookingGuest: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn() },
   choreAssignment: {
     findMany: vi.fn(),
+    findFirst: vi.fn(),
     update: vi.fn(),
     count: vi.fn(),
     deleteMany: vi.fn(),
@@ -65,6 +66,7 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
   });
 
   it("sets completedAt and completedVia on complete action", async () => {
+    mockPrisma.choreAssignment.findFirst.mockResolvedValue({ id: "assign-1" });
     mockPrisma.choreAssignment.update.mockResolvedValue({});
 
     const { PUT } = await import("@/app/api/lodge/roster/[date]/route");
@@ -87,6 +89,7 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
   });
 
   it("clears completedAt and completedVia on uncomplete action", async () => {
+    mockPrisma.choreAssignment.findFirst.mockResolvedValue({ id: "assign-1" });
     mockPrisma.choreAssignment.update.mockResolvedValue({});
 
     const { PUT } = await import("@/app/api/lodge/roster/[date]/route");
@@ -143,6 +146,20 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
 
     const res = await PUT(req, makeParams("not-a-date"));
     expect(res.status).toBe(400);
+  });
+
+  it("rejects assignments outside the requested date scope", async () => {
+    mockPrisma.choreAssignment.findFirst.mockResolvedValue(null);
+
+    const { PUT } = await import("@/app/api/lodge/roster/[date]/route");
+    const req = makeRequest({
+      action: "complete",
+      assignmentId: "assign-foreign-date",
+    }) as any;
+
+    const res = await PUT(req, makeParams());
+    expect(res.status).toBe(404);
+    expect(mockPrisma.choreAssignment.update).not.toHaveBeenCalled();
   });
 });
 
@@ -233,7 +250,7 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
   });
 
   it("sets arrivedAt when guest has not arrived", async () => {
-    mockPrisma.bookingGuest.findUnique.mockResolvedValue({
+    mockPrisma.bookingGuest.findFirst.mockResolvedValue({
       id: "g1",
       arrivedAt: null,
     });
@@ -261,7 +278,7 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
   });
 
   it("clears arrivedAt when guest already arrived (toggle off)", async () => {
-    mockPrisma.bookingGuest.findUnique.mockResolvedValue({
+    mockPrisma.bookingGuest.findFirst.mockResolvedValue({
       id: "g1",
       arrivedAt: new Date(),
     });
@@ -287,7 +304,7 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
   });
 
   it("returns 404 for unknown guest", async () => {
-    mockPrisma.bookingGuest.findUnique.mockResolvedValue(null);
+    mockPrisma.bookingGuest.findFirst.mockResolvedValue(null);
 
     const { PUT } = await import(
       "@/app/api/lodge/guests/[date]/arrive/route"
@@ -300,6 +317,23 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
 
     const res = await PUT(req, makeParams());
     expect(res.status).toBe(404);
+  });
+
+  it("rejects a guest from another date", async () => {
+    mockPrisma.bookingGuest.findFirst.mockResolvedValue(null);
+
+    const { PUT } = await import(
+      "@/app/api/lodge/guests/[date]/arrive/route"
+    );
+    const req = new Request("http://localhost/api/lodge/guests/2026-07-10/arrive", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bookingGuestId: "g-outside-date" }),
+    }) as any;
+
+    const res = await PUT(req, makeParams());
+    expect(res.status).toBe(404);
+    expect(mockPrisma.bookingGuest.update).not.toHaveBeenCalled();
   });
 
   it("rejects MEMBER role", async () => {
@@ -338,7 +372,7 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
   });
 
   it("sets departedAt when guest has not departed", async () => {
-    mockPrisma.bookingGuest.findUnique.mockResolvedValue({
+    mockPrisma.bookingGuest.findFirst.mockResolvedValue({
       id: "g1",
       departedAt: null,
     });
@@ -369,7 +403,7 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
   });
 
   it("clears departedAt when guest already departed (toggle off)", async () => {
-    mockPrisma.bookingGuest.findUnique.mockResolvedValue({
+    mockPrisma.bookingGuest.findFirst.mockResolvedValue({
       id: "g1",
       departedAt: new Date(),
     });
@@ -392,7 +426,7 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
   });
 
   it("returns 404 for unknown guest", async () => {
-    mockPrisma.bookingGuest.findUnique.mockResolvedValue(null);
+    mockPrisma.bookingGuest.findFirst.mockResolvedValue(null);
 
     const { PUT } = await import(
       "@/app/api/lodge/guests/[date]/depart/route"
@@ -405,6 +439,23 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
 
     const res = await PUT(req, makeParams());
     expect(res.status).toBe(404);
+  });
+
+  it("rejects departure toggles for guests outside the requested date", async () => {
+    mockPrisma.bookingGuest.findFirst.mockResolvedValue(null);
+
+    const { PUT } = await import(
+      "@/app/api/lodge/guests/[date]/depart/route"
+    );
+    const req = new Request("http://localhost/api/lodge/guests/2026-07-10/depart", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bookingGuestId: "g-outside-date" }),
+    }) as any;
+
+    const res = await PUT(req, makeParams());
+    expect(res.status).toBe(404);
+    expect(mockPrisma.bookingGuest.update).not.toHaveBeenCalled();
   });
 });
 
@@ -636,6 +687,7 @@ describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
     vi.clearAllMocks();
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([{ id: "g1", bookingId: "b1" }]);
     // Confirm requires hut-leader or admin tier (LODGE can't confirm)
     mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
   });
@@ -768,6 +820,31 @@ describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
 
     const res = await POST(req, makeParams());
     expect(res.status).toBe(403);
+  });
+
+  it("rejects allocations whose guest does not belong to the booking for that date", async () => {
+    mockPrisma.bookingGuest.findMany.mockResolvedValue([{ id: "g1", bookingId: "b-other" }]);
+
+    const { POST } = await import(
+      "@/app/api/lodge/roster/[date]/confirm/route"
+    );
+    const req = new Request("http://localhost/api/lodge/roster/2026-07-10/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        allocations: [
+          {
+            choreTemplateId: "ct1",
+            bookingGuestId: "g1",
+            bookingId: "b1",
+          },
+        ],
+      }),
+    }) as any;
+
+    const res = await POST(req, makeParams());
+    expect(res.status).toBe(400);
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 });
 
