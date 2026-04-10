@@ -18,6 +18,11 @@ import {
   validatePromoCodeFull,
 } from "@/lib/promo";
 import { z } from "zod";
+import {
+  BookingGuestValidationError,
+  normalizeBookingGuestInputs,
+  resolveLinkedBookingMembers,
+} from "@/lib/booking-guests";
 
 const modifyQuoteSchema = z.object({
   checkIn: z.string().optional(),
@@ -29,7 +34,7 @@ const modifyQuoteSchema = z.object({
         lastName: z.string().min(1),
         ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
         isMember: z.boolean(),
-        memberId: z.string().optional(),
+        memberId: z.string().min(1).optional(),
       })
     )
     .optional(),
@@ -96,6 +101,24 @@ export async function POST(
     promoCode: newPromoCode,
     removePromoCode,
   } = parsed.data;
+  let normalizedAddGuests = addGuests;
+
+  try {
+    const linkedMembers = await resolveLinkedBookingMembers(
+      prisma,
+      booking.memberId,
+      (addGuests ?? []).map((guest) => guest.memberId),
+      { skipAuthorization: session.user.role === "ADMIN" }
+    );
+    normalizedAddGuests = addGuests
+      ? normalizeBookingGuestInputs(addGuests, linkedMembers)
+      : undefined;
+  } catch (error) {
+    if (error instanceof BookingGuestValidationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
 
   // Determine new dates
   const newCheckIn = newCheckInStr ? new Date(newCheckInStr) : booking.checkIn;
@@ -113,7 +136,7 @@ export async function POST(
   const remainingGuests = booking.guests.filter((g) => !removeSet.has(g.id));
   const removedGuests = booking.guests.filter((g) => removeSet.has(g.id));
 
-  if (remainingGuests.length === 0 && (!addGuests || addGuests.length === 0)) {
+  if (remainingGuests.length === 0 && (!normalizedAddGuests || normalizedAddGuests.length === 0)) {
     return NextResponse.json(
       { error: "Booking must have at least one guest" },
       { status: 400 }
@@ -126,7 +149,7 @@ export async function POST(
       isMember: g.isMember,
       memberId: g.memberId ?? null,
     })),
-    ...(addGuests ?? []).map((g) => ({
+    ...(normalizedAddGuests ?? []).map((g) => ({
       ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
       isMember: g.isMember,
       memberId: g.memberId ?? null,
@@ -255,8 +278,8 @@ export async function POST(
   }
 
   // 3. Per-added-guest costs
-  if (addGuests && addGuests.length > 0) {
-    for (const guest of addGuests) {
+  if (normalizedAddGuests && normalizedAddGuests.length > 0) {
+    for (const guest of normalizedAddGuests) {
       try {
         const guestPrice = calculateBookingPrice(
           newCheckIn,

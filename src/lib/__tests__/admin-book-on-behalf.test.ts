@@ -71,6 +71,7 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { getMemberCreditBalance } from "@/lib/member-credit";
+import { calculateBookingPrice } from "@/lib/pricing";
 import { POST } from "@/app/api/bookings/route";
 import { POST as postQuote } from "@/app/api/bookings/quote/route";
 import { POST as postPromoValidate } from "@/app/api/promo-codes/validate/route";
@@ -79,6 +80,7 @@ const mockedAuth = vi.mocked(auth);
 const mockedPrisma = vi.mocked(prisma);
 const mockedAudit = vi.mocked(logAudit);
 const mockedGetCredit = vi.mocked(getMemberCreditBalance);
+const mockedCalcPrice = vi.mocked(calculateBookingPrice);
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/bookings", {
@@ -251,6 +253,50 @@ describe("Admin Book on Behalf", () => {
   });
 });
 
+describe("Create booking guest normalization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("forces manually typed guests to non-member pricing on create", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      active: true,
+      emailVerified: true,
+      xeroContactId: "xero-1",
+    });
+    (mockedPrisma.memberSubscription.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "PAID",
+    });
+    (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "b1",
+      memberId: "m1",
+      status: "DRAFT",
+      guests: [],
+    });
+
+    const req = makeRequest({
+      checkIn,
+      checkOut,
+      draft: true,
+      guests: [{ firstName: "Manual", lastName: "Guest", ageTier: "ADULT", isMember: true }],
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+
+    const createCall = (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(createCall.data.guests.create[0]).toEqual(
+      expect.objectContaining({
+        firstName: "Manual",
+        lastName: "Guest",
+        isMember: false,
+        memberId: null,
+      })
+    );
+  });
+});
+
 describe("Quote API - forMemberId", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -296,6 +342,31 @@ describe("Quote API - forMemberId", () => {
 
     await postQuote(req);
     expect(mockedGetCredit).toHaveBeenCalledWith("m1");
+  });
+
+  it("treats manually typed guests as non-members in quotes", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    mockedGetCredit.mockResolvedValue(0);
+
+    const req = new NextRequest("http://localhost/api/bookings/quote", {
+      method: "POST",
+      body: JSON.stringify({
+        checkIn,
+        checkOut,
+        guests: [{ ageTier: "ADULT", isMember: true }],
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await postQuote(req);
+    expect(res.status).toBe(200);
+    expect(mockedCalcPrice).toHaveBeenCalledWith(
+      expect.any(Date),
+      expect.any(Date),
+      [expect.objectContaining({ ageTier: "ADULT", isMember: false })],
+      expect.any(Array)
+    );
   });
 });
 

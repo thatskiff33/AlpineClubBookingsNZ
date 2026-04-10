@@ -36,7 +36,8 @@ vi.mock("@/lib/prisma", () => ({
     choreAssignment: { findMany: mockFindMany, delete: mockDelete, deleteMany: mockDeleteMany },
     season: { findMany: mockFindMany },
     payment: { update: mockUpdate },
-    member: { findUnique: mockFindUnique },
+    member: { findUnique: mockFindUnique, findMany: mockFindMany },
+    familyGroupMember: { findMany: mockFindMany },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
   },
 }));
@@ -133,6 +134,12 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     },
     payment: {
       update: vi.fn().mockResolvedValue({}),
+    },
+    member: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    familyGroupMember: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
     season: {
       findMany: vi.fn().mockResolvedValue([{
@@ -683,6 +690,54 @@ describe("POST /api/bookings/[id]/guests", () => {
     expect(tx.bookingModification.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ modificationType: "GUEST_ADD" }),
+      })
+    );
+  });
+
+  it("forces typed guest additions to non-member pricing", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
+    mockedCalcPrice
+      .mockReturnValueOnce({
+        guests: [{ ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000] }],
+        totalPriceCents: 14000,
+      })
+      .mockReturnValueOnce({
+        guests: [
+          { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
+          { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] },
+          { ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000] },
+        ],
+        totalPriceCents: 24000,
+      });
+    mockedGetHoldDays.mockResolvedValue(7);
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({ guests: [{ firstName: "Manual", lastName: "Guest", ageTier: "ADULT", isMember: true }] }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(200);
+
+    expect(mockedCalcPrice).toHaveBeenNthCalledWith(
+      1,
+      booking.checkIn,
+      booking.checkOut,
+      [expect.objectContaining({ isMember: false, ageTier: "ADULT", memberId: null })],
+      expect.any(Array)
+    );
+    expect(tx.bookingGuest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          firstName: "Manual",
+          lastName: "Guest",
+          isMember: false,
+          memberId: null,
+        }),
       })
     );
   });

@@ -25,6 +25,11 @@ import { getMemberCreditBalance, applyCreditToBooking } from "@/lib/member-credi
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
 import { logAudit } from "@/lib/audit";
+import {
+  BookingGuestValidationError,
+  normalizeBookingGuestInputs,
+  resolveLinkedBookingMembers,
+} from "@/lib/booking-guests";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -36,7 +41,7 @@ const createBookingSchema = z.object({
         lastName: z.string().min(1).max(100),
         ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
         isMember: z.boolean(),
-        memberId: z.string().optional(),
+        memberId: z.string().min(1).optional(),
       })
     )
     .min(1)
@@ -136,55 +141,20 @@ export async function POST(request: NextRequest) {
   }
 
   // Validate and verify guest memberIds and pricing attributes
-  const guestMemberIds = guests.map((g) => g.memberId).filter(Boolean) as string[];
-  if (guestMemberIds.length > 0) {
-    // Authorization: memberIds must be self or family group members
-    // Admin booking on-behalf skips this restriction — admin can add any member as guest
-    if (!isOnBehalf) {
-      const allowedIds = new Set<string>([session.user.id]);
-      const familyLinks = await prisma.familyGroupMember.findMany({
-        where: { memberId: session.user.id },
-        select: { familyGroupId: true },
-      });
-      if (familyLinks.length > 0) {
-        const groupIds = familyLinks.map((l) => l.familyGroupId);
-        const familyMembers = await prisma.familyGroupMember.findMany({
-          where: { familyGroupId: { in: groupIds } },
-          select: { memberId: true },
-        });
-        for (const fm of familyMembers) allowedIds.add(fm.memberId);
-      }
-      for (const id of guestMemberIds) {
-        if (!allowedIds.has(id)) {
-          return NextResponse.json({ error: "Invalid guest member reference" }, { status: 403 });
-        }
-      }
+  try {
+    const linkedMembers = await resolveLinkedBookingMembers(
+      prisma,
+      effectiveMemberId,
+      guests.map((guest) => guest.memberId),
+      { skipAuthorization: isOnBehalf }
+    );
+    const normalizedGuests = normalizeBookingGuestInputs(guests, linkedMembers);
+    guests.splice(0, guests.length, ...normalizedGuests);
+  } catch (error) {
+    if (error instanceof BookingGuestValidationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
     }
-
-    // Verify isMember and ageTier from DB for linked members (don't trust client)
-    const linkedMembers = await prisma.member.findMany({
-      where: { id: { in: guestMemberIds }, active: true },
-      select: { id: true, ageTier: true },
-    });
-    const memberMap = new Map(linkedMembers.map((m) => [m.id, m]));
-    for (const g of guests) {
-      if (g.memberId) {
-        const dbMember = memberMap.get(g.memberId);
-        if (!dbMember) {
-          return NextResponse.json({ error: "Linked member is inactive or not found" }, { status: 400 });
-        }
-        g.isMember = true;
-        g.ageTier = dbMember.ageTier;
-      } else {
-        // Guests without a memberId cannot claim member pricing
-        g.isMember = false;
-      }
-    }
-  } else {
-    // No linked members — enforce isMember=false for all guests
-    for (const g of guests) {
-      g.isMember = false;
-    }
+    throw error;
   }
 
   const today = new Date();

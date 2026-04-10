@@ -14,6 +14,7 @@ interface Guest {
   lastName: string;
   ageTier: string;
   isMember: boolean;
+  memberId?: string | null;
   priceCents: number;
 }
 
@@ -30,6 +31,8 @@ export interface BookingEditorData {
   nights: number;
   status: string;
   guests: Guest[];
+  bookingMemberId: string;
+  viewerRole: string;
   totalPriceCents: number;
   discountCents: number;
   finalPriceCents: number;
@@ -56,6 +59,8 @@ export function BookingEditor({
           checkIn: booking.checkIn,
           checkOut: booking.checkOut,
           guests: booking.guests,
+          bookingMemberId: booking.bookingMemberId,
+          viewerRole: booking.viewerRole,
           finalPriceCents: booking.finalPriceCents,
           totalPriceCents: booking.totalPriceCents,
           discountCents: booking.discountCents,

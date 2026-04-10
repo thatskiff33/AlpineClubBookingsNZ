@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 
 export interface GuestData {
   firstName: string;
@@ -19,6 +20,8 @@ interface GuestFormProps {
 }
 
 export function GuestForm({ guests, onGuestsChange, maxGuests }: GuestFormProps) {
+  const ageTierOptions = useAgeTierOptions();
+
   function addGuest() {
     if (guests.length >= maxGuests) return;
     onGuestsChange([
@@ -62,8 +65,10 @@ export function GuestForm({ guests, onGuestsChange, maxGuests }: GuestFormProps)
         </p>
       )}
 
-      {guests.map((guest, index) => (
-        <div key={index} className="rounded-lg border p-4 space-y-3">
+      {guests.map((guest, index) => {
+        const isLinkedMember = Boolean(guest.memberId);
+        return (
+          <div key={index} className="rounded-lg border p-4 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium">Guest {index + 1}</span>
             <Button
@@ -85,6 +90,7 @@ export function GuestForm({ guests, onGuestsChange, maxGuests }: GuestFormProps)
                 onChange={(e) => updateGuest(index, "firstName", e.target.value)}
                 placeholder="First name"
                 required
+                disabled={isLinkedMember}
               />
             </div>
             <div className="space-y-1">
@@ -94,37 +100,35 @@ export function GuestForm({ guests, onGuestsChange, maxGuests }: GuestFormProps)
                 onChange={(e) => updateGuest(index, "lastName", e.target.value)}
                 placeholder="Last name"
                 required
+                disabled={isLinkedMember}
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Age Category</Label>
-              <select
-                value={guest.ageTier}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateGuest(index, "ageTier", e.target.value)}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
-              >
-                <option value="ADULT">Adult (18+)</option>
-                <option value="YOUTH">Youth (10-17)</option>
-                <option value="CHILD">Child (under 10)</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <Label>Membership</Label>
-              <select
-                value={guest.isMember ? "true" : "false"}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateGuest(index, "isMember", e.target.value === "true")}
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
-              >
-                <option value="true">Member</option>
-                <option value="false">Non-member</option>
-              </select>
-            </div>
+          <div className="space-y-1">
+            <Label>Age Category</Label>
+            <select
+              value={guest.ageTier}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => updateGuest(index, "ageTier", e.target.value)}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+              disabled={isLinkedMember}
+            >
+              {ageTierOptions.map((option) => (
+                <option key={option.tier} value={option.tier}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
-        </div>
-      ))}
+
+          <p className="text-sm text-gray-500">
+            {isLinkedMember
+              ? "Linked family members keep their member details and member pricing."
+              : "Typed-in guests are treated as non-members and charged at non-member rates."}
+          </p>
+          </div>
+        );
+      })}
     </div>
   );
 }

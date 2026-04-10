@@ -103,7 +103,6 @@ export function AdditionalPaymentCard({
             {clientSecret && (
               <StripeProvider clientSecret={clientSecret}>
                 <PaymentForm
-                  bookingId={bookingId}
                   amountCents={additionalAmountCents}
                   returnUrl={returnUrl}
                   onSuccess={handlePaymentSuccess}

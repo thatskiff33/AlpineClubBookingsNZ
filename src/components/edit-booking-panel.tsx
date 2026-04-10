@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
+import { getAgeTierLabel, useAgeTierOptions } from "@/lib/use-age-tier-options";
 
 interface Guest {
   id: string;
@@ -14,7 +15,16 @@ interface Guest {
   lastName: string;
   ageTier: string;
   isMember: boolean;
+  memberId?: string | null;
   priceCents: number;
+}
+
+interface FamilyMember {
+  id: string;
+  firstName: string;
+  lastName: string;
+  ageTier: "ADULT" | "YOUTH" | "CHILD";
+  relationship: "self" | "partner" | "dependent";
 }
 
 interface PromoInfo {
@@ -28,6 +38,8 @@ interface BookingData {
   checkIn: string;
   checkOut: string;
   guests: Guest[];
+  bookingMemberId: string;
+  viewerRole: string;
   finalPriceCents: number;
   totalPriceCents: number;
   discountCents: number;
@@ -40,6 +52,7 @@ interface NewGuest {
   lastName: string;
   ageTier: "ADULT" | "YOUTH" | "CHILD";
   isMember: boolean;
+  memberId?: string;
 }
 
 interface ItemizedChange {
@@ -74,12 +87,14 @@ export function EditBookingPanel({
   onDone: () => void;
 }) {
   const router = useRouter();
+  const ageTierOptions = useAgeTierOptions();
 
   // Editable state
   const [checkIn, setCheckIn] = useState(booking.checkIn);
   const [checkOut, setCheckOut] = useState(booking.checkOut);
   const [removedGuestIds, setRemovedGuestIds] = useState<Set<string>>(new Set());
   const [addedGuests, setAddedGuests] = useState<NewGuest[]>([]);
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [promoAction, setPromoAction] = useState<
     { type: "keep" } | { type: "remove" } | { type: "new"; code: string }
   >({ type: "keep" });
@@ -95,13 +110,37 @@ export function EditBookingPanel({
   const [addFirstName, setAddFirstName] = useState("");
   const [addLastName, setAddLastName] = useState("");
   const [addAgeTier, setAddAgeTier] = useState<"ADULT" | "YOUTH" | "CHILD">("ADULT");
-  const [addIsMember, setAddIsMember] = useState(false);
 
   // Save state
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
   const today = new Date().toISOString().split("T")[0];
+
+  useEffect(() => {
+    let cancelled = false;
+    const familyUrl =
+      booking.viewerRole === "ADMIN"
+        ? `/api/admin/members/${booking.bookingMemberId}/family`
+        : "/api/members/family";
+
+    fetch(familyUrl)
+      .then((res) => (res.ok ? res.json() : { familyMembers: [] }))
+      .then((data) => {
+        if (!cancelled) {
+          setFamilyMembers(data.familyMembers || []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFamilyMembers([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [booking.bookingMemberId, booking.viewerRole]);
 
   // Check if anything has changed
   const remainingGuests = booking.guests.filter((g) => !removedGuestIds.has(g.id));
@@ -135,6 +174,7 @@ export function EditBookingPanel({
           lastName: g.lastName,
           ageTier: g.ageTier,
           isMember: g.isMember,
+          memberId: g.memberId,
         }));
       }
       if (removedGuestIds.size > 0) {
@@ -201,14 +241,33 @@ export function EditBookingPanel({
         firstName: addFirstName.trim(),
         lastName: addLastName.trim(),
         ageTier: addAgeTier,
-        isMember: addIsMember,
+        isMember: false,
       },
     ]);
     setAddFirstName("");
     setAddLastName("");
     setAddAgeTier("ADULT");
-    setAddIsMember(false);
     setShowAddForm(false);
+  }
+
+  function handleAddFamilyMember(familyMember: FamilyMember) {
+    const alreadyAdded = booking.guests.some((guest) => guest.memberId === familyMember.id)
+      || addedGuests.some((guest) => guest.memberId === familyMember.id);
+    if (alreadyAdded) {
+      return;
+    }
+
+    setAddedGuests((prev) => [
+      ...prev,
+      {
+        key: crypto.randomUUID(),
+        firstName: familyMember.firstName,
+        lastName: familyMember.lastName,
+        ageTier: familyMember.ageTier,
+        isMember: true,
+        memberId: familyMember.id,
+      },
+    ]);
   }
 
   function handleRemoveAddedGuest(key: string) {
@@ -236,6 +295,7 @@ export function EditBookingPanel({
           lastName: g.lastName,
           ageTier: g.ageTier,
           isMember: g.isMember,
+          memberId: g.memberId,
         }));
       }
       if (removedGuestIds.size > 0) {
@@ -324,6 +384,35 @@ export function EditBookingPanel({
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
+          {familyMembers.length > 0 && (
+            <div className="space-y-2 rounded-md border border-dashed p-3">
+              <p className="text-sm font-medium text-muted-foreground">Quick add family members</p>
+              <div className="flex flex-wrap gap-2">
+                {familyMembers.map((familyMember) => {
+                  const alreadyAdded = booking.guests.some((guest) => guest.memberId === familyMember.id)
+                    || addedGuests.some((guest) => guest.memberId === familyMember.id);
+                  const label = familyMember.relationship === "self"
+                    ? `${familyMember.firstName} ${familyMember.lastName}`
+                    : `${familyMember.firstName} ${familyMember.lastName} (${getAgeTierLabel(ageTierOptions, familyMember.ageTier)})`;
+
+                  return (
+                    <Button
+                      key={familyMember.id}
+                      type="button"
+                      variant={alreadyAdded ? "secondary" : familyMember.relationship === "self" ? "default" : "outline"}
+                      size="sm"
+                      disabled={alreadyAdded}
+                      onClick={() => handleAddFamilyMember(familyMember)}
+                    >
+                      {alreadyAdded ? "\u2713 " : "+ "}
+                      {label}
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Existing guests */}
           {booking.guests.map((guest) => {
             const isRemoved = removedGuestIds.has(guest.id);
@@ -339,7 +428,7 @@ export function EditBookingPanel({
                     {guest.firstName} {guest.lastName}
                   </p>
                   <p className="text-sm text-gray-500">
-                    {guest.ageTier} &middot; {guest.isMember ? "Member" : "Non-member"}
+                    {getAgeTierLabel(ageTierOptions, guest.ageTier)} &middot; {guest.isMember ? "Member" : "Non-member"}
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -378,7 +467,7 @@ export function EditBookingPanel({
                   <span className="ml-2 text-xs text-green-700 font-normal">NEW</span>
                 </p>
                 <p className="text-sm text-gray-500">
-                  {guest.ageTier} &middot; {guest.isMember ? "Member" : "Non-member"}
+                  {getAgeTierLabel(ageTierOptions, guest.ageTier)} &middot; {guest.isMember ? "Member" : "Non-member"}
                 </p>
               </div>
               <Button
@@ -424,24 +513,17 @@ export function EditBookingPanel({
                     onChange={(e) => setAddAgeTier(e.target.value as "ADULT" | "YOUTH" | "CHILD")}
                     className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                   >
-                    <option value="ADULT">Adult (18+)</option>
-                    <option value="YOUTH">Youth (10-17)</option>
-                    <option value="CHILD">Child (under 10)</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="new-guest-member">Membership</Label>
-                  <select
-                    id="new-guest-member"
-                    value={addIsMember ? "true" : "false"}
-                    onChange={(e) => setAddIsMember(e.target.value === "true")}
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                  >
-                    <option value="true">Member</option>
-                    <option value="false">Non-member</option>
+                    {ageTierOptions.map((option) => (
+                      <option key={option.tier} value={option.tier}>
+                        {option.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
+              <p className="text-sm text-gray-500">
+                Typed-in guests are always treated as non-members and charged at non-member rates.
+              </p>
               <div className="flex gap-2">
                 <Button
                   size="sm"

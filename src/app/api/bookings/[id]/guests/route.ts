@@ -18,6 +18,11 @@ import logger from "@/lib/logger";
 import { z } from "zod";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import {
+  BookingGuestValidationError,
+  normalizeBookingGuestInputs,
+  resolveLinkedBookingMembers,
+} from "@/lib/booking-guests";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -27,7 +32,7 @@ const addGuestsSchema = z.object({
         lastName: z.string().min(1).max(100),
         ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
         isMember: z.boolean(),
-        memberId: z.string().optional(),
+        memberId: z.string().min(1).optional(),
       })
     )
     .min(1),
@@ -100,7 +105,23 @@ export async function POST(
         );
       }
 
-      const totalGuestCount = booking.guests.length + newGuests.length;
+      let normalizedNewGuests = newGuests;
+      try {
+        const linkedMembers = await resolveLinkedBookingMembers(
+          tx,
+          booking.memberId,
+          newGuests.map((guest) => guest.memberId),
+          { skipAuthorization: session.user.role === "ADMIN" }
+        );
+        normalizedNewGuests = normalizeBookingGuestInputs(newGuests, linkedMembers);
+      } catch (error) {
+        if (error instanceof BookingGuestValidationError) {
+          throw new ApiError(error.message, error.status);
+        }
+        throw error;
+      }
+
+      const totalGuestCount = booking.guests.length + normalizedNewGuests.length;
 
       // Capacity check excluding this booking (using tx to participate in advisory lock)
       const capacity = await checkCapacity(
@@ -135,26 +156,8 @@ export async function POST(
         })),
       }));
 
-      // Verify isMember claims against DB for guests with a memberId
-      for (const g of newGuests) {
-        if (g.memberId && g.isMember) {
-          const linked = await tx.member.findUnique({
-            where: { id: g.memberId },
-            select: { id: true, active: true, ageTier: true },
-          });
-          if (!linked || !linked.active) {
-            throw new ApiError(
-              `Member ${g.memberId} not found or inactive`,
-              400
-            );
-          }
-          // Server-side override: use DB ageTier as authoritative
-          g.ageTier = linked.ageTier;
-        }
-      }
-
       // Calculate price for new guests
-      const newGuestInputs = newGuests.map((g) => ({
+      const newGuestInputs = normalizedNewGuests.map((g) => ({
         ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
         isMember: g.isMember,
         memberId: g.memberId ?? null,
@@ -177,15 +180,15 @@ export async function POST(
 
       // Create BookingGuest records
       const createdGuests = [];
-      for (let i = 0; i < newGuests.length; i++) {
+      for (let i = 0; i < normalizedNewGuests.length; i++) {
         const guest = await tx.bookingGuest.create({
           data: {
             bookingId,
-            firstName: newGuests[i].firstName,
-            lastName: newGuests[i].lastName,
-            ageTier: newGuests[i].ageTier,
-            isMember: newGuests[i].isMember,
-            memberId: newGuests[i].memberId || null,
+            firstName: normalizedNewGuests[i].firstName,
+            lastName: normalizedNewGuests[i].lastName,
+            ageTier: normalizedNewGuests[i].ageTier,
+            isMember: normalizedNewGuests[i].isMember,
+            memberId: normalizedNewGuests[i].memberId || null,
             priceCents: newGuestPrice.guests[i].priceCents,
           },
         });
@@ -267,7 +270,7 @@ export async function POST(
       const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
 
       // Update hasNonMembers
-      const addingNonMembers = newGuests.some((g) => !g.isMember);
+      const addingNonMembers = normalizedNewGuests.some((g) => !g.isMember);
       const hasNonMembers = booking.hasNonMembers || addingNonMembers;
 
       // Update nonMemberHoldUntil if adding non-members
@@ -322,7 +325,7 @@ export async function POST(
           },
           newData: {
             guestCount: updatedBooking.guests.length,
-            addedGuests: newGuests.map((g) => ({
+            addedGuests: normalizedNewGuests.map((g) => ({
               firstName: g.firstName,
               lastName: g.lastName,
               ageTier: g.ageTier,
@@ -349,6 +352,7 @@ export async function POST(
         memberEmail: booking.member.email,
         memberName: `${booking.member.firstName} ${booking.member.lastName}`,
         memberId: booking.memberId,
+        addedGuestNames: normalizedNewGuests.map((guest) => `${guest.firstName} ${guest.lastName}`),
       };
     });
 
@@ -401,7 +405,7 @@ export async function POST(
       memberId: session.user.id,
       targetId: bookingId,
       details: JSON.stringify({
-        addedGuests: newGuests.map((g) => `${g.firstName} ${g.lastName}`),
+        addedGuests: result.addedGuestNames,
         priceDiffCents: result.priceDiffCents,
       }),
       ipAddress,

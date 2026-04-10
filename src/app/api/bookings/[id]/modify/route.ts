@@ -28,6 +28,11 @@ import {
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
+import {
+  BookingGuestValidationError,
+  normalizeBookingGuestInputs,
+  resolveLinkedBookingMembers,
+} from "@/lib/booking-guests";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -39,7 +44,7 @@ const batchModifySchema = z.object({
         lastName: z.string().min(1),
         ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
         isMember: z.boolean(),
-        memberId: z.string().optional(),
+        memberId: z.string().min(1).optional(),
       })
     )
     .optional(),
@@ -142,12 +147,30 @@ export async function PUT(
         throw new ApiError("Check-in cannot be in the past", 400);
       }
 
+      let normalizedAddGuests = addGuests;
+      try {
+        const linkedMembers = await resolveLinkedBookingMembers(
+          tx,
+          booking.memberId,
+          (addGuests ?? []).map((guest) => guest.memberId),
+          { skipAuthorization: session.user.role === "ADMIN" }
+        );
+        normalizedAddGuests = addGuests
+          ? normalizeBookingGuestInputs(addGuests, linkedMembers)
+          : undefined;
+      } catch (error) {
+        if (error instanceof BookingGuestValidationError) {
+          throw new ApiError(error.message, error.status);
+        }
+        throw error;
+      }
+
       // Determine guest changes
       const removeSet = new Set(removeGuestIds ?? []);
       const remainingGuests = booking.guests.filter((g) => !removeSet.has(g.id));
       const removedGuests = booking.guests.filter((g) => removeSet.has(g.id));
 
-      if (remainingGuests.length === 0 && (!addGuests || addGuests.length === 0)) {
+      if (remainingGuests.length === 0 && (!normalizedAddGuests || normalizedAddGuests.length === 0)) {
         throw new ApiError("Booking must have at least one guest", 400);
       }
 
@@ -157,7 +180,7 @@ export async function PUT(
           isMember: g.isMember,
           memberId: g.memberId ?? null,
         })),
-        ...(addGuests ?? []).map((g) => ({
+        ...(normalizedAddGuests ?? []).map((g) => ({
           ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
           isMember: g.isMember,
           memberId: g.memberId ?? null,
@@ -354,8 +377,8 @@ export async function PUT(
       // --- Create new guests ---
       const createdGuests = [];
       const addedGuestStartIndex = remainingGuests.length;
-      for (let i = 0; i < (addGuests ?? []).length; i++) {
-        const g = addGuests![i];
+      for (let i = 0; i < (normalizedAddGuests ?? []).length; i++) {
+        const g = normalizedAddGuests![i];
         const guestPriceIndex = addedGuestStartIndex + i;
         const guest = await tx.bookingGuest.create({
           data: {
@@ -496,7 +519,7 @@ export async function PUT(
             checkIn: newCheckIn.toISOString().split("T")[0],
             checkOut: newCheckOut.toISOString().split("T")[0],
             guestCount: updatedBooking.guests.length,
-            addedGuests: (addGuests ?? []).map((g) => ({
+            addedGuests: (normalizedAddGuests ?? []).map((g) => ({
               firstName: g.firstName,
               lastName: g.lastName,
             })),

@@ -199,7 +199,11 @@ export default function BookPage() {
       body: JSON.stringify({
         checkIn: checkIn!.toISOString(),
         checkOut: checkOut!.toISOString(),
-        guests: guests.map((g) => ({ ageTier: g.ageTier, isMember: g.isMember })),
+        guests: guests.map((g) => ({
+          ageTier: g.ageTier,
+          isMember: g.isMember,
+          memberId: g.memberId,
+        })),
       }),
     });
 
