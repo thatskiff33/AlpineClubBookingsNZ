@@ -48,9 +48,10 @@ export async function POST(req: NextRequest) {
     ? parsed.data.forMemberId
     : session.user.id;
 
-  // Look up the promo code
+  // Look up the promo code with assignments
   const promoCode = await prisma.promoCode.findUnique({
     where: { code: normalizedCode },
+    include: { assignments: { select: { memberId: true } } },
   });
 
   // Check single-use against effective member
@@ -64,11 +65,16 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  const assignedMemberIds = promoCode?.assignments?.length
+    ? promoCode.assignments.map((a) => a.memberId)
+    : null;
+
   const validationError = validatePromoCodeRules(
     promoCode,
     { memberId: effectiveMemberId },
     new Date(),
-    memberRedemptionCount
+    memberRedemptionCount,
+    assignedMemberIds
   );
 
   if (validationError) {

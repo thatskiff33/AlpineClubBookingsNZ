@@ -17,18 +17,28 @@ const promoCodeSchema = z.object({
   membersOnly: z.boolean().default(false),
   singleUse: z.boolean().default(false),
   active: z.boolean().default(true),
+  assignedMemberIds: z.array(z.string()).optional(),
 });
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const { searchParams } = new URL(req.url);
+  const showArchived = searchParams.get("archived") === "true";
+
   const promoCodes = await prisma.promoCode.findMany({
+    where: showArchived ? { archivedAt: { not: null } } : { archivedAt: null },
     include: {
       redemptions: {
         select: { id: true, discountCents: true, createdAt: true },
+      },
+      assignments: {
+        include: {
+          member: { select: { id: true, firstName: true, lastName: true, email: true } },
+        },
       },
     },
     orderBy: { createdAt: "desc" },
@@ -93,28 +103,50 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const promoCode = await prisma.promoCode.create({
-    data: {
-      code: data.code,
-      description: data.description || null,
-      type: data.type,
-      valueCents: data.type === "FIXED_AMOUNT" ? data.valueCents : null,
-      percentOff: data.type === "PERCENTAGE" ? data.percentOff : null,
-      freeNights: data.type === "FREE_NIGHTS" ? data.freeNights : null,
-      maxRedemptions: data.maxRedemptions || null,
-      validFrom: data.validFrom ? new Date(data.validFrom) : null,
-      validUntil: data.validUntil ? new Date(data.validUntil) : null,
-      membersOnly: data.membersOnly,
-      singleUse: data.singleUse,
-      active: data.active,
-    },
+  const promoCode = await prisma.$transaction(async (tx) => {
+    const created = await tx.promoCode.create({
+      data: {
+        code: data.code,
+        description: data.description || null,
+        type: data.type,
+        valueCents: data.type === "FIXED_AMOUNT" ? data.valueCents : null,
+        percentOff: data.type === "PERCENTAGE" ? data.percentOff : null,
+        freeNights: data.type === "FREE_NIGHTS" ? data.freeNights : null,
+        maxRedemptions: data.maxRedemptions || null,
+        validFrom: data.validFrom ? new Date(data.validFrom) : null,
+        validUntil: data.validUntil ? new Date(data.validUntil) : null,
+        membersOnly: data.membersOnly,
+        singleUse: data.singleUse,
+        active: data.active,
+      },
+    });
+
+    if (data.assignedMemberIds && data.assignedMemberIds.length > 0) {
+      await tx.promoCodeAssignment.createMany({
+        data: data.assignedMemberIds.map((memberId) => ({
+          promoCodeId: created.id,
+          memberId,
+        })),
+      });
+    }
+
+    return tx.promoCode.findUnique({
+      where: { id: created.id },
+      include: {
+        assignments: {
+          include: {
+            member: { select: { id: true, firstName: true, lastName: true, email: true } },
+          },
+        },
+      },
+    });
   });
 
   logAudit({
     action: "promo.create",
     memberId: session.user.id,
-    targetId: promoCode.id,
-    details: `Created promo code: ${data.code}`,
+    targetId: promoCode!.id,
+    details: `Created promo code: ${data.code}${data.assignedMemberIds?.length ? ` (assigned to ${data.assignedMemberIds.length} member(s))` : ""}`,
   });
 
   return NextResponse.json(promoCode, { status: 201 });

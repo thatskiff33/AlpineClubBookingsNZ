@@ -14,6 +14,19 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { formatCents } from "@/lib/pricing";
 
+interface MemberOption {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+}
+
+interface PromoAssignment {
+  id: string;
+  memberId: string;
+  member: MemberOption;
+}
+
 interface PromoCode {
   id: string;
   code: string;
@@ -29,8 +42,10 @@ interface PromoCode {
   membersOnly: boolean;
   singleUse: boolean;
   active: boolean;
+  archivedAt: string | null;
   createdAt: string;
   redemptions: { id: string; discountCents: number; createdAt: string }[];
+  assignments: PromoAssignment[];
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -41,11 +56,13 @@ const TYPE_LABELS: Record<string, string> = {
 
 export default function PromoCodesPage() {
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
+  const [archivedCodes, setArchivedCodes] = useState<PromoCode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   // Form state
   const [code, setCode] = useState("");
@@ -63,6 +80,13 @@ export default function PromoCodesPage() {
   const [singleUse, setSingleUse] = useState(false);
   const [active, setActive] = useState(true);
 
+  // Member assignment state
+  const [assignedMemberIds, setAssignedMemberIds] = useState<string[]>([]);
+  const [assignedMembers, setAssignedMembers] = useState<MemberOption[]>([]);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberResults, setMemberResults] = useState<MemberOption[]>([]);
+  const [searchingMembers, setSearchingMembers] = useState(false);
+
   const fetchPromoCodes = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/promo-codes");
@@ -76,9 +100,70 @@ export default function PromoCodesPage() {
     }
   }, []);
 
+  const fetchArchivedCodes = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/promo-codes?archived=true");
+      if (!res.ok) throw new Error("Failed to fetch archived codes");
+      const data = await res.json();
+      setArchivedCodes(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    }
+  }, []);
+
   useEffect(() => {
     fetchPromoCodes();
   }, [fetchPromoCodes]);
+
+  useEffect(() => {
+    if (showArchived) {
+      fetchArchivedCodes();
+    }
+  }, [showArchived, fetchArchivedCodes]);
+
+  async function searchMembers(query: string) {
+    setMemberSearch(query);
+    if (query.length < 2) {
+      setMemberResults([]);
+      return;
+    }
+    setSearchingMembers(true);
+    try {
+      const res = await fetch(
+        `/api/admin/members?search=${encodeURIComponent(query)}&pageSize=10&active=true`
+      );
+      if (!res.ok) throw new Error("Failed to search members");
+      const data = await res.json();
+      const members = (data.members || []).map((m: MemberOption) => ({
+        id: m.id,
+        firstName: m.firstName,
+        lastName: m.lastName,
+        email: m.email,
+      }));
+      // Filter out already assigned members
+      setMemberResults(
+        members.filter((m: MemberOption) => !assignedMemberIds.includes(m.id))
+      );
+    } catch {
+      setMemberResults([]);
+    } finally {
+      setSearchingMembers(false);
+    }
+  }
+
+  function addMember(member: MemberOption) {
+    if (!assignedMemberIds.includes(member.id)) {
+      setAssignedMemberIds([...assignedMemberIds, member.id]);
+      setAssignedMembers([...assignedMembers, member]);
+    }
+    setMemberSearch("");
+    setMemberResults([]);
+  }
+
+  function removeMember(memberId: string) {
+    setAssignedMemberIds(assignedMemberIds.filter((id) => id !== memberId));
+    setAssignedMembers(assignedMembers.filter((m) => m.id !== memberId));
+  }
 
   function resetForm() {
     setCode("");
@@ -96,6 +181,10 @@ export default function PromoCodesPage() {
     setEditingId(null);
     setShowForm(false);
     setError("");
+    setAssignedMemberIds([]);
+    setAssignedMembers([]);
+    setMemberSearch("");
+    setMemberResults([]);
   }
 
   function startEdit(promo: PromoCode) {
@@ -116,6 +205,8 @@ export default function PromoCodesPage() {
     setMembersOnly(promo.membersOnly);
     setSingleUse(promo.singleUse);
     setActive(promo.active);
+    setAssignedMemberIds(promo.assignments?.map((a) => a.member.id) || []);
+    setAssignedMembers(promo.assignments?.map((a) => a.member) || []);
     setShowForm(true);
   }
 
@@ -134,6 +225,7 @@ export default function PromoCodesPage() {
       validFrom: validFrom || null,
       validUntil: validUntil || null,
       maxRedemptions: maxRedemptions ? parseInt(maxRedemptions) : null,
+      assignedMemberIds,
     };
 
     if (type === "PERCENTAGE") {
@@ -172,11 +264,16 @@ export default function PromoCodesPage() {
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm("Are you sure you want to delete this promo code?")) return;
+  async function handleDelete(promo: PromoCode) {
+    const hasRedemptions = promo.redemptions.length > 0;
+    const confirmMsg = hasRedemptions
+      ? `This promo code has been used ${promo.redemptions.length} time(s). It will be archived (not deleted) so you can still reference it. Continue?`
+      : "Are you sure you want to delete this promo code?";
+
+    if (!confirm(confirmMsg)) return;
 
     try {
-      const res = await fetch(`/api/admin/promo-codes/${id}`, {
+      const res = await fetch(`/api/admin/promo-codes/${promo.id}`, {
         method: "DELETE",
       });
       if (!res.ok) {
@@ -184,6 +281,23 @@ export default function PromoCodesPage() {
         throw new Error(data.error || "Failed to delete");
       }
       fetchPromoCodes();
+      if (showArchived) fetchArchivedCodes();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    }
+  }
+
+  async function handleRestore(id: string) {
+    try {
+      const res = await fetch(`/api/admin/promo-codes/${id}`, {
+        method: "PATCH",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to restore");
+      }
+      fetchPromoCodes();
+      fetchArchivedCodes();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     }
@@ -217,6 +331,129 @@ export default function PromoCodesPage() {
       default:
         return "";
     }
+  }
+
+  function renderPromoCard(promo: PromoCode, isArchived: boolean) {
+    return (
+      <Card key={promo.id}>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <CardTitle className="text-xl font-mono">
+                {promo.code}
+              </CardTitle>
+              <Badge
+                variant={
+                  promo.type === "PERCENTAGE"
+                    ? "default"
+                    : promo.type === "FIXED_AMOUNT"
+                      ? "secondary"
+                      : "outline"
+                }
+              >
+                {TYPE_LABELS[promo.type]}
+              </Badge>
+              {isArchived ? (
+                <Badge variant="outline" className="text-orange-600 border-orange-600">
+                  Archived
+                </Badge>
+              ) : (
+                <Badge variant={promo.active ? "default" : "outline"}>
+                  {promo.active ? "Active" : "Inactive"}
+                </Badge>
+              )}
+            </div>
+            <div className="flex space-x-2">
+              {isArchived ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleRestore(promo.id)}
+                >
+                  Restore
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleToggleActive(promo)}
+                  >
+                    {promo.active ? "Deactivate" : "Activate"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => startEdit(promo)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => handleDelete(promo)}
+                  >
+                    {promo.redemptions.length > 0 ? "Archive" : "Delete"}
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+          {promo.description && (
+            <CardDescription>{promo.description}</CardDescription>
+          )}
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+            <div>
+              <span className="text-muted-foreground">Value:</span>{" "}
+              <span className="font-medium">{formatPromoValue(promo)}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Redemptions:</span>{" "}
+              <span className="font-medium">
+                {promo.currentRedemptions}
+                {promo.maxRedemptions != null
+                  ? ` / ${promo.maxRedemptions}`
+                  : " (unlimited)"}
+              </span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Valid:</span>{" "}
+              <span className="font-medium">
+                {promo.validFrom
+                  ? new Date(promo.validFrom).toLocaleDateString("en-NZ")
+                  : "Any time"}
+                {" - "}
+                {promo.validUntil
+                  ? new Date(promo.validUntil).toLocaleDateString("en-NZ")
+                  : "No expiry"}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {promo.membersOnly && (
+                <Badge variant="outline">Members Only</Badge>
+              )}
+              {promo.singleUse && (
+                <Badge variant="outline">Single Use</Badge>
+              )}
+            </div>
+          </div>
+          {promo.assignments && promo.assignments.length > 0 && (
+            <div className="mt-3 pt-3 border-t">
+              <span className="text-sm text-muted-foreground">Assigned to: </span>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {promo.assignments.map((a) => (
+                  <Badge key={a.member.id} variant="secondary" className="text-xs">
+                    {a.member.firstName} {a.member.lastName}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
   }
 
   if (loading) {
@@ -421,6 +658,63 @@ export default function PromoCodesPage() {
                 </div>
               </div>
 
+              {/* Member Assignment Section */}
+              <div className="space-y-3 border rounded-md p-4">
+                <div>
+                  <Label>Assign to Specific Members (optional)</Label>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    If members are assigned, only they can use this code. Leave empty to allow anyone.
+                  </p>
+                </div>
+                <div className="relative">
+                  <Input
+                    value={memberSearch}
+                    onChange={(e) => searchMembers(e.target.value)}
+                    placeholder="Search members by name or email..."
+                  />
+                  {memberResults.length > 0 && (
+                    <div className="absolute z-10 w-full mt-1 bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                      {memberResults.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => addMember(m)}
+                          className="w-full text-left px-3 py-2 hover:bg-muted text-sm"
+                        >
+                          {m.firstName} {m.lastName}{" "}
+                          <span className="text-muted-foreground">({m.email})</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {searchingMembers && (
+                    <div className="absolute z-10 w-full mt-1 bg-background border rounded-md shadow-lg px-3 py-2 text-sm text-muted-foreground">
+                      Searching...
+                    </div>
+                  )}
+                </div>
+                {assignedMembers.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {assignedMembers.map((m) => (
+                      <Badge
+                        key={m.id}
+                        variant="secondary"
+                        className="flex items-center gap-1 py-1 px-2"
+                      >
+                        {m.firstName} {m.lastName}
+                        <button
+                          type="button"
+                          onClick={() => removeMember(m.id)}
+                          className="ml-1 text-muted-foreground hover:text-foreground"
+                        >
+                          &times;
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="flex space-x-3">
                 <Button type="submit" disabled={saving}>
                   {saving
@@ -438,7 +732,7 @@ export default function PromoCodesPage() {
         </Card>
       )}
 
-      {/* Promo Codes List */}
+      {/* Active Promo Codes List */}
       {promoCodes.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
@@ -447,98 +741,32 @@ export default function PromoCodesPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {promoCodes.map((promo) => (
-            <Card key={promo.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <CardTitle className="text-xl font-mono">
-                      {promo.code}
-                    </CardTitle>
-                    <Badge
-                      variant={
-                        promo.type === "PERCENTAGE"
-                          ? "default"
-                          : promo.type === "FIXED_AMOUNT"
-                            ? "secondary"
-                            : "outline"
-                      }
-                    >
-                      {TYPE_LABELS[promo.type]}
-                    </Badge>
-                    <Badge variant={promo.active ? "default" : "outline"}>
-                      {promo.active ? "Active" : "Inactive"}
-                    </Badge>
-                  </div>
-                  <div className="flex space-x-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleToggleActive(promo)}
-                    >
-                      {promo.active ? "Deactivate" : "Activate"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => startEdit(promo)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => handleDelete(promo.id)}
-                    >
-                      Delete
-                    </Button>
-                  </div>
-                </div>
-                {promo.description && (
-                  <CardDescription>{promo.description}</CardDescription>
-                )}
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">Value:</span>{" "}
-                    <span className="font-medium">{formatPromoValue(promo)}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Redemptions:</span>{" "}
-                    <span className="font-medium">
-                      {promo.currentRedemptions}
-                      {promo.maxRedemptions != null
-                        ? ` / ${promo.maxRedemptions}`
-                        : " (unlimited)"}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Valid:</span>{" "}
-                    <span className="font-medium">
-                      {promo.validFrom
-                        ? new Date(promo.validFrom).toLocaleDateString("en-NZ")
-                        : "Any time"}
-                      {" - "}
-                      {promo.validUntil
-                        ? new Date(promo.validUntil).toLocaleDateString("en-NZ")
-                        : "No expiry"}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {promo.membersOnly && (
-                      <Badge variant="outline">Members Only</Badge>
-                    )}
-                    {promo.singleUse && (
-                      <Badge variant="outline">Single Use</Badge>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+          {promoCodes.map((promo) => renderPromoCard(promo, false))}
         </div>
       )}
+
+      {/* Archived Promo Codes Section */}
+      <div className="border-t pt-6">
+        <button
+          onClick={() => setShowArchived(!showArchived)}
+          className="flex items-center gap-2 text-muted-foreground hover:text-foreground text-sm font-medium"
+        >
+          <span>{showArchived ? "\u25BC" : "\u25B6"}</span>
+          Archived Promo Codes
+          {archivedCodes.length > 0 && showArchived && (
+            <Badge variant="outline">{archivedCodes.length}</Badge>
+          )}
+        </button>
+        {showArchived && (
+          <div className="mt-4 space-y-4">
+            {archivedCodes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No archived promo codes.</p>
+            ) : (
+              archivedCodes.map((promo) => renderPromoCard(promo, true))
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

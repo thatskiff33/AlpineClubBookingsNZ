@@ -84,7 +84,8 @@ export function validatePromoCodeRules(
   } | null,
   bookingDetails: { memberId: string },
   now: Date = new Date(),
-  memberRedemptionCount: number = 0
+  memberRedemptionCount: number = 0,
+  assignedMemberIds: string[] | null = null
 ): string | null {
   if (!promoCode) {
     return "Promo code not found";
@@ -113,6 +114,13 @@ export function validatePromoCodeRules(
     return "This promo code is only available to members";
   }
 
+  // If code has member assignments, only assigned members can use it
+  if (assignedMemberIds !== null && assignedMemberIds.length > 0) {
+    if (!bookingDetails.memberId || !assignedMemberIds.includes(bookingDetails.memberId)) {
+      return "This promo code is not assigned to you";
+    }
+  }
+
   if (promoCode.singleUse && memberRedemptionCount > 0) {
     return "You have already used this promo code";
   }
@@ -132,6 +140,7 @@ export async function validatePromoCodeFull(
 
   const promoCode = await prisma.promoCode.findUnique({
     where: { code: normalizedCode },
+    include: { assignments: { select: { memberId: true } } },
   });
 
   if (!promoCode) {
@@ -149,11 +158,16 @@ export async function validatePromoCodeFull(
     });
   }
 
+  const assignedMemberIds = promoCode.assignments.length > 0
+    ? promoCode.assignments.map((a) => a.memberId)
+    : null;
+
   const validationError = validatePromoCodeRules(
     promoCode,
     bookingDetails,
     new Date(),
-    memberRedemptionCount
+    memberRedemptionCount,
+    assignedMemberIds
   );
 
   if (validationError) {

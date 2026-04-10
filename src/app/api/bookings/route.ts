@@ -277,18 +277,25 @@ export async function POST(request: NextRequest) {
 
     if (promoCodeStr) {
       const normalizedCode = promoCodeStr.toUpperCase().trim();
-      const promoCode = await prisma.promoCode.findUnique({ where: { code: normalizedCode } });
+      const promoCode = await prisma.promoCode.findUnique({
+        where: { code: normalizedCode },
+        include: { assignments: { select: { memberId: true } } },
+      });
       let memberRedemptionCount = 0;
       if (promoCode?.singleUse) {
         memberRedemptionCount = await prisma.promoRedemption.count({
           where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
         });
       }
+      const assignedMemberIds = promoCode?.assignments?.length
+        ? promoCode.assignments.map((a) => a.memberId)
+        : null;
       const validationError = validatePromoCodeRules(
         promoCode,
         { memberId: effectiveMemberId },
         new Date(),
-        memberRedemptionCount
+        memberRedemptionCount,
+        assignedMemberIds
       );
       if (validationError) {
         return NextResponse.json({ error: validationError }, { status: 400 });
@@ -511,11 +518,24 @@ export async function POST(request: NextRequest) {
           });
         }
 
+        // Check member assignments
+        let assignedMemberIds: string[] | null = null;
+        if (promoCode) {
+          const assignments = await tx.promoCodeAssignment.findMany({
+            where: { promoCodeId: promoCode.id },
+            select: { memberId: true },
+          });
+          if (assignments.length > 0) {
+            assignedMemberIds = assignments.map((a) => a.memberId);
+          }
+        }
+
         const validationError = validatePromoCodeRules(
           promoCode,
           { memberId: effectiveMemberId },
           new Date(),
-          memberRedemptionCount
+          memberRedemptionCount,
+          assignedMemberIds
         );
 
         if (validationError) {
@@ -803,18 +823,25 @@ async function createWaitlistedBooking(params: {
 
   if (promoCodeStr) {
     const normalizedCode = promoCodeStr.toUpperCase().trim();
-    const promoCode = await prisma.promoCode.findUnique({ where: { code: normalizedCode } });
+    const promoCode = await prisma.promoCode.findUnique({
+      where: { code: normalizedCode },
+      include: { assignments: { select: { memberId: true } } },
+    });
     let memberRedemptionCount = 0;
     if (promoCode?.singleUse) {
       memberRedemptionCount = await prisma.promoRedemption.count({
         where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
       });
     }
+    const assignedMemberIds = promoCode?.assignments?.length
+      ? promoCode.assignments.map((a) => a.memberId)
+      : null;
     const validationError = validatePromoCodeRules(
       promoCode,
       { memberId: effectiveMemberId },
       new Date(),
-      memberRedemptionCount
+      memberRedemptionCount,
+      assignedMemberIds
     );
     if (validationError) {
       return NextResponse.json({ error: validationError }, { status: 400 });

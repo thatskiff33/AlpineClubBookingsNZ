@@ -176,6 +176,7 @@ model Member {
   bookings                   Booking[]
   guestAppearances           BookingGuest[]
   promoRedemptions           PromoRedemption[]
+  promoCodeAssignments       PromoCodeAssignment[]
   notificationPreference     NotificationPreference?
   hutLeaderAssignments       HutLeaderAssignment[]
   familyGroupRequests        FamilyGroupJoinRequest[] @relation("FamilyGroupRequester")
@@ -416,14 +417,17 @@ model PromoCode {
   membersOnly         Boolean       @default(false)
   singleUse           Boolean       @default(false)
   active              Boolean       @default(true)
+  archivedAt          DateTime?
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
 
   // Relations
-  redemptions PromoRedemption[]
+  redemptions  PromoRedemption[]
+  assignments  PromoCodeAssignment[]
 
   @@index([code])
   @@index([active])
+  @@index([archivedAt])
 }
 
 model PromoRedemption {
@@ -439,6 +443,21 @@ model PromoRedemption {
   booking   Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   member    Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
+  @@index([promoCodeId])
+  @@index([memberId])
+}
+
+model PromoCodeAssignment {
+  id          String   @id @default(cuid())
+  promoCodeId String
+  memberId    String
+  createdAt   DateTime @default(now())
+
+  // Relations
+  promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+  member    Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([promoCodeId, memberId])
   @@index([promoCodeId])
   @@index([memberId])
 }
