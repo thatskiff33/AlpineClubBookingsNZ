@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { getAuthenticatedXeroClient, withXeroRetry } from "@/lib/xero";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { prisma } from "@/lib/prisma";
@@ -13,6 +14,10 @@ export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const q = request.nextUrl.searchParams.get("q")?.trim();

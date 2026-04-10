@@ -26,7 +26,8 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: vi.fn(),
     },
     member: {
-      findUnique: vi.fn(),
+      count: vi.fn(),
+findUnique: vi.fn(),
       findMany: vi.fn(),
     },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({

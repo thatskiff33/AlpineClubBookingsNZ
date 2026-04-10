@@ -13,6 +13,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    member: { count: vi.fn() },
     xeroAccountMapping: {
       findUnique: vi.fn(),
       findMany: vi.fn(),

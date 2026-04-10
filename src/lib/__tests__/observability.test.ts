@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock prisma
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    member: { count: vi.fn() },
     webhookLog: {
       create: vi.fn(),
       groupBy: vi.fn(),

@@ -7,6 +7,7 @@ import { formatMemberPhone, parsePhoneString } from "@/lib/member-phone";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {
+      count: vi.fn(),
       findUnique: vi.fn(),
       findFirst: vi.fn(),
       update: vi.fn(),
@@ -183,7 +184,10 @@ describe("parsePhoneString", () => {
 // ──────────────────────────────────────────────────────────────
 
 describe("Profile API: structured phone and address fields", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.member.count).mockResolvedValue(1);
+  });
 
   function makeProfilePut(body: Record<string, unknown>) {
     return new NextRequest("http://localhost/api/profile", {
@@ -216,7 +220,7 @@ describe("Profile API: structured phone and address fields", () => {
 
   it("returns 403 for deactivated members", async () => {
     vi.mocked(auth).mockResolvedValue(memberSession);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue({ active: false } as any);
+    vi.mocked(prisma.member.count).mockResolvedValueOnce(0);
 
     const res = await updateProfile(makeProfilePut(validProfileBody));
     expect(res.status).toBe(403);
@@ -321,7 +325,10 @@ describe("Profile API: structured phone and address fields", () => {
 // ──────────────────────────────────────────────────────────────
 
 describe("Admin Member Edit: structured phone and address", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.member.count).mockResolvedValue(1);
+  });
 
   function makePutRequest(id: string, body: Record<string, unknown>) {
     return new NextRequest(`http://localhost/api/admin/members/${id}`, {
@@ -442,7 +449,10 @@ describe("Admin Member Edit: structured phone and address", () => {
 // ──────────────────────────────────────────────────────────────
 
 describe("Registration: structured phone + Xero auto-link", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.member.count).mockResolvedValue(1);
+  });
 
   function makeRegisterRequest(body: Record<string, unknown>) {
     return new NextRequest("http://localhost/api/auth/register", {

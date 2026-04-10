@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockPrisma = {
   booking: { findMany: vi.fn(), count: vi.fn() },
+  member: { count: vi.fn() },
   bookingGuest: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn() },
   choreAssignment: {
     findMany: vi.fn(),
@@ -58,6 +59,7 @@ function makeParams(date = "2026-07-10") {
 describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
@@ -170,6 +172,7 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
 describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
@@ -244,6 +247,7 @@ describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
 describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
@@ -685,6 +689,7 @@ describe("F6: POST /api/lodge/roster/[date]/generate", () => {
 describe("F6: POST /api/lodge/roster/[date]/confirm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
     mockPrisma.bookingGuest.findMany.mockResolvedValue([{ id: "g1", bookingId: "b1" }]);

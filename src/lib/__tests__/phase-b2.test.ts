@@ -19,6 +19,7 @@ const mockPrisma = {
     findMany: vi.fn(),
   },
   member: {
+    count: vi.fn(),
     findUnique: vi.fn(),
   },
 };
@@ -86,6 +87,7 @@ describe("#25: calculateOverlapDays", () => {
 describe("#25: Hut Leader POST Overlap Enforcement", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
   });
 
   function d(str: string) {
@@ -184,6 +186,7 @@ describe("#25: Hut Leader POST Overlap Enforcement", () => {
 describe("#25: Eligible Members API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
   });
 
   function d(str: string) {
@@ -308,6 +311,7 @@ describe("#25: Eligible Members API", () => {
 describe("#25: Auto-Assign Hut Leaders", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
     vi.useFakeTimers();
     // Set to a time that resolves to the desired "today" in NZST after setHours(0,0,0,0)
     vi.setSystemTime(new Date("2026-04-08T06:00:00.000Z"));
@@ -399,6 +403,7 @@ describe("#25: Auto-Assign Hut Leaders", () => {
 describe("#25: Unassigned Dates API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-08T06:00:00.000Z"));
   });

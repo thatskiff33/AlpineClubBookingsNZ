@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
+import { requireActiveSessionUser } from "@/lib/session-guards"
 import { validateMinimumStay, formatViolationsDetail } from "@/lib/booking-policies"
 
 export async function GET(request: NextRequest) {
   const session = await auth()
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 })
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const { searchParams } = new URL(request.url)

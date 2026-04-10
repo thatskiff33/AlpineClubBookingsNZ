@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Account } from "xero-node";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { getAuthenticatedXeroClient } from "@/lib/xero";
 
 export interface XeroAccount {
@@ -24,6 +25,10 @@ export async function GET() {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   // Return from cache if fresh

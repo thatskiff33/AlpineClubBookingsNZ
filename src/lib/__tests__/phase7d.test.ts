@@ -22,7 +22,8 @@ const mockPrisma = {
     update: vi.fn(),
   },
   member: {
-    findUnique: vi.fn(),
+    count: vi.fn(),
+findUnique: vi.fn(),
     findMany: vi.fn(),
   },
   bookingGuest: {

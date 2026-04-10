@@ -1,4 +1,5 @@
 import { auth } from "./auth";
+import { requireActiveSessionUser } from "./session-guards";
 import { getKioskAccessTier, type KioskTier } from "./kiosk-access";
 import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "./date-only";
 
@@ -11,6 +12,11 @@ export async function checkLodgeAuth(dateStr?: string) {
   const session = await auth();
   if (!session?.user) {
     return { session: null, tier: "none" as KioskTier, error: "Unauthorised" as const, status: 401 as const };
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return { session: null, tier: "none" as KioskTier, error: "Account is deactivated" as const, status: 403 as const };
   }
 
   if (dateStr && !isDateOnlyString(dateStr)) {

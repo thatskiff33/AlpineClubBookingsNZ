@@ -7,7 +7,8 @@ import { NextRequest } from "next/server";
 
 const mockPrisma = {
   member: {
-    findUnique: vi.fn(),
+    count: vi.fn(),
+findUnique: vi.fn(),
     findFirst: vi.fn(),
     findMany: vi.fn(),
     update: vi.fn(),

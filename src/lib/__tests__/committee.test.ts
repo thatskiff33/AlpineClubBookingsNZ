@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    member: { count: vi.fn() },
     committeeMember: {
       findMany: vi.fn(),
       findUnique: vi.fn(),

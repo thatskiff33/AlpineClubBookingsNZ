@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import {
   getMemberCreditBalance,
@@ -21,6 +22,10 @@ export async function GET(
     const session = await auth();
     if (!session?.user || session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+    }
+    const inactiveResponse = await requireActiveSessionUser(session.user.id);
+    if (inactiveResponse) {
+      return inactiveResponse;
     }
 
     const { id } = await params;
@@ -57,6 +62,10 @@ export async function POST(
     const session = await auth();
     if (!session?.user || session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+    }
+    const inactiveResponse = await requireActiveSessionUser(session.user.id);
+    if (inactiveResponse) {
+      return inactiveResponse;
     }
 
     const { id } = await params;

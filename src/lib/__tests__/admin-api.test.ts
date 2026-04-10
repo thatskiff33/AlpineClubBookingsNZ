@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    member: { count: vi.fn() },
     memberSubscription: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
     payment: { findMany: vi.fn(), count: vi.fn(), aggregate: vi.fn() },
     auditLog: { findMany: vi.fn(), count: vi.fn() },
@@ -28,7 +29,10 @@ import { GET as getAuditLog } from "@/app/api/admin/audit-log/route";
 const mockedAuth = vi.mocked(auth);
 
 describe("Admin Subscriptions API", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.member.count).mockResolvedValue(1 as any);
+  });
 
   it("returns 401 for unauthenticated requests", async () => {
     mockedAuth.mockResolvedValue(null as any);
@@ -114,7 +118,10 @@ describe("Admin Subscriptions API", () => {
 });
 
 describe("Admin Payments API", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.member.count).mockResolvedValue(1 as any);
+  });
 
   it("returns 401 for unauthenticated requests", async () => {
     mockedAuth.mockResolvedValue(null as any);
@@ -206,7 +213,10 @@ describe("Admin Payments API", () => {
 });
 
 describe("Admin Audit Log API", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.member.count).mockResolvedValue(1 as any);
+  });
 
   it("returns 401 for unauthenticated requests", async () => {
     mockedAuth.mockResolvedValue(null as any);
@@ -224,6 +234,17 @@ describe("Admin Audit Log API", () => {
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toBe("Forbidden");
+  });
+
+  it("returns 403 for deactivated admin sessions", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    vi.mocked(prisma.member.count).mockResolvedValue(0 as any);
+
+    const req = new NextRequest("http://localhost/api/admin/audit-log");
+    const res = await getAuditLog(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("Account is deactivated");
   });
 
   it("returns audit log data and actions for admin", async () => {

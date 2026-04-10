@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { findUnique: vi.fn() },
+    member: { count: vi.fn(), findUnique: vi.fn() },
     familyGroup: { findUnique: vi.fn() },
     familyGroupJoinRequest: { findFirst: vi.fn(), create: vi.fn() },
   },

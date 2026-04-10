@@ -14,6 +14,7 @@ import {
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {
+      count: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
       findMany: vi.fn(),
@@ -93,6 +94,7 @@ describe("F-COMP-03: Personal Data Export", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     _testStore.clear();
+    mockedPrisma.member.count.mockResolvedValue(1);
   });
 
   it("returns 401 for unauthenticated requests", async () => {
@@ -202,6 +204,7 @@ describe("F-COMP-04: Account Deletion - request endpoint", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     _testStore.clear();
+    mockedPrisma.member.count.mockResolvedValue(1);
   });
 
   it("returns 401 for unauthenticated requests", async () => {
@@ -284,7 +287,10 @@ describe("F-COMP-04: Account Deletion - request endpoint", () => {
 // ─── F-COMP-04: Admin Deletion Requests API ──────────────────────────────────
 
 describe("F-COMP-04: Admin - list deletion requests", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedPrisma.member.count.mockResolvedValue(1);
+  });
 
   it("returns 401 for unauthenticated", async () => {
     mockedAuth.mockResolvedValue(null as any);
@@ -334,7 +340,10 @@ describe("F-COMP-04: Admin - list deletion requests", () => {
 });
 
 describe("F-COMP-04: Admin - approve/reject deletion request", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedPrisma.member.count.mockResolvedValue(1);
+  });
 
   const makeRequest = (body: object) =>
     new NextRequest("http://localhost/api/admin/deletion-requests/dr1", {

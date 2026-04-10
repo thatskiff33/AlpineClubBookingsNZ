@@ -29,6 +29,7 @@ const mockChoreAssignDeleteMany = vi.fn();
 const mockProcessedWebhookCreate = vi.fn();
 const mockProcessedWebhookDeleteMany = vi.fn();
 const mockProcessedWebhookFindUnique = vi.fn();
+const mockMemberCount = vi.fn();
 const mockMemberFindUnique = vi.fn();
 const mockAuditCreate = vi.fn();
 
@@ -56,7 +57,7 @@ vi.mock("@/lib/prisma", () => ({
       create: mockProcessedWebhookCreate,
       deleteMany: mockProcessedWebhookDeleteMany,
     },
-    member: { findUnique: mockMemberFindUnique },
+    member: { count: mockMemberCount, findUnique: mockMemberFindUnique },
     auditLog: { create: mockAuditCreate },
   },
 }));
@@ -205,6 +206,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberCount.mockResolvedValue(1);
     mockMemberFindUnique.mockResolvedValue({
       id: "m1",
       active: true,
@@ -426,6 +428,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberCount.mockResolvedValue(1);
     mockMemberFindUnique.mockResolvedValue({
       id: "m1",
       active: true,
@@ -506,6 +509,7 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberCount.mockResolvedValue(1);
     process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
     const mod = await import("@/app/api/webhooks/stripe/route");
     POST = mod.POST;
@@ -672,6 +676,7 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberCount.mockResolvedValue(1);
     mockMemberFindUnique.mockResolvedValue({
       id: "m1",
       active: true,
@@ -790,7 +795,7 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
 
   it("returns 403 for deactivated members", async () => {
     mockedAuth.mockResolvedValue(makeSession() as any);
-    mockMemberFindUnique.mockResolvedValueOnce({ id: "m1", active: false } as any);
+    mockMemberCount.mockResolvedValueOnce(0);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/confirm-modification-payment", {
       method: "POST",
@@ -836,6 +841,7 @@ describe("GET /api/bookings/[id]/additional-payment-secret", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberCount.mockResolvedValue(1);
     const mod = await import(
       "@/app/api/bookings/[id]/additional-payment-secret/route"
     );

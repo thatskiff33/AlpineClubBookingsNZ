@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 // Mock prisma
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { findUnique: vi.fn(), findMany: vi.fn() },
+    member: { count: vi.fn(), findUnique: vi.fn(), findMany: vi.fn() },
     booking: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
     season: { findMany: vi.fn() },
     promoCode: { findUnique: vi.fn() },
