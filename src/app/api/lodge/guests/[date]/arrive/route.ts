@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { findLodgeGuestForDate } from "@/lib/lodge-date-scoping";
+import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -34,6 +36,7 @@ export async function PUT(
   if (!dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
+  const date = parseDateOnly(dateStr);
 
   let body: unknown;
   try {
@@ -51,12 +54,13 @@ export async function PUT(
   }
 
   try {
-    const guest = await prisma.bookingGuest.findUnique({
-      where: { id: parsed.data.bookingGuestId },
-    });
+    const guest = await findLodgeGuestForDate(parsed.data.bookingGuestId, date);
 
     if (!guest) {
-      return NextResponse.json({ error: "Guest not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Guest not found for this date" },
+        { status: 404 }
+      );
     }
 
     // Toggle: if already arrived, clear; otherwise set
