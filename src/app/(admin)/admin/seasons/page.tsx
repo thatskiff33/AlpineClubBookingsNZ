@@ -26,22 +26,25 @@ interface Season {
   rates: SeasonRate[]
 }
 
-const AGE_TIERS = ["ADULT", "YOUTH", "CHILD"] as const
-const RATE_LABELS: Record<string, string> = {
-  "ADULT-true": "Adult Member (18+)",
-  "ADULT-false": "Adult Non-Member (18+)",
-  "YOUTH-true": "Youth Member (10\u201317)",
-  "YOUTH-false": "Youth Non-Member (10\u201317)",
-  "CHILD-true": "Child Member (under 10)",
-  "CHILD-false": "Child Non-Member (under 10)",
+interface AgeTierSetting {
+  tier: "ADULT" | "YOUTH" | "CHILD"
+  minAge: number
+  maxAge: number | null
+  label: string
+  sortOrder: number
 }
 
-function emptyRates(): Record<string, number> {
+const FALLBACK_TIERS: AgeTierSetting[] = [
+  { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
+  { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
+  { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
+]
+
+function emptyRates(tiers: AgeTierSetting[]): Record<string, number> {
   const rates: Record<string, number> = {}
-  for (const tier of AGE_TIERS) {
-    for (const isMember of [true, false]) {
-      rates[`${tier}-${isMember}`] = 0
-    }
+  for (const t of tiers) {
+    rates[`${t.tier}-true`] = 0
+    rates[`${t.tier}-false`] = 0
   }
   return rates
 }
@@ -56,6 +59,7 @@ function seasonToRatesMap(rates: SeasonRate[]): Record<string, number> {
 
 export default function SeasonsPage() {
   const [seasons, setSeasons] = useState<Season[]>([])
+  const [ageTiers, setAgeTiers] = useState<AgeTierSetting[]>(FALLBACK_TIERS)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [showForm, setShowForm] = useState(false)
@@ -67,8 +71,21 @@ export default function SeasonsPage() {
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [active, setActive] = useState(true)
-  const [rates, setRates] = useState<Record<string, number>>(emptyRates())
+  const [rates, setRates] = useState<Record<string, number>>(emptyRates(FALLBACK_TIERS))
   const [saving, setSaving] = useState(false)
+
+  const fetchAgeTiers = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/age-tier-settings")
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.settings && data.settings.length > 0) {
+        setAgeTiers(data.settings)
+      }
+    } catch {
+      // Use fallback tiers
+    }
+  }, [])
 
   const fetchSeasons = useCallback(async () => {
     try {
@@ -84,8 +101,9 @@ export default function SeasonsPage() {
   }, [])
 
   useEffect(() => {
+    fetchAgeTiers()
     fetchSeasons()
-  }, [fetchSeasons])
+  }, [fetchAgeTiers, fetchSeasons])
 
   function resetForm() {
     setName("")
@@ -93,7 +111,7 @@ export default function SeasonsPage() {
     setStartDate("")
     setEndDate("")
     setActive(true)
-    setRates(emptyRates())
+    setRates(emptyRates(ageTiers))
     setEditingId(null)
     setShowForm(false)
     setError("")
@@ -273,34 +291,72 @@ export default function SeasonsPage() {
                 </div>
               </div>
 
-              <div>
+              <div className="space-y-4">
                 <Label className="text-base font-semibold">Nightly Rates (NZD)</Label>
-                <p className="text-sm text-muted-foreground mb-3">
+                <p className="text-sm text-muted-foreground">
                   Set the price per night for each guest type
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {Object.entries(RATE_LABELS).map(([key, label]) => (
-                    <div key={key} className="space-y-1">
-                      <Label htmlFor={`rate-${key}`} className="text-sm">
-                        {label}
-                      </Label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                          $
-                        </span>
-                        <Input
-                          id={`rate-${key}`}
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          className="pl-7"
-                          value={rates[key] ? (rates[key] / 100).toFixed(2) : ""}
-                          onChange={(e) => handleRateChange(key, e.target.value)}
-                          placeholder="0.00"
-                        />
-                      </div>
-                    </div>
-                  ))}
+
+                <div>
+                  <h4 className="text-sm font-semibold mb-2">Member Rates</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {ageTiers.map((t) => {
+                      const key = `${t.tier}-true`
+                      return (
+                        <div key={key} className="space-y-1">
+                          <Label htmlFor={`rate-${key}`} className="text-sm">
+                            {t.label}
+                          </Label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                              $
+                            </span>
+                            <Input
+                              id={`rate-${key}`}
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              className="pl-7"
+                              value={rates[key] ? (rates[key] / 100).toFixed(2) : ""}
+                              onChange={(e) => handleRateChange(key, e.target.value)}
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-sm font-semibold mb-2">Non-Member Rates</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {ageTiers.map((t) => {
+                      const key = `${t.tier}-false`
+                      return (
+                        <div key={key} className="space-y-1">
+                          <Label htmlFor={`rate-${key}`} className="text-sm">
+                            {t.label}
+                          </Label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                              $
+                            </span>
+                            <Input
+                              id={`rate-${key}`}
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              className="pl-7"
+                              value={rates[key] ? (rates[key] / 100).toFixed(2) : ""}
+                              onChange={(e) => handleRateChange(key, e.target.value)}
+                              placeholder="0.00"
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -380,30 +436,39 @@ export default function SeasonsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Guest Type</TableHead>
-                      <TableHead className="text-right">Price/Night</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {Object.entries(RATE_LABELS).map(([key, label]) => {
-                      const [ageTier, isMemberStr] = key.split("-")
-                      const rate = season.rates.find(
-                        (r) => r.ageTier === ageTier && r.isMember === (isMemberStr === "true")
-                      )
-                      return (
-                        <TableRow key={key}>
-                          <TableCell>{label}</TableCell>
-                          <TableCell className="text-right font-mono">
-                            {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {([
+                    { heading: "Member Rates", isMember: true },
+                    { heading: "Non-Member Rates", isMember: false },
+                  ] as const).map(({ heading, isMember }) => (
+                    <div key={heading}>
+                      <h4 className="text-sm font-semibold mb-2">{heading}</h4>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Age Group</TableHead>
+                            <TableHead className="text-right">Price/Night</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {ageTiers.map((t) => {
+                            const rate = season.rates.find(
+                              (r) => r.ageTier === t.tier && r.isMember === isMember
+                            )
+                            return (
+                              <TableRow key={t.tier}>
+                                <TableCell>{t.label}</TableCell>
+                                <TableCell className="text-right font-mono">
+                                  {rate ? formatCents(rate.pricePerNightCents) : "Not set"}
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             </Card>
           ))}
