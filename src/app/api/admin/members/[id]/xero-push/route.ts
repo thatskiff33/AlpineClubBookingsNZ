@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { findOrCreateXeroContact } from "@/lib/xero";
+import {
+  createXeroContactForMember,
+  XeroContactValidationError,
+} from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 
@@ -33,7 +36,7 @@ export async function POST(
   }
 
   try {
-    const xeroContactId = await findOrCreateXeroContact(id);
+    const xeroContactId = await createXeroContactForMember(id);
 
     await logAudit({
       action: "XERO_PUSH",
@@ -49,6 +52,16 @@ export async function POST(
       xeroLink: `https://go.xero.com/Contacts/View/${xeroContactId}`,
     });
   } catch (err) {
+    if (err instanceof XeroContactValidationError) {
+      return NextResponse.json(
+        {
+          error: `Complete these fields before creating in Xero: ${err.missingFields.join(", ")}`,
+          missingFields: err.missingFields,
+        },
+        { status: 422 }
+      );
+    }
+
     logger.error({ err, memberId: id }, "Error pushing member to Xero");
     return NextResponse.json({ error: "Failed to create Xero contact" }, { status: 500 });
   }

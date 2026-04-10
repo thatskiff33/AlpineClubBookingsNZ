@@ -4,7 +4,11 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { getSeasonYear } from "@/lib/utils";
-import { isXeroConnected, updateXeroContact } from "@/lib/xero";
+import {
+  getXeroContactGroupMemberships,
+  isXeroConnected,
+  updateXeroContact,
+} from "@/lib/xero";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
@@ -147,6 +151,23 @@ export async function GET(
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
+  let xeroContactGroups: Array<{ id: string; name: string }> = [];
+  if (member.xeroContactId) {
+    try {
+      if (await isXeroConnected()) {
+        const memberships = await getXeroContactGroupMemberships([
+          member.xeroContactId,
+        ]);
+        xeroContactGroups = memberships[member.xeroContactId] ?? [];
+      }
+    } catch (error) {
+      logger.error(
+        { err: error, memberId: id },
+        "Failed to fetch Xero contact groups for member detail"
+      );
+    }
+  }
+
   return NextResponse.json({
     ...member,
     familyGroups: member.familyGroupMemberships.map((fg) => ({
@@ -156,6 +177,7 @@ export async function GET(
     familyGroupMemberships: undefined,
     bookings,
     auditLogs,
+    xeroContactGroups,
     stats: {
       totalBookings: stats._count,
       totalSpendCents: stats._sum.finalPriceCents || 0,
@@ -309,6 +331,7 @@ export async function PUT(
             firstName: updated.firstName,
             lastName: updated.lastName,
             email: updated.email,
+            dateOfBirth: updated.dateOfBirth,
             phoneCountryCode: updated.phoneCountryCode,
             phoneAreaCode: updated.phoneAreaCode,
             phoneNumber: updated.phoneNumber,

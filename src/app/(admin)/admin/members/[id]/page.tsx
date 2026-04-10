@@ -25,6 +25,7 @@ interface MemberDetail {
   role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
   active: boolean; forcePasswordChange: boolean; xeroContactId: string | null; joinedDate: string | null; createdAt: string
   canLogin: boolean
+  xeroContactGroups: Array<{ id: string; name: string }>
   inheritEmailFromId: string | null
   inheritEmailFrom: { id: string; firstName: string; lastName: string; email: string } | null
   familyGroups: { id: string; name: string | null }[]
@@ -309,7 +310,30 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         <div><dt className="text-slate-500">Login</dt><dd className="font-medium">{member.canLogin ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Can Login</Badge> : <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Non-Login</Badge>}</dd></div>
         <div><dt className="text-slate-500">Email Inheritance</dt><dd className="font-medium">{member.inheritEmailFrom ? <span className="text-xs">{member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} <span className="text-slate-400">({member.inheritEmailFrom.email})</span></span> : <span className="text-xs text-slate-500">Own email</span>}</dd></div>
         <div><dt className="text-slate-500">Family Groups</dt><dd className="font-medium">{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Badge key={fg.id} variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200">{fg.name || "Unnamed"}</Badge>)}</div> : <span className="text-xs text-slate-500">None</span>}</dd></div>
-        <div><dt className="text-slate-500">Xero Contact ID</dt><dd className="font-medium">{member.xeroContactId ? <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">{member.xeroContactId}<ExternalLink className="h-3 w-3" /></a> : "Not linked"}</dd></div>
+        <div>
+          <dt className="text-slate-500">Xero Contact</dt>
+          <dd className="font-medium space-y-2">
+            <div>
+              {member.xeroContactId ? (
+                <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">
+                  {member.xeroContactId}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              ) : (
+                "Not linked"
+              )}
+            </div>
+            {member.xeroContactGroups.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {member.xeroContactGroups.map((group) => (
+                  <Badge key={group.id} variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                    {group.name}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </dd>
+        </div>
       </dl></CardContent></Card>
 
       <Card><CardHeader><CardTitle className="text-base font-medium">Subscription History</CardTitle></CardHeader><CardContent>

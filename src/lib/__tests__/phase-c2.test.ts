@@ -34,13 +34,22 @@ vi.mock("@/lib/auth", () => ({
 
 const mockGetAuthenticatedXeroClient = vi.fn();
 const mockWithXeroRetry = vi.fn();
-const mockFindOrCreateXeroContact = vi.fn();
+const mockCreateXeroContactForMember = vi.fn();
 const mockSyncContactsFromXero = vi.fn();
+class MockXeroContactValidationError extends Error {
+  missingFields: string[];
+
+  constructor(missingFields: string[]) {
+    super("Xero contact validation failed");
+    this.missingFields = missingFields;
+  }
+}
 
 vi.mock("@/lib/xero", () => ({
   getAuthenticatedXeroClient: () => mockGetAuthenticatedXeroClient(),
   withXeroRetry: (fn: () => unknown) => mockWithXeroRetry(fn),
-  findOrCreateXeroContact: (id: string) => mockFindOrCreateXeroContact(id),
+  createXeroContactForMember: (id: string) => mockCreateXeroContactForMember(id),
+  XeroContactValidationError: MockXeroContactValidationError,
   syncContactsFromXero: () => mockSyncContactsFromXero(),
 }));
 
@@ -265,12 +274,12 @@ describe("#28: Xero Push API", () => {
     expect(res.status).toBe(409);
   });
 
-  it("creates Xero contact and returns link", async () => {
+  it("creates a brand-new Xero contact and returns link", async () => {
     mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", xeroContactId: null,
     });
-    mockFindOrCreateXeroContact.mockResolvedValue("xc-new-123");
+    mockCreateXeroContactForMember.mockResolvedValue("xc-new-123");
     mockLogAudit.mockResolvedValue(undefined);
 
     const { POST } = await import("@/app/api/admin/members/[id]/xero-push/route");
@@ -280,7 +289,25 @@ describe("#28: Xero Push API", () => {
     const data = await res.json();
     expect(data.xeroContactId).toBe("xc-new-123");
     expect(data.xeroLink).toBe("https://go.xero.com/Contacts/View/xc-new-123");
-    expect(mockFindOrCreateXeroContact).toHaveBeenCalledWith("m1");
+    expect(mockCreateXeroContactForMember).toHaveBeenCalledWith("m1");
+  });
+
+  it("returns 422 when required Xero fields are missing", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", xeroContactId: null,
+    });
+    mockCreateXeroContactForMember.mockRejectedValue(
+      new MockXeroContactValidationError(["Phone", "Postal Address", "Joined Date"])
+    );
+
+    const { POST } = await import("@/app/api/admin/members/[id]/xero-push/route");
+    const req = makeRequest("/api/admin/members/m1/xero-push", { method: "POST" });
+    const res = await POST(req as any, { params: Promise.resolve({ id: "m1" }) });
+    expect(res.status).toBe(422);
+    const data = await res.json();
+    expect(data.error).toContain("Phone, Postal Address, Joined Date");
+    expect(data.missingFields).toEqual(["Phone", "Postal Address", "Joined Date"]);
   });
 });
 

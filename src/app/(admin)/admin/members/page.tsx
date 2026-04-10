@@ -19,11 +19,24 @@ interface Member {
   dateOfBirth: string | null
   role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
   active: boolean; xeroContactId: string | null
+  xeroContactGroups: Array<{ id: string; name: string }>
   subscriptionStatus: "NOT_INVOICED" | "UNPAID" | "PAID" | "OVERDUE" | null
   subscriptionXeroInvoiceId: string | null; createdAt: string; joinedDate: string | null
   forcePasswordChange: boolean
   canLogin: boolean
+  streetAddressLine1: string | null; streetAddressLine2: string | null; streetCity: string | null
+  streetRegion: string | null; streetPostalCode: string | null; streetCountry: string | null
+  postalAddressLine1: string | null; postalAddressLine2: string | null; postalCity: string | null
+  postalRegion: string | null; postalPostalCode: string | null; postalCountry: string | null
   familyGroups: { id: string; name: string | null }[]
+}
+
+interface XeroSearchResult {
+  contactId: string
+  name: string
+  email: string | null
+  isLinked: boolean
+  linkedMemberName: string | null
 }
 
 interface MemberForm {
@@ -32,14 +45,44 @@ interface MemberForm {
   dateOfBirth: string; role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
   active: boolean; sendInvite: boolean; forcePasswordChange: boolean
   joinedDate: string; canLogin: boolean
+  streetAddressLine1: string; streetAddressLine2: string; streetCity: string
+  streetRegion: string; streetPostalCode: string; streetCountry: string
+  postalAddressLine1: string; postalAddressLine2: string; postalCity: string
+  postalRegion: string; postalPostalCode: string; postalCountry: string
 }
 
 
-interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string; type: string }
+interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string }
 interface ImportRow { firstName: string; lastName: string; email: string; phone?: string; dateOfBirth?: string; role?: string }
 
-const emptyForm: MemberForm = { firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", role: "MEMBER", ageTier: "ADULT", active: true, sendInvite: false, forcePasswordChange: false, joinedDate: "", canLogin: true }
-const emptyFilters: Filters = { role: "", active: "", ageTier: "", xeroLinked: "", subscription: "", type: "" }
+const emptyForm: MemberForm = {
+  firstName: "", lastName: "", email: "",
+  phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "",
+  dateOfBirth: "", role: "MEMBER", ageTier: "ADULT",
+  active: true, sendInvite: false, forcePasswordChange: false,
+  joinedDate: "", canLogin: true,
+  streetAddressLine1: "", streetAddressLine2: "", streetCity: "",
+  streetRegion: "", streetPostalCode: "", streetCountry: "",
+  postalAddressLine1: "", postalAddressLine2: "", postalCity: "",
+  postalRegion: "", postalPostalCode: "", postalCountry: "",
+}
+const emptyFilters: Filters = { role: "", active: "", ageTier: "", xeroLinked: "", subscription: "" }
+
+function getMissingFieldsForXeroCreate(form: MemberForm): string[] {
+  const missing: string[] = []
+
+  if (!form.firstName.trim()) missing.push("First Name")
+  if (!form.lastName.trim()) missing.push("Last Name")
+  if (!form.email.trim()) missing.push("Email")
+  if (!form.phoneCountryCode.trim() || !form.phoneAreaCode.trim() || !form.phoneNumber.trim()) missing.push("Phone")
+  if (!form.dateOfBirth) missing.push("Date of Birth")
+  if (!form.joinedDate) missing.push("Joined Date")
+  if (!form.streetAddressLine1.trim() || !form.streetCity.trim() || !form.streetRegion.trim() || !form.streetPostalCode.trim() || !form.streetCountry.trim()) missing.push("Physical Address")
+  if (!form.postalAddressLine1.trim() || !form.postalCity.trim() || !form.postalRegion.trim() || !form.postalPostalCode.trim() || !form.postalCountry.trim()) missing.push("Postal Address")
+
+  return missing
+}
+
 function parseCsvLine(line: string): string[] {
   const result: string[] = []; let current = ""; let inQuotes = false
   for (let i = 0; i < line.length; i++) {
@@ -76,7 +119,6 @@ export default function MembersPage() {
     ageTier: searchParams.get("ageTier") || "",
     xeroLinked: searchParams.get("xeroLinked") || "",
     subscription: searchParams.get("subscription") || "",
-    type: searchParams.get("type") || "",
   })
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -98,8 +140,24 @@ export default function MembersPage() {
   const [importSendInvites, setImportSendInvites] = useState(false)
   const [importLoading, setImportLoading] = useState(false)
   const [importResult, setImportResult] = useState<{ created: number; skipped: number; errors: Array<{ row: number; errors: string[] }> } | null>(null)
+  const [xeroConnected, setXeroConnected] = useState<boolean | null>(null)
+  const [xeroChoice, setXeroChoice] = useState<"" | "link" | "create">("")
+  const [xeroSearchQuery, setXeroSearchQuery] = useState("")
+  const [xeroSearchResults, setXeroSearchResults] = useState<XeroSearchResult[]>([])
+  const [xeroSearchLoading, setXeroSearchLoading] = useState(false)
+  const [selectedXeroContactId, setSelectedXeroContactId] = useState("")
 
   useEffect(() => { const t = setTimeout(() => { setDebouncedSearch(search); setPage(1) }, 300); return () => clearTimeout(t) }, [search])
+
+  useEffect(() => {
+    fetch("/api/admin/xero/status")
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Failed to load Xero status")
+        return res.json()
+      })
+      .then((data) => setXeroConnected(Boolean(data.connected)))
+      .catch(() => setXeroConnected(false))
+  }, [])
 
   useEffect(() => {
     const params = new URLSearchParams()
@@ -138,17 +196,106 @@ export default function MembersPage() {
   const activeFilterCount = Object.values(filters).filter(Boolean).length
   const toggleSelect = (id: string) => setSelectedIds(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const toggleSelectAll = () => { if (selectedIds.size === members.length) setSelectedIds(new Set()); else setSelectedIds(new Set(members.map(m => m.id))) }
-  const openCreateDialog = () => { setEditingMember(null); setForm(emptyForm); setFormError(""); setDialogOpen(true) }
-  const openEditDialog = (member: Member) => { setEditingMember(member); setForm({ firstName: member.firstName, lastName: member.lastName, email: member.email, phoneCountryCode: member.phoneCountryCode || "", phoneAreaCode: member.phoneAreaCode || "", phoneNumber: member.phoneNumber || "", dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "", role: member.role, ageTier: member.ageTier, active: member.active, sendInvite: false, forcePasswordChange: member.forcePasswordChange, joinedDate: member.joinedDate ? new Date(member.joinedDate).toISOString().split("T")[0] : "", canLogin: member.canLogin }); setFormError(""); setDialogOpen(true) }
+  const openCreateDialog = () => {
+    setEditingMember(null)
+    setForm(emptyForm)
+    setXeroChoice("")
+    setXeroSearchQuery("")
+    setXeroSearchResults([])
+    setSelectedXeroContactId("")
+    setFormError("")
+    setDialogOpen(true)
+  }
+  const openEditDialog = (member: Member) => {
+    setEditingMember(member)
+    setXeroChoice("")
+    setXeroSearchQuery("")
+    setXeroSearchResults([])
+    setSelectedXeroContactId("")
+    setForm({
+      firstName: member.firstName,
+      lastName: member.lastName,
+      email: member.email,
+      phoneCountryCode: member.phoneCountryCode || "",
+      phoneAreaCode: member.phoneAreaCode || "",
+      phoneNumber: member.phoneNumber || "",
+      dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "",
+      role: member.role,
+      ageTier: member.ageTier,
+      active: member.active,
+      sendInvite: false,
+      forcePasswordChange: member.forcePasswordChange,
+      joinedDate: member.joinedDate ? new Date(member.joinedDate).toISOString().split("T")[0] : "",
+      canLogin: member.canLogin,
+      streetAddressLine1: member.streetAddressLine1 || "",
+      streetAddressLine2: member.streetAddressLine2 || "",
+      streetCity: member.streetCity || "",
+      streetRegion: member.streetRegion || "",
+      streetPostalCode: member.streetPostalCode || "",
+      streetCountry: member.streetCountry || "",
+      postalAddressLine1: member.postalAddressLine1 || "",
+      postalAddressLine2: member.postalAddressLine2 || "",
+      postalCity: member.postalCity || "",
+      postalRegion: member.postalRegion || "",
+      postalPostalCode: member.postalPostalCode || "",
+      postalCountry: member.postalCountry || "",
+    })
+    setFormError("")
+    setDialogOpen(true)
+  }
+
+  const handleXeroSearch = async () => {
+    const query = xeroSearchQuery.trim() || form.email.trim() || [form.firstName.trim(), form.lastName.trim()].filter(Boolean).join(" ")
+    if (query.length < 2) {
+      setFormError("Enter at least 2 characters in the Xero search field, or complete the member name/email first.")
+      return
+    }
+
+    setXeroSearchLoading(true)
+    setFormError("")
+    try {
+      const res = await fetch(`/api/admin/xero/search-contacts?q=${encodeURIComponent(query)}`)
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to search Xero contacts") }
+      const data = await res.json()
+      const availableContacts = (data.contacts as XeroSearchResult[]).filter((contact) => !contact.isLinked)
+      setXeroSearchResults(availableContacts)
+      if (availableContacts.length === 0) {
+        setSelectedXeroContactId("")
+      }
+    } catch (err) {
+      setXeroSearchResults([])
+      setSelectedXeroContactId("")
+      setFormError(err instanceof Error ? err.message : "Failed to search Xero contacts")
+    } finally {
+      setXeroSearchLoading(false)
+    }
+  }
 
   const handleSave = async () => {
     setSaving(true); setFormError("")
     try {
+      if (!editingMember && xeroConnected === null) {
+        throw new Error("Still checking Xero connection status. Please try again in a moment.")
+      }
+      if (!editingMember && xeroConnected) {
+        if (!xeroChoice) {
+          throw new Error("Choose whether to link an existing Xero contact or create a new one.")
+        }
+        if (xeroChoice === "link" && !selectedXeroContactId) {
+          throw new Error("Select an existing unlinked Xero contact before creating the member.")
+        }
+        if (xeroChoice === "create") {
+          const missingFields = getMissingFieldsForXeroCreate(form)
+          if (missingFields.length > 0) {
+            throw new Error(`Complete these fields before creating in Xero: ${missingFields.join(", ")}`)
+          }
+        }
+      }
+
       const url = editingMember ? `/api/admin/members/${editingMember.id}` : "/api/admin/members"
-      const body: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, phoneCountryCode: form.phoneCountryCode || null, phoneAreaCode: form.phoneAreaCode || null, phoneNumber: form.phoneNumber || null, dateOfBirth: form.dateOfBirth || null, role: form.role, ageTier: form.ageTier, active: form.active, canLogin: form.canLogin }
+      const body: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, phoneCountryCode: form.phoneCountryCode || null, phoneAreaCode: form.phoneAreaCode || null, phoneNumber: form.phoneNumber || null, dateOfBirth: form.dateOfBirth || null, role: form.role, ageTier: form.ageTier, active: form.active, canLogin: form.canLogin, joinedDate: form.joinedDate || null, streetAddressLine1: form.streetAddressLine1 || null, streetAddressLine2: form.streetAddressLine2 || null, streetCity: form.streetCity || null, streetRegion: form.streetRegion || null, streetPostalCode: form.streetPostalCode || null, streetCountry: form.streetCountry || null, postalAddressLine1: form.postalAddressLine1 || null, postalAddressLine2: form.postalAddressLine2 || null, postalCity: form.postalCity || null, postalRegion: form.postalRegion || null, postalPostalCode: form.postalPostalCode || null, postalCountry: form.postalCountry || null }
       if (editingMember) {
         body.forcePasswordChange = form.forcePasswordChange
-        body.joinedDate = form.joinedDate || null
       }
       if (!editingMember) {
         body.sendInvite = form.sendInvite
@@ -156,8 +303,42 @@ export default function MembersPage() {
       const res = await fetch(url, { method: editingMember ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Save failed") }
       const data = await res.json()
-      if (data.warning) { setDialogOpen(false); setError(data.warning); setTimeout(() => setError(""), 8000); fetchMembers() }
-      else { setDialogOpen(false); setSuccess(editingMember ? "Member updated" : "Member created"); setTimeout(() => setSuccess(""), 3000); fetchMembers() }
+
+      let warning = data.warning as string | undefined
+      let successMessage = editingMember ? "Member updated" : "Member created"
+
+      if (!editingMember && xeroConnected) {
+        if (xeroChoice === "link") {
+          const linkRes = await fetch(`/api/admin/members/${data.id}/xero-link`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ xeroContactId: selectedXeroContactId }),
+          })
+          if (!linkRes.ok) {
+            const linkData = await linkRes.json().catch(() => ({}))
+            warning = `Member created, but Xero link failed: ${linkData.error || "Unknown error"}`
+          } else {
+            successMessage = "Member created and linked to Xero"
+          }
+        } else if (xeroChoice === "create") {
+          const pushRes = await fetch(`/api/admin/members/${data.id}/xero-push`, { method: "POST" })
+          if (!pushRes.ok) {
+            const pushData = await pushRes.json().catch(() => ({}))
+            warning = `Member created, but Xero contact creation failed: ${pushData.error || "Unknown error"}`
+          } else {
+            successMessage = "Member created and pushed to Xero"
+          }
+        }
+      }
+
+      setDialogOpen(false)
+      setSuccess(successMessage)
+      setTimeout(() => setSuccess(""), 3000)
+      if (warning) {
+        setError(warning)
+        setTimeout(() => setError(""), 8000)
+      }
+      fetchMembers()
     } catch (err) { setFormError(err instanceof Error ? err.message : "Save failed") }
     finally { setSaving(false) }
   }
@@ -238,7 +419,6 @@ export default function MembersPage() {
         <Select value={filters.ageTier || "all"} onValueChange={v => setFilter("ageTier", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Age Tier" /></SelectTrigger><SelectContent><SelectItem value="all">All Tiers</SelectItem><SelectItem value="ADULT">Adult</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="CHILD">Child</SelectItem></SelectContent></Select>
         <Select value={filters.xeroLinked || "all"} onValueChange={v => setFilter("xeroLinked", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Xero" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero</SelectItem><SelectItem value="true">Linked</SelectItem><SelectItem value="false">Not Linked</SelectItem></SelectContent></Select>
         <Select value={filters.subscription || "all"} onValueChange={v => setFilter("subscription", v === "all" ? "" : v)}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Subscription" /></SelectTrigger><SelectContent><SelectItem value="all">All Subs</SelectItem><SelectItem value="PAID">Paid</SelectItem><SelectItem value="UNPAID">Unpaid</SelectItem><SelectItem value="OVERDUE">Overdue</SelectItem><SelectItem value="NOT_INVOICED">Not Invoiced</SelectItem><SelectItem value="NONE">No Record</SelectItem></SelectContent></Select>
-        <Select value={filters.type || "all"} onValueChange={v => setFilter("type", v === "all" ? "" : v)}><SelectTrigger className="w-[140px]"><SelectValue placeholder="Type" /></SelectTrigger><SelectContent><SelectItem value="all">All Types</SelectItem><SelectItem value="primary">Primary</SelectItem><SelectItem value="dependent">Dependent</SelectItem></SelectContent></Select>
         {activeFilterCount > 0 && <Button variant="ghost" size="sm" onClick={clearFilters}><X className="h-4 w-4 mr-1" />Clear ({activeFilterCount})</Button>}
       </div>
       {activeFilterCount > 0 && <div className="flex flex-wrap gap-2">{Object.entries(filters).filter(([,v]) => v).map(([k, v]) => <Badge key={k} variant="secondary" className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setFilter(k as keyof Filters, "")}>{k}: {v}<X className="h-3 w-3" /></Badge>)}</div>}
@@ -270,7 +450,29 @@ export default function MembersPage() {
               <TableCell>{member.canLogin ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Can Login</Badge> : <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Non-Login</Badge>}</TableCell>
               <TableCell>{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Link key={fg.id} href={`/admin/family-groups?edit=${fg.id}`}><Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer">{fg.name || "Unnamed Group"}</Badge></Link>)}</div> : <span className="text-xs text-slate-400">-</span>}</TableCell>
               <TableCell>{member.subscriptionStatus ? (() => { const cfg = statusConfig[member.subscriptionStatus] || statusConfig.NOT_INVOICED; const badge = <Badge variant="secondary" className={`${cfg.className} ${member.subscriptionXeroInvoiceId ? "cursor-pointer inline-flex items-center gap-1" : ""}`}>{cfg.label}{member.subscriptionXeroInvoiceId && <ExternalLink className="h-3 w-3" />}</Badge>; return member.subscriptionXeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${member.subscriptionXeroInvoiceId}`} target="_blank" rel="noopener noreferrer">{badge}</a> : badge })() : <span className="text-xs text-slate-400">-</span>}</TableCell>
-              <TableCell>{member.xeroContactId ? <a href={`https://go.xero.com/app/contacts/contact/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer"><Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer inline-flex items-center gap-1">Linked<ExternalLink className="h-3 w-3" /></Badge></a> : <span className="text-xs text-slate-400">-</span>}</TableCell>
+              <TableCell>
+                <div className="space-y-1">
+                  {member.xeroContactId ? (
+                    <a href={`https://go.xero.com/app/contacts/contact/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer">
+                      <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer inline-flex items-center gap-1">
+                        Linked
+                        <ExternalLink className="h-3 w-3" />
+                      </Badge>
+                    </a>
+                  ) : (
+                    <span className="text-xs text-slate-400">-</span>
+                  )}
+                  {member.xeroContactGroups.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {member.xeroContactGroups.map((group) => (
+                        <Badge key={group.id} variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                          {group.name}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </TableCell>
               <TableCell className="text-slate-500 text-sm">{new Date(member.joinedDate || member.createdAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })}</TableCell>
               <TableCell className="text-right"><div className="flex justify-end gap-1"><Button variant="outline" size="sm" onClick={() => { setResetPasswordTarget({ ids: [member.id], label: `${member.firstName} ${member.lastName}` }); setResetPasswordDialogOpen(true) }}>Reset Password</Button><Button variant="outline" size="sm" onClick={() => openEditDialog(member)}>Edit</Button></div></TableCell>
             </TableRow>)}
@@ -278,18 +480,231 @@ export default function MembersPage() {
         {totalPages > 1 && <div className="flex items-center justify-between mt-4 pt-4 border-t"><p className="text-sm text-slate-500">Page {page} of {totalPages}</p><div className="flex gap-1"><Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="h-4 w-4" /></Button>{Array.from({ length: Math.min(5, totalPages) }, (_, i) => { let pn: number; if (totalPages <= 5) pn = i + 1; else if (page <= 3) pn = i + 1; else if (page >= totalPages - 2) pn = totalPages - 4 + i; else pn = page - 2 + i; return <Button key={pn} variant={pn === page ? "default" : "outline"} size="sm" onClick={() => setPage(pn)}>{pn}</Button> })}<Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight className="h-4 w-4" /></Button></div></div>}
       </CardContent></Card>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{editingMember ? "Edit Member" : "Add Member"}</DialogTitle><DialogDescription>{editingMember ? "Update the member details." : "Create a new member account."}</DialogDescription></DialogHeader>{formError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{formError}</div>}<div className="grid gap-4 py-2">
-        <div className="flex items-center gap-2"><input type="checkbox" id="canLogin" checked={form.canLogin} onChange={e => setForm(f => ({ ...f, canLogin: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="canLogin">Can Login</Label><p className="text-xs text-muted-foreground ml-2">Adults who can sign in and make bookings. Uncheck for children/youth managed by family group.</p></div>
-        <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label htmlFor="firstName">First Name *</Label><Input id="firstName" value={form.firstName} onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="lastName">Last Name *</Label><Input id="lastName" value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} /></div></div>
-        <div className="space-y-2"><Label htmlFor="email">Email *</Label><Input id="email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} /></div>
-        <div className="space-y-2"><Label>Phone</Label><div className="flex gap-2"><Input className="w-20" placeholder="64" value={form.phoneCountryCode} onChange={e => setForm(f => ({ ...f, phoneCountryCode: e.target.value }))} maxLength={5} aria-label="Country code" /><Input className="w-20" placeholder="27" value={form.phoneAreaCode} onChange={e => setForm(f => ({ ...f, phoneAreaCode: e.target.value }))} maxLength={5} aria-label="Area code" /><Input className="flex-1" placeholder="123 4567" value={form.phoneNumber} onChange={e => setForm(f => ({ ...f, phoneNumber: e.target.value }))} maxLength={15} aria-label="Phone number" /></div></div>
-        <div className="space-y-2"><Label htmlFor="dateOfBirth">Date of Birth</Label><Input id="dateOfBirth" type="date" value={form.dateOfBirth} onChange={e => setForm(f => ({ ...f, dateOfBirth: e.target.value }))} /><p className="text-xs text-muted-foreground">Age tier is calculated automatically from date of birth.</p></div>
-        <div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label>Role</Label><Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as "MEMBER" | "ADMIN" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="MEMBER">Member</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>Age Tier</Label><Select value={form.ageTier} onValueChange={v => setForm(f => ({ ...f, ageTier: v as "ADULT" | "YOUTH" | "CHILD" }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ADULT">Adult</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="CHILD">Child</SelectItem></SelectContent></Select></div></div>
-        {editingMember && <div className="space-y-2"><Label htmlFor="joinedDate">Joined Date</Label><Input id="joinedDate" type="date" value={form.joinedDate} onChange={e => setForm(f => ({ ...f, joinedDate: e.target.value }))} /><p className="text-xs text-muted-foreground">Populated from Xero first invoice date, or set manually.</p></div>}
-        {editingMember && <div className="flex items-center gap-2"><input type="checkbox" id="active" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="active">Active</Label></div>}
-        {editingMember && <div className="flex items-center gap-2"><input type="checkbox" id="forcePasswordChange" checked={form.forcePasswordChange} onChange={e => setForm(f => ({ ...f, forcePasswordChange: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="forcePasswordChange">Force Password Change on Next Login</Label></div>}
-        {!editingMember && <div className="flex items-center gap-2"><input type="checkbox" id="sendInvite" checked={form.sendInvite} onChange={e => setForm(f => ({ ...f, sendInvite: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="sendInvite">Send invite email (password reset link)</Label></div>}
-      </div><DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button><Button onClick={handleSave} disabled={saving}>{saving ? "Saving..." : editingMember ? "Save Changes" : "Create Member"}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingMember ? "Edit Member" : "Add Member"}</DialogTitle>
+            <DialogDescription>
+              {editingMember ? "Update the member details." : "Create a new member account."}
+            </DialogDescription>
+          </DialogHeader>
+          {formError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{formError}</div>}
+          <div className="grid gap-4 py-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="canLogin"
+                checked={form.canLogin}
+                onChange={e => setForm(f => ({ ...f, canLogin: e.target.checked }))}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              <Label htmlFor="canLogin">Can Login</Label>
+              <p className="text-xs text-muted-foreground ml-2">
+                Adults who can sign in and make bookings. Uncheck for children/youth managed by family group.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="firstName">First Name *</Label>
+                <Input id="firstName" value={form.firstName} onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="lastName">Last Name *</Label>
+                <Input id="lastName" value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="email">Email *</Label>
+              <Input id="email" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Phone</Label>
+              <div className="flex gap-2">
+                <Input className="w-20" placeholder="64" value={form.phoneCountryCode} onChange={e => setForm(f => ({ ...f, phoneCountryCode: e.target.value }))} maxLength={5} aria-label="Country code" />
+                <Input className="w-20" placeholder="27" value={form.phoneAreaCode} onChange={e => setForm(f => ({ ...f, phoneAreaCode: e.target.value }))} maxLength={5} aria-label="Area code" />
+                <Input className="flex-1" placeholder="123 4567" value={form.phoneNumber} onChange={e => setForm(f => ({ ...f, phoneNumber: e.target.value }))} maxLength={15} aria-label="Phone number" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="dateOfBirth">Date of Birth</Label>
+                <Input id="dateOfBirth" type="date" value={form.dateOfBirth} onChange={e => setForm(f => ({ ...f, dateOfBirth: e.target.value }))} />
+                <p className="text-xs text-muted-foreground">Age tier is calculated automatically from date of birth.</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="joinedDate">{!editingMember && xeroChoice === "create" ? "Joined Date *" : "Joined Date"}</Label>
+                <Input id="joinedDate" type="date" value={form.joinedDate} onChange={e => setForm(f => ({ ...f, joinedDate: e.target.value }))} />
+                <p className="text-xs text-muted-foreground">Required when creating a new Xero contact.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Role</Label>
+                <Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as "MEMBER" | "ADMIN" }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="MEMBER">Member</SelectItem>
+                    <SelectItem value="ADMIN">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Age Tier</Label>
+                <Select value={form.ageTier} onValueChange={v => setForm(f => ({ ...f, ageTier: v as "ADULT" | "YOUTH" | "CHILD" }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ADULT">Adult</SelectItem>
+                    <SelectItem value="YOUTH">Youth</SelectItem>
+                    <SelectItem value="CHILD">Child</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <fieldset className="space-y-3 pt-2 border-t">
+              <legend className="text-sm font-medium">Physical Address</legend>
+              <Input placeholder="Address line 1" value={form.streetAddressLine1} onChange={e => setForm(f => ({ ...f, streetAddressLine1: e.target.value }))} maxLength={200} />
+              <Input placeholder="Address line 2" value={form.streetAddressLine2} onChange={e => setForm(f => ({ ...f, streetAddressLine2: e.target.value }))} maxLength={200} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Input placeholder="City" value={form.streetCity} onChange={e => setForm(f => ({ ...f, streetCity: e.target.value }))} maxLength={200} />
+                <Input placeholder="Region" value={form.streetRegion} onChange={e => setForm(f => ({ ...f, streetRegion: e.target.value }))} maxLength={200} />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Input placeholder="Postal code" value={form.streetPostalCode} onChange={e => setForm(f => ({ ...f, streetPostalCode: e.target.value }))} maxLength={20} />
+                <Input placeholder="Country" value={form.streetCountry} onChange={e => setForm(f => ({ ...f, streetCountry: e.target.value }))} maxLength={100} />
+              </div>
+            </fieldset>
+
+            <fieldset className="space-y-3 pt-2 border-t">
+              <legend className="text-sm font-medium">Postal Address</legend>
+              <Input placeholder="Address line 1" value={form.postalAddressLine1} onChange={e => setForm(f => ({ ...f, postalAddressLine1: e.target.value }))} maxLength={200} />
+              <Input placeholder="Address line 2" value={form.postalAddressLine2} onChange={e => setForm(f => ({ ...f, postalAddressLine2: e.target.value }))} maxLength={200} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Input placeholder="City" value={form.postalCity} onChange={e => setForm(f => ({ ...f, postalCity: e.target.value }))} maxLength={200} />
+                <Input placeholder="Region" value={form.postalRegion} onChange={e => setForm(f => ({ ...f, postalRegion: e.target.value }))} maxLength={200} />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Input placeholder="Postal code" value={form.postalPostalCode} onChange={e => setForm(f => ({ ...f, postalPostalCode: e.target.value }))} maxLength={20} />
+                <Input placeholder="Country" value={form.postalCountry} onChange={e => setForm(f => ({ ...f, postalCountry: e.target.value }))} maxLength={100} />
+              </div>
+            </fieldset>
+
+            {!editingMember && xeroConnected === true && (
+              <fieldset className="space-y-3 pt-2 border-t">
+                <legend className="text-sm font-medium">Xero</legend>
+                <div className="space-y-2">
+                  <Label>After creating this member</Label>
+                  <Select
+                    value={xeroChoice || undefined}
+                    onValueChange={(value) => {
+                      const nextChoice = value as "link" | "create"
+                      setXeroChoice(nextChoice)
+                      setFormError("")
+                      setSelectedXeroContactId("")
+                      if (nextChoice !== "link") {
+                        setXeroSearchQuery("")
+                        setXeroSearchResults([])
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose whether to link or create a Xero contact" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="link">Link an existing Xero contact</SelectItem>
+                      <SelectItem value="create">Create a new Xero contact</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {xeroChoice === "link" && (
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Search Xero by name or email"
+                        value={xeroSearchQuery}
+                        onChange={e => setXeroSearchQuery(e.target.value)}
+                        onKeyDown={e => e.key === "Enter" && handleXeroSearch()}
+                      />
+                      <Button type="button" variant="outline" onClick={handleXeroSearch} disabled={xeroSearchLoading}>
+                        {xeroSearchLoading ? "Searching..." : "Search"}
+                      </Button>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Available Xero contacts</Label>
+                      <Select value={selectedXeroContactId || undefined} onValueChange={setSelectedXeroContactId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder={xeroSearchResults.length > 0 ? "Select a Xero contact" : "Search to load unlinked Xero contacts"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {xeroSearchResults.map((contact) => (
+                            <SelectItem key={contact.contactId} value={contact.contactId}>
+                              {contact.name}{contact.email ? ` (${contact.email})` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Only unlinked Xero contacts are shown here. If none match, switch to Create.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {xeroChoice === "create" && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                    Creating a new Xero contact requires First Name, Last Name, Email, Phone, Postal Address, Physical Address, Date of Birth, and Joined Date.
+                  </div>
+                )}
+              </fieldset>
+            )}
+
+            {!editingMember && xeroConnected === false && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                Xero is not connected right now. This member will be created locally only.
+              </div>
+            )}
+
+            {!editingMember && xeroConnected === null && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                Checking Xero connection status...
+              </div>
+            )}
+
+            {editingMember && (
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="active" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" />
+                <Label htmlFor="active">Active</Label>
+              </div>
+            )}
+
+            {editingMember && (
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="forcePasswordChange" checked={form.forcePasswordChange} onChange={e => setForm(f => ({ ...f, forcePasswordChange: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" />
+                <Label htmlFor="forcePasswordChange">Force Password Change on Next Login</Label>
+              </div>
+            )}
+
+            {!editingMember && (
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="sendInvite" checked={form.sendInvite} onChange={e => setForm(f => ({ ...f, sendInvite: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" />
+                <Label htmlFor="sendInvite">Send invite email (password reset link)</Label>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving || (!editingMember && xeroConnected === null)}>
+              {saving ? "Saving..." : editingMember ? "Save Changes" : "Create Member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Bulk {bulkAction === "set-role" ? "Change Role" : bulkAction === "deactivate" ? "Deactivate" : "Reactivate"}</DialogTitle><DialogDescription>This will affect {selectedIds.size} selected member(s).</DialogDescription></DialogHeader>{bulkAction === "set-role" && <div className="space-y-2"><Label>New Role</Label><Select value={bulkRole} onValueChange={v => setBulkRole(v as "MEMBER" | "ADMIN")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="MEMBER">Member</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select></div>}<DialogFooter><Button variant="outline" onClick={() => setBulkDialogOpen(false)} disabled={bulkLoading}>Cancel</Button><Button onClick={handleBulkAction} disabled={bulkLoading} variant={bulkAction === "deactivate" ? "destructive" : "default"}>{bulkLoading ? "Processing..." : "Confirm"}</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={resetPasswordDialogOpen} onOpenChange={setResetPasswordDialogOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Send Password Reset</DialogTitle><DialogDescription>Send a password reset email to {resetPasswordTarget?.label}. They will receive a link to set a new password (expires in 1 hour).</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => { setResetPasswordDialogOpen(false); setResetPasswordTarget(null) }} disabled={resetPasswordLoading}>Cancel</Button><Button onClick={handleSendPasswordReset} disabled={resetPasswordLoading}>{resetPasswordLoading ? "Sending..." : "Send Reset Email"}</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>Import Members from CSV</DialogTitle><DialogDescription>Upload a CSV with columns: First Name, Last Name, Email, Phone (optional), Date of Birth (optional), Role (optional).</DialogDescription></DialogHeader><div className="space-y-4"><div><Label htmlFor="csvFile">CSV File</Label><Input id="csvFile" type="file" accept=".csv" onChange={handleFileUpload} className="mt-1" /></div>{importRows.length > 0 && !importResult && <div><p className="text-sm font-medium mb-2">{importRows.length} rows parsed</p><div className="max-h-48 overflow-y-auto border rounded text-xs"><Table><TableHeader><TableRow><TableHead>First Name</TableHead><TableHead>Last Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead></TableRow></TableHeader><TableBody>{importRows.slice(0, 10).map((row, i) => <TableRow key={i}><TableCell>{row.firstName}</TableCell><TableCell>{row.lastName}</TableCell><TableCell>{row.email}</TableCell><TableCell>{row.role || "MEMBER"}</TableCell></TableRow>)}</TableBody></Table>{importRows.length > 10 && <p className="text-xs text-slate-500 p-2">...and {importRows.length - 10} more</p>}</div><div className="flex items-center gap-2 mt-3"><input type="checkbox" id="sendInvites" checked={importSendInvites} onChange={e => setImportSendInvites(e.target.checked)} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="sendInvites">Send invite emails</Label></div></div>}{importResult && <div className="space-y-2"><p className="text-sm"><span className="font-medium text-green-700">{importResult.created} created</span>, <span className="font-medium text-yellow-700">{importResult.skipped} skipped</span>, <span className="font-medium text-red-700">{importResult.errors.length} errors</span></p>{importResult.errors.length > 0 && <div className="max-h-32 overflow-y-auto text-xs text-red-600 border border-red-200 rounded p-2">{importResult.errors.map((e, i) => <p key={i}>Row {e.row}: {e.errors.join(", ")}</p>)}</div>}</div>}</div><DialogFooter><Button variant="outline" onClick={() => setImportDialogOpen(false)}>Close</Button>{importRows.length > 0 && !importResult && <Button onClick={handleImport} disabled={importLoading}>{importLoading ? "Importing..." : `Import ${importRows.length} Members`}</Button>}</DialogFooter></DialogContent></Dialog>

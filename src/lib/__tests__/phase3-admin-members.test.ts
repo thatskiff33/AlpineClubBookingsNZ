@@ -36,10 +36,19 @@ vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
 }));
+const {
+  mockIsXeroConnected,
+  mockGetXeroContactGroupMemberships,
+  mockUpdateXeroContact,
+} = vi.hoisted(() => ({
+  mockIsXeroConnected: vi.fn().mockResolvedValue(false),
+  mockGetXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
+  mockUpdateXeroContact: vi.fn(),
+}));
 vi.mock("@/lib/xero", () => ({
-  isXeroConnected: vi.fn().mockResolvedValue(false),
-  findOrCreateXeroContact: vi.fn(),
-  updateXeroContact: vi.fn(),
+  isXeroConnected: mockIsXeroConnected,
+  getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
+  updateXeroContact: mockUpdateXeroContact,
 }));
 vi.mock("@/lib/email", () => ({ sendPasswordResetEmail: vi.fn() }));
 vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
@@ -58,7 +67,11 @@ const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
 const memberSession = { user: { id: "m1", role: "MEMBER" } } as any;
 
 describe("Phase 3: Admin Member Management", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsXeroConnected.mockResolvedValue(false);
+    mockGetXeroContactGroupMemberships.mockResolvedValue({});
+  });
 
   // ── A1: Pagination ──
 
@@ -102,6 +115,57 @@ describe("Phase 3: Admin Member Management", () => {
       const res = await getMembers(new NextRequest("http://localhost/api/admin/members?pageSize=500"));
       const body = await res.json();
       expect(body.pageSize).toBe(100);
+    });
+
+    it("includes Xero contact groups for linked members when Xero is connected", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      mockIsXeroConnected.mockResolvedValue(true);
+      mockGetXeroContactGroupMemberships.mockResolvedValue({
+        "xc-1": [{ id: "cg-1", name: "Camp Families" }],
+      });
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        {
+          id: "m1",
+          firstName: "Alice",
+          lastName: "Smith",
+          email: "alice@test.com",
+          phoneCountryCode: "64",
+          phoneAreaCode: "27",
+          phoneNumber: "1234567",
+          dateOfBirth: null,
+          role: "MEMBER",
+          ageTier: "ADULT",
+          active: true,
+          canLogin: true,
+          xeroContactId: "xc-1",
+          joinedDate: null,
+          createdAt: new Date("2025-01-01"),
+          forcePasswordChange: false,
+          streetAddressLine1: null,
+          streetAddressLine2: null,
+          streetCity: null,
+          streetRegion: null,
+          streetPostalCode: null,
+          streetCountry: null,
+          postalAddressLine1: null,
+          postalAddressLine2: null,
+          postalCity: null,
+          postalRegion: null,
+          postalPostalCode: null,
+          postalCountry: null,
+          familyGroupMemberships: [],
+          subscriptions: [],
+        },
+      ] as any);
+      vi.mocked(prisma.member.count).mockResolvedValue(1);
+
+      const res = await getMembers(new NextRequest("http://localhost/api/admin/members"));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.members[0].xeroContactGroups).toEqual([
+        { id: "cg-1", name: "Camp Families" },
+      ]);
+      expect(mockGetXeroContactGroupMemberships).toHaveBeenCalledWith(["xc-1"]);
     });
   });
 
@@ -529,6 +593,10 @@ describe("Phase 3: Admin Member Management", () => {
 
     it("returns member with booking history, stats, and audit logs", async () => {
       mockedAuth.mockResolvedValue(adminSession);
+      mockIsXeroConnected.mockResolvedValue(true);
+      mockGetXeroContactGroupMemberships.mockResolvedValue({
+        xc1: [{ id: "cg-1", name: "Camp Families" }],
+      });
       vi.mocked(prisma.member.findUnique).mockResolvedValue({
         id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
         phone: "021-123", dateOfBirth: new Date("1990-01-15"),
@@ -567,6 +635,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(body.auditLogs).toHaveLength(1);
       // Subscriptions
       expect(body.subscriptions).toHaveLength(1);
+      expect(body.xeroContactGroups).toEqual([{ id: "cg-1", name: "Camp Families" }]);
     });
   });
 
@@ -609,6 +678,121 @@ describe("Phase 3: Admin Member Management", () => {
       });
       const res = await createMember(req);
       expect(res.status).toBe(409);
+    });
+
+    it("creates a local member without auto-creating a Xero contact", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
+        const tx = {
+          member: {
+            create: vi.fn().mockResolvedValue({
+              id: "m1",
+              firstName: "Test",
+              lastName: "User",
+              email: "test@test.com",
+              phoneCountryCode: null,
+              phoneAreaCode: null,
+              phoneNumber: null,
+              dateOfBirth: null,
+              role: "MEMBER",
+              ageTier: "ADULT",
+              active: true,
+              canLogin: true,
+              xeroContactId: null,
+              joinedDate: null,
+              createdAt: new Date("2026-04-11"),
+            }),
+          },
+          familyGroupMember: { createMany: vi.fn() },
+        };
+        return fn(tx);
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/members", {
+        method: "POST",
+        body: JSON.stringify({ firstName: "Test", lastName: "User", email: "test@test.com" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await createMember(req);
+      expect(res.status).toBe(201);
+      expect(mockIsXeroConnected).not.toHaveBeenCalled();
+      const body = await res.json();
+      expect(body.xeroContactId).toBeNull();
+    });
+
+    it("stores joined date and both addresses when creating a member", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+
+      let createArgs: any;
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
+        const tx = {
+          member: {
+            create: vi.fn().mockImplementation(async (args: any) => {
+              createArgs = args;
+              return {
+                id: "m1",
+                firstName: "Test",
+                lastName: "User",
+                email: "test@test.com",
+                phoneCountryCode: "64",
+                phoneAreaCode: "27",
+                phoneNumber: "123 4567",
+                dateOfBirth: new Date("1990-01-15"),
+                role: "MEMBER",
+                ageTier: "ADULT",
+                active: true,
+                canLogin: true,
+                xeroContactId: null,
+                joinedDate: new Date("2026-03-01"),
+                createdAt: new Date("2026-04-11"),
+              };
+            }),
+          },
+          familyGroupMember: { createMany: vi.fn() },
+        };
+        return fn(tx);
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/members", {
+        method: "POST",
+        body: JSON.stringify({
+          firstName: "Test",
+          lastName: "User",
+          email: "test@test.com",
+          phoneCountryCode: "64",
+          phoneAreaCode: "27",
+          phoneNumber: "123 4567",
+          dateOfBirth: "1990-01-15",
+          joinedDate: "2026-03-01",
+          streetAddressLine1: "12 Main St",
+          streetCity: "Tokoroa",
+          streetRegion: "Waikato",
+          streetPostalCode: "3420",
+          streetCountry: "NZ",
+          postalAddressLine1: "PO Box 10",
+          postalCity: "Tokoroa",
+          postalRegion: "Waikato",
+          postalPostalCode: "3420",
+          postalCountry: "NZ",
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await createMember(req);
+      expect(res.status).toBe(201);
+      expect(createArgs.data.joinedDate).toBeInstanceOf(Date);
+      expect(createArgs.data.joinedDate.toISOString().startsWith("2026-03-01")).toBe(true);
+      expect(createArgs.data.streetAddressLine1).toBe("12 Main St");
+      expect(createArgs.data.streetCity).toBe("Tokoroa");
+      expect(createArgs.data.streetRegion).toBe("Waikato");
+      expect(createArgs.data.streetPostalCode).toBe("3420");
+      expect(createArgs.data.streetCountry).toBe("NZ");
+      expect(createArgs.data.postalAddressLine1).toBe("PO Box 10");
+      expect(createArgs.data.postalCity).toBe("Tokoroa");
+      expect(createArgs.data.postalRegion).toBe("Waikato");
+      expect(createArgs.data.postalPostalCode).toBe("3420");
+      expect(createArgs.data.postalCountry).toBe("NZ");
     });
   });
 });

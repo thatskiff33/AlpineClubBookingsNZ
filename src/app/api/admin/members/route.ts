@@ -5,11 +5,16 @@ import { randomBytes } from "crypto";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
-import { isXeroConnected, findOrCreateXeroContact } from "@/lib/xero";
+import {
+  getXeroContactGroupMemberships,
+  isXeroConnected,
+} from "@/lib/xero";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
+
+const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
 const createMemberSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -29,6 +34,24 @@ const createMemberSchema = z.object({
   sendInvite: z.boolean().default(false),
   canLogin: z.boolean().optional(),
   familyGroupIds: z.array(z.string()).optional(),
+  joinedDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+  streetAddressLine1: maxStr(200),
+  streetAddressLine2: maxStr(200),
+  streetCity: maxStr(200),
+  streetRegion: maxStr(200),
+  streetPostalCode: maxStr(20),
+  streetCountry: maxStr(100),
+  postalAddressLine1: maxStr(200),
+  postalAddressLine2: maxStr(200),
+  postalCity: maxStr(200),
+  postalRegion: maxStr(200),
+  postalPostalCode: maxStr(20),
+  postalCountry: maxStr(100),
 });
 
 const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
@@ -182,6 +205,18 @@ export async function GET(req: NextRequest) {
     joinedDate: true,
     createdAt: true,
     forcePasswordChange: true,
+    streetAddressLine1: true,
+    streetAddressLine2: true,
+    streetCity: true,
+    streetRegion: true,
+    streetPostalCode: true,
+    streetCountry: true,
+    postalAddressLine1: true,
+    postalAddressLine2: true,
+    postalCity: true,
+    postalRegion: true,
+    postalPostalCode: true,
+    postalCountry: true,
     familyGroupMemberships: {
       select: {
         familyGroupId: true,
@@ -206,6 +241,21 @@ export async function GET(req: NextRequest) {
     prisma.member.count({ where }),
   ]);
 
+  let xeroContactGroups: Record<string, Array<{ id: string; name: string }>> = {};
+  const linkedContactIds = members
+    .map((member) => member.xeroContactId)
+    .filter(Boolean) as string[];
+
+  if (linkedContactIds.length > 0) {
+    try {
+      if (await isXeroConnected()) {
+        xeroContactGroups = await getXeroContactGroupMemberships(linkedContactIds);
+      }
+    } catch (error) {
+      logger.error({ err: error }, "Failed to fetch Xero contact groups for members list");
+    }
+  }
+
   const membersWithSub = members.map((m) => ({
     ...m,
     subscriptionStatus: m.subscriptions[0]?.status ?? null,
@@ -216,6 +266,9 @@ export async function GET(req: NextRequest) {
     })),
     subscriptions: undefined,
     familyGroupMemberships: undefined,
+    xeroContactGroups: m.xeroContactId
+      ? xeroContactGroups[m.xeroContactId] ?? []
+      : [],
   }));
 
   return NextResponse.json({
@@ -284,12 +337,19 @@ export async function POST(req: NextRequest) {
   // Determine age tier from DOB if provided, otherwise use explicit value or default
   let ageTier = data.ageTier || "ADULT";
   let dateOfBirth: Date | null = null;
+  let joinedDate: Date | null = null;
   if (data.dateOfBirth) {
     dateOfBirth = new Date(data.dateOfBirth);
     if (isNaN(dateOfBirth.getTime())) {
       return NextResponse.json({ error: "Invalid date of birth" }, { status: 422 });
     }
     ageTier = await computeAgeTier(dateOfBirth, getSeasonStartDate(getSeasonYear()));
+  }
+  if (data.joinedDate && data.joinedDate !== "") {
+    joinedDate = new Date(data.joinedDate);
+    if (isNaN(joinedDate.getTime())) {
+      return NextResponse.json({ error: "Invalid joined date" }, { status: 422 });
+    }
   }
 
   // Random unguessable password
@@ -312,6 +372,19 @@ export async function POST(req: NextRequest) {
           canLogin,
           passwordHash: placeholderHash,
           emailVerified: !canLogin, // Non-login members don't need verification
+          joinedDate,
+          streetAddressLine1: data.streetAddressLine1?.trim() || null,
+          streetAddressLine2: data.streetAddressLine2?.trim() || null,
+          streetCity: data.streetCity?.trim() || null,
+          streetRegion: data.streetRegion?.trim() || null,
+          streetPostalCode: data.streetPostalCode?.trim() || null,
+          streetCountry: data.streetCountry?.trim() || null,
+          postalAddressLine1: data.postalAddressLine1?.trim() || null,
+          postalAddressLine2: data.postalAddressLine2?.trim() || null,
+          postalCity: data.postalCity?.trim() || null,
+          postalRegion: data.postalRegion?.trim() || null,
+          postalPostalCode: data.postalPostalCode?.trim() || null,
+          postalCountry: data.postalCountry?.trim() || null,
         },
         select: {
           id: true,
@@ -345,15 +418,6 @@ export async function POST(req: NextRequest) {
 
       return created;
     });
-
-    // Sync to Xero if connected
-    try {
-      if (await isXeroConnected()) {
-        await findOrCreateXeroContact(member.id);
-      }
-    } catch (xeroErr) {
-      logger.error({ err: xeroErr, memberId: member.id }, "Xero sync failed for new member");
-    }
 
     // Send invite email if requested
     let inviteWarning: string | undefined;

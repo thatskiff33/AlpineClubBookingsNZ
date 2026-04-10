@@ -29,6 +29,18 @@ export class XeroDailyLimitError extends Error {
   }
 }
 
+export class XeroContactValidationError extends Error {
+  missingFields: string[];
+
+  constructor(missingFields: string[]) {
+    super(
+      `Member is missing required fields for Xero contact creation: ${missingFields.join(", ")}`
+    );
+    this.name = "XeroContactValidationError";
+    this.missingFields = missingFields;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -420,6 +432,7 @@ export async function findOrCreateXeroContact(memberId: string): Promise<string>
       firstName: member.firstName,
       lastName: member.lastName,
       emailAddress: member.email,
+      companyNumber: formatDateOfBirthForXero(member.dateOfBirth),
       phones: member.phoneNumber
         ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneCountryCode: member.phoneCountryCode || "", phoneAreaCode: member.phoneAreaCode || "", phoneNumber: member.phoneNumber }]
         : [],
@@ -427,6 +440,58 @@ export async function findOrCreateXeroContact(memberId: string): Promise<string>
     };
 
     const response = await xero.accountingApi.createContacts(tenantId, { contacts: [contact] });
+    const createdContact = response.body.contacts?.[0];
+    if (!createdContact?.contactID) {
+      throw new Error("Failed to create Xero contact");
+    }
+
+    await tx.member.update({
+      where: { id: memberId },
+      data: { xeroContactId: createdContact.contactID },
+    });
+
+    return createdContact.contactID;
+  });
+}
+
+/**
+ * Create a brand-new Xero contact for a member and link it locally.
+ * Unlike findOrCreateXeroContact, this does not try to match existing contacts by email.
+ */
+export async function createXeroContactForMember(memberId: string): Promise<string> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
+
+    const member = await tx.member.findUnique({ where: { id: memberId } });
+    if (!member) throw new Error(`Member not found: ${memberId}`);
+
+    const missingFields = getMissingFieldsForXeroContactCreate(member);
+    if (missingFields.length > 0) {
+      throw new XeroContactValidationError(missingFields);
+    }
+
+    const { xero, tenantId } = await getAuthenticatedXeroClient();
+
+    const contact: Contact = {
+      name: `${member.firstName} ${member.lastName}`,
+      firstName: member.firstName,
+      lastName: member.lastName,
+      emailAddress: member.email,
+      companyNumber: formatDateOfBirthForXero(member.dateOfBirth),
+      phones: [
+        {
+          phoneType: Phone.PhoneTypeEnum.MOBILE,
+          phoneCountryCode: member.phoneCountryCode || "",
+          phoneAreaCode: member.phoneAreaCode || "",
+          phoneNumber: member.phoneNumber || "",
+        },
+      ],
+      addresses: buildXeroAddresses(member),
+    };
+
+    const response = await xero.accountingApi.createContacts(tenantId, {
+      contacts: [contact],
+    });
     const createdContact = response.body.contacts?.[0];
     if (!createdContact?.contactID) {
       throw new Error("Failed to create Xero contact");
@@ -811,6 +876,53 @@ export async function getXeroContactGroups(): Promise<
   return results;
 }
 
+export async function getXeroContactGroupMemberships(
+  contactIds: string[]
+): Promise<Record<string, Array<{ id: string; name: string }>>> {
+  if (contactIds.length === 0) {
+    return {};
+  }
+
+  const targetContactIds = new Set(contactIds);
+  const memberships: Record<string, Array<{ id: string; name: string }>> = {};
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const response = await withXeroRetry(
+    () => xero.accountingApi.getContactGroups(tenantId),
+    { context: "getXeroContactGroupMemberships" }
+  );
+  const groups = (response.body.contactGroups ?? []).filter(
+    (group) =>
+      group.contactGroupID &&
+      group.name &&
+      group.status === ContactGroup.StatusEnum.ACTIVE
+  );
+
+  for (const group of groups) {
+    const detail = await withXeroRetry(
+      () => xero.accountingApi.getContactGroup(tenantId, group.contactGroupID!),
+      { context: `getContactGroupMembers(${group.name})` }
+    );
+    const contacts = detail.body.contactGroups?.[0]?.contacts ?? [];
+
+    for (const contact of contacts) {
+      if (!contact.contactID || !targetContactIds.has(contact.contactID)) {
+        continue;
+      }
+
+      if (!memberships[contact.contactID]) {
+        memberships[contact.contactID] = [];
+      }
+
+      memberships[contact.contactID].push({
+        id: group.contactGroupID!,
+        name: group.name!,
+      });
+    }
+  }
+
+  return memberships;
+}
+
 /**
  * Assemble a full phone number from Xero's split fields (countryCode, areaCode, number).
  * e.g. countryCode="64", areaCode="27", number="4224115" → "+64 27 4224115"
@@ -907,6 +1019,72 @@ function buildXeroAddresses(member: {
     });
   }
   return addresses;
+}
+
+function formatDateOfBirthForXero(dateOfBirth?: Date | null): string | undefined {
+  if (!dateOfBirth) return undefined;
+
+  const day = String(dateOfBirth.getUTCDate()).padStart(2, "0");
+  const month = String(dateOfBirth.getUTCMonth() + 1).padStart(2, "0");
+  const year = dateOfBirth.getUTCFullYear();
+
+  return `${day}/${month}/${year}`;
+}
+
+function getMissingFieldsForXeroContactCreate(member: {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  phoneCountryCode?: string | null;
+  phoneAreaCode?: string | null;
+  phoneNumber?: string | null;
+  streetAddressLine1?: string | null;
+  streetCity?: string | null;
+  streetRegion?: string | null;
+  streetPostalCode?: string | null;
+  streetCountry?: string | null;
+  postalAddressLine1?: string | null;
+  postalCity?: string | null;
+  postalRegion?: string | null;
+  postalPostalCode?: string | null;
+  postalCountry?: string | null;
+  dateOfBirth?: Date | null;
+  joinedDate?: Date | null;
+}): string[] {
+  const missingFields: string[] = [];
+
+  if (!member.firstName?.trim()) missingFields.push("First Name");
+  if (!member.lastName?.trim()) missingFields.push("Last Name");
+  if (!member.email?.trim()) missingFields.push("Email");
+  if (
+    !member.phoneCountryCode?.trim() ||
+    !member.phoneAreaCode?.trim() ||
+    !member.phoneNumber?.trim()
+  ) {
+    missingFields.push("Phone");
+  }
+  if (!member.dateOfBirth) missingFields.push("Date of Birth");
+  if (!member.joinedDate) missingFields.push("Joined Date");
+  if (
+    !member.streetAddressLine1?.trim() ||
+    !member.streetCity?.trim() ||
+    !member.streetRegion?.trim() ||
+    !member.streetPostalCode?.trim() ||
+    !member.streetCountry?.trim()
+  ) {
+    missingFields.push("Physical Address");
+  }
+  if (
+    !member.postalAddressLine1?.trim() ||
+    !member.postalCity?.trim() ||
+    !member.postalRegion?.trim() ||
+    !member.postalPostalCode?.trim() ||
+    !member.postalCountry?.trim()
+  ) {
+    missingFields.push("Postal Address");
+  }
+
+  return missingFields;
 }
 
 /**
@@ -1362,6 +1540,7 @@ export interface XeroContactUpdateData {
   firstName: string;
   lastName: string;
   email: string;
+  dateOfBirth?: Date | null;
   phoneCountryCode?: string | null;
   phoneAreaCode?: string | null;
   phoneNumber?: string | null;
@@ -1394,6 +1573,7 @@ export async function updateXeroContact(
     firstName: data.firstName,
     lastName: data.lastName,
     emailAddress: data.email,
+    companyNumber: formatDateOfBirthForXero(data.dateOfBirth),
     phones: data.phoneNumber
       ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneCountryCode: data.phoneCountryCode || "", phoneAreaCode: data.phoneAreaCode || "", phoneNumber: data.phoneNumber }]
       : [],
