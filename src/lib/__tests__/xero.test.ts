@@ -445,6 +445,35 @@ describe("withXeroRetry", () => {
     expect(calls).toBe(1) // No retries — aborted immediately
   })
 
+  it("detects wrapped daily-limit JSON errors and activates cooldown", async () => {
+    let calls = 0
+    const fn = () => {
+      calls++
+      return Promise.reject(
+        new Error(
+          JSON.stringify({
+            response: {
+              statusCode: 429,
+              headers: {
+                "retry-after": "60",
+                "x-rate-limit-problem": "day",
+              },
+            },
+          })
+        )
+      )
+    }
+
+    await expect(withXeroRetry(fn, { maxRetries: 3 })).rejects.toBeInstanceOf(
+      XeroDailyLimitError
+    )
+    expect(calls).toBe(1)
+
+    const secondFn = vi.fn(() => Promise.resolve("should not run"))
+    await expect(withXeroRetry(secondFn)).rejects.toBeInstanceOf(XeroDailyLimitError)
+    expect(secondFn).not.toHaveBeenCalled()
+  })
+
   it("short-circuits future calls while the daily limit cooldown is active", async () => {
     await expect(
       withXeroRetry(

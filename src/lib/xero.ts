@@ -13,6 +13,7 @@ import { sendPasswordResetEmail } from "./email";
 import { AgeTier } from "@prisma/client";
 import { getSeasonYear, getStayNights } from "./pricing";
 import logger from "@/lib/logger";
+import { getXeroErrorHeader, getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 
 // ---------------------------------------------------------------------------
 // Rate limit error
@@ -614,12 +615,11 @@ export async function withXeroRetry<T>(
       return await fn();
     } catch (err: unknown) {
       lastError = err;
-      const statusCode = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+      const statusCode = getXeroErrorStatusCode(err);
       if (statusCode !== 429) throw err;
 
-      const headers = (err as { response?: { headers?: Record<string, string> } })?.response?.headers;
-      const retryAfter = headers?.["retry-after"];
-      const rateLimitProblem = headers?.["x-rate-limit-problem"];
+      const retryAfter = getXeroErrorHeader(err, "retry-after");
+      const rateLimitProblem = getXeroErrorHeader(err, "x-rate-limit-problem");
 
       // Daily limit — abort immediately, no point retrying for hours
       if (rateLimitProblem === "day") {

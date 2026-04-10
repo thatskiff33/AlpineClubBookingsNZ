@@ -33,6 +33,26 @@ describe("getXeroApiErrorInfo", () => {
     });
   });
 
+  it("maps wrapped JSON 429/day errors carried in Error.message", () => {
+    const error = new Error(
+      JSON.stringify({
+        response: {
+          statusCode: 429,
+          headers: {
+            "retry-after": "12328",
+            "x-rate-limit-problem": "day",
+          },
+        },
+      })
+    );
+
+    expect(getXeroApiErrorInfo(error, "Fallback failure")).toEqual({
+      handled: true,
+      status: 429,
+      message: "Xero daily API limit reached. Please try again tomorrow.",
+    });
+  });
+
   it("maps 401 and 403 to reconnect guidance", () => {
     expect(
       getXeroApiErrorInfo(
