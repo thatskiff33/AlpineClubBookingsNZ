@@ -102,6 +102,9 @@ enum ChoreFrequencyMode {
 
 model Member {
   id            String   @id @default(cuid())
+  // Lookup index only in Prisma schema. Login identity uniqueness is enforced
+  // by the manual partial unique index Member_email_login_unique
+  // (WHERE canLogin = true), because Prisma schema cannot express partial unique indexes.
   email         String
   passwordHash        String
   forcePasswordChange Boolean  @default(false)
@@ -138,7 +141,7 @@ model Member {
   ageTier       AgeTier  @default(ADULT)
   xeroContactId String?  @unique
   active        Boolean  @default(true)
-  canLogin      Boolean  @default(false) // true for adults with unique email + password set
+  canLogin      Boolean  @default(false) // true for members allowed to authenticate; the DB enforces one canLogin member per email
   joinedDate    DateTime?  // Membership start date, sourced from Xero first invoice
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

@@ -669,6 +669,51 @@ describe("Phase 3: Admin Member Management", () => {
       expect(res.status).toBe(409);
     });
 
+    it("allows shared email when creating a non-login member", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findFirst).mockResolvedValue({ id: "existing-login" } as any);
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
+        const tx = {
+          member: {
+            create: vi.fn().mockResolvedValue({
+              id: "m2",
+              firstName: "Shared",
+              lastName: "Email",
+              email: "shared@test.com",
+              phoneCountryCode: null,
+              phoneAreaCode: null,
+              phoneNumber: null,
+              dateOfBirth: null,
+              role: "MEMBER",
+              ageTier: "ADULT",
+              active: true,
+              canLogin: false,
+              xeroContactId: null,
+              joinedDate: null,
+              createdAt: new Date("2026-04-11"),
+            }),
+          },
+          familyGroupMember: { createMany: vi.fn() },
+        };
+        return fn(tx);
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/members", {
+        method: "POST",
+        body: JSON.stringify({
+          firstName: "Shared",
+          lastName: "Email",
+          email: "shared@test.com",
+          canLogin: false,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await createMember(req);
+
+      expect(res.status).toBe(201);
+      expect(prisma.member.findFirst).not.toHaveBeenCalled();
+    });
+
     it("creates a local member without auto-creating a Xero contact", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findFirst).mockResolvedValue(null);

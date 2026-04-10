@@ -410,6 +410,31 @@ describe("Admin Member Edit: structured phone and address", () => {
 
     expect(res.status).toBe(409);
   });
+
+  it("allows shared email when demoting a member to non-login", async () => {
+    vi.mocked(auth).mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue({ id: "other-login" } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      email: "shared@test.com",
+      canLogin: false,
+    } as any);
+
+    const res = await updateMember(
+      makePutRequest("m1", { email: "shared@test.com", canLogin: false }),
+      { params: Promise.resolve({ id: "m1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(prisma.member.findFirst).not.toHaveBeenCalled();
+    expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        email: "shared@test.com",
+        canLogin: false,
+      }),
+    }));
+  });
 });
 
 // ──────────────────────────────────────────────────────────────
