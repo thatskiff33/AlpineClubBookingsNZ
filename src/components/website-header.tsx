@@ -43,12 +43,12 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
   const dashboardHref = isAuthenticated ? "/dashboard" : "/login";
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-white/95 backdrop-blur shadow-sm">
+    <header className="sticky top-0 z-50 w-full border-b border-brand-gold/15 bg-brand-charcoal/95 text-brand-snow shadow-[0_16px_40px_-28px_rgba(47,47,43,0.9)] backdrop-blur">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Branding */}
         <Link
           href="/"
-          className="flex items-center gap-2 font-bold text-slate-900 hover:opacity-80 transition-opacity"
+          className="flex items-center gap-2 font-bold text-brand-snow transition-opacity hover:opacity-85"
         >
           <Image
             src="/images/tac-logo.png"
@@ -69,8 +69,8 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
               className={cn(
                 "rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 isActive(link.href)
-                  ? "bg-blue-50 text-blue-700"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                  ? "bg-brand-gold text-brand-charcoal shadow-sm"
+                  : "text-brand-snow/80 hover:bg-brand-snow/10 hover:text-brand-snow"
               )}
             >
               {link.label}
@@ -84,25 +84,35 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
             href="https://tokoroa.org.nz/"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors"
+            className="text-sm font-medium text-brand-mist transition-colors hover:text-brand-gold"
           >
             TAC Website
           </a>
           {isAuthenticated ? (
             <>
-              <Button variant="outline" size="sm" asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+                className="border-brand-snow/20 bg-brand-snow/5 text-brand-snow hover:bg-brand-snow/10 hover:text-brand-snow"
+              >
                 <Link href={dashboardHref}>Dashboard</Link>
               </Button>
-              <Button size="sm" asChild>
+              <Button size="sm" asChild className="shadow-lg shadow-brand-gold/20">
                 <Link href={bookingsHref}>Book Now</Link>
               </Button>
             </>
           ) : (
             <>
-              <Button variant="outline" size="sm" asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+                className="border-brand-snow/20 bg-brand-snow/5 text-brand-snow hover:bg-brand-snow/10 hover:text-brand-snow"
+              >
                 <Link href="/login">Log In</Link>
               </Button>
-              <Button size="sm" asChild>
+              <Button size="sm" asChild className="shadow-lg shadow-brand-gold/20">
                 <a href={bookingsHref} target="_blank" rel="noopener noreferrer">Book Now</a>
               </Button>
             </>
@@ -115,15 +125,18 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
             <Button
               variant="ghost"
               size="icon"
-              className="lg:hidden"
+              className="lg:hidden text-brand-snow hover:bg-brand-snow/10 hover:text-brand-snow"
               aria-label="Open menu"
             >
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="right" className="w-72">
+          <SheetContent
+            side="right"
+            className="website-theme w-72 border-brand-ridge/25 bg-brand-charcoal text-brand-snow"
+          >
             <SheetHeader>
-              <SheetTitle className="flex items-center gap-2 text-left">
+              <SheetTitle className="flex items-center gap-2 text-left font-heading text-brand-snow">
                 <Image
                   src="/images/tac-logo.png"
                   alt="Tokoroa Alpine Club"
@@ -143,8 +156,8 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                   className={cn(
                     "rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
                     isActive(link.href)
-                      ? "bg-blue-50 text-blue-700"
-                      : "text-slate-700 hover:bg-slate-100"
+                      ? "bg-brand-gold text-brand-charcoal"
+                      : "text-brand-snow/85 hover:bg-brand-snow/10 hover:text-brand-snow"
                   )}
                 >
                   {link.label}
@@ -152,15 +165,20 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
               ))}
             </div>
 
-            <div className="mt-6 border-t pt-6 flex flex-col gap-2 px-3">
+            <div className="mt-6 flex flex-col gap-2 border-t border-brand-snow/10 px-3 pt-6">
               {isAuthenticated ? (
                 <>
-                  <Button variant="outline" size="sm" asChild className="w-full">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    asChild
+                    className="w-full border-brand-snow/20 bg-brand-snow/5 text-brand-snow hover:bg-brand-snow/10 hover:text-brand-snow"
+                  >
                     <Link href={dashboardHref} onClick={() => setMobileOpen(false)}>
                       Dashboard
                     </Link>
                   </Button>
-                  <Button size="sm" asChild className="w-full">
+                  <Button size="sm" asChild className="w-full shadow-lg shadow-brand-gold/20">
                     <Link href={bookingsHref} onClick={() => setMobileOpen(false)}>
                       Book Now
                     </Link>
@@ -168,12 +186,17 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                 </>
               ) : (
                 <>
-                  <Button variant="outline" size="sm" asChild className="w-full">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    asChild
+                    className="w-full border-brand-snow/20 bg-brand-snow/5 text-brand-snow hover:bg-brand-snow/10 hover:text-brand-snow"
+                  >
                     <Link href="/login" onClick={() => setMobileOpen(false)}>
                       Log In
                     </Link>
                   </Button>
-                  <Button size="sm" asChild className="w-full">
+                  <Button size="sm" asChild className="w-full shadow-lg shadow-brand-gold/20">
                     <a href={bookingsHref} target="_blank" rel="noopener noreferrer" onClick={() => setMobileOpen(false)}>
                       Book Now
                     </a>
@@ -185,7 +208,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => setMobileOpen(false)}
-                className="text-center text-sm font-medium text-slate-600 hover:text-slate-900 py-2 transition-colors"
+                className="py-2 text-center text-sm font-medium text-brand-mist transition-colors hover:text-brand-gold"
               >
                 Visit TAC Website
               </a>

@@ -14,26 +14,27 @@ const PRIVACY_OFFICER_EMAIL = "secretary@tokoroa.org.nz";
 export default function PrivacyPage() {
   return (
     <>
-      <section className="bg-gradient-to-br from-slate-800 to-slate-900 text-white py-16 sm:py-20">
+      <section className="bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+          <span className="website-eyebrow mb-4">Policy</span>
+          <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
             Privacy Policy
           </h1>
-          <p className="mt-4 text-lg text-slate-300 max-w-2xl">
+          <p className="mt-4 max-w-2xl text-lg text-brand-snow/80">
             How we collect, use, and protect your personal information.
           </p>
-          <p className="mt-2 text-sm text-slate-400">
+          <p className="mt-2 text-sm text-brand-snow/60">
             Effective {EFFECTIVE_DATE} &mdash; Last updated {LAST_UPDATED}
           </p>
         </div>
       </section>
 
-      <section className="bg-white py-16 sm:py-20">
-        <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 prose prose-slate max-w-none">
-          <div className="space-y-10 text-slate-700">
+      <section className="bg-brand-snow py-16 sm:py-20">
+        <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
+          <div className="website-legal-copy">
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">1. Who We Are</h2>
+              <h2>1. Who We Are</h2>
               <p>
                 The Tokoroa Alpine Club Incorporated (&ldquo;TAC&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit
                 incorporated society registered in New Zealand. We operate Waldvogel Lodge at Iwikau
@@ -48,7 +49,7 @@ export default function PrivacyPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">2. What Information We Collect</h2>
+              <h2>2. What Information We Collect</h2>
               <p>We collect the following categories of personal information:</p>
               <ul className="list-disc pl-6 mt-3 space-y-2">
                 <li>
@@ -91,7 +92,7 @@ export default function PrivacyPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">3. How We Collect Information</h2>
+              <h2>3. How We Collect Information</h2>
               <p>We collect your information:</p>
               <ul className="list-disc pl-6 mt-3 space-y-2">
                 <li>Directly from you when you register an account, make a booking, or contact us.</li>
@@ -108,7 +109,7 @@ export default function PrivacyPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">4. How We Use Your Information</h2>
+              <h2>4. How We Use Your Information</h2>
               <p>We use your personal information to:</p>
               <ul className="list-disc pl-6 mt-3 space-y-2">
                 <li>Create and manage your member account.</li>
@@ -127,7 +128,7 @@ export default function PrivacyPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">5. Who We Share Your Information With</h2>
+              <h2>5. Who We Share Your Information With</h2>
               <p>
                 We share your personal information with the following third-party service providers
                 where necessary to operate the System:
@@ -141,7 +142,7 @@ export default function PrivacyPage() {
                     href="https://stripe.com/en-nz/privacy"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-blue-600 hover:underline"
+                    className="website-link"
                   >
                     Stripe&apos;s Privacy Policy
                   </a>
@@ -156,7 +157,7 @@ export default function PrivacyPage() {
                     href="https://www.xero.com/nz/about/policies/privacy/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-blue-600 hover:underline"
+                    className="website-link"
                   >
                     Xero&apos;s Privacy Policy
                   </a>
@@ -171,7 +172,7 @@ export default function PrivacyPage() {
                     href="https://aws.amazon.com/privacy/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-blue-600 hover:underline"
+                    className="website-link"
                   >
                     AWS Privacy Notice
                   </a>
@@ -198,7 +199,7 @@ export default function PrivacyPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">6. How We Store and Protect Your Information</h2>
+              <h2>6. How We Store and Protect Your Information</h2>
               <ul className="list-disc pl-6 mt-3 space-y-2">
                 <li>
                   Your data is stored in a PostgreSQL database hosted on AWS Lightsail in the
@@ -228,7 +229,7 @@ export default function PrivacyPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">7. How Long We Keep Your Information</h2>
+              <h2>7. How Long We Keep Your Information</h2>
               <ul className="list-disc pl-6 mt-3 space-y-2">
                 <li>
                   <strong>Active member accounts:</strong> Retained for as long as you remain a member
@@ -257,13 +258,13 @@ export default function PrivacyPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">8. Your Rights</h2>
+              <h2>8. Your Rights</h2>
               <p>Under the Privacy Act 2020, you have the right to:</p>
               <ul className="list-disc pl-6 mt-3 space-y-2">
                 <li>
                   <strong>Access your information (IPP 6):</strong> Request a copy of the personal
                   information we hold about you. You can download your data from your{" "}
-                  <Link href="/profile" className="text-blue-600 hover:underline">
+                  <Link href="/profile" className="website-link">
                     Profile page
                   </Link>
                   .
@@ -285,7 +286,7 @@ export default function PrivacyPage() {
                     href="https://www.privacy.org.nz/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-blue-600 hover:underline"
+                    className="website-link"
                   >
                     Office of the Privacy Commissioner
                   </a>
@@ -295,7 +296,7 @@ export default function PrivacyPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">9. Cookies and Tracking</h2>
+              <h2>9. Cookies and Tracking</h2>
               <p>
                 This System uses a single session cookie to keep you logged in. This cookie contains an
                 encrypted session token and no personal information. We do not use advertising cookies,
@@ -305,7 +306,7 @@ export default function PrivacyPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">10. Changes to This Policy</h2>
+              <h2>10. Changes to This Policy</h2>
               <p>
                 We may update this Privacy Policy from time to time. When we do, we will update the
                 &ldquo;Last updated&rdquo; date at the top of this page. Continued use of the System
@@ -314,25 +315,25 @@ export default function PrivacyPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">11. Contact Our Privacy Officer</h2>
+              <h2>11. Contact Our Privacy Officer</h2>
               <p>
                 For any questions or concerns about this Privacy Policy, or to exercise your privacy
                 rights, please contact our Privacy Officer:
               </p>
-              <div className="mt-4 p-4 bg-slate-50 rounded-lg border border-slate-200">
-                <p className="font-semibold text-slate-900">Privacy Officer</p>
-                <p className="text-slate-700">Tokoroa Alpine Club Incorporated</p>
+              <div className="website-legal-callout">
+                <p className="font-semibold text-brand-charcoal">Privacy Officer</p>
+                <p className="text-brand-deep">Tokoroa Alpine Club Incorporated</p>
                 <p className="mt-2">
                   <a
                     href={`mailto:${PRIVACY_OFFICER_EMAIL}`}
-                    className="text-blue-600 hover:underline"
+                    className="website-link"
                   >
                     {PRIVACY_OFFICER_EMAIL}
                   </a>
                 </p>
                 <p className="mt-1">
                   Or use our{" "}
-                  <Link href="/contact?recipient=secretary" className="text-blue-600 hover:underline">
+                  <Link href="/contact?recipient=secretary" className="website-link">
                     contact form
                   </Link>
                   .

@@ -35,16 +35,31 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-brand-gold: var(--brand-gold);
+  --color-brand-charcoal: var(--brand-charcoal);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-ridge: var(--brand-ridge);
+  --color-brand-mist: var(--brand-mist);
+  --color-brand-snow: var(--brand-snow);
+  --color-brand-safety: var(--brand-safety);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-heading: var(--website-heading-font, var(--font-sans));
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 :root {
   --radius: 0.625rem;
+  --brand-gold: #ffcb05;
+  --brand-charcoal: #4d4d46;
+  --brand-deep: #2f2f2b;
+  --brand-ridge: #6a6a63;
+  --brand-mist: #d9d5c2;
+  --brand-snow: #f7f5ed;
+  --brand-safety: #ff7c12;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -114,6 +129,54 @@
   --sidebar-ring: oklch(0.439 0 0);
 }
 
+.website-theme {
+  --website-heading-font: var(--font-website-heading, var(--font-sans));
+  --font-sans: var(--font-website-body, ui-sans-serif, system-ui, sans-serif);
+  --background: var(--brand-snow);
+  --foreground: var(--brand-deep);
+  --card: #fffdf7;
+  --card-foreground: var(--brand-deep);
+  --popover: #fffdf7;
+  --popover-foreground: var(--brand-deep);
+  --primary: var(--brand-gold);
+  --primary-foreground: var(--brand-charcoal);
+  --secondary: var(--brand-mist);
+  --secondary-foreground: var(--brand-deep);
+  --muted: color-mix(in srgb, var(--brand-mist) 72%, var(--brand-snow));
+  --muted-foreground: color-mix(in srgb, var(--brand-deep) 70%, var(--brand-snow));
+  --accent: color-mix(in srgb, var(--brand-gold) 16%, var(--brand-snow));
+  --accent-foreground: var(--brand-deep);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: color-mix(in srgb, var(--brand-ridge) 30%, var(--brand-snow));
+  --input: color-mix(in srgb, var(--brand-ridge) 30%, var(--brand-snow));
+  --ring: color-mix(in srgb, var(--brand-gold) 72%, white);
+  --sidebar: var(--brand-charcoal);
+  --sidebar-foreground: var(--brand-snow);
+  --sidebar-primary: var(--brand-gold);
+  --sidebar-primary-foreground: var(--brand-charcoal);
+  --sidebar-accent: color-mix(in srgb, var(--brand-snow) 12%, transparent);
+  --sidebar-accent-foreground: var(--brand-snow);
+  --sidebar-border: color-mix(in srgb, var(--brand-ridge) 35%, var(--brand-charcoal));
+  --sidebar-ring: color-mix(in srgb, var(--brand-gold) 80%, white);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.website-theme :is(h1, h2, h3, h4, [data-website-heading="true"]) {
+  font-family: var(--website-heading-font);
+  letter-spacing: -0.035em;
+}
+
+.website-theme :is(h1, h2, h3) {
+  text-wrap: balance;
+}
+
+.website-theme :is(p, li) {
+  text-wrap: pretty;
+}
+
 @theme inline {
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
@@ -135,6 +198,68 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .website-eyebrow {
+    @apply inline-flex items-center rounded-full bg-brand-gold px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-brand-charcoal shadow-sm;
+  }
+
+  .website-link {
+    @apply font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4 transition-colors hover:text-brand-deep hover:decoration-brand-safety;
+  }
+
+  .website-legal-copy {
+    @apply space-y-10 leading-7 text-brand-deep;
+  }
+
+  .website-legal-copy h2 {
+    @apply mb-3 font-heading text-xl font-bold text-brand-charcoal;
+  }
+
+  .website-legal-copy h3 {
+    @apply mt-6 mb-2 font-heading text-lg font-semibold text-brand-charcoal;
+  }
+
+  .website-legal-copy strong {
+    @apply text-brand-charcoal;
+  }
+
+  .website-legal-copy a {
+    @apply font-medium text-brand-charcoal underline decoration-brand-gold/70 decoration-2 underline-offset-4 transition-colors hover:text-brand-deep hover:decoration-brand-safety;
+  }
+
+  .website-legal-copy ul {
+    @apply mt-3 list-disc space-y-2 pl-6;
+  }
+
+  .website-legal-copy ol {
+    @apply mt-3 list-decimal space-y-2 pl-6;
+  }
+
+  .website-legal-callout {
+    @apply mt-4 rounded-2xl border border-brand-ridge/20 bg-brand-mist/45 p-5;
+  }
+
+  .website-data-table {
+    @apply w-full overflow-hidden rounded-2xl border border-brand-ridge/20 text-sm;
+  }
+
+  .website-data-table thead {
+    @apply bg-brand-mist/55;
+  }
+
+  .website-data-table th {
+    @apply px-4 py-3 text-left font-semibold text-brand-charcoal;
+  }
+
+  .website-data-table td {
+    @apply px-4 py-3 text-brand-deep;
+  }
+
+  .website-data-table tbody tr {
+    @apply border-t border-brand-ridge/20;
   }
 }
 

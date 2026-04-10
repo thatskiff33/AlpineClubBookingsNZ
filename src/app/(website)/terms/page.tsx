@@ -13,26 +13,27 @@ const EFFECTIVE_DATE = "1 April 2026";
 export default function TermsPage() {
   return (
     <>
-      <section className="bg-gradient-to-br from-slate-800 to-slate-900 text-white py-16 sm:py-20">
+      <section className="bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+          <span className="website-eyebrow mb-4">Policy</span>
+          <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
             Terms of Service
           </h1>
-          <p className="mt-4 text-lg text-slate-300 max-w-2xl">
+          <p className="mt-4 max-w-2xl text-lg text-brand-snow/80">
             Please read these terms carefully before using the booking system.
           </p>
-          <p className="mt-2 text-sm text-slate-400">
+          <p className="mt-2 text-sm text-brand-snow/60">
             Effective {EFFECTIVE_DATE} &mdash; Last updated {LAST_UPDATED}
           </p>
         </div>
       </section>
 
-      <section className="bg-white py-16 sm:py-20">
+      <section className="bg-brand-snow py-16 sm:py-20">
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-          <div className="space-y-10 text-slate-700">
+          <div className="website-legal-copy">
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">1. Agreement to Terms</h2>
+              <h2>1. Agreement to Terms</h2>
               <p>
                 By registering an account or using the Tokoroa Alpine Club Incorporated (&ldquo;TAC&rdquo;,
                 &ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) booking and membership system (&ldquo;the System&rdquo;), you agree to be bound
@@ -45,7 +46,7 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">2. Eligibility</h2>
+              <h2>2. Eligibility</h2>
               <ul className="list-disc pl-6 space-y-2">
                 <li>You must be 18 years or older to create an account.</li>
                 <li>
@@ -64,7 +65,7 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">3. Booking Rules</h2>
+              <h2>3. Booking Rules</h2>
               <ul className="list-disc pl-6 space-y-2">
                 <li>
                   Lodge bookings are for accommodation at Waldvogel Lodge, Iwikau Village, Mt Ruapehu.
@@ -98,12 +99,12 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">4. Payment Terms</h2>
+              <h2>4. Payment Terms</h2>
               <ul className="list-disc pl-6 space-y-2">
                 <li>
                   Lodge accommodation fees are charged per person per night based on age group and
                   membership status. Current rates are published on the{" "}
-                  <Link href="/join" className="text-blue-600 hover:underline">
+                  <Link href="/join" className="website-link">
                     Join page
                   </Link>
                   .
@@ -131,7 +132,7 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">5. Non-Member Priority System</h2>
+              <h2>5. Non-Member Priority System</h2>
               <p>
                 The Tokoroa Alpine Club is a members&apos; club. Members have priority access to the lodge.
                 The following rules apply to bookings that include non-member guests:
@@ -157,11 +158,11 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">6. Cancellation and Refunds</h2>
+              <h2>6. Cancellation and Refunds</h2>
               <p>
                 Refunds are calculated based on the cancellation policy set by the TAC committee.
                 Current tiers are shown on the{" "}
-                <Link href="/rules" className="text-blue-600 hover:underline">
+                <Link href="/rules" className="website-link">
                   Club Rules
                 </Link>{" "}
                 page. General principles:
@@ -184,7 +185,7 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">7. Member Conduct</h2>
+              <h2>7. Member Conduct</h2>
               <ul className="list-disc pl-6 space-y-2">
                 <li>
                   You are responsible for the conduct of all guests on your booking.
@@ -207,7 +208,7 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">8. Account Security</h2>
+              <h2>8. Account Security</h2>
               <ul className="list-disc pl-6 space-y-2">
                 <li>
                   You are responsible for keeping your account credentials confidential. Do not share
@@ -225,7 +226,7 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">9. Limitation of Liability</h2>
+              <h2>9. Limitation of Liability</h2>
               <p>
                 The Tokoroa Alpine Club is a volunteer-run, not-for-profit organisation. To the maximum
                 extent permitted by New Zealand law:
@@ -251,7 +252,7 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">10. Account Suspension and Termination</h2>
+              <h2>10. Account Suspension and Termination</h2>
               <ul className="list-disc pl-6 space-y-2">
                 <li>
                   TAC may suspend or terminate an account for breach of these terms, unpaid membership
@@ -270,7 +271,7 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">11. Changes to These Terms</h2>
+              <h2>11. Changes to These Terms</h2>
               <p>
                 TAC may update these Terms of Service from time to time. We will update the &ldquo;Last
                 updated&rdquo; date at the top of this page. Continued use of the System after any changes
@@ -279,7 +280,7 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">12. Governing Law</h2>
+              <h2>12. Governing Law</h2>
               <p>
                 These terms are governed by the laws of New Zealand. Any disputes will be subject to
                 the exclusive jurisdiction of the New Zealand courts.
@@ -287,16 +288,16 @@ export default function TermsPage() {
             </div>
 
             <div>
-              <h2 className="text-xl font-bold text-slate-900 mb-3">13. Contact Us</h2>
+              <h2>13. Contact Us</h2>
               <p>
                 For questions about these terms, please{" "}
-                <Link href="/contact" className="text-blue-600 hover:underline">
+                <Link href="/contact" className="website-link">
                   contact us
                 </Link>{" "}
                 or email{" "}
                 <a
                   href="mailto:secretary@tokoroa.org.nz"
-                  className="text-blue-600 hover:underline"
+                  className="website-link"
                 >
                   secretary@tokoroa.org.nz
                 </a>

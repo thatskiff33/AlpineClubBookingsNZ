@@ -17,23 +17,24 @@ export const metadata: Metadata = {
 export default function FaqPage() {
   return (
     <>
-      <section className="bg-gradient-to-br from-slate-800 to-slate-900 text-white py-16 sm:py-20">
+      <section className="bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+          <span className="website-eyebrow mb-4">Common questions</span>
+          <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
             Frequently Asked Questions
           </h1>
-          <p className="mt-4 text-lg text-slate-300 max-w-2xl">
+          <p className="mt-4 max-w-2xl text-lg text-brand-snow/80">
             Common questions about the lodge, bookings, and membership.
           </p>
         </div>
       </section>
 
-      <section className="bg-white py-16 sm:py-20">
+      <section className="bg-brand-snow py-16 sm:py-20">
         <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
           <div className="space-y-12">
             {faqSections.map((section) => (
               <div key={section.title}>
-                <h2 className="text-lg font-bold text-slate-900 mb-4 pb-2 border-b border-slate-200">
+                <h2 className="mb-4 border-b border-brand-ridge/20 pb-2 font-heading text-lg font-bold text-brand-charcoal">
                   {section.title}
                 </h2>
                 <Accordion type="single" collapsible className="w-full">
@@ -41,11 +42,12 @@ export default function FaqPage() {
                     <AccordionItem
                       key={index}
                       value={`${section.title}-${index}`}
+                      className="border-brand-ridge/20"
                     >
-                      <AccordionTrigger className="text-left text-slate-800 hover:text-blue-600 hover:no-underline">
+                      <AccordionTrigger className="text-left text-brand-charcoal hover:text-brand-deep hover:no-underline">
                         {item.question}
                       </AccordionTrigger>
-                      <AccordionContent className="text-slate-600 leading-relaxed">
+                      <AccordionContent className="leading-relaxed text-brand-deep/78">
                         {item.answer}
                       </AccordionContent>
                     </AccordionItem>
@@ -55,16 +57,16 @@ export default function FaqPage() {
             ))}
           </div>
 
-          <div className="mt-16 rounded-lg bg-slate-50 border border-slate-200 p-6 text-center">
-            <h2 className="text-lg font-semibold text-slate-900 mb-2">
+          <div className="mt-16 rounded-3xl border border-brand-gold/15 bg-brand-charcoal p-6 text-center text-brand-snow">
+            <h2 className="mb-2 font-heading text-lg font-semibold text-brand-snow">
               Still have a question?
             </h2>
-            <p className="text-slate-600 mb-4 text-sm">
+            <p className="mb-4 text-sm text-brand-snow/76">
               Can&apos;t find what you&apos;re looking for? Get in touch and we&apos;ll help.
             </p>
             <Link
               href="/contact"
-              className="inline-flex items-center justify-center rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 transition-colors"
+              className="inline-flex items-center justify-center rounded-md bg-brand-gold px-5 py-2.5 text-sm font-medium text-brand-charcoal shadow-sm transition-colors hover:bg-[#e0b304]"
             >
               Contact Us
             </Link>

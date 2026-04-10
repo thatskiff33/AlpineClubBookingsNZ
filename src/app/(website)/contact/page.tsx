@@ -101,12 +101,13 @@ export default function ContactPage() {
   return (
     <>
       {/* Header */}
-      <section className="bg-gradient-to-br from-slate-800 to-slate-900 text-white py-16 sm:py-20">
+      <section className="bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+          <span className="website-eyebrow mb-4">Get in touch</span>
+          <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
             Contact Us
           </h1>
-          <p className="mt-4 text-lg text-slate-300 max-w-2xl">
+          <p className="mt-4 max-w-2xl text-lg text-brand-snow/80">
             Have a question about the club, the lodge, or booking a stay? Get in
             touch and we&apos;ll get back to you.
           </p>
@@ -114,17 +115,17 @@ export default function ContactPage() {
       </section>
 
       {/* Content */}
-      <section className="bg-white py-16 sm:py-20">
+      <section className="bg-brand-snow py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 gap-12 lg:grid-cols-3">
             {/* Contact form */}
             <div className="lg:col-span-2">
-              <h2 className="text-2xl font-bold text-slate-900 mb-6">
+              <h2 className="mb-6 font-heading text-2xl font-bold text-brand-charcoal">
                 Send a Message
               </h2>
 
               {status === "sent" ? (
-                <div className="rounded-lg bg-green-50 border border-green-200 p-6">
+                <div className="rounded-2xl border border-green-200 bg-green-50 p-6">
                   <h3 className="font-semibold text-green-800 mb-1">
                     Message Sent
                   </h3>
@@ -135,7 +136,7 @@ export default function ContactPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="mt-4"
+                    className="mt-4 border-brand-charcoal/20 bg-white text-brand-charcoal hover:bg-brand-mist/35 hover:text-brand-charcoal"
                     onClick={() => setStatus("idle")}
                   >
                     Send Another Message
@@ -150,10 +151,10 @@ export default function ContactPage() {
                       onValueChange={setRecipient}
                       disabled={loadingMembers}
                     >
-                      <SelectTrigger className="mt-1">
+                      <SelectTrigger className="mt-1 border-brand-ridge/20 bg-white">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="website-theme border-brand-ridge/20 bg-brand-snow">
                         {recipientOptions.map(({ key, label }) => (
                           <SelectItem key={key} value={key}>
                             {label}
@@ -172,7 +173,7 @@ export default function ContactPage() {
                         setForm({ ...form, name: e.target.value })
                       }
                       placeholder="Your name"
-                      className="mt-1"
+                      className="mt-1 border-brand-ridge/20 bg-white"
                     />
                   </div>
                   <div>
@@ -186,7 +187,7 @@ export default function ContactPage() {
                         setForm({ ...form, email: e.target.value })
                       }
                       placeholder="you@example.com"
-                      className="mt-1"
+                      className="mt-1 border-brand-ridge/20 bg-white"
                     />
                   </div>
                   <div>
@@ -200,7 +201,7 @@ export default function ContactPage() {
                         setForm({ ...form, message: e.target.value })
                       }
                       placeholder="How can we help?"
-                      className="mt-1"
+                      className="mt-1 border-brand-ridge/20 bg-white"
                     />
                   </div>
 
@@ -217,25 +218,25 @@ export default function ContactPage() {
 
             {/* Contact details sidebar */}
             <div className="space-y-6">
-              <h2 className="text-2xl font-bold text-slate-900 mb-6">
+              <h2 className="mb-6 font-heading text-2xl font-bold text-brand-charcoal">
                 Club Details
               </h2>
 
-              <Card>
+              <Card className="border-brand-ridge/20 bg-brand-snow/90 shadow-[0_20px_45px_-35px_rgba(47,47,43,0.45)]">
                 <CardContent className="pt-6 space-y-4">
                   {bookingOfficer && (
                     <div className="flex items-start gap-3">
-                      <Phone className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+                      <Phone className="mt-0.5 h-5 w-5 shrink-0 text-brand-gold" />
                       <div>
-                        <p className="font-medium text-slate-900 text-sm">
+                        <p className="text-sm font-medium text-brand-charcoal">
                           {bookingOfficer.role}
                         </p>
-                        <p className="text-sm text-slate-600">
+                        <p className="text-sm text-brand-deep/75">
                           {bookingOfficer.name}
                         </p>
                         <a
                           href={`tel:${bookingOfficer.phone.replace(/\s/g, "")}`}
-                          className="text-sm text-blue-600 hover:underline"
+                          className="website-link text-sm"
                         >
                           {bookingOfficer.phone}
                         </a>
@@ -243,12 +244,12 @@ export default function ContactPage() {
                     </div>
                   )}
                   <div className="flex items-start gap-3">
-                    <MapPin className="h-5 w-5 text-blue-600 mt-0.5 shrink-0" />
+                    <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-brand-gold" />
                     <div>
-                      <p className="font-medium text-slate-900 text-sm">
+                      <p className="text-sm font-medium text-brand-charcoal">
                         Lodge
                       </p>
-                      <p className="text-sm text-slate-600">
+                      <p className="text-sm text-brand-deep/75">
                         Waldvogel Lodge, Iwikau Village, Mt Ruapehu, New Zealand
                       </p>
                     </div>
@@ -256,16 +257,16 @@ export default function ContactPage() {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="border-brand-ridge/20 bg-brand-mist/35 shadow-[0_20px_45px_-35px_rgba(47,47,43,0.35)]">
                 <CardContent className="pt-6">
-                  <h3 className="font-semibold text-slate-900 mb-3">
+                  <h3 className="mb-3 font-heading text-lg font-semibold text-brand-charcoal">
                     Follow Us
                   </h3>
                   <a
                     href="https://www.facebook.com/TokoroaAlpineClub/"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm text-blue-600 hover:underline"
+                    className="website-link text-sm"
                   >
                     Facebook — Tokoroa Alpine Club
                   </a>

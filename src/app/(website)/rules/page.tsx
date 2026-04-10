@@ -48,12 +48,13 @@ export default async function RulesPage() {
   return (
     <>
       {/* Header */}
-      <section className="bg-gradient-to-br from-slate-800 to-slate-900 text-white py-16 sm:py-20">
+      <section className="bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
+          <span className="website-eyebrow mb-4">Practical information</span>
+          <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
             Club Rules & Info
           </h1>
-          <p className="mt-4 text-lg text-slate-300 max-w-2xl">
+          <p className="mt-4 max-w-2xl text-lg text-brand-snow/80">
             Important information about membership, lodge bookings, tramping
             parties, and staying at the club lodge.
           </p>
@@ -61,30 +62,30 @@ export default async function RulesPage() {
       </section>
 
       {/* Content */}
-      <section className="bg-white py-16 sm:py-20">
-        <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 space-y-12">
+      <section className="bg-brand-snow py-16 sm:py-20">
+        <div className="website-legal-copy mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
           {/* Membership classes */}
           <div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-4">
+            <h2 className="mb-4 font-heading text-2xl font-bold text-brand-charcoal">
               Membership Classes
             </h2>
-            <div className="space-y-3 text-slate-600">
+            <div className="space-y-3 text-brand-deep/78">
               <p>
-                <strong className="text-slate-800">Adult members:</strong> Aged 18
+                <strong className="text-brand-charcoal">Adult members:</strong> Aged 18
                 years and over. Full voting rights at the AGM.
               </p>
               <p>
-                <strong className="text-slate-800">Youth members:</strong> Aged 10
+                <strong className="text-brand-charcoal">Youth members:</strong> Aged 10
                 to 17 years. Reduced membership fee. Must be accompanied by an
                 adult member when staying at the lodge.
               </p>
               <p>
-                <strong className="text-slate-800">Child members:</strong> Under 10
+                <strong className="text-brand-charcoal">Child members:</strong> Under 10
                 years. Included as part of a family membership at no additional
                 cost. Must be accompanied by a parent or guardian.
               </p>
               <p>
-                <strong className="text-slate-800">Family membership:</strong> A
+                <strong className="text-brand-charcoal">Family membership:</strong> A
                 family concession is granted to a family group living at the same
                 address which consists of one or two adult members plus any
                 nominated dependent children under the age of 10. Dependent
@@ -93,7 +94,7 @@ export default async function RulesPage() {
                 equivalent individual memberships and is the recommended option for
                 families.
               </p>
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-brand-deep/65">
                 Note: &quot;Reserved Membership&quot; was discontinued in May 2000.
               </p>
             </div>
@@ -101,10 +102,10 @@ export default async function RulesPage() {
 
           {/* Tramping Party Rules */}
           <div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-4">
+            <h2 className="mb-4 font-heading text-2xl font-bold text-brand-charcoal">
               Tramping Party Rules
             </h2>
-            <div className="space-y-3 text-slate-600">
+            <div className="space-y-3 text-brand-deep/78">
               <p>
                 The following rules apply to organised club tramping trips:
               </p>
@@ -136,7 +137,7 @@ export default async function RulesPage() {
                   Travelling expenses are to be shared with the driver.
                 </li>
               </ol>
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-brand-deep/65">
                 The club is not responsible for accidents, however caused, although
                 all due care and attention will be taken.
               </p>
@@ -145,10 +146,10 @@ export default async function RulesPage() {
 
           {/* Lodge booking rules */}
           <div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-4">
+            <h2 className="mb-4 font-heading text-2xl font-bold text-brand-charcoal">
               Waldvogel Lodge Rules
             </h2>
-            <div className="space-y-3 text-slate-600">
+            <div className="space-y-3 text-brand-deep/78">
               <p>
                 The lodge accommodates up to 29 guests per night. All guests must
                 have a formal confirmed paid booking. The only exception is a work
@@ -156,7 +157,7 @@ export default async function RulesPage() {
                 the Booking Officer.
               </p>
 
-              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+              <h3 className="mt-6 mb-2 font-heading text-lg font-semibold text-brand-charcoal">
                 Non-Member Guests
               </h3>
               <ul className="list-disc pl-5 space-y-2">
@@ -174,7 +175,7 @@ export default async function RulesPage() {
                 </li>
               </ul>
 
-              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+              <h3 className="mt-6 mb-2 font-heading text-lg font-semibold text-brand-charcoal">
                 Bookings
               </h3>
               <ul className="list-disc pl-5 space-y-2">
@@ -183,11 +184,11 @@ export default async function RulesPage() {
                   they are confirmed.
                 </li>
                 <li>
-                  <strong className="text-slate-800">Member bookings</strong> with
+                  <strong className="text-brand-charcoal">Member bookings</strong> with
                   all-member guests are confirmed immediately upon payment.
                 </li>
                 <li>
-                  <strong className="text-slate-800">
+                  <strong className="text-brand-charcoal">
                     Bookings with non-member guests
                   </strong>{" "}
                   can only be confirmed {defaultHoldDays} days before the start date of the
@@ -195,7 +196,7 @@ export default async function RulesPage() {
                   before arrival.{bookingPeriods.length > 0 && " Different thresholds may apply for certain date ranges — see below."}
                 </li>
                 <li>
-                  <strong className="text-slate-800">Member priority:</strong> If
+                  <strong className="text-brand-charcoal">Member priority:</strong> If
                   the lodge fills up, pending non-member bookings may be bumped to
                   make room for member bookings. Bumped bookings are not charged.
                 </li>
@@ -210,7 +211,7 @@ export default async function RulesPage() {
                 </li>
               </ul>
 
-              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+              <h3 className="mt-6 mb-2 font-heading text-lg font-semibold text-brand-charcoal">
                 At the Lodge
               </h3>
               <ul className="list-disc pl-5 space-y-2">
@@ -253,7 +254,7 @@ export default async function RulesPage() {
                 </li>
               </ul>
 
-              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+              <h3 className="mt-6 mb-2 font-heading text-lg font-semibold text-brand-charcoal">
                 General Conduct
               </h3>
               <ul className="list-disc pl-5 space-y-2">
@@ -273,7 +274,7 @@ export default async function RulesPage() {
                 </li>
               </ul>
 
-              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+              <h3 className="mt-6 mb-2 font-heading text-lg font-semibold text-brand-charcoal">
                 New Members
               </h3>
               <ul className="list-disc pl-5 space-y-2">
@@ -295,7 +296,7 @@ export default async function RulesPage() {
                 </li>
               </ul>
 
-              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+              <h3 className="mt-6 mb-2 font-heading text-lg font-semibold text-brand-charcoal">
                 Working Bees
               </h3>
               <ul className="list-disc pl-5 space-y-2">
@@ -321,10 +322,10 @@ export default async function RulesPage() {
 
           {/* Hut Leader Instructions */}
           <div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-4">
+            <h2 className="mb-4 font-heading text-2xl font-bold text-brand-charcoal">
               Hut Leader Instructions
             </h2>
-            <div className="space-y-3 text-slate-600">
+            <div className="space-y-3 text-brand-deep/78">
               <p>
                 Hut Leaders are appointed by the Booking Officer and committee to
                 look after the lodge. All club members and visitors to the lodge
@@ -332,7 +333,7 @@ export default async function RulesPage() {
                 their duties.
               </p>
 
-              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+              <h3 className="mt-6 mb-2 font-heading text-lg font-semibold text-brand-charcoal">
                 General Responsibilities
               </h3>
               <ul className="list-disc pl-5 space-y-2">
@@ -361,7 +362,7 @@ export default async function RulesPage() {
                 </li>
               </ul>
 
-              <h3 className="text-lg font-semibold text-slate-800 mt-6 mb-2">
+              <h3 className="mt-6 mb-2 font-heading text-lg font-semibold text-brand-charcoal">
                 Specific Duties
               </h3>
               <ol className="list-decimal pl-5 space-y-2">
@@ -410,7 +411,7 @@ export default async function RulesPage() {
                   rubbish is removed, and keys are returned to the Booking Officer.
                 </li>
               </ol>
-              <p className="text-sm text-slate-500 mt-3">
+              <p className="mt-3 text-sm text-brand-deep/65">
                 Any member can expect to be asked to take on the duties of Hut
                 Leader. Make yourself familiar with these duties so that you can
                 take over when requested.
@@ -420,10 +421,10 @@ export default async function RulesPage() {
 
           {/* Lodge Etiquette */}
           <div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-4">
+            <h2 className="mb-4 font-heading text-2xl font-bold text-brand-charcoal">
               Lodge Etiquette
             </h2>
-            <div className="space-y-3 text-slate-600">
+            <div className="space-y-3 text-brand-deep/78">
               <p>
                 A few practical reminders to help keep the lodge running smoothly
                 for everyone:
@@ -473,20 +474,20 @@ export default async function RulesPage() {
 
           {/* Cancellation policy */}
           <div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-4">
+            <h2 className="mb-4 font-heading text-2xl font-bold text-brand-charcoal">
               Cancellation Policy
             </h2>
-            <div className="space-y-3 text-slate-600">
+            <div className="space-y-3 text-brand-deep/78">
               <p>Refunds for confirmed bookings are based on notice given:</p>
               {cancellationPolicies.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
-                    <thead className="bg-slate-50">
+                  <table className="website-data-table">
+                    <thead>
                       <tr>
-                        <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                        <th>
                           Notice Period
                         </th>
-                        <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                        <th>
                           Refund
                         </th>
                       </tr>
@@ -499,12 +500,9 @@ export default async function RulesPage() {
                           cancellationPolicies
                         );
                         return (
-                          <tr
-                            key={policy.id}
-                            className="border-t border-slate-200"
-                          >
-                            <td className="px-4 py-2">{noticePeriod}</td>
-                            <td className="px-4 py-2">{refundText}</td>
+                          <tr key={policy.id}>
+                            <td>{noticePeriod}</td>
+                            <td>{refundText}</td>
                           </tr>
                         );
                       })}
@@ -512,11 +510,11 @@ export default async function RulesPage() {
                   </table>
                 </div>
               ) : (
-                <p className="text-slate-500 italic">
+                <p className="italic text-brand-deep/65">
                   Contact the club for current cancellation policy details.
                 </p>
               )}
-              <p className="text-sm text-slate-500">
+              <p className="text-sm text-brand-deep/65">
                 Cancellation policy is configured by the committee and may change.
                 The policy at the time of booking applies.
               </p>
@@ -526,10 +524,10 @@ export default async function RulesPage() {
           {/* Date-specific booking periods */}
           {bookingPeriods.length > 0 && (
             <div>
-              <h2 className="text-2xl font-bold text-slate-900 mb-4">
-                Date-Specific Booking Policies
-              </h2>
-              <div className="space-y-3 text-slate-600">
+            <h2 className="mb-4 font-heading text-2xl font-bold text-brand-charcoal">
+              Date-Specific Booking Policies
+            </h2>
+            <div className="space-y-3 text-brand-deep/78">
                 <p>
                   The following date ranges have specific cancellation policies
                   and non-member booking thresholds that differ from the standard
@@ -546,13 +544,13 @@ export default async function RulesPage() {
                   return (
                     <div
                       key={period.id}
-                      className="border border-slate-200 rounded-lg p-4 space-y-3"
+                      className="space-y-3 rounded-2xl border border-brand-ridge/20 bg-brand-snow/85 p-4"
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
-                        <h3 className="text-lg font-semibold text-slate-800">
+                        <h3 className="font-heading text-lg font-semibold text-brand-charcoal">
                           {period.name}
                         </h3>
-                        <span className="text-sm text-slate-500">
+                        <span className="text-sm text-brand-deep/65">
                           {new Date(period.startDate).toLocaleDateString(
                             "en-NZ",
                             { day: "numeric", month: "short", year: "numeric" }
@@ -565,20 +563,20 @@ export default async function RulesPage() {
                         </span>
                       </div>
                       <p className="text-sm">
-                        <strong className="text-slate-800">
+                        <strong className="text-brand-charcoal">
                           Non-member booking threshold:
                         </strong>{" "}
                         {period.nonMemberHoldDays} days before check-in
                       </p>
                       {rules.length > 0 && (
                         <div className="overflow-x-auto">
-                          <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
-                            <thead className="bg-slate-50">
+                          <table className="website-data-table">
+                            <thead>
                               <tr>
-                                <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                                <th>
                                   Notice Period
                                 </th>
-                                <th className="text-left px-4 py-2 font-semibold text-slate-700">
+                                <th>
                                   Refund
                                 </th>
                               </tr>
@@ -588,14 +586,9 @@ export default async function RulesPage() {
                                 const { noticePeriod, refundText } =
                                   formatPolicyRow(rule, index, rules);
                                 return (
-                                  <tr
-                                    key={index}
-                                    className="border-t border-slate-200"
-                                  >
-                                    <td className="px-4 py-2">
-                                      {noticePeriod}
-                                    </td>
-                                    <td className="px-4 py-2">{refundText}</td>
+                                  <tr key={index}>
+                                    <td>{noticePeriod}</td>
+                                    <td>{refundText}</td>
                                   </tr>
                                 );
                               })}
@@ -612,10 +605,10 @@ export default async function RulesPage() {
 
           {/* Subscriptions */}
           <div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-4">
-              Annual Subscriptions
-            </h2>
-            <div className="space-y-3 text-slate-600">
+              <h2 className="mb-4 font-heading text-2xl font-bold text-brand-charcoal">
+                Annual Subscriptions
+              </h2>
+            <div className="space-y-3 text-brand-deep/78">
               <p>
                 The club&apos;s financial year runs from April to March.
                 Subscriptions are due at the start of each season and are managed
@@ -628,7 +621,7 @@ export default async function RulesPage() {
               </p>
               <p>
                 For questions about your membership or subscription status,{" "}
-                <Link href="/contact" className="text-blue-600 hover:underline">
+                <Link href="/contact" className="website-link">
                   contact the club
                 </Link>
                 .
