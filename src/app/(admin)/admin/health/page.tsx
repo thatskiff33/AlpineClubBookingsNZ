@@ -50,6 +50,7 @@ interface HealthData {
     uptime: number;
     checks: {
       db?: HealthCheck;
+      config?: HealthCheck;
       stripe?: HealthCheck;
       xero?: HealthCheck;
       smtp?: HealthCheck;
@@ -201,6 +202,7 @@ export default function AdminHealthPage() {
   const checkEntries = Object.entries(health.checks) as [string, HealthCheck][];
   const checkIcons: Record<string, typeof Database> = {
     db: Database,
+    config: AlertTriangle,
     stripe: CreditCard,
     xero: RefreshCw,
     smtp: Mail,

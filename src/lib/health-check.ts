@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getRuntimeConfigCheck } from "@/lib/runtime-config";
 
 export interface CheckResult {
   status: "ok" | "error";
@@ -12,6 +13,7 @@ export interface DetailedHealthReport {
   uptime: number;
   checks: {
     db: CheckResult;
+    config?: CheckResult;
     stripe: CheckResult;
     xero: CheckResult;
     smtp: CheckResult;
@@ -149,11 +151,13 @@ export async function getDetailedHealthReport(): Promise<{
     checkXero(),
     checkSmtp(),
   ]);
+  const config = getRuntimeConfigCheck();
 
   const isUnhealthy = db.status === "error";
   const isDegraded =
     !isUnhealthy &&
-    (stripe.status === "error" ||
+    (config.status === "error" ||
+      stripe.status === "error" ||
       xero.status === "error" ||
       smtp.status === "error");
 
@@ -162,7 +166,7 @@ export async function getDetailedHealthReport(): Promise<{
     report: {
       ...getBaseMetadata(),
       status: isUnhealthy ? "unhealthy" : isDegraded ? "degraded" : "healthy",
-      checks: { db, stripe, xero, smtp },
+      checks: { db, config, stripe, xero, smtp },
     },
   };
 }

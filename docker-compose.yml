@@ -93,7 +93,11 @@ services:
     mem_limit: 1g
     cpus: 0.8
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "(test -n \"$AUTH_SECRET\" || test -n \"$NEXTAUTH_SECRET\") && test -n \"$CRON_SECRET\" && wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
