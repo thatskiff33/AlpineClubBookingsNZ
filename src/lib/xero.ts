@@ -924,6 +924,23 @@ export async function getXeroContactGroupMemberships(
 }
 
 /**
+ * Get all Xero contact IDs that belong to a specific contact group.
+ */
+export async function getXeroContactIdsForGroup(
+  groupId: string
+): Promise<string[]> {
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const detail = await withXeroRetry(
+    () => xero.accountingApi.getContactGroup(tenantId, groupId),
+    { context: `getXeroContactIdsForGroup(${groupId})` }
+  );
+  const contacts = detail.body.contactGroups?.[0]?.contacts ?? [];
+  return contacts
+    .map((c) => c.contactID)
+    .filter((id): id is string => Boolean(id));
+}
+
+/**
  * Assemble a full phone number from Xero's split fields (countryCode, areaCode, number).
  * e.g. countryCode="64", areaCode="27", number="4224115" → "+64 27 4224115"
  */

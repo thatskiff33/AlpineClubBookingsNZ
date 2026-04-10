@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import {
   getXeroContactGroupMemberships,
+  getXeroContactIdsForGroup,
   isXeroConnected,
 } from "@/lib/xero";
 import { sendPasswordResetEmail } from "@/lib/email";
@@ -174,6 +175,25 @@ export async function GET(req: NextRequest) {
     andConditions.push({ familyGroupMemberships: { some: {} } });
   } else if (familyGroupFilter && familyGroupFilter !== "all") {
     andConditions.push({ familyGroupMemberships: { some: { familyGroupId: familyGroupFilter } } });
+  }
+
+  // Filter: Xero contact group — fetch contact IDs from Xero, then filter DB
+  const xeroContactGroupFilter = sp.get("xeroContactGroup");
+  if (xeroContactGroupFilter && xeroContactGroupFilter !== "all") {
+    try {
+      if (await isXeroConnected()) {
+        const groupContactIds = await getXeroContactIdsForGroup(xeroContactGroupFilter);
+        if (groupContactIds.length > 0) {
+          andConditions.push({ xeroContactId: { in: groupContactIds } });
+        } else {
+          // Group has no contacts — force empty result
+          andConditions.push({ xeroContactId: { in: [] } });
+        }
+      }
+    } catch (error) {
+      logger.error({ err: error, groupId: xeroContactGroupFilter }, "Failed to fetch Xero contact group members for filter");
+      // Fall through — don't apply this filter if Xero call fails
+    }
   }
 
   if (andConditions.length > 0) {

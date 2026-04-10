@@ -52,7 +52,9 @@ interface MemberForm {
 }
 
 
-interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string }
+interface XeroContactGroup { id: string; name: string; contactCount: number }
+
+interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string; xeroContactGroup: string }
 interface ImportRow { firstName: string; lastName: string; email: string; phone?: string; dateOfBirth?: string; role?: string }
 
 const emptyForm: MemberForm = {
@@ -66,7 +68,7 @@ const emptyForm: MemberForm = {
   postalAddressLine1: "", postalAddressLine2: "", postalCity: "",
   postalRegion: "", postalPostalCode: "", postalCountry: "",
 }
-const emptyFilters: Filters = { role: "", active: "", ageTier: "", xeroLinked: "", subscription: "" }
+const emptyFilters: Filters = { role: "", active: "", ageTier: "", xeroLinked: "", subscription: "", xeroContactGroup: "" }
 
 function getMissingFieldsForXeroCreate(form: MemberForm): string[] {
   const missing: string[] = []
@@ -119,6 +121,7 @@ export default function MembersPage() {
     ageTier: searchParams.get("ageTier") || "",
     xeroLinked: searchParams.get("xeroLinked") || "",
     subscription: searchParams.get("subscription") || "",
+    xeroContactGroup: searchParams.get("xeroContactGroup") || "",
   })
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
@@ -141,7 +144,9 @@ export default function MembersPage() {
   const [importLoading, setImportLoading] = useState(false)
   const [importResult, setImportResult] = useState<{ created: number; skipped: number; errors: Array<{ row: number; errors: string[] }> } | null>(null)
   const [xeroConnected, setXeroConnected] = useState<boolean | null>(null)
-  const [xeroChoice, setXeroChoice] = useState<"" | "link" | "create">("")
+  const [xeroContactGroupsList, setXeroContactGroupsList] = useState<XeroContactGroup[]>([])
+  const [xeroChoice, setXeroChoice] = useState<"" | "link" | "create" | "change">("")
+  const [xeroUnlinking, setXeroUnlinking] = useState(false)
   const [xeroSearchQuery, setXeroSearchQuery] = useState("")
   const [xeroSearchResults, setXeroSearchResults] = useState<XeroSearchResult[]>([])
   const [xeroSearchLoading, setXeroSearchLoading] = useState(false)
@@ -155,7 +160,16 @@ export default function MembersPage() {
         if (!res.ok) throw new Error("Failed to load Xero status")
         return res.json()
       })
-      .then((data) => setXeroConnected(Boolean(data.connected)))
+      .then((data) => {
+        const connected = Boolean(data.connected)
+        setXeroConnected(connected)
+        if (connected) {
+          fetch("/api/admin/xero/contact-groups")
+            .then(res => res.ok ? res.json() : null)
+            .then(data => { if (data?.groups) setXeroContactGroupsList(data.groups) })
+            .catch(() => {})
+        }
+      })
       .catch(() => setXeroConnected(false))
   }, [])
 
@@ -206,6 +220,61 @@ export default function MembersPage() {
     setFormError("")
     setDialogOpen(true)
   }
+  const handleXeroUnlink = async (memberId: string) => {
+    setXeroUnlinking(true)
+    setFormError("")
+    try {
+      const res = await fetch(`/api/admin/members/${memberId}/xero-unlink`, { method: "POST" })
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to unlink") }
+      if (editingMember) {
+        setEditingMember({ ...editingMember, xeroContactId: null, xeroContactGroups: [] })
+      }
+      setXeroChoice("")
+      setSuccess("Xero contact unlinked")
+      setTimeout(() => setSuccess(""), 3000)
+      fetchMembers()
+    } catch (err) { setFormError(err instanceof Error ? err.message : "Failed to unlink Xero contact") }
+    finally { setXeroUnlinking(false) }
+  }
+
+  const handleXeroLink = async (memberId: string, contactId: string) => {
+    setFormError("")
+    try {
+      const res = await fetch(`/api/admin/members/${memberId}/xero-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ xeroContactId: contactId }),
+      })
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to link") }
+      const data = await res.json()
+      if (editingMember) {
+        setEditingMember({ ...editingMember, xeroContactId: contactId, xeroContactGroups: [] })
+      }
+      setXeroChoice("")
+      setSelectedXeroContactId("")
+      setXeroSearchResults([])
+      setSuccess(`Linked to Xero contact: ${data.contactName}`)
+      setTimeout(() => setSuccess(""), 3000)
+      fetchMembers()
+    } catch (err) { setFormError(err instanceof Error ? err.message : "Failed to link Xero contact") }
+  }
+
+  const handleXeroPush = async (memberId: string) => {
+    setFormError("")
+    try {
+      const res = await fetch(`/api/admin/members/${memberId}/xero-push`, { method: "POST" })
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to create Xero contact") }
+      const data = await res.json()
+      if (editingMember) {
+        setEditingMember({ ...editingMember, xeroContactId: data.xeroContactId, xeroContactGroups: [] })
+      }
+      setXeroChoice("")
+      setSuccess("Xero contact created and linked")
+      setTimeout(() => setSuccess(""), 3000)
+      fetchMembers()
+    } catch (err) { setFormError(err instanceof Error ? err.message : "Failed to create Xero contact") }
+  }
+
   const openEditDialog = (member: Member) => {
     setEditingMember(member)
     setXeroChoice("")
@@ -419,9 +488,10 @@ export default function MembersPage() {
         <Select value={filters.ageTier || "all"} onValueChange={v => setFilter("ageTier", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Age Tier" /></SelectTrigger><SelectContent><SelectItem value="all">All Tiers</SelectItem><SelectItem value="ADULT">Adult</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="CHILD">Child</SelectItem></SelectContent></Select>
         <Select value={filters.xeroLinked || "all"} onValueChange={v => setFilter("xeroLinked", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Xero" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero</SelectItem><SelectItem value="true">Linked</SelectItem><SelectItem value="false">Not Linked</SelectItem></SelectContent></Select>
         <Select value={filters.subscription || "all"} onValueChange={v => setFilter("subscription", v === "all" ? "" : v)}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Subscription" /></SelectTrigger><SelectContent><SelectItem value="all">All Subs</SelectItem><SelectItem value="PAID">Paid</SelectItem><SelectItem value="UNPAID">Unpaid</SelectItem><SelectItem value="OVERDUE">Overdue</SelectItem><SelectItem value="NOT_INVOICED">Not Invoiced</SelectItem><SelectItem value="NONE">No Record</SelectItem></SelectContent></Select>
+        {xeroContactGroupsList.length > 0 && <Select value={filters.xeroContactGroup || "all"} onValueChange={v => setFilter("xeroContactGroup", v === "all" ? "" : v)}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Xero Group" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero Groups</SelectItem>{xeroContactGroupsList.map(g => <SelectItem key={g.id} value={g.id}>{g.name} ({g.contactCount})</SelectItem>)}</SelectContent></Select>}
         {activeFilterCount > 0 && <Button variant="ghost" size="sm" onClick={clearFilters}><X className="h-4 w-4 mr-1" />Clear ({activeFilterCount})</Button>}
       </div>
-      {activeFilterCount > 0 && <div className="flex flex-wrap gap-2">{Object.entries(filters).filter(([,v]) => v).map(([k, v]) => <Badge key={k} variant="secondary" className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setFilter(k as keyof Filters, "")}>{k}: {v}<X className="h-3 w-3" /></Badge>)}</div>}
+      {activeFilterCount > 0 && <div className="flex flex-wrap gap-2">{Object.entries(filters).filter(([,v]) => v).map(([k, v]) => { const displayValue = k === "xeroContactGroup" ? (xeroContactGroupsList.find(g => g.id === v)?.name ?? v) : v; return <Badge key={k} variant="secondary" className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setFilter(k as keyof Filters, "")}>{k}: {displayValue}<X className="h-3 w-3" /></Badge> })}</div>}
       {selectedIds.size > 0 && <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-md"><span className="text-sm font-medium text-blue-700">{selectedIds.size} selected</span><Button size="sm" variant="outline" onClick={() => { setBulkAction("deactivate"); setBulkDialogOpen(true) }}>Deactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("reactivate"); setBulkDialogOpen(true) }}>Reactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("set-role"); setBulkDialogOpen(true) }}>Change Role</Button><Button size="sm" variant="outline" onClick={() => { setResetPasswordTarget({ ids: [...selectedIds], label: `${selectedIds.size} selected member(s)` }); setResetPasswordDialogOpen(true) }}>Send Password Reset</Button><Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}><X className="h-4 w-4" /></Button></div>}
 
       <Card><CardHeader className="pb-0"><CardTitle className="text-base font-medium">Member List</CardTitle></CardHeader><CardContent className="pt-4">
@@ -594,72 +664,196 @@ export default function MembersPage() {
               </div>
             </fieldset>
 
-            {!editingMember && xeroConnected === true && (
+            {xeroConnected === true && (
               <fieldset className="space-y-3 pt-2 border-t">
                 <legend className="text-sm font-medium">Xero</legend>
-                <div className="space-y-2">
-                  <Label>After creating this member</Label>
-                  <Select
-                    value={xeroChoice || undefined}
-                    onValueChange={(value) => {
-                      const nextChoice = value as "link" | "create"
-                      setXeroChoice(nextChoice)
-                      setFormError("")
-                      setSelectedXeroContactId("")
-                      if (nextChoice !== "link") {
-                        setXeroSearchQuery("")
-                        setXeroSearchResults([])
-                      }
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose whether to link or create a Xero contact" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="link">Link an existing Xero contact</SelectItem>
-                      <SelectItem value="create">Create a new Xero contact</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
 
-                {xeroChoice === "link" && (
+                {/* Existing member: show current link status with change/unlink/link options */}
+                {editingMember && editingMember.xeroContactId && (
                   <div className="space-y-3">
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="Search Xero by name or email"
-                        value={xeroSearchQuery}
-                        onChange={e => setXeroSearchQuery(e.target.value)}
-                        onKeyDown={e => e.key === "Enter" && handleXeroSearch()}
-                      />
-                      <Button type="button" variant="outline" onClick={handleXeroSearch} disabled={xeroSearchLoading}>
-                        {xeroSearchLoading ? "Searching..." : "Search"}
-                      </Button>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">Linked</Badge>
+                        <a href={`https://go.xero.com/app/contacts/contact/${editingMember.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline inline-flex items-center gap-1">
+                          View in Xero <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={() => setXeroChoice(xeroChoice === "change" ? "" : "change")}>
+                          {xeroChoice === "change" ? "Cancel Change" : "Change Contact"}
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => handleXeroUnlink(editingMember.id)} disabled={xeroUnlinking}>
+                          {xeroUnlinking ? "Unlinking..." : "Unlink"}
+                        </Button>
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Available Xero contacts</Label>
-                      <Select value={selectedXeroContactId || undefined} onValueChange={setSelectedXeroContactId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder={xeroSearchResults.length > 0 ? "Select a Xero contact" : "Search to load unlinked Xero contacts"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {xeroSearchResults.map((contact) => (
-                            <SelectItem key={contact.contactId} value={contact.contactId}>
-                              {contact.name}{contact.email ? ` (${contact.email})` : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">
-                        Only unlinked Xero contacts are shown here. If none match, switch to Create.
-                      </p>
-                    </div>
+                    {editingMember.xeroContactGroups.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {editingMember.xeroContactGroups.map((group) => (
+                          <Badge key={group.id} variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">{group.name}</Badge>
+                        ))}
+                      </div>
+                    )}
+                    {xeroChoice === "change" && (
+                      <div className="space-y-3 rounded-md border border-blue-200 bg-blue-50 p-3">
+                        <p className="text-sm text-blue-800">Search for a different Xero contact to link to this member. The current link will be replaced.</p>
+                        <div className="flex gap-2">
+                          <Input placeholder="Search Xero by name or email" value={xeroSearchQuery} onChange={e => setXeroSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleXeroSearch()} />
+                          <Button type="button" variant="outline" onClick={handleXeroSearch} disabled={xeroSearchLoading}>{xeroSearchLoading ? "Searching..." : "Search"}</Button>
+                        </div>
+                        {xeroSearchResults.length > 0 && (
+                          <div className="space-y-2">
+                            <Label>Available Xero contacts</Label>
+                            <Select value={selectedXeroContactId || undefined} onValueChange={setSelectedXeroContactId}>
+                              <SelectTrigger><SelectValue placeholder="Select a Xero contact" /></SelectTrigger>
+                              <SelectContent>
+                                {xeroSearchResults.map((contact) => (
+                                  <SelectItem key={contact.contactId} value={contact.contactId}>{contact.name}{contact.email ? ` (${contact.email})` : ""}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+                        {selectedXeroContactId && (
+                          <Button type="button" size="sm" onClick={() => handleXeroLink(editingMember.id, selectedXeroContactId)}>
+                            Link to Selected Contact
+                          </Button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {xeroChoice === "create" && (
-                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                    Creating a new Xero contact requires First Name, Last Name, Email, Phone, Postal Address, Physical Address, Date of Birth, and Joined Date.
+                {/* Existing member: not linked — offer to link or create */}
+                {editingMember && !editingMember.xeroContactId && (
+                  <div className="space-y-3">
+                    <p className="text-sm text-slate-600">This member is not linked to a Xero contact.</p>
+                    <Select
+                      value={xeroChoice || undefined}
+                      onValueChange={(value) => {
+                        setXeroChoice(value as "link" | "create")
+                        setFormError("")
+                        setSelectedXeroContactId("")
+                        if (value !== "link") { setXeroSearchQuery(""); setXeroSearchResults([]) }
+                      }}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Link or create a Xero contact..." /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="link">Link an existing Xero contact</SelectItem>
+                        <SelectItem value="create">Create a new Xero contact</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    {xeroChoice === "link" && (
+                      <div className="space-y-3">
+                        <div className="flex gap-2">
+                          <Input placeholder="Search Xero by name or email" value={xeroSearchQuery} onChange={e => setXeroSearchQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && handleXeroSearch()} />
+                          <Button type="button" variant="outline" onClick={handleXeroSearch} disabled={xeroSearchLoading}>{xeroSearchLoading ? "Searching..." : "Search"}</Button>
+                        </div>
+                        {xeroSearchResults.length > 0 && (
+                          <div className="space-y-2">
+                            <Label>Available Xero contacts</Label>
+                            <Select value={selectedXeroContactId || undefined} onValueChange={setSelectedXeroContactId}>
+                              <SelectTrigger><SelectValue placeholder="Select a Xero contact" /></SelectTrigger>
+                              <SelectContent>
+                                {xeroSearchResults.map((contact) => (
+                                  <SelectItem key={contact.contactId} value={contact.contactId}>{contact.name}{contact.email ? ` (${contact.email})` : ""}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">Only unlinked Xero contacts are shown.</p>
+                          </div>
+                        )}
+                        {selectedXeroContactId && (
+                          <Button type="button" size="sm" onClick={() => handleXeroLink(editingMember.id, selectedXeroContactId)}>
+                            Link to Selected Contact
+                          </Button>
+                        )}
+                      </div>
+                    )}
+
+                    {xeroChoice === "create" && (
+                      <div className="space-y-3">
+                        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                          Creating a new Xero contact requires First Name, Last Name, Email, Phone, Postal Address, Physical Address, Date of Birth, and Joined Date. Save changes first, then create.
+                        </div>
+                        <Button type="button" size="sm" onClick={() => handleXeroPush(editingMember.id)} disabled={(() => { const m = getMissingFieldsForXeroCreate(form); return m.length > 0 })()}>
+                          Create Xero Contact
+                        </Button>
+                        {(() => { const m = getMissingFieldsForXeroCreate(form); return m.length > 0 ? <p className="text-xs text-red-600">Missing: {m.join(", ")}</p> : null })()}
+                      </div>
+                    )}
                   </div>
+                )}
+
+                {/* New member: original create flow */}
+                {!editingMember && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>After creating this member</Label>
+                      <Select
+                        value={xeroChoice || undefined}
+                        onValueChange={(value) => {
+                          const nextChoice = value as "link" | "create"
+                          setXeroChoice(nextChoice)
+                          setFormError("")
+                          setSelectedXeroContactId("")
+                          if (nextChoice !== "link") {
+                            setXeroSearchQuery("")
+                            setXeroSearchResults([])
+                          }
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Choose whether to link or create a Xero contact" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="link">Link an existing Xero contact</SelectItem>
+                          <SelectItem value="create">Create a new Xero contact</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {xeroChoice === "link" && (
+                      <div className="space-y-3">
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="Search Xero by name or email"
+                            value={xeroSearchQuery}
+                            onChange={e => setXeroSearchQuery(e.target.value)}
+                            onKeyDown={e => e.key === "Enter" && handleXeroSearch()}
+                          />
+                          <Button type="button" variant="outline" onClick={handleXeroSearch} disabled={xeroSearchLoading}>
+                            {xeroSearchLoading ? "Searching..." : "Search"}
+                          </Button>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Available Xero contacts</Label>
+                          <Select value={selectedXeroContactId || undefined} onValueChange={setSelectedXeroContactId}>
+                            <SelectTrigger>
+                              <SelectValue placeholder={xeroSearchResults.length > 0 ? "Select a Xero contact" : "Search to load unlinked Xero contacts"} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {xeroSearchResults.map((contact) => (
+                                <SelectItem key={contact.contactId} value={contact.contactId}>
+                                  {contact.name}{contact.email ? ` (${contact.email})` : ""}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">
+                            Only unlinked Xero contacts are shown here. If none match, switch to Create.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {xeroChoice === "create" && (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        Creating a new Xero contact requires First Name, Last Name, Email, Phone, Postal Address, Physical Address, Date of Birth, and Joined Date.
+                      </div>
+                    )}
+                  </>
                 )}
               </fieldset>
             )}
