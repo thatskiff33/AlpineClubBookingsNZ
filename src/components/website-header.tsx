@@ -80,14 +80,6 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
 
         {/* Desktop CTA */}
         <div className="hidden lg:flex items-center gap-3">
-          <a
-            href="https://tokoroa.org.nz/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm font-medium text-brand-mist transition-colors hover:text-brand-gold"
-          >
-            TAC Website
-          </a>
           {isAuthenticated ? (
             <>
               <Button
@@ -203,15 +195,6 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                   </Button>
                 </>
               )}
-              <a
-                href="https://tokoroa.org.nz/"
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setMobileOpen(false)}
-                className="py-2 text-center text-sm font-medium text-brand-mist transition-colors hover:text-brand-gold"
-              >
-                Visit TAC Website
-              </a>
             </div>
           </SheetContent>
         </Sheet>

@@ -293,14 +293,7 @@ export default function TermsPage() {
                 For questions about these terms, please{" "}
                 <Link href="/contact" className="website-link">
                   contact us
-                </Link>{" "}
-                or email{" "}
-                <a
-                  href="mailto:secretary@tokoroa.org.nz"
-                  className="website-link"
-                >
-                  secretary@tokoroa.org.nz
-                </a>
+                </Link>
                 .
               </p>
             </div>

@@ -9,7 +9,6 @@ export const metadata: Metadata = {
 
 const LAST_UPDATED = "1 April 2026";
 const EFFECTIVE_DATE = "1 April 2026";
-const PRIVACY_OFFICER_EMAIL = "secretary@tokoroa.org.nz";
 
 export default function PrivacyPage() {
   return (
@@ -324,15 +323,7 @@ export default function PrivacyPage() {
                 <p className="font-semibold text-brand-charcoal">Privacy Officer</p>
                 <p className="text-brand-deep">Tokoroa Alpine Club Incorporated</p>
                 <p className="mt-2">
-                  <a
-                    href={`mailto:${PRIVACY_OFFICER_EMAIL}`}
-                    className="website-link"
-                  >
-                    {PRIVACY_OFFICER_EMAIL}
-                  </a>
-                </p>
-                <p className="mt-1">
-                  Or use our{" "}
+                  Please use our{" "}
                   <Link href="/contact?recipient=secretary" className="website-link">
                     contact form
                   </Link>
