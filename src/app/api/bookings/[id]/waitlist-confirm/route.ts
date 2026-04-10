@@ -9,6 +9,7 @@ import {
 } from "@/lib/email";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import logger from "@/lib/logger";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 
 export async function POST(
   _request: NextRequest,
@@ -17,6 +18,11 @@ export async function POST(
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const { id: bookingId } = await params;

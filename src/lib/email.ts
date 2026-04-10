@@ -36,6 +36,11 @@ import {
   waitlistOfferExpiredTemplate,
   adminWaitlistOfferTemplate,
 } from "./email-templates";
+import {
+  ADMIN_NOTIFICATION_PREFERENCE_SELECT,
+  type AdminNotificationPreferenceKey,
+  resolveAdminNotificationPreferences,
+} from "./admin-notification-preferences";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
@@ -85,10 +90,14 @@ export async function sendEmail({
     logger.debug({ html }, "Email HTML content");
     // Mark as SENT in dev mode
     if (emailLogId) {
-      prisma.emailLog.update({
-        where: { id: emailLogId },
-        data: { status: "SENT", sentAt: new Date() },
-      }).catch((err) => logger.error({ err, to, templateName }, "Failed to update EmailLog"));
+      try {
+        await prisma.emailLog.update({
+          where: { id: emailLogId },
+          data: { status: "SENT", sentAt: new Date() },
+        });
+      } catch (err) {
+        logger.error({ err, to, templateName }, "Failed to update EmailLog");
+      }
     }
     return;
   }
@@ -103,29 +112,33 @@ export async function sendEmail({
 
     // Update EmailLog to SENT
     if (emailLogId) {
-      prisma.emailLog.update({
-        where: { id: emailLogId },
-        data: {
-          status: "SENT",
-          sentAt: new Date(),
-          messageId: result.messageId || null,
-        },
-      }).catch((err) => {
+      try {
+        await prisma.emailLog.update({
+          where: { id: emailLogId },
+          data: {
+            status: "SENT",
+            sentAt: new Date(),
+            messageId: result.messageId || null,
+          },
+        });
+      } catch (err) {
         logger.error({ err }, "Failed to update EmailLog to SENT");
-      });
+      }
     }
   } catch (err) {
     // Update EmailLog to FAILED
     if (emailLogId) {
-      prisma.emailLog.update({
-        where: { id: emailLogId },
-        data: {
-          status: "FAILED",
-          errorMessage: err instanceof Error ? err.message : String(err),
-        },
-      }).catch((logErr) => {
+      try {
+        await prisma.emailLog.update({
+          where: { id: emailLogId },
+          data: {
+            status: "FAILED",
+            errorMessage: err instanceof Error ? err.message : String(err),
+          },
+        });
+      } catch (logErr) {
         logger.error({ err: logErr }, "Failed to update EmailLog to FAILED");
-      });
+      }
     }
     throw err;
   }
@@ -140,17 +153,42 @@ export async function getAdminEmails(): Promise<string[]> {
   return admins.map((a) => a.email);
 }
 
+async function getAdminAlertEmails(
+  preferenceKey: AdminNotificationPreferenceKey
+): Promise<string[]> {
+  const admins = await prisma.member.findMany({
+    where: { role: "ADMIN", active: true },
+    select: {
+      email: true,
+      notificationPreference: {
+        select: ADMIN_NOTIFICATION_PREFERENCE_SELECT,
+      },
+    },
+  });
+
+  return admins
+    .filter(
+      (admin) =>
+        resolveAdminNotificationPreferences(admin.notificationPreference)[
+          preferenceKey
+        ]
+    )
+    .map((admin) => admin.email);
+}
+
 /** Send an email to all active admins (fire-and-forget) */
 async function sendToAdmins({
   subject,
   html,
   templateName,
+  preferenceKey,
 }: {
   subject: string;
   html: string;
   templateName: string;
+  preferenceKey: AdminNotificationPreferenceKey;
 }) {
-  const emails = await getAdminEmails();
+  const emails = await getAdminAlertEmails(preferenceKey);
   for (const email of emails) {
     sendEmail({ to: email, subject, html, templateName }).catch((err) =>
       logger.error({ err, to: email, templateName }, "Failed to send admin alert")
@@ -346,6 +384,7 @@ export async function sendAdminNewBookingAlert(data: {
     subject: `New Booking: ${data.memberName} (${data.status})`,
     html: adminNewBookingTemplate(data),
     templateName: "admin-new-booking",
+    preferenceKey: "adminNewBooking",
   });
 }
 
@@ -362,6 +401,7 @@ export async function sendAdminPaymentFailureAlert(data: {
     subject: "Payment Failed - TAC Bookings",
     html: adminPaymentFailureTemplate(data),
     templateName: "admin-payment-failure",
+    preferenceKey: "adminPaymentFailure",
   });
 }
 
@@ -378,6 +418,7 @@ export async function sendAdminPendingDeadlineAlert(bookings: Array<{
     subject: `${bookings.length} Pending Booking${bookings.length > 1 ? "s" : ""} Approaching Deadline`,
     html: adminPendingDeadlineTemplate(bookings),
     templateName: "admin-pending-deadline",
+    preferenceKey: "adminPendingDeadline",
   });
 }
 
@@ -393,6 +434,7 @@ export async function sendAdminBookingBumpedAlert(data: {
     subject: `Booking Bumped: ${data.bumpedMemberName}`,
     html: adminBookingBumpedTemplate(data),
     templateName: "admin-booking-bumped",
+    preferenceKey: "adminBookingBumped",
   });
 }
 
@@ -407,6 +449,7 @@ export async function sendAdminXeroSyncErrorAlert(data: {
     subject: "Xero Sync Error - TAC Bookings",
     html: adminXeroSyncErrorTemplate(data),
     templateName: "admin-xero-sync-error",
+    preferenceKey: "adminXeroSyncError",
   });
 }
 
@@ -420,6 +463,7 @@ export async function sendAdminCapacityWarningAlert(days: Array<{
     subject: `Capacity Warning: ${days.length} high-occupancy day${days.length > 1 ? "s" : ""} ahead`,
     html: adminCapacityWarningTemplate(days),
     templateName: "admin-capacity-warning",
+    preferenceKey: "adminCapacityWarning",
   });
 }
 
@@ -437,6 +481,7 @@ export async function sendAdminDailyDigestAlert(sections: {
     subject: `Admin Daily Digest - ${sections.totalAlerts} alert${sections.totalAlerts !== 1 ? "s" : ""} in past 24h`,
     html: adminDailyDigestTemplate(sections),
     templateName: "admin-daily-digest",
+    preferenceKey: "adminDailyDigest",
   });
 }
 
@@ -697,5 +742,6 @@ export async function sendAdminWaitlistOfferAlert(data: {
     subject: `Waitlist Offer: ${data.memberName}`,
     html: adminWaitlistOfferTemplate(data),
     templateName: "admin-waitlist-offer",
+    preferenceKey: "adminWaitlistOffer",
   });
 }

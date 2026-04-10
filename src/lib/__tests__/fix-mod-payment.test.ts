@@ -203,6 +203,12 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberFindUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      email: "alice@test.com",
+      firstName: "Alice",
+    } as any);
     const mod = await import("@/app/api/bookings/[id]/modify-dates/route");
     PUT = mod.PUT;
   });
@@ -223,7 +229,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       client_secret: "pi_additional_secret_xxx",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
-    mockMemberFindUnique.mockResolvedValue({ email: "alice@test.com", firstName: "Alice" });
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -276,7 +282,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       client_secret: "secret_2",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
-    mockMemberFindUnique.mockResolvedValue({ email: "alice@test.com", firstName: "Alice" });
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -306,7 +312,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       client_secret: "fee_secret",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
-    mockMemberFindUnique.mockResolvedValue({ email: "alice@test.com", firstName: "Alice" });
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
 
     // Changing check-in from Aug 1 to Aug 2 (still before checkOut Aug 3) — triggers late-notice fee
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
@@ -337,7 +343,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
     mockedProcessRefund.mockResolvedValue({ id: "re_refund123" } as any);
     mockPaymentUpdate.mockResolvedValue({});
-    mockMemberFindUnique.mockResolvedValue({ email: "alice@test.com", firstName: "Alice" });
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -392,7 +398,7 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       guests: [{ priceCents: 15000, perNightCents: [7500, 7500] }],
     } as any);
     mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
-    mockMemberFindUnique.mockResolvedValue({ email: "alice@test.com", firstName: "Alice" });
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -418,6 +424,12 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberFindUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      email: "alice@test.com",
+      firstName: "Alice",
+    } as any);
     const mod = await import("@/app/api/bookings/[id]/guests/route");
     POST = mod.POST;
   });
@@ -438,7 +450,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
       client_secret: "guest_extra_secret",
     } as any);
     mockPaymentUpdate.mockResolvedValue({});
-    mockMemberFindUnique.mockResolvedValue({ email: "alice@test.com", firstName: "Alice" });
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
       method: "POST",
@@ -578,6 +590,43 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
     // Payment update should NOT have been called (already succeeded)
     expect(mockPaymentUpdate).not.toHaveBeenCalled();
   });
+
+  it("does not update payment when additional PI amount mismatches", async () => {
+    mockedConstructWebhookEvent.mockReturnValue({
+      id: "evt_mismatch",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_additional",
+          amount: 2500,
+          metadata: { bookingId: "bk1", type: "modification_additional" },
+          payment_method: "pm_test",
+        },
+      },
+    } as any);
+
+    mockProcessedWebhookCreate.mockResolvedValue({});
+    mockPaymentFindUnique.mockResolvedValueOnce({
+      id: "p1",
+      bookingId: "bk1",
+      amountCents: 10000,
+      additionalPaymentIntentId: "pi_additional",
+      additionalAmountCents: 3000,
+      additionalPaymentStatus: "PENDING",
+    });
+    mockBookingFindUnique.mockResolvedValue({
+      id: "bk1",
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      member: { firstName: "Alice", lastName: "Smith" },
+    });
+
+    const req = makeWebhookRequest();
+    const res = await POST(req);
+
+    expect(res.status).toBe(500);
+    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+  });
 });
 
 // ============================================================================
@@ -589,6 +638,12 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberFindUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      email: "alice@test.com",
+      firstName: "Alice",
+    } as any);
     const mod = await import(
       "@/app/api/bookings/[id]/confirm-modification-payment/route"
     );
@@ -634,7 +689,7 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
       amountCents: 10000,
       booking: { memberId: "m1" },
     });
-    mockedGetPaymentIntent.mockResolvedValue({ status: "succeeded" } as any);
+    mockedGetPaymentIntent.mockResolvedValue({ status: "succeeded", amount: 3000 } as any);
     mockPaymentUpdate.mockResolvedValue({});
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/confirm-modification-payment", {
@@ -676,6 +731,40 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
     });
     const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(400);
+  });
+
+  it("returns 400 if Stripe PI amount does not match the modification amount", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "p1",
+      additionalPaymentIntentId: "pi_additional",
+      additionalPaymentStatus: "PENDING",
+      additionalAmountCents: 3000,
+      amountCents: 10000,
+      booking: { memberId: "m1" },
+    });
+    mockedGetPaymentIntent.mockResolvedValue({ status: "succeeded", amount: 2500 } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/confirm-modification-payment", {
+      method: "POST",
+      body: JSON.stringify({ paymentIntentId: "pi_additional" }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(400);
+    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for deactivated members", async () => {
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockMemberFindUnique.mockResolvedValueOnce({ id: "m1", active: false } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/confirm-modification-payment", {
+      method: "POST",
+      body: JSON.stringify({ paymentIntentId: "pi_additional" }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(403);
+    expect(mockPaymentFindUnique).not.toHaveBeenCalled();
   });
 
   it("is idempotent for already-SUCCEEDED payments", async () => {

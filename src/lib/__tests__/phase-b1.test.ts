@@ -302,6 +302,7 @@ describe("#24: LODGE JWT 30-day expiry", () => {
 describe("#31: Expected Arrival Time", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.findUnique.mockResolvedValue({ id: "member-1", active: true });
   });
 
   describe("PUT /api/bookings/[id]/arrival-time", () => {
@@ -442,6 +443,26 @@ describe("#31: Expected Arrival Time", () => {
       });
       const res = await PUT(req, { params: Promise.resolve({ id: "booking-1" }) });
       expect(res.status).toBe(404);
+    });
+
+    it("rejects deactivated members before mutating the booking", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "member-1", role: "MEMBER" },
+      });
+      mockPrisma.member.findUnique.mockResolvedValue({ id: "member-1", active: false });
+
+      const { NextRequest } = await import("next/server");
+      const { PUT } = await import(
+        "@/app/api/bookings/[id]/arrival-time/route"
+      );
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expectedArrivalTime: "14:00" }),
+      });
+      const res = await PUT(req, { params: Promise.resolve({ id: "booking-1" }) });
+      expect(res.status).toBe(403);
+      expect(mockPrisma.booking.findUnique).not.toHaveBeenCalled();
     });
   });
 

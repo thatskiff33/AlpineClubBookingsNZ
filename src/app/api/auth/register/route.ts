@@ -10,6 +10,7 @@ import { createEmailVerificationToken } from "@/lib/verification-tokens";
 import { AgeTier } from "@prisma/client";
 import { isXeroConnected, findOrCreateXeroContact } from "@/lib/xero";
 import logger from "@/lib/logger";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -94,6 +95,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, memberId: member.id }, { status: 201 });
   } catch (err) {
+    if (isPrismaUniqueConstraintError(err)) {
+      return NextResponse.json(
+        { error: "An account with this email already exists" },
+        { status: 409 }
+      );
+    }
+
     logger.error({ err }, "Unexpected error in register");
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

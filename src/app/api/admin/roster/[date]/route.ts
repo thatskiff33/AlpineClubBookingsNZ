@@ -364,9 +364,14 @@ export async function PUT(
 
       // Generate per-guest chore tokens and send emails
       const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000"
-      const emailPromises: Promise<void>[] = []
+      const emailPromises: Promise<{
+        guestId: string
+        name: string
+        email: string
+      }>[] = []
       for (const [guestId, guest] of byGuest) {
         if (guest.email) {
+          const recipientEmail = guest.email
           emailPromises.push(
             (async () => {
               // Delete old tokens for this guest+date to prevent duplicates
@@ -376,18 +381,36 @@ export async function PUT(
               const token = await createGuestChoreToken(guestId, date)
               const choreLink = `${baseUrl}/chores/${token}`
               await sendChoreRosterEmail(
-                guest.email!,
+                recipientEmail,
                 guest.name,
                 dateStr,
                 guest.chores,
                 choreLink
               )
+              return {
+                guestId,
+                name: guest.name,
+                email: recipientEmail,
+              }
             })()
           )
         }
       }
-      await Promise.all(emailPromises)
-      break
+
+      const results = await Promise.allSettled(emailPromises)
+      const failures = results
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => ({
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }))
+
+      return NextResponse.json({
+        success: true,
+        partialFailure: failures.length > 0,
+        sent: results.filter((result) => result.status === "fulfilled").length,
+        failed: failures.length,
+        failures,
+      })
     }
   }
   } catch (err) {

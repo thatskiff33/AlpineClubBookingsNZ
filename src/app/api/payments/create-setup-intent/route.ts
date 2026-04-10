@@ -4,12 +4,18 @@ import { createSetupIntent, findOrCreateCustomer } from "@/lib/stripe";
 import { CreateSetupIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+    }
+
+    const inactiveResponse = await requireActiveSessionUser(session.user.id);
+    if (inactiveResponse) {
+      return inactiveResponse;
     }
 
     const body = await request.json();

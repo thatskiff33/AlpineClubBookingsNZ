@@ -1,0 +1,118 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { auth } from "@/lib/auth";
+import { logAudit } from "@/lib/audit";
+import { prisma } from "@/lib/prisma";
+import {
+  ADMIN_NOTIFICATION_PREFERENCE_KEYS,
+  ADMIN_NOTIFICATION_PREFERENCE_SELECT,
+  resolveAdminNotificationPreferences,
+} from "@/lib/admin-notification-preferences";
+
+const preferenceUpdateSchema = z
+  .object({
+    adminNewBooking: z.boolean().optional(),
+    adminPaymentFailure: z.boolean().optional(),
+    adminPendingDeadline: z.boolean().optional(),
+    adminBookingBumped: z.boolean().optional(),
+    adminXeroSyncError: z.boolean().optional(),
+    adminCapacityWarning: z.boolean().optional(),
+    adminDailyDigest: z.boolean().optional(),
+    adminWaitlistOffer: z.boolean().optional(),
+  })
+  .refine(
+    (value) => Object.values(value).some((entry) => entry !== undefined),
+    "At least one preference update is required"
+  );
+
+const updateSchema = z.object({
+  memberId: z.string().min(1),
+  preferences: preferenceUpdateSchema,
+});
+
+export async function PUT(request: Request) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (session.user.role !== "ADMIN") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = updateSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+  const targetMember = await prisma.member.findUnique({
+    where: { id: parsed.data.memberId },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      role: true,
+      notificationPreference: {
+        select: ADMIN_NOTIFICATION_PREFERENCE_SELECT,
+      },
+    },
+  });
+
+  if (!targetMember) {
+    return NextResponse.json({ error: "Admin user not found" }, { status: 404 });
+  }
+  if (targetMember.role !== "ADMIN") {
+    return NextResponse.json(
+      { error: "Notification preferences can only be managed for admin users" },
+      { status: 400 }
+    );
+  }
+
+  const before = resolveAdminNotificationPreferences(
+    targetMember.notificationPreference
+  );
+
+  const updated = await prisma.notificationPreference.upsert({
+    where: { memberId: targetMember.id },
+    create: {
+      memberId: targetMember.id,
+      ...parsed.data.preferences,
+    },
+    update: parsed.data.preferences,
+    select: ADMIN_NOTIFICATION_PREFERENCE_SELECT,
+  });
+
+  const after = resolveAdminNotificationPreferences(updated);
+  const changes = ADMIN_NOTIFICATION_PREFERENCE_KEYS.filter(
+    (key) => parsed.data.preferences[key] !== undefined
+  ).map((key) => ({
+    key,
+    before: before[key],
+    after: after[key],
+  }));
+
+  logAudit({
+    action: "ADMIN_NOTIFICATION_PREFERENCES_UPDATED",
+    memberId: session.user.id,
+    targetId: targetMember.id,
+    details: JSON.stringify({
+      targetEmail: targetMember.email,
+      changes,
+    }),
+  });
+
+  return NextResponse.json({
+    memberId: targetMember.id,
+    preferences: after,
+  });
+}

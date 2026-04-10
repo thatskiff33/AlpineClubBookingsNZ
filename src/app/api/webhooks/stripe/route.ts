@@ -167,15 +167,23 @@ async function handlePaymentIntentSucceeded(
   // Validate webhook amount matches expected booking amount
   const existingPayment = payment ?? await prisma.payment.findUnique({ where: { bookingId } });
   if (existingPayment && existingPayment.amountCents !== paymentIntent.amount) {
-    logger.warn(
+    logger.error(
       {
         bookingId,
         expectedCents: existingPayment.amountCents,
         receivedCents: paymentIntent.amount,
         paymentIntentId: paymentIntent.id,
       },
-      "Stripe webhook amount mismatch - using Stripe amount as authoritative"
+      "Stripe webhook amount mismatch - refusing to auto-apply payment"
     );
+    await alertPaymentAmountMismatch(
+      bookingId,
+      paymentIntent.id,
+      existingPayment.amountCents,
+      paymentIntent.amount,
+      "Primary booking payment"
+    );
+    throw new Error(`Stripe payment amount mismatch for booking ${bookingId}`);
   }
 
   await prisma.$transaction(async (tx) => {
@@ -325,6 +333,26 @@ async function handleAdditionalModificationPaymentSucceeded(
       return;
     }
 
+    if (paymentByBooking.additionalAmountCents !== paymentIntent.amount) {
+      logger.error(
+        {
+          bookingId,
+          paymentIntentId: paymentIntent.id,
+          expectedCents: paymentByBooking.additionalAmountCents,
+          receivedCents: paymentIntent.amount,
+        },
+        "Stripe webhook additional payment amount mismatch - refusing to auto-apply payment"
+      );
+      await alertPaymentAmountMismatch(
+        bookingId,
+        paymentIntent.id,
+        paymentByBooking.additionalAmountCents,
+        paymentIntent.amount,
+        "Booking modification payment"
+      );
+      throw new Error(`Stripe modification payment amount mismatch for booking ${bookingId}`);
+    }
+
     await prisma.payment.update({
       where: { id: paymentByBooking.id },
       data: {
@@ -339,6 +367,26 @@ async function handleAdditionalModificationPaymentSucceeded(
   if (payment.additionalPaymentStatus === "SUCCEEDED") {
     logger.info({ paymentIntentId: paymentIntent.id, bookingId }, "Additional modification payment already recorded");
     return;
+  }
+
+  if (payment.additionalAmountCents !== paymentIntent.amount) {
+    logger.error(
+      {
+        bookingId,
+        paymentIntentId: paymentIntent.id,
+        expectedCents: payment.additionalAmountCents,
+        receivedCents: paymentIntent.amount,
+      },
+      "Stripe webhook additional payment amount mismatch - refusing to auto-apply payment"
+    );
+    await alertPaymentAmountMismatch(
+      bookingId,
+      paymentIntent.id,
+      payment.additionalAmountCents,
+      paymentIntent.amount,
+      "Booking modification payment"
+    );
+    throw new Error(`Stripe modification payment amount mismatch for booking ${bookingId}`);
   }
 
   await prisma.payment.update({
@@ -459,5 +507,38 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     }
   } catch (xeroErr) {
     logger.error({ err: xeroErr, paymentId: payment.id }, "Failed to create Xero credit note for payment");
+  }
+}
+
+async function alertPaymentAmountMismatch(
+  bookingId: string,
+  paymentIntentId: string,
+  expectedCents: number,
+  receivedCents: number,
+  paymentType: string
+) {
+  try {
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { member: true },
+    });
+
+    if (!booking) {
+      return;
+    }
+
+    await sendAdminPaymentFailureAlert({
+      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      amountCents: receivedCents,
+      errorMessage: `${paymentType} amount mismatch. Expected ${expectedCents} cents but Stripe reported ${receivedCents} cents. The booking was not auto-updated and needs manual review.`,
+      paymentIntentId,
+    });
+  } catch (err) {
+    logger.error(
+      { err, bookingId, paymentIntentId },
+      "Failed to send admin alert for payment amount mismatch"
+    );
   }
 }

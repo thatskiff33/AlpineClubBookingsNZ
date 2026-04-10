@@ -15,6 +15,7 @@ import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import logger from "@/lib/logger";
 import { z } from "zod";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -37,6 +38,11 @@ export async function POST(
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const { id: bookingId } = await params;

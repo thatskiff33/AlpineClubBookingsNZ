@@ -23,6 +23,7 @@ import {
   createXeroCreditNoteForModification,
 } from "@/lib/xero";
 import logger from "@/lib/logger";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 
 const batchModifySchema = z.object({
@@ -60,6 +61,11 @@ export async function PUT(
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const { id: bookingId } = await params;

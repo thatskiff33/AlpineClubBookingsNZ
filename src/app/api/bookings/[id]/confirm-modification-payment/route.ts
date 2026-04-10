@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getPaymentIntent } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 
 const schema = z.object({
@@ -17,6 +18,11 @@ export async function POST(
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const { id: bookingId } = await params;
@@ -68,6 +74,13 @@ export async function POST(
     if (pi.status !== "succeeded") {
       return NextResponse.json(
         { error: `Payment has not succeeded (status: ${pi.status})` },
+        { status: 400 }
+      );
+    }
+
+    if (pi.amount !== payment.additionalAmountCents) {
+      return NextResponse.json(
+        { error: "Payment amount does not match booking modification" },
         { status: 400 }
       );
     }

@@ -9,6 +9,7 @@ import { isXeroConnected, findOrCreateXeroContact } from "@/lib/xero";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
 import logger from "@/lib/logger";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 const createMemberSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -375,6 +376,13 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    if (isPrismaUniqueConstraintError(error)) {
+      return NextResponse.json(
+        { error: "A member with this email already exists" },
+        { status: 409 }
+      );
+    }
+
     logger.error({ err: error }, "Failed to create member");
     return NextResponse.json({ error: "Failed to create member" }, { status: 500 });
   }

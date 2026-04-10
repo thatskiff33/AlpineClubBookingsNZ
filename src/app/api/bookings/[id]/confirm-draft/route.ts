@@ -8,6 +8,7 @@ import { getSeasonYear } from "@/lib/utils";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 
 export async function POST(
   request: NextRequest,
@@ -16,6 +17,11 @@ export async function POST(
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const { id } = await params;

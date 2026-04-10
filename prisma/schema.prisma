@@ -687,6 +687,14 @@ model NotificationPreference {
   bookingWaitlist      Boolean  @default(true)
   choreRoster          Boolean  @default(true)
   marketingEmails      Boolean  @default(false)
+  adminNewBooking      Boolean  @default(true)
+  adminPaymentFailure  Boolean  @default(true)
+  adminPendingDeadline Boolean  @default(true)
+  adminBookingBumped   Boolean  @default(true)
+  adminXeroSyncError   Boolean  @default(true)
+  adminCapacityWarning Boolean  @default(true)
+  adminDailyDigest     Boolean  @default(true)
+  adminWaitlistOffer   Boolean  @default(true)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 

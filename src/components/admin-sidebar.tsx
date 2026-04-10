@@ -29,6 +29,7 @@ import {
   House,
   Tablet,
   UsersRound,
+  Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -93,6 +94,7 @@ const navSections: NavSection[] = [
   {
     label: "System",
     items: [
+      { href: "/admin/notifications", label: "Notifications", icon: Bell },
       { href: "/admin/audit-log", label: "Audit Log", icon: Shield },
       { href: "/admin/deletion-requests", label: "Deletion Requests", icon: Trash2 },
       { href: "/admin/health", label: "System Health", icon: Activity },

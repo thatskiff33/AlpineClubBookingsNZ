@@ -4,6 +4,7 @@ import { CancelBookingSchema } from "@/types/payments";
 import { cancelBooking } from "@/lib/booking-cancel";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 
 /**
  * @deprecated Use POST /api/bookings/[id]/cancel instead.
@@ -16,6 +17,11 @@ export async function POST(request: NextRequest) {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+    }
+
+    const inactiveResponse = await requireActiveSessionUser(session.user.id);
+    if (inactiveResponse) {
+      return inactiveResponse;
     }
 
     const body = await request.json();

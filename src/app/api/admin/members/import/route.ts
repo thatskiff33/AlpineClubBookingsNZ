@@ -10,6 +10,7 @@ import { sendPasswordResetEmail } from "@/lib/email";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 const importRowSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100),
@@ -214,6 +215,15 @@ export async function POST(req: NextRequest) {
       }
     }
   } catch (err) {
+    if (isPrismaUniqueConstraintError(err)) {
+      return NextResponse.json(
+        {
+          error: "Import failed because one or more login emails already exist. No members were created.",
+        },
+        { status: 409 }
+      );
+    }
+
     logger.error({ err }, "Failed to import members (transaction rolled back)");
     return NextResponse.json(
       { error: "Import failed — no members were created. Please try again." },

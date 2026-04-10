@@ -239,7 +239,7 @@ export default function RegisterPage() {
               <div className="flex gap-2">
                 <Input className="w-20" placeholder="64" value={form.phoneCountryCode} onChange={updateField("phoneCountryCode")} maxLength={5} aria-label="Country code" />
                 <Input className="w-20" placeholder="27" value={form.phoneAreaCode} onChange={updateField("phoneAreaCode")} maxLength={5} aria-label="Area code" />
-                <Input className="flex-1" placeholder="4224115" value={form.phoneNumber} onChange={updateField("phoneNumber")} maxLength={15} aria-label="Phone number" />
+                <Input className="flex-1" placeholder="123 4567" value={form.phoneNumber} onChange={updateField("phoneNumber")} maxLength={15} aria-label="Phone number" />
               </div>
               <p className="text-xs text-muted-foreground">Country code, area code, and number</p>
             </div>

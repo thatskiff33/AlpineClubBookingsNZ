@@ -3,6 +3,9 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    member: {
+      findUnique: vi.fn(),
+    },
     booking: {
       findUnique: vi.fn(),
       update: vi.fn(),
@@ -22,6 +25,7 @@ import { PUT as putNotes } from "@/app/api/bookings/[id]/notes/route";
 
 const mockedAuth = vi.mocked(auth);
 const mockedBooking = vi.mocked(prisma.booking);
+const mockedMember = vi.mocked(prisma.member);
 
 function makeRequest(id: string, body: unknown) {
   return new NextRequest(`http://localhost/api/bookings/${id}/notes`, {
@@ -38,6 +42,7 @@ function makeParams(id: string) {
 describe("PUT /api/bookings/[id]/notes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedMember.findUnique.mockResolvedValue({ active: true } as never);
   });
 
   it("returns 401 for unauthenticated requests", async () => {
@@ -58,6 +63,15 @@ describe("PUT /api/bookings/[id]/notes", () => {
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CONFIRMED" } as never);
     const res = await putNotes(makeRequest("b1", { notes: "hi" }), makeParams("b1"));
     expect(res.status).toBe(403);
+  });
+
+  it("returns 403 for deactivated members even if they own the booking", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedMember.findUnique.mockResolvedValue({ active: false } as never);
+
+    const res = await putNotes(makeRequest("b1", { notes: "hi" }), makeParams("b1"));
+    expect(res.status).toBe(403);
+    expect(mockedBooking.findUnique).not.toHaveBeenCalled();
   });
 
   it("returns 400 for CANCELLED bookings", async () => {

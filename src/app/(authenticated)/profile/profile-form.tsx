@@ -160,7 +160,7 @@ export function ProfileForm({ member }: ProfileFormProps) {
               name="phoneNumber"
               value={form.phoneNumber}
               onChange={handleChange}
-              placeholder="4224115"
+              placeholder="123 4567"
               maxLength={15}
               aria-label="Phone number"
             />

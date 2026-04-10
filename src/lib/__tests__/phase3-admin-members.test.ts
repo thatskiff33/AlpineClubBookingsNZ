@@ -397,6 +397,23 @@ describe("Phase 3: Admin Member Management", () => {
       const body = await res.json();
       expect(body.error).toContain("no members were created");
     });
+
+    it("returns 409 if the import hits a concurrent unique-email conflict", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.$transaction).mockRejectedValue({ code: "P2002" });
+
+      const req = new NextRequest("http://localhost/api/admin/members/import", {
+        method: "POST",
+        body: JSON.stringify({
+          rows: [{ firstName: "Alice", lastName: "A", email: "a@test.com" }],
+          sendInvites: false,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await importMembers(req);
+      expect(res.status).toBe(409);
+    });
   });
 
   // ── A5/A6: Bulk Operations ──
@@ -570,6 +587,20 @@ describe("Phase 3: Admin Member Management", () => {
     it("rejects duplicate email", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findFirst).mockResolvedValue({ id: "existing" } as any);
+
+      const req = new NextRequest("http://localhost/api/admin/members", {
+        method: "POST",
+        body: JSON.stringify({ firstName: "Test", lastName: "User", email: "existing@test.com" }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await createMember(req);
+      expect(res.status).toBe(409);
+    });
+
+    it("returns 409 if member creation hits a unique constraint after the pre-check", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.$transaction).mockRejectedValue({ code: "P2002" });
 
       const req = new NextRequest("http://localhost/api/admin/members", {
         method: "POST",

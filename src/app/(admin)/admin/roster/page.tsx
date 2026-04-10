@@ -184,7 +184,12 @@ export default function RosterPage() {
         body: JSON.stringify({ action: "email" }),
       })
       if (!res.ok) throw new Error("Failed to send emails")
-      alert("Roster emails sent successfully!")
+      const data = await res.json()
+      if (data.partialFailure) {
+        alert(`Roster emails sent with ${data.failed} failure(s).`)
+      } else {
+        alert("Roster emails sent successfully!")
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error")
     } finally {

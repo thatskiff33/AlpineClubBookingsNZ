@@ -214,6 +214,15 @@ describe("Profile API: structured phone and address fields", () => {
     }));
   });
 
+  it("returns 403 for deactivated members", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ active: false } as any);
+
+    const res = await updateProfile(makeProfilePut(validProfileBody));
+    expect(res.status).toBe(403);
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
   it("accepts address fields", async () => {
     vi.mocked(auth).mockResolvedValue(memberSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
@@ -388,6 +397,19 @@ describe("Admin Member Edit: structured phone and address", () => {
       }),
     );
   });
+
+  it("returns 409 when admin member update hits a unique email constraint", async () => {
+    vi.mocked(auth).mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    vi.mocked(prisma.member.update).mockRejectedValueOnce({ code: "P2002" });
+
+    const res = await updateMember(
+      makePutRequest("m1", { email: "new@test.com" }),
+      { params: Promise.resolve({ id: "m1" }) },
+    );
+
+    expect(res.status).toBe(409);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────
@@ -482,5 +504,13 @@ describe("Registration: structured phone + Xero auto-link", () => {
       firstName: "Bob", lastName: "Builder",
     }));
     expect(res.status).toBe(201);
+  });
+
+  it("returns 409 when registration hits a unique email constraint after the pre-check", async () => {
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.member.create).mockRejectedValueOnce({ code: "P2002" });
+
+    const res = await register(makeRegisterRequest(validRegistration));
+    expect(res.status).toBe(409);
   });
 });

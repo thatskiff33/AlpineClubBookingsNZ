@@ -171,6 +171,12 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockFindUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      email: "alice@test.com",
+      firstName: "Alice",
+    } as any);
     const mod = await import("@/app/api/bookings/[id]/modify-dates/route");
     PUT = mod.PUT;
   });
@@ -207,6 +213,19 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     });
     const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(404);
+  });
+
+  it("returns 403 for deactivated members before modifying dates", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    mockFindUnique.mockResolvedValueOnce({ id: "m1", active: false } as any);
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-06-05" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    expect(res.status).toBe(403);
+    expect(mockTransaction).not.toHaveBeenCalled();
   });
 
   it("returns 403 if not booking owner or admin", async () => {
@@ -283,7 +302,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedGetHoldDays.mockResolvedValue(7);
 
     // Mock member lookup for email
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "alice@test.com", firstName: "Alice" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "alice@test.com", firstName: "Alice" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -315,7 +334,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedLoadPolicy.mockResolvedValue([]);
     mockedGetHoldDays.mockResolvedValue(7);
     mockedProcessRefund.mockResolvedValue({ id: "re_123" } as any);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -346,7 +365,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedDaysUntilDate.mockReturnValue(5);
     mockedLoadPolicy.mockResolvedValue([{ daysBeforeStay: 14, refundPercentage: 100 }, { daysBeforeStay: 7, refundPercentage: 50 }, { daysBeforeStay: 0, refundPercentage: 0 }]);
     mockedGetHoldDays.mockResolvedValue(7);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -375,7 +394,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedDaysUntilDate.mockReturnValue(30);
     mockedLoadPolicy.mockResolvedValue([]);
     mockedGetHoldDays.mockResolvedValue(7);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -411,7 +430,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedLoadPolicy.mockResolvedValue([]);
     mockedGetHoldDays.mockResolvedValue(7);
     mockedValidatePromo.mockReturnValue("This promo code is no longer active");
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -444,7 +463,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedDaysUntilDate.mockReturnValue(30);
     mockedLoadPolicy.mockResolvedValue([]);
     mockedGetHoldDays.mockResolvedValue(7);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -476,7 +495,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedDaysUntilDate.mockReturnValue(30);
     mockedLoadPolicy.mockResolvedValue([]);
     mockedGetHoldDays.mockResolvedValue(7);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -515,7 +534,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedDaysUntilDate.mockReturnValue(3);
     mockedLoadPolicy.mockResolvedValue([]);
     mockedGetHoldDays.mockResolvedValue(7);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     // Check-in 3 days from now (within 7 day hold)
     const soon = new Date();
@@ -545,6 +564,12 @@ describe("POST /api/bookings/[id]/guests", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockFindUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      email: "alice@test.com",
+      firstName: "Alice",
+    } as any);
     const mod = await import("@/app/api/bookings/[id]/guests/route");
     POST = mod.POST;
   });
@@ -645,7 +670,7 @@ describe("POST /api/bookings/[id]/guests", () => {
         totalPriceCents: 24000,
       });
     mockedGetHoldDays.mockResolvedValue(7);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
       method: "POST",
@@ -674,7 +699,7 @@ describe("POST /api/bookings/[id]/guests", () => {
       .mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }], totalPriceCents: 5000 })
       .mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }], totalPriceCents: 15000 });
     mockedGetHoldDays.mockResolvedValue(7);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
       method: "POST",
@@ -696,7 +721,7 @@ describe("POST /api/bookings/[id]/guests", () => {
       .mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }], totalPriceCents: 5000 })
       .mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }], totalPriceCents: 15000 });
     mockedGetHoldDays.mockResolvedValue(7);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
       method: "POST",
@@ -715,6 +740,12 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockFindUnique.mockResolvedValue({
+      id: "m1",
+      active: true,
+      email: "alice@test.com",
+      firstName: "Alice",
+    } as any);
     const mod = await import("@/app/api/bookings/[id]/guests/[guestId]/route");
     DELETE = mod.DELETE;
   });
@@ -794,7 +825,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       totalPriceCents: 5000,
     });
     mockedProcessRefund.mockResolvedValue({ id: "re_456" } as any);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
     const res = await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
@@ -824,7 +855,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       totalPriceCents: 5000,
     });
     mockedProcessRefund.mockResolvedValue({ id: "re_789" } as any);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
     const res = await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
@@ -845,7 +876,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       totalPriceCents: 5000,
     });
     mockedProcessRefund.mockResolvedValue({ id: "re_000" } as any);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
     await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
@@ -870,7 +901,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       totalPriceCents: 5000,
     });
     mockedProcessRefund.mockResolvedValue({ id: "re_nm" } as any);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
     const res = await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });
@@ -893,7 +924,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       totalPriceCents: 5000,
     });
     mockedProcessRefund.mockResolvedValue({ id: "re_audit" } as any);
-    mockFindUnique.mockResolvedValue({ id: "m1", email: "a@t.com", firstName: "A" });
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });
     await DELETE(req, { params: Promise.resolve({ id: "bk1", guestId: "g2" }) });

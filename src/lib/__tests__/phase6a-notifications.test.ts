@@ -101,11 +101,62 @@ describe("N-10: EmailLog tracking", () => {
     (process.env as Record<string, string>).NODE_ENV =origEnv;
   });
 
+  it("does not fail delivery if EmailLog SENT update fails", async () => {
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV ="production";
+
+    mockPrisma.emailLog.update.mockRejectedValueOnce(new Error("EmailLog update failed"));
+
+    const { sendEmail } = await import("../email");
+
+    await expect(
+      sendEmail({
+        to: "test@example.com",
+        subject: "Test",
+        html: "<p>Test</p>",
+        templateName: "test-template",
+      })
+    ).resolves.toBeUndefined();
+
+    expect(mockTransporter.sendMail).toHaveBeenCalled();
+
+    (process.env as Record<string, string>).NODE_ENV =origEnv;
+  });
+
   it("updates EmailLog to FAILED on send error", async () => {
     const origEnv = process.env.NODE_ENV;
     (process.env as Record<string, string>).NODE_ENV ="production";
 
     mockTransporter.sendMail.mockRejectedValue(new Error("SMTP connection refused"));
+
+    const { sendEmail } = await import("../email");
+
+    await expect(
+      sendEmail({
+        to: "test@example.com",
+        subject: "Test",
+        html: "<p>Test</p>",
+        templateName: "test-template",
+      })
+    ).rejects.toThrow("SMTP connection refused");
+
+    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
+      where: { id: "log-1" },
+      data: expect.objectContaining({
+        status: "FAILED",
+        errorMessage: "SMTP connection refused",
+      }),
+    });
+
+    (process.env as Record<string, string>).NODE_ENV =origEnv;
+  });
+
+  it("preserves the original send error if EmailLog FAILED update also fails", async () => {
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV ="production";
+
+    mockTransporter.sendMail.mockRejectedValueOnce(new Error("SMTP connection refused"));
+    mockPrisma.emailLog.update.mockRejectedValueOnce(new Error("EmailLog update failed"));
 
     const { sendEmail } = await import("../email");
 
@@ -225,6 +276,41 @@ describe("N-02: sendAdminNewBookingAlert", () => {
         templateName: "admin-new-booking",
       }),
     });
+  });
+
+  it("skips admins who disable new booking alerts", async () => {
+    mockPrisma.member.findMany.mockResolvedValue([
+      {
+        email: "enabled@tokoroa.org.nz",
+        notificationPreference: { adminNewBooking: true },
+      },
+      {
+        email: "disabled@tokoroa.org.nz",
+        notificationPreference: { adminNewBooking: false },
+      },
+      {
+        email: "default@tokoroa.org.nz",
+        notificationPreference: null,
+      },
+    ]);
+
+    const { sendAdminNewBookingAlert } = await import("../email");
+    await sendAdminNewBookingAlert({
+      memberName: "John Doe",
+      checkIn: new Date("2026-04-10"),
+      checkOut: new Date("2026-04-12"),
+      guestCount: 3,
+      totalCents: 45000,
+      status: "CONFIRMED",
+    });
+
+    const recipients = mockPrisma.emailLog.create.mock.calls.map(
+      (call) => call[0].data.to
+    );
+
+    expect(recipients).toContain("enabled@tokoroa.org.nz");
+    expect(recipients).toContain("default@tokoroa.org.nz");
+    expect(recipients).not.toContain("disabled@tokoroa.org.nz");
   });
 });
 

@@ -6,6 +6,7 @@ import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { getSeasonYear } from "@/lib/utils";
 import { isXeroConnected, updateXeroContact } from "@/lib/xero";
 import logger from "@/lib/logger";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -45,6 +46,11 @@ export async function PUT(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   let body: unknown;

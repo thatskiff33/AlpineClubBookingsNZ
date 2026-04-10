@@ -6,6 +6,7 @@ import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { getSeasonYear } from "@/lib/utils";
 import { isXeroConnected, updateXeroContact } from "@/lib/xero";
 import logger from "@/lib/logger";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -332,6 +333,13 @@ export async function PUT(
 
     return NextResponse.json(updated);
   } catch (error) {
+    if (isPrismaUniqueConstraintError(error)) {
+      return NextResponse.json(
+        { error: "A member with this email already exists" },
+        { status: 409 }
+      );
+    }
+
     logger.error({ err: error, memberId: id }, "Failed to update member");
     return NextResponse.json({ error: "Failed to update member" }, { status: 500 });
   }
