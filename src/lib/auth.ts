@@ -2,6 +2,7 @@ import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
+import { getAuthSecret, getAuthTrustHost } from "./runtime-config";
 
 class EmailNotVerifiedError extends CredentialsSignin {
   code = "EMAIL_NOT_VERIFIED";
@@ -26,7 +27,8 @@ declare module "next-auth" {
 }
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  trustHost: true,
+  trustHost: getAuthTrustHost(),
+  secret: getAuthSecret(),
   providers: [
     Credentials({
       name: "credentials",
