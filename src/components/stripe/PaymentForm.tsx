@@ -8,6 +8,7 @@ import {
 } from "@stripe/react-stripe-js";
 
 interface PaymentFormProps {
+  bookingId?: string;
   amountCents: number;
   onSuccess: (paymentIntentId: string) => void;
   onError: (error: string) => void;
