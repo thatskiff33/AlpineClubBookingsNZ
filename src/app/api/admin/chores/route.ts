@@ -3,22 +3,42 @@ import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 
-const choreSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  description: z.string().optional().default(""),
-  recommendedPeopleMin: z.number().int().min(1).default(1),
-  recommendedPeopleMax: z.number().int().min(1).default(2),
-  isEssential: z.boolean().default(false),
-  ageRestriction: z.enum(["ANY", "ADULTS_ONLY", "MIXED_PREFERRED", "ADULT_SUPERVISED"]).default("ANY"),
-  conditionalNote: z.string().nullable().optional().default(null),
-  minAge: z.number().int().min(0).default(0),
-  sortOrder: z.number().int().default(0),
-  timeOfDay: z.enum(["MORNING", "EVENING", "ANYTIME"]).default("ANYTIME"),
-  frequencyMode: z.enum(["DAILY", "EVERY_X_DAYS", "SPECIFIC_DAYS"]).default("DAILY"),
-  frequencyDays: z.number().int().min(2).nullable().optional().default(null),
-  frequencyDaysOfWeek: z.array(z.number().int().min(1).max(7)).optional().default([]),
-  active: z.boolean().default(true),
-})
+const choreSchema = z
+  .object({
+    name: z.string().min(1, "Name is required"),
+    description: z.string().optional().default(""),
+    recommendedPeopleMin: z.number().int().min(1).default(1),
+    recommendedPeopleMax: z.number().int().min(1).default(2),
+    isEssential: z.boolean().default(false),
+    ageRestriction: z
+      .enum(["ANY", "ADULTS_ONLY", "MIXED_PREFERRED", "ADULT_SUPERVISED"])
+      .default("ANY"),
+    conditionalNote: z.string().nullable().optional().default(null),
+    minAge: z.number().int().min(0).default(0),
+    sortOrder: z.number().int().default(0),
+    timeOfDay: z.enum(["MORNING", "EVENING", "ANYTIME"]).default("ANYTIME"),
+    frequencyMode: z
+      .enum(["DAILY", "EVERY_X_DAYS", "SPECIFIC_DAYS"])
+      .default("DAILY"),
+    frequencyDays: z.number().int().min(2).nullable().optional().default(null),
+    frequencyDaysOfWeek: z
+      .array(z.number().int().min(1).max(7))
+      .optional()
+      .default([]),
+    active: z.boolean().default(true),
+  })
+  .superRefine((data, ctx) => {
+    if (
+      data.frequencyMode === "SPECIFIC_DAYS" &&
+      data.frequencyDaysOfWeek.length === 0
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["frequencyDaysOfWeek"],
+        message: "Select at least one day for SPECIFIC_DAYS chores",
+      });
+    }
+  });
 
 export async function GET() {
   const session = await auth()

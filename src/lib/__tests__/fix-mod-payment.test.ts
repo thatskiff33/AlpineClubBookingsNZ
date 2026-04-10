@@ -27,6 +27,7 @@ const mockSeasonFindMany = vi.fn();
 const mockChoreAssignFindMany = vi.fn();
 const mockChoreAssignDeleteMany = vi.fn();
 const mockProcessedWebhookCreate = vi.fn();
+const mockProcessedWebhookDeleteMany = vi.fn();
 const mockProcessedWebhookFindUnique = vi.fn();
 const mockMemberFindUnique = vi.fn();
 const mockAuditCreate = vi.fn();
@@ -53,6 +54,7 @@ vi.mock("@/lib/prisma", () => ({
     processedWebhookEvent: {
       findUnique: mockProcessedWebhookFindUnique,
       create: mockProcessedWebhookCreate,
+      deleteMany: mockProcessedWebhookDeleteMany,
     },
     member: { findUnique: mockMemberFindUnique },
     auditLog: { create: mockAuditCreate },
@@ -534,6 +536,7 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
 
     mockProcessedWebhookFindUnique.mockResolvedValue(null);
     mockProcessedWebhookCreate.mockResolvedValue({});
+    mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 0 });
     mockPaymentFindUnique.mockResolvedValueOnce(payment); // findUnique by additionalPaymentIntentId
     mockPaymentUpdate.mockResolvedValue({});
 
@@ -580,6 +583,7 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
 
     mockProcessedWebhookFindUnique.mockResolvedValue(null);
     mockProcessedWebhookCreate.mockResolvedValue({});
+    mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 0 });
     mockPaymentFindUnique.mockResolvedValueOnce(payment);
     mockPaymentUpdate.mockResolvedValue({});
 
@@ -606,6 +610,7 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
     } as any);
 
     mockProcessedWebhookCreate.mockResolvedValue({});
+    mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 1 });
     mockPaymentFindUnique.mockResolvedValueOnce({
       id: "p1",
       bookingId: "bk1",
@@ -626,6 +631,35 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
 
     expect(res.status).toBe(500);
     expect(mockPaymentUpdate).not.toHaveBeenCalled();
+    expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith({
+      where: { eventId: "evt_mismatch", source: "stripe" },
+    });
+  });
+
+  it("returns success for duplicate Stripe webhook deliveries", async () => {
+    mockedConstructWebhookEvent.mockReturnValue({
+      id: "evt_duplicate",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_additional",
+          amount: 3000,
+          metadata: { bookingId: "bk1", type: "modification_additional" },
+          payment_method: "pm_test",
+        },
+      },
+    } as any);
+
+    mockProcessedWebhookCreate.mockRejectedValueOnce({ code: "P2002" });
+
+    const req = makeWebhookRequest();
+    const res = await POST(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.received).toBe(true);
+    expect(mockPaymentFindUnique).not.toHaveBeenCalled();
+    expect(mockProcessedWebhookDeleteMany).not.toHaveBeenCalled();
   });
 });
 

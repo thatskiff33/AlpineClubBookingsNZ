@@ -4,6 +4,7 @@
  * - Issue 15: KPI card hrefs and bookings page upcoming/comma-status filtering
  */
 import { describe, it, expect } from "vitest";
+import { getAuthenticatedBrandHref } from "@/components/nav-bar";
 
 // ─── Issue 8: Admin Sidebar Home Link ────────────────────────────────────────
 
@@ -32,10 +33,9 @@ describe("Issue 8: Admin Sidebar Home Link", () => {
 // ─── Issue 9: Nav Bar Branding Link ──────────────────────────────────────────
 
 describe("Issue 9: Nav Bar Branding Link", () => {
-  it("should link branding to / (public homepage)", () => {
-    const brandingHref = "/";
-    expect(brandingHref).toBe("/");
-    expect(brandingHref).not.toBe("/dashboard");
+  it("should link authenticated branding to /dashboard", () => {
+    expect(getAuthenticatedBrandHref()).toBe("/dashboard");
+    expect(getAuthenticatedBrandHref()).not.toBe("/");
   });
 
   it("should have Dashboard as a nav item", () => {

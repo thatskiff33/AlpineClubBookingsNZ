@@ -599,6 +599,28 @@ describe("POST /api/bookings/[id]/guests", () => {
     expect(res.status).toBe(400);
   });
 
+  it("returns 400 when the add-guests request exceeds lodge capacity in one payload", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    const guests = Array.from({ length: 30 }, (_, index) => ({
+      firstName: `Guest${index}`,
+      lastName: "Overflow",
+      ageTier: "ADULT",
+      isMember: false,
+    }));
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({ guests }),
+    });
+
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe("Invalid input");
+    expect(body.details.fieldErrors.guests?.[0]).toBeDefined();
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
   it("returns 404 for nonexistent booking", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
     const tx = makeTx(makeBooking());
