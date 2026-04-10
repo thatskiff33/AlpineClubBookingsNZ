@@ -255,17 +255,6 @@ describe("Phase 3: Admin Member Management", () => {
       ]));
     });
 
-    it("filters by type (canLogin vs non-login)", async () => {
-      mockedAuth.mockResolvedValue(adminSession);
-      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
-
-      await getMembers(new NextRequest("http://localhost/api/admin/members?type=dependent"));
-      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
-      expect(call.where?.AND).toEqual(expect.arrayContaining([
-        { canLogin: false },
-      ]));
-    });
   });
 
   // ── A3: CSV Export ──
@@ -324,11 +313,11 @@ describe("Phase 3: Admin Member Management", () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
 
-      await exportMembers(new NextRequest("http://localhost/api/admin/members/export?role=ADMIN&type=primary"));
+      await exportMembers(new NextRequest("http://localhost/api/admin/members/export?role=ADMIN&active=true"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
       expect(call.where?.AND).toEqual(expect.arrayContaining([
         { role: "ADMIN" },
-        { canLogin: true },
+        { active: true },
       ]));
     });
   });
