@@ -6,6 +6,7 @@ import { z } from "zod";
 const cancellationRuleSchema = z.object({
   daysBeforeStay: z.number().int().min(0),
   refundPercentage: z.number().int().min(0).max(100),
+  creditRefundPercentage: z.number().int().min(0).max(100).optional(),
 });
 
 const createSchema = z.object({
