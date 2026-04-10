@@ -35,7 +35,8 @@ const addGuestsSchema = z.object({
         memberId: z.string().min(1).optional(),
       })
     )
-    .min(1),
+    .min(1)
+    .max(29),
 });
 
 export async function POST(

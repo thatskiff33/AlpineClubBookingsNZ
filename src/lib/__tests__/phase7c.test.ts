@@ -325,6 +325,16 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
     mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
     mockPrisma.booking.count.mockResolvedValue(0);
     mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+    mockPrisma.$transaction.mockImplementation(async (fn: any) =>
+      fn({
+        bookingGuest: {
+          update: mockPrisma.bookingGuest.update,
+        },
+        choreAssignment: {
+          deleteMany: mockPrisma.choreAssignment.deleteMany,
+        },
+      })
+    );
   });
 
   it("sets departedAt when guest has not departed", async () => {
@@ -349,6 +359,13 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.departedAt).toBeTruthy();
+    expect(mockPrisma.choreAssignment.deleteMany).toHaveBeenCalledWith({
+      where: {
+        bookingGuestId: "g1",
+        date: { gt: new Date("2026-07-10T00:00:00.000Z") },
+        status: "SUGGESTED",
+      },
+    });
   });
 
   it("clears departedAt when guest already departed (toggle off)", async () => {
@@ -371,6 +388,7 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
     const data = await res.json();
 
     expect(data.departedAt).toBeNull();
+    expect(mockPrisma.choreAssignment.deleteMany).not.toHaveBeenCalled();
   });
 
   it("returns 404 for unknown guest", async () => {

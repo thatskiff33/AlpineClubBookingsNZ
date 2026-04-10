@@ -161,6 +161,11 @@ export default function KioskPage() {
     setDate(newDate);
   };
 
+  const showActionError = (message: string) => {
+    setActionError(message);
+    setTimeout(() => setActionError(null), 3000);
+  };
+
   const toggleChore = async (assignmentId: string, currentStatus: string) => {
     if (!canCompleteChores) return;
     const action = currentStatus === "COMPLETED" ? "uncomplete" : "complete";
@@ -170,23 +175,24 @@ export default function KioskPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, assignmentId }),
       });
-      if (res.ok) {
-        setAssignments((prev) =>
-          prev.map((a) =>
-            a.id === assignmentId
-              ? {
-                  ...a,
-                  status: action === "complete" ? "COMPLETED" : "CONFIRMED",
-                  completedAt: action === "complete" ? new Date().toISOString() : null,
-                  completedVia: action === "complete" ? "KIOSK" : null,
-                }
-              : a
-          )
-        );
+      if (!res.ok) {
+        showActionError("Failed to update chore");
+        return;
       }
+      setAssignments((prev) =>
+        prev.map((a) =>
+          a.id === assignmentId
+            ? {
+                ...a,
+                status: action === "complete" ? "COMPLETED" : "CONFIRMED",
+                completedAt: action === "complete" ? new Date().toISOString() : null,
+                completedVia: action === "complete" ? "KIOSK" : null,
+              }
+            : a
+        )
+      );
     } catch {
-      setActionError("Failed to update chore");
-      setTimeout(() => setActionError(null), 3000);
+      showActionError("Failed to update chore");
     }
   };
 
@@ -198,20 +204,21 @@ export default function KioskPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bookingGuestId: guestId }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setBookings((prev) =>
-          prev.map((b) => ({
-            ...b,
-            guests: b.guests.map((g) =>
-              g.id === guestId ? { ...g, arrivedAt: data.arrivedAt } : g
-            ),
-          }))
-        );
+      if (!res.ok) {
+        showActionError("Failed to update arrival");
+        return;
       }
+      const data = await res.json();
+      setBookings((prev) =>
+        prev.map((b) => ({
+          ...b,
+          guests: b.guests.map((g) =>
+            g.id === guestId ? { ...g, arrivedAt: data.arrivedAt } : g
+          ),
+        }))
+      );
     } catch {
-      setActionError("Failed to update arrival");
-      setTimeout(() => setActionError(null), 3000);
+      showActionError("Failed to update arrival");
     }
   };
 
@@ -223,20 +230,21 @@ export default function KioskPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bookingGuestId: guestId }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setBookings((prev) =>
-          prev.map((b) => ({
-            ...b,
-            guests: b.guests.map((g) =>
-              g.id === guestId ? { ...g, departedAt: data.departedAt } : g
-            ),
-          }))
-        );
+      if (!res.ok) {
+        showActionError("Failed to update departure");
+        return;
       }
+      const data = await res.json();
+      setBookings((prev) =>
+        prev.map((b) => ({
+          ...b,
+          guests: b.guests.map((g) =>
+            g.id === guestId ? { ...g, departedAt: data.departedAt } : g
+          ),
+        }))
+      );
     } catch {
-      setActionError("Failed to update departure");
-      setTimeout(() => setActionError(null), 3000);
+      showActionError("Failed to update departure");
     }
   };
 

@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
   }
 
   const webhookStart = Date.now();
+  let claimedEvent = false;
 
   try {
     // Idempotency: attempt to claim this event atomically
@@ -53,6 +54,7 @@ export async function POST(request: NextRequest) {
       await prisma.processedWebhookEvent.create({
         data: { eventId: event.id, source: "stripe", eventType: event.type },
       });
+      claimedEvent = true;
     } catch (err: unknown) {
       // Unique constraint violation (P2002) = already processed
       if (
@@ -111,17 +113,37 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ received: true });
   } catch (error) {
+    if (claimedEvent) {
+      try {
+        await prisma.processedWebhookEvent.deleteMany({
+          where: { eventId: event.id, source: "stripe" },
+        });
+      } catch (cleanupError) {
+        logger.error(
+          { err: cleanupError, eventId: event.id, eventType: event.type },
+          "Failed to release processed Stripe webhook event claim after handler failure"
+        );
+      }
+    }
+
     logger.error({ err: error, eventType: event.type }, "Error processing webhook event");
 
     // OBS-08: Record failed webhook processing
-    await recordWebhookLog({
-      source: "stripe",
-      eventType: event.type,
-      eventId: event.id,
-      status: "failure",
-      durationMs: Date.now() - webhookStart,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    try {
+      await recordWebhookLog({
+        source: "stripe",
+        eventType: event.type,
+        eventId: event.id,
+        status: "failure",
+        durationMs: Date.now() - webhookStart,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } catch (logError) {
+      logger.error(
+        { err: logError, eventId: event.id, eventType: event.type },
+        "Failed to record failed Stripe webhook delivery"
+      );
+    }
 
     return NextResponse.json(
       { error: "Webhook handler failed" },

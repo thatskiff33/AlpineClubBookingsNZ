@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -34,6 +35,7 @@ export async function PUT(
   if (!dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
+  const date = parseDateOnly(dateStr);
 
   let body: unknown;
   try {
@@ -62,9 +64,21 @@ export async function PUT(
     // Toggle: if already departed, clear; otherwise set
     const departedAt = guest.departedAt ? null : new Date();
 
-    await prisma.bookingGuest.update({
-      where: { id: parsed.data.bookingGuestId },
-      data: { departedAt },
+    await prisma.$transaction(async (tx) => {
+      await tx.bookingGuest.update({
+        where: { id: parsed.data.bookingGuestId },
+        data: { departedAt },
+      });
+
+      if (departedAt) {
+        await tx.choreAssignment.deleteMany({
+          where: {
+            bookingGuestId: parsed.data.bookingGuestId,
+            date: { gt: date },
+            status: "SUGGESTED",
+          },
+        });
+      }
     });
 
     return NextResponse.json({ success: true, departedAt: departedAt?.toISOString() ?? null });

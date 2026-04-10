@@ -44,6 +44,10 @@ const adminLink = { href: "/admin/dashboard", label: "Admin" };
 const hutLeaderLink = { href: "/lodge/kiosk", label: "Hut Leader" };
 const viewLodgeLink = { href: "/lodge/kiosk", label: "View Lodge" };
 
+export function getAuthenticatedBrandHref() {
+  return "/dashboard";
+}
+
 export function NavBar({ user }: NavBarProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -65,7 +69,7 @@ export function NavBar({ user }: NavBarProps) {
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Branding */}
         <Link
-          href="/"
+          href={getAuthenticatedBrandHref()}
           className="flex items-center gap-2 font-bold text-slate-900 hover:opacity-80 transition-opacity"
         >
           <Mountain className="h-6 w-6 text-blue-600" />
