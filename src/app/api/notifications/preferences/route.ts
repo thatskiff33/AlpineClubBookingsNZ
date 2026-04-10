@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
@@ -16,6 +17,10 @@ export async function GET() {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   // Get or create default preferences
@@ -43,6 +48,10 @@ export async function PUT(request: Request) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   let body;

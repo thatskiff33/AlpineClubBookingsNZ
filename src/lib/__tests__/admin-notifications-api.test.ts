@@ -4,7 +4,8 @@ import { NextRequest } from "next/server";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {
-      findUnique: vi.fn(),
+      count: vi.fn(),
+findUnique: vi.fn(),
     },
     notificationPreference: {
       upsert: vi.fn(),

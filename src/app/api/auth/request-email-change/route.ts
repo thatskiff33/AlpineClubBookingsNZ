@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { sendEmailChangeVerification, sendEmailChangeNotification } from "@/lib/email";
 import { createEmailChangeToken } from "@/lib/verification-tokens";
@@ -20,6 +21,10 @@ export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   try {

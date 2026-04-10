@@ -7,6 +7,7 @@
  */
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
@@ -15,6 +16,10 @@ export async function GET() {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   // Rate limit by member ID (not IP), 5 exports per day

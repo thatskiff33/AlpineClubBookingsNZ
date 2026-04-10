@@ -77,7 +77,8 @@ describe("Family group email templates", () => {
 vi.mock("../prisma", () => ({
   prisma: {
     member: {
-      findUnique: vi.fn(),
+      count: vi.fn(),
+findUnique: vi.fn(),
       findFirst: vi.fn(),
     },
     familyGroup: {

@@ -18,6 +18,7 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    member: { count: vi.fn() },
     booking: {
       findMany: mockBookingFindMany,
     },

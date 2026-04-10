@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../prisma", () => ({
   prisma: {
     member: {
+      count: vi.fn(),
       findMany: vi.fn(),
     },
     familyGroup: {
@@ -26,6 +27,7 @@ const mockedFindMany = vi.mocked(prisma.member.findMany);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(prisma.member.count).mockResolvedValue(1);
 });
 
 describe("suggestFamilyGroups", () => {

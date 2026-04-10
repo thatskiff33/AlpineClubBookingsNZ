@@ -8,6 +8,7 @@ const mockChoreAssignmentFindMany = vi.fn();
 const mockChoreTemplateFindMany = vi.fn();
 const mockTransaction = vi.fn();
 const mockTxExecuteRaw = vi.fn();
+const mockMemberCount = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
@@ -17,6 +18,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     booking: {
       findMany: mockBookingFindMany,
+    },
+    member: {
+      count: mockMemberCount,
     },
     choreAssignment: {
       findMany: mockChoreAssignmentFindMany,
@@ -52,6 +56,7 @@ describe("GET /api/admin/roster/[date] age tier display", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockMemberCount.mockResolvedValue(1);
     mockTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({
         $executeRaw: mockTxExecuteRaw,

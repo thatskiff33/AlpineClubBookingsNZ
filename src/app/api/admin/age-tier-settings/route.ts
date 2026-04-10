@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
@@ -24,6 +25,10 @@ export async function GET() {
   if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
+  }
 
   const settings = await prisma.ageTierSetting.findMany({
     orderBy: { sortOrder: "asc" },
@@ -37,6 +42,10 @@ export async function PUT(request: NextRequest) {
   const session = await auth();
   if (!session || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const body = await request.json();

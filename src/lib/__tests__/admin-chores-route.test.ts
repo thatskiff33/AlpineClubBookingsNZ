@@ -11,6 +11,7 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    member: { count: vi.fn() },
     choreTemplate: {
       create: mockChoreCreate,
       findMany: mockChoreFindMany,

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { chargePaymentMethod } from "@/lib/stripe";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
@@ -30,7 +31,18 @@ export async function POST(request: NextRequest) {
       timingSafeEqual(Buffer.from(cronSecret), Buffer.from(expected)));
 
     const session = await auth();
-    const isAdmin = session?.user?.role === "ADMIN";
+    let isAdmin = false;
+
+    if (session?.user?.id) {
+      const inactiveResponse = await requireActiveSessionUser(session.user.id);
+      if (inactiveResponse && !isAuthorizedCron) {
+        return inactiveResponse;
+      }
+
+      if (!inactiveResponse) {
+        isAdmin = session.user.role === "ADMIN";
+      }
+    }
 
     if (!isAuthorizedCron && !isAdmin) {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });

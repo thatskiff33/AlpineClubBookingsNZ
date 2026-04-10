@@ -6,6 +6,9 @@ import { NextRequest } from "next/server";
 // ---------------------------------------------------------------------------
 
 const mockPrisma = {
+  member: {
+    count: vi.fn(),
+  },
   booking: {
     findMany: vi.fn(),
   },
@@ -36,6 +39,7 @@ vi.mock("@/lib/auth", () => ({
 describe("#33: Admin Bookings Calendar API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
   });
 
   it("rejects non-admin users with 403", async () => {

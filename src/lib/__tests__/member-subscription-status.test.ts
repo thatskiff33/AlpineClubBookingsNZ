@@ -4,6 +4,7 @@ vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    member: { count: vi.fn() },
     memberSubscription: {
       findFirst: vi.fn(),
     },

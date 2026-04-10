@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 
 export async function GET(request: NextRequest) {
@@ -12,6 +13,10 @@ export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const { searchParams } = new URL(request.url);

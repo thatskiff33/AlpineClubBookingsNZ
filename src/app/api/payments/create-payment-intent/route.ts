@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 import { BookingStatus } from "@prisma/client";
 
@@ -12,17 +13,9 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
     }
-
-    // Verify member is still active (session JWT may outlive deactivation)
-    const activeMember = await prisma.member.findUnique({
-      where: { id: session.user.id },
-      select: { active: true },
-    });
-    if (!activeMember?.active) {
-      return NextResponse.json(
-        { error: "Account is deactivated" },
-        { status: 403 }
-      );
+    const inactiveResponse = await requireActiveSessionUser(session.user.id);
+    if (inactiveResponse) {
+      return inactiveResponse;
     }
 
     const body = await request.json();

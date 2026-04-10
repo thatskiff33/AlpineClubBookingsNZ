@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
 import {
@@ -50,6 +51,10 @@ export async function POST(
   const session = await auth();
   if (!session) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const { id: bookingId } = await params;

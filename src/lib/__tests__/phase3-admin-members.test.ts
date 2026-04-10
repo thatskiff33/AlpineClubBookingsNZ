@@ -66,11 +66,18 @@ const mockedAuth = vi.mocked(auth);
 const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
 const memberSession = { user: { id: "m1", role: "MEMBER" } } as any;
 
+function mockSessionAndMemberListCounts(total: number) {
+  vi.mocked(prisma.member.count)
+    .mockResolvedValueOnce(1)
+    .mockResolvedValueOnce(total);
+}
+
 describe("Phase 3: Admin Member Management", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsXeroConnected.mockResolvedValue(false);
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
+    vi.mocked(prisma.member.count).mockResolvedValue(1);
   });
 
   // ── A1: Pagination ──
@@ -85,7 +92,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("returns paginated results with metadata", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(50);
+      mockSessionAndMemberListCounts(50);
 
       const res = await getMembers(new NextRequest("http://localhost/api/admin/members?page=2&pageSize=10"));
       expect(res.status).toBe(200);
@@ -99,7 +106,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("defaults to page 1 and pageSize 25", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       const res = await getMembers(new NextRequest("http://localhost/api/admin/members"));
       const body = await res.json();
@@ -110,7 +117,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("clamps pageSize to max 100", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       const res = await getMembers(new NextRequest("http://localhost/api/admin/members?pageSize=500"));
       const body = await res.json();
@@ -157,7 +164,7 @@ describe("Phase 3: Admin Member Management", () => {
           subscriptions: [],
         },
       ] as any);
-      vi.mocked(prisma.member.count).mockResolvedValue(1);
+      mockSessionAndMemberListCounts(1);
 
       const res = await getMembers(new NextRequest("http://localhost/api/admin/members"));
       expect(res.status).toBe(200);
@@ -175,7 +182,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("sorts by name ascending by default", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       await getMembers(new NextRequest("http://localhost/api/admin/members"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
@@ -185,7 +192,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("sorts by email descending when specified", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?sortBy=email&sortDir=desc"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
@@ -195,7 +202,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("rejects invalid sortBy values", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?sortBy=passwordHash"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
@@ -210,7 +217,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("filters by role", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?role=ADMIN"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
@@ -220,7 +227,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("filters by active status", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?active=false"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
@@ -230,7 +237,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("combines text search with filters (AND logic)", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?q=alice&role=MEMBER&active=true"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
@@ -246,7 +253,7 @@ describe("Phase 3: Admin Member Management", () => {
     it("filters by subscription status NONE (no record)", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NONE"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
@@ -675,7 +682,8 @@ describe("Phase 3: Admin Member Management", () => {
       vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
         const tx = {
           member: {
-            create: vi.fn().mockResolvedValue({
+            count: vi.fn(),
+create: vi.fn().mockResolvedValue({
               id: "m2",
               firstName: "Shared",
               lastName: "Email",

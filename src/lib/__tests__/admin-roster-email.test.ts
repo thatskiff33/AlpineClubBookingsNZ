@@ -6,6 +6,7 @@ const mockChoreAssignmentFindMany = vi.fn();
 const mockGuestTokenDeleteMany = vi.fn();
 const mockSendChoreRosterEmail = vi.fn();
 const mockCreateGuestChoreToken = vi.fn();
+const mockMemberCount = vi.fn();
 
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
@@ -15,6 +16,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     choreAssignment: {
       findMany: mockChoreAssignmentFindMany,
+    },
+    member: {
+      count: mockMemberCount,
     },
     guestChoreToken: {
       deleteMany: mockGuestTokenDeleteMany,
@@ -39,6 +43,7 @@ describe("PUT /api/admin/roster/[date] email action", () => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
     mockCreateGuestChoreToken.mockResolvedValue("token-1");
+    mockMemberCount.mockResolvedValue(1);
   });
 
   it("returns partial-failure details instead of failing the whole request", async () => {

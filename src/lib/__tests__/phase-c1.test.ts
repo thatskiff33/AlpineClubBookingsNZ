@@ -21,7 +21,8 @@ const mockPrisma = {
     findFirst: vi.fn(),
   },
   member: {
-    findUnique: vi.fn(),
+    count: vi.fn(),
+findUnique: vi.fn(),
   },
 };
 

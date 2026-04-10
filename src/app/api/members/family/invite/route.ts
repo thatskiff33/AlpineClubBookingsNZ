@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
@@ -21,6 +22,10 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const rateLimited = applyRateLimit(rateLimiters.familyGroupJoinRequest, req);

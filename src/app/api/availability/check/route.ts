@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkCapacity } from "@/lib/capacity";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const { searchParams } = new URL(request.url);

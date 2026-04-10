@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {
+      count: vi.fn(),
       findUnique: vi.fn(),
     },
     booking: {
@@ -42,7 +43,7 @@ function makeParams(id: string) {
 describe("PUT /api/bookings/[id]/notes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockedMember.findUnique.mockResolvedValue({ active: true } as never);
+    mockedMember.count.mockResolvedValue(1 as never);
   });
 
   it("returns 401 for unauthenticated requests", async () => {
@@ -67,7 +68,7 @@ describe("PUT /api/bookings/[id]/notes", () => {
 
   it("returns 403 for deactivated members even if they own the booking", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
-    mockedMember.findUnique.mockResolvedValue({ active: false } as never);
+    mockedMember.count.mockResolvedValue(0 as never);
 
     const res = await putNotes(makeRequest("b1", { notes: "hi" }), makeParams("b1"));
     expect(res.status).toBe(403);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { calculateBookingPrice, type SeasonRateData } from "@/lib/pricing";
@@ -63,6 +64,10 @@ export async function POST(request: NextRequest) {
   if (!session) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
+  }
 
   const body = await request.json();
   const parsed = createBookingSchema.safeParse(body);
@@ -108,14 +113,8 @@ export async function POST(request: NextRequest) {
   if (!isOnBehalf) {
     const member = await prisma.member.findUnique({
       where: { id: session.user.id },
-      select: { active: true, emailVerified: true, xeroContactId: true },
+      select: { emailVerified: true, xeroContactId: true },
     });
-    if (!member?.active) {
-      return NextResponse.json(
-        { error: "Account is deactivated" },
-        { status: 403 }
-      );
-    }
 
     // Gate: email must be verified before booking
     if (!member?.emailVerified) {

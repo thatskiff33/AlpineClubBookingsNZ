@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { handleXeroCallback } from "@/lib/xero";
 import logger from "@/lib/logger";
 
@@ -13,6 +14,10 @@ export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.redirect(new URL("/login", baseUrl));
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   try {

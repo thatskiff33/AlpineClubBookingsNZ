@@ -63,12 +63,19 @@ import { GET as searchXeroContacts } from "@/app/api/admin/xero/search-contacts/
 const mockedAuth = vi.mocked(auth);
 const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
 
+function mockSessionAndMemberListCounts(total: number) {
+  vi.mocked(prisma.member.count)
+    .mockResolvedValueOnce(1)
+    .mockResolvedValueOnce(total);
+}
+
 describe("Xero Member Management", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsXeroConnected.mockResolvedValue(false);
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
     mockGetXeroContactIdsForGroup.mockResolvedValue([]);
+    vi.mocked(prisma.member.count).mockResolvedValue(1);
   });
 
   // ── Xero Unlink ──
@@ -147,7 +154,7 @@ describe("Xero Member Management", () => {
       mockIsXeroConnected.mockResolvedValue(true);
       mockGetXeroContactIdsForGroup.mockResolvedValue(["xero-1", "xero-2"]);
       vi.mocked(prisma.member.findMany).mockResolvedValue([baseMember] as any);
-      vi.mocked(prisma.member.count).mockResolvedValue(1);
+      mockSessionAndMemberListCounts(1);
 
       const req = new NextRequest("http://localhost/api/admin/members?xeroContactGroup=group-1");
       const res = await getMembers(req);
@@ -171,7 +178,7 @@ describe("Xero Member Management", () => {
       mockIsXeroConnected.mockResolvedValue(true);
       mockGetXeroContactIdsForGroup.mockResolvedValue([]);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       const req = new NextRequest("http://localhost/api/admin/members?xeroContactGroup=empty-group");
       const res = await getMembers(req);
@@ -190,7 +197,7 @@ describe("Xero Member Management", () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       const req = new NextRequest("http://localhost/api/admin/members?xeroContactGroup=all");
       const res = await getMembers(req);
@@ -203,7 +210,7 @@ describe("Xero Member Management", () => {
       mockIsXeroConnected.mockResolvedValue(true);
       mockGetXeroContactIdsForGroup.mockRejectedValue(new Error("API error"));
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       const req = new NextRequest("http://localhost/api/admin/members?xeroContactGroup=group-1");
       const res = await getMembers(req);
@@ -214,7 +221,7 @@ describe("Xero Member Management", () => {
     it("accepts the legacy search query parameter for promo assignment lookups", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
-      vi.mocked(prisma.member.count).mockResolvedValue(0);
+      mockSessionAndMemberListCounts(0);
 
       const req = new NextRequest(
         "http://localhost/api/admin/members?search=alice&pageSize=10&active=true"

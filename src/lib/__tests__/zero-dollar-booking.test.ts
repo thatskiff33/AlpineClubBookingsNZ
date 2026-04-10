@@ -26,6 +26,7 @@ vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
 // ─── Shared mock functions (reconfigured per describe block via beforeEach) ───
 
 const mockPrismaTransaction = vi.fn();
+const mockMemberCount = vi.fn();
 const mockMemberFindUnique = vi.fn();
 const mockBookingFindUnique = vi.fn();
 const mockTxBookingFindMany = vi.fn().mockResolvedValue([]);
@@ -57,6 +58,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => mockPrismaTransaction(fn),
     member: {
+      count: (...args: unknown[]) => mockMemberCount(...args),
       findUnique: (...args: unknown[]) => mockMemberFindUnique(...args),
       findMany: vi.fn().mockResolvedValue([{ id: "m1", ageTier: "ADULT" }]),
     },
@@ -227,6 +229,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockMemberCount.mockResolvedValue(1);
     mockTxBookingFindMany.mockResolvedValue([]);
     mockTxSeasonFindMany.mockResolvedValue([]);
   });

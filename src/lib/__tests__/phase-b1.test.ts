@@ -16,7 +16,7 @@ const mockPrisma = {
     update: vi.fn(),
   },
   member: {
-    findUnique: vi.fn(),
+    count: vi.fn(),
   },
 };
 
@@ -49,6 +49,7 @@ function makeDate(str: string): Date {
 describe("#24: Kiosk Access Tiers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
   });
 
   describe("getKioskAccessTier", () => {
@@ -223,6 +224,7 @@ describe("#24: Kiosk Access Tiers", () => {
 describe("#24: Lodge Auth Tier-Based Restrictions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
   });
 
   describe("checkLodgeAuth", () => {
@@ -312,7 +314,7 @@ describe("#24: LODGE JWT 30-day expiry", () => {
 describe("#31: Expected Arrival Time", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockPrisma.member.findUnique.mockResolvedValue({ id: "member-1", active: true });
+    mockPrisma.member.count.mockResolvedValue(1);
   });
 
   describe("PUT /api/bookings/[id]/arrival-time", () => {
@@ -459,7 +461,7 @@ describe("#31: Expected Arrival Time", () => {
       mockAuth.mockResolvedValue({
         user: { id: "member-1", role: "MEMBER" },
       });
-      mockPrisma.member.findUnique.mockResolvedValue({ id: "member-1", active: false });
+      mockPrisma.member.count.mockResolvedValue(0);
 
       const { NextRequest } = await import("next/server");
       const { PUT } = await import(
@@ -607,6 +609,7 @@ describe("#31: Booking creation schema accepts expectedArrivalTime", () => {
 describe("#24: Lodge Access API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.count.mockResolvedValue(1);
   });
 
   it("returns access info for authenticated user", async () => {
@@ -636,6 +639,21 @@ describe("#24: Lodge Access API", () => {
     const req = new NextRequest("http://localhost/api/lodge/access?date=2026-04-08");
     const res = await GET(req);
     expect(res.status).toBe(401);
+  });
+
+  it("returns 403 for deactivated user with a stale session", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN" },
+    });
+    mockPrisma.member.count.mockResolvedValue(0);
+
+    const { NextRequest } = await import("next/server");
+    const { GET } = await import("@/app/api/lodge/access/route");
+    const req = new NextRequest("http://localhost/api/lodge/access?date=2026-04-08");
+    const res = await GET(req);
+    expect(res.status).toBe(403);
+    const data = await res.json();
+    expect(data.error).toBe("Account is deactivated");
   });
 
   it("returns 400 for missing date parameter", async () => {

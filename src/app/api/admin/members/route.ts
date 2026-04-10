@@ -3,6 +3,7 @@ import { z } from "zod";
 import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";
 import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import {
@@ -66,6 +67,10 @@ export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const sp = req.nextUrl.searchParams;
@@ -304,6 +309,10 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   let body: unknown;

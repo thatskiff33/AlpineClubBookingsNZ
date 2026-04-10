@@ -44,6 +44,7 @@ vi.mock("@/lib/prisma", () => ({
       upsert: vi.fn(),
     },
     member: {
+      count: vi.fn(),
       findUnique: vi.fn(),
       findMany: vi.fn(),
     },
@@ -148,7 +149,7 @@ const mockPrisma = prisma as unknown as {
     deleteMany: ReturnType<typeof vi.fn>;
   };
   payment: { create: ReturnType<typeof vi.fn>; upsert: ReturnType<typeof vi.fn> };
-  member: { findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
+  member: { count: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
   memberSubscription: { findFirst: ReturnType<typeof vi.fn> };
   familyGroupMember: { findMany: ReturnType<typeof vi.fn> };
   season: { findMany: ReturnType<typeof vi.fn> };
@@ -187,6 +188,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 
   // Active, verified member by default
+  mockPrisma.member.count.mockResolvedValue(1);
   mockPrisma.member.findUnique.mockResolvedValue({ active: true, emailVerified: true, xeroContactId: "xero-contact-1" });
   // Guest memberId validation mocks
   mockPrisma.familyGroupMember.findMany.mockResolvedValue([]);
@@ -317,6 +319,16 @@ describe("Issue 7: GET /api/bookings/drafts", () => {
 
     const res = await getDrafts();
     expect(res.status).toBe(401);
+  });
+
+  it("returns 403 when the member was deactivated after the session was issued", async () => {
+    mockAuth.mockResolvedValue(memberSession());
+    mockPrisma.member.count.mockResolvedValue(0);
+
+    const res = await getDrafts();
+    expect(res.status).toBe(403);
+    const data = await res.json();
+    expect(data.error).toBe("Account is deactivated");
   });
 });
 

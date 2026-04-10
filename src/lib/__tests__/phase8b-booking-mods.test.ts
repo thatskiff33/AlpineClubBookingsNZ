@@ -10,6 +10,7 @@ const mockCreate = vi.fn();
 const mockDelete = vi.fn();
 const mockDeleteMany = vi.fn();
 const mockFindMany = vi.fn();
+const mockMemberCount = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -36,7 +37,7 @@ vi.mock("@/lib/prisma", () => ({
     choreAssignment: { findMany: mockFindMany, delete: mockDelete, deleteMany: mockDeleteMany },
     season: { findMany: mockFindMany },
     payment: { update: mockUpdate },
-    member: { findUnique: mockFindUnique, findMany: mockFindMany },
+    member: { count: mockMemberCount, findUnique: mockFindUnique, findMany: mockFindMany },
     familyGroupMember: { findMany: mockFindMany },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
   },
@@ -176,6 +177,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberCount.mockResolvedValue(1);
     mockFindUnique.mockResolvedValue({
       id: "m1",
       active: true,
@@ -222,7 +224,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
 
   it("returns 403 for deactivated members before modifying dates", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
-    mockFindUnique.mockResolvedValueOnce({ id: "m1", active: false } as any);
+    mockMemberCount.mockResolvedValueOnce(0);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",
@@ -569,6 +571,7 @@ describe("POST /api/bookings/[id]/guests", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberCount.mockResolvedValue(1);
     mockFindUnique.mockResolvedValue({
       id: "m1",
       active: true,
@@ -815,6 +818,7 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockMemberCount.mockResolvedValue(1);
     mockFindUnique.mockResolvedValue({
       id: "m1",
       active: true,
