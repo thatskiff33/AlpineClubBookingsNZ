@@ -14,9 +14,6 @@
     "db:migrate": "npx prisma migrate deploy",
     "db:push": "npx prisma db push"
   },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
-  },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
     "@prisma/client": "^6.19.3",
