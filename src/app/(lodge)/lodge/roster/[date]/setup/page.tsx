@@ -166,52 +166,50 @@ export default function RosterSetupWizard() {
       const [guestsRes, rosterRes, templatesRes] = await Promise.all([
         fetch(`/api/lodge/guests/${dateStr}`),
         fetch(`/api/lodge/roster/${dateStr}`),
-        fetch(`/api/admin/chores`),
+        fetch(`/api/lodge/roster/${dateStr}/chores`),
       ]);
 
-      if (guestsRes.ok) {
-        const gData = await guestsRes.json();
-        setBookings(gData.bookings);
+      if (!guestsRes.ok || !rosterRes.ok || !templatesRes.ok) {
+        throw new Error("Failed to load data");
       }
 
-      if (rosterRes.ok) {
-        const rData = await rosterRes.json();
-        const confirmed = rData.assignments.some(
-          (a: { status: string }) =>
-            a.status === "CONFIRMED" || a.status === "COMPLETED"
-        );
-        setHasExistingRoster(confirmed);
+      const gData = await guestsRes.json();
+      setBookings(gData.bookings);
+
+      const rData = await rosterRes.json();
+      const confirmed = rData.assignments.some(
+        (a: { status: string }) =>
+          a.status === "CONFIRMED" || a.status === "COMPLETED"
+      );
+      setHasExistingRoster(confirmed);
+
+      const tData = await templatesRes.json();
+      const activeTemplates = (tData.templates ?? tData).filter(
+        (t: ChoreTemplate & { active?: boolean }) => t.active !== false
+      );
+      setTemplates(activeTemplates);
+
+      // Fetch last rostered dates for frequency info
+      const lastRosteredRes = await fetch(
+        `/api/lodge/roster/${dateStr}/frequency-info`
+      );
+      let lrDates: Record<string, string> = {};
+      if (lastRosteredRes.ok) {
+        const lrData = await lastRosteredRes.json();
+        lrDates = lrData.lastRosteredDates ?? {};
       }
-
-      if (templatesRes.ok) {
-        const tData = await templatesRes.json();
-        const activeTemplates = (tData.templates ?? tData).filter(
-          (t: ChoreTemplate & { active?: boolean }) => t.active !== false
-        );
-        setTemplates(activeTemplates);
-
-        // Fetch last rostered dates for frequency info
-        const lastRosteredRes = await fetch(
-          `/api/lodge/roster/${dateStr}/frequency-info`
-        );
-        let lrDates: Record<string, string> = {};
-        if (lastRosteredRes.ok) {
-          const lrData = await lastRosteredRes.json();
-          lrDates = lrData.lastRosteredDates ?? {};
+      // Compute frequency info and pre-select
+      const freqMap = new Map<string, FrequencyInfo>();
+      const preSelected = new Set<string>();
+      for (const t of activeTemplates) {
+        const info = computeFrequencyInfo(t, lrDates, dateStr);
+        freqMap.set(t.id, info);
+        if (!info.excluded) {
+          preSelected.add(t.id);
         }
-        // Compute frequency info and pre-select
-        const freqMap = new Map<string, FrequencyInfo>();
-        const preSelected = new Set<string>();
-        for (const t of activeTemplates) {
-          const info = computeFrequencyInfo(t, lrDates, dateStr);
-          freqMap.set(t.id, info);
-          if (!info.excluded) {
-            preSelected.add(t.id);
-          }
-        }
-        setFrequencyInfoMap(freqMap);
-        setSelectedChoreIds(preSelected);
       }
+      setFrequencyInfoMap(freqMap);
+      setSelectedChoreIds(preSelected);
 
       setError(null);
     } catch {

@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { allocateChores, ChoreTemplateInput, GuestInput, ChoreHistoryEntry } from "@/lib/chore-allocator"
+import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests"
 import { sendChoreRosterEmail } from "@/lib/email"
 import { createGuestChoreToken } from "@/lib/guest-chore-token"
 import { getEffectiveEmail } from "@/lib/member-utils"
@@ -43,7 +44,13 @@ async function getGuestsForDate(date: Date): Promise<GuestInput[]> {
       checkOut: { gt: date },
     },
     include: {
-      guests: true,
+      guests: {
+        include: {
+          member: {
+            select: { ageTier: true },
+          },
+        },
+      },
     },
   })
 
@@ -55,7 +62,7 @@ async function getGuestsForDate(date: Date): Promise<GuestInput[]> {
       bookingId: b.id,
       firstName: g.firstName,
       lastName: g.lastName,
-      ageTier: g.ageTier,
+      ageTier: getBookingGuestDisplayAgeTier(g),
       isArriving: b.checkIn.getTime() === date.getTime(),
       isDeparting: b.checkOut.getTime() === nextDay.getTime(),
     }))
@@ -130,6 +137,11 @@ async function buildSuggestedAllocations(
   return allocateChores(templateInputs, guests, history, options)
 }
 
+async function lockRosterDate(tx: Prisma.TransactionClient, date: Date) {
+  const lockKey = `roster:${formatDateOnly(date)}`
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`
+}
+
 /**
  * GET /api/admin/roster/[date]
  * Returns the roster for a given date. If no assignments exist, auto-suggests.
@@ -164,11 +176,19 @@ export async function GET(
 
   // Wrap check + create in a transaction to prevent concurrent duplicate assignments
   const existing = await prisma.$transaction(async (tx) => {
+    await lockRosterDate(tx, date)
+
     let current = await tx.choreAssignment.findMany({
       where: { date },
       include: {
         choreTemplate: true,
-        bookingGuest: true,
+        bookingGuest: {
+          include: {
+            member: {
+              select: { ageTier: true },
+            },
+          },
+        },
       },
     })
 
@@ -211,7 +231,13 @@ export async function GET(
       where: { date },
       include: {
         choreTemplate: true,
-        bookingGuest: true,
+        bookingGuest: {
+          include: {
+            member: {
+              select: { ageTier: true },
+            },
+          },
+        },
       },
     })
   })
@@ -260,7 +286,7 @@ export async function GET(
       guestName: a.bookingGuest
         ? `${a.bookingGuest.firstName} ${a.bookingGuest.lastName}`
         : null,
-      guestAgeTier: a.bookingGuest?.ageTier ?? null,
+      guestAgeTier: a.bookingGuest ? getBookingGuestDisplayAgeTier(a.bookingGuest) : null,
       bookingId: a.bookingId,
       status: a.status,
     })),
@@ -336,6 +362,8 @@ export async function PUT(
     }
     case "regenerate": {
       const regenerateResult = await prisma.$transaction(async (tx) => {
+        await lockRosterDate(tx, date)
+
         const currentAssignments = await tx.choreAssignment.findMany({
           where: { date },
           select: { status: true },

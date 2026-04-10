@@ -237,6 +237,41 @@ describe("#28: Xero Link API", () => {
       targetId: "m1",
     }));
   });
+
+  it("returns a friendly 429 message when Xero daily limit is reached", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "m1",
+      firstName: "John",
+      lastName: "Smith",
+      xeroContactId: null,
+    });
+    mockGetAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi: { getContact: vi.fn() } },
+      tenantId: "t1",
+    });
+    mockWithXeroRetry.mockRejectedValue({
+      response: {
+        statusCode: 429,
+        headers: {
+          "retry-after": "12328",
+          "x-rate-limit-problem": "day",
+        },
+      },
+    });
+
+    const { POST } = await import("@/app/api/admin/members/[id]/xero-link/route");
+    const req = makeRequest("/api/admin/members/m1/xero-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ xeroContactId: "xc-1" }),
+    });
+    const res = await POST(req as any, { params: Promise.resolve({ id: "m1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(data.error).toBe("Xero daily API limit reached. Please try again tomorrow.");
+  });
 });
 
 // ---------------------------------------------------------------------------

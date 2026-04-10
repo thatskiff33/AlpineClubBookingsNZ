@@ -34,6 +34,7 @@ interface NavBarProps {
 }
 
 const memberLinks = [
+  { href: "/", label: "Home" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/book", label: "Book" },
   { href: "/bookings", label: "My Bookings" },
@@ -54,6 +55,7 @@ export function NavBar({ user }: NavBarProps) {
   ];
 
   const isActive = (href: string) => {
+    if (href === "/") return pathname === "/";
     if (href === "/dashboard") return pathname === "/dashboard";
     return pathname.startsWith(href);
   };
@@ -63,7 +65,7 @@ export function NavBar({ user }: NavBarProps) {
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Branding */}
         <Link
-          href="/dashboard"
+          href="/"
           className="flex items-center gap-2 font-bold text-slate-900 hover:opacity-80 transition-opacity"
         >
           <Mountain className="h-6 w-6 text-blue-600" />

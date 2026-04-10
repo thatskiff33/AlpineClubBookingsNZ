@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getAuthenticatedXeroClient, withXeroRetry } from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
+import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
 import { z } from "zod";
 
@@ -88,7 +89,10 @@ export async function POST(
       contactName: contact.name,
     });
   } catch (err) {
-    logger.error({ err, memberId: id }, "Error linking member to Xero contact");
-    return NextResponse.json({ error: "Failed to link to Xero contact" }, { status: 500 });
+    const xeroError = getXeroApiErrorInfo(err, "Failed to link to Xero contact");
+    if (!xeroError.handled) {
+      logger.error({ err, memberId: id }, "Error linking member to Xero contact");
+    }
+    return NextResponse.json({ error: xeroError.message }, { status: xeroError.status });
   }
 }

@@ -10,6 +10,7 @@ const mockChoreTemplateFindMany = vi.fn()
 const mockChoreAssignmentGroupBy = vi.fn()
 const mockTransaction = vi.fn()
 const mockAllocateChores = vi.fn()
+const mockTxExecuteRaw = vi.fn()
 
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
@@ -54,6 +55,7 @@ describe("PUT /api/admin/roster/[date] regenerate action", () => {
 
     mockTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({
+        $executeRaw: mockTxExecuteRaw,
         choreAssignment: {
           findMany: mockChoreAssignmentFindMany,
           deleteMany: mockChoreAssignmentDeleteMany,
@@ -85,6 +87,7 @@ describe("PUT /api/admin/roster/[date] regenerate action", () => {
     expect(mockBookingFindMany).not.toHaveBeenCalled()
     expect(mockChoreAssignmentDeleteMany).not.toHaveBeenCalled()
     expect(mockChoreAssignmentCreateMany).not.toHaveBeenCalled()
+    expect(mockTxExecuteRaw).toHaveBeenCalledTimes(1)
   })
 
   it("replaces confirmed assignments with fresh suggested ones after acknowledgement", async () => {
@@ -160,5 +163,6 @@ describe("PUT /api/admin/roster/[date] regenerate action", () => {
         }),
       ],
     })
+    expect(mockTxExecuteRaw).toHaveBeenCalledTimes(1)
   })
 })

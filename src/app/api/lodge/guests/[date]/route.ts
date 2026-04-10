@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -41,7 +42,13 @@ export async function GET(
       checkOut: { gt: date },
     },
     include: {
-      guests: true,
+      guests: {
+        include: {
+          member: {
+            select: { ageTier: true },
+          },
+        },
+      },
       member: { select: { firstName: true, lastName: true } },
     },
     orderBy: { checkIn: "asc" },
@@ -55,7 +62,7 @@ export async function GET(
       id: g.id,
       firstName: g.firstName,
       lastName: g.lastName,
-      ageTier: g.ageTier,
+      ageTier: getBookingGuestDisplayAgeTier(g),
       isMember: g.isMember,
       isArriving: b.checkIn.getTime() === date.getTime(),
       isDeparting: b.checkOut.getTime() === nextDay.getTime(),

@@ -11,6 +11,11 @@ export type BookingGuestInput = BookingGuestPricingInput & {
   lastName: string;
 };
 
+type BookingGuestAgeTierSource = {
+  ageTier: AgeTier;
+  member?: { ageTier: AgeTier } | null;
+};
+
 type BookingGuestLookupDb =
   | Pick<PrismaClient, "familyGroupMember" | "member">
   | Pick<Prisma.TransactionClient, "familyGroupMember" | "member">;
@@ -155,4 +160,10 @@ export function normalizeBookingGuestInputs(
       memberId,
     };
   });
+}
+
+export function getBookingGuestDisplayAgeTier(
+  guest: BookingGuestAgeTierSource
+): AgeTier {
+  return (guest.member?.ageTier ?? guest.ageTier) as AgeTier;
 }

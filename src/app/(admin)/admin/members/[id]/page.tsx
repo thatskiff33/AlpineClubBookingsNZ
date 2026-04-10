@@ -66,8 +66,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const { data: session } = useSession()
   const [member, setMember] = useState<MemberDetail | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
+  const [pageError, setPageError] = useState("")
   const [success, setSuccess] = useState("")
+  const [xeroError, setXeroError] = useState("")
   const [editOpen, setEditOpen] = useState(false)
   const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", role: "MEMBER", active: true, forcePasswordChange: false, inheritEmailFromId: null, streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: "", postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: "" })
   const [saving, setSaving] = useState(false)
@@ -94,9 +95,10 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const fetchMember = async () => {
     try {
       const res = await fetch(`/api/admin/members/${id}`)
-      if (!res.ok) { setError(res.status === 404 ? "Member not found" : "Failed to load member"); setLoading(false); return }
+      if (!res.ok) { setPageError(res.status === 404 ? "Member not found" : "Failed to load member"); setLoading(false); return }
       setMember(await res.json())
-    } catch { setError("Failed to load member") }
+      setPageError("")
+    } catch { setPageError("Failed to load member") }
     finally { setLoading(false) }
   }
 
@@ -212,17 +214,24 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const handleXeroSearch = async () => {
     if (!xeroSearchQuery || xeroSearchQuery.length < 2) return
     setXeroSearching(true)
+    setXeroError("")
     try {
       const res = await fetch(`/api/admin/xero/search-contacts?q=${encodeURIComponent(xeroSearchQuery)}`)
-      if (!res.ok) throw new Error("Search failed")
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Search failed")
+      }
       const data = await res.json()
       setXeroSearchResults(data.contacts ?? [])
-    } catch { setXeroSearchResults([]) }
+    } catch (err) {
+      setXeroSearchResults([])
+      setXeroError(err instanceof Error ? err.message : "Search failed")
+    }
     finally { setXeroSearching(false) }
   }
 
   const handleXeroLink = async (xeroContactId: string) => {
-    setXeroLinking(true); setError("")
+    setXeroLinking(true); setXeroError("")
     try {
       const res = await fetch(`/api/admin/members/${id}/xero-link`, {
         method: "POST",
@@ -235,12 +244,12 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       setTimeout(() => setSuccess(""), 3000)
       setLoading(true)
       await fetchMember()
-    } catch (err) { setError(err instanceof Error ? err.message : "Link failed") }
+    } catch (err) { setXeroError(err instanceof Error ? err.message : "Link failed") }
     finally { setXeroLinking(false) }
   }
 
   const handleXeroPush = async () => {
-    setXeroPushing(true); setError("")
+    setXeroPushing(true); setXeroError("")
     try {
       const res = await fetch(`/api/admin/members/${id}/xero-push`, { method: "POST" })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Push failed") }
@@ -248,17 +257,17 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       setTimeout(() => setSuccess(""), 3000)
       setLoading(true)
       await fetchMember()
-    } catch (err) { setError(err instanceof Error ? err.message : "Push failed") }
+    } catch (err) { setXeroError(err instanceof Error ? err.message : "Push failed") }
     finally { setXeroPushing(false) }
   }
 
   const isSelf = session?.user?.id === id
 
   if (loading) return <div className="py-12 text-center"><p className="text-sm text-slate-500">Loading member details...</p></div>
-  if (error || !member) return (
+  if (pageError || !member) return (
     <div className="space-y-4">
       <Button variant="outline" onClick={() => router.push("/admin/members")}><ArrowLeft className="h-4 w-4 mr-2" />Back to Members</Button>
-      <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{error || "Member not found"}</div>
+      <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{pageError || "Member not found"}</div>
     </div>
   )
 
@@ -286,7 +295,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               </a>
             ) : (
               <>
-                <Button variant="outline" size="sm" onClick={() => { setXeroSearchOpen(true); setXeroSearchQuery(""); setXeroSearchResults([]) }}><Link2 className="h-4 w-4 mr-1" />Link to Xero</Button>
+                <Button variant="outline" size="sm" onClick={() => { setXeroSearchOpen(true); setXeroSearchQuery(""); setXeroSearchResults([]); setXeroError(""); }}><Link2 className="h-4 w-4 mr-1" />Link to Xero</Button>
                 <Button variant="outline" size="sm" onClick={handleXeroPush} disabled={xeroPushing}><Plus className="h-4 w-4 mr-1" />{xeroPushing ? "Creating..." : "Create in Xero"}</Button>
               </>
             )}
@@ -296,6 +305,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       </div>
 
       {success && <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">{success}</div>}
+      {xeroError && !xeroSearchOpen && <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{xeroError}</div>}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card><CardContent className="pt-6"><div className="flex items-center gap-3"><User className="h-8 w-8 text-slate-400" /><div><p className="text-xs text-slate-500 uppercase tracking-wide">Age Tier</p><p className="text-lg font-semibold">{member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()}</p>{member.dateOfBirth && <p className="text-xs text-slate-400">DOB: {fmtDate(member.dateOfBirth)}</p>}</div></div></CardContent></Card>
@@ -398,13 +408,14 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             <Input
               placeholder="Search by name or email..."
               value={xeroSearchQuery}
-              onChange={e => setXeroSearchQuery(e.target.value)}
+              onChange={e => { setXeroSearchQuery(e.target.value); if (xeroError) setXeroError("") }}
               onKeyDown={e => e.key === "Enter" && handleXeroSearch()}
             />
             <Button onClick={handleXeroSearch} disabled={xeroSearching || xeroSearchQuery.length < 2}>
               <Search className="h-4 w-4 mr-1" />{xeroSearching ? "..." : "Search"}
             </Button>
           </div>
+          {xeroError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{xeroError}</div>}
           <div className="max-h-64 overflow-y-auto space-y-2">
             {xeroSearchResults.length === 0 && !xeroSearching && xeroSearchQuery.length >= 2 && (
               <p className="text-sm text-slate-500 text-center py-4">No contacts found</p>

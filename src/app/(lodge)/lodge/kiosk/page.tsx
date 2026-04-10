@@ -249,9 +249,7 @@ export default function KioskPage() {
     assignments: assignments.filter((a) => a.choreTimeOfDay === tod),
   }));
 
-  const hasRoster = assignments.some(
-    (a) => a.status === "CONFIRMED" || a.status === "COMPLETED"
-  );
+  const hasAssignments = assignments.length > 0;
 
   if (loading) {
     return (
@@ -437,22 +435,24 @@ export default function KioskPage() {
 
         {/* Chore Roster Panel */}
         <section>
-          <h2 className="text-xl font-semibold mb-3 text-slate-300">
-            Chore Roster
-          </h2>
-          {!hasRoster && assignments.length === 0 ? (
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h2 className="text-xl font-semibold text-slate-300">
+              Chore Roster
+            </h2>
+            {canManageRoster && (
+              <a
+                href={`/lodge/roster/${date}/setup`}
+                className="inline-block bg-blue-600 hover:bg-blue-500 active:bg-blue-400 text-white text-sm font-semibold px-4 py-2 rounded-xl min-h-[44px] transition-colors whitespace-nowrap"
+              >
+                {hasAssignments ? "Manage Today&apos;s Roster" : "Set Up Today&apos;s Roster"}
+              </a>
+            )}
+          </div>
+          {!hasAssignments ? (
             <div className="bg-slate-800 rounded-xl p-6 text-center">
               <p className="text-slate-400 text-lg mb-4">
                 No roster set up for this date
               </p>
-              {canManageRoster && (
-                <a
-                  href={`/lodge/roster/${date}/setup`}
-                  className="inline-block bg-blue-600 hover:bg-blue-500 active:bg-blue-400 text-white text-lg font-semibold px-8 py-4 rounded-xl min-h-[56px] transition-colors"
-                >
-                  Set Up Today&apos;s Roster
-                </a>
-              )}
             </div>
           ) : (
             <div className="space-y-4">

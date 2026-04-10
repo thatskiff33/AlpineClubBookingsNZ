@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
 import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
+import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import {
@@ -67,11 +68,19 @@ export async function POST(
     // Get guests staying on this date
     const bookings = await prisma.booking.findMany({
       where: {
-        status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
-        checkIn: { lte: date },
-        checkOut: { gt: date },
+      status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
+      checkIn: { lte: date },
+      checkOut: { gt: date },
+    },
+      include: {
+        guests: {
+          include: {
+            member: {
+              select: { ageTier: true },
+            },
+          },
+        },
       },
-      include: { guests: true },
     });
 
     const guests: GuestInput[] = bookings.flatMap((b) =>
@@ -80,7 +89,7 @@ export async function POST(
         bookingId: b.id,
         firstName: g.firstName,
         lastName: g.lastName,
-        ageTier: g.ageTier,
+        ageTier: getBookingGuestDisplayAgeTier(g),
         isArriving: b.checkIn.getTime() === date.getTime(),
         isDeparting: b.checkOut.getTime() === nextDay.getTime(),
       }))

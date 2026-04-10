@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
@@ -46,7 +47,13 @@ export async function GET(
     where: { date },
     include: {
       choreTemplate: true,
-      bookingGuest: true,
+      bookingGuest: {
+        include: {
+          member: {
+            select: { ageTier: true },
+          },
+        },
+      },
     },
     orderBy: [
       { choreTemplate: { sortOrder: "asc" } },
@@ -66,7 +73,7 @@ export async function GET(
       guestName: a.bookingGuest
         ? `${a.bookingGuest.firstName} ${a.bookingGuest.lastName}`
         : null,
-      guestAgeTier: a.bookingGuest?.ageTier ?? null,
+      guestAgeTier: a.bookingGuest ? getBookingGuestDisplayAgeTier(a.bookingGuest) : null,
       bookingId: a.bookingId,
       status: a.status,
       completedAt: a.completedAt?.toISOString() ?? null,

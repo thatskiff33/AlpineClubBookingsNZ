@@ -433,6 +433,82 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
     expect(data.bookings[0].guests[0].arrivedAt).toBe(arrivedAt.toISOString());
     expect(data.bookings[0].guests[0].departedAt).toBeNull();
   });
+
+  it("prefers the linked member age tier over the booking snapshot", async () => {
+    mockPrisma.booking.findMany.mockResolvedValue([
+      {
+        id: "b1",
+        checkIn: new Date("2026-07-10"),
+        checkOut: new Date("2026-07-12"),
+        member: { firstName: "John", lastName: "Doe" },
+        guests: [
+          {
+            id: "g1",
+            firstName: "Malia",
+            lastName: "Hartley-Smith",
+            ageTier: "CHILD",
+            isMember: true,
+            arrivedAt: null,
+            departedAt: null,
+            member: { ageTier: "YOUTH" },
+          },
+        ],
+      },
+    ]);
+
+    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
+    const req = new Request("http://localhost/api/lodge/guests/2026-07-10") as any;
+
+    const res = await GET(req, makeParams());
+    const data = await res.json();
+
+    expect(data.bookings[0].guests[0].ageTier).toBe("YOUTH");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F6: GET /api/lodge/roster/[date]/chores
+// ---------------------------------------------------------------------------
+
+describe("F6: GET /api/lodge/roster/[date]/chores", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+    mockPrisma.booking.count.mockResolvedValue(0);
+  });
+
+  it("returns active templates for admins and hut leaders", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } });
+    mockPrisma.choreTemplate.findMany.mockResolvedValue([
+      { id: "ct1", name: "Kitchen", active: true, sortOrder: 1 },
+    ]);
+
+    const { GET } = await import("@/app/api/lodge/roster/[date]/chores/route");
+    const req = new Request("http://localhost/api/lodge/roster/2026-07-10/chores") as any;
+
+    const res = await GET(req, makeParams());
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.templates).toEqual([
+      { id: "ct1", name: "Kitchen", active: true, sortOrder: 1 },
+    ]);
+    expect(mockPrisma.choreTemplate.findMany).toHaveBeenCalledWith({
+      where: { active: true },
+      orderBy: { sortOrder: "asc" },
+    });
+  });
+
+  it("rejects lodge-only access for roster setup chores", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "lodge1", role: "LODGE" } });
+
+    const { GET } = await import("@/app/api/lodge/roster/[date]/chores/route");
+    const req = new Request("http://localhost/api/lodge/roster/2026-07-10/chores") as any;
+
+    const res = await GET(req, makeParams());
+
+    expect(res.status).toBe(403);
+  });
 });
 
 // ---------------------------------------------------------------------------
