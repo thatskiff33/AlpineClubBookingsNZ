@@ -44,9 +44,11 @@ interface BookingPeriod {
 function CancellationRulesEditor({
   rules,
   onChange,
+  disabled = false,
 }: {
   rules: PolicyRule[]
   onChange: (rules: PolicyRule[]) => void
+  disabled?: boolean
 }) {
   function addRule() {
     onChange([...rules, { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 }])
@@ -81,7 +83,8 @@ function CancellationRulesEditor({
                     onChange={(e) =>
                       updateRule(index, "daysBeforeStay", parseInt(e.target.value) || 0)
                     }
-                    className="w-24"
+                    className={`w-24 ${disabled ? "bg-slate-50 text-slate-700" : ""}`}
+                    disabled={disabled}
                   />
                   <span className="text-sm text-muted-foreground">days</span>
                 </div>
@@ -96,7 +99,8 @@ function CancellationRulesEditor({
                     onChange={(e) =>
                       updateRule(index, "refundPercentage", parseInt(e.target.value) || 0)
                     }
-                    className="w-24"
+                    className={`w-24 ${disabled ? "bg-slate-50 text-slate-700" : ""}`}
+                    disabled={disabled}
                   />
                   <span className="text-sm text-muted-foreground">%</span>
                 </div>
@@ -111,28 +115,33 @@ function CancellationRulesEditor({
                     onChange={(e) =>
                       updateRule(index, "creditRefundPercentage", parseInt(e.target.value) || 0)
                     }
-                    className="w-24"
+                    className={`w-24 ${disabled ? "bg-slate-50 text-slate-700" : ""}`}
+                    disabled={disabled}
                   />
                   <span className="text-sm text-muted-foreground">%</span>
                 </div>
               </TableCell>
               <TableCell>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => removeRule(index)}
-                  disabled={rules.length <= 1}
-                >
-                  Remove
-                </Button>
+                {!disabled && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeRule(index)}
+                    disabled={rules.length <= 1}
+                  >
+                    Remove
+                  </Button>
+                )}
               </TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
-      <Button variant="outline" size="sm" onClick={addRule}>
-        Add Rule
-      </Button>
+      {!disabled && (
+        <Button variant="outline" size="sm" onClick={addRule}>
+          Add Rule
+        </Button>
+      )}
     </div>
   )
 }
@@ -181,6 +190,9 @@ export default function BookingPoliciesPage() {
   const [defaultHoldDays, setDefaultHoldDays] = useState(7)
   const [loadingDefaults, setLoadingDefaults] = useState(true)
   const [savingDefaults, setSavingDefaults] = useState(false)
+  const [editingDefaults, setEditingDefaults] = useState(false)
+  const [savedDefaultRules, setSavedDefaultRules] = useState<PolicyRule[]>([])
+  const [savedDefaultHoldDays, setSavedDefaultHoldDays] = useState(7)
 
   // Booking periods state
   const [periods, setPeriods] = useState<BookingPeriod[]>([])
@@ -222,16 +234,18 @@ export default function BookingPoliciesPage() {
       const res = await fetch("/api/admin/booking-policies/cancellation")
       if (!res.ok) throw new Error("Failed to fetch policy")
       const data = await res.json()
-      if (data.rules && data.rules.length > 0) {
-        setDefaultRules(data.rules)
-      } else {
-        setDefaultRules([
-          { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100 },
-          { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50 },
-          { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
-        ])
-      }
-      setDefaultHoldDays(data.nonMemberHoldDays ?? 7)
+      const rules = data.rules && data.rules.length > 0
+        ? data.rules
+        : [
+            { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100 },
+            { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50 },
+            { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
+          ]
+      const holdDays = data.nonMemberHoldDays ?? 7
+      setDefaultRules(rules)
+      setDefaultHoldDays(holdDays)
+      setSavedDefaultRules(rules)
+      setSavedDefaultHoldDays(holdDays)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error")
     } finally {
@@ -273,6 +287,12 @@ export default function BookingPoliciesPage() {
 
   // ─── Save defaults ────────────────────────────────────────────────────────
 
+  function handleCancelDefaults() {
+    setDefaultRules(savedDefaultRules)
+    setDefaultHoldDays(savedDefaultHoldDays)
+    setEditingDefaults(false)
+  }
+
   async function handleSaveDefaults() {
     setSavingDefaults(true)
     setError("")
@@ -293,6 +313,9 @@ export default function BookingPoliciesPage() {
       const data = await res.json()
       setDefaultRules(data.rules)
       setDefaultHoldDays(data.nonMemberHoldDays)
+      setSavedDefaultRules(data.rules)
+      setSavedDefaultHoldDays(data.nonMemberHoldDays)
+      setEditingDefaults(false)
       setSuccess("Default policy saved")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error")
@@ -506,11 +529,18 @@ export default function BookingPoliciesPage() {
       {/* ── Default Policy ─────────────────────────────────────────────────── */}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Default Policy</CardTitle>
-          <CardDescription>
-            These rules apply to all bookings unless a date-specific period overrides them.
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Default Policy</CardTitle>
+            <CardDescription>
+              These rules apply to all bookings unless a date-specific period overrides them.
+            </CardDescription>
+          </div>
+          {!editingDefaults && (
+            <Button variant="outline" size="sm" onClick={() => setEditingDefaults(true)}>
+              Edit
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-2 max-w-xs">
@@ -523,7 +553,8 @@ export default function BookingPoliciesPage() {
                 max="30"
                 value={defaultHoldDays}
                 onChange={(e) => setDefaultHoldDays(parseInt(e.target.value) || 7)}
-                className="w-20"
+                className={`w-20 ${!editingDefaults ? "bg-slate-50 text-slate-700" : ""}`}
+                disabled={!editingDefaults}
               />
               <span className="text-sm text-muted-foreground">days before check-in</span>
             </div>
@@ -537,7 +568,7 @@ export default function BookingPoliciesPage() {
             <p className="text-sm text-muted-foreground mb-3">
               The first matching rule (highest days threshold) applies.
             </p>
-            <CancellationRulesEditor rules={defaultRules} onChange={setDefaultRules} />
+            <CancellationRulesEditor rules={defaultRules} onChange={setDefaultRules} disabled={!editingDefaults} />
           </div>
 
           <div>
@@ -545,12 +576,16 @@ export default function BookingPoliciesPage() {
             <PolicyPreview rules={defaultRules} />
           </div>
 
-          <div className="flex space-x-3">
-            <Button onClick={handleSaveDefaults} disabled={savingDefaults}>
-              {savingDefaults ? "Saving..." : "Save Default Policy"}
-            </Button>
-            <Button variant="outline" onClick={fetchDefaults}>Reset</Button>
-          </div>
+          {editingDefaults && (
+            <div className="flex space-x-3">
+              <Button onClick={handleSaveDefaults} disabled={savingDefaults}>
+                {savingDefaults ? "Saving..." : "Save Default Policy"}
+              </Button>
+              <Button variant="outline" onClick={handleCancelDefaults} disabled={savingDefaults}>
+                Cancel
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

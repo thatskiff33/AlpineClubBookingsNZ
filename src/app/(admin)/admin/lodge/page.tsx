@@ -25,6 +25,7 @@ export default function AdminLodgePage() {
   const [lastName, setLastName] = useState("");
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
@@ -40,6 +41,22 @@ export default function AdminLodgePage() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
+
+  function handleEdit() {
+    setEditing(true);
+    setSaveMessage(null);
+  }
+
+  function handleCancel() {
+    if (lodge) {
+      setEmail(lodge.email);
+      setFirstName(lodge.firstName);
+      setLastName(lodge.lastName);
+    }
+    setPassword("");
+    setEditing(false);
+    setSaveMessage(null);
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -73,6 +90,7 @@ export default function AdminLodgePage() {
       setFirstName(data.lodge.firstName);
       setLastName(data.lodge.lastName);
       setPassword("");
+      setEditing(false);
       setSaveMessage({ type: "success", text: "Lodge account updated successfully" });
     } catch {
       setSaveMessage({ type: "error", text: "Failed to save changes" });
@@ -116,8 +134,13 @@ export default function AdminLodgePage() {
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Lodge Account Settings</CardTitle>
+          {!editing && (
+            <Button variant="outline" size="sm" onClick={handleEdit}>
+              Edit
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -127,6 +150,8 @@ export default function AdminLodgePage() {
                 id="lodge-first"
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
+                disabled={!editing}
+                className={!editing ? "bg-slate-50 text-slate-700" : ""}
               />
             </div>
             <div className="space-y-1">
@@ -135,6 +160,8 @@ export default function AdminLodgePage() {
                 id="lodge-last"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
+                disabled={!editing}
+                className={!editing ? "bg-slate-50 text-slate-700" : ""}
               />
             </div>
           </div>
@@ -146,20 +173,24 @@ export default function AdminLodgePage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              disabled={!editing}
+              className={!editing ? "bg-slate-50 text-slate-700" : ""}
             />
           </div>
 
-          <div className="space-y-1">
-            <Label htmlFor="lodge-password">New Password</Label>
-            <Input
-              id="lodge-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Leave blank to keep current password"
-            />
-            <p className="text-xs text-slate-500">Minimum 6 characters</p>
-          </div>
+          {editing && (
+            <div className="space-y-1">
+              <Label htmlFor="lodge-password">New Password</Label>
+              <Input
+                id="lodge-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Leave blank to keep current password"
+              />
+              <p className="text-xs text-slate-500">Minimum 6 characters</p>
+            </div>
+          )}
 
           <div className="text-xs text-slate-500">
             <p>Created: {new Date(lodge.createdAt).toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" })}</p>
@@ -178,9 +209,16 @@ export default function AdminLodgePage() {
             </div>
           )}
 
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? "Saving..." : "Save Changes"}
-          </Button>
+          {editing && (
+            <div className="flex gap-3">
+              <Button onClick={handleSave} disabled={saving}>
+                {saving ? "Saving..." : "Save Changes"}
+              </Button>
+              <Button variant="outline" onClick={handleCancel} disabled={saving}>
+                Cancel
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

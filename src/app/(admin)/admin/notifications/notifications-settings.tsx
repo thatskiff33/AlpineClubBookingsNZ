@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
@@ -25,75 +26,94 @@ export function AdminNotificationSettings({
   initialAdmins: AdminNotificationUser[];
 }) {
   const [admins, setAdmins] = useState(initialAdmins);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [savedAdmins, setSavedAdmins] = useState(initialAdmins);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  const updatePreference = async (
-    memberId: string,
-    key: AdminNotificationPreferenceKey,
-    value: boolean
-  ) => {
-    const pendingKey = `${memberId}:${key}`;
-    const currentAdmin = admins.find((admin) => admin.id === memberId);
-    if (!currentAdmin) return;
+  function handleEdit() {
+    setEditing(true);
+  }
 
-    const previousValue = currentAdmin.preferences[key];
-    setSavingKey(pendingKey);
+  function handleCancel() {
+    setAdmins(savedAdmins.map((a) => ({ ...a, preferences: { ...a.preferences } })));
+    setEditing(false);
+  }
+
+  function togglePreference(memberId: string, key: AdminNotificationPreferenceKey) {
     setAdmins((current) =>
       current.map((admin) =>
         admin.id === memberId
           ? {
               ...admin,
-              preferences: { ...admin.preferences, [key]: value },
+              preferences: { ...admin.preferences, [key]: !admin.preferences[key] },
             }
           : admin
       )
     );
+  }
+
+  async function handleSave() {
+    setSaving(true);
+
+    // Find all changed preferences
+    const changes: Array<{ memberId: string; preferences: Partial<AdminNotificationPreferences> }> = [];
+    for (const admin of admins) {
+      const saved = savedAdmins.find((s) => s.id === admin.id);
+      if (!saved) continue;
+      const diff: Partial<AdminNotificationPreferences> = {};
+      for (const key of ADMIN_NOTIFICATION_PREFERENCE_KEYS) {
+        if (admin.preferences[key] !== saved.preferences[key]) {
+          diff[key] = admin.preferences[key];
+        }
+      }
+      if (Object.keys(diff).length > 0) {
+        changes.push({ memberId: admin.id, preferences: diff });
+      }
+    }
+
+    if (changes.length === 0) {
+      setEditing(false);
+      setSaving(false);
+      return;
+    }
 
     try {
-      const response = await fetch("/api/admin/notifications", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          memberId,
-          preferences: { [key]: value },
-        }),
+      // Save each changed admin's preferences
+      const results = await Promise.all(
+        changes.map(async ({ memberId, preferences }) => {
+          const response = await fetch("/api/admin/notifications", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ memberId, preferences }),
+          });
+          const data = await response.json().catch(() => null);
+          if (!response.ok) {
+            throw new Error(data?.error ?? "Failed to update notification preferences");
+          }
+          return { memberId, preferences: data.preferences as AdminNotificationPreferences };
+        })
+      );
+
+      // Update both admins and savedAdmins with server response
+      const updatedAdmins = admins.map((admin) => {
+        const result = results.find((r) => r.memberId === admin.id);
+        return result ? { ...admin, preferences: result.preferences } : admin;
       });
-
-      const data = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(data?.error ?? "Failed to update notification preferences");
-      }
-
-      setAdmins((current) =>
-        current.map((admin) =>
-          admin.id === memberId
-            ? {
-                ...admin,
-                preferences: data.preferences as AdminNotificationPreferences,
-              }
-            : admin
-        )
-      );
+      setAdmins(updatedAdmins);
+      setSavedAdmins(updatedAdmins.map((a) => ({ ...a, preferences: { ...a.preferences } })));
+      setEditing(false);
     } catch (error) {
-      setAdmins((current) =>
-        current.map((admin) =>
-          admin.id === memberId
-            ? {
-                ...admin,
-                preferences: { ...admin.preferences, [key]: previousValue },
-              }
-            : admin
-        )
-      );
+      // Revert on error
+      setAdmins(savedAdmins.map((a) => ({ ...a, preferences: { ...a.preferences } })));
       toast.error(
         error instanceof Error
           ? error.message
           : "Failed to update notification preferences"
       );
     } finally {
-      setSavingKey(null);
+      setSaving(false);
     }
-  };
+  }
 
   if (admins.length === 0) {
     return (
@@ -104,19 +124,32 @@ export function AdminNotificationSettings({
   }
 
   return (
-    <div className="grid gap-4 xl:grid-cols-2">
-      {admins.map((admin) => {
-        const adminSaving = savingKey?.startsWith(`${admin.id}:`);
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div />
+        {!editing ? (
+          <Button variant="outline" size="sm" onClick={handleEdit}>
+            Edit
+          </Button>
+        ) : (
+          <div className="flex gap-3">
+            <Button size="sm" onClick={handleSave} disabled={saving}>
+              {saving ? "Saving..." : "Save Changes"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleCancel} disabled={saving}>
+              Cancel
+            </Button>
+          </div>
+        )}
+      </div>
 
-        return (
+      <div className="grid gap-4 xl:grid-cols-2">
+        {admins.map((admin) => (
           <Card key={admin.id} className="border-slate-200 shadow-sm">
             <CardHeader className="pb-4">
               <CardTitle className="text-base">{admin.name}</CardTitle>
-              <CardDescription className="flex items-center justify-between gap-2">
+              <CardDescription>
                 <span>{admin.email}</span>
-                {adminSaving && (
-                  <span className="text-xs font-medium text-blue-600">Saving...</span>
-                )}
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-2">
@@ -132,10 +165,8 @@ export function AdminNotificationSettings({
                     <Checkbox
                       id={controlId}
                       checked={admin.preferences[key]}
-                      disabled={savingKey === controlId}
-                      onCheckedChange={(checked) =>
-                        updatePreference(admin.id, key, checked === true)
-                      }
+                      disabled={!editing}
+                      onCheckedChange={() => editing && togglePreference(admin.id, key)}
                     />
                     <div className="space-y-1">
                       <Label htmlFor={controlId} className="cursor-pointer text-sm font-medium">
@@ -150,8 +181,8 @@ export function AdminNotificationSettings({
               })}
             </CardContent>
           </Card>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }

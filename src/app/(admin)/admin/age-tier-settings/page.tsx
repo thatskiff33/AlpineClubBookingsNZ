@@ -22,7 +22,9 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
 
 export default function AgeTierSettingsPage() {
   const [settings, setSettings] = useState<AgeTierRow[]>([]);
+  const [savedSettings, setSavedSettings] = useState<AgeTierRow[]>([]);
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -32,7 +34,9 @@ export default function AgeTierSettingsPage() {
       .then((r) => r.json())
       .then((d) => {
         const rows = d.settings ?? [];
-        setSettings(rows.length > 0 ? rows : DEFAULT_SETTINGS);
+        const data = rows.length > 0 ? rows : DEFAULT_SETTINGS;
+        setSettings(data);
+        setSavedSettings(data);
       })
       .catch(() => setError("Failed to load settings"))
       .finally(() => setLoading(false));
@@ -76,6 +80,8 @@ export default function AgeTierSettingsPage() {
         setError(data.error ?? "Failed to save");
       } else {
         setSettings(data.settings);
+        setSavedSettings(data.settings);
+        setEditing(false);
         setSuccess(true);
       }
     } catch {
@@ -83,6 +89,13 @@ export default function AgeTierSettingsPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleCancel() {
+    setSettings(savedSettings);
+    setEditing(false);
+    setError(null);
+    setSuccess(false);
   }
 
   return (
@@ -96,8 +109,13 @@ export default function AgeTierSettingsPage() {
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Age Tier Boundaries</CardTitle>
+          {!editing && (
+            <Button variant="outline" size="sm" onClick={() => { setEditing(true); setSuccess(false); }}>
+              Edit
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="space-y-6">
           {loading && (
@@ -112,6 +130,8 @@ export default function AgeTierSettingsPage() {
                   <Input
                     value={s.label}
                     onChange={(e) => updateRow(s.tier, "label", e.target.value)}
+                    disabled={!editing}
+                    className={!editing ? "bg-slate-50 text-slate-700" : ""}
                   />
                 </div>
               </div>
@@ -122,6 +142,8 @@ export default function AgeTierSettingsPage() {
                   min={0}
                   value={s.minAge}
                   onChange={(e) => updateRow(s.tier, "minAge", parseInt(e.target.value, 10))}
+                  disabled={!editing}
+                  className={!editing ? "bg-slate-50 text-slate-700" : ""}
                 />
               </div>
               <div className="space-y-1">
@@ -156,9 +178,16 @@ export default function AgeTierSettingsPage() {
             </div>
           )}
 
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? "Saving..." : "Save Changes"}
-          </Button>
+          {editing && (
+            <div className="flex gap-3">
+              <Button onClick={handleSave} disabled={saving}>
+                {saving ? "Saving..." : "Save Changes"}
+              </Button>
+              <Button variant="outline" onClick={handleCancel} disabled={saving}>
+                Cancel
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

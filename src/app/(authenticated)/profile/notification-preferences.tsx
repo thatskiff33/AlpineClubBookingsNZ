@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 
 interface Preferences {
   bookingConfirmation: boolean;
@@ -41,49 +42,65 @@ const PREFERENCE_LABELS: Record<keyof Preferences, { label: string; description:
 
 export function NotificationPreferences() {
   const [prefs, setPrefs] = useState<Preferences | null>(null);
+  const [editPrefs, setEditPrefs] = useState<Preferences | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/notifications/preferences")
       .then((res) => res.json())
       .then((data) => {
         setPrefs(data);
+        setEditPrefs(data);
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, []);
 
-  const toggle = useCallback(
-    async (key: keyof Preferences) => {
-      if (!prefs) return;
-      const newValue = !prefs[key];
-      // Optimistic update
-      setPrefs({ ...prefs, [key]: newValue });
-      setSaving(key);
+  function handleEdit() {
+    setEditPrefs(prefs ? { ...prefs } : null);
+    setEditing(true);
+    setError(null);
+  }
 
-      try {
-        const res = await fetch("/api/notifications/preferences", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ [key]: newValue }),
-        });
-        if (res.ok) {
-          const updated = await res.json();
-          setPrefs(updated);
-        } else {
-          // Revert on error
-          setPrefs({ ...prefs, [key]: !newValue });
-        }
-      } catch {
-        // Revert on error
-        setPrefs({ ...prefs, [key]: !newValue });
-      } finally {
-        setSaving(null);
+  function handleCancel() {
+    setEditPrefs(prefs ? { ...prefs } : null);
+    setEditing(false);
+    setError(null);
+  }
+
+  function togglePref(key: keyof Preferences) {
+    if (!editPrefs) return;
+    setEditPrefs({ ...editPrefs, [key]: !editPrefs[key] });
+  }
+
+  async function handleSave() {
+    if (!editPrefs) return;
+    setSaving(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/notifications/preferences", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editPrefs),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setPrefs(updated);
+        setEditPrefs(updated);
+        setEditing(false);
+      } else {
+        setError("Failed to save preferences");
       }
-    },
-    [prefs]
-  );
+    } catch {
+      setError("Failed to save preferences");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -93,7 +110,7 @@ export function NotificationPreferences() {
     );
   }
 
-  if (!prefs) {
+  if (!prefs || !editPrefs) {
     return (
       <div className="text-sm text-red-500 py-4">
         Failed to load notification preferences.
@@ -101,8 +118,19 @@ export function NotificationPreferences() {
     );
   }
 
+  const displayPrefs = editing ? editPrefs : prefs;
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-muted-foreground">Manage your email notification preferences</h3>
+        {!editing && (
+          <Button variant="outline" size="sm" onClick={handleEdit}>
+            Edit
+          </Button>
+        )}
+      </div>
+
       {(Object.keys(PREFERENCE_LABELS) as Array<keyof Preferences>).map((key) => (
         <div key={key} className="flex items-center justify-between gap-4">
           <div className="space-y-0.5">
@@ -116,21 +144,38 @@ export function NotificationPreferences() {
           <button
             id={key}
             role="switch"
-            aria-checked={prefs[key]}
-            onClick={() => toggle(key)}
-            disabled={saving === key}
-            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
-              prefs[key] ? "bg-blue-600" : "bg-gray-200"
-            }`}
+            aria-checked={displayPrefs[key]}
+            onClick={() => editing && togglePref(key)}
+            disabled={!editing}
+            className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
+              editing ? "cursor-pointer" : ""
+            } ${displayPrefs[key] ? "bg-blue-600" : "bg-gray-200"}`}
           >
             <span
               className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                prefs[key] ? "translate-x-5" : "translate-x-0"
+                displayPrefs[key] ? "translate-x-5" : "translate-x-0"
               }`}
             />
           </button>
         </div>
       ))}
+
+      {error && (
+        <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {editing && (
+        <div className="flex gap-3 pt-2">
+          <Button onClick={handleSave} disabled={saving} size="sm">
+            {saving ? "Saving..." : "Save Changes"}
+          </Button>
+          <Button variant="outline" onClick={handleCancel} disabled={saving} size="sm">
+            Cancel
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
