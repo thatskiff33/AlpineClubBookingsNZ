@@ -23,15 +23,19 @@ export async function GET(request: NextRequest) {
     const { xero, tenantId } = await getAuthenticatedXeroClient();
 
     const response = await withXeroRetry(
-      () => xero.accountingApi.getContacts(
-        tenantId,
-        undefined, // ifModifiedSince
-        `Name.Contains("${q.replace(/"/g, "")}") || EmailAddress.Contains("${q.replace(/"/g, "")}")`,
-        undefined, // order
-        undefined, // iDs
-        1, // page
-        false // includeArchived
-      ),
+      () =>
+        xero.accountingApi.getContacts(
+          tenantId,
+          undefined, // ifModifiedSince
+          undefined, // where
+          undefined, // order
+          undefined, // iDs
+          1, // page
+          false, // includeArchived
+          true, // summaryOnly
+          q.replace(/"/g, ""),
+          20 // pageSize
+        ),
       { context: `searchContacts(${q})` }
     );
 
@@ -58,6 +62,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ contacts: results });
   } catch (err) {
     logger.error({ err }, "Error searching Xero contacts");
+    const statusCode = (err as { response?: { statusCode?: number } })?.response?.statusCode;
+    if (statusCode === 401 || statusCode === 403) {
+      return NextResponse.json(
+        { error: "Xero connection expired. Please reconnect Xero from the admin panel." },
+        { status: 401 }
+      );
+    }
+    if (statusCode === 429) {
+      return NextResponse.json(
+        { error: "Xero rate limit hit. Please wait a moment and try again." },
+        { status: 429 }
+      );
+    }
     return NextResponse.json({ error: "Failed to search Xero contacts" }, { status: 500 });
   }
 }

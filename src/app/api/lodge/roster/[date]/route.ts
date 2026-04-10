@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -36,7 +37,7 @@ export async function GET(
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 
-  const date = new Date(dateStr + "T00:00:00");
+  const date = parseDateOnly(dateStr);
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }

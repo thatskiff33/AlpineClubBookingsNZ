@@ -1,4 +1,8 @@
 import { prisma } from "./prisma";
+import {
+  addDaysDateOnly,
+  formatDateOnly,
+} from "./date-only";
 
 export type KioskTier = "admin" | "hut-leader" | "lodge" | "staying-guest" | "none";
 
@@ -8,13 +12,6 @@ export interface KioskAccess {
   canManageRoster: boolean;
   canMarkAttendance: boolean;
   canCompleteChores: boolean;
-}
-
-function formatDateStr(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
 }
 
 /**
@@ -30,8 +27,7 @@ export async function getKioskAccessTier(
 
   if (userRole === "MEMBER") {
     // Check hut leader assignment: (startDate - 1 day) <= date <= endDate
-    const nextDay = new Date(date);
-    nextDay.setDate(nextDay.getDate() + 1);
+    const nextDay = addDaysDateOnly(date, 1);
 
     const hutLeaderCount = await prisma.hutLeaderAssignment.count({
       where: {
@@ -84,9 +80,6 @@ export async function getKioskDateRange(
 ): Promise<{ minDate: string; maxDate: string } | null> {
   if (userRole === "ADMIN" || userRole === "LODGE") return null;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   // Gather all hut leader assignments
   const assignments = await prisma.hutLeaderAssignment.findMany({
     where: { memberId: userId },
@@ -106,9 +99,8 @@ export async function getKioskDateRange(
 
   for (const a of assignments) {
     // Day-before access
-    const start = new Date(a.startDate);
-    start.setDate(start.getDate() - 1);
-    const end = new Date(a.endDate);
+    const start = addDaysDateOnly(a.startDate, -1);
+    const end = a.endDate;
 
     if (!minDate || start < minDate) minDate = start;
     if (!maxDate || end > maxDate) maxDate = end;
@@ -116,9 +108,8 @@ export async function getKioskDateRange(
 
   for (const b of bookings) {
     // Day-before access
-    const start = new Date(b.checkIn);
-    start.setDate(start.getDate() - 1);
-    const end = new Date(b.checkOut);
+    const start = addDaysDateOnly(b.checkIn, -1);
+    const end = b.checkOut;
 
     if (!minDate || start < minDate) minDate = start;
     if (!maxDate || end > maxDate) maxDate = end;
@@ -127,8 +118,8 @@ export async function getKioskDateRange(
   if (!minDate || !maxDate) return null;
 
   return {
-    minDate: formatDateStr(minDate),
-    maxDate: formatDateStr(maxDate),
+    minDate: formatDateOnly(minDate),
+    maxDate: formatDateOnly(maxDate),
   };
 }
 

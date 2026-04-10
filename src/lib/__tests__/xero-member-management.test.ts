@@ -58,6 +58,7 @@ import { logAudit } from "@/lib/audit";
 import { GET as getMembers } from "@/app/api/admin/members/route";
 import { POST as xeroUnlink } from "@/app/api/admin/members/[id]/xero-unlink/route";
 import { POST as xeroLink } from "@/app/api/admin/members/[id]/xero-link/route";
+import { GET as searchXeroContacts } from "@/app/api/admin/xero/search-contacts/route";
 
 const mockedAuth = vi.mocked(auth);
 const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
@@ -208,6 +209,103 @@ describe("Xero Member Management", () => {
       const res = await getMembers(req);
       // Should still succeed — filter just not applied
       expect(res.status).toBe(200);
+    });
+
+    it("accepts the legacy search query parameter for promo assignment lookups", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.member.count).mockResolvedValue(0);
+
+      const req = new NextRequest(
+        "http://localhost/api/admin/members?search=alice&pageSize=10&active=true"
+      );
+      const res = await getMembers(req);
+
+      expect(res.status).toBe(200);
+
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0] as any;
+      expect(call.where.AND).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            OR: expect.arrayContaining([
+              { firstName: { contains: "alice", mode: "insensitive" } },
+              { lastName: { contains: "alice", mode: "insensitive" } },
+              { email: { contains: "alice", mode: "insensitive" } },
+            ]),
+          }),
+        ])
+      );
+    });
+  });
+
+  describe("GET /api/admin/xero/search-contacts", () => {
+    it("uses the SDK searchTerm parameter and annotates linked contacts", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      const getContactsMock = vi.fn().mockResolvedValue({
+        body: {
+          contacts: [
+            {
+              contactID: "xero-1",
+              name: "Alice Example",
+              emailAddress: "alice@example.com",
+            },
+            {
+              contactID: "xero-2",
+              name: "Bob Example",
+              emailAddress: "bob@example.com",
+            },
+          ],
+        },
+      });
+      mockGetAuthenticatedXeroClient.mockResolvedValue({
+        xero: { accountingApi: { getContacts: getContactsMock } },
+        tenantId: "tenant-1",
+      });
+      mockWithXeroRetry.mockImplementation(async (fn) => fn());
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        {
+          xeroContactId: "xero-1",
+          firstName: "Alice",
+          lastName: "Member",
+        },
+      ] as any);
+
+      const req = new NextRequest(
+        "http://localhost/api/admin/xero/search-contacts?q=alice"
+      );
+      const res = await searchXeroContacts(req);
+
+      expect(res.status).toBe(200);
+      expect(mockWithXeroRetry).toHaveBeenCalledTimes(1);
+
+      expect(getContactsMock).toHaveBeenCalledWith(
+        "tenant-1",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        1,
+        false,
+        true,
+        "alice",
+        20
+      );
+
+      const data = await res.json();
+      expect(data.contacts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            contactId: "xero-1",
+            isLinked: true,
+            linkedMemberName: "Alice Member",
+          }),
+          expect.objectContaining({
+            contactId: "xero-2",
+            isLinked: false,
+            linkedMemberName: null,
+          }),
+        ])
+      );
     });
   });
 

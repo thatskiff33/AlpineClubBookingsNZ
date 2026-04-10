@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
@@ -23,7 +24,7 @@ export async function GET(
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 
-  const date = new Date(dateStr + "T00:00:00");
+  const date = parseDateOnly(dateStr);
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }
@@ -38,7 +39,7 @@ export async function GET(
   for (const rec of lastRosteredRecords) {
     if (rec._max.date) {
       lastRosteredDates[rec.choreTemplateId] =
-        rec._max.date.toISOString().split("T")[0];
+        formatDateOnly(rec._max.date);
     }
   }
 

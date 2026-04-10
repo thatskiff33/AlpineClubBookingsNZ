@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getKioskAccessInfo } from "@/lib/kiosk-access";
+import { parseDateOnly } from "@/lib/date-only";
 import { z } from "zod";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid or missing date parameter" }, { status: 400 });
   }
 
-  const date = new Date(dateStr + "T00:00:00");
+  const date = parseDateOnly(dateStr);
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }

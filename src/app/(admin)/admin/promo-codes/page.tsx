@@ -130,7 +130,7 @@ export default function PromoCodesPage() {
     setSearchingMembers(true);
     try {
       const res = await fetch(
-        `/api/admin/members?search=${encodeURIComponent(query)}&pageSize=10&active=true`
+        `/api/admin/members?q=${encodeURIComponent(query)}&pageSize=10&active=true`
       );
       if (!res.ok) throw new Error("Failed to search members");
       const data = await res.json();

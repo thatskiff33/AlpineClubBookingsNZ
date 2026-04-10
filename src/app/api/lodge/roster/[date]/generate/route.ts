@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import {
@@ -40,7 +41,7 @@ export async function POST(
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 
-  const date = new Date(dateStr + "T00:00:00");
+  const date = parseDateOnly(dateStr);
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }
@@ -61,8 +62,7 @@ export async function POST(
   }
 
   try {
-    const nextDay = new Date(date);
-    nextDay.setDate(nextDay.getDate() + 1);
+    const nextDay = addDaysDateOnly(date, 1);
 
     // Get guests staying on this date
     const bookings = await prisma.booking.findMany({
@@ -111,8 +111,7 @@ export async function POST(
     }));
 
     // 4-day lookback for guest chore history
-    const lookbackDate = new Date(date);
-    lookbackDate.setDate(lookbackDate.getDate() - 4);
+    const lookbackDate = addDaysDateOnly(date, -4);
 
     const historyRecords = await prisma.choreAssignment.findMany({
       where: {

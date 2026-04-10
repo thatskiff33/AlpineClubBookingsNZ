@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { eachDayOfInterval, addDays } from "date-fns";
+import {
+  addDaysDateOnly,
+  formatDateOnly,
+  getTodayDateOnly,
+} from "@/lib/date-only";
 
 /**
  * GET /api/admin/hut-leaders/unassigned-dates
@@ -13,11 +17,8 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const endDate = addDays(today, 14);
-
-  const days = eachDayOfInterval({ start: today, end: endDate });
+  const today = getTodayDateOnly();
+  const endDate = addDaysDateOnly(today, 14);
 
   // Get all hut leader assignments covering the next 14 days
   const assignments = await prisma.hutLeaderAssignment.findMany({
@@ -60,16 +61,14 @@ export async function GET() {
     return { bookingCount, guestCount };
   }
 
-  function fmt(d: Date) { return d.toISOString().split("T")[0]; }
-
   const unassignedDates: { date: string; bookingCount: number; guestCount: number }[] = [];
 
-  for (const day of days) {
+  for (let day = today; day.getTime() <= endDate.getTime(); day = addDaysDateOnly(day, 1)) {
     if (isDateCovered(day)) continue;
     const stats = getBookingStats(day);
     if (stats.bookingCount > 0) {
       unassignedDates.push({
-        date: fmt(day),
+        date: formatDateOnly(day),
         bookingCount: stats.bookingCount,
         guestCount: stats.guestCount,
       });

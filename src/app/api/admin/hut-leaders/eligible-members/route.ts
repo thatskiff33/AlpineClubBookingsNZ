@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 
 /**
  * GET /api/admin/hut-leaders/eligible-members?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
@@ -25,8 +26,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "startDate must be before or equal to endDate" }, { status: 400 });
   }
 
-  const rangeStart = new Date(startDate + "T00:00:00");
-  const rangeEnd = new Date(endDate + "T00:00:00");
+  const rangeStart = parseDateOnly(startDate);
+  const rangeEnd = parseDateOnly(endDate);
 
   // Find adult booking guests whose booking overlaps the date range
   const guests = await prisma.bookingGuest.findMany({
@@ -112,8 +113,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  function fmt(d: Date) { return d.toISOString().split("T")[0]; }
-
   const members = Array.from(memberBookings.values())
     .map((m) => {
       // Find earliest checkIn and latest checkOut as suggested dates
@@ -125,10 +124,10 @@ export async function GET(req: NextRequest) {
         firstName: m.firstName,
         lastName: m.lastName,
         email: m.email,
-        bookingCheckIn: fmt(earliestCheckIn),
-        bookingCheckOut: fmt(latestCheckOut),
-        suggestedStartDate: fmt(earliestCheckIn),
-        suggestedEndDate: fmt(latestCheckOut),
+        bookingCheckIn: formatDateOnly(earliestCheckIn),
+        bookingCheckOut: formatDateOnly(latestCheckOut),
+        suggestedStartDate: formatDateOnly(earliestCheckIn),
+        suggestedEndDate: formatDateOnly(latestCheckOut),
       };
     })
     .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));

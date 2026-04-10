@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
@@ -25,13 +26,12 @@ export async function GET(
     return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
   }
 
-  const date = new Date(dateStr + "T00:00:00");
+  const date = parseDateOnly(dateStr);
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }
 
-  const nextDay = new Date(date);
-  nextDay.setDate(nextDay.getDate() + 1);
+  const nextDay = addDaysDateOnly(date, 1);
 
   // Guests staying on this date: checkIn <= date < checkOut
   const bookings = await prisma.booking.findMany({

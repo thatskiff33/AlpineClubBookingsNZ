@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -47,10 +48,10 @@ export async function PUT(
 
   const updateData: Record<string, Date> = {};
   if (parsed.data.startDate) {
-    updateData.startDate = new Date(parsed.data.startDate + "T00:00:00");
+    updateData.startDate = parseDateOnly(parsed.data.startDate);
   }
   if (parsed.data.endDate) {
-    updateData.endDate = new Date(parsed.data.endDate + "T00:00:00");
+    updateData.endDate = parseDateOnly(parsed.data.endDate);
   }
 
   // Validate start <= end
@@ -79,8 +80,8 @@ export async function PUT(
     const overlapDays = calculateOverlapDays(finalStart, finalEnd, existing.startDate, existing.endDate);
     if (overlapDays > 1) {
       const name = `${existing.member.firstName} ${existing.member.lastName}`;
-      const start = existing.startDate.toISOString().split("T")[0];
-      const end = existing.endDate.toISOString().split("T")[0];
+      const start = formatDateOnly(existing.startDate);
+      const end = formatDateOnly(existing.endDate);
       return NextResponse.json(
         { error: `Assignment overlaps with ${name}'s assignment (${start} to ${end}) by ${overlapDays} days. Maximum 1 day overlap is allowed for handover.` },
         { status: 409 }

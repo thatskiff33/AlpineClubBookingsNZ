@@ -5,6 +5,7 @@ import { allocateChores, ChoreTemplateInput, GuestInput, ChoreHistoryEntry } fro
 import { sendChoreRosterEmail } from "@/lib/email"
 import { createGuestChoreToken } from "@/lib/guest-chore-token"
 import { getEffectiveEmail } from "@/lib/member-utils"
+import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only"
 import { z } from "zod"
 import logger from "@/lib/logger"
 
@@ -46,7 +47,7 @@ export async function GET(
   }
 
   const { date: dateStr } = await params
-  const date = new Date(dateStr + "T00:00:00")
+  const date = parseDateOnly(dateStr)
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 })
   }
@@ -67,8 +68,7 @@ export async function GET(
     },
   })
 
-  const nextDay = new Date(date)
-  nextDay.setDate(nextDay.getDate() + 1)
+  const nextDay = addDaysDateOnly(date, 1)
 
   const guests: GuestInput[] = bookings.flatMap((b) =>
     b.guests.map((g) => ({
@@ -127,8 +127,7 @@ export async function GET(
       }))
 
       // 4-day lookback for chore history
-      const lookbackDate = new Date(date)
-      lookbackDate.setDate(lookbackDate.getDate() - 4)
+      const lookbackDate = addDaysDateOnly(date, -4)
 
       const historyRecords = await tx.choreAssignment.findMany({
         where: {
@@ -200,8 +199,7 @@ export async function GET(
   })
 
   // Get 4-day history for each guest (for display)
-  const lookbackDate = new Date(date)
-  lookbackDate.setDate(lookbackDate.getDate() - 4)
+  const lookbackDate = addDaysDateOnly(date, -4)
 
   const guestHistory = await prisma.choreAssignment.findMany({
     where: {
@@ -220,7 +218,7 @@ export async function GET(
       historyByGuest[h.bookingGuestId] = []
     }
     historyByGuest[h.bookingGuestId].push({
-      date: h.date.toISOString().split("T")[0],
+      date: formatDateOnly(h.date),
       choreName: h.choreTemplate.name,
     })
   }
@@ -262,7 +260,7 @@ export async function PUT(
   }
 
   const { date: dateStr } = await params
-  const date = new Date(dateStr + "T00:00:00")
+  const date = parseDateOnly(dateStr)
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 })
   }

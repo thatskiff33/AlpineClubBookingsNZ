@@ -883,40 +883,41 @@ export async function getXeroContactGroupMemberships(
     return {};
   }
 
-  const targetContactIds = new Set(contactIds);
   const memberships: Record<string, Array<{ id: string; name: string }>> = {};
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const response = await withXeroRetry(
-    () => xero.accountingApi.getContactGroups(tenantId),
-    { context: "getXeroContactGroupMemberships" }
-  );
-  const groups = (response.body.contactGroups ?? []).filter(
-    (group) =>
-      group.contactGroupID &&
-      group.name &&
-      group.status === ContactGroup.StatusEnum.ACTIVE
-  );
+  const uniqueContactIds = Array.from(new Set(contactIds));
+  const batchSize = 50;
 
-  for (const group of groups) {
-    const detail = await withXeroRetry(
-      () => xero.accountingApi.getContactGroup(tenantId, group.contactGroupID!),
-      { context: `getContactGroupMembers(${group.name})` }
+  for (let i = 0; i < uniqueContactIds.length; i += batchSize) {
+    const batch = uniqueContactIds.slice(i, i + batchSize);
+    const response = await withXeroRetry(
+      () =>
+        xero.accountingApi.getContacts(
+          tenantId,
+          undefined, // ifModifiedSince
+          undefined, // where
+          undefined, // order
+          batch
+        ),
+      { context: `getXeroContactGroupMemberships(batch ${Math.floor(i / batchSize) + 1})` }
     );
-    const contacts = detail.body.contactGroups?.[0]?.contacts ?? [];
 
-    for (const contact of contacts) {
-      if (!contact.contactID || !targetContactIds.has(contact.contactID)) {
+    for (const contact of response.body.contacts ?? []) {
+      if (!contact.contactID) {
         continue;
       }
 
-      if (!memberships[contact.contactID]) {
-        memberships[contact.contactID] = [];
-      }
-
-      memberships[contact.contactID].push({
-        id: group.contactGroupID!,
-        name: group.name!,
-      });
+      memberships[contact.contactID] = (contact.contactGroups ?? [])
+        .filter(
+          (group) =>
+            group.contactGroupID &&
+            group.name &&
+            group.status === ContactGroup.StatusEnum.ACTIVE
+        )
+        .map((group) => ({
+          id: group.contactGroupID!,
+          name: group.name!,
+        }));
     }
   }
 

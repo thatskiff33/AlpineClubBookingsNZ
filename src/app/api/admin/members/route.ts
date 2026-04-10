@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
   }
 
   const sp = req.nextUrl.searchParams;
-  const q = sp.get("q") || undefined;
+  const q = sp.get("q") || sp.get("search") || undefined;
 
   // Pagination
   const page = Math.max(1, parseInt(sp.get("page") || "1", 10) || 1);
