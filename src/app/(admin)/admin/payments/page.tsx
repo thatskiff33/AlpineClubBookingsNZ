@@ -25,7 +25,6 @@ import { Badge } from "@/components/ui/badge";
 import { DollarSign, CreditCard, TrendingUp, BarChart2, ExternalLink, FileText } from "lucide-react";
 import { paymentStatusClass } from "@/lib/status-colors";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 function formatCents(cents: number): string {
   return "$" + (cents / 100).toFixed(2);

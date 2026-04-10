@@ -110,7 +110,6 @@ export default function HutLeadersPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.startDate, formData.endDate]);
 
   async function handleCreate(e: React.FormEvent) {

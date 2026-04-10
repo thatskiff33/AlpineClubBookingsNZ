@@ -3,10 +3,12 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
   calculateBookingPrice,
-  calculatePromoDiscount,
   type SeasonRateData,
 } from "@/lib/pricing";
-import { validatePromoCodeRules } from "@/lib/promo";
+import {
+  calculatePromoDiscountForGuestRates,
+  validatePromoCodeRules,
+} from "@/lib/promo";
 import { processRefund } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
@@ -42,7 +44,13 @@ export async function DELETE(
           guests: true,
           payment: true,
           member: true,
-          promoRedemption: { include: { promoCode: true } },
+          promoRedemption: {
+            include: {
+              promoCode: {
+                include: { assignments: { select: { memberId: true } } },
+              },
+            },
+          },
         },
       });
 
@@ -124,6 +132,7 @@ export async function DELETE(
       const guestsForPricing = remainingGuests.map((g) => ({
         ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
         isMember: g.isMember,
+        memberId: g.memberId ?? null,
       }));
 
       const priceBreakdown = calculateBookingPrice(
@@ -132,6 +141,10 @@ export async function DELETE(
         guestsForPricing,
         seasonRateData
       );
+      const guestNightRates = guestsForPricing.map((guest, index) => ({
+        memberId: guest.memberId ?? null,
+        perNightRates: priceBreakdown.guests[index].perNightCents,
+      }));
 
       const newTotalPriceCents = priceBreakdown.totalPriceCents;
 
@@ -145,7 +158,10 @@ export async function DELETE(
           promo,
           { memberId: booking.memberId },
           new Date(),
-          0
+          0,
+          promo.assignments.length > 0
+            ? promo.assignments.map((assignment) => assignment.memberId)
+            : null
         );
 
         if (validationError) {
@@ -158,17 +174,7 @@ export async function DELETE(
             data: { currentRedemptions: { decrement: 1 } },
           });
         } else {
-          const allPerNightRates = guestsForPricing.flatMap((guest) => {
-            const breakdown = calculateBookingPrice(
-              booking.checkIn,
-              booking.checkOut,
-              [guest],
-              seasonRateData
-            );
-            return breakdown.guests[0].perNightCents;
-          });
-
-          newDiscountCents = calculatePromoDiscount(
+          newDiscountCents = calculatePromoDiscountForGuestRates(
             {
               type: promo.type,
               valueCents: promo.valueCents,
@@ -176,7 +182,11 @@ export async function DELETE(
               freeNights: promo.freeNights,
             },
             newTotalPriceCents,
-            allPerNightRates
+            booking.memberId,
+            guestNightRates,
+            promo.assignments.length > 0
+              ? promo.assignments.map((assignment) => assignment.memberId)
+              : null
           );
 
           await tx.promoRedemption.update({

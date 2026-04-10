@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
-import { LODGE_CAPACITY } from "@/lib/capacity";
 import { auth } from "@/lib/auth";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 

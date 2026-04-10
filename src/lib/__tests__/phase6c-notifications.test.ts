@@ -191,9 +191,9 @@ describe("N-09: Bulk communication validation", () => {
     vi.resetModules();
   });
 
-  it("sendSchema strips newlines from subject to prevent header injection", () => {
+  it("sendSchema strips newlines from subject to prevent header injection", async () => {
     // Test the Zod schema directly by importing it indirectly
-    const { z } = require("zod");
+    const { z } = await import("zod");
     const sendSchema = z.object({
       subject: z
         .string()
@@ -219,8 +219,8 @@ describe("N-09: Bulk communication validation", () => {
     }
   });
 
-  it("rejects subject over 200 characters", () => {
-    const { z } = require("zod");
+  it("rejects subject over 200 characters", async () => {
+    const { z } = await import("zod");
     const sendSchema = z.object({
       subject: z.string().min(1).max(200),
       body: z.string().min(1).max(10000),
@@ -236,8 +236,8 @@ describe("N-09: Bulk communication validation", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects body over 10000 characters", () => {
-    const { z } = require("zod");
+  it("rejects body over 10000 characters", async () => {
+    const { z } = await import("zod");
     const sendSchema = z.object({
       subject: z.string().min(1).max(200),
       body: z.string().min(1).max(10000),
@@ -253,8 +253,8 @@ describe("N-09: Bulk communication validation", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects invalid recipientFilter", () => {
-    const { z } = require("zod");
+  it("rejects invalid recipientFilter", async () => {
+    const { z } = await import("zod");
     const sendSchema = z.object({
       subject: z.string().min(1).max(200),
       body: z.string().min(1).max(10000),

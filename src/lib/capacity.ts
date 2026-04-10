@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { BookingStatus, Prisma } from "@prisma/client";
+import { BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 
 type PrismaClient = typeof prisma;

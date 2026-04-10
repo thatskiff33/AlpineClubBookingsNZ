@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { bookingStatusClass } from "@/lib/status-colors";
@@ -41,8 +41,32 @@ export default function AdminWaitlistPage() {
   }, []);
 
   useEffect(() => {
-    loadEntries();
-  }, [loadEntries]);
+    let cancelled = false;
+
+    async function initialLoad() {
+      try {
+        const res = await fetch("/api/admin/waitlist");
+        if (!res.ok || cancelled) {
+          return;
+        }
+
+        const data = await res.json();
+        if (!cancelled) {
+          setEntries(data.entries);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void initialLoad();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleForceConfirm(bookingId: string, allowOverbook = false) {
     setForceConfirming(bookingId);

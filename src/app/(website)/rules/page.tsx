@@ -15,8 +15,6 @@ function formatPolicyRow(
 ) {
   const days = policy.daysBeforeStay;
   const refund = policy.refundPercentage;
-  const nextPolicy = all[index + 1];
-
   let noticePeriod: string;
   if (index === 0) {
     noticePeriod = `${days} or more days before stay`;

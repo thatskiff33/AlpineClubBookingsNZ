@@ -1,6 +1,6 @@
 import { PromoCodeType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { calculatePromoDiscount } from "@/lib/pricing";
+import { calculatePromoDiscount, type PromoCodeInput } from "@/lib/pricing";
 
 export interface PromoValidationResult {
   valid: boolean;
@@ -21,6 +21,35 @@ export interface BookingDetailsForPromo {
   totalPriceCents: number;
   perNightRates: number[];
   memberId: string;
+  guestNightRates?: GuestNightRatesForPromo[];
+}
+
+export interface GuestNightRatesForPromo {
+  memberId: string | null;
+  perNightRates: number[];
+}
+
+export function calculatePromoDiscountForGuestRates(
+  promo: PromoCodeInput,
+  totalPriceCents: number,
+  bookingMemberId: string,
+  guestNightRates: GuestNightRatesForPromo[] | undefined,
+  assignedMemberIds: string[] | null = null,
+  fallbackPerNightRates?: number[]
+): number {
+  let perNightRates = fallbackPerNightRates;
+
+  if (guestNightRates) {
+    if (promo.type === "FREE_NIGHTS" && assignedMemberIds && assignedMemberIds.length > 0) {
+      perNightRates = guestNightRates
+        .filter((guest) => guest.memberId === bookingMemberId)
+        .flatMap((guest) => guest.perNightRates);
+    } else {
+      perNightRates = guestNightRates.flatMap((guest) => guest.perNightRates);
+    }
+  }
+
+  return calculatePromoDiscount(promo, totalPriceCents, perNightRates);
 }
 
 /**
@@ -41,7 +70,7 @@ export async function validateAndApplyPromoCode(
   }
 
   // At this point promoCode is guaranteed non-null
-  const discountCents = calculatePromoDiscount(
+  const discountCents = calculatePromoDiscountForGuestRates(
     {
       type: promoCode!.type,
       valueCents: promoCode!.valueCents,
@@ -49,6 +78,9 @@ export async function validateAndApplyPromoCode(
       freeNights: promoCode!.freeNights,
     },
     bookingDetails.totalPriceCents,
+    bookingDetails.memberId,
+    bookingDetails.guestNightRates,
+    null,
     bookingDetails.perNightRates
   );
 
@@ -174,7 +206,7 @@ export async function validatePromoCodeFull(
     return { valid: false, error: validationError };
   }
 
-  const discountCents = calculatePromoDiscount(
+  const discountCents = calculatePromoDiscountForGuestRates(
     {
       type: promoCode.type,
       valueCents: promoCode.valueCents,
@@ -182,6 +214,9 @@ export async function validatePromoCodeFull(
       freeNights: promoCode.freeNights,
     },
     bookingDetails.totalPriceCents,
+    bookingDetails.memberId,
+    bookingDetails.guestNightRates,
+    assignedMemberIds,
     bookingDetails.perNightRates
   );
 

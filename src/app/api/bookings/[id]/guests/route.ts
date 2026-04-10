@@ -4,10 +4,12 @@ import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
 import {
   calculateBookingPrice,
-  calculatePromoDiscount,
   type SeasonRateData,
 } from "@/lib/pricing";
-import { validatePromoCodeRules } from "@/lib/promo";
+import {
+  calculatePromoDiscountForGuestRates,
+  validatePromoCodeRules,
+} from "@/lib/promo";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { createXeroSupplementaryInvoice } from "@/lib/xero";
@@ -70,7 +72,13 @@ export async function POST(
           guests: true,
           payment: true,
           member: true,
-          promoRedemption: { include: { promoCode: true } },
+          promoRedemption: {
+            include: {
+              promoCode: {
+                include: { assignments: { select: { memberId: true } } },
+              },
+            },
+          },
         },
       });
 
@@ -149,6 +157,7 @@ export async function POST(
       const newGuestInputs = newGuests.map((g) => ({
         ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
         isMember: g.isMember,
+        memberId: g.memberId ?? null,
       }));
 
       let newGuestPrice;
@@ -188,6 +197,7 @@ export async function POST(
         ...booking.guests.map((g) => ({
           ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
           isMember: g.isMember,
+          memberId: g.memberId ?? null,
         })),
         ...newGuestInputs,
       ];
@@ -198,6 +208,10 @@ export async function POST(
         allGuestsForPricing,
         seasonRateData
       );
+      const guestNightRates = allGuestsForPricing.map((guest, index) => ({
+        memberId: guest.memberId ?? null,
+        perNightRates: fullPriceBreakdown.guests[index].perNightCents,
+      }));
 
       const newTotalPriceCents = fullPriceBreakdown.totalPriceCents;
 
@@ -211,7 +225,10 @@ export async function POST(
           promo,
           { memberId: booking.memberId },
           new Date(),
-          0
+          0,
+          promo.assignments.length > 0
+            ? promo.assignments.map((assignment) => assignment.memberId)
+            : null
         );
 
         if (validationError) {
@@ -224,17 +241,7 @@ export async function POST(
             data: { currentRedemptions: { decrement: 1 } },
           });
         } else {
-          const allPerNightRates = allGuestsForPricing.flatMap((guest) => {
-            const breakdown = calculateBookingPrice(
-              booking.checkIn,
-              booking.checkOut,
-              [guest],
-              seasonRateData
-            );
-            return breakdown.guests[0].perNightCents;
-          });
-
-          newDiscountCents = calculatePromoDiscount(
+          newDiscountCents = calculatePromoDiscountForGuestRates(
             {
               type: promo.type,
               valueCents: promo.valueCents,
@@ -242,7 +249,11 @@ export async function POST(
               freeNights: promo.freeNights,
             },
             newTotalPriceCents,
-            allPerNightRates
+            booking.memberId,
+            guestNightRates,
+            promo.assignments.length > 0
+              ? promo.assignments.map((assignment) => assignment.memberId)
+              : null
           );
 
           await tx.promoRedemption.update({

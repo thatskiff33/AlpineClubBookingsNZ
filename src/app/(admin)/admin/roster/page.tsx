@@ -71,12 +71,11 @@ export default function RosterPage() {
   const [includeNonEssential, setIncludeNonEssential] = useState<boolean | null>(null)
   const [sendingEmail, setSendingEmail] = useState(false)
 
-  const fetchRoster = useCallback(async (date: string, regenerate = false) => {
+  const fetchRoster = useCallback(async (date: string) => {
     setLoading(true)
     setError("")
     try {
       let url = `/api/admin/roster/${date}?`
-      if (regenerate) url += "regenerate=true&"
       if (includeNonEssential !== null) url += `includeNonEssential=${includeNonEssential}`
       const res = await fetch(url)
       if (!res.ok) {
@@ -116,6 +115,7 @@ export default function RosterPage() {
   }
 
   async function handleRemove(assignmentId: string) {
+    if (!confirm("Remove this person from the chore?")) return
     setSaving(true)
     try {
       const res = await fetch(`/api/admin/roster/${selectedDate}`, {
@@ -124,6 +124,46 @@ export default function RosterPage() {
         body: JSON.stringify({ action: "remove", assignmentId }),
       })
       if (!res.ok) throw new Error("Failed to remove")
+      fetchRoster(selectedDate)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleRegenerate() {
+    const hasConfirmedAssignments =
+      roster?.assignments.some(
+        (assignment) =>
+          assignment.status === "CONFIRMED" || assignment.status === "COMPLETED"
+      ) ?? false
+
+    if (
+      hasConfirmedAssignments &&
+      !confirm(
+        "This will replace the current confirmed roster with a new editable suggested roster. Continue?"
+      )
+    ) {
+      return
+    }
+
+    setSaving(true)
+    setError("")
+    try {
+      const res = await fetch(`/api/admin/roster/${selectedDate}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "regenerate",
+          includeNonEssential: includeNonEssential ?? undefined,
+          overwriteConfirmed: hasConfirmedAssignments || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to regenerate roster")
+      }
       fetchRoster(selectedDate)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error")
@@ -295,8 +335,8 @@ export default function RosterPage() {
             </div>
             <Button
               variant="outline"
-              onClick={() => fetchRoster(selectedDate, true)}
-              disabled={loading}
+              onClick={handleRegenerate}
+              disabled={loading || saving}
             >
               Regenerate Roster
             </Button>
@@ -412,7 +452,7 @@ export default function RosterPage() {
                                   onChange={(e) => {
                                     if (e.target.value) handleReassign(a.id, e.target.value)
                                   }}
-                                  disabled={saving || a.status === "CONFIRMED"}
+                                  disabled={saving}
                                   className="flex h-8 w-full max-w-[200px] rounded-md border border-input bg-transparent px-2 py-1 text-sm"
                                 >
                                   <option value="">Unassigned</option>
@@ -451,16 +491,14 @@ export default function RosterPage() {
                                 </Badge>
                               </TableCell>
                               <TableCell className="text-right">
-                                {a.status === "SUGGESTED" && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => handleRemove(a.id)}
-                                    disabled={saving}
-                                  >
-                                    Remove
-                                  </Button>
-                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleRemove(a.id)}
+                                  disabled={saving}
+                                >
+                                  Remove
+                                </Button>
                               </TableCell>
                             </TableRow>
                           ))}

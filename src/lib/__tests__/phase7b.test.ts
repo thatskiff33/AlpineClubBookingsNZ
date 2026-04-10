@@ -1,11 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   allocateChores,
-  filterChoresByFrequency,
   isEligibleForTimeOfDay,
   ChoreTemplateInput,
   GuestInput,
-  ChoreHistoryEntry,
 } from "../chore-allocator";
 
 // ---------------------------------------------------------------------------

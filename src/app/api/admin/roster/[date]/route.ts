@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
+import type { Prisma } from "@prisma/client"
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { allocateChores, ChoreTemplateInput, GuestInput, ChoreHistoryEntry } from "@/lib/chore-allocator"
 import { sendChoreRosterEmail } from "@/lib/email"
 import { createGuestChoreToken } from "@/lib/guest-chore-token"
 import { getEffectiveEmail } from "@/lib/member-utils"
-import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "@/lib/date-only"
+import { addDaysDateOnly, formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only"
 import { z } from "zod"
 import logger from "@/lib/logger"
 
@@ -25,9 +26,109 @@ const rosterActionSchema = z.discriminatedUnion("action", [
     action: z.literal("remove"),
     assignmentId: z.string().min(1),
   }),
+  z.object({
+    action: z.literal("regenerate"),
+    includeNonEssential: z.boolean().optional(),
+    overwriteConfirmed: z.boolean().optional(),
+  }),
   z.object({ action: z.literal("confirm") }),
   z.object({ action: z.literal("email") }),
 ])
+
+async function getGuestsForDate(date: Date): Promise<GuestInput[]> {
+  const bookings = await prisma.booking.findMany({
+    where: {
+      status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
+      checkIn: { lte: date },
+      checkOut: { gt: date },
+    },
+    include: {
+      guests: true,
+    },
+  })
+
+  const nextDay = addDaysDateOnly(date, 1)
+
+  return bookings.flatMap((b) =>
+    b.guests.map((g) => ({
+      id: g.id,
+      bookingId: b.id,
+      firstName: g.firstName,
+      lastName: g.lastName,
+      ageTier: g.ageTier,
+      isArriving: b.checkIn.getTime() === date.getTime(),
+      isDeparting: b.checkOut.getTime() === nextDay.getTime(),
+    }))
+  )
+}
+
+async function buildSuggestedAllocations(
+  tx: Prisma.TransactionClient,
+  date: Date,
+  guests: GuestInput[],
+  includeNonEssential: boolean | undefined
+) {
+  const choreTemplates = await tx.choreTemplate.findMany({
+    where: { active: true },
+    orderBy: { sortOrder: "asc" },
+  })
+
+  const templateInputs: ChoreTemplateInput[] = choreTemplates.map((t) => ({
+    id: t.id,
+    name: t.name,
+    recommendedPeopleMin: t.recommendedPeopleMin,
+    recommendedPeopleMax: t.recommendedPeopleMax,
+    isEssential: t.isEssential,
+    ageRestriction: t.ageRestriction,
+    minAge: t.minAge,
+    sortOrder: t.sortOrder,
+    timeOfDay: t.timeOfDay,
+    frequencyMode: t.frequencyMode,
+    frequencyDays: t.frequencyDays,
+    frequencyDaysOfWeek: t.frequencyDaysOfWeek,
+  }))
+
+  const lookbackDate = addDaysDateOnly(date, -4)
+
+  const historyRecords = await tx.choreAssignment.findMany({
+    where: {
+      date: { gte: lookbackDate, lt: date },
+      bookingGuestId: { in: guests.map((g) => g.id) },
+    },
+  })
+
+  const history: ChoreHistoryEntry[] = historyRecords
+    .filter((h) => h.bookingGuestId !== null)
+    .map((h) => ({
+      guestId: h.bookingGuestId!,
+      choreTemplateId: h.choreTemplateId,
+      date: h.date,
+    }))
+
+  const lastRosteredRecords = await tx.choreAssignment.groupBy({
+    by: ["choreTemplateId"],
+    where: { date: { lt: date } },
+    _max: { date: true },
+  })
+  const choreLastRosteredDates = new Map<string, Date>()
+  for (const rec of lastRosteredRecords) {
+    if (rec._max.date) {
+      choreLastRosteredDates.set(rec.choreTemplateId, rec._max.date)
+    }
+  }
+
+  const options: {
+    includeNonEssential?: boolean
+    choreLastRosteredDates?: Map<string, Date>
+    currentDate?: Date
+  } = { choreLastRosteredDates, currentDate: date }
+
+  if (includeNonEssential !== undefined) {
+    options.includeNonEssential = includeNonEssential
+  }
+
+  return allocateChores(templateInputs, guests, history, options)
+}
 
 /**
  * GET /api/admin/roster/[date]
@@ -47,6 +148,9 @@ export async function GET(
   }
 
   const { date: dateStr } = await params
+  if (!isDateOnlyString(dateStr)) {
+    return NextResponse.json({ error: "Invalid date format" }, { status: 400 })
+  }
   const date = parseDateOnly(dateStr)
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 })
@@ -56,31 +160,7 @@ export async function GET(
   const regenerate = searchParams.get("regenerate") === "true"
   const includeNonEssentialParam = searchParams.get("includeNonEssential")
 
-  // Get all confirmed guests staying on this date
-  const bookings = await prisma.booking.findMany({
-    where: {
-      status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
-      checkIn: { lte: date },
-      checkOut: { gt: date },
-    },
-    include: {
-      guests: true,
-    },
-  })
-
-  const nextDay = addDaysDateOnly(date, 1)
-
-  const guests: GuestInput[] = bookings.flatMap((b) =>
-    b.guests.map((g) => ({
-      id: g.id,
-      bookingId: b.id,
-      firstName: g.firstName,
-      lastName: g.lastName,
-      ageTier: g.ageTier,
-      isArriving: b.checkIn.getTime() === date.getTime(),
-      isDeparting: b.checkOut.getTime() === nextDay.getTime(),
-    }))
-  )
+  const guests = await getGuestsForDate(date)
 
   // Wrap check + create in a transaction to prevent concurrent duplicate assignments
   const existing = await prisma.$transaction(async (tx) => {
@@ -105,68 +185,12 @@ export async function GET(
     const hasConfirmed = current.some((a) => a.status === "CONFIRMED" || a.status === "COMPLETED")
 
     if (!hasSuggested && !hasConfirmed) {
-      // Auto-suggest
-      const choreTemplates = await tx.choreTemplate.findMany({
-        where: { active: true },
-        orderBy: { sortOrder: "asc" },
-      })
-
-      const templateInputs: ChoreTemplateInput[] = choreTemplates.map((t) => ({
-        id: t.id,
-        name: t.name,
-        recommendedPeopleMin: t.recommendedPeopleMin,
-        recommendedPeopleMax: t.recommendedPeopleMax,
-        isEssential: t.isEssential,
-        ageRestriction: t.ageRestriction,
-        minAge: t.minAge,
-        sortOrder: t.sortOrder,
-        timeOfDay: t.timeOfDay,
-        frequencyMode: t.frequencyMode,
-        frequencyDays: t.frequencyDays,
-        frequencyDaysOfWeek: t.frequencyDaysOfWeek,
-      }))
-
-      // 4-day lookback for chore history
-      const lookbackDate = addDaysDateOnly(date, -4)
-
-      const historyRecords = await tx.choreAssignment.findMany({
-        where: {
-          date: { gte: lookbackDate, lt: date },
-          bookingGuestId: { in: guests.map((g) => g.id) },
-        },
-      })
-
-      const history: ChoreHistoryEntry[] = historyRecords
-        .filter((h) => h.bookingGuestId !== null)
-        .map((h) => ({
-          guestId: h.bookingGuestId!,
-          choreTemplateId: h.choreTemplateId,
-          date: h.date,
-        }))
-
-      // Query most recent assignment date per chore template for frequency filtering (F11)
-      const lastRosteredRecords = await tx.choreAssignment.groupBy({
-        by: ["choreTemplateId"],
-        where: { date: { lt: date } },
-        _max: { date: true },
-      })
-      const choreLastRosteredDates = new Map<string, Date>()
-      for (const rec of lastRosteredRecords) {
-        if (rec._max.date) {
-          choreLastRosteredDates.set(rec.choreTemplateId, rec._max.date)
-        }
-      }
-
-      const options: {
-        includeNonEssential?: boolean;
-        choreLastRosteredDates?: Map<string, Date>;
-        currentDate?: Date;
-      } = { choreLastRosteredDates, currentDate: date }
-      if (includeNonEssentialParam !== null) {
-        options.includeNonEssential = includeNonEssentialParam === "true"
-      }
-
-      const allocations = allocateChores(templateInputs, guests, history, options)
+      const allocations = await buildSuggestedAllocations(
+        tx,
+        date,
+        guests,
+        includeNonEssentialParam !== null ? includeNonEssentialParam === "true" : undefined
+      )
 
       // Save allocations
       if (allocations.length > 0) {
@@ -260,6 +284,9 @@ export async function PUT(
   }
 
   const { date: dateStr } = await params
+  if (!isDateOnlyString(dateStr)) {
+    return NextResponse.json({ error: "Invalid date format" }, { status: 400 })
+  }
   const date = parseDateOnly(dateStr)
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 })
@@ -305,6 +332,62 @@ export async function PUT(
     }
     case "remove": {
       await prisma.choreAssignment.delete({ where: { id: data.assignmentId } })
+      break
+    }
+    case "regenerate": {
+      const regenerateResult = await prisma.$transaction(async (tx) => {
+        const currentAssignments = await tx.choreAssignment.findMany({
+          where: { date },
+          select: { status: true },
+        })
+
+        const hasConfirmed = currentAssignments.some(
+          (assignment) =>
+            assignment.status === "CONFIRMED" || assignment.status === "COMPLETED"
+        )
+
+        if (hasConfirmed && !data.overwriteConfirmed) {
+          return { conflict: true as const }
+        }
+
+        const guests = await getGuestsForDate(date)
+        const deleteWhere = hasConfirmed
+          ? { date }
+          : { date, status: "SUGGESTED" as const }
+
+        await tx.choreAssignment.deleteMany({ where: deleteWhere })
+
+        const allocations = await buildSuggestedAllocations(
+          tx,
+          date,
+          guests,
+          data.includeNonEssential
+        )
+
+        if (allocations.length > 0) {
+          await tx.choreAssignment.createMany({
+            data: allocations.map((allocation) => ({
+              choreTemplateId: allocation.choreTemplateId,
+              bookingId: allocation.bookingId,
+              bookingGuestId: allocation.bookingGuestId,
+              date,
+              status: "SUGGESTED",
+            })),
+          })
+        }
+
+        return { conflict: false as const }
+      })
+
+      if (regenerateResult.conflict) {
+        return NextResponse.json(
+          {
+            error:
+              "Roster already confirmed. Confirm overwrite to regenerate it.",
+          },
+          { status: 409 }
+        )
+      }
       break
     }
     case "confirm": {

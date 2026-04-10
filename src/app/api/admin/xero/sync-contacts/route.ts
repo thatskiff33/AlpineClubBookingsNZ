@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { syncContactsFromXero } from "@/lib/xero";
+import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
+import logger from "@/lib/logger";
 
 /**
  * POST /api/admin/xero/sync-contacts
@@ -18,7 +20,10 @@ export async function POST() {
     const report = await syncContactsFromXero();
     return NextResponse.json({ syncReport: report });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Contact sync failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const xeroError = getXeroApiErrorInfo(error, "Contact sync failed");
+    if (!xeroError.handled) {
+      logger.error({ err: error }, "Failed to sync contacts from Xero");
+    }
+    return NextResponse.json({ error: xeroError.message }, { status: xeroError.status });
   }
 }

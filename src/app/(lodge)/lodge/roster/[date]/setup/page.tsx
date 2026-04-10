@@ -148,9 +148,6 @@ export default function RosterSetupWizard() {
   const [frequencyInfoMap, setFrequencyInfoMap] = useState<
     Map<string, FrequencyInfo>
   >(new Map());
-  const [lastRosteredDates, setLastRosteredDates] = useState<
-    Record<string, string>
-  >({});
 
   // Step 3 data
   const [allocations, setAllocations] = useState<Allocation[]>([]);
@@ -202,8 +199,6 @@ export default function RosterSetupWizard() {
           const lrData = await lastRosteredRes.json();
           lrDates = lrData.lastRosteredDates ?? {};
         }
-        setLastRosteredDates(lrDates);
-
         // Compute frequency info and pre-select
         const freqMap = new Map<string, FrequencyInfo>();
         const preSelected = new Set<string>();
@@ -304,6 +299,10 @@ export default function RosterSetupWizard() {
     );
   };
 
+  const removeAllocation = (allocationIndex: number) => {
+    setAllocations((prev) => prev.filter((_, index) => index !== allocationIndex));
+  };
+
   const isGuestEligible = (guest: typeof allGuests[0], ageRestriction: string, minAge: number | null) => {
     if (ageRestriction === "ADULTS_ONLY" && guest.ageTier !== "ADULT") return false;
     if (minAge !== null) {
@@ -311,6 +310,48 @@ export default function RosterSetupWizard() {
       if (guest.ageTier === "YOUTH" && minAge > 17) return false;
     }
     return true;
+  };
+
+  const getEligibleGuests = (choreTemplateId: string) => {
+    const template = templates.find((t) => t.id === choreTemplateId);
+    return allGuests.filter((guest) =>
+      isGuestEligible(
+        guest,
+        template?.ageRestriction ?? "NONE",
+        template?.minAge ?? null
+      )
+    );
+  };
+
+  const addAllocation = (choreTemplateId: string) => {
+    const template = templates.find((t) => t.id === choreTemplateId);
+    if (!template) return;
+
+    const eligibleGuests = getEligibleGuests(choreTemplateId);
+    if (eligibleGuests.length === 0) return;
+
+    const assignedGuestIds = new Set(
+      allocations
+        .filter((allocation) => allocation.choreTemplateId === choreTemplateId)
+        .map((allocation) => allocation.bookingGuestId)
+    );
+    const guest =
+      eligibleGuests.find((candidate) => !assignedGuestIds.has(candidate.id)) ??
+      eligibleGuests[0];
+
+    setAllocations((prev) => [
+      ...prev,
+      {
+        choreTemplateId: template.id,
+        choreTemplateName: template.name,
+        choreTimeOfDay: template.timeOfDay,
+        choreSortOrder: template.sortOrder,
+        bookingGuestId: guest.id,
+        guestName: `${guest.firstName} ${guest.lastName}`,
+        guestAgeTier: guest.ageTier,
+        bookingId: guest.bookingId,
+      },
+    ]);
   };
 
   // ---------------------------------------------------------------------------
@@ -610,60 +651,55 @@ export default function RosterSetupWizard() {
             {allocations.length !== 1 ? "s" : ""})
           </h2>
 
-          {allocations.length === 0 ? (
-            <div className="bg-slate-800 rounded-xl p-6 text-center text-slate-400 text-lg">
-              No allocations generated. Check chore selections and guest
-              eligibility.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {groupedAllocations
-                .filter((g) => g.allocations.length > 0)
-                .map((group) => (
-                  <div key={group.tod}>
-                    <h3 className="text-base font-medium text-slate-400 mb-2">
-                      {group.label}
-                    </h3>
-                    <div className="space-y-2">
-                      {/* Group by chore template */}
-                      {Object.entries(
-                        group.allocations.reduce(
-                          (acc, a, idx) => {
-                            if (!acc[a.choreTemplateId]) {
-                              acc[a.choreTemplateId] = {
-                                name: a.choreTemplateName,
-                                items: [],
-                              };
-                            }
-                            // Find the global index for reassignment
-                            const globalIdx = allocations.indexOf(a) !== -1 ? allocations.indexOf(a) : idx;
-                            acc[a.choreTemplateId].items.push({
-                              allocation: a,
-                              globalIndex: globalIdx,
-                            });
-                            return acc;
-                          },
-                          {} as Record<
-                            string,
-                            {
-                              name: string;
-                              items: Array<{
-                                allocation: Allocation;
-                                globalIndex: number;
-                              }>;
-                            }
-                          >
-                        )
-                      ).map(([choreId, chore]) => (
+          <div className="space-y-4">
+            {groupedTemplates
+              .map((group) => ({
+                ...group,
+                templates: group.templates.filter((template) =>
+                  selectedChoreIds.has(template.id)
+                ),
+              }))
+              .filter((g) => g.templates.length > 0)
+              .map((group) => (
+                <div key={group.tod}>
+                  <h3 className="text-base font-medium text-slate-400 mb-2">
+                    {group.label}
+                  </h3>
+                  <div className="space-y-2">
+                    {group.templates.map((template) => {
+                      const items = allocations
+                        .map((allocation, index) => ({ allocation, globalIndex: index }))
+                        .filter(
+                          ({ allocation }) =>
+                            allocation.choreTemplateId === template.id
+                        );
+                      const eligibleGuests = getEligibleGuests(template.id);
+
+                      return (
                         <div
-                          key={choreId}
+                          key={template.id}
                           className="bg-slate-800 rounded-xl p-4"
                         >
-                          <h4 className="font-semibold text-lg mb-2">
-                            {chore.name}
-                          </h4>
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <h4 className="font-semibold text-lg">
+                              {template.name}
+                            </h4>
+                            <button
+                              type="button"
+                              onClick={() => addAllocation(template.id)}
+                              disabled={eligibleGuests.length === 0}
+                              className="bg-slate-700 hover:bg-slate-600 disabled:bg-slate-700/50 disabled:text-slate-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+                            >
+                              + Add Person
+                            </button>
+                          </div>
                           <div className="space-y-2">
-                            {chore.items.map(({ allocation, globalIndex }) => (
+                            {items.length === 0 ? (
+                              <div className="bg-slate-700/30 rounded-lg px-4 py-3 text-slate-400">
+                                No one assigned yet. Add someone to keep this chore on the roster.
+                              </div>
+                            ) : (
+                              items.map(({ allocation, globalIndex }) => (
                               <div
                                 key={`${allocation.choreTemplateId}-${allocation.bookingGuestId}-${globalIndex}`}
                                 className="flex items-center gap-3 bg-slate-700/50 rounded-lg px-4 py-3 min-h-[56px]"
@@ -675,27 +711,30 @@ export default function RosterSetupWizard() {
                                   }
                                   className="flex-1 bg-slate-600 text-white rounded-lg px-3 py-2 text-lg min-h-[44px]"
                                 >
-                                  {allGuests
-                                    .filter((g) => {
-                                      const tmpl = templates.find((t) => t.id === choreId);
-                                      return isGuestEligible(g, tmpl?.ageRestriction ?? "NONE", tmpl?.minAge ?? null);
-                                    })
-                                    .map((g) => (
+                                  {eligibleGuests.map((g) => (
                                     <option key={g.id} value={g.id}>
                                       {g.firstName} {g.lastName} ({g.ageTier})
                                     </option>
                                   ))}
                                 </select>
+                                <button
+                                  type="button"
+                                  onClick={() => removeAllocation(globalIndex)}
+                                  className="bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+                                >
+                                  Remove
+                                </button>
                               </div>
-                            ))}
+                              ))
+                            )}
                           </div>
                         </div>
-                      ))}
-                    </div>
+                      );
+                    })}
                   </div>
-                ))}
-            </div>
-          )}
+                </div>
+              ))}
+          </div>
 
           <div className="mt-6 flex justify-between gap-2 flex-wrap">
             <button

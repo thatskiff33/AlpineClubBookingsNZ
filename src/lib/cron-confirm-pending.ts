@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
-import { checkCapacity, LODGE_CAPACITY } from "./capacity";
+import { checkCapacity } from "./capacity";
 import { chargePaymentMethod } from "./stripe";
 import { isXeroConnected, createXeroInvoiceForBooking } from "./xero";
 import {

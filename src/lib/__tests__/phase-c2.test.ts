@@ -36,6 +36,7 @@ const mockGetAuthenticatedXeroClient = vi.fn();
 const mockWithXeroRetry = vi.fn();
 const mockCreateXeroContactForMember = vi.fn();
 const mockSyncContactsFromXero = vi.fn();
+const mockFindDuplicateContacts = vi.fn();
 class MockXeroContactValidationError extends Error {
   missingFields: string[];
 
@@ -51,6 +52,7 @@ vi.mock("@/lib/xero", () => ({
   createXeroContactForMember: (id: string) => mockCreateXeroContactForMember(id),
   XeroContactValidationError: MockXeroContactValidationError,
   syncContactsFromXero: () => mockSyncContactsFromXero(),
+  findDuplicateContacts: () => mockFindDuplicateContacts(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -359,6 +361,47 @@ describe("#29: Sync Contacts route returns syncReport", () => {
     expect(data.syncReport.skippedNoEmail).toHaveLength(1);
     expect(data.syncReport.skippedOther).toHaveLength(1);
     expect(data.syncReport.errors).toHaveLength(0);
+  });
+
+  it("returns a 429 daily-limit message when Xero limit is reached", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    const err = new Error("Xero daily API limit reached. Retry after 123 seconds.");
+    err.name = "XeroDailyLimitError";
+    mockSyncContactsFromXero.mockRejectedValue(err);
+
+    const { POST } = await import("@/app/api/admin/xero/sync-contacts/route");
+    const res = await POST();
+
+    expect(res.status).toBe(429);
+    await expect(res.json()).resolves.toEqual({
+      error: "Xero daily API limit reached. Please try again tomorrow.",
+    });
+  });
+});
+
+describe("#27: Duplicate scan route surfaces Xero rate limits", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns a 429 daily-limit message for raw Xero SDK errors", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockFindDuplicateContacts.mockRejectedValue({
+      response: {
+        statusCode: 429,
+        headers: {
+          "x-rate-limit-problem": "day",
+        },
+      },
+    });
+
+    const { GET } = await import("@/app/api/admin/xero/duplicate-contacts/route");
+    const res = await GET();
+
+    expect(res.status).toBe(429);
+    await expect(res.json()).resolves.toEqual({
+      error: "Xero daily API limit reached. Please try again tomorrow.",
+    });
   });
 });
 

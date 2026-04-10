@@ -33,7 +33,6 @@ import {
   sendBumpedNotifications,
 } from "../bumping";
 import { sendBookingBumpedEmail } from "../email";
-import { LODGE_CAPACITY } from "../capacity";
 
 // Helper mock for promoRedemption (returns null = no promo used)
 const mockPromoRedemption = {
@@ -253,7 +252,7 @@ describe("Bumping Algorithm", () => {
       const findManyCallCount = { count: 0 };
       const txMock = {
         booking: {
-          findMany: vi.fn().mockImplementation((args: { where: { status: string | { in: string[] } } }) => {
+          findMany: vi.fn().mockImplementation(() => {
             findManyCallCount.count++;
             if (findManyCallCount.count === 1) {
               // getOccupiedBedsPerNight - returns all overlapping

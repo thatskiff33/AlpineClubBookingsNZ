@@ -208,7 +208,15 @@ export default function MembersPage() {
   const setFilter = (key: keyof Filters, value: string) => { setFilters(f => ({ ...f, [key]: value })); setPage(1) }
   const clearFilters = () => { setFilters(emptyFilters); setPage(1) }
   const activeFilterCount = Object.values(filters).filter(Boolean).length
-  const toggleSelect = (id: string) => setSelectedIds(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleSelect = (id: string) => setSelectedIds(s => {
+    const n = new Set(s)
+    if (n.has(id)) {
+      n.delete(id)
+    } else {
+      n.add(id)
+    }
+    return n
+  })
   const toggleSelectAll = () => { if (selectedIds.size === members.length) setSelectedIds(new Set()); else setSelectedIds(new Set(members.map(m => m.id))) }
   const openCreateDialog = () => {
     setEditingMember(null)

@@ -101,7 +101,7 @@ export async function PUT(
 
   const season = await prisma.$transaction(async (tx) => {
     // Update season fields
-    const updated = await tx.season.update({
+    await tx.season.update({
       where: { id },
       data: {
         ...seasonData,

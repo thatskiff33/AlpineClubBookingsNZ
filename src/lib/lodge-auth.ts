@@ -1,6 +1,6 @@
 import { auth } from "./auth";
 import { getKioskAccessTier, type KioskTier } from "./kiosk-access";
-import { parseDateOnly } from "./date-only";
+import { getTodayDateOnly, isDateOnlyString, parseDateOnly } from "./date-only";
 
 /**
  * Shared auth check for lodge API endpoints.
@@ -13,8 +13,11 @@ export async function checkLodgeAuth(dateStr?: string) {
     return { session: null, tier: "none" as KioskTier, error: "Unauthorised" as const, status: 401 as const };
   }
 
-  const date = dateStr ? parseDateOnly(dateStr) : new Date();
-  if (!dateStr) date.setHours(0, 0, 0, 0);
+  if (dateStr && !isDateOnlyString(dateStr)) {
+    return { session, tier: "none" as KioskTier, error: "Invalid date format" as const, status: 400 as const };
+  }
+
+  const date = dateStr ? parseDateOnly(dateStr) : getTodayDateOnly();
 
   const tier = await getKioskAccessTier(session.user.id, session.user.role, date);
 

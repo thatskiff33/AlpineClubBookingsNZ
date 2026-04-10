@@ -51,7 +51,6 @@ export async function POST(request: NextRequest) {
 
   // Handle events
   const events = payload.events ?? [];
-  const webhookStart = Date.now();
 
   for (const event of events) {
     const { eventType, eventCategory, resourceId } = event;

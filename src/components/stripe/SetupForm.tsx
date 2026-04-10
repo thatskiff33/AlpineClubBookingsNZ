@@ -8,7 +8,6 @@ import {
 } from "@stripe/react-stripe-js";
 
 interface SetupFormProps {
-  bookingId: string;
   onSuccess: (setupIntentId: string) => void;
   onError: (error: string) => void;
   returnUrl: string;
@@ -20,7 +19,6 @@ interface SetupFormProps {
  * without charging immediately.
  */
 export default function SetupForm({
-  bookingId,
   onSuccess,
   onError,
   returnUrl,

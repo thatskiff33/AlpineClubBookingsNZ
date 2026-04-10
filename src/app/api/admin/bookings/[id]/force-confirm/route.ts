@@ -2,11 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { BookingStatus } from "@prisma/client";
-import { checkCapacity, LODGE_CAPACITY } from "@/lib/capacity";
+import { checkCapacity } from "@/lib/capacity";
 import { logAudit } from "@/lib/audit";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
-import { eachDayOfInterval, subDays } from "date-fns";
 import { z } from "zod";
 
 const forceConfirmSchema = z.object({

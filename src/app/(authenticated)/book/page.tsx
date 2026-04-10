@@ -40,6 +40,13 @@ interface SubscriptionStatus {
   invoiceNumber: string | null;
 }
 
+const UNKNOWN_SUBSCRIPTION_STATUS: SubscriptionStatus = {
+  status: "UNKNOWN",
+  seasonDisplay: "",
+  invoiceUrl: null,
+  invoiceNumber: null,
+};
+
 export default function BookPage() {
   const router = useRouter();
   const { data: session } = useSession();
@@ -82,36 +89,41 @@ export default function BookPage() {
 
   // Fetch subscription status for the current season
   useEffect(() => {
-    setSubscriptionLoading(true);
+    let cancelled = false;
+
     fetch("/api/member/subscription-status")
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
+        if (cancelled) {
+          return;
+        }
         if (data) {
           setSubscriptionStatus(data);
           setSubscriptionInvoiceUrl(data.invoiceUrl ?? null);
           setSubscriptionInvoiceNumber(data.invoiceNumber ?? null);
         } else {
-          setSubscriptionStatus({
-            status: "UNKNOWN",
-            seasonDisplay: "",
-            invoiceUrl: null,
-            invoiceNumber: null,
-          });
+          setSubscriptionStatus(UNKNOWN_SUBSCRIPTION_STATUS);
           setSubscriptionInvoiceUrl(null);
           setSubscriptionInvoiceNumber(null);
         }
       })
       .catch(() => {
-        setSubscriptionStatus({
-          status: "UNKNOWN",
-          seasonDisplay: "",
-          invoiceUrl: null,
-          invoiceNumber: null,
-        });
+        if (cancelled) {
+          return;
+        }
+        setSubscriptionStatus(UNKNOWN_SUBSCRIPTION_STATUS);
         setSubscriptionInvoiceUrl(null);
         setSubscriptionInvoiceNumber(null);
       })
-      .finally(() => setSubscriptionLoading(false));
+      .finally(() => {
+        if (!cancelled) {
+          setSubscriptionLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function addFamilyMemberAsGuest(fm: FamilyMember) {

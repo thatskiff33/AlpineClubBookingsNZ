@@ -279,6 +279,16 @@ describe("#24: Lodge Auth Tier-Based Restrictions", () => {
       expect(result.tier).toBe("staying-guest");
       expect(result.session).toBeTruthy();
     });
+
+    it("returns 400 for invalid date strings", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "admin-1", role: "ADMIN" },
+      });
+      const { checkLodgeAuth } = await import("@/lib/lodge-auth");
+      const result = await checkLodgeAuth("not-a-date");
+      expect(result.error).toBe("Invalid date format");
+      expect(result.status).toBe(400);
+    });
   });
 });
 

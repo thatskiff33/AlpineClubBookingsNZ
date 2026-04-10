@@ -6,7 +6,7 @@
  * QF-4: Audit log action-to-URL mapping resolves correctly
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 
 // ─── QF-1: Cancel Preview Logic ─────────────────────────────────────────────
 

@@ -128,7 +128,7 @@ export async function PUT(
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    const result = await tx.promoCode.update({
+    await tx.promoCode.update({
       where: { id },
       data: {
         ...(data.code !== undefined && { code: data.code }),

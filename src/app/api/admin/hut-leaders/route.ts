@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { calculateOverlapDays } from "@/lib/hut-leader-overlap";
-import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 
 const createSchema = z.object({
   memberId: z.string().min(1),
@@ -81,6 +81,9 @@ export async function POST(req: NextRequest) {
   }
 
   // Check for overlapping assignments — 1 day overlap allowed for handover, 2+ rejected
+  if (!isDateOnlyString(parsed.data.startDate) || !isDateOnlyString(parsed.data.endDate)) {
+    return NextResponse.json({ error: "Invalid startDate or endDate" }, { status: 400 });
+  }
   const newStart = parseDateOnly(parsed.data.startDate);
   const newEnd = parseDateOnly(parsed.data.endDate);
 

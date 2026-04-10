@@ -285,7 +285,6 @@ describe("XER-01: createXeroCreditNoteForModification", () => {
 
   it("allocates credit note against original invoice", () => {
     const xeroInvoiceId = "inv-orig";
-    const creditNoteId = "cn-new";
     const refundAmountCents = 5000;
 
     // Allocation params

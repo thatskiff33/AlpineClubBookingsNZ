@@ -8,7 +8,6 @@ import {
 } from "@stripe/react-stripe-js";
 
 interface PaymentFormProps {
-  bookingId: string;
   amountCents: number;
   onSuccess: (paymentIntentId: string) => void;
   onError: (error: string) => void;
@@ -20,7 +19,6 @@ interface PaymentFormProps {
  * Used for immediate payment on confirmed bookings.
  */
 export default function PaymentForm({
-  bookingId,
   amountCents,
   onSuccess,
   onError,

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock prisma
 vi.mock("@/lib/prisma", () => ({
@@ -30,8 +30,13 @@ vi.mock("@/lib/auth", () => ({
   auth: vi.fn(),
 }));
 
+vi.mock("@/lib/health-check", () => ({
+  getDetailedHealthReport: vi.fn(),
+}));
+
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { getDetailedHealthReport } from "@/lib/health-check";
 
 // ============================================================================
 // OBS-08: Webhook logging tests
@@ -311,33 +316,32 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.cronJobRun.findMany).mockResolvedValue([]);
     vi.mocked(prisma.webhookLog.groupBy).mockResolvedValue([] as any);
     vi.mocked(prisma.webhookLog.findMany).mockResolvedValue([]);
-
-    // Mock global fetch for the internal health check call
-    const originalFetch = global.fetch;
-    global.fetch = vi.fn().mockResolvedValue({
-      json: () => Promise.resolve({
+    vi.mocked(getDetailedHealthReport).mockResolvedValue({
+      httpStatus: 200,
+      report: {
         status: "healthy",
         version: "0.1.0",
         uptime: 1000,
-        checks: { db: { status: "ok", latencyMs: 5 } },
-      }),
+        checks: {
+          db: { status: "ok", latencyMs: 5 },
+          stripe: { status: "ok", latencyMs: 1 },
+          xero: { status: "ok", latencyMs: 1 },
+          smtp: { status: "ok", latencyMs: 1 },
+        },
+      },
     });
 
-    try {
-      const { GET } = await import("@/app/api/admin/health/route");
-      const response = await GET();
-      const data = await response.json();
+    const { GET } = await import("@/app/api/admin/health/route");
+    const response = await GET();
+    const data = await response.json();
 
-      expect(response.status).toBe(200);
-      expect(data.health).toBeDefined();
-      expect(data.cronJobs).toBeDefined();
-      expect(data.webhookStats).toBeDefined();
-      expect(data.systemInfo).toBeDefined();
-      expect(data.systemInfo.nodeVersion).toBeTruthy();
-      expect(data.systemInfo.memoryMb).toBeDefined();
-    } finally {
-      global.fetch = originalFetch;
-    }
+    expect(response.status).toBe(200);
+    expect(data.health).toBeDefined();
+    expect(data.cronJobs).toBeDefined();
+    expect(data.webhookStats).toBeDefined();
+    expect(data.systemInfo).toBeDefined();
+    expect(data.systemInfo.nodeVersion).toBeTruthy();
+    expect(data.systemInfo.memoryMb).toBeDefined();
   });
 
   it("groups cron runs by job name with max 5 per job", async () => {
@@ -361,21 +365,26 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.cronJobRun.findMany).mockResolvedValue(runs);
     vi.mocked(prisma.webhookLog.groupBy).mockResolvedValue([] as any);
     vi.mocked(prisma.webhookLog.findMany).mockResolvedValue([]);
-
-    const originalFetch = global.fetch;
-    global.fetch = vi.fn().mockResolvedValue({
-      json: () => Promise.resolve({ status: "healthy", checks: {} }),
+    vi.mocked(getDetailedHealthReport).mockResolvedValue({
+      httpStatus: 200,
+      report: {
+        status: "healthy",
+        version: "0.1.0",
+        uptime: 1000,
+        checks: {
+          db: { status: "ok", latencyMs: 5 },
+          stripe: { status: "ok", latencyMs: 1 },
+          xero: { status: "ok", latencyMs: 1 },
+          smtp: { status: "ok", latencyMs: 1 },
+        },
+      },
     });
 
-    try {
-      const { GET } = await import("@/app/api/admin/health/route");
-      const response = await GET();
-      const data = await response.json();
+    const { GET } = await import("@/app/api/admin/health/route");
+    const response = await GET();
+    const data = await response.json();
 
-      expect(data.cronJobs["confirm-pending"]).toHaveLength(5);
-    } finally {
-      global.fetch = originalFetch;
-    }
+    expect(data.cronJobs["confirm-pending"]).toHaveLength(5);
   });
 });
 

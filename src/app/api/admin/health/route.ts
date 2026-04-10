@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { getDetailedHealthReport } from "@/lib/health-check";
 import { prisma } from "@/lib/prisma";
 import { getWebhookStats } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
@@ -19,13 +20,7 @@ export async function GET() {
   }
 
   try {
-    // Fetch health check results (call internal health endpoint logic)
-    const healthResponse = await fetch(
-      `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/health`
-    ).then((r) => r.json()).catch(() => ({
-      status: "unknown",
-      checks: {},
-    }));
+    const { report: healthResponse } = await getDetailedHealthReport();
 
     // Recent cron job runs (last 5 per job)
     const cronRuns = await prisma.cronJobRun.findMany({

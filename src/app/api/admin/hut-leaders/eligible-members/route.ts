@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 
 /**
  * GET /api/admin/hut-leaders/eligible-members?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
@@ -24,6 +24,9 @@ export async function GET(req: NextRequest) {
 
   if (startDate > endDate) {
     return NextResponse.json({ error: "startDate must be before or equal to endDate" }, { status: 400 });
+  }
+  if (!isDateOnlyString(startDate) || !isDateOnlyString(endDate)) {
+    return NextResponse.json({ error: "Invalid startDate or endDate" }, { status: 400 });
   }
 
   const rangeStart = parseDateOnly(startDate);

@@ -36,7 +36,7 @@ export async function reconcileCreditBalances(): Promise<{
     (b) => (b._sum.amountCents ?? 0) < 0
   );
 
-  let discrepancies = negativeBalances.length;
+  const discrepancies = negativeBalances.length;
 
   if (negativeBalances.length > 0) {
     logger.error(

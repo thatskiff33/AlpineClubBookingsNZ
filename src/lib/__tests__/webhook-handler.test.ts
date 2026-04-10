@@ -59,7 +59,7 @@ describe("Webhook handler logic", () => {
       expect(payment).toBeTruthy();
 
       // Verify transaction would be called with correct updates
-      const result = await mockPrismaTransaction([
+      await mockPrismaTransaction([
         mockPrismaPaymentUpdate({
           where: { bookingId },
           data: {

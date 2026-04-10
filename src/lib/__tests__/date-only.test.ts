@@ -3,6 +3,7 @@ import {
   addDaysDateOnly,
   formatDateOnly,
   getTodayDateOnly,
+  isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
 
@@ -29,5 +30,11 @@ describe("date-only helpers", () => {
     expect(formatDateOnly(getTodayDateOnly("Pacific/Auckland"))).toMatch(
       /^\d{4}-\d{2}-\d{2}$/
     );
+  });
+
+  it("rejects impossible or malformed date-only strings", () => {
+    expect(isDateOnlyString("not-a-date")).toBe(false);
+    expect(isDateOnlyString("2026-02-31")).toBe(false);
+    expect(Number.isNaN(parseDateOnly("2026-02-31").getTime())).toBe(true);
   });
 });

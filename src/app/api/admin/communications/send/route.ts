@@ -74,7 +74,7 @@ export async function POST(request: Request) {
   const { subject, body: messageBody, recipientFilter, memberIds } = parsed.data;
 
   // Build recipient query
-  let whereClause: Record<string, unknown> = { active: true };
+  const whereClause: Record<string, unknown> = { active: true };
   if (recipientFilter === "members-only") {
     whereClause.role = "MEMBER";
   } else if (recipientFilter === "admins-only") {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getAuthenticatedXeroClient, withXeroRetry, findOrCreateXeroContact } from "@/lib/xero";
+import { getAuthenticatedXeroClient, withXeroRetry } from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { z } from "zod";

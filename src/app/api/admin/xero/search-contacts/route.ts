@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getAuthenticatedXeroClient, withXeroRetry } from "@/lib/xero";
+import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 
@@ -61,20 +62,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ contacts: results });
   } catch (err) {
-    logger.error({ err }, "Error searching Xero contacts");
-    const statusCode = (err as { response?: { statusCode?: number } })?.response?.statusCode;
-    if (statusCode === 401 || statusCode === 403) {
-      return NextResponse.json(
-        { error: "Xero connection expired. Please reconnect Xero from the admin panel." },
-        { status: 401 }
-      );
+    const xeroError = getXeroApiErrorInfo(err, "Failed to search Xero contacts");
+    if (!xeroError.handled) {
+      logger.error({ err }, "Error searching Xero contacts");
     }
-    if (statusCode === 429) {
-      return NextResponse.json(
-        { error: "Xero rate limit hit. Please wait a moment and try again." },
-        { status: 429 }
-      );
-    }
-    return NextResponse.json({ error: "Failed to search Xero contacts" }, { status: 500 });
+    return NextResponse.json({ error: xeroError.message }, { status: xeroError.status });
   }
 }

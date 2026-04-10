@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { BookingStatus } from "@prisma/client";
 import { LODGE_CAPACITY } from "@/lib/capacity";
-import { eachDayOfInterval, subDays, startOfMonth, endOfMonth, format } from "date-fns";
+import { eachDayOfInterval, format } from "date-fns";
 import logger from "@/lib/logger";
 
 const reportQuerySchema = z.object({

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { validatePromoCodeRules } from "../promo";
+import {
+  calculatePromoDiscountForGuestRates,
+  validatePromoCodeRules,
+} from "../promo";
 import { calculatePromoDiscount, type PromoCodeInput } from "../pricing";
 
 // --- Test helpers ---
@@ -318,6 +321,56 @@ describe("calculatePromoDiscount - FREE_NIGHTS", () => {
     // Sorted: 1000, 2000, 3000, 4000, 5000
     // 2 cheapest = 1000 + 2000 = 3000
     expect(calculatePromoDiscount(promo, 15000, variedRates)).toBe(3000);
+  });
+});
+
+describe("calculatePromoDiscountForGuestRates", () => {
+  it("scopes assigned free-night promos to the assigned member's own guest nights", () => {
+    const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNights: 1 };
+
+    const discount = calculatePromoDiscountForGuestRates(
+      promo,
+      7000,
+      "member-1",
+      [
+        { memberId: "member-1", perNightRates: [5000] },
+        { memberId: "member-2", perNightRates: [2000] },
+      ],
+      ["member-1"]
+    );
+
+    expect(discount).toBe(5000);
+  });
+
+  it("keeps using all guest nights for unassigned free-night promos", () => {
+    const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNights: 1 };
+
+    const discount = calculatePromoDiscountForGuestRates(
+      promo,
+      7000,
+      "member-1",
+      [
+        { memberId: "member-1", perNightRates: [5000] },
+        { memberId: "member-2", perNightRates: [2000] },
+      ],
+      null
+    );
+
+    expect(discount).toBe(2000);
+  });
+
+  it("returns 0 when the assigned member is not included as a linked guest", () => {
+    const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNights: 1 };
+
+    const discount = calculatePromoDiscountForGuestRates(
+      promo,
+      7000,
+      "member-1",
+      [{ memberId: "member-2", perNightRates: [2000, 2000] }],
+      ["member-1"]
+    );
+
+    expect(discount).toBe(0);
   });
 });
 

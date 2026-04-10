@@ -62,17 +62,32 @@ export default function AdminBookPage() {
   // Fetch family members for the selected member
   useEffect(() => {
     if (!selectedMember) {
-      setFamilyMembers([]);
       return;
     }
+
+    let cancelled = false;
+
     fetch(`/api/admin/members/${selectedMember.id}/family`)
       .then((res) => (res.ok ? res.json() : { familyMembers: [] }))
-      .then((data) => setFamilyMembers(data.familyMembers || []))
-      .catch(() => setFamilyMembers([]));
+      .then((data) => {
+        if (!cancelled) {
+          setFamilyMembers(data.familyMembers || []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFamilyMembers([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedMember]);
 
   function handleMemberSelect(member: SelectedMember) {
     setSelectedMember(member);
+    setFamilyMembers([]);
     setStep("dates");
     // Reset wizard state
     setCheckIn(null);

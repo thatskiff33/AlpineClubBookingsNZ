@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 
@@ -26,20 +26,30 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
   const [checkIn, setCheckIn] = useState<Date | null>(selectedCheckIn || null);
   const [checkOut, setCheckOut] = useState<Date | null>(selectedCheckOut || null);
 
-  const fetchAvailability = useCallback(async () => {
-    const res = await fetch(
-      `/api/availability?year=${currentMonth.year}&month=${currentMonth.month}`
-    );
-    if (res.ok) {
-      const data = await res.json();
-      setAvailability(data.availability ?? {});
-      setSeasons(data.seasons ?? {});
-    }
-  }, [currentMonth.year, currentMonth.month]);
-
   useEffect(() => {
-    fetchAvailability();
-  }, [fetchAvailability]);
+    let cancelled = false;
+
+    async function loadAvailability() {
+      const res = await fetch(
+        `/api/availability?year=${currentMonth.year}&month=${currentMonth.month}`
+      );
+      if (!res.ok || cancelled) {
+        return;
+      }
+
+      const data = await res.json();
+      if (!cancelled) {
+        setAvailability(data.availability ?? {});
+        setSeasons(data.seasons ?? {});
+      }
+    }
+
+    void loadAvailability();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMonth.month, currentMonth.year]);
 
   const daysInMonth = new Date(currentMonth.year, currentMonth.month + 1, 0).getDate();
   const firstDay = new Date(currentMonth.year, currentMonth.month, 1).getDay();

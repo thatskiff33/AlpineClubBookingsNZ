@@ -1,11 +1,20 @@
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
-export function parseDateOnly(dateStr: string): Date {
+function buildDateOnly(dateStr: string): Date {
+  return new Date(`${dateStr}T00:00:00.000Z`);
+}
+
+export function isDateOnlyString(dateStr: string): boolean {
   if (!DATE_ONLY_REGEX.test(dateStr)) {
-    throw new Error(`Invalid date-only string: ${dateStr}`);
+    return false;
   }
 
-  return new Date(`${dateStr}T00:00:00.000Z`);
+  const parsed = buildDateOnly(dateStr);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === dateStr;
+}
+
+export function parseDateOnly(dateStr: string): Date {
+  return isDateOnlyString(dateStr) ? buildDateOnly(dateStr) : new Date(NaN);
 }
 
 export function formatDateOnly(date: Date): string {
@@ -35,5 +44,10 @@ export function getTodayDateOnly(timeZone = "Pacific/Auckland"): Date {
     throw new Error(`Unable to derive current date for timezone ${timeZone}`);
   }
 
-  return parseDateOnly(`${year}-${month}-${day}`);
+  const today = parseDateOnly(`${year}-${month}-${day}`);
+  if (Number.isNaN(today.getTime())) {
+    throw new Error(`Unable to derive current date for timezone ${timeZone}`);
+  }
+
+  return today;
 }

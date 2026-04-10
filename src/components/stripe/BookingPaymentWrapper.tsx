@@ -115,7 +115,6 @@ export default function BookingPaymentWrapper({
     <StripeProvider clientSecret={clientSecret}>
       {paymentType === "payment" ? (
         <PaymentForm
-          bookingId={bookingId}
           amountCents={amountCents}
           returnUrl={returnUrl}
           onSuccess={() => onPaymentComplete()}
@@ -123,7 +122,6 @@ export default function BookingPaymentWrapper({
         />
       ) : (
         <SetupForm
-          bookingId={bookingId}
           returnUrl={returnUrl}
           onSuccess={() => onPaymentComplete()}
           onError={(err) => setError(err)}

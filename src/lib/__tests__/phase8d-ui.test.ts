@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 // Test the UI logic and component rendering for Phase 8d
 // These test the API interaction patterns and helper logic used by the UI components

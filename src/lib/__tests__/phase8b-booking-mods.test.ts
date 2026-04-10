@@ -10,7 +10,6 @@ const mockCreate = vi.fn();
 const mockDelete = vi.fn();
 const mockDeleteMany = vi.fn();
 const mockFindMany = vi.fn();
-const mockExecuteRawUnsafe = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -71,7 +70,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { auth } from "@/lib/auth";
 import { checkCapacity } from "@/lib/capacity";
-import { calculateBookingPrice, calculatePromoDiscount } from "@/lib/pricing";
+import { calculateBookingPrice } from "@/lib/pricing";
 import { calculateChangeFee } from "@/lib/change-fee";
 import { daysUntilDate, loadCancellationPolicy, getNonMemberHoldDays } from "@/lib/cancellation";
 import { validatePromoCodeRules } from "@/lib/promo";
@@ -82,7 +81,6 @@ import { sendBookingModifiedEmail } from "@/lib/email";
 const mockedAuth = vi.mocked(auth);
 const mockedCheckCapacity = vi.mocked(checkCapacity);
 const mockedCalcPrice = vi.mocked(calculateBookingPrice);
-const mockedCalcPromoDiscount = vi.mocked(calculatePromoDiscount);
 const mockedCalcChangeFee = vi.mocked(calculateChangeFee);
 const mockedDaysUntilDate = vi.mocked(daysUntilDate);
 const mockedLoadPolicy = vi.mocked(loadCancellationPolicy);
@@ -120,7 +118,7 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
     booking: {
       findUnique: vi.fn().mockResolvedValue(booking),
-      update: vi.fn().mockImplementation(({ data, include }) => {
+      update: vi.fn().mockImplementation(({ data }) => {
         const updated = { ...booking, ...data, guests: booking.guests };
         return Promise.resolve(updated);
       }),
@@ -412,7 +410,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
       promoRedemption: {
         id: "pr1",
         promoCodeId: "pc1",
-        promoCode: { id: "pc1", active: false, validFrom: null, validUntil: null, maxRedemptions: null, currentRedemptions: 1, membersOnly: false, singleUse: false, type: "PERCENTAGE", percentOff: 10 },
+        promoCode: { id: "pc1", active: false, validFrom: null, validUntil: null, maxRedemptions: null, currentRedemptions: 1, membersOnly: false, singleUse: false, type: "PERCENTAGE", percentOff: 10, assignments: [] },
       },
     });
     const tx = makeTx(booking);

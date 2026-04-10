@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { findDuplicateContacts } from "@/lib/xero";
+import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
+import logger from "@/lib/logger";
 
 /**
  * GET /api/admin/xero/duplicate-contacts
@@ -17,8 +19,10 @@ export async function GET() {
     const result = await findDuplicateContacts();
     return NextResponse.json(result);
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Duplicate scan failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const xeroError = getXeroApiErrorInfo(error, "Duplicate scan failed");
+    if (!xeroError.handled) {
+      logger.error({ err: error }, "Failed to scan Xero contacts for duplicates");
+    }
+    return NextResponse.json({ error: xeroError.message }, { status: xeroError.status });
   }
 }

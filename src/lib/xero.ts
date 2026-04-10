@@ -58,7 +58,6 @@ const XERO_SCOPES = [
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
-const AUTH_TAG_LENGTH = 16;
 
 // Xero tokens expire after 30 minutes; refresh 10 minutes early
 const TOKEN_REFRESH_BUFFER_MS = 10 * 60 * 1000; // 10 minutes — buffer for long-running bulk ops (contact sync, membership refresh)
@@ -1633,8 +1632,6 @@ export async function checkMembershipStatus(
 
   // Fetch invoices for this contact, filtered to the season year to avoid pagination issues.
   // Season year runs April to March, so filter invoices from season start to end.
-  const seasonStart = `${year}-04-01`;
-  const seasonEnd = `${year + 1}-03-31`;
   const response = await withXeroRetry(
     () => xero.accountingApi.getInvoices(
       tenantId,
@@ -2450,14 +2447,17 @@ export async function findDuplicateContacts(): Promise<{
   let hasMore = true;
 
   while (hasMore) {
-    const response = await xero.accountingApi.getContacts(
-      tenantId,
-      undefined, // ifModifiedSince
-      undefined, // where
-      undefined, // order
-      undefined, // iDs
-      page,
-      false      // includeArchived
+    const response = await withXeroRetry(
+      () => xero.accountingApi.getContacts(
+        tenantId,
+        undefined, // ifModifiedSince
+        undefined, // where
+        undefined, // order
+        undefined, // iDs
+        page,
+        false      // includeArchived
+      ),
+      { context: `findDuplicateContacts getContacts(page ${page})` }
     );
 
     const contacts = response.body.contacts ?? [];
@@ -2497,43 +2497,52 @@ export async function findDuplicateContacts(): Promise<{
     for (const contact of contacts) {
       let invoiceCount = 0;
       try {
-        const invoiceResponse = await xero.accountingApi.getInvoices(
-          tenantId,
-          undefined, // ifModifiedSince
-          undefined, // where
-          undefined, // order
-          undefined, // iDs
-          undefined, // invoiceNumbers
-          [contact.contactID!], // contactIDs
-          undefined, // statuses
-          1,         // page
-          false,     // includeArchived
-          undefined, // createdByMyApp
-          undefined, // unitdp
-          true,      // summaryOnly
-          1          // pageSize — we just need the count
+        const invoiceResponse = await withXeroRetry(
+          () => xero.accountingApi.getInvoices(
+            tenantId,
+            undefined, // ifModifiedSince
+            undefined, // where
+            undefined, // order
+            undefined, // iDs
+            undefined, // invoiceNumbers
+            [contact.contactID!], // contactIDs
+            undefined, // statuses
+            1,         // page
+            false,     // includeArchived
+            undefined, // createdByMyApp
+            undefined, // unitdp
+            true,      // summaryOnly
+            1          // pageSize — we just need the count
+          ),
+          { context: `findDuplicateContacts getInvoices(summary ${contact.contactID})` }
         );
         invoiceCount = invoiceResponse.body.invoices?.length ?? 0;
         // If we got 1 result with pageSize 1, there may be more — fetch count properly
         if (invoiceCount > 0) {
-          const fullResponse = await xero.accountingApi.getInvoices(
-            tenantId,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            [contact.contactID!],
-            undefined,
-            undefined,
-            false,
-            undefined,
-            undefined,
-            true
+          const fullResponse = await withXeroRetry(
+            () => xero.accountingApi.getInvoices(
+              tenantId,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              [contact.contactID!],
+              undefined,
+              undefined,
+              false,
+              undefined,
+              undefined,
+              true
+            ),
+            { context: `findDuplicateContacts getInvoices(full ${contact.contactID})` }
           );
           invoiceCount = fullResponse.body.invoices?.length ?? 0;
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof XeroDailyLimitError) {
+          throw err;
+        }
         // If invoice fetch fails, just show 0
       }
 

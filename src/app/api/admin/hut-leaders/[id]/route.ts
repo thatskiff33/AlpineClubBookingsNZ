@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -48,9 +48,15 @@ export async function PUT(
 
   const updateData: Record<string, Date> = {};
   if (parsed.data.startDate) {
+    if (!isDateOnlyString(parsed.data.startDate)) {
+      return NextResponse.json({ error: "Invalid startDate" }, { status: 400 });
+    }
     updateData.startDate = parseDateOnly(parsed.data.startDate);
   }
   if (parsed.data.endDate) {
+    if (!isDateOnlyString(parsed.data.endDate)) {
+      return NextResponse.json({ error: "Invalid endDate" }, { status: 400 });
+    }
     updateData.endDate = parseDateOnly(parsed.data.endDate);
   }
 

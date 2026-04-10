@@ -18,8 +18,6 @@ import {
   adminXeroSyncErrorTemplate,
   adminCapacityWarningTemplate,
   adminDailyDigestTemplate,
-  postStayFeedbackTemplate,
-  bulkCommunicationTemplate,
   adminPasswordResetTemplate,
   bookingModifiedTemplate,
   accountDeletionApprovedTemplate,

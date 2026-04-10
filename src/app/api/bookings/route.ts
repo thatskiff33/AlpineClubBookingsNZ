@@ -15,11 +15,11 @@ import {
 import {
   validatePromoCodeRules,
   redeemPromoCode,
+  calculatePromoDiscountForGuestRates,
 } from "@/lib/promo";
-import { calculatePromoDiscount } from "@/lib/pricing";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBookingAlert, sendWaitlistConfirmationEmail } from "@/lib/email";
-import { getWaitlistPosition, updateWaitlistPositions } from "@/lib/waitlist";
+import { getWaitlistPosition } from "@/lib/waitlist";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import { getMemberCreditBalance, applyCreditToBooking } from "@/lib/member-credit";
 import logger from "@/lib/logger";
@@ -300,8 +300,11 @@ export async function POST(request: NextRequest) {
       if (validationError) {
         return NextResponse.json({ error: validationError }, { status: 400 });
       }
-      const allPerNightRates = price.guests.flatMap((g) => g.perNightCents);
-      discountCents = calculatePromoDiscount(
+      const guestNightRates = guests.map((guest, index) => ({
+        memberId: guest.memberId ?? null,
+        perNightRates: price.guests[index].perNightCents,
+      }));
+      discountCents = calculatePromoDiscountForGuestRates(
         {
           type: promoCode!.type,
           valueCents: promoCode!.valueCents,
@@ -309,7 +312,9 @@ export async function POST(request: NextRequest) {
           freeNights: promoCode!.freeNights,
         },
         price.totalPriceCents,
-        allPerNightRates
+        effectiveMemberId,
+        guestNightRates,
+        assignedMemberIds
       );
       promoCodeRecord = promoCode!;
     }
@@ -542,10 +547,12 @@ export async function POST(request: NextRequest) {
           throw new Error(validationError);
         }
 
-        // Collect all per-night rates for FREE_NIGHTS calculation
-        const allPerNightRates = price.guests.flatMap((g) => g.perNightCents);
+        const guestNightRates = guests.map((guest, index) => ({
+          memberId: guest.memberId ?? null,
+          perNightRates: price.guests[index].perNightCents,
+        }));
 
-        discountCents = calculatePromoDiscount(
+        discountCents = calculatePromoDiscountForGuestRates(
           {
             type: promoCode!.type,
             valueCents: promoCode!.valueCents,
@@ -553,7 +560,9 @@ export async function POST(request: NextRequest) {
             freeNights: promoCode!.freeNights,
           },
           price.totalPriceCents,
-          allPerNightRates
+          effectiveMemberId,
+          guestNightRates,
+          assignedMemberIds
         );
 
         promoCodeRecord = promoCode!;
@@ -846,8 +855,11 @@ async function createWaitlistedBooking(params: {
     if (validationError) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
-    const allPerNightRates = price.guests.flatMap((g) => g.perNightCents);
-    discountCents = calculatePromoDiscount(
+    const guestNightRates = guests.map((guest, index) => ({
+      memberId: guest.memberId ?? null,
+      perNightRates: price.guests[index].perNightCents,
+    }));
+    discountCents = calculatePromoDiscountForGuestRates(
       {
         type: promoCode!.type,
         valueCents: promoCode!.valueCents,
@@ -855,7 +867,9 @@ async function createWaitlistedBooking(params: {
         freeNights: promoCode!.freeNights,
       },
       price.totalPriceCents,
-      allPerNightRates
+      effectiveMemberId,
+      guestNightRates,
+      assignedMemberIds
     );
     promoCodeRecord = promoCode!;
   }

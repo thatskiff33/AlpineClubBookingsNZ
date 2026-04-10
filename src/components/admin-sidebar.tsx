@@ -17,7 +17,6 @@ import {
   RefreshCw,
   Menu,
   Mountain,
-  X,
   CreditCard,
   FileText,
   Shield,

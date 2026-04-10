@@ -128,7 +128,7 @@ describe("Admin Family Groups API", () => {
           { member: { id: "m2", firstName: "Jane", lastName: "Smith", email: "j@t.com", ageTier: "ADULT" }, role: "MEMBER" },
         ],
       };
-      mockedPrisma.$transaction.mockImplementation(async (fn: any) => createdGroup);
+      mockedPrisma.$transaction.mockImplementation(async () => createdGroup);
 
       const { POST } = await import("@/app/api/admin/family-groups/route");
       const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "Smith Family", memberIds: ["m1", "m2"] }));
@@ -167,7 +167,7 @@ describe("Admin Family Groups API", () => {
         name: "New Group",
         memberships: [{ member: { id: "m1", firstName: "John", lastName: "Smith", email: "j@t.com", ageTier: "ADULT" }, role: "MEMBER" }],
       };
-      mockedPrisma.$transaction.mockImplementation(async (fn: any) => createdGroup);
+      mockedPrisma.$transaction.mockImplementation(async () => createdGroup);
 
       const { POST } = await import("@/app/api/admin/family-groups/route");
       const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "New Group", memberIds: ["m1"] }));
@@ -180,7 +180,7 @@ describe("Admin Family Groups API", () => {
     it("deletes group and clears member links", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockedPrisma.familyGroup.findUnique.mockResolvedValue({ id: "fg1" } as any);
-      mockedPrisma.$transaction.mockImplementation(async (fn: any) => {
+      mockedPrisma.$transaction.mockImplementation(async () => {
         return undefined;
       });
 
@@ -441,7 +441,7 @@ describe("Admin Family Group Join Requests", () => {
         status: "PENDING",
         requester: { id: "m1", firstName: "John", lastName: "Smith", familyGroupId: null },
       } as any);
-      mockedPrisma.$transaction.mockImplementation(async (fn: any) => undefined);
+      mockedPrisma.$transaction.mockImplementation(async () => undefined);
 
       const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
       const res = await PUT(makeReq("/api/admin/family-groups/requests", "PUT", { requestId: "req-1", action: "approve" }));

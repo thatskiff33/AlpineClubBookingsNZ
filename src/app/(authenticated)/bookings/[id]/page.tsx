@@ -52,6 +52,10 @@ export default async function BookingDetailPage({
     (new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) /
       (1000 * 60 * 60 * 24)
   );
+  const currentTime = new Date().getTime();
+  const checkInDaysAway = Math.ceil(
+    (new Date(booking.checkIn).getTime() - currentTime) / (1000 * 60 * 60 * 24)
+  );
 
   const isDraft = booking.status === "DRAFT";
   const isWaitlisted = booking.status === "WAITLISTED";
@@ -138,9 +142,7 @@ export default async function BookingDetailPage({
               bookingId={booking.id}
               amountCents={booking.finalPriceCents}
               hasNonMembers={booking.hasNonMembers}
-              checkInDaysAway={Math.ceil(
-                (new Date(booking.checkIn).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-              )}
+              checkInDaysAway={checkInDaysAway}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
           </CardContent>
@@ -186,9 +188,7 @@ export default async function BookingDetailPage({
               bookingId={booking.id}
               amountCents={booking.finalPriceCents}
               hasNonMembers={booking.hasNonMembers}
-              checkInDaysAway={Math.ceil(
-                (new Date(booking.checkIn).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-              )}
+              checkInDaysAway={checkInDaysAway}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
           </CardContent>
@@ -209,9 +209,7 @@ export default async function BookingDetailPage({
               bookingId={booking.id}
               amountCents={booking.finalPriceCents}
               hasNonMembers={booking.hasNonMembers}
-              checkInDaysAway={Math.ceil(
-                (new Date(booking.checkIn).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-              )}
+              checkInDaysAway={checkInDaysAway}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
           </CardContent>

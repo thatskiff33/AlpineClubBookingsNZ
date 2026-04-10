@@ -75,8 +75,6 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
-import { checkCapacity } from "@/lib/capacity";
-
 beforeEach(() => {
   vi.clearAllMocks();
   // Default: transaction runs the callback with mockTx
@@ -406,7 +404,7 @@ describe("expireStaleOffers", () => {
 
 describe("status colors include waitlist statuses", () => {
   it("defines WAITLISTED and WAITLIST_OFFERED colors", async () => {
-    const { bookingStatusClasses, bookingStatusClass } = await import("@/lib/status-colors");
+    const { bookingStatusClasses } = await import("@/lib/status-colors");
 
     expect(bookingStatusClasses["WAITLISTED"]).toBeTruthy();
     expect(bookingStatusClasses["WAITLIST_OFFERED"]).toBeTruthy();
