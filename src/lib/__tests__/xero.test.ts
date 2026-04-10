@@ -7,8 +7,13 @@ import {
   buildInvoiceLineItems,
   withXeroRetry,
   XeroDailyLimitError,
+  resetXeroRateLimitStateForTests,
 } from "../xero"
 import { Invoice } from "xero-node"
+
+beforeEach(() => {
+  resetXeroRateLimitStateForTests()
+})
 
 // ---------------------------------------------------------------------------
 // Encryption / Decryption
@@ -438,6 +443,26 @@ describe("withXeroRetry", () => {
       withXeroRetry(fn, { maxRetries: 3 })
     ).rejects.toBeInstanceOf(XeroDailyLimitError)
     expect(calls).toBe(1) // No retries — aborted immediately
+  })
+
+  it("short-circuits future calls while the daily limit cooldown is active", async () => {
+    await expect(
+      withXeroRetry(
+        () =>
+          Promise.reject({
+            response: {
+              statusCode: 429,
+              headers: { "retry-after": "60", "x-rate-limit-problem": "day" },
+            },
+          }),
+        { maxRetries: 3 }
+      )
+    ).rejects.toBeInstanceOf(XeroDailyLimitError)
+
+    const fn = vi.fn(() => Promise.resolve("should not run"))
+
+    await expect(withXeroRetry(fn)).rejects.toBeInstanceOf(XeroDailyLimitError)
+    expect(fn).not.toHaveBeenCalled()
   })
 
   it("throws after exhausting all retries on minute-level 429", async () => {

@@ -14,6 +14,7 @@ import { sendPasswordResetEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
+import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -264,7 +265,10 @@ export async function GET(req: NextRequest) {
         xeroContactGroups = await getXeroContactGroupMemberships(linkedContactIds);
       }
     } catch (error) {
-      logger.error({ err: error }, "Failed to fetch Xero contact groups for members list");
+      const xeroError = getXeroApiErrorInfo(error, "Failed to fetch Xero contact groups for members list");
+      if (!xeroError.handled) {
+        logger.error({ err: error }, "Failed to fetch Xero contact groups for members list");
+      }
     }
   }
 

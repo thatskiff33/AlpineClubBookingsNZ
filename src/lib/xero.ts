@@ -62,6 +62,9 @@ const IV_LENGTH = 16;
 // Xero tokens expire after 30 minutes; refresh 10 minutes early
 const TOKEN_REFRESH_BUFFER_MS = 10 * 60 * 1000; // 10 minutes — buffer for long-running bulk ops (contact sync, membership refresh)
 
+// Cache the daily-limit cooldown in-process so we stop hammering Xero until Retry-After expires.
+let xeroDailyLimitUntilMs = 0;
+
 // ---------------------------------------------------------------------------
 // Encryption helpers (for token storage at rest)
 // ---------------------------------------------------------------------------
@@ -303,6 +306,8 @@ export async function getAuthenticatedXeroClient(): Promise<{
   xero: XeroClient;
   tenantId: string;
 }> {
+  throwIfXeroDailyLimitActive();
+
   const tokens = await loadXeroTokens();
   if (!tokens) {
     throw new Error("Xero is not connected. Please connect via admin panel.");
@@ -551,6 +556,42 @@ function throttle(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getRemainingXeroDailyLimitSeconds(): number {
+  const remainingMs = xeroDailyLimitUntilMs - Date.now();
+  if (remainingMs <= 0) {
+    xeroDailyLimitUntilMs = 0;
+    return 0;
+  }
+  return Math.ceil(remainingMs / 1000);
+}
+
+function throwIfXeroDailyLimitActive(): void {
+  const remainingSec = getRemainingXeroDailyLimitSeconds();
+  if (remainingSec > 0) {
+    throw new XeroDailyLimitError(remainingSec);
+  }
+}
+
+function rememberXeroDailyLimit(retryAfterSec: number): void {
+  const clampedRetryAfterSec = Math.max(0, retryAfterSec);
+  const nextLimitUntilMs = Date.now() + clampedRetryAfterSec * 1000;
+
+  if (nextLimitUntilMs > xeroDailyLimitUntilMs) {
+    xeroDailyLimitUntilMs = nextLimitUntilMs;
+    logger.warn(
+      {
+        retryAfterSec: clampedRetryAfterSec,
+        availableAt: new Date(nextLimitUntilMs).toISOString(),
+      },
+      "Xero daily API limit reached, suppressing further Xero calls until cooldown expires"
+    );
+  }
+}
+
+export function resetXeroRateLimitStateForTests(): void {
+  xeroDailyLimitUntilMs = 0;
+}
+
 /**
  * Retry wrapper for Xero API calls with 429 rate-limit handling.
  * - On daily limit: throws XeroDailyLimitError immediately (no point waiting hours).
@@ -561,6 +602,8 @@ export async function withXeroRetry<T>(
   fn: () => Promise<T>,
   options?: { maxRetries?: number; maxWaitSec?: number; context?: string }
 ): Promise<T> {
+  throwIfXeroDailyLimitActive();
+
   const maxRetries = options?.maxRetries ?? 3;
   const maxWaitSec = options?.maxWaitSec ?? 120;
   const context = options?.context ?? "Xero API call";
@@ -581,6 +624,7 @@ export async function withXeroRetry<T>(
       // Daily limit — abort immediately, no point retrying for hours
       if (rateLimitProblem === "day") {
         const retryAfterSec = parseInt(retryAfter || "86400", 10);
+        rememberXeroDailyLimit(retryAfterSec);
         throw new XeroDailyLimitError(retryAfterSec);
       }
 

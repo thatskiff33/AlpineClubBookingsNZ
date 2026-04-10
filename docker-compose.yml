@@ -87,7 +87,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-      - /app/.next/cache
+      - /app/.next/cache:uid=1001,gid=1001,mode=0755
     security_opt:
       - no-new-privileges:true
     mem_limit: 1g

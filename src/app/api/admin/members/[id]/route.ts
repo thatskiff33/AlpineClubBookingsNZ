@@ -9,6 +9,7 @@ import {
   isXeroConnected,
   updateXeroContact,
 } from "@/lib/xero";
+import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 
@@ -161,10 +162,13 @@ export async function GET(
         xeroContactGroups = memberships[member.xeroContactId] ?? [];
       }
     } catch (error) {
-      logger.error(
-        { err: error, memberId: id },
-        "Failed to fetch Xero contact groups for member detail"
-      );
+      const xeroError = getXeroApiErrorInfo(error, "Failed to fetch Xero contact groups for member detail");
+      if (!xeroError.handled) {
+        logger.error(
+          { err: error, memberId: id },
+          "Failed to fetch Xero contact groups for member detail"
+        );
+      }
     }
   }
 
