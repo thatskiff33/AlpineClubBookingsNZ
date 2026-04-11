@@ -21,6 +21,7 @@ const ChargeSavedMethodSchema = z.object({
 export async function POST(request: NextRequest) {
   // Track bookingId outside try so catch block can revert status on charge failure
   let claimedBookingId: string | null = null;
+  let paymentSucceeded = false;
 
   try {
     // This endpoint is called by internal cron or admin
@@ -113,13 +114,20 @@ export async function POST(request: NextRequest) {
 
     // Update payment record and revert booking status if payment not yet succeeded
     if (paymentIntent.status === "succeeded") {
-      await prisma.payment.update({
-        where: { bookingId: booking.id },
-        data: {
-          stripePaymentIntentId: paymentIntent.id,
-          status: "SUCCEEDED",
-        },
-      });
+      paymentSucceeded = true;
+      await prisma.$transaction([
+        prisma.payment.update({
+          where: { bookingId: booking.id },
+          data: {
+            stripePaymentIntentId: paymentIntent.id,
+            status: "SUCCEEDED",
+          },
+        }),
+        prisma.booking.update({
+          where: { id: booking.id },
+          data: { status: "PAID" },
+        }),
+      ]);
     } else {
       // Payment requires additional action (e.g. 3D Secure/SCA) — revert to PENDING
       await prisma.$transaction([
@@ -172,8 +180,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     logger.error({ err: error }, "Error charging saved method");
 
-    // Revert booking from CONFIRMED back to PENDING if we claimed it but the charge failed
-    if (claimedBookingId) {
+    // Only roll the booking back when Stripe never confirmed a successful charge.
+    // If Stripe already succeeded, keep the claimed state so the webhook/manual
+    // reconciliation path can finish local persistence safely.
+    if (claimedBookingId && !paymentSucceeded) {
       try {
         await prisma.booking.updateMany({
           where: { id: claimedBookingId, status: "CONFIRMED" },
@@ -183,6 +193,11 @@ export async function POST(request: NextRequest) {
       } catch (revertErr) {
         logger.error({ err: revertErr, bookingId: claimedBookingId }, "Failed to revert booking status after charge failure");
       }
+    } else if (claimedBookingId) {
+      logger.error(
+        { bookingId: claimedBookingId },
+        "Stripe charge succeeded but local booking reconciliation failed; leaving booking claimed for webhook recovery"
+      );
     }
 
     return NextResponse.json(
