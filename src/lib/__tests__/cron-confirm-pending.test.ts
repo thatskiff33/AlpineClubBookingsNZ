@@ -303,6 +303,7 @@ describe("Cron: Confirm Pending Bookings", () => {
 
     expect(result.failedBookingIds).toEqual(["b1"]);
     expect(result.confirmedBookingIds).toEqual(["b2"]);
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 
   it("passes booking ID to checkCapacity as excludeBookingId", async () => {
@@ -329,5 +330,31 @@ describe("Cron: Confirm Pending Bookings", () => {
       3,
       "b1"
     );
+  });
+
+  it("does not revert or alert when local persistence fails after Stripe already succeeded", async () => {
+    const booking = makePendingBooking("b1");
+    mockBookingFindMany.mockResolvedValue([booking]);
+    mockCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 10,
+      nightDetails: [],
+    });
+    mockChargePaymentMethod.mockResolvedValue({
+      id: "pi_auto_1",
+      status: "succeeded",
+      amount: 10000,
+    });
+    mockPaymentUpdate.mockRejectedValue(new Error("Payment update failed"));
+
+    const result = await confirmPendingBookings();
+
+    expect(result.failedBookingIds).toEqual(["b1"]);
+    expect(mockBookingUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "b1", status: "PENDING" },
+      data: { status: "PAID" },
+    });
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 });

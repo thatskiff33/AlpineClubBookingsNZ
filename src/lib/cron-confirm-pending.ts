@@ -55,6 +55,9 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
   };
 
   for (const booking of pendingBookings) {
+    let chargeAttempted = false;
+    let paymentSucceeded = false;
+
     try {
       // Check capacity (excluding this booking since it's already counted as PENDING)
       const capacityCheck = await checkCapacity(
@@ -163,6 +166,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       }
 
       // Charge the saved card
+      chargeAttempted = true;
       const paymentIntent = await chargePaymentMethod({
         amountCents: booking.finalPriceCents,
         customerId: booking.payment.stripeCustomerId,
@@ -175,6 +179,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       });
 
       if (paymentIntent.status === "succeeded") {
+        paymentSucceeded = true;
         await prisma.payment.update({
           where: { bookingId: booking.id },
           data: {
@@ -232,24 +237,35 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       }
     } catch (err) {
       logger.error({ err, bookingId: booking.id, job: "confirmPendingBookings" }, "Error processing pending booking");
-      // Revert status if we claimed it but the charge failed
-      await prisma.booking.updateMany({
-        where: { id: booking.id, status: BookingStatus.PAID },
-        data: { status: BookingStatus.PENDING },
-      }).catch((revertErr) => logger.error({ err: revertErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to revert booking status"));
+
+      // Only roll back the booking when Stripe never confirmed a successful charge.
+      if (!paymentSucceeded) {
+        await prisma.booking.updateMany({
+          where: { id: booking.id, status: BookingStatus.PAID },
+          data: { status: BookingStatus.PENDING },
+        }).catch((revertErr) => logger.error({ err: revertErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to revert booking status"));
+      } else {
+        logger.error(
+          { bookingId: booking.id, job: "confirmPendingBookings" },
+          "Stripe charge succeeded but local booking reconciliation failed; leaving booking claimed for webhook recovery"
+        );
+      }
+
       result.failedBookingIds.push(booking.id);
 
-      // N-04: Send admin alert for payment failure from cron
-      sendAdminPaymentFailureAlert({
-        memberName: `${booking.member.firstName} ${booking.member.lastName}`,
-        checkIn: booking.checkIn,
-        checkOut: booking.checkOut,
-        amountCents: booking.finalPriceCents,
-        errorMessage: err instanceof Error ? err.message : String(err),
-        paymentIntentId: booking.payment?.stripePaymentIntentId || "N/A",
-      }).catch((alertErr) =>
-        logger.error({ err: alertErr, bookingId: booking.id }, "Failed to send admin payment failure alert")
-      );
+      // Only emit a payment-failure alert when the Stripe charge attempt itself failed.
+      if (chargeAttempted && !paymentSucceeded) {
+        sendAdminPaymentFailureAlert({
+          memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          amountCents: booking.finalPriceCents,
+          errorMessage: err instanceof Error ? err.message : String(err),
+          paymentIntentId: booking.payment?.stripePaymentIntentId || "N/A",
+        }).catch((alertErr) =>
+          logger.error({ err: alertErr, bookingId: booking.id }, "Failed to send admin payment failure alert")
+        );
+      }
     }
   }
 
