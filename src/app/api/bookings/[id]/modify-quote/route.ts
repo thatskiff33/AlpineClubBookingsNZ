@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -19,11 +20,17 @@ import {
   validatePromoCodeFull,
 } from "@/lib/promo";
 import { z } from "zod";
+import { ageTierEnum } from "@/lib/age-tier-schema";
 import {
   BookingGuestValidationError,
   normalizeBookingGuestInputs,
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
+import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
+import {
+  canModifyBookingStatus,
+  usesActiveBookingLifecycle,
+} from "@/lib/booking-modify-permissions";
 
 const modifyQuoteSchema = z.object({
   checkIn: z.string().optional(),
@@ -33,7 +40,7 @@ const modifyQuoteSchema = z.object({
       z.object({
         firstName: z.string().min(1),
         lastName: z.string().min(1),
-        ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
+        ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
       })
@@ -82,9 +89,9 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!["PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
+  if (!canModifyBookingStatus(booking.status, session.user.role)) {
     return NextResponse.json(
-      { error: "Only PENDING, CONFIRMED, or PAID bookings can be modified" },
+      { error: "This booking cannot be modified in its current status" },
       { status: 400 }
     );
   }
@@ -128,6 +135,9 @@ export async function POST(
   // Determine new dates
   const newCheckIn = newCheckInStr ? new Date(newCheckInStr) : booking.checkIn;
   const newCheckOut = newCheckOutStr ? new Date(newCheckOutStr) : booking.checkOut;
+  const skipBookingLifecycleRules =
+    session.user.role === "ADMIN" &&
+    !usesActiveBookingLifecycle(booking.status);
 
   if (newCheckOut <= newCheckIn) {
     return NextResponse.json(
@@ -150,18 +160,44 @@ export async function POST(
 
   const guestsForPricing = [
     ...remainingGuests.map((g) => ({
-      ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+      ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
       memberId: g.memberId ?? null,
     })),
     ...(normalizedAddGuests ?? []).map((g) => ({
-      ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+      ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
       memberId: g.memberId ?? null,
     })),
   ];
 
   const totalGuestCount = guestsForPricing.length;
+
+  if (totalGuestCount > 29) {
+    return NextResponse.json(
+      { error: "A booking cannot exceed 29 guests" },
+      { status: 400 }
+    );
+  }
+
+  if (session.user.role !== "ADMIN") {
+    const unpaidMemberGuests = await findUnpaidMemberGuestNames(prisma, {
+      bookingMemberId: booking.memberId,
+      checkIn: newCheckIn,
+      guests: normalizedAddGuests ?? [],
+    });
+
+    if (unpaidMemberGuests.length > 0) {
+      return NextResponse.json(
+        {
+          error: `The following member guests have unpaid subscriptions: ${unpaidMemberGuests.join(", ")}. All member guests must have a paid subscription before booking.`,
+          code: "GUEST_SUBSCRIPTION_REQUIRED",
+          unpaidMembers: unpaidMemberGuests,
+        },
+        { status: 403 }
+      );
+    }
+  }
 
   // Minimum stay policy validation (skip for admins)
   let minimumStayViolations: { policyName: string; triggerDay: string; minimumNights: number; actualNights: number }[] = [];
@@ -172,12 +208,9 @@ export async function POST(
   }
 
   // Capacity check (exclude current booking)
-  const capacity = await checkCapacity(
-    newCheckIn,
-    newCheckOut,
-    totalGuestCount,
-    bookingId
-  );
+  const capacity = skipBookingLifecycleRules
+    ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
+    : await checkCapacity(newCheckIn, newCheckOut, totalGuestCount, bookingId);
 
   // Load seasons for pricing
   const seasons = await prisma.season.findMany({
@@ -225,7 +258,7 @@ export async function POST(
   // 1. Date change cost: price remaining guests at new dates vs old dates
   if (datesChanged && remainingGuests.length > 0) {
     const remainingForPricing = remainingGuests.map((g) => ({
-      ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+      ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
     }));
 
@@ -263,7 +296,7 @@ export async function POST(
   const checkInChanged =
     newCheckIn.getTime() !== new Date(booking.checkIn).getTime();
 
-  if (checkInChanged) {
+  if (!skipBookingLifecycleRules && checkInChanged) {
     const now = new Date();
     const policy = await loadCancellationPolicy(booking.checkIn);
     const feeResult = calculateChangeFee({

@@ -10,7 +10,15 @@ import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
 export default async function AdminBookingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; from?: string; to?: string; search?: string; upcoming?: string; sort?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    from?: string;
+    to?: string;
+    search?: string;
+    upcoming?: string;
+    sort?: string;
+    month?: string;
+  }>;
 }) {
   const params = await searchParams;
   const statusFilter = params.status;
@@ -19,6 +27,7 @@ export default async function AdminBookingsPage({
   const search = params.search;
   const upcomingDays = params.upcoming ? parseInt(params.upcoming, 10) : null;
   const sortBy = params.sort === "checkIn" ? "checkIn" : "updatedAt";
+  const monthFilter = params.month;
 
   const where: Record<string, unknown> = {};
 
@@ -43,6 +52,13 @@ export default async function AdminBookingsPage({
     if (!statusFilter) {
       where.status = { in: ["CONFIRMED", "PAID", "PENDING"] };
     }
+  }
+
+  if (monthFilter && /^\d{4}-\d{2}$/.test(monthFilter)) {
+    const [y, m] = monthFilter.split("-").map(Number);
+    const monthStart = new Date(y, m - 1, 1);
+    const monthEnd = new Date(y, m, 0); // last day of month
+    where.checkIn = { ...(where.checkIn as object || {}), gte: monthStart, lte: monthEnd };
   }
 
   if (fromDate) {

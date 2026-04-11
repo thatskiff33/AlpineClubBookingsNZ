@@ -5,9 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { calculateBookingPrice, type SeasonRateData } from "@/lib/pricing";
 import { LODGE_CAPACITY } from "@/lib/capacity";
-import { BookingStatus } from "@prisma/client";
+import { AgeTier, BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { z } from "zod";
+import { ageTierEnum } from "@/lib/age-tier-schema";
 import { PromoCodeType } from "@prisma/client";
 import {
   bumpPendingBookings,
@@ -23,6 +24,7 @@ import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBooking
 import { getWaitlistPosition } from "@/lib/waitlist";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import { getMemberCreditBalance, applyCreditToBooking } from "@/lib/member-credit";
+import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
 import { logAudit } from "@/lib/audit";
@@ -40,7 +42,7 @@ const createBookingSchema = z.object({
       z.object({
         firstName: z.string().min(1).max(100),
         lastName: z.string().min(1).max(100),
-        ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
+        ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
       })
@@ -186,6 +188,26 @@ export async function POST(request: NextRequest) {
           code: "SUBSCRIPTION_REQUIRED",
           invoiceUrl: subscription?.xeroOnlineInvoiceUrl ?? null,
           invoiceNumber: subscription?.xeroInvoiceNumber ?? null,
+        },
+        { status: 403 }
+      );
+    }
+  }
+
+  // P2.3: Subscription check for all member guests (non-admin only)
+  if (session.user.role !== "ADMIN") {
+    const unpaidMemberGuests = await findUnpaidMemberGuestNames(prisma, {
+      bookingMemberId: effectiveMemberId,
+      checkIn,
+      guests,
+    });
+
+    if (unpaidMemberGuests.length > 0) {
+      return NextResponse.json(
+        {
+          error: `The following member guests have unpaid subscriptions: ${unpaidMemberGuests.join(", ")}. All member guests must have a paid subscription before booking.`,
+          code: "GUEST_SUBSCRIPTION_REQUIRED",
+          unpaidMembers: unpaidMemberGuests,
         },
         { status: 403 }
       );
@@ -790,7 +812,7 @@ async function createWaitlistedBooking(params: {
   }));
 
   const guestInputs = guests.map((g) => ({
-    ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+    ageTier: g.ageTier as AgeTier,
     isMember: g.isMember,
   }));
 
@@ -864,7 +886,7 @@ async function createWaitlistedBooking(params: {
         create: guests.map((g, i) => ({
           firstName: g.firstName,
           lastName: g.lastName,
-          ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+          ageTier: g.ageTier as AgeTier,
           isMember: g.isMember,
           memberId: g.memberId || null,
           priceCents: price.guests[i].priceCents,

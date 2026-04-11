@@ -14,6 +14,7 @@ import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
+import { canModifyBookingStatus } from "@/lib/booking-modify-permissions";
 
 export default async function BookingDetailPage({
   params,
@@ -62,10 +63,8 @@ export default async function BookingDetailPage({
   const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
   const canCancel = ["CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
   const isFutureCheckIn = new Date(booking.checkIn) > new Date();
-  const isAdmin = session.user.role === "ADMIN";
-  const canModify = isAdmin
-    ? !["CANCELLED", "COMPLETED"].includes(booking.status) && isFutureCheckIn
-    : ["CONFIRMED", "PAID", "PENDING"].includes(booking.status) && isFutureCheckIn;
+  const canModify =
+    canModifyBookingStatus(booking.status, session.user.role) && isFutureCheckIn;
 
   const editorData: BookingEditorData = {
     id: booking.id,

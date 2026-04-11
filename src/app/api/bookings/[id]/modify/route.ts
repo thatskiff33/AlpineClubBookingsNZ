@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
@@ -28,11 +29,17 @@ import {
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
+import { ageTierEnum } from "@/lib/age-tier-schema";
 import {
   BookingGuestValidationError,
   normalizeBookingGuestInputs,
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
+import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
+import {
+  canModifyBookingStatus,
+  usesActiveBookingLifecycle,
+} from "@/lib/booking-modify-permissions";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -42,7 +49,7 @@ const batchModifySchema = z.object({
       z.object({
         firstName: z.string().min(1),
         lastName: z.string().min(1),
-        ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
+        ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
       })
@@ -125,8 +132,11 @@ export async function PUT(
         throw new ApiError("Forbidden", 403);
       }
 
-      if (!["PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
-        throw new ApiError("Only PENDING, CONFIRMED, or PAID bookings can be modified", 400);
+      if (!canModifyBookingStatus(booking.status, session.user.role)) {
+        throw new ApiError(
+          "This booking cannot be modified in its current status",
+          400
+        );
       }
 
       const today = new Date();
@@ -146,6 +156,10 @@ export async function PUT(
       if (newCheckIn < today) {
         throw new ApiError("Check-in cannot be in the past", 400);
       }
+
+      const skipBookingLifecycleRules =
+        session.user.role === "ADMIN" &&
+        !usesActiveBookingLifecycle(booking.status);
 
       let normalizedAddGuests = addGuests;
       try {
@@ -176,12 +190,12 @@ export async function PUT(
 
       const guestsForPricing = [
         ...remainingGuests.map((g) => ({
-          ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+          ageTier: g.ageTier as AgeTier,
           isMember: g.isMember,
           memberId: g.memberId ?? null,
         })),
         ...(normalizedAddGuests ?? []).map((g) => ({
-          ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+          ageTier: g.ageTier as AgeTier,
           isMember: g.isMember,
           memberId: g.memberId ?? null,
         })),
@@ -189,8 +203,29 @@ export async function PUT(
 
       const totalGuestCount = guestsForPricing.length;
 
+      if (totalGuestCount > 29) {
+        throw new ApiError("A booking cannot exceed 29 guests", 400);
+      }
+
+      if (session.user.role !== "ADMIN") {
+        const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
+          bookingMemberId: booking.memberId,
+          checkIn: newCheckIn,
+          guests: normalizedAddGuests ?? [],
+        });
+
+        if (unpaidMemberGuests.length > 0) {
+          throw new ApiError(
+            `The following member guests have unpaid subscriptions: ${unpaidMemberGuests.join(", ")}. All member guests must have a paid subscription before booking.`,
+            403
+          );
+        }
+      }
+
       // Capacity check excluding this booking
-      const capacity = await checkCapacity(newCheckIn, newCheckOut, totalGuestCount, bookingId);
+      const capacity = skipBookingLifecycleRules
+        ? { available: true, minAvailable: Number.POSITIVE_INFINITY, nightDetails: [] }
+        : await checkCapacity(newCheckIn, newCheckOut, totalGuestCount, bookingId);
       if (!capacity.available) {
         throw new ApiError("Not enough beds available for these changes", 400);
       }
@@ -356,7 +391,7 @@ export async function PUT(
       const checkInChanged = newCheckIn.getTime() !== new Date(booking.checkIn).getTime();
       const datesChanged = checkInChanged || newCheckOut.getTime() !== new Date(booking.checkOut).getTime();
 
-      if (checkInChanged) {
+      if (!skipBookingLifecycleRules && checkInChanged) {
         const now = new Date();
         const policy = await loadCancellationPolicy(booking.checkIn);
         const feeResult = calculateChangeFee({
@@ -461,7 +496,7 @@ export async function PUT(
       let newNonMemberHoldUntil = booking.nonMemberHoldUntil;
       let newStatus = booking.status;
 
-      if (hasNonMembers) {
+      if (!skipBookingLifecycleRules && hasNonMembers) {
         const holdDays = await getNonMemberHoldDays(newCheckIn);
         const daysUntilNewCheckIn = Math.ceil(
           (newCheckIn.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
@@ -477,7 +512,7 @@ export async function PUT(
             newCheckIn.getTime() - holdDays * 24 * 60 * 60 * 1000
           );
         }
-      } else {
+      } else if (!skipBookingLifecycleRules) {
         newNonMemberHoldUntil = null;
       }
 

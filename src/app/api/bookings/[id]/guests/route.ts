@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
@@ -16,6 +17,7 @@ import { createXeroSupplementaryInvoice } from "@/lib/xero";
 import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import logger from "@/lib/logger";
 import { z } from "zod";
+import { ageTierEnum } from "@/lib/age-tier-schema";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
@@ -23,6 +25,7 @@ import {
   normalizeBookingGuestInputs,
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
+import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -30,7 +33,7 @@ const addGuestsSchema = z.object({
       z.object({
         firstName: z.string().min(1).max(100),
         lastName: z.string().min(1).max(100),
-        ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
+        ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
       })
@@ -122,6 +125,21 @@ export async function POST(
         throw error;
       }
 
+      if (session.user.role !== "ADMIN") {
+        const unpaidMemberGuests = await findUnpaidMemberGuestNames(tx, {
+          bookingMemberId: booking.memberId,
+          checkIn: booking.checkIn,
+          guests: normalizedNewGuests,
+        });
+
+        if (unpaidMemberGuests.length > 0) {
+          throw new ApiError(
+            `The following member guests have unpaid subscriptions: ${unpaidMemberGuests.join(", ")}. All member guests must have a paid subscription before booking.`,
+            403
+          );
+        }
+      }
+
       const totalGuestCount = booking.guests.length + normalizedNewGuests.length;
 
       // Capacity check excluding this booking (using tx to participate in advisory lock)
@@ -159,7 +177,7 @@ export async function POST(
 
       // Calculate price for new guests
       const newGuestInputs = normalizedNewGuests.map((g) => ({
-        ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+        ageTier: g.ageTier as AgeTier,
         isMember: g.isMember,
         memberId: g.memberId ?? null,
       }));
@@ -199,7 +217,7 @@ export async function POST(
       // Recalculate total booking price with all guests
       const allGuestsForPricing = [
         ...booking.guests.map((g) => ({
-          ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+          ageTier: g.ageTier as AgeTier,
           isMember: g.isMember,
           memberId: g.memberId ?? null,
         })),
