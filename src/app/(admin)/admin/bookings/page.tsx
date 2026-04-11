@@ -10,7 +10,7 @@ import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
 export default async function AdminBookingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; from?: string; to?: string; search?: string; upcoming?: string }>;
+  searchParams: Promise<{ status?: string; from?: string; to?: string; search?: string; upcoming?: string; sort?: string }>;
 }) {
   const params = await searchParams;
   const statusFilter = params.status;
@@ -18,6 +18,7 @@ export default async function AdminBookingsPage({
   const toDate = params.to;
   const search = params.search;
   const upcomingDays = params.upcoming ? parseInt(params.upcoming, 10) : null;
+  const sortBy = params.sort === "checkIn" ? "checkIn" : "updatedAt";
 
   const where: Record<string, unknown> = {};
 
@@ -68,7 +69,7 @@ export default async function AdminBookingsPage({
       member: { select: { firstName: true, lastName: true, email: true } },
       guests: true,
     },
-    orderBy: { checkIn: "desc" },
+    orderBy: { [sortBy]: "desc" },
     take: 100,
   });
 

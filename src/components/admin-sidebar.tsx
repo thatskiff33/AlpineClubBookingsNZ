@@ -48,7 +48,7 @@ interface NavSection {
 const navSections: NavSection[] = [
   {
     items: [
-      { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/admin/dashboard", label: "Admin Dashboard", icon: LayoutDashboard },
     ],
   },
   {

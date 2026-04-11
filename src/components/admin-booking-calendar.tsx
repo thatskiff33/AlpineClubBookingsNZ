@@ -22,6 +22,8 @@ const STATUS_COLORS: Record<string, string> = {
   COMPLETED: "bg-purple-500",
   CANCELLED: "bg-red-500",
   BUMPED: "bg-orange-500",
+  WAITLISTED: "bg-purple-400",
+  WAITLIST_OFFERED: "bg-teal-500",
 };
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
