@@ -122,15 +122,18 @@ function getXeroConfig() {
   };
 }
 
-export function createXeroClient(): XeroClient {
-  return new XeroClient(getXeroConfig());
+export function createXeroClient(state?: string): XeroClient {
+  return new XeroClient({
+    ...getXeroConfig(),
+    ...(state ? { state } : {}),
+  });
 }
 
 /**
  * Build the Xero OAuth2 consent URL for admin to connect.
  */
-export async function getXeroConsentUrl(): Promise<string> {
-  const xero = createXeroClient();
+export async function getXeroConsentUrl(state?: string): Promise<string> {
+  const xero = createXeroClient(state);
   await xero.initialize();
   return xero.buildConsentUrl();
 }
@@ -139,8 +142,8 @@ export async function getXeroConsentUrl(): Promise<string> {
  * Handle the OAuth2 callback from Xero.
  * Exchanges the authorization code for tokens and stores them encrypted.
  */
-export async function handleXeroCallback(url: string): Promise<void> {
-  const xero = createXeroClient();
+export async function handleXeroCallback(url: string, state?: string): Promise<void> {
+  const xero = createXeroClient(state);
   await xero.initialize();
   const tokenSet = await xero.apiCallback(url);
   await xero.updateTenants();
