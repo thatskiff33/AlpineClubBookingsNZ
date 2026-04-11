@@ -155,8 +155,8 @@ export default function HutLeadersPage() {
         setError(data.error || "Failed to create");
         return;
       }
-      setFormData({ memberId: "", startDate: "", endDate: "" });
-      setShowForm(false);
+      // Don't reset form or close it — only re-fetch data so remaining
+      // unassigned dates and eligible members stay visible
       setEditingMember(null);
       fetchAssignments();
       fetchUnassignedDates();

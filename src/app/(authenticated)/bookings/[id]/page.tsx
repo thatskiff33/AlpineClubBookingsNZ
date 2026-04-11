@@ -62,7 +62,10 @@ export default async function BookingDetailPage({
   const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
   const canCancel = ["CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
   const isFutureCheckIn = new Date(booking.checkIn) > new Date();
-  const canModify = ["CONFIRMED", "PAID", "PENDING"].includes(booking.status) && isFutureCheckIn;
+  const isAdmin = session.user.role === "ADMIN";
+  const canModify = isAdmin
+    ? !["CANCELLED", "COMPLETED"].includes(booking.status) && isFutureCheckIn
+    : ["CONFIRMED", "PAID", "PENDING"].includes(booking.status) && isFutureCheckIn;
 
   const editorData: BookingEditorData = {
     id: booking.id,

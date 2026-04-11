@@ -13,6 +13,7 @@ export function BookingFilters() {
   const [from, setFrom] = useState(searchParams.get("from") || "");
   const [to, setTo] = useState(searchParams.get("to") || "");
   const [search, setSearch] = useState(searchParams.get("search") || "");
+  const [sort, setSort] = useState(searchParams.get("sort") || "updatedAt");
 
   function applyFilters() {
     const params = new URLSearchParams();
@@ -20,6 +21,7 @@ export function BookingFilters() {
     if (from) params.set("from", from);
     if (to) params.set("to", to);
     if (search) params.set("search", search);
+    if (sort !== "updatedAt") params.set("sort", sort);
     router.push(`/admin/bookings?${params.toString()}`);
   }
 
@@ -28,6 +30,7 @@ export function BookingFilters() {
     setFrom("");
     setTo("");
     setSearch("");
+    setSort("updatedAt");
     router.push("/admin/bookings");
   }
 
@@ -64,6 +67,17 @@ export function BookingFilters() {
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Name or email..."
         />
+      </div>
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-gray-500">Sort by</label>
+        <select
+          value={sort}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSort(e.target.value)}
+          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+        >
+          <option value="updatedAt">Last Updated</option>
+          <option value="checkIn">Check-in Date</option>
+        </select>
       </div>
       <Button onClick={applyFilters} size="sm">
         Filter
