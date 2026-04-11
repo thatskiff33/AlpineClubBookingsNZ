@@ -54,6 +54,20 @@ const transporter = nodemailer.createTransport({
 
 const FROM = process.env.EMAIL_FROM || "support@tokoroa.org.nz";
 
+// Token-bearing emails should never persist their rendered HTML in logs or retry
+// tables because that would retain live reset/verification links at rest.
+const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
+  "password-reset",
+  "admin-password-reset",
+  "email-verification",
+  "email-change-verification",
+  "age-up-invitation",
+]);
+
+function shouldPersistEmailHtml(templateName: string): boolean {
+  return !SENSITIVE_EMAIL_LOG_TEMPLATES.has(templateName);
+}
+
 export async function sendEmail({
   to,
   subject,
@@ -65,6 +79,8 @@ export async function sendEmail({
   html: string;
   templateName?: string;
 }) {
+  const persistHtmlBody = shouldPersistEmailHtml(templateName);
+
   // Create EmailLog record (fire-and-forget logging won't break email delivery)
   let emailLogId: string | null = null;
   try {
@@ -73,7 +89,7 @@ export async function sendEmail({
         to,
         subject,
         templateName,
-        htmlBody: html,
+        htmlBody: persistHtmlBody ? html : null,
         status: "QUEUED",
         lastAttemptAt: new Date(),
       },
@@ -85,7 +101,11 @@ export async function sendEmail({
 
   if (process.env.NODE_ENV === "development") {
     logger.info({ to, subject, templateName }, "Email sent (dev mode)");
-    logger.debug({ html }, "Email HTML content");
+    if (persistHtmlBody) {
+      logger.debug({ html }, "Email HTML content");
+    } else {
+      logger.debug({ templateName }, "Email HTML content redacted for sensitive template");
+    }
     // Mark as SENT in dev mode
     if (emailLogId) {
       try {
@@ -137,6 +157,12 @@ export async function sendEmail({
       } catch (logErr) {
         logger.error({ err: logErr }, "Failed to update EmailLog to FAILED");
       }
+    }
+    if (!persistHtmlBody) {
+      logger.warn(
+        { templateName },
+        "Sensitive email delivery failed and cannot be automatically retried because HTML retention is disabled"
+      );
     }
     throw err;
   }

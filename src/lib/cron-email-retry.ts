@@ -19,6 +19,8 @@ const FROM = process.env.EMAIL_FROM || "support@tokoroa.org.nz";
 /**
  * N-11: Retry failed emails with backoff.
  * Queries EmailLog for FAILED records with attempts < 3 and re-sends.
+ * Token-bearing templates are intentionally excluded because their HTML bodies
+ * are not retained in EmailLog.
  * Runs every 30 minutes.
  */
 export async function retryFailedEmails(): Promise<{ retried: number; succeeded: number; failed: number }> {

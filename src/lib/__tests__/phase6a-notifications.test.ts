@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Use vi.hoisted so the mock objects are available at hoist time
-const { mockPrisma, mockTransporter } = vi.hoisted(() => {
+const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
   const mockTransporter = {
     sendMail: vi.fn().mockResolvedValue({ messageId: "msg-123" }),
+  };
+  const mockLogger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
   };
   const mockPrisma = {
     emailLog: {
@@ -22,7 +28,7 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
   };
-  return { mockPrisma, mockTransporter };
+  return { mockPrisma, mockTransporter, mockLogger };
 });
 
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
@@ -34,7 +40,7 @@ vi.mock("nodemailer", () => ({
 }));
 
 vi.mock("@/lib/logger", () => ({
-  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  default: mockLogger,
 }));
 
 // ============================================================================
@@ -70,11 +76,62 @@ describe("N-10: EmailLog tracking", () => {
         to: "test@example.com",
         subject: "Test",
         templateName: "test-template",
+        htmlBody: "<p>Test</p>",
         status: "QUEUED",
       }),
     });
 
     (process.env as Record<string, string>).NODE_ENV =origEnv;
+  });
+
+  it("redacts stored HTML for token-bearing templates", async () => {
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV = "production";
+
+    const { sendEmail } = await import("../email");
+
+    await sendEmail({
+      to: "test@example.com",
+      subject: "Reset your password",
+      html: '<a href="https://tokoroa.org.nz/reset-password?token=live-secret">Reset</a>',
+      templateName: "password-reset",
+    });
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        templateName: "password-reset",
+        htmlBody: null,
+      }),
+    });
+
+    (process.env as Record<string, string>).NODE_ENV = origEnv;
+  });
+
+  it("redacts sensitive email HTML from dev logs", async () => {
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV = "development";
+
+    const { sendEmail } = await import("../email");
+
+    await sendEmail({
+      to: "test@example.com",
+      subject: "Reset your password",
+      html: '<a href="https://tokoroa.org.nz/reset-password?token=live-secret">Reset</a>',
+      templateName: "password-reset",
+    });
+
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      { templateName: "password-reset" },
+      "Email HTML content redacted for sensitive template"
+    );
+    expect(mockLogger.debug).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        html: expect.stringContaining("live-secret"),
+      }),
+      "Email HTML content"
+    );
+
+    (process.env as Record<string, string>).NODE_ENV = origEnv;
   });
 
   it("updates EmailLog to SENT on success", async () => {
