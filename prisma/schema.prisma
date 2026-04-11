@@ -678,7 +678,7 @@ model EmailLog {
   to            String
   subject       String
   templateName  String
-  htmlBody      String?        // Stored for retry purposes (N-11)
+  htmlBody      String?        // Stored only for retry-safe templates; token-bearing templates are redacted
   status        EmailLogStatus @default(QUEUED)
   errorMessage  String?
   attempts      Int            @default(1)
