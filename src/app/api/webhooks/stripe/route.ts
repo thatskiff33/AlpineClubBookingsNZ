@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { isXeroConnected, createXeroInvoiceForBooking, createXeroCreditNote } from "@/lib/xero";
-import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupIntentFailedEmail, sendAdminXeroSyncErrorAlert } from "@/lib/email";
+import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupIntentFailedEmail } from "@/lib/email";
 import { recordWebhookLog } from "@/lib/webhook-log";
+import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
 
@@ -272,12 +273,12 @@ async function handlePaymentIntentSucceeded(
     }
   } catch (xeroErr) {
     logger.error({ err: xeroErr, bookingId }, "Failed to create Xero invoice for booking");
-    // Alert admins so they can manually create the invoice in Xero
-    sendAdminXeroSyncErrorAlert({
+    // Alert admins through the deduplicated Xero notifier so repeated
+    // webhook retries or repeated failures do not spam operators.
+    notifyXeroSyncError({
       errorType: "INVOICE_CREATION",
       operation: `Create invoice for booking ${bookingId}`,
       errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
-      timestamp: new Date(),
     }).catch(() => {});
   }
 }
@@ -529,6 +530,11 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     }
   } catch (xeroErr) {
     logger.error({ err: xeroErr, paymentId: payment.id }, "Failed to create Xero credit note for payment");
+    notifyXeroSyncError({
+      errorType: "CREDIT_NOTE_CREATION",
+      operation: `Create refund credit note for payment ${payment.id}`,
+      errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
+    }).catch(() => {});
   }
 }
 

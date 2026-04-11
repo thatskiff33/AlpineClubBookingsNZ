@@ -9,6 +9,7 @@ import {
   sendAdminPaymentFailureAlert,
 } from "./email";
 import { processWaitlistForDates } from "./waitlist";
+import { notifyXeroSyncError } from "./xero-error-alert";
 import logger from "@/lib/logger";
 
 export interface CronConfirmResult {
@@ -126,6 +127,11 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           }
         } catch (xeroErr) {
           logger.error({ err: xeroErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to create Xero invoice for $0 booking");
+          await notifyXeroSyncError({
+            errorType: "INVOICE_CREATION",
+            operation: `Create invoice for booking ${booking.id} during pending confirmation ($0 booking)`,
+            errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
+          });
         }
 
         try {
@@ -199,6 +205,11 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           }
         } catch (xeroErr) {
           logger.error({ err: xeroErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to create Xero invoice");
+          await notifyXeroSyncError({
+            errorType: "INVOICE_CREATION",
+            operation: `Create invoice for booking ${booking.id} during pending confirmation`,
+            errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
+          });
         }
 
         try {

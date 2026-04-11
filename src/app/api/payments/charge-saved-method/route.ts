@@ -8,6 +8,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
+import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -168,6 +169,11 @@ export async function POST(request: NextRequest) {
         }
       } catch (xeroErr) {
         logger.error({ err: xeroErr, bookingId: booking.id }, "Failed to create Xero invoice for booking");
+        await notifyXeroSyncError({
+          errorType: "INVOICE_CREATION",
+          operation: `Create invoice for booking ${booking.id} after saved-card charge`,
+          errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
+        });
       }
     }
 

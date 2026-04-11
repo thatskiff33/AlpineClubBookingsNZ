@@ -4,18 +4,28 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
 
 const mockChargePaymentMethod = vi.fn();
+const mockIsXeroConnected = vi.fn().mockResolvedValue(false);
+const mockCreateXeroInvoiceForBooking = vi.fn().mockResolvedValue(undefined);
 vi.mock("../stripe", () => ({
   chargePaymentMethod: (...args: unknown[]) => mockChargePaymentMethod(...args),
+}));
+vi.mock("../xero", () => ({
+  isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
+  createXeroInvoiceForBooking: (...args: unknown[]) => mockCreateXeroInvoiceForBooking(...args),
 }));
 
 // Mock email
 const mockSendConfirmedEmail = vi.fn();
 const mockSendBumpedEmail = vi.fn();
 const mockSendAdminPaymentFailureAlert = vi.fn().mockResolvedValue(undefined);
+const mockNotifyXeroSyncError = vi.fn().mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
+}));
+vi.mock("../xero-error-alert", () => ({
+  notifyXeroSyncError: (...args: unknown[]) => mockNotifyXeroSyncError(...args),
 }));
 
 // Mock capacity
@@ -112,6 +122,8 @@ function makePendingBooking(
 describe("Cron: Confirm Pending Bookings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsXeroConnected.mockResolvedValue(false);
+    mockCreateXeroInvoiceForBooking.mockResolvedValue(undefined);
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
     mockPrismaTransaction.mockImplementation(async (actions: unknown[]) => {
       // Execute all Prisma actions in the transaction array
@@ -330,6 +342,33 @@ describe("Cron: Confirm Pending Bookings", () => {
       3,
       "b1"
     );
+  });
+
+  it("notifies admins when Xero invoice creation fails during pending confirmation", async () => {
+    const booking = makePendingBooking("b1");
+    mockBookingFindMany.mockResolvedValue([booking]);
+    mockCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 10,
+      nightDetails: [],
+    });
+    mockChargePaymentMethod.mockResolvedValue({
+      id: "pi_auto_1",
+      status: "succeeded",
+      amount: 10000,
+    });
+    mockPaymentUpdate.mockResolvedValue({});
+    mockIsXeroConnected.mockResolvedValue(true);
+    mockCreateXeroInvoiceForBooking.mockRejectedValue(new Error("Xero unavailable"));
+
+    const result = await confirmPendingBookings();
+
+    expect(result.confirmedBookingIds).toEqual(["b1"]);
+    expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
+      errorType: "INVOICE_CREATION",
+      operation: "Create invoice for booking b1 during pending confirmation",
+      errorMessage: "Xero unavailable",
+    });
   });
 
   it("does not revert or alert when local persistence fails after Stripe already succeeded", async () => {
