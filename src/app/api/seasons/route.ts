@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import { ageTierEnum } from "@/lib/age-tier-schema";
 import logger from "@/lib/logger";
 
 const createSeasonSchema = z.object({
@@ -12,7 +13,7 @@ const createSeasonSchema = z.object({
   endDate: z.string().transform((s) => new Date(s)),
   rates: z.array(
     z.object({
-      ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
+      ageTier: ageTierEnum,
       isMember: z.boolean(),
       pricePerNightCents: z.number().int().min(0),
     })

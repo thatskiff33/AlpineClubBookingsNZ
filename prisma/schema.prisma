@@ -21,9 +21,10 @@ enum Role {
 }
 
 enum AgeTier {
-  ADULT
-  YOUTH
+  INFANT
   CHILD
+  YOUTH
+  ADULT
 }
 
 enum SubscriptionStatus {
@@ -716,7 +717,8 @@ model NotificationPreference {
   adminXeroSyncError   Boolean  @default(true)
   adminCapacityWarning Boolean  @default(true)
   adminDailyDigest     Boolean  @default(true)
-  adminWaitlistOffer   Boolean  @default(true)
+  adminWaitlistOffer          Boolean  @default(true)
+  adminFamilyGroupRequest     Boolean  @default(true)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 

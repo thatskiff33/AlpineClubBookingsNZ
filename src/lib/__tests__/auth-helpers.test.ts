@@ -48,13 +48,20 @@ describe("computeAgeTierWithSettings (new TAC boundaries: CHILD<10, YOUTH 10-17,
   // Use April 1 2026 as reference (season start date for season 2026)
   const ref = new Date("2026-04-01");
 
-  it("returns CHILD for age under 10", () => {
+  it("returns INFANT for age under 5", () => {
+    // Born 2025-01-01: age 1 -> INFANT
+    expect(computeAgeTierWithSettings(new Date("2025-01-01"), ref, AGE_TIER_DEFAULTS)).toBe("INFANT");
+    // Born 2021-04-02: age 4 on April 1 2026 -> INFANT
+    expect(computeAgeTierWithSettings(new Date("2021-04-02"), ref, AGE_TIER_DEFAULTS)).toBe("INFANT");
+  });
+
+  it("returns CHILD for age 5-9", () => {
+    // Born 2021-04-01: age 5 on April 1 2026 -> CHILD
+    expect(computeAgeTierWithSettings(new Date("2021-04-01"), ref, AGE_TIER_DEFAULTS)).toBe("CHILD");
     // Born 2017-01-01: age 9 on April 1 2026 -> CHILD
     expect(computeAgeTierWithSettings(new Date("2017-01-01"), ref, AGE_TIER_DEFAULTS)).toBe("CHILD");
     // Born 2016-04-02: still 9 on April 1 2026 (turns 10 on April 2) -> CHILD
     expect(computeAgeTierWithSettings(new Date("2016-04-02"), ref, AGE_TIER_DEFAULTS)).toBe("CHILD");
-    // Born 2025-01-01: age 1 -> CHILD
-    expect(computeAgeTierWithSettings(new Date("2025-01-01"), ref, AGE_TIER_DEFAULTS)).toBe("CHILD");
   });
 
   it("returns YOUTH for age 10 to 17 (inclusive)", () => {

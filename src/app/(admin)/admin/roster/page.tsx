@@ -13,7 +13,7 @@ interface Guest {
   bookingId: string
   firstName: string
   lastName: string
-  ageTier: "ADULT" | "YOUTH" | "CHILD"
+  ageTier: string
 }
 
 interface Assignment {

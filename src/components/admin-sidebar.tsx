@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   Users,
@@ -101,8 +101,33 @@ const navSections: NavSection[] = [
   },
 ];
 
+/** Fetch pending family group request count for sidebar badge. */
+function usePendingFamilyRequests(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/admin/family-groups/requests")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.requests) {
+          setCount(data.requests.length);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  return count;
+}
+
 function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const pendingFamilyRequests = usePendingFamilyRequests();
+
+  // Map href -> badge count
+  const badges: Record<string, number> = {};
+  if (pendingFamilyRequests > 0) {
+    badges["/admin/family-groups"] = pendingFamilyRequests;
+  }
 
   return (
     <nav className="flex flex-col gap-0.5">
@@ -127,6 +152,7 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
               href === "/admin/dashboard"
                 ? pathname === "/admin/dashboard"
                 : pathname.startsWith(href);
+            const badgeCount = badges[href];
 
             return (
               <Link
@@ -146,7 +172,12 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
                     active ? "text-blue-600" : "text-slate-400"
                   )}
                 />
-                {label}
+                <span className="flex-1">{label}</span>
+                {badgeCount != null && badgeCount > 0 && (
+                  <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-orange-500 px-1.5 text-[11px] font-semibold text-white">
+                    {badgeCount > 99 ? "99+" : badgeCount}
+                  </span>
+                )}
               </Link>
             );
           })}

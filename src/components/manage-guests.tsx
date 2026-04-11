@@ -1,6 +1,8 @@
 "use client";
 
+import type { AgeTier } from "@prisma/client";
 import { useState } from "react";
+import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,10 +89,11 @@ function AddGuestDialog({
   checkOut: string;
 }) {
   const router = useRouter();
+  const ageTierOptions = useAgeTierOptions();
   const [open, setOpen] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [ageTier, setAgeTier] = useState<"ADULT" | "YOUTH" | "CHILD">("ADULT");
+  const [ageTier, setAgeTier] = useState<AgeTier>("ADULT");
   const [isMember, setIsMember] = useState(false);
   const [quote, setQuote] = useState<AddGuestQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
@@ -283,14 +286,16 @@ function AddGuestDialog({
                   id="add-guest-age"
                   value={ageTier}
                   onChange={(e) => {
-                    setAgeTier(e.target.value as "ADULT" | "YOUTH" | "CHILD");
+                    setAgeTier(e.target.value as AgeTier);
                     setQuote(null);
                   }}
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                 >
-                  <option value="ADULT">Adult (18+)</option>
-                  <option value="YOUTH">Youth (10-17)</option>
-                  <option value="CHILD">Child (under 10)</option>
+                  {ageTierOptions.map((option) => (
+                    <option key={option.tier} value={option.tier}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="space-y-1">

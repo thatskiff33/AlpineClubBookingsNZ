@@ -109,6 +109,7 @@ vi.mock("../email", () => ({
   sendChildRequestSubmittedEmail: vi.fn(),
   sendChildRequestApprovedEmail: vi.fn(),
   sendChildRequestRejectedEmail: vi.fn(),
+  sendAdminFamilyGroupRequestAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../auth", () => ({

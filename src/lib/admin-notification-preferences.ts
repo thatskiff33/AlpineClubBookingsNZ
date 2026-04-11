@@ -31,6 +31,10 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
     label: "Waitlist offers",
     description: "Alerts when a waitlist spot is offered to a member.",
   },
+  adminFamilyGroupRequest: {
+    label: "Family group requests",
+    description: "Alerts when a member requests to join or add to a family group.",
+  },
 } as const;
 
 export type AdminNotificationPreferenceKey =
@@ -54,6 +58,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_SELECT = {
   adminCapacityWarning: true,
   adminDailyDigest: true,
   adminWaitlistOffer: true,
+  adminFamilyGroupRequest: true,
 } as const;
 
 export function resolveAdminNotificationPreferences(
@@ -68,5 +73,6 @@ export function resolveAdminNotificationPreferences(
     adminCapacityWarning: preferences?.adminCapacityWarning ?? true,
     adminDailyDigest: preferences?.adminDailyDigest ?? true,
     adminWaitlistOffer: preferences?.adminWaitlistOffer ?? true,
+    adminFamilyGroupRequest: preferences?.adminFamilyGroupRequest ?? true,
   };
 }

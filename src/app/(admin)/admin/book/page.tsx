@@ -1,5 +1,6 @@
 "use client";
 
+import type { AgeTier } from "@prisma/client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { BookingCalendar } from "@/components/booking-calendar";
@@ -17,7 +18,7 @@ interface FamilyMember {
   id: string;
   firstName: string;
   lastName: string;
-  ageTier: "ADULT" | "YOUTH" | "CHILD";
+  ageTier: AgeTier;
   relationship: "self" | "partner" | "dependent";
 }
 

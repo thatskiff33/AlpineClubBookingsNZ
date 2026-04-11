@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";
@@ -114,7 +115,7 @@ export async function POST(req: NextRequest) {
     phoneAreaCode: string | null;
     phoneNumber: string | null;
     dateOfBirth: Date | null;
-    ageTier: "ADULT" | "YOUTH" | "CHILD";
+    ageTier: AgeTier;
     role: "MEMBER" | "ADMIN";
   }
   const validatedRows: ValidatedRow[] = [];
@@ -135,7 +136,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Determine age tier
-    let ageTier: "ADULT" | "YOUTH" | "CHILD" = "ADULT";
+    let ageTier: AgeTier = "ADULT";
     let dateOfBirth: Date | null = null;
     if (row.dateOfBirth) {
       dateOfBirth = new Date(row.dateOfBirth);
@@ -143,7 +144,7 @@ export async function POST(req: NextRequest) {
         results.errors.push({ row: rowNum, errors: ["Invalid date of birth"] });
         continue;
       }
-      ageTier = (await computeAgeTier(dateOfBirth, getSeasonStartDate(getSeasonYear()))) as "ADULT" | "YOUTH" | "CHILD";
+      ageTier = (await computeAgeTier(dateOfBirth, getSeasonStartDate(getSeasonYear()))) as AgeTier;
     }
 
     validatedRows.push({

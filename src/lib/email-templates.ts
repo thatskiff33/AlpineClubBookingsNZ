@@ -848,6 +848,38 @@ export function childRequestRejectedTemplate(
   `);
 }
 
+/** Admin alert: family group request created */
+export function adminFamilyGroupRequestTemplate(data: {
+  requestType: string;
+  requesterName: string;
+  groupName: string;
+  details: string;
+}): string {
+  return layout(`
+    ${heading("Family Group Request")}
+    ${paragraph("A new <strong>" + escapeHtml(data.requestType) + "</strong> request has been submitted.")}
+    ${paragraph("<strong>Requester:</strong> " + escapeHtml(data.requesterName))}
+    ${paragraph("<strong>Group:</strong> " + escapeHtml(data.groupName))}
+    ${paragraph(escapeHtml(data.details))}
+    ${button("Review Requests", (process.env.NEXTAUTH_URL || "http://localhost:3000") + "/admin/family-groups")}
+    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+  `);
+}
+
+/** Confirmation email sent to the requester when they submit a join request */
+export function joinRequestConfirmationTemplate(
+  requesterName: string,
+  groupName: string
+): string {
+  return layout(`
+    ${heading("Join Request Submitted")}
+    ${paragraph("Hi " + escapeHtml(requesterName) + ",")}
+    ${paragraph("Your request to join the family group <strong>" + escapeHtml(groupName) + "</strong> has been submitted.")}
+    ${alertBox("An administrator will review your request. You'll be notified once it's been processed.", "info")}
+    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+  `);
+}
+
 /** Age-up invitation — sent when a youth/child turns 18 and gets their own login */
 export function ageUpInvitationTemplate(firstName: string, resetUrl: string): string {
   const name = escapeHtml(firstName);

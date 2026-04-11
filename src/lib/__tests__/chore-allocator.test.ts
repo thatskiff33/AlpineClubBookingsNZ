@@ -65,6 +65,12 @@ describe("meetsMinAge", () => {
     expect(meetsMinAge("CHILD", 1)).toBe(false);
     expect(meetsMinAge("CHILD", 7)).toBe(false);
   });
+
+  it("INFANT meets only minAge 0", () => {
+    expect(meetsMinAge("INFANT", 0)).toBe(true);
+    expect(meetsMinAge("INFANT", 1)).toBe(false);
+    expect(meetsMinAge("INFANT", 7)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

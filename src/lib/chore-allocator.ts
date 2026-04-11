@@ -72,6 +72,7 @@ function ageForTier(tier: AgeTier): number {
       return AGE_FOR_ADULT;
     case "YOUTH":
       return AGE_FOR_YOUTH;
+    case "INFANT":
     case "CHILD":
       return 0;
   }

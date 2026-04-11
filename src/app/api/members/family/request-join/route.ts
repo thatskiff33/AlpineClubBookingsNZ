@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { sendAdminFamilyGroupRequestAlert, sendJoinRequestConfirmationEmail } from "@/lib/email";
 
 const requestJoinSchema = z.object({
   targetEmail: z.string().email("Invalid email address"),
@@ -145,6 +146,40 @@ export async function POST(req: NextRequest) {
     { requestId: joinRequest.id, requesterId: session.user.id, familyGroupId },
     "Family group join request created"
   );
+
+  // Fetch group name for emails
+  const groupInfo = await prisma.familyGroup.findUnique({
+    where: { id: familyGroupId },
+    select: { name: true },
+  });
+  const groupName = groupInfo?.name ?? "Unnamed Group";
+
+  // Fetch requester email for confirmation
+  const requesterEmail = await prisma.member.findUnique({
+    where: { id: session.user.id },
+    select: { email: true },
+  });
+
+  // Send requester confirmation email (fire-and-forget)
+  if (requesterEmail) {
+    sendJoinRequestConfirmationEmail(
+      requesterEmail.email,
+      `${requester.firstName} ${requester.lastName}`,
+      groupName
+    ).catch((err) => {
+      logger.error({ err, requestId: joinRequest.id }, "Failed to send join request confirmation email");
+    });
+  }
+
+  // Send admin alert (fire-and-forget)
+  sendAdminFamilyGroupRequestAlert({
+    requestType: "Join Request",
+    requesterName: `${requester.firstName} ${requester.lastName}`,
+    groupName,
+    details: `Wants to join via ${targetEmail}`,
+  }).catch((err) => {
+    logger.error({ err, requestId: joinRequest.id }, "Failed to send admin family group request alert");
+  });
 
   return NextResponse.json(
     {

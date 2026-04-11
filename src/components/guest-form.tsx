@@ -1,5 +1,6 @@
 "use client";
 
+import type { AgeTier } from "@prisma/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,7 +9,7 @@ import { useAgeTierOptions } from "@/lib/use-age-tier-options";
 export interface GuestData {
   firstName: string;
   lastName: string;
-  ageTier: "ADULT" | "YOUTH" | "CHILD";
+  ageTier: AgeTier;
   isMember: boolean;
   memberId?: string;
 }

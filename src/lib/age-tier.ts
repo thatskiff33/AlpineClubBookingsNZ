@@ -31,8 +31,9 @@ export function computeAge(dateOfBirth: Date, referenceDate: Date): number {
 // ---------------------------------------------------------------------------
 
 export const AGE_TIER_DEFAULTS = [
-  { tier: "CHILD" as AgeTier, minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
-  { tier: "YOUTH" as AgeTier, minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
+  { tier: "INFANT" as AgeTier, minAge: 0, maxAge: 4, label: "Infant (under 5)", sortOrder: 0 },
+  { tier: "CHILD" as AgeTier, minAge: 5, maxAge: 9 as number | null, label: "Child (5-9)", sortOrder: 1 },
+  { tier: "YOUTH" as AgeTier, minAge: 10, maxAge: 17 as number | null, label: "Youth (10-17)", sortOrder: 2 },
   { tier: "ADULT" as AgeTier, minAge: 18, maxAge: null as number | null, label: "Adult (18+)", sortOrder: 3 },
 ];
 

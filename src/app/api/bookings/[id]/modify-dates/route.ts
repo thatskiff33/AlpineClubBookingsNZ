@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
@@ -170,7 +171,7 @@ export async function PUT(
 
       // Recalculate price with new dates
       const guestsForPricing = booking.guests.map((g) => ({
-        ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+        ageTier: g.ageTier as AgeTier,
         isMember: g.isMember,
         memberId: g.memberId ?? null,
       }));

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { ageTierEnum } from "@/lib/age-tier-schema";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { importMembersFromXeroGroups, XeroDailyLimitError } from "@/lib/xero";
@@ -10,7 +11,7 @@ const importSchema = z.object({
     z.object({
       groupId: z.string().min(1),
       groupName: z.string().min(1),
-      ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
+      ageTier: ageTierEnum,
     })
   ).min(1, "At least one group mapping is required"),
   sendInvites: z.boolean().default(false),

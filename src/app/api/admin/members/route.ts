@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { ageTierEnum } from "@/lib/age-tier-schema";
+import type { AgeTier } from "@prisma/client";
 import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";
 import { auth } from "@/lib/auth";
@@ -32,7 +34,7 @@ const createMemberSchema = z.object({
     .optional()
     .nullable(),
   role: z.enum(["MEMBER", "ADMIN"]).default("MEMBER"),
-  ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]).optional(),
+  ageTier: ageTierEnum.optional(),
   active: z.boolean().default(true),
   sendInvite: z.boolean().default(false),
   canLogin: z.boolean().optional(),
@@ -392,7 +394,7 @@ export async function POST(req: NextRequest) {
           phoneNumber: data.phoneNumber?.trim() || null,
           dateOfBirth,
           role: data.role,
-          ageTier: ageTier as "ADULT" | "YOUTH" | "CHILD",
+          ageTier: ageTier as AgeTier,
           active: data.active,
           canLogin,
           passwordHash: placeholderHash,
