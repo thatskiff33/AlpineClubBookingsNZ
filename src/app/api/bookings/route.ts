@@ -192,6 +192,44 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // P2.3: Subscription check for all member guests (non-admin only)
+  if (session.user.role !== "ADMIN") {
+    const seasonYear = getSeasonYear(checkIn);
+    const memberGuestIds = guests
+      .filter((g) => g.isMember && g.memberId && g.memberId !== effectiveMemberId)
+      .map((g) => g.memberId!);
+
+    if (memberGuestIds.length > 0) {
+      const uniqueIds = [...new Set(memberGuestIds)];
+      const paidSubs = await prisma.memberSubscription.findMany({
+        where: {
+          memberId: { in: uniqueIds },
+          seasonYear,
+          status: "PAID",
+        },
+        select: { memberId: true },
+      });
+      const paidMemberIds = new Set(paidSubs.map((s) => s.memberId));
+      const unpaidMemberIds = uniqueIds.filter((id) => !paidMemberIds.has(id));
+
+      if (unpaidMemberIds.length > 0) {
+        const unpaidMembers = await prisma.member.findMany({
+          where: { id: { in: unpaidMemberIds } },
+          select: { firstName: true, lastName: true },
+        });
+        const names = unpaidMembers.map((m) => `${m.firstName} ${m.lastName}`);
+        return NextResponse.json(
+          {
+            error: `The following member guests have unpaid subscriptions: ${names.join(", ")}. All member guests must have a paid subscription before booking.`,
+            code: "GUEST_SUBSCRIPTION_REQUIRED",
+            unpaidMembers: names,
+          },
+          { status: 403 }
+        );
+      }
+    }
+  }
+
   // Minimum stay policy validation (skip for admins)
   if (session.user.role !== "ADMIN") {
     const { validateMinimumStay, formatViolationsDetail } = await import("@/lib/booking-policies");

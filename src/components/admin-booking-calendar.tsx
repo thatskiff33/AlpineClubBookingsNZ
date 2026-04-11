@@ -22,7 +22,11 @@ const STATUS_COLORS: Record<string, string> = {
   COMPLETED: "bg-purple-500",
   CANCELLED: "bg-red-500",
   BUMPED: "bg-orange-500",
+  WAITLISTED: "bg-purple-400",
+  WAITLIST_OFFERED: "bg-teal-500",
 };
+
+const ALL_STATUSES = Object.keys(STATUS_COLORS);
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -61,6 +65,7 @@ export function AdminBookingCalendar() {
   const [bookings, setBookings] = useState<CalendarBooking[]>([]);
   const [availability, setAvailability] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
+  const [enabledStatuses, setEnabledStatuses] = useState<Set<string>>(new Set(ALL_STATUSES));
 
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
 
@@ -101,6 +106,17 @@ export function AdminBookingCalendar() {
     else setMonth(month + 1);
   };
 
+  function toggleStatus(status: string) {
+    setEnabledStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  }
+
+  const filteredBookings = bookings.filter((b) => enabledStatuses.has(b.status));
+
   const { startDow, daysInMonth } = getMonthDays(year, month);
   const monthStart = new Date(year, month, 1);
   const monthEnd = new Date(year, month + 1, 0);
@@ -124,7 +140,7 @@ export function AdminBookingCalendar() {
   type Lane = Array<{ booking: CalendarBooking; start: number; end: number }>;
   const lanes: Lane[] = [];
 
-  for (const b of bookings) {
+  for (const b of filteredBookings) {
     const range = getBookingDayRange(b);
     if (!range) continue;
     // Find the first lane that doesn't overlap
@@ -168,6 +184,27 @@ export function AdminBookingCalendar() {
           </Button>
         </div>
         {loading && <span className="text-xs text-slate-400">Loading...</span>}
+      </div>
+
+      {/* Status toggle filters */}
+      <div className="flex flex-wrap gap-1.5 px-3 py-2 border-b">
+        {ALL_STATUSES.map((status) => {
+          const isOn = enabledStatuses.has(status);
+          return (
+            <button
+              key={status}
+              type="button"
+              onClick={() => toggleStatus(status)}
+              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors border ${
+                isOn
+                  ? `${STATUS_COLORS[status]} text-white border-transparent`
+                  : "bg-white text-slate-500 border-slate-300"
+              }`}
+            >
+              {status.replace("_", " ")}
+            </button>
+          );
+        })}
       </div>
 
       {/* Day headers */}
@@ -284,12 +321,12 @@ export function AdminBookingCalendar() {
         </div>
       </div>
 
-      {/* Legend */}
+      {/* Legend (click toggles above to filter) */}
       <div className="flex flex-wrap gap-4 px-3 py-2.5 border-t text-xs">
         {Object.entries(STATUS_COLORS).map(([status, color]) => (
-          <div key={status} className="flex items-center gap-1.5">
+          <div key={status} className={`flex items-center gap-1.5 ${enabledStatuses.has(status) ? "" : "opacity-30"}`}>
             <div className={`w-3.5 h-2.5 rounded-sm ${color}`} />
-            <span className="text-slate-600">{status}</span>
+            <span className="text-slate-600">{status.replace("_", " ")}</span>
           </div>
         ))}
       </div>

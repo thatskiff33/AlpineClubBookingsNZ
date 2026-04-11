@@ -13,6 +13,18 @@ export function BookingFilters() {
   const [from, setFrom] = useState(searchParams.get("from") || "");
   const [to, setTo] = useState(searchParams.get("to") || "");
   const [search, setSearch] = useState(searchParams.get("search") || "");
+  const [month, setMonth] = useState(searchParams.get("month") || "");
+
+  // Generate month options: current year ±1
+  const monthOptions: Array<{ value: string; label: string }> = [];
+  const currentYear = new Date().getFullYear();
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  for (let y = currentYear - 1; y <= currentYear + 1; y++) {
+    for (let m = 0; m < 12; m++) {
+      const val = `${y}-${String(m + 1).padStart(2, "0")}`;
+      monthOptions.push({ value: val, label: `${monthNames[m]} ${y}` });
+    }
+  }
 
   function applyFilters() {
     const params = new URLSearchParams();
@@ -20,6 +32,7 @@ export function BookingFilters() {
     if (from) params.set("from", from);
     if (to) params.set("to", to);
     if (search) params.set("search", search);
+    if (month) params.set("month", month);
     router.push(`/admin/bookings?${params.toString()}`);
   }
 
@@ -28,6 +41,7 @@ export function BookingFilters() {
     setFrom("");
     setTo("");
     setSearch("");
+    setMonth("");
     router.push("/admin/bookings");
   }
 
@@ -47,6 +61,19 @@ export function BookingFilters() {
           <option value="CANCELLED">Cancelled</option>
           <option value="BUMPED">Bumped</option>
           <option value="COMPLETED">Completed</option>
+        </select>
+      </div>
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-gray-500">Month</label>
+        <select
+          value={month}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setMonth(e.target.value)}
+          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+        >
+          <option value="">All months</option>
+          {monthOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
         </select>
       </div>
       <div className="space-y-1">
