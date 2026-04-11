@@ -7,6 +7,7 @@ const {
   mockChargePaymentMethod,
   mockIsXeroConnected,
   mockCreateXeroInvoiceForBooking,
+  mockNotifyXeroSyncError,
   mockSendAdminPaymentFailureAlert,
   mockBookingFindUnique,
   mockBookingUpdateMany,
@@ -19,6 +20,7 @@ const {
   mockChargePaymentMethod: vi.fn(),
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
   mockCreateXeroInvoiceForBooking: vi.fn(),
+  mockNotifyXeroSyncError: vi.fn().mockResolvedValue(undefined),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
   mockBookingFindUnique: vi.fn(),
   mockBookingUpdateMany: vi.fn(),
@@ -46,6 +48,10 @@ vi.mock("@/lib/xero", () => ({
 
 vi.mock("@/lib/email", () => ({
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
+}));
+
+vi.mock("@/lib/xero-error-alert", () => ({
+  notifyXeroSyncError: (...args: unknown[]) => mockNotifyXeroSyncError(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -157,6 +163,30 @@ describe("POST /api/payments/charge-saved-method", () => {
     expect(mockBookingUpdateMany).toHaveBeenCalledWith({
       where: { id: "booking-1", status: "PENDING" },
       data: { status: "CONFIRMED" },
+    });
+  });
+
+  it("notifies admins when Xero invoice creation fails after a successful charge", async () => {
+    mockChargePaymentMethod.mockResolvedValue({
+      id: "pi_success_3",
+      status: "succeeded",
+    });
+    mockIsXeroConnected.mockResolvedValue(true);
+    mockCreateXeroInvoiceForBooking.mockRejectedValue(new Error("Xero down"));
+
+    const request = new NextRequest("http://localhost/api/payments/charge-saved-method", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(200);
+    expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
+      errorType: "INVOICE_CREATION",
+      operation: "Create invoice for booking booking-1 after saved-card charge",
+      errorMessage: "Xero down",
     });
   });
 });
