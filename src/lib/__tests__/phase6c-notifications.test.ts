@@ -51,100 +51,31 @@ describe("N-12: sendFeedbackRequests", () => {
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
 
-  it("sends feedback for bookings where checkOut was yesterday", async () => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
-
-    mockPrisma.booking.findMany.mockResolvedValue([
-      {
-        id: "booking-1",
-        checkIn: new Date(yesterday.getTime() - 2 * 86400000),
-        checkOut: yesterday,
-        status: "CONFIRMED",
-        member: { id: "member-1", email: "user@example.com", firstName: "Alice" },
-      },
-    ]);
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
-
-    const { sendFeedbackRequests } = await import("../cron-feedback-requests");
-    const result = await sendFeedbackRequests();
-
-    expect(result.sent).toBe(1);
-    expect(result.skippedPreference).toBe(0);
-    expect(result.failed).toBe(0);
-    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          templateName: "post-stay-feedback",
-        }),
-      })
-    );
-  });
-
-  it("skips members who disabled bookingReminder preference", async () => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
-
-    mockPrisma.booking.findMany.mockResolvedValue([
-      {
-        id: "booking-2",
-        checkIn: new Date(yesterday.getTime() - 86400000),
-        checkOut: yesterday,
-        status: "COMPLETED",
-        member: { id: "member-2", email: "bob@example.com", firstName: "Bob" },
-      },
-    ]);
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue({
-      bookingReminder: false,
-      bookingConfirmation: true,
-      bookingBumped: true,
-      bookingCancelled: true,
-      choreRoster: true,
-      marketingEmails: false,
-    });
-
-    const { sendFeedbackRequests } = await import("../cron-feedback-requests");
-    const result = await sendFeedbackRequests();
-
-    expect(result.sent).toBe(0);
-    expect(result.skippedPreference).toBe(1);
-  });
-
-  it("handles empty result set gracefully", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([]);
-
+  it("returns zero counts while the feature is disabled", async () => {
     const { sendFeedbackRequests } = await import("../cron-feedback-requests");
     const result = await sendFeedbackRequests();
 
     expect(result).toEqual({ sent: 0, skippedPreference: 0, failed: 0 });
   });
 
-  it("counts failed sends correctly", async () => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
-
+  it("does not query bookings or send any emails", async () => {
     mockPrisma.booking.findMany.mockResolvedValue([
       {
-        id: "booking-3",
-        checkIn: new Date(yesterday.getTime() - 86400000),
-        checkOut: yesterday,
+        id: "booking-1",
+        checkIn: new Date("2026-04-01"),
+        checkOut: new Date("2026-04-05"),
         status: "CONFIRMED",
-        member: { id: "member-3", email: "fail@example.com", firstName: "Fail" },
+        member: { id: "member-1", email: "user@example.com", firstName: "Alice" },
       },
     ]);
-    mockPrisma.notificationPreference.findUnique.mockResolvedValue(null);
-    // Make emailLog.create fail to trigger the catch in sendEmail -> then sendFeedbackRequests catches
-    mockPrisma.emailLog.create.mockRejectedValue(new Error("DB error"));
 
     const { sendFeedbackRequests } = await import("../cron-feedback-requests");
     const result = await sendFeedbackRequests();
 
-    // In dev mode, sendEmail doesn't throw even if emailLog fails (fire-and-forget logging)
-    // So it will count as sent, not failed
-    expect(result.sent + result.failed).toBe(1);
+    expect(result).toEqual({ sent: 0, skippedPreference: 0, failed: 0 });
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.notificationPreference.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.emailLog.create).not.toHaveBeenCalled();
   });
 });
 
