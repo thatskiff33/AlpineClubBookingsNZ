@@ -10,7 +10,19 @@ import { sendChildRequestApprovedEmail, sendChildRequestRejectedEmail } from "@/
 const reviewRequestSchema = z.object({
   requestId: z.string().min(1),
   action: z.enum(["approve", "reject"]),
+  linkedMemberId: z.string().min(1).optional(),
+  rejectionReason: z.string().max(500).optional(),
 });
+
+function getSameDayRange(date: Date) {
+  const start = new Date(date);
+  start.setUTCHours(0, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+
+  return { gte: start, lt: end };
+}
 
 /**
  * GET /api/admin/family-groups/requests
@@ -27,7 +39,10 @@ export async function GET() {
   }
 
   const requests = await prisma.familyGroupJoinRequest.findMany({
-    where: { status: "PENDING" },
+    where: {
+      status: "PENDING",
+      type: { in: ["JOIN_REQUEST", "CHILD_REQUEST"] },
+    },
     include: {
       requester: {
         select: { id: true, firstName: true, lastName: true, email: true },
@@ -46,15 +61,84 @@ export async function GET() {
     orderBy: { createdAt: "asc" },
   });
 
-  // Flatten memberships to members array for UI compatibility
-  const mapped = requests.map((r) => ({
-    ...r,
-    familyGroup: {
-      ...r.familyGroup,
-      members: r.familyGroup.memberships.map((ms) => ms.member),
-      memberships: undefined,
-    },
-  }));
+  const mapped = await Promise.all(
+    requests.map(async (request) => {
+      let matchingMembers: Array<{
+        id: string;
+        firstName: string;
+        lastName: string;
+        email: string;
+        ageTier: string;
+        active: boolean;
+        dateOfBirth: Date | null;
+        alreadyInGroup: boolean;
+      }> = [];
+
+      if (request.type === "CHILD_REQUEST" && request.childFirstName && request.childLastName) {
+        const nameFilters = [
+          {
+            firstName: {
+              contains: request.childFirstName.trim(),
+              mode: "insensitive" as const,
+            },
+          },
+          {
+            lastName: {
+              contains: request.childLastName.trim(),
+              mode: "insensitive" as const,
+            },
+          },
+        ];
+
+        const childMatches = await prisma.member.findMany({
+          where: {
+            AND: [
+              ...nameFilters,
+              ...(request.childDateOfBirth
+                ? [{ dateOfBirth: getSameDayRange(request.childDateOfBirth) }]
+                : []),
+            ],
+          },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            ageTier: true,
+            active: true,
+            dateOfBirth: true,
+            familyGroupMemberships: {
+              where: { familyGroupId: request.familyGroupId },
+              select: { familyGroupId: true },
+            },
+          },
+          orderBy: [{ active: "desc" }, { lastName: "asc" }, { firstName: "asc" }],
+          take: 10,
+        });
+
+        matchingMembers = childMatches.map((member) => ({
+          id: member.id,
+          firstName: member.firstName,
+          lastName: member.lastName,
+          email: member.email,
+          ageTier: member.ageTier,
+          active: member.active,
+          dateOfBirth: member.dateOfBirth,
+          alreadyInGroup: member.familyGroupMemberships.length > 0,
+        }));
+      }
+
+      return {
+        ...request,
+        familyGroup: {
+          ...request.familyGroup,
+          members: request.familyGroup.memberships.map((membership) => membership.member),
+          memberships: undefined,
+        },
+        matchingMembers,
+      };
+    })
+  );
 
   return NextResponse.json({ requests: mapped });
 }
@@ -89,12 +173,14 @@ export async function PUT(req: NextRequest) {
   }
 
   const { requestId, action } = parsed.data;
+  const linkedMemberId = parsed.data.linkedMemberId?.trim();
+  const rejectionReason = parsed.data.rejectionReason?.trim();
 
   const request = await prisma.familyGroupJoinRequest.findUnique({
     where: { id: requestId },
     include: {
       requester: { select: { id: true, firstName: true, lastName: true, email: true } },
-      familyGroup: { select: { name: true } },
+      familyGroup: { select: { id: true, name: true } },
     },
   });
 
@@ -106,12 +192,41 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Request has already been reviewed" }, { status: 422 });
   }
 
+  if (request.type === "ADULT_INVITE") {
+    return NextResponse.json(
+      { error: "Adult invitations are managed by the invited member, not admin review." },
+      { status: 422 }
+    );
+  }
+
   if (action === "approve") {
+    let memberIdToLink = request.requesterId;
+
+    if (request.type === "CHILD_REQUEST") {
+      if (!linkedMemberId) {
+        return NextResponse.json(
+          { error: "Select the member record to link before approving this child/youth request." },
+          { status: 422 }
+        );
+      }
+
+      const linkedMember = await prisma.member.findUnique({
+        where: { id: linkedMemberId },
+        select: { id: true },
+      });
+
+      if (!linkedMember) {
+        return NextResponse.json({ error: "Selected member record not found" }, { status: 404 });
+      }
+
+      memberIdToLink = linkedMemberId;
+    }
+
     await prisma.$transaction(async (tx) => {
       // Add to join table (multi-group: no restriction on existing memberships)
       await tx.familyGroupMember.upsert({
-        where: { familyGroupId_memberId: { familyGroupId: request.familyGroupId, memberId: request.requesterId } },
-        create: { familyGroupId: request.familyGroupId, memberId: request.requesterId, role: "MEMBER" },
+        where: { familyGroupId_memberId: { familyGroupId: request.familyGroupId, memberId: memberIdToLink } },
+        create: { familyGroupId: request.familyGroupId, memberId: memberIdToLink, role: "MEMBER" },
         update: {},
       });
       await tx.familyGroupJoinRequest.update({
@@ -120,19 +235,34 @@ export async function PUT(req: NextRequest) {
           status: "APPROVED",
           reviewedAt: new Date(),
           reviewedBy: session.user.id,
+          ...(request.type === "CHILD_REQUEST" ? { linkedMemberId: memberIdToLink } : {}),
         },
       });
     });
 
     logAudit({
-      action: "FAMILY_GROUP_JOIN_APPROVED",
+      action:
+        request.type === "CHILD_REQUEST"
+          ? "FAMILY_GROUP_CHILD_REQUEST_APPROVED"
+          : "FAMILY_GROUP_JOIN_APPROVED",
       memberId: session.user.id,
-      targetId: request.requesterId,
-      details: JSON.stringify({ familyGroupId: request.familyGroupId }),
+      targetId: memberIdToLink,
+      details: JSON.stringify({
+        familyGroupId: request.familyGroupId,
+        requestId,
+        requestType: request.type,
+        ...(request.type === "CHILD_REQUEST" ? { linkedMemberId: memberIdToLink } : {}),
+      }),
     });
 
     logger.info(
-      { requestId, requesterId: request.requesterId, familyGroupId: request.familyGroupId },
+      {
+        requestId,
+        requesterId: request.requesterId,
+        familyGroupId: request.familyGroupId,
+        requestType: request.type,
+        linkedMemberId: request.type === "CHILD_REQUEST" ? memberIdToLink : undefined,
+      },
       "Family group join request approved"
     );
 
@@ -159,13 +289,24 @@ export async function PUT(req: NextRequest) {
     });
 
     logAudit({
-      action: "FAMILY_GROUP_JOIN_REJECTED",
+      action:
+        request.type === "CHILD_REQUEST"
+          ? "FAMILY_GROUP_CHILD_REQUEST_REJECTED"
+          : "FAMILY_GROUP_JOIN_REJECTED",
       memberId: session.user.id,
       targetId: request.requesterId,
-      details: JSON.stringify({ familyGroupId: request.familyGroupId }),
+      details: JSON.stringify({
+        familyGroupId: request.familyGroupId,
+        requestId,
+        requestType: request.type,
+        rejectionReason: rejectionReason || undefined,
+      }),
     });
 
-    logger.info({ requestId, requesterId: request.requesterId }, "Family group join request rejected");
+    logger.info(
+      { requestId, requesterId: request.requesterId, requestType: request.type },
+      "Family group join request rejected"
+    );
 
     // Send rejection notification for child requests
     if (request.type === "CHILD_REQUEST" && request.requester) {
@@ -173,7 +314,8 @@ export async function PUT(req: NextRequest) {
       sendChildRequestRejectedEmail(
         request.requester.email,
         request.requester.firstName,
-        childName || "your child"
+        childName || "your child",
+        rejectionReason || undefined
       ).catch((err) => {
         logger.error({ err, requestId }, "Failed to send child request rejected email");
       });

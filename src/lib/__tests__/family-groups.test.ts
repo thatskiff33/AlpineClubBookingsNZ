@@ -41,6 +41,12 @@ vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/email", () => ({
+  sendAdminFamilyGroupRequestAlert: vi.fn().mockResolvedValue(undefined),
+  sendJoinRequestConfirmationEmail: vi.fn().mockResolvedValue(undefined),
+  sendChildRequestApprovedEmail: vi.fn().mockResolvedValue(undefined),
+  sendChildRequestRejectedEmail: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
   rateLimiters: { familyGroupJoinRequest: { id: "fgjr", limit: 3, windowSeconds: 3600 } },
@@ -429,6 +435,58 @@ describe("Admin Family Group Join Requests", () => {
       // Should have members array (flattened from memberships)
       expect(body.requests[0].familyGroup.members).toEqual([]);
     });
+
+    it("returns child requests with suggested member matches", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      mockedPrisma.familyGroupJoinRequest.findMany.mockResolvedValue([
+        {
+          id: "req-child-1",
+          type: "CHILD_REQUEST",
+          createdAt: new Date("2026-04-10T00:00:00.000Z"),
+          childFirstName: "Sam",
+          childLastName: "Smith",
+          childDateOfBirth: new Date("2018-03-15T00:00:00.000Z"),
+          requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
+          familyGroupId: "fg1",
+          familyGroup: {
+            id: "fg1",
+            name: "Smith Family",
+            memberships: [
+              { member: { id: "parent-1", firstName: "Alice", lastName: "Smith" } },
+            ],
+          },
+        },
+      ] as any);
+      mockedPrisma.member.findMany.mockResolvedValue([
+        {
+          id: "child-1",
+          firstName: "Sam",
+          lastName: "Smith",
+          email: "sam@test.com",
+          ageTier: "CHILD",
+          active: true,
+          dateOfBirth: new Date("2018-03-15T00:00:00.000Z"),
+          familyGroupMemberships: [],
+        },
+      ] as any);
+
+      const { GET } = await import("@/app/api/admin/family-groups/requests/route");
+      const res = await GET();
+      expect(res.status).toBe(200);
+
+      const body = await res.json();
+      expect(body.requests).toHaveLength(1);
+      expect(body.requests[0].type).toBe("CHILD_REQUEST");
+      expect(body.requests[0].childFirstName).toBe("Sam");
+      expect(body.requests[0].matchingMembers).toEqual([
+        expect.objectContaining({
+          id: "child-1",
+          firstName: "Sam",
+          ageTier: "CHILD",
+          alreadyInGroup: false,
+        }),
+      ]);
+    });
   });
 
   describe("PUT /api/admin/family-groups/requests", () => {
@@ -448,6 +506,91 @@ describe("Admin Family Group Join Requests", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.action).toBe("approve");
+    });
+
+    it("requires linkedMemberId when approving a child request", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue({
+        id: "req-child-1",
+        familyGroupId: "fg1",
+        requesterId: "parent-1",
+        status: "PENDING",
+        type: "CHILD_REQUEST",
+        childFirstName: "Sam",
+        childLastName: "Smith",
+        requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
+        familyGroup: { id: "fg1", name: "Smith Family" },
+      } as any);
+
+      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const res = await PUT(
+        makeReq("/api/admin/family-groups/requests", "PUT", {
+          requestId: "req-child-1",
+          action: "approve",
+        })
+      );
+
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.error).toMatch(/select the member record/i);
+    });
+
+    it("approves a child request and links the selected member", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue({
+        id: "req-child-1",
+        familyGroupId: "fg1",
+        requesterId: "parent-1",
+        status: "PENDING",
+        type: "CHILD_REQUEST",
+        childFirstName: "Sam",
+        childLastName: "Smith",
+        requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
+        familyGroup: { id: "fg1", name: "Smith Family" },
+      } as any);
+      mockedPrisma.member.findUnique.mockResolvedValue({ id: "child-1" } as any);
+
+      const txUpsert = vi.fn();
+      const txUpdate = vi.fn();
+      mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
+        callback({
+          familyGroupMember: { upsert: txUpsert },
+          familyGroupJoinRequest: { update: txUpdate },
+        })
+      );
+
+      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const res = await PUT(
+        makeReq("/api/admin/family-groups/requests", "PUT", {
+          requestId: "req-child-1",
+          action: "approve",
+          linkedMemberId: "child-1",
+        })
+      );
+
+      expect(res.status).toBe(200);
+      expect(txUpsert).toHaveBeenCalledWith({
+        where: {
+          familyGroupId_memberId: {
+            familyGroupId: "fg1",
+            memberId: "child-1",
+          },
+        },
+        create: {
+          familyGroupId: "fg1",
+          memberId: "child-1",
+          role: "MEMBER",
+        },
+        update: {},
+      });
+      expect(txUpdate).toHaveBeenCalledWith({
+        where: { id: "req-child-1" },
+        data: expect.objectContaining({
+          status: "APPROVED",
+          reviewedBy: "admin-1",
+          linkedMemberId: "child-1",
+        }),
+      });
     });
 
     it("rejects a request", async () => {

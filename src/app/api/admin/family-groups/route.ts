@@ -43,7 +43,16 @@ export async function GET() {
         },
         orderBy: { member: { firstName: "asc" } },
       },
-      _count: { select: { joinRequests: { where: { status: "PENDING" } } } },
+      _count: {
+        select: {
+          joinRequests: {
+            where: {
+              status: "PENDING",
+              type: { in: ["JOIN_REQUEST", "CHILD_REQUEST"] },
+            },
+          },
+        },
+      },
     },
     orderBy: { name: "asc" },
   });
