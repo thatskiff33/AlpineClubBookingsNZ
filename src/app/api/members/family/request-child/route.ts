@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { sendChildRequestSubmittedEmail } from "@/lib/email";
+import { sendChildRequestSubmittedEmail, sendAdminFamilyGroupRequestAlert } from "@/lib/email";
 
 const requestChildSchema = z.object({
   familyGroupId: z.string().min(1, "Family group ID required"),
@@ -134,6 +134,16 @@ export async function POST(req: NextRequest) {
       logger.error({ err, requestId: request.id }, "Failed to send child request confirmation email");
     });
   }
+
+  // Send admin alert (fire-and-forget)
+  sendAdminFamilyGroupRequestAlert({
+    requestType: "Child/Youth Request",
+    requesterName: `${requester.firstName} ${requester.lastName}`,
+    groupName: groupInfo?.name ?? "Unnamed Group",
+    details: `Wants to add ${firstName} ${lastName}${dateOfBirth ? ` (DOB: ${dateOfBirth})` : ""}`,
+  }).catch((err) => {
+    logger.error({ err, requestId: request.id }, "Failed to send admin family group request alert");
+  });
 
   return NextResponse.json(
     {

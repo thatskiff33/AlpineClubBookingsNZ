@@ -1,5 +1,6 @@
 "use client"
 
+import type { AgeTier } from "@prisma/client"
 import { useEffect, useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,7 +12,7 @@ import { formatCents } from "@/lib/pricing"
 
 interface SeasonRate {
   id: string
-  ageTier: "ADULT" | "YOUTH" | "CHILD"
+  ageTier: AgeTier
   isMember: boolean
   pricePerNightCents: number
 }
@@ -27,7 +28,7 @@ interface Season {
 }
 
 interface AgeTierSetting {
-  tier: "ADULT" | "YOUTH" | "CHILD"
+  tier: AgeTier
   minAge: number
   maxAge: number | null
   label: string
@@ -35,7 +36,8 @@ interface AgeTierSetting {
 }
 
 const FALLBACK_TIERS: AgeTierSetting[] = [
-  { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
+  { tier: "INFANT", minAge: 0, maxAge: 4, label: "Infant (under 5)", sortOrder: 0 },
+  { tier: "CHILD", minAge: 5, maxAge: 9, label: "Child (5-9)", sortOrder: 1 },
   { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
   { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
 ]
@@ -136,7 +138,7 @@ export default function SeasonsPage() {
     const ratesArray = Object.entries(rates).map(([key, price]) => {
       const [ageTier, isMemberStr] = key.split("-")
       return {
-        ageTier: ageTier as "ADULT" | "YOUTH" | "CHILD",
+        ageTier: ageTier as AgeTier,
         isMember: isMemberStr === "true",
         pricePerNightCents: price,
       }

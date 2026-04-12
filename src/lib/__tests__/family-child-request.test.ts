@@ -20,6 +20,7 @@ vi.mock("@/lib/rate-limit", () => ({
 }));
 vi.mock("@/lib/email", () => ({
   sendChildRequestSubmittedEmail: vi.fn().mockResolvedValue(undefined),
+  sendAdminFamilyGroupRequestAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { prisma } from "@/lib/prisma";

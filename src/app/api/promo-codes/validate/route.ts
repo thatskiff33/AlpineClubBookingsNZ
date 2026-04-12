@@ -6,6 +6,7 @@ import { calculateBookingPrice, calculatePromoDiscount, type SeasonRateData } fr
 import { validatePromoCodeRules } from "@/lib/promo";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
+import { ageTierEnum } from "@/lib/age-tier-schema";
 
 const validateSchema = z.object({
   code: z.string().min(1, "Promo code is required"),
@@ -14,7 +15,7 @@ const validateSchema = z.object({
   guests: z
     .array(
       z.object({
-        ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
+        ageTier: ageTierEnum,
         isMember: z.boolean(),
       })
     )

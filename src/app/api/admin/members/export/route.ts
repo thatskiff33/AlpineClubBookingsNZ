@@ -3,7 +3,10 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
+import { AgeTier } from "@prisma/client";
 import logger from "@/lib/logger";
+
+const AGE_TIER_VALUES = Object.values(AgeTier);
 
 /**
  * Escape a value for RFC 4180 CSV format.
@@ -63,7 +66,7 @@ export async function GET(req: NextRequest) {
   }
 
   const ageTierFilter = sp.get("ageTier");
-  if (ageTierFilter && ["ADULT", "YOUTH", "CHILD"].includes(ageTierFilter)) {
+  if (ageTierFilter && AGE_TIER_VALUES.includes(ageTierFilter as AgeTier)) {
     andConditions.push({ ageTier: ageTierFilter });
   }
 

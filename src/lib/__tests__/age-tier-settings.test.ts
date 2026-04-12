@@ -18,14 +18,25 @@ import {
 describe("computeAgeTierWithSettings — TAC default boundaries", () => {
   const ref2026 = getSeasonStartDate(2026); // April 1, 2026
 
-  it("CHILD: age 0-9", () => {
-    // Age 9 exactly
-    expect(
-      computeAgeTierWithSettings(new Date("2016-04-02"), ref2026, AGE_TIER_DEFAULTS)
-    ).toBe("CHILD");
+  it("INFANT: age 0-4", () => {
     // Newborn-ish
     expect(
       computeAgeTierWithSettings(new Date("2025-06-01"), ref2026, AGE_TIER_DEFAULTS)
+    ).toBe("INFANT");
+    // Age 4 exactly
+    expect(
+      computeAgeTierWithSettings(new Date("2021-04-02"), ref2026, AGE_TIER_DEFAULTS)
+    ).toBe("INFANT");
+  });
+
+  it("CHILD: age 5-9", () => {
+    // Age 5 exactly
+    expect(
+      computeAgeTierWithSettings(new Date("2021-04-01"), ref2026, AGE_TIER_DEFAULTS)
+    ).toBe("CHILD");
+    // Age 9 exactly
+    expect(
+      computeAgeTierWithSettings(new Date("2016-04-02"), ref2026, AGE_TIER_DEFAULTS)
     ).toBe("CHILD");
   });
 

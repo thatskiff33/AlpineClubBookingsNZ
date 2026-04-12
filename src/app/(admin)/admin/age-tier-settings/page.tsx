@@ -1,5 +1,6 @@
 "use client";
 
+import type { AgeTier } from "@prisma/client";
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 type AgeTierRow = {
-  tier: "ADULT" | "YOUTH" | "CHILD";
+  tier: AgeTier;
   minAge: number;
   maxAge: number | null;
   label: string;
@@ -15,7 +16,8 @@ type AgeTierRow = {
 };
 
 const DEFAULT_SETTINGS: AgeTierRow[] = [
-  { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
+  { tier: "INFANT", minAge: 0, maxAge: 4, label: "Infant (under 5)", sortOrder: 0 },
+  { tier: "CHILD", minAge: 5, maxAge: 9, label: "Child (5-9)", sortOrder: 1 },
   { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
   { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
 ];
@@ -44,6 +46,7 @@ export default function AgeTierSettingsPage() {
 
   // Sort by sortOrder for display
   const sorted = [...settings].sort((a, b) => a.sortOrder - b.sortOrder);
+  const lastTier = sorted[sorted.length - 1];
 
   function updateRow(tier: string, field: keyof AgeTierRow, value: string | number | null) {
     setSettings((prev) =>
@@ -64,7 +67,7 @@ export default function AgeTierSettingsPage() {
       const next = bySort[i + 1];
       return {
         ...s,
-        // ADULT (last) has no upper limit; others use next tier's minAge - 1
+        // Last tier (highest sortOrder) has no upper limit; others use next tier's minAge - 1
         maxAge: next ? next.minAge - 1 : null,
       };
     });
@@ -103,7 +106,7 @@ export default function AgeTierSettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Age Group Settings</h1>
         <p className="text-slate-600 mt-1">
-          Configure the age boundaries for each membership tier. The ADULT tier has no upper limit.
+          Configure the age boundaries for each membership tier. The highest tier has no upper limit.
           MaxAge for each tier is automatically set to the next tier&apos;s MinAge minus 1.
         </p>
       </div>
@@ -152,7 +155,7 @@ export default function AgeTierSettingsPage() {
                   type="text"
                   disabled
                   value={
-                    s.tier === "ADULT"
+                    lastTier && s.tier === lastTier.tier
                       ? "No limit"
                       : String(
                           (sorted.find((x) => x.sortOrder === s.sortOrder + 1)?.minAge ?? 0) - 1
@@ -160,7 +163,7 @@ export default function AgeTierSettingsPage() {
                   }
                   className="bg-slate-50 text-slate-500"
                 />
-                {s.tier !== "ADULT" && (
+                {!(lastTier && s.tier === lastTier.tier) && (
                   <p className="text-xs text-slate-400">Auto-calculated from next tier&apos;s min age</p>
                 )}
               </div>

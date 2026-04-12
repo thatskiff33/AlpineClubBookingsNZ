@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth"
 import { requireActiveSessionUser } from "@/lib/session-guards"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
+import { ageTierEnum } from "@/lib/age-tier-schema"
 import { logAudit } from "@/lib/audit"
 
 const seasonSchema = z.object({
@@ -13,11 +14,11 @@ const seasonSchema = z.object({
   active: z.boolean().default(true),
   rates: z.array(
     z.object({
-      ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
+      ageTier: ageTierEnum,
       isMember: z.boolean(),
       pricePerNightCents: z.number().int().min(0),
     })
-  ).length(6, "Must provide exactly 6 rates (3 age tiers x member/non-member)"),
+  ).min(1, "Must provide at least one rate"),
 })
 
 export async function GET() {

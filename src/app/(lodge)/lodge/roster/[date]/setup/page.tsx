@@ -1,5 +1,6 @@
 "use client";
 
+import type { AgeTier } from "@prisma/client";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 
@@ -12,7 +13,7 @@ interface Guest {
   bookingId: string;
   firstName: string;
   lastName: string;
-  ageTier: string;
+  ageTier: AgeTier;
   isArriving: boolean;
   isDeparting: boolean;
 }
@@ -46,7 +47,7 @@ interface Allocation {
   choreSortOrder: number;
   bookingGuestId: string;
   guestName: string;
-  guestAgeTier: string | null;
+  guestAgeTier: AgeTier | null;
   bookingId: string;
 }
 
@@ -55,6 +56,12 @@ interface FrequencyInfo {
   excluded: boolean;
   reason: string | null;
 }
+
+const MAX_AGE_BY_TIER: Partial<Record<AgeTier, number>> = {
+  INFANT: 4,
+  CHILD: 9,
+  YOUTH: 17,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -304,8 +311,8 @@ export default function RosterSetupWizard() {
   const isGuestEligible = (guest: typeof allGuests[0], ageRestriction: string, minAge: number | null) => {
     if (ageRestriction === "ADULTS_ONLY" && guest.ageTier !== "ADULT") return false;
     if (minAge !== null) {
-      if (guest.ageTier === "CHILD" && minAge > 9) return false;
-      if (guest.ageTier === "YOUTH" && minAge > 17) return false;
+      const tierMaxAge = MAX_AGE_BY_TIER[guest.ageTier];
+      if (tierMaxAge !== undefined && minAge > tierMaxAge) return false;
     }
     return true;
   };

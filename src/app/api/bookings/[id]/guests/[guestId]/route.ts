@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import {
@@ -130,7 +131,7 @@ export async function DELETE(
       }));
 
       const guestsForPricing = remainingGuests.map((g) => ({
-        ageTier: g.ageTier as "ADULT" | "YOUTH" | "CHILD",
+        ageTier: g.ageTier as AgeTier,
         isMember: g.isMember,
         memberId: g.memberId ?? null,
       }));

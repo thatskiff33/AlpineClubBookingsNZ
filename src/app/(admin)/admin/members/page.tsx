@@ -1,5 +1,6 @@
 "use client"
 
+import type { AgeTier } from "@prisma/client"
 import { useEffect, useState, useCallback } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
@@ -17,7 +18,7 @@ interface Member {
   id: string; firstName: string; lastName: string; email: string
   phoneCountryCode: string | null; phoneAreaCode: string | null; phoneNumber: string | null
   dateOfBirth: string | null
-  role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
+  role: "MEMBER" | "ADMIN"; ageTier: AgeTier
   active: boolean; xeroContactId: string | null
   xeroContactGroups: Array<{ id: string; name: string }>
   subscriptionStatus: "NOT_INVOICED" | "UNPAID" | "PAID" | "OVERDUE" | null
@@ -42,7 +43,7 @@ interface XeroSearchResult {
 interface MemberForm {
   firstName: string; lastName: string; email: string
   phoneCountryCode: string; phoneAreaCode: string; phoneNumber: string
-  dateOfBirth: string; role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
+  dateOfBirth: string; role: "MEMBER" | "ADMIN"; ageTier: AgeTier
   active: boolean; sendInvite: boolean; forcePasswordChange: boolean
   joinedDate: string; canLogin: boolean
   streetAddressLine1: string; streetAddressLine2: string; streetCity: string
@@ -493,7 +494,7 @@ export default function MembersPage() {
         <div className="flex-1 min-w-[200px] max-w-sm"><Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or email..." className="bg-white" /></div>
         <Select value={filters.role || "all"} onValueChange={v => setFilter("role", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Role" /></SelectTrigger><SelectContent><SelectItem value="all">All Roles</SelectItem><SelectItem value="MEMBER">Member</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select>
         <Select value={filters.active || "all"} onValueChange={v => setFilter("active", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Status" /></SelectTrigger><SelectContent><SelectItem value="all">All Status</SelectItem><SelectItem value="true">Active</SelectItem><SelectItem value="false">Inactive</SelectItem></SelectContent></Select>
-        <Select value={filters.ageTier || "all"} onValueChange={v => setFilter("ageTier", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Age Tier" /></SelectTrigger><SelectContent><SelectItem value="all">All Tiers</SelectItem><SelectItem value="ADULT">Adult</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="CHILD">Child</SelectItem></SelectContent></Select>
+        <Select value={filters.ageTier || "all"} onValueChange={v => setFilter("ageTier", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Age Tier" /></SelectTrigger><SelectContent><SelectItem value="all">All Tiers</SelectItem><SelectItem value="INFANT">Infant</SelectItem><SelectItem value="CHILD">Child</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="ADULT">Adult</SelectItem></SelectContent></Select>
         <Select value={filters.xeroLinked || "all"} onValueChange={v => setFilter("xeroLinked", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Xero" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero</SelectItem><SelectItem value="true">Linked</SelectItem><SelectItem value="false">Not Linked</SelectItem></SelectContent></Select>
         <Select value={filters.subscription || "all"} onValueChange={v => setFilter("subscription", v === "all" ? "" : v)}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Subscription" /></SelectTrigger><SelectContent><SelectItem value="all">All Subs</SelectItem><SelectItem value="PAID">Paid</SelectItem><SelectItem value="UNPAID">Unpaid</SelectItem><SelectItem value="OVERDUE">Overdue</SelectItem><SelectItem value="NOT_INVOICED">Not Invoiced</SelectItem><SelectItem value="NONE">No Record</SelectItem></SelectContent></Select>
         {xeroContactGroupsList.length > 0 && <Select value={filters.xeroContactGroup || "all"} onValueChange={v => setFilter("xeroContactGroup", v === "all" ? "" : v)}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Xero Group" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero Groups</SelectItem>{xeroContactGroupsList.map(g => <SelectItem key={g.id} value={g.id}>{g.name} ({g.contactCount})</SelectItem>)}</SelectContent></Select>}
@@ -633,12 +634,13 @@ export default function MembersPage() {
               </div>
               <div className="space-y-2">
                 <Label>Age Tier</Label>
-                <Select value={form.ageTier} onValueChange={v => setForm(f => ({ ...f, ageTier: v as "ADULT" | "YOUTH" | "CHILD" }))}>
+                <Select value={form.ageTier} onValueChange={v => setForm(f => ({ ...f, ageTier: v as AgeTier }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ADULT">Adult</SelectItem>
-                    <SelectItem value="YOUTH">Youth</SelectItem>
+                    <SelectItem value="INFANT">Infant</SelectItem>
                     <SelectItem value="CHILD">Child</SelectItem>
+                    <SelectItem value="YOUTH">Youth</SelectItem>
+                    <SelectItem value="ADULT">Adult</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

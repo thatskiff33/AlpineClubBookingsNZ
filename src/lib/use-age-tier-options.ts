@@ -1,27 +1,28 @@
 "use client";
 
+import type { AgeTier } from "@prisma/client";
 import { useEffect, useState } from "react";
 
 export type AgeTierOption = {
-  tier: "ADULT" | "YOUTH" | "CHILD";
+  tier: AgeTier;
   label: string;
+  sortOrder: number;
 };
 
 type AgeTierSettingsResponse = {
   settings?: Array<{
-    tier: "ADULT" | "YOUTH" | "CHILD";
+    tier: AgeTier;
     label: string;
-    sortOrder?: number;
+    sortOrder: number;
   }>;
 };
 
 const DEFAULT_AGE_TIER_OPTIONS: AgeTierOption[] = [
-  { tier: "ADULT", label: "Adult (18+)" },
-  { tier: "YOUTH", label: "Youth (10-17)" },
-  { tier: "CHILD", label: "Child (under 10)" },
+  { tier: "INFANT", label: "Infant (under 5)", sortOrder: 0 },
+  { tier: "CHILD", label: "Child (5-9)", sortOrder: 1 },
+  { tier: "YOUTH", label: "Youth (10-17)", sortOrder: 2 },
+  { tier: "ADULT", label: "Adult (18+)", sortOrder: 3 },
 ];
-
-const DISPLAY_ORDER: AgeTierOption["tier"][] = ["ADULT", "YOUTH", "CHILD"];
 
 export function getAgeTierOptionsFromSettings(
   settings?: AgeTierSettingsResponse["settings"]
@@ -30,12 +31,9 @@ export function getAgeTierOptionsFromSettings(
     return DEFAULT_AGE_TIER_OPTIONS;
   }
 
-  const labelByTier = new Map(settings.map((setting) => [setting.tier, setting.label]));
-
-  return DISPLAY_ORDER.map((tier) => ({
-    tier,
-    label: labelByTier.get(tier) ?? DEFAULT_AGE_TIER_OPTIONS.find((option) => option.tier === tier)!.label,
-  }));
+  return [...settings]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((s) => ({ tier: s.tier, label: s.label, sortOrder: s.sortOrder }));
 }
 
 export function useAgeTierOptions(): AgeTierOption[] {
@@ -65,7 +63,7 @@ export function useAgeTierOptions(): AgeTierOption[] {
 
 export function getAgeTierLabel(
   options: AgeTierOption[],
-  tier: AgeTierOption["tier"] | string
+  tier: AgeTier | string
 ): string {
   return options.find((option) => option.tier === tier)?.label ?? tier;
 }

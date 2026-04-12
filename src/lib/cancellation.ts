@@ -3,7 +3,7 @@ import { prisma } from "./prisma";
 export interface CancellationRule {
   daysBeforeStay: number;
   refundPercentage: number;
-  creditRefundPercentage: number; // Typically >= refundPercentage (no Stripe fees)
+  creditRefundPercentage?: number; // Typically >= refundPercentage (no Stripe fees)
 }
 
 /**
@@ -59,7 +59,8 @@ export function getRefundTier(
     if (daysUntilCheckIn >= rule.daysBeforeStay) {
       return {
         refundPercentage: rule.refundPercentage,
-        creditRefundPercentage: rule.creditRefundPercentage,
+        creditRefundPercentage:
+          rule.creditRefundPercentage ?? rule.refundPercentage,
         daysBeforeStay: rule.daysBeforeStay,
       };
     }

@@ -33,6 +33,8 @@ import {
   waitlistOfferTemplate,
   waitlistOfferExpiredTemplate,
   adminWaitlistOfferTemplate,
+  adminFamilyGroupRequestTemplate,
+  joinRequestConfirmationTemplate,
 } from "./email-templates";
 import {
   ADMIN_NOTIFICATION_PREFERENCE_SELECT,
@@ -646,6 +648,35 @@ export async function sendChildRequestRejectedEmail(
     subject: "Child/Youth request update — TAC Bookings",
     html: childRequestRejectedTemplate(parentName, childName, reason),
     templateName: "child-request-rejected",
+  });
+}
+
+// P3.4: Admin alert for family group requests
+export async function sendAdminFamilyGroupRequestAlert(data: {
+  requestType: string;
+  requesterName: string;
+  groupName: string;
+  details: string;
+}) {
+  await sendToAdmins({
+    subject: `Family Group Request: ${data.requesterName} (${data.requestType})`,
+    html: adminFamilyGroupRequestTemplate(data),
+    templateName: "admin-family-group-request",
+    preferenceKey: "adminFamilyGroupRequest",
+  });
+}
+
+// P3.4: Confirmation email to requester on join request
+export async function sendJoinRequestConfirmationEmail(
+  email: string,
+  requesterName: string,
+  groupName: string
+) {
+  await sendEmail({
+    to: email,
+    subject: "Join request submitted — TAC Bookings",
+    html: joinRequestConfirmationTemplate(requesterName, groupName),
+    templateName: "join-request-confirmation",
   });
 }
 

@@ -244,12 +244,14 @@ async function main() {
       active: true,
       rates: {
         create: [
-          { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
-          { ageTier: "ADULT", isMember: false, pricePerNightCents: 6500 },
-          { ageTier: "YOUTH", isMember: true, pricePerNightCents: 3000 },
-          { ageTier: "YOUTH", isMember: false, pricePerNightCents: 4500 },
+          { ageTier: "INFANT", isMember: true, pricePerNightCents: 0 },
+          { ageTier: "INFANT", isMember: false, pricePerNightCents: 0 },
           { ageTier: "CHILD", isMember: true, pricePerNightCents: 1500 },
           { ageTier: "CHILD", isMember: false, pricePerNightCents: 2500 },
+          { ageTier: "YOUTH", isMember: true, pricePerNightCents: 3000 },
+          { ageTier: "YOUTH", isMember: false, pricePerNightCents: 4500 },
+          { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
+          { ageTier: "ADULT", isMember: false, pricePerNightCents: 6500 },
         ],
       },
     },
@@ -269,12 +271,14 @@ async function main() {
       active: true,
       rates: {
         create: [
-          { ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
-          { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
-          { ageTier: "YOUTH", isMember: true, pricePerNightCents: 2500 },
-          { ageTier: "YOUTH", isMember: false, pricePerNightCents: 3500 },
+          { ageTier: "INFANT", isMember: true, pricePerNightCents: 0 },
+          { ageTier: "INFANT", isMember: false, pricePerNightCents: 0 },
           { ageTier: "CHILD", isMember: true, pricePerNightCents: 1000 },
           { ageTier: "CHILD", isMember: false, pricePerNightCents: 2000 },
+          { ageTier: "YOUTH", isMember: true, pricePerNightCents: 2500 },
+          { ageTier: "YOUTH", isMember: false, pricePerNightCents: 3500 },
+          { ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
+          { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
         ],
       },
     },
@@ -300,7 +304,8 @@ async function main() {
 
   // Seed age tier settings with correct TAC boundaries (Issue 14)
   const ageTierSettings = [
-    { tier: "CHILD" as const, minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
+    { tier: "INFANT" as const, minAge: 0, maxAge: 4, label: "Infant (under 5)", sortOrder: 0 },
+    { tier: "CHILD" as const, minAge: 5, maxAge: 9, label: "Child (5-9)", sortOrder: 1 },
     { tier: "YOUTH" as const, minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
     { tier: "ADULT" as const, minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
   ];

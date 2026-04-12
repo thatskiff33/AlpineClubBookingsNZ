@@ -2,22 +2,32 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
+import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
+import { ageTierEnum } from "@/lib/age-tier-schema";
 import { logAudit } from "@/lib/audit";
 import { invalidateAgeTierCache } from "@/lib/age-tier";
+
+type AgeTierSettingInput = {
+  tier: AgeTier;
+  minAge: number;
+  maxAge: number | null;
+  label: string;
+  sortOrder: number;
+};
 
 const putSchema = z.object({
   settings: z
     .array(
       z.object({
-        tier: z.enum(["ADULT", "YOUTH", "CHILD"]),
+        tier: ageTierEnum,
         minAge: z.number().int().min(0),
         maxAge: z.number().int().min(0).nullable(),
         label: z.string().min(1).max(100),
         sortOrder: z.number().int().min(0),
       })
     )
-    .length(3),
+    .min(1),
 });
 
 export async function GET() {
@@ -57,7 +67,10 @@ export async function PUT(request: NextRequest) {
     );
   }
 
-  const { settings } = parsed.data;
+  const settings: AgeTierSettingInput[] = parsed.data.settings.map((setting) => ({
+    ...setting,
+    tier: setting.tier as AgeTier,
+  }));
 
   // Validate: tiers must be contiguous — no gaps or overlaps
   const sorted = [...settings].sort((a, b) => a.minAge - b.minAge);

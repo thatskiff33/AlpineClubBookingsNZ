@@ -43,7 +43,7 @@ describe("member-credit helpers", () => {
       vi.mocked(prisma.memberCredit.aggregate).mockResolvedValue({
         _sum: { amountCents: null },
         _count: null, _avg: null, _max: null, _min: null,
-      });
+      } as any);
 
       const { getMemberCreditBalance } = await import("@/lib/member-credit");
       const balance = await getMemberCreditBalance("member-1");
@@ -56,7 +56,7 @@ describe("member-credit helpers", () => {
       vi.mocked(prisma.memberCredit.aggregate).mockResolvedValue({
         _sum: { amountCents: 3000 },
         _count: null, _avg: null, _max: null, _min: null,
-      });
+      } as any);
 
       const { getMemberCreditBalance } = await import("@/lib/member-credit");
       const balance = await getMemberCreditBalance("member-1");
@@ -224,7 +224,7 @@ describe("member-credit helpers", () => {
       vi.mocked(prisma.memberCredit.aggregate).mockResolvedValue({
         _sum: { amountCents: 1000 },
         _count: null, _avg: null, _max: null, _min: null,
-      });
+      } as any);
 
       const { createAdminAdjustment } = await import("@/lib/member-credit");
       await expect(

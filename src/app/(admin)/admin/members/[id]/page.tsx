@@ -22,7 +22,7 @@ interface MemberDetail {
   id: string; firstName: string; lastName: string; email: string
   phoneCountryCode: string | null; phoneAreaCode: string | null; phoneNumber: string | null
   dateOfBirth: string | null
-  role: "MEMBER" | "ADMIN"; ageTier: "ADULT" | "YOUTH" | "CHILD"
+  role: "MEMBER" | "ADMIN"; ageTier: string
   active: boolean; forcePasswordChange: boolean; xeroContactId: string | null; joinedDate: string | null; createdAt: string
   canLogin: boolean
   xeroContactGroups: Array<{ id: string; name: string }>

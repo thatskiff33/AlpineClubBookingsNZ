@@ -1,5 +1,6 @@
 "use client";
 
+import type { AgeTier } from "@prisma/client";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,7 @@ interface FamilyMember {
   id: string;
   firstName: string;
   lastName: string;
-  ageTier: "ADULT" | "YOUTH" | "CHILD";
+  ageTier: AgeTier;
   relationship: "self" | "partner" | "dependent";
 }
 
@@ -50,7 +51,7 @@ interface NewGuest {
   key: string; // client-side key for React
   firstName: string;
   lastName: string;
-  ageTier: "ADULT" | "YOUTH" | "CHILD";
+  ageTier: AgeTier;
   isMember: boolean;
   memberId?: string;
 }
@@ -109,7 +110,7 @@ export function EditBookingPanel({
   const [showAddForm, setShowAddForm] = useState(false);
   const [addFirstName, setAddFirstName] = useState("");
   const [addLastName, setAddLastName] = useState("");
-  const [addAgeTier, setAddAgeTier] = useState<"ADULT" | "YOUTH" | "CHILD">("ADULT");
+  const [addAgeTier, setAddAgeTier] = useState<AgeTier>("ADULT");
 
   // Save state
   const [saving, setSaving] = useState(false);
@@ -510,7 +511,7 @@ export function EditBookingPanel({
                   <select
                     id="new-guest-age"
                     value={addAgeTier}
-                    onChange={(e) => setAddAgeTier(e.target.value as "ADULT" | "YOUTH" | "CHILD")}
+                    onChange={(e) => setAddAgeTier(e.target.value as AgeTier)}
                     className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
                   >
                     {ageTierOptions.map((option) => (

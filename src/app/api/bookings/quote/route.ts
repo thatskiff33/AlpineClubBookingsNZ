@@ -6,6 +6,7 @@ import { calculateBookingPrice, type SeasonRateData } from "@/lib/pricing";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
+import { ageTierEnum } from "@/lib/age-tier-schema";
 import {
   BookingGuestValidationError,
   normalizeBookingGuestPricingInputs,
@@ -17,7 +18,7 @@ const quoteSchema = z.object({
   checkOut: z.string().transform((s) => new Date(s)),
   guests: z.array(
     z.object({
-      ageTier: z.enum(["ADULT", "YOUTH", "CHILD"]),
+      ageTier: ageTierEnum,
       isMember: z.boolean(),
       memberId: z.string().min(1).optional(),
     })

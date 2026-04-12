@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, Users, Check, X, Edit2 } from "lucide-react";
+import { Trash2, Plus, Users, Check, X, Edit2, Search } from "lucide-react";
 
 interface FamilyGroupMemberRow {
   id: string;
@@ -47,6 +47,22 @@ interface MemberOption {
   email: string;
 }
 
+const AGE_TIER_COLORS: Record<string, string> = {
+  INFANT: "bg-pink-100 text-pink-700 border-pink-200",
+  CHILD: "bg-blue-100 text-blue-700 border-blue-200",
+  YOUTH: "bg-purple-100 text-purple-700 border-purple-200",
+  ADULT: "bg-slate-100 text-slate-700 border-slate-200",
+};
+
+function AgeTierBadge({ tier }: { tier: string }) {
+  const colors = AGE_TIER_COLORS[tier] || "bg-gray-100 text-gray-700 border-gray-200";
+  return (
+    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium border ${colors}`}>
+      {tier}
+    </span>
+  );
+}
+
 export default function FamilyGroupsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -62,6 +78,12 @@ export default function FamilyGroupsPage() {
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  // P3.1: Search and filter state
+  const [filterQuery, setFilterQuery] = useState("");
+  const [filterMinMembers, setFilterMinMembers] = useState("");
+  const [filterMaxMembers, setFilterMaxMembers] = useState("");
+  const [filterHasPending, setFilterHasPending] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -136,6 +158,55 @@ export default function FamilyGroupsPage() {
       clearTimeout(timer);
     };
   }, [memberSearch, selectedMembers]);
+
+  // P3.1: Client-side filtering
+  const filteredGroups = useMemo(() => {
+    let result = groups;
+
+    // Text search
+    if (filterQuery.trim()) {
+      const q = filterQuery.toLowerCase();
+      result = result.filter((g) => {
+        const nameMatch = g.name?.toLowerCase().includes(q);
+        const memberNameMatch = g.members.some(
+          (m) =>
+            `${m.firstName} ${m.lastName}`.toLowerCase().includes(q) ||
+            m.email.toLowerCase().includes(q)
+        );
+        return nameMatch || memberNameMatch;
+      });
+    }
+
+    // Member count range
+    const min = filterMinMembers ? parseInt(filterMinMembers, 10) : null;
+    const max = filterMaxMembers ? parseInt(filterMaxMembers, 10) : null;
+    if (min !== null && !isNaN(min)) {
+      result = result.filter((g) => g.memberCount >= min);
+    }
+    if (max !== null && !isNaN(max)) {
+      result = result.filter((g) => g.memberCount <= max);
+    }
+
+    // Has pending requests
+    if (filterHasPending) {
+      result = result.filter((g) => g.pendingRequests > 0);
+    }
+
+    return result;
+  }, [groups, filterQuery, filterMinMembers, filterMaxMembers, filterHasPending]);
+
+  const hasActiveFilters =
+    filterQuery.trim() !== "" ||
+    filterMinMembers !== "" ||
+    filterMaxMembers !== "" ||
+    filterHasPending;
+
+  function clearFilters() {
+    setFilterQuery("");
+    setFilterMinMembers("");
+    setFilterMaxMembers("");
+    setFilterHasPending(false);
+  }
 
   function openCreateForm() {
     setEditingGroup(null);
@@ -255,6 +326,67 @@ export default function FamilyGroupsPage() {
         </Button>
       </div>
 
+      {/* P3.1: Search and filter bar */}
+      <Card>
+        <CardContent className="pt-4 pb-4 space-y-3">
+          <div className="flex flex-wrap gap-3 items-end">
+            <div className="flex-1 min-w-[200px] max-w-md relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <Input
+                value={filterQuery}
+                onChange={(e) => setFilterQuery(e.target.value)}
+                placeholder="Search by group name, member name, or email..."
+                className="pl-9"
+              />
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs text-slate-500">Min members</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={filterMinMembers}
+                  onChange={(e) => setFilterMinMembers(e.target.value)}
+                  className="w-24"
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-slate-500">Max members</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  value={filterMaxMembers}
+                  onChange={(e) => setFilterMaxMembers(e.target.value)}
+                  className="w-24"
+                  placeholder="any"
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer whitespace-nowrap">
+              <input
+                type="checkbox"
+                checked={filterHasPending}
+                onChange={(e) => setFilterHasPending(e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              Has pending requests
+            </label>
+            {hasActiveFilters && (
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                <X className="h-4 w-4 mr-1" />
+                Clear
+              </Button>
+            )}
+          </div>
+          {hasActiveFilters && (
+            <p className="text-xs text-slate-500">
+              Showing {filteredGroups.length} of {groups.length} group{groups.length !== 1 ? "s" : ""}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Pending join requests */}
       {requests.length > 0 && (
         <Card>
@@ -350,22 +482,29 @@ export default function FamilyGroupsPage() {
                 <Label>Members</Label>
                 {selectedMembers.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2 mb-2">
-                    {selectedMembers.map((m) => (
-                      <Badge
-                        key={m.id}
-                        variant="secondary"
-                        className="flex items-center gap-1 py-1 px-2"
-                      >
-                        {m.firstName} {m.lastName}
-                        <button
-                          type="button"
-                          onClick={() => removeMember(m.id)}
-                          className="ml-1 hover:text-red-600"
+                    {selectedMembers.map((m) => {
+                      // P3.2: Show age tier badge in edit panel
+                      const memberInfo = editingGroup?.members.find((em) => em.id === m.id);
+                      return (
+                        <Badge
+                          key={m.id}
+                          variant="secondary"
+                          className="flex items-center gap-1 py-1 px-2"
                         >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </Badge>
-                    ))}
+                          {m.firstName} {m.lastName}
+                          {memberInfo?.ageTier && (
+                            <AgeTierBadge tier={memberInfo.ageTier} />
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => removeMember(m.id)}
+                            className="ml-1 hover:text-red-600"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
+                      );
+                    })}
                   </div>
                 )}
                 <div className="relative">
@@ -422,9 +561,11 @@ export default function FamilyGroupsPage() {
         <CardContent className="p-0">
           {loading ? (
             <div className="p-6 text-center text-slate-500">Loading...</div>
-          ) : groups.length === 0 ? (
+          ) : filteredGroups.length === 0 ? (
             <div className="p-6 text-center text-slate-500">
-              No family groups yet. Create one to link members together.
+              {hasActiveFilters
+                ? "No family groups match the current filters."
+                : "No family groups yet. Create one to link members together."}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -438,7 +579,7 @@ export default function FamilyGroupsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {groups.map((g) => (
+                  {filteredGroups.map((g) => (
                     <tr key={g.id} className="border-b hover:bg-slate-50">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
@@ -458,9 +599,11 @@ export default function FamilyGroupsPage() {
                               <Badge
                                 key={m.id}
                                 variant="secondary"
-                                className={`text-xs ${!m.active ? "opacity-50" : ""}`}
+                                className={`text-xs flex items-center gap-1 ${!m.active ? "opacity-50" : ""}`}
                               >
                                 {m.firstName} {m.lastName}
+                                {/* P3.2: Age tier badge */}
+                                <AgeTierBadge tier={m.ageTier} />
                                 {!m.active && (
                                   <span className="ml-1 text-slate-400">(inactive)</span>
                                 )}

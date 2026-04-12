@@ -8,18 +8,20 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface RateInput {
-  ageTier: "ADULT" | "YOUTH" | "CHILD";
+  ageTier: string;
   isMember: boolean;
   pricePerNight: string; // dollars as string for input
 }
 
 const defaultRates: RateInput[] = [
-  { ageTier: "ADULT", isMember: true, pricePerNight: "" },
-  { ageTier: "ADULT", isMember: false, pricePerNight: "" },
-  { ageTier: "YOUTH", isMember: true, pricePerNight: "" },
-  { ageTier: "YOUTH", isMember: false, pricePerNight: "" },
+  { ageTier: "INFANT", isMember: true, pricePerNight: "" },
+  { ageTier: "INFANT", isMember: false, pricePerNight: "" },
   { ageTier: "CHILD", isMember: true, pricePerNight: "" },
   { ageTier: "CHILD", isMember: false, pricePerNight: "" },
+  { ageTier: "YOUTH", isMember: true, pricePerNight: "" },
+  { ageTier: "YOUTH", isMember: false, pricePerNight: "" },
+  { ageTier: "ADULT", isMember: true, pricePerNight: "" },
+  { ageTier: "ADULT", isMember: false, pricePerNight: "" },
 ];
 
 export function SeasonForm() {
