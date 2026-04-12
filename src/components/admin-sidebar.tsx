@@ -223,7 +223,7 @@ export function AdminSidebar() {
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="hidden md:flex w-60 shrink-0 flex-col border-r bg-white">
+      <aside className="hidden w-60 shrink-0 flex-col border-r bg-white print:hidden md:flex">
         <div className="flex h-16 items-center gap-2 border-b px-4 font-bold text-slate-900">
           <Mountain className="h-5 w-5 text-blue-600" />
           <span>Admin Panel</span>
@@ -234,7 +234,7 @@ export function AdminSidebar() {
       </aside>
 
       {/* Mobile header bar with toggle */}
-      <div className="md:hidden flex items-center h-14 border-b bg-white px-4 gap-3">
+      <div className="flex h-14 items-center gap-3 border-b bg-white px-4 print:hidden md:hidden">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
             <Button variant="ghost" size="icon" aria-label="Open admin menu">

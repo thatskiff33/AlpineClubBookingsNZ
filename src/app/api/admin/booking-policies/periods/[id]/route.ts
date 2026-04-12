@@ -96,7 +96,8 @@ export async function PUT(
           nonMemberHoldDays: data.nonMemberHoldDays,
         }),
         ...(data.cancellationRules && {
-          cancellationRules: data.cancellationRules.map(normalizeCancellationRule) as Prisma.InputJsonValue,
+          cancellationRules:
+            data.cancellationRules.map(normalizeCancellationRule) as unknown as Prisma.InputJsonArray,
         }),
         ...(data.active !== undefined && { active: data.active }),
       },

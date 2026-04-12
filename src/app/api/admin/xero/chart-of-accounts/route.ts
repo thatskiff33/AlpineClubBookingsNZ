@@ -3,18 +3,11 @@ import { Account } from "xero-node";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { getAuthenticatedXeroClient } from "@/lib/xero";
-
-export interface XeroAccount {
-  code: string;
-  name: string;
-  type: string;
-  class: string;
-}
-
-// In-memory cache: 1-hour TTL
-let cachedAccounts: XeroAccount[] | null = null;
-let cacheExpiresAt: number = 0;
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+import {
+  type XeroAccount,
+  getCachedChartOfAccounts,
+  setCachedChartOfAccounts,
+} from "@/lib/xero-admin-cache";
 
 /**
  * GET /api/admin/xero/chart-of-accounts
@@ -32,7 +25,8 @@ export async function GET() {
   }
 
   // Return from cache if fresh
-  if (cachedAccounts && Date.now() < cacheExpiresAt) {
+  const cachedAccounts = getCachedChartOfAccounts();
+  if (cachedAccounts) {
     return NextResponse.json({ accounts: cachedAccounts });
   }
 
@@ -51,18 +45,11 @@ export async function GET() {
       }))
       .sort((a, b) => a.code.localeCompare(b.code));
 
-    cachedAccounts = accounts;
-    cacheExpiresAt = Date.now() + CACHE_TTL_MS;
+    setCachedChartOfAccounts(accounts);
 
     return NextResponse.json({ accounts });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch chart of accounts";
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
-
-/** Exported for testing — clears the in-memory cache */
-export function _clearChartOfAccountsCache() {
-  cachedAccounts = null;
-  cacheExpiresAt = 0;
 }

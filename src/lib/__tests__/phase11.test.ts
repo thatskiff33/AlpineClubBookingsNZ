@@ -41,15 +41,13 @@ vi.mock("@/lib/xero", async (importOriginal) => {
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { getAccountMapping, getAuthenticatedXeroClient } from "@/lib/xero";
+import {
+  clearChartOfAccountsCache,
+  clearItemsCache,
+} from "@/lib/xero-admin-cache";
 import { GET as getMappings, PUT as putMappings } from "@/app/api/admin/xero/account-mappings/route";
-import {
-  GET as getChartOfAccounts,
-  _clearChartOfAccountsCache,
-} from "@/app/api/admin/xero/chart-of-accounts/route";
-import {
-  GET as getXeroItems,
-  _clearItemsCache,
-} from "@/app/api/admin/xero/items/route";
+import { GET as getChartOfAccounts } from "@/app/api/admin/xero/chart-of-accounts/route";
+import { GET as getXeroItems } from "@/app/api/admin/xero/items/route";
 
 const mockPrisma = prisma as unknown as {
   xeroAccountMapping: {
@@ -207,11 +205,11 @@ describe("GET /api/admin/xero/chart-of-accounts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue(adminSession());
-    _clearChartOfAccountsCache();
+    clearChartOfAccountsCache();
   });
 
   afterEach(() => {
-    _clearChartOfAccountsCache();
+    clearChartOfAccountsCache();
   });
 
   it("returns 401 for non-admin", async () => {
@@ -293,11 +291,11 @@ describe("GET /api/admin/xero/items", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue(adminSession());
-    _clearItemsCache();
+    clearItemsCache();
   });
 
   afterEach(() => {
-    _clearItemsCache();
+    clearItemsCache();
   });
 
   it("returns 401 for non-admin", async () => {

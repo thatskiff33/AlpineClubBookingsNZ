@@ -2,18 +2,11 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { getAuthenticatedXeroClient } from "@/lib/xero";
-
-export interface XeroItem {
-  itemID: string;
-  code: string;
-  name: string;
-  description: string;
-}
-
-// In-memory cache: 1-hour TTL
-let cachedItems: XeroItem[] | null = null;
-let cacheExpiresAt: number = 0;
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+import {
+  type XeroItem,
+  getCachedItems,
+  setCachedItems,
+} from "@/lib/xero-admin-cache";
 
 /**
  * GET /api/admin/xero/items
@@ -31,7 +24,8 @@ export async function GET() {
   }
 
   // Return from cache if fresh
-  if (cachedItems && Date.now() < cacheExpiresAt) {
+  const cachedItems = getCachedItems();
+  if (cachedItems) {
     return NextResponse.json({ items: cachedItems });
   }
 
@@ -50,18 +44,11 @@ export async function GET() {
       }))
       .sort((a, b) => a.code.localeCompare(b.code));
 
-    cachedItems = items;
-    cacheExpiresAt = Date.now() + CACHE_TTL_MS;
+    setCachedItems(items);
 
     return NextResponse.json({ items });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch Xero items";
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
-
-/** Exported for testing — clears the in-memory cache */
-export function _clearItemsCache() {
-  cachedItems = null;
-  cacheExpiresAt = 0;
 }

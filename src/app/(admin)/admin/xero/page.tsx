@@ -10,8 +10,7 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
-import type { XeroAccount } from "@/app/api/admin/xero/chart-of-accounts/route"
-import type { XeroItem } from "@/app/api/admin/xero/items/route"
+import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache"
 
 interface XeroStatus {
   connected: boolean

@@ -78,7 +78,8 @@ export async function POST(request: NextRequest) {
         startDate,
         endDate,
         nonMemberHoldDays: data.nonMemberHoldDays,
-        cancellationRules: data.cancellationRules.map(normalizeCancellationRule) as Prisma.InputJsonValue,
+        cancellationRules:
+          data.cancellationRules.map(normalizeCancellationRule) as unknown as Prisma.InputJsonArray,
         active: data.active ?? true,
       },
     });

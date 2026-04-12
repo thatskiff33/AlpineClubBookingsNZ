@@ -3,10 +3,12 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, SubscriptionStatus } from "@prisma/client";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { eachDayOfInterval, format } from "date-fns";
 import logger from "@/lib/logger";
+import { buildRevenueSeries } from "@/lib/admin-reports";
+import { getSeasonYear } from "@/lib/utils";
 
 const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -41,37 +43,85 @@ export async function GET(request: NextRequest) {
 
   const fromDate = new Date(parsed.data.from + "T00:00:00");
   const toDate = new Date(parsed.data.to + "T23:59:59");
+  const occupancyFromDate = new Date(parsed.data.from + "T00:00:00");
+  const occupancyToDate = new Date(parsed.data.to + "T00:00:00");
 
   if (toDate <= fromDate) {
     return NextResponse.json({ error: "to must be after from" }, { status: 400 });
   }
 
   try {
-    // Fetch all bookings in range (by creation date)
-    const bookings = await prisma.booking.findMany({
-      where: {
-        createdAt: { gte: fromDate, lte: toDate },
-      },
-      include: {
-        guests: true,
-        payment: true,
-      },
-      orderBy: { createdAt: "asc" },
-    });
+    const currentSeasonYear = getSeasonYear(new Date());
+    const currentSeasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
 
-    // Also fetch bookings overlapping with the date range (for occupancy)
-    const occupancyBookings = await prisma.booking.findMany({
-      where: {
-        checkIn: { lte: toDate },
-        checkOut: { gte: fromDate },
-        status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.COMPLETED] },
-      },
-      include: { guests: true },
-    });
+    const [
+      bookings,
+      occupancyBookings,
+      totalActiveMembers,
+      paidMembers,
+      unpaidMembers,
+      overdueMembers,
+      newMembers,
+    ] = await Promise.all([
+      prisma.booking.findMany({
+        where: {
+          createdAt: { gte: fromDate, lte: toDate },
+        },
+        include: {
+          guests: true,
+          payment: true,
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.booking.findMany({
+        where: {
+          checkIn: { lte: toDate },
+          checkOut: { gte: fromDate },
+          status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.COMPLETED] },
+        },
+        include: { guests: true },
+      }),
+      prisma.member.count({
+        where: {
+          active: true,
+        },
+      }),
+      prisma.memberSubscription.count({
+        where: {
+          seasonYear: currentSeasonYear,
+          status: SubscriptionStatus.PAID,
+          member: { active: true },
+        },
+      }),
+      prisma.memberSubscription.count({
+        where: {
+          seasonYear: currentSeasonYear,
+          status: SubscriptionStatus.UNPAID,
+          member: { active: true },
+        },
+      }),
+      prisma.memberSubscription.count({
+        where: {
+          seasonYear: currentSeasonYear,
+          status: SubscriptionStatus.OVERDUE,
+          member: { active: true },
+        },
+      }),
+      prisma.member.count({
+        where: {
+          active: true,
+          OR: [
+            { joinedDate: { gte: fromDate, lte: toDate } },
+            {
+              joinedDate: null,
+              createdAt: { gte: fromDate, lte: toDate },
+            },
+          ],
+        },
+      }),
+    ]);
 
     // 1. Occupancy by date
-    const occupancyFromDate = new Date(parsed.data.from + "T00:00:00");
-    const occupancyToDate = new Date(parsed.data.to + "T00:00:00");
     const days = eachDayOfInterval({ start: occupancyFromDate, end: occupancyToDate });
 
     const occupancyByDate = days.map((day) => {
@@ -92,25 +142,8 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    // 2. Revenue by month
-    const revenueByMonth: Record<string, { revenue: number; bookings: number }> = {};
-    for (const b of bookings) {
-      if (b.status === BookingStatus.CANCELLED || b.status === BookingStatus.BUMPED) continue;
-      const month = format(b.createdAt, "yyyy-MM");
-      if (!revenueByMonth[month]) {
-        revenueByMonth[month] = { revenue: 0, bookings: 0 };
-      }
-      revenueByMonth[month].revenue += b.finalPriceCents;
-      revenueByMonth[month].bookings += 1;
-    }
-
-    const revenueData = Object.entries(revenueByMonth)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, data]) => ({
-        month,
-        revenueCents: data.revenue,
-        bookingCount: data.bookings,
-      }));
+    // 2. Revenue by dynamic granularity
+    const revenueSeries = buildRevenueSeries(bookings, occupancyFromDate, occupancyToDate);
 
     // 3. Booking trends by week
     const bookingsByWeek: Record<string, { total: number; confirmed: number; cancelled: number; bumped: number; pending: number }> = {};
@@ -190,8 +223,18 @@ export async function GET(request: NextRequest) {
         nonMemberGuests,
       },
       statusBreakdown,
+      memberStats: {
+        totalActiveMembers,
+        paidMembers,
+        unpaidMembers,
+        overdueMembers,
+        newMembers,
+        currentSeasonYear,
+        currentSeasonLabel,
+      },
       occupancy: occupancyByDate,
-      revenue: revenueData,
+      revenueGranularity: revenueSeries.granularity,
+      revenue: revenueSeries.data,
       trends: trendData,
     });
   } catch (err) {
