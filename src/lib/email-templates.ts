@@ -1013,3 +1013,58 @@ export function setupIntentFailedTemplate(data: {
     ${muted("If you need help, contact the club at support@tokoroa.org.nz")}
   `);
 }
+
+export function adminRefundRequestTemplate(data: {
+  memberName: string;
+  bookingId: string;
+  checkIn: Date;
+  checkOut: Date;
+  reason: string;
+  requestedAmountCents: number | null;
+  paidAmountCents: number;
+  refundedAmountCents: number;
+}): string {
+  const remaining = data.paidAmountCents - data.refundedAmountCents;
+  return layout(`
+    ${heading("Refund Appeal Submitted")}
+    ${paragraph(escapeHtml(data.memberName) + " has submitted a refund appeal.")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Paid", value: "$" + (data.paidAmountCents / 100).toFixed(2) },
+      { label: "Already Refunded", value: "$" + (data.refundedAmountCents / 100).toFixed(2) },
+      { label: "Remaining", value: "$" + (remaining / 100).toFixed(2) },
+      ...(data.requestedAmountCents ? [{ label: "Requested", value: "$" + (data.requestedAmountCents / 100).toFixed(2) }] : []),
+    ])}
+    ${alertBox(escapeHtml(data.reason), "info")}
+    ${button("Review Appeal", BASE_URL + "/admin/refund-requests")}
+  `);
+}
+
+export function refundRequestResolvedTemplate(data: {
+  firstName: string;
+  status: "APPROVED" | "REJECTED";
+  amountCents: number | null;
+  adminNotes: string | null;
+  checkIn: Date;
+  checkOut: Date;
+}): string {
+  const isApproved = data.status === "APPROVED";
+  return layout(`
+    ${heading("Refund Appeal " + (isApproved ? "Approved" : "Update"))}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
+    ${isApproved
+      ? alertBox(
+          "Your refund appeal for your booking (" + formatNZDate(data.checkIn) + " - " + formatNZDate(data.checkOut) + ") has been approved. A refund of $" + ((data.amountCents ?? 0) / 100).toFixed(2) + " will be processed to your original payment method.",
+          "success"
+        )
+      : alertBox(
+          "Your refund appeal for your booking (" + formatNZDate(data.checkIn) + " - " + formatNZDate(data.checkOut) + ") was not approved at this time.",
+          "warning"
+        )
+    }
+    ${data.adminNotes ? paragraph("<strong>Notes:</strong> " + escapeHtml(data.adminNotes)) : ""}
+    ${muted("If you have questions, contact the club at support@tokoroa.org.nz")}
+  `);
+}

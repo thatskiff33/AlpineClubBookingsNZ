@@ -21,6 +21,7 @@ export interface BookingDetailsForPromo {
   totalPriceCents: number;
   perNightRates: number[];
   memberId: string;
+  bookingCheckIn?: Date;
   guestNightRates?: GuestNightRatesForPromo[];
 }
 
@@ -64,7 +65,7 @@ export async function validateAndApplyPromoCode(
     where: { code: code.toUpperCase().trim() },
   });
 
-  const validationError = validatePromoCodeRules(promoCode, bookingDetails);
+  const validationError = validatePromoCodeRules(promoCode, { memberId: bookingDetails.memberId, bookingCheckIn: bookingDetails.bookingCheckIn });
   if (validationError) {
     return { valid: false, error: validationError };
   }
@@ -109,12 +110,14 @@ export function validatePromoCodeRules(
     active: boolean;
     validFrom: Date | null;
     validUntil: Date | null;
+    bookingStartFrom?: Date | null;
+    bookingStartUntil?: Date | null;
     maxRedemptions: number | null;
     currentRedemptions: number;
     membersOnly: boolean;
     singleUse: boolean;
   } | null,
-  bookingDetails: { memberId: string },
+  bookingDetails: { memberId: string; bookingCheckIn?: Date },
   now: Date = new Date(),
   memberRedemptionCount: number = 0,
   assignedMemberIds: string[] | null = null
@@ -133,6 +136,16 @@ export function validatePromoCodeRules(
 
   if (promoCode.validUntil && now >= promoCode.validUntil) {
     return "This promo code has expired";
+  }
+
+  // Booking date gating (P5.3): check if the booking check-in date falls within allowed range
+  if (bookingDetails.bookingCheckIn) {
+    if (promoCode.bookingStartFrom && bookingDetails.bookingCheckIn < promoCode.bookingStartFrom) {
+      return "This promo code is not valid for your booking dates";
+    }
+    if (promoCode.bookingStartUntil && bookingDetails.bookingCheckIn >= promoCode.bookingStartUntil) {
+      return "This promo code is not valid for your booking dates";
+    }
   }
 
   if (

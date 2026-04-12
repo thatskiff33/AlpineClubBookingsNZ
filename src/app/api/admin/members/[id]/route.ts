@@ -14,6 +14,10 @@ import {
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
+import {
+  copyStreetAddressToPostal,
+  POSTAL_ADDRESS_FIELDS,
+} from "@/lib/member-address";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -35,6 +39,7 @@ const updateMemberSchema = z.object({
   active: z.boolean().optional(),
   canLogin: z.boolean().optional(),
   forcePasswordChange: z.boolean().optional(),
+  inheritEmailFromId: z.string().optional().nullable().or(z.literal("")),
   joinedDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
@@ -54,6 +59,7 @@ const updateMemberSchema = z.object({
   postalRegion: maxStr(200),
   postalPostalCode: maxStr(20),
   postalCountry: maxStr(100),
+  postalSameAsPhysical: z.boolean().optional(),
 });
 
 const PHONE_FIELDS = ["phoneCountryCode", "phoneAreaCode", "phoneNumber"] as const;
@@ -98,6 +104,17 @@ export async function GET(
         active: true,
         canLogin: true,
         forcePasswordChange: true,
+        parentMemberId: true,
+        inheritParentEmail: true,
+        inheritEmailFromId: true,
+        inheritEmailFrom: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
         xeroContactId: true,
         joinedDate: true,
         createdAt: true,
@@ -121,6 +138,18 @@ export async function GET(
         },
         subscriptions: {
           orderBy: { seasonYear: "desc" },
+        },
+        dependents: {
+          orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            ageTier: true,
+            active: true,
+            dateOfBirth: true,
+            canLogin: true,
+          },
         },
       },
     }),
@@ -251,6 +280,29 @@ export async function PUT(
     }
   }
 
+  if (data.inheritEmailFromId !== undefined && data.inheritEmailFromId !== "") {
+    const inheritEmailFrom = data.inheritEmailFromId
+      ? await prisma.member.findUnique({
+          where: { id: data.inheritEmailFromId },
+          select: { id: true, ageTier: true },
+        })
+      : null;
+
+    if (data.inheritEmailFromId && !inheritEmailFrom) {
+      return NextResponse.json(
+        { error: "Email inheritance member not found" },
+        { status: 404 }
+      );
+    }
+
+    if (inheritEmailFrom && inheritEmailFrom.ageTier !== "ADULT") {
+      return NextResponse.json(
+        { error: "Email inheritance must point to an adult member" },
+        { status: 422 }
+      );
+    }
+  }
+
   // Build update data
   const updateData: Record<string, unknown> = {};
   if (data.firstName !== undefined) updateData.firstName = data.firstName.trim();
@@ -265,6 +317,24 @@ export async function PUT(
   if (data.active !== undefined) updateData.active = data.active;
   if (data.canLogin !== undefined) updateData.canLogin = data.canLogin;
   if (data.forcePasswordChange !== undefined) updateData.forcePasswordChange = data.forcePasswordChange;
+  if (data.inheritEmailFromId !== undefined) {
+    updateData.inheritEmailFromId = data.inheritEmailFromId?.trim() || null;
+  }
+
+  if (data.postalSameAsPhysical) {
+    const copiedPostalAddress = copyStreetAddressToPostal({
+      streetAddressLine1: data.streetAddressLine1,
+      streetAddressLine2: data.streetAddressLine2,
+      streetCity: data.streetCity,
+      streetRegion: data.streetRegion,
+      streetPostalCode: data.streetPostalCode,
+      streetCountry: data.streetCountry,
+    });
+
+    for (const field of POSTAL_ADDRESS_FIELDS) {
+      updateData[field] = copiedPostalAddress[field]?.trim() || null;
+    }
+  }
 
   // Handle email
   if (data.email !== undefined) {
@@ -319,6 +389,9 @@ export async function PUT(
         ageTier: true,
         active: true,
         canLogin: true,
+        parentMemberId: true,
+        inheritParentEmail: true,
+        inheritEmailFromId: true,
         xeroContactId: true,
         joinedDate: true,
         createdAt: true,

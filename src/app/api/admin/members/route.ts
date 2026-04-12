@@ -18,6 +18,7 @@ import { getSeasonYear } from "@/lib/utils";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
+import { copyStreetAddressToPostal } from "@/lib/member-address";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -38,6 +39,9 @@ const createMemberSchema = z.object({
   active: z.boolean().default(true),
   sendInvite: z.boolean().default(false),
   canLogin: z.boolean().optional(),
+  parentMemberId: z.string().optional().nullable(),
+  inheritParentEmail: z.boolean().optional(),
+  inheritEmailFromId: z.string().optional().nullable(),
   familyGroupIds: z.array(z.string()).optional(),
   joinedDate: z
     .string()
@@ -57,6 +61,7 @@ const createMemberSchema = z.object({
   postalRegion: maxStr(200),
   postalPostalCode: maxStr(20),
   postalCountry: maxStr(100),
+  postalSameAsPhysical: z.boolean().optional(),
 });
 
 const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
@@ -336,21 +341,6 @@ export async function POST(req: NextRequest) {
   const data = parsed.data;
   const email = data.email.toLowerCase().trim();
 
-  // Determine canLogin: explicit if provided, otherwise adults with unique email can login
-  const ageTierForLogin = data.ageTier || "ADULT";
-  const canLogin = data.canLogin !== undefined ? data.canLogin : ageTierForLogin === "ADULT";
-
-  // Check for existing member with same email that can login
-  if (canLogin) {
-    const existing = await prisma.member.findFirst({ where: { email, canLogin: true } });
-    if (existing) {
-      return NextResponse.json(
-        { error: "A member with this email already exists" },
-        { status: 409 }
-      );
-    }
-  }
-
   // Validate family group assignments
   if (data.familyGroupIds && data.familyGroupIds.length > 0) {
     const groups = await prisma.familyGroup.findMany({
@@ -359,6 +349,52 @@ export async function POST(req: NextRequest) {
     });
     if (groups.length !== data.familyGroupIds.length) {
       return NextResponse.json({ error: "One or more family groups not found" }, { status: 404 });
+    }
+  }
+
+  if (data.inheritParentEmail && !data.parentMemberId) {
+    return NextResponse.json(
+      { error: "inheritParentEmail requires parentMemberId" },
+      { status: 422 }
+    );
+  }
+
+  if (data.parentMemberId) {
+    const parentMember = await prisma.member.findUnique({
+      where: { id: data.parentMemberId },
+      select: { id: true, ageTier: true },
+    });
+
+    if (!parentMember) {
+      return NextResponse.json({ error: "Parent member not found" }, { status: 404 });
+    }
+
+    if (parentMember.ageTier !== "ADULT") {
+      return NextResponse.json(
+        { error: "Dependents can only be created under adult members" },
+        { status: 422 }
+      );
+    }
+  }
+
+  if (data.inheritEmailFromId) {
+    const inheritEmailFrom = await prisma.member.findUnique({
+      where: { id: data.inheritEmailFromId },
+      select: { id: true, ageTier: true },
+    });
+
+    if (!inheritEmailFrom) {
+      return NextResponse.json(
+        { error: "Email inheritance member not found" },
+        { status: 404 }
+      );
+    }
+
+    if (inheritEmailFrom.ageTier !== "ADULT") {
+      return NextResponse.json(
+        { error: "Email inheritance must point to an adult member" },
+        { status: 422 }
+      );
     }
   }
 
@@ -380,8 +416,45 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Determine canLogin: explicit if provided, otherwise adult members without a parent can log in
+  const canLogin =
+    data.canLogin !== undefined
+      ? data.canLogin
+      : data.parentMemberId
+        ? false
+        : ageTier === "ADULT";
+
+  // Check for existing member with same email that can login
+  if (canLogin) {
+    const existing = await prisma.member.findFirst({ where: { email, canLogin: true } });
+    if (existing) {
+      return NextResponse.json(
+        { error: "A member with this email already exists" },
+        { status: 409 }
+      );
+    }
+  }
+
   // Random unguessable password
   const placeholderHash = await hash(randomBytes(32).toString("hex"), 13);
+
+  const postalAddress = data.postalSameAsPhysical
+    ? copyStreetAddressToPostal({
+        streetAddressLine1: data.streetAddressLine1,
+        streetAddressLine2: data.streetAddressLine2,
+        streetCity: data.streetCity,
+        streetRegion: data.streetRegion,
+        streetPostalCode: data.streetPostalCode,
+        streetCountry: data.streetCountry,
+      })
+    : {
+        postalAddressLine1: data.postalAddressLine1,
+        postalAddressLine2: data.postalAddressLine2,
+        postalCity: data.postalCity,
+        postalRegion: data.postalRegion,
+        postalPostalCode: data.postalPostalCode,
+        postalCountry: data.postalCountry,
+      };
 
   try {
     const member = await prisma.$transaction(async (tx) => {
@@ -398,6 +471,9 @@ export async function POST(req: NextRequest) {
           ageTier: ageTier as AgeTier,
           active: data.active,
           canLogin,
+          parentMemberId: data.parentMemberId?.trim() || null,
+          inheritParentEmail: data.inheritParentEmail ?? Boolean(data.parentMemberId),
+          inheritEmailFromId: data.inheritEmailFromId?.trim() || null,
           passwordHash: placeholderHash,
           emailVerified: !canLogin, // Non-login members don't need verification
           joinedDate,
@@ -407,12 +483,12 @@ export async function POST(req: NextRequest) {
           streetRegion: data.streetRegion?.trim() || null,
           streetPostalCode: data.streetPostalCode?.trim() || null,
           streetCountry: data.streetCountry?.trim() || null,
-          postalAddressLine1: data.postalAddressLine1?.trim() || null,
-          postalAddressLine2: data.postalAddressLine2?.trim() || null,
-          postalCity: data.postalCity?.trim() || null,
-          postalRegion: data.postalRegion?.trim() || null,
-          postalPostalCode: data.postalPostalCode?.trim() || null,
-          postalCountry: data.postalCountry?.trim() || null,
+          postalAddressLine1: postalAddress.postalAddressLine1?.trim() || null,
+          postalAddressLine2: postalAddress.postalAddressLine2?.trim() || null,
+          postalCity: postalAddress.postalCity?.trim() || null,
+          postalRegion: postalAddress.postalRegion?.trim() || null,
+          postalPostalCode: postalAddress.postalPostalCode?.trim() || null,
+          postalCountry: postalAddress.postalCountry?.trim() || null,
         },
         select: {
           id: true,
@@ -427,6 +503,9 @@ export async function POST(req: NextRequest) {
           ageTier: true,
           active: true,
           canLogin: true,
+          parentMemberId: true,
+          inheritParentEmail: true,
+          inheritEmailFromId: true,
           xeroContactId: true,
           joinedDate: true,
           createdAt: true,

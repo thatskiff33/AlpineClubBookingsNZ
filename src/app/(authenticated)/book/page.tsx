@@ -73,6 +73,8 @@ export default function BookPage() {
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
+  const [availablePromoCodes, setAvailablePromoCodes] = useState<{ code: string; description: string | null; type: string; percentOff: number | null; valueCents: number | null; freeNights: number | null }[]>([]);
+  const [prefillPromoCode, setPrefillPromoCode] = useState<string | undefined>();
 
   // Redirect admins to the admin booking page — admins must book on behalf of members
   useEffect(() => {
@@ -212,6 +214,12 @@ export default function BookPage() {
       const data = await res.json();
       setPriceQuote(data);
       setStep("review");
+
+      // Fetch available promo codes for the member
+      fetch("/api/promo-codes/available")
+        .then((r) => r.ok ? r.json() : [])
+        .then((codes) => setAvailablePromoCodes(codes))
+        .catch(() => {});
     } else {
       const data = await res.json();
       setError(data.error || "Failed to calculate price");
@@ -667,12 +675,37 @@ export default function BookPage() {
                   onChange={setExpectedArrivalTime}
                 />
               </div>
+              {availablePromoCodes.length > 0 && !appliedPromo && (
+                <div className="rounded-md bg-blue-50 border border-blue-200 p-4">
+                  <p className="text-sm font-medium text-blue-800 mb-2">
+                    You have promo codes available:
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {availablePromoCodes.map((pc) => (
+                      <button
+                        key={pc.code}
+                        type="button"
+                        onClick={() => setPrefillPromoCode(pc.code)}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-blue-100 px-3 py-1.5 text-sm font-mono font-medium text-blue-700 hover:bg-blue-200 transition-colors"
+                      >
+                        {pc.code}
+                        {pc.description && (
+                          <span className="font-sans font-normal text-blue-600">
+                            — {pc.description}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <PromoCodeInput
                 checkIn={checkIn!}
                 checkOut={checkOut!}
                 guests={guests}
                 onPromoApplied={setAppliedPromo}
                 appliedPromo={appliedPromo}
+                prefillCode={prefillPromoCode}
               />
             </CardContent>
           </Card>

@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
-import { calculateBookingPrice, type SeasonRateData } from "@/lib/pricing";
+import { calculateBookingPrice, type SeasonRateData, type GroupDiscountConfig } from "@/lib/pricing";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
@@ -231,6 +231,13 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Load group discount settings once for all paths
+  let groupDiscount: GroupDiscountConfig | undefined;
+  const gds = await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } });
+  if (gds && gds.enabled) {
+    groupDiscount = { minGroupSize: gds.minGroupSize, summerOnly: gds.summerOnly, enabled: true };
+  }
+
   // Issue 7: Draft booking — skip capacity, payment, Xero, emails
   if (draft) {
     const draftExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
@@ -249,6 +256,7 @@ export async function POST(request: NextRequest) {
       seasonId: s.id,
       startDate: s.startDate,
       endDate: s.endDate,
+      type: s.type,
       rates: s.rates.map((r) => ({
         ageTier: r.ageTier,
         isMember: r.isMember,
@@ -261,7 +269,7 @@ export async function POST(request: NextRequest) {
       isMember: g.isMember,
     }));
 
-    const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData);
+    const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData, groupDiscount);
 
     let discountCents = 0;
     let promoCodeRecord: { id: string; type: string; valueCents: number | null; percentOff: number | null; freeNights: number | null } | null = null;
@@ -283,7 +291,7 @@ export async function POST(request: NextRequest) {
         : null;
       const validationError = validatePromoCodeRules(
         promoCode,
-        { memberId: effectiveMemberId },
+        { memberId: effectiveMemberId, bookingCheckIn: checkIn },
         new Date(),
         memberRedemptionCount,
         assignedMemberIds
@@ -489,7 +497,7 @@ export async function POST(request: NextRequest) {
         isMember: g.isMember,
       }));
 
-      const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData);
+      const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData, groupDiscount);
 
       // Handle promo code if provided
       let discountCents = 0;
@@ -528,7 +536,7 @@ export async function POST(request: NextRequest) {
 
         const validationError = validatePromoCodeRules(
           promoCode,
-          { memberId: effectiveMemberId },
+          { memberId: effectiveMemberId, bookingCheckIn: checkIn },
           new Date(),
           memberRedemptionCount,
           assignedMemberIds

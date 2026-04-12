@@ -1,15 +1,22 @@
-import { AgeTier, PromoCodeType } from "@prisma/client";
+import { AgeTier, PromoCodeType, SeasonType } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 
 export interface SeasonRateData {
   seasonId: string;
   startDate: Date;
   endDate: Date;
+  type?: SeasonType;
   rates: {
     ageTier: AgeTier;
     isMember: boolean;
     pricePerNightCents: number;
   }[];
+}
+
+export interface GroupDiscountConfig {
+  minGroupSize: number;
+  summerOnly: boolean;
+  enabled: boolean;
 }
 
 export interface GuestInput {
@@ -117,6 +124,24 @@ export function getNightlyRate(
 }
 
 /**
+ * Check if a group discount applies for a given night.
+ * Returns true if the group discount should override isMember to true.
+ */
+export function isGroupDiscountApplicable(
+  guestCount: number,
+  night: Date,
+  seasons: SeasonRateData[],
+  groupDiscount?: GroupDiscountConfig
+): boolean {
+  if (!groupDiscount || !groupDiscount.enabled) return false;
+  if (guestCount < groupDiscount.minGroupSize) return false;
+  if (!groupDiscount.summerOnly) return true;
+
+  const season = findSeasonForDate(night, seasons);
+  return season?.type === "SUMMER";
+}
+
+/**
  * Calculate the total price for a booking.
  * Guests stay from checkIn night to checkOut-1 night.
  */
@@ -124,7 +149,8 @@ export function calculateBookingPrice(
   checkIn: Date,
   checkOut: Date,
   guests: GuestInput[],
-  seasons: SeasonRateData[]
+  seasons: SeasonRateData[],
+  groupDiscount?: GroupDiscountConfig
 ): PriceBreakdown {
   const nights = getStayNights(checkIn, checkOut);
 
@@ -133,7 +159,12 @@ export function calculateBookingPrice(
     let guestTotal = 0;
 
     for (const night of nights) {
-      const rate = findRateForNight(night, guest.ageTier, guest.isMember, seasons);
+      // Group discount: if applicable, treat all guests as members for rate lookup
+      const effectiveIsMember =
+        guest.isMember ||
+        isGroupDiscountApplicable(guests.length, night, seasons, groupDiscount);
+
+      const rate = findRateForNight(night, guest.ageTier, effectiveIsMember, seasons);
       if (rate === null) {
         throw new Error(
           `No rate found for ${guest.ageTier} (member: ${guest.isMember}) on ${night.toLocaleDateString("en-CA")}`

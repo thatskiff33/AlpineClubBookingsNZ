@@ -35,6 +35,10 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
     label: "Family group requests",
     description: "Alerts when a member requests to join or add to a family group.",
   },
+  adminRefundRequest: {
+    label: "Refund requests",
+    description: "Alerts when a member submits a refund appeal.",
+  },
 } as const;
 
 export type AdminNotificationPreferenceKey =
@@ -59,6 +63,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_SELECT = {
   adminDailyDigest: true,
   adminWaitlistOffer: true,
   adminFamilyGroupRequest: true,
+  adminRefundRequest: true,
 } as const;
 
 export function resolveAdminNotificationPreferences(
@@ -74,5 +79,6 @@ export function resolveAdminNotificationPreferences(
     adminDailyDigest: preferences?.adminDailyDigest ?? true,
     adminWaitlistOffer: preferences?.adminWaitlistOffer ?? true,
     adminFamilyGroupRequest: preferences?.adminFamilyGroupRequest ?? true,
+    adminRefundRequest: preferences?.adminRefundRequest ?? true,
   };
 }

@@ -48,6 +48,7 @@ vi.mock("@/lib/prisma", () => ({
     promoCode: { findUnique: vi.fn(), update: vi.fn() },
     promoRedemption: { count: vi.fn(), create: vi.fn() },
     auditLog: { create: vi.fn().mockResolvedValue({}) },
+    groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn(),
   },
 }));

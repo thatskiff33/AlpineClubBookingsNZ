@@ -35,6 +35,7 @@ import {
   adminWaitlistOfferTemplate,
   adminFamilyGroupRequestTemplate,
   joinRequestConfirmationTemplate,
+  adminRefundRequestTemplate,
 } from "./email-templates";
 import {
   ADMIN_NOTIFICATION_PREFERENCE_SELECT,
@@ -798,5 +799,23 @@ export async function sendAdminWaitlistOfferAlert(data: {
     html: adminWaitlistOfferTemplate(data),
     templateName: "admin-waitlist-offer",
     preferenceKey: "adminWaitlistOffer",
+  });
+}
+
+export async function sendAdminRefundRequestAlert(data: {
+  memberName: string;
+  bookingId: string;
+  checkIn: Date;
+  checkOut: Date;
+  reason: string;
+  requestedAmountCents: number | null;
+  paidAmountCents: number;
+  refundedAmountCents: number;
+}) {
+  await sendToAdmins({
+    subject: `Refund Appeal: ${data.memberName}`,
+    html: adminRefundRequestTemplate(data),
+    templateName: "admin-refund-request",
+    preferenceKey: "adminRefundRequest",
   });
 }

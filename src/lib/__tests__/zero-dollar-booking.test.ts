@@ -74,6 +74,9 @@ vi.mock("@/lib/prisma", () => ({
       create: (...args: unknown[]) => mockPaymentCreate(...args),
       update: (...args: unknown[]) => mockPaymentUpdate(...args),
     },
+    groupDiscountSetting: {
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
   },
 }));
 
