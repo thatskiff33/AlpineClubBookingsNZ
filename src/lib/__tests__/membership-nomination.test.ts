@@ -120,13 +120,18 @@ describe("membership nomination workflow", () => {
     vi.mocked(prisma.memberApplication.findFirst).mockResolvedValue(null as never);
 
     const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
+      member: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
       memberApplication: {
+        findFirst: vi.fn().mockResolvedValue(null),
         create: vi.fn().mockResolvedValue({
           id: "app-1",
           applicantFirstName: "Jane",
           applicantLastName: "Doe",
           applicantEmail: "jane@test.com",
-          applicantDateOfBirth: null,
+          applicantDateOfBirth: new Date("1990-05-01T00:00:00.000Z"),
           applicantPhone: "64 21 5551234",
           applicantAddress: null,
           familyMembers: [],
@@ -154,7 +159,7 @@ describe("membership nomination workflow", () => {
       applicantFirstName: "Jane",
       applicantLastName: "Doe",
       applicantEmail: "Jane@Test.com",
-      applicantDateOfBirth: null,
+      applicantDateOfBirth: "1990-05-01",
       phoneCountryCode: "64",
       phoneAreaCode: "21",
       phoneNumber: "5551234",
@@ -206,6 +211,113 @@ describe("membership nomination workflow", () => {
     expect(result.emailWarnings).toEqual([]);
   });
 
+  it("rejects applications without an applicant date of birth", async () => {
+    await expect(
+      createMemberApplication({
+        applicantFirstName: "Jane",
+        applicantLastName: "Doe",
+        applicantEmail: "jane@test.com",
+        applicantDateOfBirth: null,
+        phoneCountryCode: "64",
+        phoneAreaCode: "21",
+        phoneNumber: "5551234",
+        address: {
+          streetAddressLine1: "42 Lodge Road",
+          streetAddressLine2: null,
+          streetCity: "Whakapapa",
+          streetRegion: "Ruapehu",
+          streetPostalCode: "3951",
+          streetCountry: "NZ",
+          postalAddressLine1: null,
+          postalAddressLine2: null,
+          postalCity: null,
+          postalRegion: null,
+          postalPostalCode: null,
+          postalCountry: null,
+          postalSameAsPhysical: true,
+        },
+        familyMembers: [],
+        nominator1Email: "nominator1@test.com",
+        nominator2Email: "nominator2@test.com",
+      })
+    ).rejects.toMatchObject({
+      message: "Applicant date of birth is required",
+      status: 422,
+    });
+  });
+
+  it("rechecks for pending duplicate applications after locking the applicant email", async () => {
+    vi.mocked(prisma.member.findFirst)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "nom-1",
+        email: "nominator1@test.com",
+        firstName: "Nora",
+        lastName: "One",
+        subscriptions: [{ id: "sub-1" }],
+      } as never)
+      .mockResolvedValueOnce({
+        id: "nom-2",
+        email: "nominator2@test.com",
+        firstName: "Noel",
+        lastName: "Two",
+        subscriptions: [{ id: "sub-2" }],
+      } as never);
+    vi.mocked(prisma.memberApplication.findFirst).mockResolvedValue(null as never);
+
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
+      member: {
+        findFirst: vi.fn().mockResolvedValue(null),
+      },
+      memberApplication: {
+        findFirst: vi.fn().mockResolvedValue({ id: "app-existing" }),
+        create: vi.fn(),
+      },
+      nominationToken: {
+        createMany: vi.fn(),
+      },
+    };
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback: any) => callback(tx));
+
+    await expect(
+      createMemberApplication({
+        applicantFirstName: "Jane",
+        applicantLastName: "Doe",
+        applicantEmail: "Jane@Test.com",
+        applicantDateOfBirth: "1990-05-01",
+        phoneCountryCode: "64",
+        phoneAreaCode: "21",
+        phoneNumber: "5551234",
+        address: {
+          streetAddressLine1: "42 Lodge Road",
+          streetAddressLine2: null,
+          streetCity: "Whakapapa",
+          streetRegion: "Ruapehu",
+          streetPostalCode: "3951",
+          streetCountry: "NZ",
+          postalAddressLine1: null,
+          postalAddressLine2: null,
+          postalCity: null,
+          postalRegion: null,
+          postalPostalCode: null,
+          postalCountry: null,
+          postalSameAsPhysical: true,
+        },
+        familyMembers: [],
+        nominator1Email: "nominator1@test.com",
+        nominator2Email: "nominator2@test.com",
+      })
+    ).rejects.toMatchObject({
+      message: "There is already a membership application pending for this email address",
+      status: 409,
+    });
+
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(tx.memberApplication.create).not.toHaveBeenCalled();
+    expect(sendNominationRequestEmail).not.toHaveBeenCalled();
+  });
+
   it("moves the application to pending admin when the second nominator confirms", async () => {
     const application = {
       id: "app-1",
@@ -242,6 +354,7 @@ describe("membership nomination workflow", () => {
     } as never);
 
     const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
       nominationToken: {
         findUnique: vi.fn().mockResolvedValue({
           id: "token-row",
@@ -333,6 +446,7 @@ describe("membership nomination workflow", () => {
     } as never);
 
     const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
       member: {
         findFirst: vi.fn().mockResolvedValue(null),
         create: vi
@@ -358,6 +472,48 @@ describe("membership nomination workflow", () => {
         create: vi.fn().mockResolvedValue(undefined),
       },
       memberApplication: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "app-1",
+          applicantFirstName: "Jane",
+          applicantLastName: "Doe",
+          applicantEmail: "jane@test.com",
+          applicantDateOfBirth: new Date("1990-05-01T00:00:00.000Z"),
+          applicantPhone: "64 21 5551234",
+          applicantAddress: {
+            streetAddressLine1: "42 Lodge Road",
+            streetAddressLine2: null,
+            streetCity: "Whakapapa",
+            streetRegion: "Ruapehu",
+            streetPostalCode: "3951",
+            streetCountry: "NZ",
+            postalAddressLine1: "42 Lodge Road",
+            postalAddressLine2: null,
+            postalCity: "Whakapapa",
+            postalRegion: "Ruapehu",
+            postalPostalCode: "3951",
+            postalCountry: "NZ",
+            postalSameAsPhysical: true,
+          },
+          familyMembers: [
+            {
+              firstName: "Sam",
+              lastName: "Doe",
+              dateOfBirth: "2018-06-01",
+            },
+          ],
+          nominator1Email: "nominator1@test.com",
+          nominator2Email: "nominator2@test.com",
+          nominator1Id: "nom-1",
+          nominator2Id: "nom-2",
+          nominator1ConfirmedAt: new Date("2026-04-12T01:00:00.000Z"),
+          nominator2ConfirmedAt: new Date("2026-04-12T02:00:00.000Z"),
+          status: "PENDING_ADMIN",
+          adminNotes: null,
+          reviewedBy: null,
+          reviewedAt: null,
+          createdAt: new Date("2026-04-12T00:00:00.000Z"),
+          updatedAt: new Date("2026-04-12T00:00:00.000Z"),
+        }),
         update: vi.fn().mockResolvedValue({
           id: "app-1",
           status: "APPROVED",
@@ -400,5 +556,39 @@ describe("membership nomination workflow", () => {
       })
     );
     expect(result.warnings).toEqual([]);
+  });
+
+  it("blocks approval of legacy applications that are missing the applicant date of birth", async () => {
+    vi.mocked(prisma.memberApplication.findUnique).mockResolvedValue({
+      id: "app-legacy",
+      applicantFirstName: "Jane",
+      applicantLastName: "Doe",
+      applicantEmail: "jane@test.com",
+      applicantDateOfBirth: null,
+      applicantPhone: "64 21 5551234",
+      applicantAddress: null,
+      familyMembers: [],
+      nominator1Email: "nominator1@test.com",
+      nominator2Email: "nominator2@test.com",
+      nominator1Id: "nom-1",
+      nominator2Id: "nom-2",
+      nominator1ConfirmedAt: new Date("2026-04-12T01:00:00.000Z"),
+      nominator2ConfirmedAt: new Date("2026-04-12T02:00:00.000Z"),
+      status: "PENDING_ADMIN",
+      adminNotes: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      createdAt: new Date("2026-04-12T00:00:00.000Z"),
+      updatedAt: new Date("2026-04-12T00:00:00.000Z"),
+    } as never);
+
+    await expect(
+      approveMemberApplication("app-legacy", "admin-1", "Need DOB")
+    ).rejects.toMatchObject({
+      message: "Applicant date of birth is required before approval",
+      status: 409,
+    });
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });

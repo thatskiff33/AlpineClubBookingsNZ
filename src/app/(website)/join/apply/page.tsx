@@ -173,6 +173,9 @@ export default function JoinApplyPage() {
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.applicantEmail)) {
       nextErrors.applicantEmail = "Enter a valid email address";
     }
+    if (!form.applicantDateOfBirth) {
+      nextErrors.applicantDateOfBirth = "Date of birth is required";
+    }
     if (!form.nominator1Email.trim()) {
       nextErrors.nominator1Email = "First nominator email is required";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.nominator1Email)) {
@@ -426,10 +429,7 @@ export default function JoinApplyPage() {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="applicantDateOfBirth">
-                      Date of birth{" "}
-                      <span className="font-normal text-muted-foreground">
-                        (optional)
-                      </span>
+                      Date of birth
                     </Label>
                     <Input
                       id="applicantDateOfBirth"
@@ -438,6 +438,11 @@ export default function JoinApplyPage() {
                       onChange={updateField("applicantDateOfBirth")}
                       autoComplete="bday"
                     />
+                    {fieldErrors.applicantDateOfBirth && (
+                      <p className="text-xs text-destructive">
+                        {fieldErrors.applicantDateOfBirth}
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-2">

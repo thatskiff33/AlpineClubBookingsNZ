@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { resolvePostLoginPath } from "@/lib/auth-redirect";
 
 function LoginForm() {
   const router = useRouter();
@@ -24,6 +25,7 @@ function LoginForm() {
   const verified = searchParams.get("verified") === "true";
   const verifyError = searchParams.get("verifyError");
   const emailChanged = searchParams.get("emailChanged") === "true";
+  const redirectTo = resolvePostLoginPath(searchParams.get("callbackUrl"));
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,6 +39,7 @@ function LoginForm() {
         email,
         password,
         redirect: false,
+        redirectTo,
       });
 
       if (result?.error) {
@@ -47,7 +50,7 @@ function LoginForm() {
           setError("Invalid email or password. Please try again.");
         }
       } else {
-        router.push("/dashboard");
+        router.push(redirectTo);
       }
     } catch {
       setError("Something went wrong. Please try again.");

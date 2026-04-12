@@ -19,7 +19,7 @@ const applicationSchema = z.object({
   applicantFirstName: cleanedString("First name", 100),
   applicantLastName: cleanedString("Last name", 100),
   applicantEmail: z.string().email("Invalid email address").transform((value) => value.trim()),
-  applicantDateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  applicantDateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD"),
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(20).optional().nullable(),

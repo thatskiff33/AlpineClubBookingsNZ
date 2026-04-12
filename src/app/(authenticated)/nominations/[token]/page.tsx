@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
+import { buildLoginPath } from "@/lib/auth-redirect";
 import {
   parseApplicationFamilyMembers,
 } from "@/lib/nomination";
@@ -29,7 +30,8 @@ export default async function NominationPage({
 }) {
   const session = await auth();
   if (!session?.user?.id) {
-    redirect("/login");
+    const { token } = await params;
+    redirect(buildLoginPath(`/nominations/${token}`));
   }
 
   const { token } = await params;
