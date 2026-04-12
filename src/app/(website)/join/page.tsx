@@ -123,6 +123,14 @@ export default async function JoinPage() {
             The Tokoroa Alpine Club is a members&apos; club. New members are
             nominated by existing members and welcomed into the club community.
           </p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Button asChild size="lg" className="bg-brand-gold text-brand-charcoal hover:bg-brand-gold/90">
+              <Link href="/join/apply">Apply for Membership</Link>
+            </Button>
+            <Button asChild size="lg" variant="outline" className="border-brand-snow/30 bg-transparent text-brand-snow hover:bg-brand-snow/10">
+              <Link href="/contact">Talk to the Committee</Link>
+            </Button>
+          </div>
         </div>
       </section>
 

@@ -445,107 +445,18 @@ describe("Admin Member Edit: structured phone and address", () => {
 });
 
 // ──────────────────────────────────────────────────────────────
-// Registration — structured phone + Xero auto-link
+// Legacy self-service registration
 // ──────────────────────────────────────────────────────────────
 
-describe("Registration: structured phone + Xero auto-link", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(prisma.member.count).mockResolvedValue(1);
-  });
+describe("Legacy registration route", () => {
+  it("returns 410 and directs applicants to /join/apply", async () => {
+    const res = await register();
 
-  function makeRegisterRequest(body: Record<string, unknown>) {
-    return new NextRequest("http://localhost/api/auth/register", {
-      method: "POST",
-      body: JSON.stringify(body),
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  const validRegistration = {
-    email: "new@test.com",
-    password: "securePassword123",
-    firstName: "Jane",
-    lastName: "Doe",
-    phoneCountryCode: "64",
-    phoneAreaCode: "21",
-    phoneNumber: "5551234",
-  };
-
-  it("stores structured phone fields on registration", async () => {
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.member.create).mockResolvedValue({
-      id: "new1", email: "new@test.com", firstName: "Jane", lastName: "Doe",
-      phoneCountryCode: "64", phoneAreaCode: "21", phoneNumber: "5551234",
-    } as any);
-
-    const res = await register(makeRegisterRequest(validRegistration));
-    expect(res.status).toBe(201);
-    expect(prisma.member.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        phoneCountryCode: "64",
-        phoneAreaCode: "21",
-        phoneNumber: "5551234",
-      }),
-    }));
-  });
-
-  it("auto-creates Xero contact when Xero is connected", async () => {
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.member.create).mockResolvedValue({ id: "new1", email: "new@test.com", firstName: "Jane" } as any);
-    vi.mocked(isXeroConnected).mockResolvedValue(true);
-    vi.mocked(findOrCreateXeroContact).mockResolvedValue("xc-new" as any);
-
-    await register(makeRegisterRequest(validRegistration));
-
-    // isXeroConnected is called fire-and-forget, so wait for promises
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(findOrCreateXeroContact).toHaveBeenCalledWith("new1");
-  });
-
-  it("does not create Xero contact when Xero is disconnected", async () => {
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.member.create).mockResolvedValue({ id: "new1", email: "new@test.com", firstName: "Jane" } as any);
-    vi.mocked(isXeroConnected).mockResolvedValue(false);
-
-    await register(makeRegisterRequest(validRegistration));
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(findOrCreateXeroContact).not.toHaveBeenCalled();
-  });
-
-  it("handles Xero auto-link failure gracefully", async () => {
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.member.create).mockResolvedValue({ id: "new1", email: "new@test.com", firstName: "Jane" } as any);
-    vi.mocked(isXeroConnected).mockResolvedValue(true);
-    vi.mocked(findOrCreateXeroContact).mockRejectedValue(new Error("Xero unavailable"));
-
-    const res = await register(makeRegisterRequest(validRegistration));
-    // Registration should still succeed even if Xero fails
-    expect(res.status).toBe(201);
-
-    await new Promise((r) => setTimeout(r, 50));
-    // Should have attempted but failed gracefully
-    expect(findOrCreateXeroContact).toHaveBeenCalledWith("new1");
-  });
-
-  it("registers without phone fields (optional)", async () => {
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.member.create).mockResolvedValue({ id: "new2", email: "bob@test.com", firstName: "Bob" } as any);
-
-    const res = await register(makeRegisterRequest({
-      email: "bob@test.com", password: "securePassword123",
-      firstName: "Bob", lastName: "Builder",
-    }));
-    expect(res.status).toBe(201);
-  });
-
-  it("returns 409 when registration hits a unique email constraint after the pre-check", async () => {
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.member.create).mockRejectedValueOnce({ code: "P2002" });
-
-    const res = await register(makeRegisterRequest(validRegistration));
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(410);
+    await expect(res.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringContaining("/join/apply"),
+      })
+    );
   });
 });

@@ -154,6 +154,8 @@ export const rateLimiters = {
   login: { id: "login", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
   /** Register: 5 attempts per hour */
   register: { id: "register", limit: 5, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Membership application: 3 submissions per hour */
+  membershipApplication: { id: "membership-application", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Password reset request: 5 per hour */
   forgotPassword: { id: "forgot-password", limit: 5, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Password reset submission: 10 per hour */

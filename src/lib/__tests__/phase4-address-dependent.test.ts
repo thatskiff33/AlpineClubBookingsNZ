@@ -193,82 +193,19 @@ describe("member-address utilities", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// Registration with address fields
+// Legacy self-service registration
 // ─────────────────────────────────────────────────────────────────
 
-describe("Registration with address fields", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+describe("Legacy registration route", () => {
+  it("returns 410 and points applicants to the membership workflow", async () => {
+    const res = await register();
 
-  function makeRegisterRequest(body: Record<string, unknown>) {
-    return new NextRequest("http://localhost/api/auth/register", {
-      method: "POST",
-      body: JSON.stringify(body),
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  const validRegistration = {
-    email: "new@test.com",
-    password: "securePassword123",
-    firstName: "Jane",
-    lastName: "Doe",
-    streetAddressLine1: "42 Lodge Rd",
-    streetCity: "Whakapapa",
-    streetRegion: "Manawatu-Wanganui",
-    streetPostalCode: "3951",
-    streetCountry: "NZ",
-  };
-
-  it("stores address fields on registration", async () => {
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.member.create).mockResolvedValue({ id: "new1", email: "new@test.com", firstName: "Jane" } as any);
-
-    const res = await register(makeRegisterRequest(validRegistration));
-    expect(res.status).toBe(201);
-    expect(prisma.member.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        streetAddressLine1: "42 Lodge Rd",
-        streetCity: "Whakapapa",
-      }),
-    }));
-  });
-
-  it("copies street to postal when postalSameAsPhysical is true", async () => {
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.member.create).mockResolvedValue({ id: "new1", email: "new@test.com", firstName: "Jane" } as any);
-
-    const res = await register(makeRegisterRequest({
-      ...validRegistration,
-      postalSameAsPhysical: true,
-    }));
-    expect(res.status).toBe(201);
-    expect(prisma.member.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        streetAddressLine1: "42 Lodge Rd",
-        postalAddressLine1: "42 Lodge Rd",
-        postalCity: "Whakapapa",
-        postalPostalCode: "3951",
-      }),
-    }));
-  });
-
-  it("uses separate postal address when postalSameAsPhysical is false", async () => {
-    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.member.create).mockResolvedValue({ id: "new1", email: "new@test.com", firstName: "Jane" } as any);
-
-    const res = await register(makeRegisterRequest({
-      ...validRegistration,
-      postalSameAsPhysical: false,
-      postalAddressLine1: "PO Box 99",
-      postalCity: "Whakapapa",
-    }));
-    expect(res.status).toBe(201);
-    expect(prisma.member.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        streetAddressLine1: "42 Lodge Rd",
-        postalAddressLine1: "PO Box 99",
-      }),
-    }));
+    expect(res.status).toBe(410);
+    await expect(res.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringContaining("/join/apply"),
+      })
+    );
   });
 });
 

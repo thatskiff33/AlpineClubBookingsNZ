@@ -312,6 +312,34 @@ export function emailVerificationTemplate(firstName: string, verifyUrl: string):
   `);
 }
 
+export function nominationRequestTemplate(params: {
+  nominatorName: string;
+  applicantName: string;
+  reviewUrl: string;
+  familyMemberCount: number;
+  expiresAt: Date;
+}): string {
+  const dependentLine =
+    params.familyMemberCount > 0
+      ? `${paragraph("This application also includes " + String(params.familyMemberCount) + " dependent family member" + (params.familyMemberCount === 1 ? "" : "s") + ".")}`
+      : "";
+
+  return layout(`
+    ${heading("Membership Nomination Request")}
+    ${paragraph("Hi " + escapeHtml(params.nominatorName) + ",")}
+    ${paragraph(
+      "<strong>" +
+        escapeHtml(params.applicantName) +
+        "</strong> has listed you as one of their Tokoroa Alpine Club nominators."
+    )}
+    ${dependentLine}
+    ${paragraph("Please review the application and confirm whether you agree to nominate this person for membership.")}
+    ${alertBox("You will need to sign in before you can confirm the nomination.", "info")}
+    ${button("Review Application", params.reviewUrl)}
+    ${muted("This link expires on " + escapeHtml(formatNZDate(params.expiresAt)) + ".")}
+  `);
+}
+
 export function emailChangeVerificationTemplate(newEmail: string, verifyUrl: string): string {
   return layout(`
     ${heading("Confirm Your New Email")}
@@ -876,6 +904,74 @@ export function joinRequestConfirmationTemplate(
     ${paragraph("Hi " + escapeHtml(requesterName) + ",")}
     ${paragraph("Your request to join the family group <strong>" + escapeHtml(groupName) + "</strong> has been submitted.")}
     ${alertBox("An administrator will review your request. You'll be notified once it's been processed.", "info")}
+    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+  `);
+}
+
+export function adminMembershipApplicationPendingTemplate(data: {
+  applicantName: string;
+  applicantEmail: string;
+  familyMemberCount: number;
+  reviewUrl: string;
+}): string {
+  const dependentSummary =
+    data.familyMemberCount > 0
+      ? `${paragraph(
+          "This application includes " +
+            String(data.familyMemberCount) +
+            " dependent family member" +
+            (data.familyMemberCount === 1 ? "" : "s") +
+            "."
+        )}`
+      : "";
+
+  return layout(`
+    ${heading("Membership Application Ready for Review")}
+    ${paragraph("Both nominators have now confirmed a new membership application.")}
+    ${infoTable([
+      { label: "Applicant", value: escapeHtml(data.applicantName) },
+      { label: "Email", value: escapeHtml(data.applicantEmail) },
+    ])}
+    ${dependentSummary}
+    ${button("Review Application", data.reviewUrl)}
+    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+  `);
+}
+
+export function membershipApplicationApprovedTemplate(
+  firstName: string,
+  resetUrl: string,
+  adminNotes?: string | null
+): string {
+  const notes = adminNotes
+    ? `${alertBox("Committee note: " + escapeHtml(adminNotes), "info")}`
+    : "";
+
+  return layout(`
+    ${heading("Membership Approved")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", your Tokoroa Alpine Club membership application has been approved.")}
+    ${paragraph("Your account is ready. Use the button below to set your password and access the bookings system.")}
+    ${button("Set Up My Account", resetUrl)}
+    ${notes}
+    ${paragraph("Your entrance fee and any membership charges will be managed separately through the club's normal process.")}
+    ${muted("This setup link expires in 7 days.")}
+  `);
+}
+
+export function membershipApplicationRejectedTemplate(
+  firstName: string,
+  adminNotes?: string | null
+): string {
+  const notes = adminNotes
+    ? `${alertBox("Committee note: " + escapeHtml(adminNotes), "warning")}`
+    : "";
+
+  return layout(`
+    ${heading("Membership Application Update")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", your Tokoroa Alpine Club membership application has been reviewed.")}
+    ${paragraph("The committee has decided not to approve the application at this time.")}
+    ${notes}
+    ${paragraph("If you would like more information, please contact the club directly.")}
     ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
   `);
 }

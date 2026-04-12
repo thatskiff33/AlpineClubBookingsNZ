@@ -183,12 +183,12 @@ function LoginForm() {
           </Button>
 
           <p className="text-sm text-center text-muted-foreground">
-            Don&apos;t have an account?{" "}
+            Need to join the club?{" "}
             <Link
-              href="/register"
+              href="/join/apply"
               className="text-foreground font-medium underline-offset-4 hover:underline"
             >
-              Create one
+              Apply for membership
             </Link>
           </p>
         </CardFooter>

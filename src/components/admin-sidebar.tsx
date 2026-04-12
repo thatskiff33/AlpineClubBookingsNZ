@@ -74,6 +74,7 @@ const navSections: NavSection[] = [
   {
     label: "Members",
     items: [
+      { href: "/admin/member-applications", label: "Applications", icon: ClipboardList },
       { href: "/admin/members", label: "Members", icon: Users },
       { href: "/admin/family-groups", label: "Family Groups", icon: Users },
       { href: "/admin/family-suggestions", label: "Family Suggestions", icon: Users },
@@ -121,12 +122,39 @@ function usePendingFamilyRequests(): number {
   return count;
 }
 
+function usePendingApplications(): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/admin/member-applications?status=PENDING_ADMIN")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled) {
+          setCount(data?.pendingCount ?? 0);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return count;
+}
+
 function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const pendingFamilyRequests = usePendingFamilyRequests();
+  const pendingApplications = usePendingApplications();
 
   // Map href -> badge count
   const badges: Record<string, number> = {};
+  if (pendingApplications > 0) {
+    badges["/admin/member-applications"] = pendingApplications;
+  }
   if (pendingFamilyRequests > 0) {
     badges["/admin/family-groups"] = pendingFamilyRequests;
   }

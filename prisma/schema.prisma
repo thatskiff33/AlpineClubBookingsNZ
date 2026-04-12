@@ -27,6 +27,13 @@ enum AgeTier {
   ADULT
 }
 
+enum ApplicationStatus {
+  PENDING_NOMINATORS
+  PENDING_ADMIN
+  APPROVED
+  REJECTED
+}
+
 enum SubscriptionStatus {
   NOT_INVOICED
   UNPAID
@@ -102,60 +109,60 @@ enum ChoreFrequencyMode {
 // ---------------------------------------------------------------------------
 
 model Member {
-  id            String   @id @default(cuid())
+  id                  String    @id @default(cuid())
   // Lookup index only in Prisma schema. Login identity uniqueness is enforced
   // by the manual partial unique index Member_email_login_unique
   // (WHERE canLogin = true), because Prisma schema cannot express partial unique indexes.
-  email         String
+  email               String
   passwordHash        String
-  forcePasswordChange Boolean  @default(false)
+  forcePasswordChange Boolean   @default(false)
   passwordChangedAt   DateTime?
   // Email verification: new registrations start as false.
   // Existing members should be bulk-updated: UPDATE "Member" SET "emailVerified" = true;
-  emailVerified       Boolean  @default(false)
+  emailVerified       Boolean   @default(false)
   firstName           String
   lastName            String
-  dateOfBirth   DateTime?
+  dateOfBirth         DateTime?
 
   // Structured phone (matches Xero's countryCode/areaCode/number format)
-  phoneCountryCode  String?   // e.g. "64"
-  phoneAreaCode     String?   // e.g. "27"
-  phoneNumber       String?   // e.g. "4224115"
+  phoneCountryCode String? // e.g. "64"
+  phoneAreaCode    String? // e.g. "27"
+  phoneNumber      String? // e.g. "4224115"
 
   // Physical address (Xero STREET type)
-  streetAddressLine1  String?
-  streetAddressLine2  String?
-  streetCity          String?
-  streetRegion        String?
-  streetPostalCode    String?
-  streetCountry       String?
+  streetAddressLine1 String?
+  streetAddressLine2 String?
+  streetCity         String?
+  streetRegion       String?
+  streetPostalCode   String?
+  streetCountry      String?
 
   // Postal address (Xero POBOX type)
-  postalAddressLine1  String?
-  postalAddressLine2  String?
-  postalCity          String?
-  postalRegion        String?
-  postalPostalCode    String?
-  postalCountry       String?
+  postalAddressLine1 String?
+  postalAddressLine2 String?
+  postalCity         String?
+  postalRegion       String?
+  postalPostalCode   String?
+  postalCountry      String?
 
-  role          Role     @default(MEMBER)
-  ageTier       AgeTier  @default(ADULT)
-  xeroContactId String?  @unique
-  active        Boolean  @default(true)
-  canLogin      Boolean  @default(false) // true for members allowed to authenticate; the DB enforces one canLogin member per email
-  joinedDate    DateTime?  // Membership start date, sourced from Xero first invoice
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  role          Role      @default(MEMBER)
+  ageTier       AgeTier   @default(ADULT)
+  xeroContactId String?   @unique
+  active        Boolean   @default(true)
+  canLogin      Boolean   @default(false) // true for members allowed to authenticate; the DB enforces one canLogin member per email
+  joinedDate    DateTime? // Membership start date, sourced from Xero first invoice
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   // Family/dependent support: dependents can share parent's email or have their own
-  parentMemberId      String?
-  inheritParentEmail  Boolean  @default(true) // When true, dependent uses parent's email
-  parent              Member?  @relation("FamilyMembers", fields: [parentMemberId], references: [id], onDelete: SetNull)
-  dependents          Member[] @relation("FamilyMembers")
+  parentMemberId     String?
+  inheritParentEmail Boolean  @default(true) // When true, dependent uses parent's email
+  parent             Member?  @relation("FamilyMembers", fields: [parentMemberId], references: [id], onDelete: SetNull)
+  dependents         Member[] @relation("FamilyMembers")
 
   // Secondary parent for split families (e.g. child with separated parents)
-  secondaryParentId String?
-  secondaryParent   Member?  @relation("SecondaryFamily", fields: [secondaryParentId], references: [id], onDelete: SetNull)
+  secondaryParentId   String?
+  secondaryParent     Member?  @relation("SecondaryFamily", fields: [secondaryParentId], references: [id], onDelete: SetNull)
   secondaryDependents Member[] @relation("SecondaryFamily")
 
   // Flexible email inheritance: use any adult's email for communications.
@@ -166,30 +173,30 @@ model Member {
 
   // Family group: links primary adult members (e.g. spouses) for shared booking quick-add
   // @deprecated — use FamilyGroupMember join table instead
-  familyGroupId     String?
-  familyGroup       FamilyGroup?             @relation("FamilyGroupLegacy", fields: [familyGroupId], references: [id])
+  familyGroupId String?
+  familyGroup   FamilyGroup? @relation("FamilyGroupLegacy", fields: [familyGroupId], references: [id])
 
   // Many-to-many family group memberships via join table
   familyGroupMemberships FamilyGroupMember[]
 
   // Relations
-  passwordResetTokens        PasswordResetToken[]
-  emailVerificationTokens    EmailVerificationToken[]
-  emailChangeTokens          EmailChangeToken[]
-  subscriptions              MemberSubscription[]
-  bookings                   Booking[]
-  guestAppearances           BookingGuest[]
-  promoRedemptions           PromoRedemption[]
-  promoCodeAssignments       PromoCodeAssignment[]
-  notificationPreference     NotificationPreference?
-  hutLeaderAssignments       HutLeaderAssignment[]
-  familyGroupRequests        FamilyGroupJoinRequest[] @relation("FamilyGroupRequester")
-  familyGroupInvitations     FamilyGroupJoinRequest[] @relation("FamilyGroupInvitedMember")
-  familyGroupLinkedRequests  FamilyGroupJoinRequest[] @relation("FamilyGroupLinkedMember")
-  deletionRequests           DeletionRequest[]
-  credits                    MemberCredit[]
-  bookingsCreatedOnBehalf    Booking[]       @relation("BookingsCreatedBy")
-  refundRequests             RefundRequest[]
+  passwordResetTokens       PasswordResetToken[]
+  emailVerificationTokens   EmailVerificationToken[]
+  emailChangeTokens         EmailChangeToken[]
+  subscriptions             MemberSubscription[]
+  bookings                  Booking[]
+  guestAppearances          BookingGuest[]
+  promoRedemptions          PromoRedemption[]
+  promoCodeAssignments      PromoCodeAssignment[]
+  notificationPreference    NotificationPreference?
+  hutLeaderAssignments      HutLeaderAssignment[]
+  familyGroupRequests       FamilyGroupJoinRequest[] @relation("FamilyGroupRequester")
+  familyGroupInvitations    FamilyGroupJoinRequest[] @relation("FamilyGroupInvitedMember")
+  familyGroupLinkedRequests FamilyGroupJoinRequest[] @relation("FamilyGroupLinkedMember")
+  deletionRequests          DeletionRequest[]
+  credits                   MemberCredit[]
+  bookingsCreatedOnBehalf   Booking[]                @relation("BookingsCreatedBy")
+  refundRequests            RefundRequest[]
 
   @@index([email])
   @@index([xeroContactId])
@@ -242,21 +249,67 @@ model EmailChangeToken {
   @@index([memberId])
 }
 
+model MemberApplication {
+  id                    String            @id @default(cuid())
+  applicantFirstName    String
+  applicantLastName     String
+  applicantEmail        String
+  applicantDateOfBirth  DateTime?
+  applicantPhone        String?
+  applicantAddress      Json?
+  familyMembers         Json?
+  nominator1Email       String
+  nominator2Email       String
+  nominator1Id          String?
+  nominator2Id          String?
+  nominator1ConfirmedAt DateTime?
+  nominator2ConfirmedAt DateTime?
+  status                ApplicationStatus @default(PENDING_NOMINATORS)
+  adminNotes            String?
+  reviewedBy            String?
+  reviewedAt            DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  nominationTokens NominationToken[]
+
+  @@index([applicantEmail])
+  @@index([status, createdAt])
+  @@index([nominator1Id])
+  @@index([nominator2Id])
+}
+
+model NominationToken {
+  id                String    @id @default(cuid())
+  token             String    @unique
+  applicationId     String
+  nominatorMemberId String
+  expiresAt         DateTime
+  confirmedAt       DateTime?
+  createdAt         DateTime  @default(now())
+
+  application MemberApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@index([nominatorMemberId])
+  @@index([expiresAt])
+}
+
 // ---------------------------------------------------------------------------
 // Membership Subscriptions
 // ---------------------------------------------------------------------------
 
 model MemberSubscription {
-  id             String             @id @default(cuid())
-  memberId       String
-  seasonYear     Int
-  status         SubscriptionStatus @default(NOT_INVOICED)
-  xeroInvoiceId         String?
-  xeroInvoiceNumber     String?
-  xeroOnlineInvoiceUrl  String?
-  paidAt                DateTime?
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
+  id                   String             @id @default(cuid())
+  memberId             String
+  seasonYear           Int
+  status               SubscriptionStatus @default(NOT_INVOICED)
+  xeroInvoiceId        String?
+  xeroInvoiceNumber    String?
+  xeroOnlineInvoiceUrl String?
+  paidAt               DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 
   // Relations
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
@@ -306,36 +359,36 @@ model SeasonRate {
 // ---------------------------------------------------------------------------
 
 model Booking {
-  id                 String        @id @default(cuid())
-  memberId           String
-  checkIn            DateTime      @db.Date
-  checkOut           DateTime      @db.Date
-  status             BookingStatus @default(PENDING)
-  totalPriceCents    Int
-  discountCents      Int           @default(0)
-  finalPriceCents    Int
-  hasNonMembers      Boolean       @default(false)
-  nonMemberHoldUntil DateTime?
-  draftExpiresAt     DateTime?
-  notes              String?       @db.VarChar(500)
-  expectedArrivalTime String?      @db.VarChar(5)
-  createdById             String?       // Admin who created this booking on behalf of the member
-  waitlistPosition        Int?
-  waitlistOfferedAt       DateTime?
-  waitlistOfferExpiresAt  DateTime?
-  createdAt               DateTime      @default(now())
-  updatedAt               DateTime      @updatedAt
+  id                     String        @id @default(cuid())
+  memberId               String
+  checkIn                DateTime      @db.Date
+  checkOut               DateTime      @db.Date
+  status                 BookingStatus @default(PENDING)
+  totalPriceCents        Int
+  discountCents          Int           @default(0)
+  finalPriceCents        Int
+  hasNonMembers          Boolean       @default(false)
+  nonMemberHoldUntil     DateTime?
+  draftExpiresAt         DateTime?
+  notes                  String?       @db.VarChar(500)
+  expectedArrivalTime    String?       @db.VarChar(5)
+  createdById            String? // Admin who created this booking on behalf of the member
+  waitlistPosition       Int?
+  waitlistOfferedAt      DateTime?
+  waitlistOfferExpiresAt DateTime?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
 
   // Relations
-  member           Member               @relation(fields: [memberId], references: [id], onDelete: Restrict)
-  createdBy        Member?              @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  guests           BookingGuest[]
-  payment          Payment?
-  choreAssignments ChoreAssignment[]
-  promoRedemption  PromoRedemption?
-  modifications    BookingModification[]
-  creditsFromCancellation MemberCredit[] @relation("CreditSource")
-  creditsApplied          MemberCredit[] @relation("CreditApplied")
+  member                  Member                @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  createdBy               Member?               @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  guests                  BookingGuest[]
+  payment                 Payment?
+  choreAssignments        ChoreAssignment[]
+  promoRedemption         PromoRedemption?
+  modifications           BookingModification[]
+  creditsFromCancellation MemberCredit[]        @relation("CreditSource")
+  creditsApplied          MemberCredit[]        @relation("CreditApplied")
   refundRequests          RefundRequest[]
 
   @@index([memberId])
@@ -348,17 +401,17 @@ model Booking {
 }
 
 model BookingGuest {
-  id        String  @id @default(cuid())
-  bookingId String
-  firstName String
-  lastName  String
-  ageTier   AgeTier
-  isMember  Boolean @default(false)
-  memberId  String?
+  id         String    @id @default(cuid())
+  bookingId  String
+  firstName  String
+  lastName   String
+  ageTier    AgeTier
+  isMember   Boolean   @default(false)
+  memberId   String?
   priceCents Int
   arrivedAt  DateTime?
   departedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt  DateTime  @default(now())
 
   // Relations
   booking          Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
@@ -375,25 +428,25 @@ model BookingGuest {
 // ---------------------------------------------------------------------------
 
 model Payment {
-  id                          String        @id @default(cuid())
-  bookingId                   String        @unique
-  amountCents                 Int
-  stripePaymentIntentId       String?       @unique
-  stripePaymentMethodId       String?
-  stripeSetupIntentId         String?       @unique
-  stripeCustomerId            String?
-  xeroInvoiceId               String?       @unique
-  xeroInvoiceNumber           String?
-  status                      PaymentStatus @default(PENDING)
-  refundedAmountCents         Int           @default(0)
-  changeFeeCents              Int           @default(0)
-  additionalPaymentIntentId   String?       @unique
-  additionalAmountCents       Int           @default(0)
-  additionalPaymentStatus     String?       // PENDING, SUCCEEDED, FAILED
-  xeroRefundCreditNoteId      String?       // Track Xero credit note to prevent duplicates
-  creditAppliedCents          Int           @default(0) // Account credit applied to this booking
-  createdAt                   DateTime      @default(now())
-  updatedAt                   DateTime      @updatedAt
+  id                        String        @id @default(cuid())
+  bookingId                 String        @unique
+  amountCents               Int
+  stripePaymentIntentId     String?       @unique
+  stripePaymentMethodId     String?
+  stripeSetupIntentId       String?       @unique
+  stripeCustomerId          String?
+  xeroInvoiceId             String?       @unique
+  xeroInvoiceNumber         String?
+  status                    PaymentStatus @default(PENDING)
+  refundedAmountCents       Int           @default(0)
+  changeFeeCents            Int           @default(0)
+  additionalPaymentIntentId String?       @unique
+  additionalAmountCents     Int           @default(0)
+  additionalPaymentStatus   String? // PENDING, SUCCEEDED, FAILED
+  xeroRefundCreditNoteId    String? // Track Xero credit note to prevent duplicates
+  creditAppliedCents        Int           @default(0) // Account credit applied to this booking
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
 
   // Relations
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
@@ -409,29 +462,29 @@ model Payment {
 // ---------------------------------------------------------------------------
 
 model PromoCode {
-  id                  String        @id @default(cuid())
-  code                String        @unique
-  description         String?
-  type                PromoCodeType
-  valueCents          Int?
-  percentOff          Int?
-  freeNights          Int?
-  maxRedemptions      Int?
-  currentRedemptions  Int           @default(0)
-  validFrom           DateTime?
-  validUntil          DateTime?
-  bookingStartFrom    DateTime?     // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
-  bookingStartUntil   DateTime?     // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
-  membersOnly         Boolean       @default(false)
-  singleUse           Boolean       @default(false)
-  active              Boolean       @default(true)
-  archivedAt          DateTime?
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  id                 String        @id @default(cuid())
+  code               String        @unique
+  description        String?
+  type               PromoCodeType
+  valueCents         Int?
+  percentOff         Int?
+  freeNights         Int?
+  maxRedemptions     Int?
+  currentRedemptions Int           @default(0)
+  validFrom          DateTime?
+  validUntil         DateTime?
+  bookingStartFrom   DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  bookingStartUntil  DateTime? // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  membersOnly        Boolean       @default(false)
+  singleUse          Boolean       @default(false)
+  active             Boolean       @default(true)
+  archivedAt         DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   // Relations
-  redemptions  PromoRedemption[]
-  assignments  PromoCodeAssignment[]
+  redemptions PromoRedemption[]
+  assignments PromoCodeAssignment[]
 
   @@index([code])
   @@index([active])
@@ -498,16 +551,16 @@ model ChoreTemplate {
 }
 
 model ChoreAssignment {
-  id               String      @id @default(cuid())
-  choreTemplateId  String
-  bookingId        String
-  bookingGuestId   String?
-  date             DateTime    @db.Date
-  status           ChoreStatus @default(SUGGESTED)
-  completedAt      DateTime?
-  completedVia     String?     // "KIOSK", "ADMIN", or "GUEST_LINK"
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
+  id              String      @id @default(cuid())
+  choreTemplateId String
+  bookingId       String
+  bookingGuestId  String?
+  date            DateTime    @db.Date
+  status          ChoreStatus @default(SUGGESTED)
+  completedAt     DateTime?
+  completedVia    String? // "KIOSK", "ADMIN", or "GUEST_LINK"
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   // Relations
   choreTemplate ChoreTemplate @relation(fields: [choreTemplateId], references: [id], onDelete: Restrict)
@@ -525,13 +578,13 @@ model ChoreAssignment {
 // ---------------------------------------------------------------------------
 
 model CancellationPolicy {
-  id                      String   @id @default(cuid())
-  daysBeforeStay          Int
-  refundPercentage        Int      // Card refund percentage
-  creditRefundPercentage  Int?     // Credit refund percentage (null = same as refundPercentage)
-  fixedFeeCents           Int      @default(0) // Fixed fee deducted from refund per tier
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  id                     String   @id @default(cuid())
+  daysBeforeStay         Int
+  refundPercentage       Int // Card refund percentage
+  creditRefundPercentage Int? // Credit refund percentage (null = same as refundPercentage)
+  fixedFeeCents          Int      @default(0) // Fixed fee deducted from refund per tier
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   @@unique([daysBeforeStay])
 }
@@ -542,11 +595,11 @@ model CancellationPolicy {
 
 model BookingPeriod {
   id                String   @id @default(cuid())
-  name              String   // e.g. "School Holidays Jul 2026"
+  name              String // e.g. "School Holidays Jul 2026"
   startDate         DateTime @db.Date
   endDate           DateTime @db.Date
   nonMemberHoldDays Int      @default(7)
-  cancellationRules Json     // Array of {daysBeforeStay: number, refundPercentage: number}
+  cancellationRules Json // Array of {daysBeforeStay: number, refundPercentage: number}
   active            Boolean  @default(true)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -569,10 +622,10 @@ model BookingDefaults {
 
 model MinimumStayPolicy {
   id            String   @id @default(cuid())
-  name          String   // e.g. "Winter Saturday Minimum Stay"
+  name          String // e.g. "Winter Saturday Minimum Stay"
   startDate     DateTime @db.Date
   endDate       DateTime @db.Date
-  triggerDays   Int[]    // Days of week: 0=Sunday, 1=Monday, ..., 6=Saturday
+  triggerDays   Int[] // Days of week: 0=Sunday, 1=Monday, ..., 6=Saturday
   minimumNights Int
   active        Boolean  @default(true)
   createdAt     DateTime @default(now())
@@ -603,7 +656,7 @@ model XeroToken {
 model ProcessedWebhookEvent {
   id          String   @id @default(cuid())
   eventId     String   @unique
-  source      String   // "stripe" or "xero"
+  source      String // "stripe" or "xero"
   eventType   String
   processedAt DateTime @default(now())
 
@@ -615,14 +668,14 @@ model ProcessedWebhookEvent {
 // ---------------------------------------------------------------------------
 
 model WebhookLog {
-  id        String   @id @default(cuid())
-  source    String   // "stripe" or "xero"
-  eventType String
-  eventId   String
-  status    String   // "success" or "failure"
+  id         String   @id @default(cuid())
+  source     String // "stripe" or "xero"
+  eventType  String
+  eventId    String
+  status     String // "success" or "failure"
   durationMs Int
-  error     String?
-  createdAt DateTime @default(now())
+  error      String?
+  createdAt  DateTime @default(now())
 
   @@index([source])
   @@index([createdAt])
@@ -655,9 +708,9 @@ model BookingModification {
   id               String   @id @default(cuid())
   bookingId        String
   memberId         String
-  modificationType String   // DATE_CHANGE | GUEST_ADD | GUEST_REMOVE | EXTEND_STAY
-  previousData     Json     // snapshot of changed fields before
-  newData          Json     // snapshot of changed fields after
+  modificationType String // DATE_CHANGE | GUEST_ADD | GUEST_REMOVE | EXTEND_STAY
+  previousData     Json // snapshot of changed fields before
+  newData          Json // snapshot of changed fields after
   priceDiffCents   Int      @default(0) // positive = owes more, negative = refund
   changeFeeCents   Int      @default(0) // late-notice fee charged
   createdAt        DateTime @default(now())
@@ -684,7 +737,7 @@ model EmailLog {
   to            String
   subject       String
   templateName  String
-  htmlBody      String?        // Stored only for retry-safe templates; token-bearing templates are redacted
+  htmlBody      String? // Stored only for retry-safe templates; token-bearing templates are redacted
   status        EmailLogStatus @default(QUEUED)
   errorMessage  String?
   attempts      Int            @default(1)
@@ -706,27 +759,27 @@ model EmailLog {
 // ---------------------------------------------------------------------------
 
 model NotificationPreference {
-  id                   String   @id @default(cuid())
-  memberId             String   @unique
-  bookingConfirmation  Boolean  @default(true)
-  bookingReminder      Boolean  @default(true)
-  bookingBumped        Boolean  @default(true)
-  bookingCancelled     Boolean  @default(true)
-  bookingWaitlist      Boolean  @default(true)
-  choreRoster          Boolean  @default(true)
-  marketingEmails      Boolean  @default(false)
-  adminNewBooking      Boolean  @default(true)
-  adminPaymentFailure  Boolean  @default(true)
-  adminPendingDeadline Boolean  @default(true)
-  adminBookingBumped   Boolean  @default(true)
-  adminXeroSyncError   Boolean  @default(true)
-  adminCapacityWarning Boolean  @default(true)
-  adminDailyDigest     Boolean  @default(true)
-  adminWaitlistOffer   Boolean  @default(true)
-  adminFamilyGroupRequest Boolean @default(true)
-  adminRefundRequest   Boolean  @default(true)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                      String   @id @default(cuid())
+  memberId                String   @unique
+  bookingConfirmation     Boolean  @default(true)
+  bookingReminder         Boolean  @default(true)
+  bookingBumped           Boolean  @default(true)
+  bookingCancelled        Boolean  @default(true)
+  bookingWaitlist         Boolean  @default(true)
+  choreRoster             Boolean  @default(true)
+  marketingEmails         Boolean  @default(false)
+  adminNewBooking         Boolean  @default(true)
+  adminPaymentFailure     Boolean  @default(true)
+  adminPendingDeadline    Boolean  @default(true)
+  adminBookingBumped      Boolean  @default(true)
+  adminXeroSyncError      Boolean  @default(true)
+  adminCapacityWarning    Boolean  @default(true)
+  adminDailyDigest        Boolean  @default(true)
+  adminWaitlistOffer      Boolean  @default(true)
+  adminFamilyGroupRequest Boolean  @default(true)
+  adminRefundRequest      Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 }
@@ -741,7 +794,7 @@ model CronJobRun {
   startedAt     DateTime  @default(now())
   completedAt   DateTime?
   durationMs    Int?
-  status        String    // SUCCESS | FAILURE | SKIPPED
+  status        String // SUCCESS | FAILURE | SKIPPED
   resultSummary Json?
   error         String?
   createdAt     DateTime  @default(now())
@@ -791,22 +844,22 @@ model GuestChoreToken {
 // ---------------------------------------------------------------------------
 
 model FamilyGroup {
-  id           String                  @id @default(cuid())
-  name         String?
-  createdAt    DateTime                @default(now())
-  updatedAt    DateTime                @updatedAt
+  id            String                   @id @default(cuid())
+  name          String?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
   // @deprecated — legacy single-group FK; use memberships (FamilyGroupMember) instead
-  legacyMembers Member[]               @relation("FamilyGroupLegacy")
-  memberships  FamilyGroupMember[]
-  joinRequests FamilyGroupJoinRequest[]
+  legacyMembers Member[]                 @relation("FamilyGroupLegacy")
+  memberships   FamilyGroupMember[]
+  joinRequests  FamilyGroupJoinRequest[]
 }
 
 model FamilyGroupMember {
-  id            String      @id @default(cuid())
+  id            String   @id @default(cuid())
   familyGroupId String
   memberId      String
-  role          String      @default("MEMBER") // ADMIN or MEMBER (group admin can manage the group)
-  joinedAt      DateTime    @default(now())
+  role          String   @default("MEMBER") // ADMIN or MEMBER (group admin can manage the group)
+  joinedAt      DateTime @default(now())
 
   familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
   member      Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
@@ -817,27 +870,27 @@ model FamilyGroupMember {
 }
 
 model FamilyGroupJoinRequest {
-  id            String      @id @default(cuid())
+  id            String    @id @default(cuid())
   familyGroupId String
   requesterId   String
-  type          String      @default("JOIN_REQUEST") // JOIN_REQUEST | ADULT_INVITE | CHILD_REQUEST
-  status        String      @default("PENDING") // PENDING | APPROVED | REJECTED
-  createdAt     DateTime    @default(now())
+  type          String    @default("JOIN_REQUEST") // JOIN_REQUEST | ADULT_INVITE | CHILD_REQUEST
+  status        String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  createdAt     DateTime  @default(now())
   reviewedAt    DateTime?
   reviewedBy    String?
 
   // For ADULT_INVITE: the member being invited
-  invitedMemberId   String?
-  invitedMember     Member?   @relation("FamilyGroupInvitedMember", fields: [invitedMemberId], references: [id])
+  invitedMemberId String?
+  invitedMember   Member? @relation("FamilyGroupInvitedMember", fields: [invitedMemberId], references: [id])
 
   // For CHILD_REQUEST: child details submitted by parent
-  childFirstName    String?
-  childLastName     String?
-  childDateOfBirth  DateTime?
+  childFirstName   String?
+  childLastName    String?
+  childDateOfBirth DateTime?
 
   // Set by admin when approving CHILD_REQUEST — links to existing member
-  linkedMemberId    String?
-  linkedMember      Member?   @relation("FamilyGroupLinkedMember", fields: [linkedMemberId], references: [id])
+  linkedMemberId String?
+  linkedMember   Member? @relation("FamilyGroupLinkedMember", fields: [linkedMemberId], references: [id])
 
   familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
   requester   Member      @relation("FamilyGroupRequester", fields: [requesterId], references: [id], onDelete: Cascade)
@@ -855,9 +908,9 @@ model FamilyGroupJoinRequest {
 
 model XeroAccountMapping {
   id        String   @id @default(cuid())
-  key       String   @unique  // hutFeesIncome | hutFeeRefunds | stripeBankAccount | stripeFees | subscriptionIncome | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
-  code      String?           // null = not configured, use application default (GL account code or amount string)
-  itemCode  String?           // Xero Item Code — when set, Xero auto-fills account from Item config
+  key       String   @unique // hutFeesIncome | hutFeeRefunds | stripeBankAccount | stripeFees | subscriptionIncome | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
+  code      String? // null = not configured, use application default (GL account code or amount string)
+  itemCode  String? // Xero Item Code — when set, Xero auto-fills account from Item config
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -872,8 +925,8 @@ model AgeTierSetting {
   id        String   @id @default(cuid())
   tier      AgeTier  @unique
   minAge    Int
-  maxAge    Int?     // null for ADULT (no upper limit)
-  label     String   // e.g. "Child (under 10)"
+  maxAge    Int? // null for ADULT (no upper limit)
+  label     String // e.g. "Child (under 10)"
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -892,15 +945,15 @@ enum DeletionRequestStatus {
 }
 
 model DeletionRequest {
-  id           String                @id @default(cuid())
-  memberId     String
-  status       DeletionRequestStatus @default(PENDING)
-  reason       String?               // Optional free-text reason from member
-  adminNote    String?               // Note from admin on approve/reject
-  reviewedBy   String?               // Admin member ID
-  reviewedAt   DateTime?
-  createdAt    DateTime              @default(now())
-  updatedAt    DateTime              @updatedAt
+  id         String                @id @default(cuid())
+  memberId   String
+  status     DeletionRequestStatus @default(PENDING)
+  reason     String? // Optional free-text reason from member
+  adminNote  String? // Note from admin on approve/reject
+  reviewedBy String? // Admin member ID
+  reviewedAt DateTime?
+  createdAt  DateTime              @default(now())
+  updatedAt  DateTime              @updatedAt
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
@@ -916,12 +969,12 @@ model DeletionRequest {
 model MemberCredit {
   id                 String     @id @default(cuid())
   memberId           String
-  amountCents        Int        // Positive = credit added, negative = credit used
+  amountCents        Int // Positive = credit added, negative = credit used
   type               CreditType
-  description        String     // Human-readable reason
-  sourceBookingId    String?    // Booking that generated the credit (cancellation)
-  appliedToBookingId String?    // Booking where credit was spent
-  xeroCreditNoteId   String?    // Linked Xero credit note ID
+  description        String // Human-readable reason
+  sourceBookingId    String? // Booking that generated the credit (cancellation)
+  appliedToBookingId String? // Booking where credit was spent
+  xeroCreditNoteId   String? // Linked Xero credit note ID
   createdAt          DateTime   @default(now())
 
   member           Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
@@ -984,12 +1037,12 @@ model RefundRequest {
 
 model CommitteeMember {
   id          String   @id @default(cuid())
-  role        String   // Position title (e.g. "President")
-  name        String   // Display name
-  phone       String   // Contact phone number
-  email       String?  // Optional email address
+  role        String // Position title (e.g. "President")
+  name        String // Display name
+  phone       String // Contact phone number
+  email       String? // Optional email address
   contactKey  String?  @unique // Maps to /contact?recipient=key
-  description String   // Role description
+  description String // Role description
   sortOrder   Int      @default(0) // Display order on public page
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())

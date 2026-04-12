@@ -10,6 +10,10 @@ import {
   emailVerificationTemplate,
   emailChangeVerificationTemplate,
   emailChangeNotificationTemplate,
+  nominationRequestTemplate,
+  adminMembershipApplicationPendingTemplate,
+  membershipApplicationApprovedTemplate,
+  membershipApplicationRejectedTemplate,
   checkinReminderTemplate,
   adminNewBookingTemplate,
   adminPaymentFailureTemplate,
@@ -65,6 +69,8 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "email-verification",
   "email-change-verification",
   "age-up-invitation",
+  "nomination-request",
+  "membership-application-approved",
 ]);
 
 function shouldPersistEmailHtml(templateName: string): boolean {
@@ -358,6 +364,98 @@ export async function sendVerificationEmail(email: string, firstName: string, to
     html: emailVerificationTemplate(firstName, verifyUrl),
     templateName: "email-verification",
   });
+}
+
+export async function sendNominationRequestEmail(params: {
+  email: string;
+  nominatorName: string;
+  applicantName: string;
+  token: string;
+  familyMemberCount: number;
+  expiresAt: Date;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/nominations/${params.token}`;
+
+  await sendEmail({
+    to: params.email,
+    subject: `Nomination request for ${params.applicantName} — TAC Bookings`,
+    html: nominationRequestTemplate({
+      nominatorName: params.nominatorName,
+      applicantName: params.applicantName,
+      reviewUrl,
+      familyMemberCount: params.familyMemberCount,
+      expiresAt: params.expiresAt,
+    }),
+    templateName: "nomination-request",
+  });
+}
+
+export async function sendMembershipApplicationApprovedEmail(params: {
+  email: string;
+  firstName: string;
+  token: string;
+  adminNotes?: string | null;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const resetUrl = `${baseUrl}/reset-password?token=${params.token}`;
+
+  await sendEmail({
+    to: params.email,
+    subject: "Your TAC membership has been approved",
+    html: membershipApplicationApprovedTemplate(
+      params.firstName,
+      resetUrl,
+      params.adminNotes
+    ),
+    templateName: "membership-application-approved",
+  });
+}
+
+export async function sendMembershipApplicationRejectedEmail(params: {
+  email: string;
+  firstName: string;
+  adminNotes?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: "Update on your TAC membership application",
+    html: membershipApplicationRejectedTemplate(
+      params.firstName,
+      params.adminNotes
+    ),
+    templateName: "membership-application-rejected",
+  });
+}
+
+export async function sendAdminMembershipApplicationPendingEmail(data: {
+  applicationId: string;
+  applicantName: string;
+  applicantEmail: string;
+  familyMemberCount: number;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/member-applications`;
+  const emails = await getAdminEmails();
+
+  for (const email of emails) {
+    sendEmail({
+      to: email,
+      subject: `Membership application ready: ${data.applicantName}`,
+      html: adminMembershipApplicationPendingTemplate({
+        applicantName: data.applicantName,
+        applicantEmail: data.applicantEmail,
+        familyMemberCount: data.familyMemberCount,
+        reviewUrl,
+      }),
+      templateName: "admin-membership-application-pending",
+    }).catch((err) =>
+      logger.error(
+        { err, to: email, applicationId: data.applicationId },
+        "Failed to send admin membership application alert"
+      )
+    );
+  }
 }
 
 export async function sendEmailChangeVerification(newEmail: string, token: string) {
