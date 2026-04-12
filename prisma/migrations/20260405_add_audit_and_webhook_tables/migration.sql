@@ -1,0 +1,11 @@
+-- Historical placeholder migration.
+--
+-- Production contains an applied Prisma migration record named
+-- `20260405_add_audit_and_webhook_tables`, but the original migration file is
+-- no longer present in source control. The schema changes for audit and
+-- webhook tables are fully represented by the subsequent committed migration
+-- `20260406020000_add_phase1_4_5_6_9_models`.
+--
+-- This migration is intentionally a no-op so local migration history matches
+-- the production `_prisma_migrations` table without reintroducing duplicate
+-- DDL into fresh environments.
