@@ -103,6 +103,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (
+    data.bookingStartFrom &&
+    data.bookingStartUntil &&
+    new Date(data.bookingStartUntil) <= new Date(data.bookingStartFrom)
+  ) {
+    return NextResponse.json(
+      { error: "Booking check-in until must be after booking check-in from" },
+      { status: 400 }
+    );
+  }
+
   // Check for duplicate code
   const existing = await prisma.promoCode.findUnique({
     where: { code: data.code },

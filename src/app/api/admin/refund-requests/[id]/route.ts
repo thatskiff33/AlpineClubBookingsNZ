@@ -97,6 +97,7 @@ export async function PUT(
             reason: "refund_appeal_approved",
             refundRequestId: id,
           },
+          idempotencyKey: `refund-request-${id}`,
         });
       } catch (err) {
         logger.error({ err, refundRequestId: id }, "Failed to process Stripe refund for appeal");
@@ -107,30 +108,60 @@ export async function PUT(
       }
     }
 
-    // Update payment record
-    const newRefundedTotal = payment.refundedAmountCents + approvedAmountCents;
-    const newPaymentStatus =
-      newRefundedTotal >= payment.amountCents ? "REFUNDED" : "PARTIALLY_REFUNDED";
+    try {
+      await prisma.$transaction(async (tx) => {
+        const claim = await tx.refundRequest.updateMany({
+          where: { id, status: "PENDING" },
+          data: {
+            status: "APPROVED",
+            adminNotes,
+            approvedAmountCents,
+            reviewedBy: session.user.id,
+            reviewedAt: new Date(),
+          },
+        });
 
-    await prisma.$transaction([
-      prisma.payment.update({
-        where: { id: payment.id },
-        data: {
-          refundedAmountCents: newRefundedTotal,
-          status: newPaymentStatus,
-        },
-      }),
-      prisma.refundRequest.update({
-        where: { id },
-        data: {
-          status: "APPROVED",
-          adminNotes,
-          approvedAmountCents,
-          reviewedBy: session.user.id,
-          reviewedAt: new Date(),
-        },
-      }),
-    ]);
+        if (claim.count !== 1) {
+          throw new Error("REFUND_REQUEST_ALREADY_REVIEWED");
+        }
+
+        const currentPayment = await tx.payment.findUnique({
+          where: { id: payment.id },
+          select: { amountCents: true, refundedAmountCents: true },
+        });
+
+        if (!currentPayment) {
+          throw new Error("PAYMENT_NOT_FOUND");
+        }
+
+        const newRefundedTotal =
+          currentPayment.refundedAmountCents + approvedAmountCents;
+        const newPaymentStatus =
+          newRefundedTotal >= currentPayment.amountCents
+            ? "REFUNDED"
+            : "PARTIALLY_REFUNDED";
+
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: {
+            refundedAmountCents: newRefundedTotal,
+            status: newPaymentStatus,
+          },
+        });
+      });
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        err.message === "REFUND_REQUEST_ALREADY_REVIEWED"
+      ) {
+        return NextResponse.json(
+          { error: "This refund request has already been reviewed" },
+          { status: 409 }
+        );
+      }
+
+      throw err;
+    }
 
     // Create Xero credit note
     try {
@@ -175,8 +206,8 @@ export async function PUT(
     }
   } else {
     // REJECTED
-    await prisma.refundRequest.update({
-      where: { id },
+    const rejected = await prisma.refundRequest.updateMany({
+      where: { id, status: "PENDING" },
       data: {
         status: "REJECTED",
         adminNotes,
@@ -185,6 +216,13 @@ export async function PUT(
         reviewedAt: new Date(),
       },
     });
+
+    if (rejected.count !== 1) {
+      return NextResponse.json(
+        { error: "This refund request has already been reviewed" },
+        { status: 409 }
+      );
+    }
 
     logAudit({
       action: "refund-request.reject",

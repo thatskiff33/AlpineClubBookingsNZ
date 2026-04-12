@@ -151,18 +151,26 @@ export async function processRefund({
   amountCents,
   reason = "requested_by_customer",
   metadata,
+  idempotencyKey,
 }: {
   paymentIntentId: string;
   amountCents: number;
   reason?: Stripe.RefundCreateParams.Reason;
   metadata?: Record<string, string>;
+  idempotencyKey?: string;
 }): Promise<Stripe.Refund> {
-  return stripe.refunds.create({
+  const params = {
     payment_intent: paymentIntentId,
     amount: amountCents,
     reason,
     metadata: metadata ?? {},
-  });
+  };
+
+  if (idempotencyKey) {
+    return stripe.refunds.create(params, { idempotencyKey });
+  }
+
+  return stripe.refunds.create(params);
 }
 
 /**

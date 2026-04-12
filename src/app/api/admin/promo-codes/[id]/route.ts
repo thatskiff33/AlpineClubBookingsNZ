@@ -138,6 +138,26 @@ export async function PUT(
     );
   }
 
+  const effectiveBookingStartFrom =
+    data.bookingStartFrom !== undefined
+      ? data.bookingStartFrom
+      : existing.bookingStartFrom?.toISOString() ?? null;
+  const effectiveBookingStartUntil =
+    data.bookingStartUntil !== undefined
+      ? data.bookingStartUntil
+      : existing.bookingStartUntil?.toISOString() ?? null;
+
+  if (
+    effectiveBookingStartFrom &&
+    effectiveBookingStartUntil &&
+    new Date(effectiveBookingStartUntil) <= new Date(effectiveBookingStartFrom)
+  ) {
+    return NextResponse.json(
+      { error: "Booking check-in until must be after booking check-in from" },
+      { status: 400 }
+    );
+  }
+
   const updated = await prisma.$transaction(async (tx) => {
     await tx.promoCode.update({
       where: { id },

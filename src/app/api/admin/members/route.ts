@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
+import { AGE_TIER_VALUES, ageTierEnum } from "@/lib/age-tier-schema";
 import { AgeTier } from "@prisma/client";
 import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";
@@ -65,7 +65,6 @@ const createMemberSchema = z.object({
 });
 
 const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
-const AGE_TIER_VALUES = Object.values(AgeTier);
 
 /**
  * GET /api/admin/members
@@ -152,7 +151,10 @@ export async function GET(req: NextRequest) {
 
   // Filter: ageTier
   const ageTierFilter = sp.get("ageTier");
-  if (ageTierFilter && AGE_TIER_VALUES.includes(ageTierFilter as AgeTier)) {
+  if (
+    ageTierFilter &&
+    AGE_TIER_VALUES.includes(ageTierFilter as (typeof AGE_TIER_VALUES)[number])
+  ) {
     andConditions.push({ ageTier: ageTierFilter });
   }
 
