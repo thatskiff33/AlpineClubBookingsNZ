@@ -2,11 +2,15 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
+import { MemberAddressFields } from "@/components/member-address-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2 } from "lucide-react";
+import {
+  postalMatchesPhysical,
+  withDefaultNzCountry,
+} from "@/lib/member-address";
 
 interface ProfileFormProps {
   member: {
@@ -45,34 +49,34 @@ export function ProfileForm({ member }: ProfileFormProps) {
     streetCity: member.streetCity,
     streetRegion: member.streetRegion,
     streetPostalCode: member.streetPostalCode,
-    streetCountry: member.streetCountry,
+    streetCountry: withDefaultNzCountry(member.streetCountry),
     postalAddressLine1: member.postalAddressLine1,
     postalAddressLine2: member.postalAddressLine2,
     postalCity: member.postalCity,
     postalRegion: member.postalRegion,
     postalPostalCode: member.postalPostalCode,
-    postalCountry: member.postalCountry,
+    postalCountry: withDefaultNzCountry(member.postalCountry),
   });
-  const [sameAsPhysical, setSameAsPhysical] = useState(false);
+  const [sameAsPhysical, setSameAsPhysical] = useState(
+    postalMatchesPhysical({
+      streetAddressLine1: member.streetAddressLine1,
+      streetAddressLine2: member.streetAddressLine2,
+      streetCity: member.streetCity,
+      streetRegion: member.streetRegion,
+      streetPostalCode: member.streetPostalCode,
+      streetCountry: withDefaultNzCountry(member.streetCountry),
+      postalAddressLine1: member.postalAddressLine1,
+      postalAddressLine2: member.postalAddressLine2,
+      postalCity: member.postalCity,
+      postalRegion: member.postalRegion,
+      postalPostalCode: member.postalPostalCode,
+      postalCountry: withDefaultNzCountry(member.postalCountry),
+    })
+  );
   const [saving, setSaving] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
-  };
-
-  const handleSameAsPhysical = (checked: boolean) => {
-    setSameAsPhysical(checked);
-    if (checked) {
-      setForm((prev) => ({
-        ...prev,
-        postalAddressLine1: prev.streetAddressLine1,
-        postalAddressLine2: prev.streetAddressLine2,
-        postalCity: prev.streetCity,
-        postalRegion: prev.streetRegion,
-        postalPostalCode: prev.streetPostalCode,
-        postalCountry: prev.streetCountry,
-      }));
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -83,7 +87,10 @@ export function ProfileForm({ member }: ProfileFormProps) {
       const res = await fetch("/api/profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          postalSameAsPhysical: sameAsPhysical,
+        }),
       });
 
       const data = await res.json();
@@ -103,7 +110,6 @@ export function ProfileForm({ member }: ProfileFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Name */}
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="firstName">First Name</Label>
@@ -131,7 +137,6 @@ export function ProfileForm({ member }: ProfileFormProps) {
         </div>
       </div>
 
-      {/* Phone */}
       <div className="space-y-2">
         <Label>Phone Number</Label>
         <div className="flex gap-2">
@@ -171,7 +176,6 @@ export function ProfileForm({ member }: ProfileFormProps) {
         </p>
       </div>
 
-      {/* Date of Birth */}
       <div className="space-y-2">
         <Label htmlFor="dateOfBirth">Date of Birth</Label>
         <Input
@@ -183,127 +187,18 @@ export function ProfileForm({ member }: ProfileFormProps) {
           max={new Date().toISOString().substring(0, 10)}
         />
         <p className="text-xs text-muted-foreground">
-          Used to determine your membership age tier (Adult / Youth / Child).
+          Used to determine your membership age tier (Adult / Youth / Child / Infant).
         </p>
       </div>
 
-      {/* Physical Address */}
-      <fieldset className="space-y-3">
-        <legend className="text-sm font-medium">Physical Address</legend>
-        <Input
-          name="streetAddressLine1"
-          value={form.streetAddressLine1}
-          onChange={handleChange}
-          placeholder="Address line 1"
-          maxLength={200}
-        />
-        <Input
-          name="streetAddressLine2"
-          value={form.streetAddressLine2}
-          onChange={handleChange}
-          placeholder="Address line 2"
-          maxLength={200}
-        />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Input
-            name="streetCity"
-            value={form.streetCity}
-            onChange={handleChange}
-            placeholder="City / Town"
-            maxLength={200}
-          />
-          <Input
-            name="streetRegion"
-            value={form.streetRegion}
-            onChange={handleChange}
-            placeholder="Region"
-            maxLength={200}
-          />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Input
-            name="streetPostalCode"
-            value={form.streetPostalCode}
-            onChange={handleChange}
-            placeholder="Postal code"
-            maxLength={20}
-          />
-          <Input
-            name="streetCountry"
-            value={form.streetCountry}
-            onChange={handleChange}
-            placeholder="Country"
-            maxLength={100}
-          />
-        </div>
-      </fieldset>
-
-      {/* Postal Address */}
-      <fieldset className="space-y-3">
-        <legend className="text-sm font-medium">Postal Address</legend>
-        <div className="flex items-center gap-2 pb-1">
-          <Checkbox
-            id="sameAsPhysical"
-            checked={sameAsPhysical}
-            onCheckedChange={(checked) => handleSameAsPhysical(checked === true)}
-          />
-          <Label htmlFor="sameAsPhysical" className="text-sm font-normal cursor-pointer">
-            Same as physical address
-          </Label>
-        </div>
-        <Input
-          name="postalAddressLine1"
-          value={form.postalAddressLine1}
-          onChange={handleChange}
-          placeholder="Address line 1"
-          maxLength={200}
-          disabled={sameAsPhysical}
-        />
-        <Input
-          name="postalAddressLine2"
-          value={form.postalAddressLine2}
-          onChange={handleChange}
-          placeholder="Address line 2"
-          maxLength={200}
-          disabled={sameAsPhysical}
-        />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Input
-            name="postalCity"
-            value={form.postalCity}
-            onChange={handleChange}
-            placeholder="City / Town"
-            maxLength={200}
-            disabled={sameAsPhysical}
-          />
-          <Input
-            name="postalRegion"
-            value={form.postalRegion}
-            onChange={handleChange}
-            placeholder="Region"
-            maxLength={200}
-            disabled={sameAsPhysical}
-          />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Input
-            name="postalPostalCode"
-            value={form.postalPostalCode}
-            onChange={handleChange}
-            placeholder="Postal code"
-            maxLength={20}
-            disabled={sameAsPhysical}
-          />
-          <Input
-            name="postalCountry"
-            value={form.postalCountry}
-            onChange={handleChange}
-            placeholder="Country"
-            maxLength={100}
-            disabled={sameAsPhysical}
-          />
-        </div>
-      </fieldset>
+      <MemberAddressFields
+        collapsible
+        idPrefix="profile"
+        onSameAsPhysicalChange={setSameAsPhysical}
+        onValuesChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
+        sameAsPhysical={sameAsPhysical}
+        values={form}
+      />
 
       <div className="flex justify-end pt-2">
         <Button type="submit" disabled={saving}>
