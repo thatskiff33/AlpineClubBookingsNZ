@@ -273,6 +273,8 @@ model MemberApplication {
 
   nominationTokens NominationToken[]
 
+  // Pending-application uniqueness is enforced by the manual partial unique index
+  // MemberApplication_pending_applicantEmail_unique in Prisma migrations.
   @@index([applicantEmail])
   @@index([status, createdAt])
   @@index([nominator1Id])

@@ -83,6 +83,13 @@ interface VerifiedNominator {
   lastName: string;
 }
 
+type MembershipApplicationLookupClient = Pick<
+  typeof prisma,
+  "member" | "memberApplication"
+>;
+
+type MembershipApplicationLockClient = Pick<typeof prisma, "$executeRaw">;
+
 function cleanString(value?: string | null) {
   return value?.replace(/[\r\n]/g, " ").trim() || "";
 }
@@ -269,18 +276,21 @@ async function verifyNominator(email: string): Promise<VerifiedNominator> {
   };
 }
 
-async function ensureApplicationCanBeCreated(applicantEmail: string) {
+async function ensureApplicationCanBeCreated(
+  applicantEmail: string,
+  client: MembershipApplicationLookupClient = prisma
+) {
   const normalizedEmail = cleanString(applicantEmail).toLowerCase();
 
   const [existingMember, existingApplication] = await Promise.all([
-    prisma.member.findFirst({
+    client.member.findFirst({
       where: {
         email: normalizedEmail,
         canLogin: true,
       },
       select: { id: true },
     }),
-    prisma.memberApplication.findFirst({
+    client.memberApplication.findFirst({
       where: {
         applicantEmail: normalizedEmail,
         status: {
@@ -314,8 +324,32 @@ function buildResetToken() {
   return randomBytes(32).toString("hex");
 }
 
-function getApplicationDisplayName(application: Pick<MemberApplication, "applicantFirstName" | "applicantLastName">) {
+function getApplicationDisplayName(
+  application: Pick<MemberApplication, "applicantFirstName" | "applicantLastName">
+) {
   return `${application.applicantFirstName} ${application.applicantLastName}`.trim();
+}
+
+function membershipApplicationLockKey(applicationId: string) {
+  return `member-application:${applicationId}`;
+}
+
+function membershipApplicationApplicantLockKey(applicantEmail: string) {
+  return `member-application-applicant:${applicantEmail}`;
+}
+
+async function lockMembershipApplication(
+  tx: MembershipApplicationLockClient,
+  applicationId: string
+) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${membershipApplicationLockKey(applicationId)}))`;
+}
+
+async function lockMembershipApplicationApplicant(
+  tx: MembershipApplicationLockClient,
+  applicantEmail: string
+) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${membershipApplicationApplicantLockKey(applicantEmail)}))`;
 }
 
 export async function createMemberApplication(input: CreateMemberApplicationInput) {
@@ -331,6 +365,12 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
 
   if (!applicantFirstName || !applicantLastName) {
     throw new MembershipApplicationError("Applicant name is required", 422);
+  }
+
+  if (!applicantDateOfBirth) {
+    throw new MembershipApplicationError("Applicant date of birth is required", 422, {
+      applicantDateOfBirth: ["Applicant date of birth is required"],
+    });
   }
 
   if (nominator1Email === nominator2Email) {
@@ -355,6 +395,9 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   const application = await prisma.$transaction(async (tx) => {
+    await lockMembershipApplicationApplicant(tx, applicantEmail);
+    await ensureApplicationCanBeCreated(applicantEmail, tx);
+
     const created = await tx.memberApplication.create({
       data: {
         applicantFirstName,
@@ -474,6 +517,8 @@ export async function confirmNomination(token: string, nominatorMemberId: string
   const confirmedAt = new Date();
 
   const result = await prisma.$transaction(async (tx) => {
+    await lockMembershipApplication(tx, current.applicationId);
+
     const latestToken = await tx.nominationToken.findUnique({
       where: { token: normalizedToken },
       include: { application: true },
@@ -481,6 +526,26 @@ export async function confirmNomination(token: string, nominatorMemberId: string
 
     if (!latestToken) {
       throw new MembershipApplicationError("This nomination link is invalid", 404);
+    }
+
+    if (latestToken.nominatorMemberId !== nominatorMemberId) {
+      throw new MembershipApplicationError("This nomination link is for a different member", 403);
+    }
+
+    if (latestToken.expiresAt < new Date()) {
+      throw new MembershipApplicationError("This nomination link has expired", 410);
+    }
+
+    if (latestToken.application.status === ApplicationStatus.REJECTED) {
+      throw new MembershipApplicationError("This application has already been rejected", 409);
+    }
+
+    if (latestToken.application.status === ApplicationStatus.APPROVED) {
+      return {
+        application: latestToken.application,
+        movedToAdmin: false,
+        alreadyConfirmed: true,
+      };
     }
 
     if (latestToken.confirmedAt) {
@@ -587,22 +652,52 @@ export async function approveMemberApplication(
     throw new MembershipApplicationError("Only applications pending admin review can be approved", 409);
   }
 
-  const address = parseApplicationAddress(application.applicantAddress);
-  const familyMembers = parseApplicationFamilyMembers(application.familyMembers);
-  const applicantPhone = parseApplicantPhone(application.applicantPhone);
+  if (!application.applicantDateOfBirth) {
+    throw new MembershipApplicationError(
+      "Applicant date of birth is required before approval",
+      409
+    );
+  }
+
   const applicantPasswordHash = await hash(randomBytes(32).toString("hex"), 13);
   const passwordSetupToken = buildResetToken();
   const passwordSetupExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-  const applicantAgeTier = await computeTier(
-    application.applicantDateOfBirth
-      ? application.applicantDateOfBirth.toISOString().slice(0, 10)
-      : null
-  );
 
   const approved = await prisma.$transaction(async (tx) => {
+    await lockMembershipApplication(tx, applicationId);
+
+    const lockedApplication = await tx.memberApplication.findUnique({
+      where: { id: applicationId },
+    });
+
+    if (!lockedApplication) {
+      throw new MembershipApplicationError("Application not found", 404);
+    }
+
+    if (lockedApplication.status !== ApplicationStatus.PENDING_ADMIN) {
+      throw new MembershipApplicationError(
+        "Only applications pending admin review can be approved",
+        409
+      );
+    }
+
+    if (!lockedApplication.applicantDateOfBirth) {
+      throw new MembershipApplicationError(
+        "Applicant date of birth is required before approval",
+        409
+      );
+    }
+
+    const address = parseApplicationAddress(lockedApplication.applicantAddress);
+    const familyMembers = parseApplicationFamilyMembers(lockedApplication.familyMembers);
+    const applicantPhone = parseApplicantPhone(lockedApplication.applicantPhone);
+    const applicantAgeTier = await computeTier(
+      lockedApplication.applicantDateOfBirth.toISOString().slice(0, 10)
+    );
+
     const existing = await tx.member.findFirst({
       where: {
-        email: application.applicantEmail,
+        email: lockedApplication.applicantEmail,
         canLogin: true,
       },
       select: { id: true },
@@ -617,12 +712,12 @@ export async function approveMemberApplication(
 
     const applicantMember = await tx.member.create({
       data: {
-        email: application.applicantEmail,
+        email: lockedApplication.applicantEmail,
         passwordHash: applicantPasswordHash,
         emailVerified: true,
-        firstName: application.applicantFirstName,
-        lastName: application.applicantLastName,
-        dateOfBirth: application.applicantDateOfBirth,
+        firstName: lockedApplication.applicantFirstName,
+        lastName: lockedApplication.applicantLastName,
+        dateOfBirth: lockedApplication.applicantDateOfBirth,
         role: "MEMBER",
         ageTier: applicantAgeTier,
         active: true,
@@ -655,7 +750,7 @@ export async function approveMemberApplication(
     if (familyMembers.length > 0) {
       const familyGroup = await tx.familyGroup.create({
         data: {
-          name: `${application.applicantLastName} Family`,
+          name: `${lockedApplication.applicantLastName} Family`,
         },
         select: { id: true },
       });
@@ -675,7 +770,7 @@ export async function approveMemberApplication(
       const dependentAgeTier = await computeTier(familyMember.dateOfBirth);
       const dependent = await tx.member.create({
         data: {
-          email: application.applicantEmail,
+          email: lockedApplication.applicantEmail,
           passwordHash: applicantPasswordHash,
           emailVerified: true,
           firstName: familyMember.firstName,
@@ -729,7 +824,7 @@ export async function approveMemberApplication(
     });
 
     const updatedApplication = await tx.memberApplication.update({
-      where: { id: application.id },
+      where: { id: lockedApplication.id },
       data: {
         status: ApplicationStatus.APPROVED,
         adminNotes: cleanNullableString(adminNotes),
@@ -799,14 +894,33 @@ export async function rejectMemberApplication(
     throw new MembershipApplicationError("Only applications pending admin review can be rejected", 409);
   }
 
-  const rejected = await prisma.memberApplication.update({
-    where: { id: applicationId },
-    data: {
-      status: ApplicationStatus.REJECTED,
-      adminNotes: cleanNullableString(adminNotes),
-      reviewedBy: adminMemberId,
-      reviewedAt: new Date(),
-    },
+  const rejected = await prisma.$transaction(async (tx) => {
+    await lockMembershipApplication(tx, applicationId);
+
+    const lockedApplication = await tx.memberApplication.findUnique({
+      where: { id: applicationId },
+    });
+
+    if (!lockedApplication) {
+      throw new MembershipApplicationError("Application not found", 404);
+    }
+
+    if (lockedApplication.status !== ApplicationStatus.PENDING_ADMIN) {
+      throw new MembershipApplicationError(
+        "Only applications pending admin review can be rejected",
+        409
+      );
+    }
+
+    return tx.memberApplication.update({
+      where: { id: applicationId },
+      data: {
+        status: ApplicationStatus.REJECTED,
+        adminNotes: cleanNullableString(adminNotes),
+        reviewedBy: adminMemberId,
+        reviewedAt: new Date(),
+      },
+    });
   });
 
   try {
