@@ -46,6 +46,10 @@ import {
   GET as getChartOfAccounts,
   _clearChartOfAccountsCache,
 } from "@/app/api/admin/xero/chart-of-accounts/route";
+import {
+  GET as getXeroItems,
+  _clearItemsCache,
+} from "@/app/api/admin/xero/items/route";
 
 const mockPrisma = prisma as unknown as {
   xeroAccountMapping: {
@@ -282,6 +286,51 @@ describe("GET /api/admin/xero/chart-of-accounts", () => {
 
     // Xero API should only be called once due to caching
     expect(getAccountsFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("GET /api/admin/xero/items", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAuth.mockResolvedValue(adminSession());
+    _clearItemsCache();
+  });
+
+  afterEach(() => {
+    _clearItemsCache();
+  });
+
+  it("returns 401 for non-admin", async () => {
+    mockAuth.mockResolvedValue({ user: { role: "MEMBER" } });
+    const res = await getXeroItems();
+    expect(res.status).toBe(401);
+  });
+
+  it("returns sellable items from Xero and filters out purchase-only items", async () => {
+    mockGetXeroClient.mockResolvedValue({
+      xero: {
+        accountingApi: {
+          getItems: vi.fn().mockResolvedValue({
+            body: {
+              items: [
+                { itemID: "2", code: "Z-LAST", name: "Archived-ish", isSold: true, description: "" },
+                { itemID: "1", code: "HUT-FEE", name: "Hut Fee", isSold: true, description: "Night stay" },
+                { itemID: "3", code: "BUY-ONLY", name: "Supplies", isSold: false, description: "Not for invoices" },
+              ],
+            },
+          }),
+        },
+      },
+      tenantId: "tenant-1",
+    });
+
+    const res = await getXeroItems();
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.items).toEqual([
+      { itemID: "1", code: "HUT-FEE", name: "Hut Fee", description: "Night stay" },
+      { itemID: "2", code: "Z-LAST", name: "Archived-ish", description: "" },
+    ]);
   });
 });
 

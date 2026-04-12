@@ -235,23 +235,39 @@ const ACCOUNT_MAPPING_DEFAULTS: Record<string, string | null> = {
   subscriptionIncome: "203",
 };
 
+type ResolvedAccountMapping = {
+  code: string | null;
+  itemCode: string | null;
+  codeExplicitlyConfigured: boolean;
+};
+
+async function getResolvedAccountMapping(key: string): Promise<ResolvedAccountMapping> {
+  try {
+    const mapping = await prisma.xeroAccountMapping.findUnique({
+      where: { key },
+      select: { code: true, itemCode: true },
+    });
+    return {
+      code: mapping?.code ?? ACCOUNT_MAPPING_DEFAULTS[key] ?? null,
+      itemCode: mapping?.itemCode ?? null,
+      codeExplicitlyConfigured: mapping?.code != null,
+    };
+  } catch {
+    return {
+      code: ACCOUNT_MAPPING_DEFAULTS[key] ?? null,
+      itemCode: null,
+      codeExplicitlyConfigured: false,
+    };
+  }
+}
+
 /**
  * Read a Xero account code from the DB, falling back to the hard-coded default.
  * Returns null for unconfigured optional mappings (e.g. stripeFees).
  */
 export async function getAccountMapping(key: string): Promise<string | null> {
-  try {
-    const mapping = await prisma.xeroAccountMapping.findUnique({
-      where: { key },
-      select: { code: true },
-    });
-    if (mapping?.code) {
-      return mapping.code;
-    }
-  } catch {
-    // DB not available — fall through to default
-  }
-  return ACCOUNT_MAPPING_DEFAULTS[key] ?? null;
+  const mapping = await getResolvedAccountMapping(key);
+  return mapping.code;
 }
 
 /**
@@ -259,15 +275,8 @@ export async function getAccountMapping(key: string): Promise<string | null> {
  * Returns null if not configured.
  */
 export async function getItemCodeMapping(key: string): Promise<string | null> {
-  try {
-    const mapping = await prisma.xeroAccountMapping.findUnique({
-      where: { key },
-      select: { itemCode: true },
-    });
-    return mapping?.itemCode ?? null;
-  } catch {
-    return null;
-  }
+  const mapping = await getResolvedAccountMapping(key);
+  return mapping.itemCode;
 }
 
 /**
@@ -1927,7 +1936,8 @@ export function buildInvoiceLineItems(
   checkOut: Date,
   nights: number,
   accountCode: string = "200",
-  itemCode?: string | null
+  itemCode?: string | null,
+  accountCodeExplicitlyConfigured: boolean = false
 ): LineItem[] {
   return guests.map((guest) => {
     const perNightCents = nights > 0 ? Math.round(guest.priceCents / nights) : guest.priceCents;
@@ -1950,9 +1960,10 @@ export function buildInvoiceLineItems(
     if (itemCode) {
       lineItem.itemCode = itemCode;
     }
-    // Always include accountCode when no itemCode; when itemCode is set, only include
-    // accountCode if it's explicitly configured (non-default) to override the Item's account.
-    if (!itemCode || accountCode !== "200") {
+    // Include the account code when there is no item code, when a non-default account
+    // is supplied, or when the admin explicitly configured the default account code to
+    // override the selected Xero Item's own default.
+    if (!itemCode || accountCode !== "200" || accountCodeExplicitlyConfigured) {
       lineItem.accountCode = accountCode;
     }
 
@@ -1995,12 +2006,11 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
   const contactId = await findOrCreateXeroContact(booking.memberId);
 
   // Resolve account codes and item codes from DB (with fallback to defaults)
-  const [hutFeesIncomeCode, stripeBankCode, hutFeeItemCode] = await Promise.all([
-    getAccountMapping("hutFeesIncome"),
+  const [hutFeeMapping, stripeBankCode] = await Promise.all([
+    getResolvedAccountMapping("hutFeesIncome"),
     getAccountMapping("stripeBankAccount"),
-    getItemCodeMapping("hutFeeItem"),
   ]);
-  const incomeCode = hutFeesIncomeCode ?? "200";
+  const incomeCode = hutFeeMapping.code ?? "200";
   const bankCode = stripeBankCode ?? "606";
 
   // Calculate nights using the same logic as the pricing engine
@@ -2021,18 +2031,25 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
     checkOut,
     nights,
     incomeCode,
-    hutFeeItemCode
+    hutFeeMapping.itemCode,
+    hutFeeMapping.codeExplicitlyConfigured
   );
 
   // Add discount line if applicable
   if (booking.discountCents > 0) {
-    lineItems.push({
+    const discountLineItem: LineItem = {
       description: "Discount",
       quantity: 1,
       unitAmount: -(booking.discountCents / 100),
-      accountCode: incomeCode,
       taxType: "OUTPUT2",
-    });
+    };
+    if (hutFeeMapping.itemCode) {
+      discountLineItem.itemCode = hutFeeMapping.itemCode;
+    }
+    if (!hutFeeMapping.itemCode || hutFeeMapping.codeExplicitlyConfigured || incomeCode !== "200") {
+      discountLineItem.accountCode = incomeCode;
+    }
+    lineItems.push(discountLineItem);
   }
 
   // Create the invoice
@@ -2124,11 +2141,8 @@ export async function createXeroCreditNote(
 
   // Ensure the member has a Xero contact
   const contactId = await findOrCreateXeroContact(payment.booking.memberId);
-  const [refundCode, refundItemCode] = await Promise.all([
-    getAccountMapping("hutFeeRefunds"),
-    getItemCodeMapping("hutFeeRefundItem"),
-  ]);
-  const accountCode = refundCode ?? "200";
+  const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
+  const accountCode = refundMapping.code ?? "200";
 
   const refundLineItem: LineItem = {
     description: `Refund for booking ${payment.booking.id.slice(0, 8)} (${formatDate(new Date(payment.booking.checkIn))} - ${formatDate(new Date(payment.booking.checkOut))})`,
@@ -2136,10 +2150,10 @@ export async function createXeroCreditNote(
     unitAmount: refundAmountCents / 100,
     taxType: "OUTPUT2",
   };
-  if (refundItemCode) {
-    refundLineItem.itemCode = refundItemCode;
+  if (refundMapping.itemCode) {
+    refundLineItem.itemCode = refundMapping.itemCode;
   }
-  if (!refundItemCode || accountCode !== "200") {
+  if (!refundMapping.itemCode || accountCode !== "200" || refundMapping.codeExplicitlyConfigured) {
     refundLineItem.accountCode = accountCode;
   }
 
@@ -2231,11 +2245,8 @@ export async function createUnappliedXeroCreditNote(
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = await findOrCreateXeroContact(payment.booking.memberId);
-  const [refundCode, refundItemCode] = await Promise.all([
-    getAccountMapping("hutFeeRefunds"),
-    getItemCodeMapping("hutFeeRefundItem"),
-  ]);
-  const accountCode = refundCode ?? "200";
+  const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
+  const accountCode = refundMapping.code ?? "200";
 
   const creditLineItem: LineItem = {
     description: `Account credit from booking ${payment.booking.id.slice(0, 8)} (${formatDate(new Date(payment.booking.checkIn))} - ${formatDate(new Date(payment.booking.checkOut))})`,
@@ -2243,10 +2254,10 @@ export async function createUnappliedXeroCreditNote(
     unitAmount: refundAmountCents / 100,
     taxType: "OUTPUT2",
   };
-  if (refundItemCode) {
-    creditLineItem.itemCode = refundItemCode;
+  if (refundMapping.itemCode) {
+    creditLineItem.itemCode = refundMapping.itemCode;
   }
-  if (!refundItemCode || accountCode !== "200") {
+  if (!refundMapping.itemCode || accountCode !== "200" || refundMapping.codeExplicitlyConfigured) {
     creditLineItem.accountCode = accountCode;
   }
 
@@ -2338,11 +2349,8 @@ export async function createXeroSupplementaryInvoice(params: {
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = await findOrCreateXeroContact(booking.memberId);
-  const [incomeMapping, hutFeeItemCode] = await Promise.all([
-    getAccountMapping("hutFeesIncome"),
-    getItemCodeMapping("hutFeeItem"),
-  ]);
-  const incomeCode = incomeMapping ?? "200";
+  const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
+  const incomeCode = incomeMapping.code ?? "200";
 
   const lineItems: LineItem[] = [];
 
@@ -2353,8 +2361,10 @@ export async function createXeroSupplementaryInvoice(params: {
       unitAmount: priceDiffCents / 100,
       taxType: "OUTPUT2",
     };
-    if (hutFeeItemCode) li.itemCode = hutFeeItemCode;
-    if (!hutFeeItemCode || incomeCode !== "200") li.accountCode = incomeCode;
+    if (incomeMapping.itemCode) li.itemCode = incomeMapping.itemCode;
+    if (!incomeMapping.itemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
+      li.accountCode = incomeCode;
+    }
     lineItems.push(li);
   }
 
@@ -2365,8 +2375,10 @@ export async function createXeroSupplementaryInvoice(params: {
       unitAmount: changeFeeCents / 100,
       taxType: "OUTPUT2",
     };
-    if (hutFeeItemCode) li.itemCode = hutFeeItemCode;
-    if (!hutFeeItemCode || incomeCode !== "200") li.accountCode = incomeCode;
+    if (incomeMapping.itemCode) li.itemCode = incomeMapping.itemCode;
+    if (!incomeMapping.itemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
+      li.accountCode = incomeCode;
+    }
     lineItems.push(li);
   }
 
@@ -2437,11 +2449,8 @@ export async function createXeroCreditNoteForModification(params: {
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = await findOrCreateXeroContact(booking.memberId);
-  const [refundCode, refundItemCode] = await Promise.all([
-    getAccountMapping("hutFeeRefunds"),
-    getItemCodeMapping("hutFeeRefundItem"),
-  ]);
-  const accountCode = refundCode ?? "200";
+  const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
+  const accountCode = refundMapping.code ?? "200";
 
   const modRefundLineItem: LineItem = {
     description: `Booking modification refund (Booking ${bookingId.slice(0, 8)})`,
@@ -2449,10 +2458,10 @@ export async function createXeroCreditNoteForModification(params: {
     unitAmount: refundAmountCents / 100,
     taxType: "OUTPUT2",
   };
-  if (refundItemCode) {
-    modRefundLineItem.itemCode = refundItemCode;
+  if (refundMapping.itemCode) {
+    modRefundLineItem.itemCode = refundMapping.itemCode;
   }
-  if (!refundItemCode || accountCode !== "200") {
+  if (!refundMapping.itemCode || accountCode !== "200" || refundMapping.codeExplicitlyConfigured) {
     modRefundLineItem.accountCode = accountCode;
   }
 
@@ -2533,9 +2542,11 @@ export async function createXeroEntranceFeeInvoice(memberId: string): Promise<st
   const contactId = await findOrCreateXeroContact(memberId);
 
   // Look up entrance fee item code
-  const entranceFeeItemCode = await getItemCodeMapping("entranceFeeItem");
-  // Look up income account code
-  const incomeCode = (await getAccountMapping("hutFeesIncome")) ?? "200";
+  const [entranceFeeItemCode, incomeMapping] = await Promise.all([
+    getItemCodeMapping("entranceFeeItem"),
+    getResolvedAccountMapping("hutFeesIncome"),
+  ]);
+  const incomeCode = incomeMapping.code ?? "200";
 
   const lineItem: LineItem = {
     description: "Membership entrance fee",
@@ -2546,7 +2557,7 @@ export async function createXeroEntranceFeeInvoice(memberId: string): Promise<st
   if (entranceFeeItemCode) {
     lineItem.itemCode = entranceFeeItemCode;
   }
-  if (!entranceFeeItemCode || incomeCode !== "200") {
+  if (!entranceFeeItemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
     lineItem.accountCode = incomeCode;
   }
 

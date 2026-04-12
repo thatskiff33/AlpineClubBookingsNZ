@@ -37,6 +37,14 @@ describe("buildInvoiceLineItems with itemCode", () => {
     }
   });
 
+  it("includes accountCode when the default account was explicitly configured as an override", () => {
+    const items = buildInvoiceLineItems(guests, checkIn, checkOut, 2, "200", "HUT-FEE", true);
+    for (const item of items) {
+      expect(item.itemCode).toBe("HUT-FEE");
+      expect(item.accountCode).toBe("200");
+    }
+  });
+
   it("includes accountCode and no itemCode when itemCode is not provided", () => {
     const items = buildInvoiceLineItems(guests, checkIn, checkOut, 2, "200");
     for (const item of items) {

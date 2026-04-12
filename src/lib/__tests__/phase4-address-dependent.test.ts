@@ -50,6 +50,7 @@ vi.mock("@/lib/xero", () => ({
   updateXeroContact: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
   getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
+  createXeroEntranceFeeInvoice: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/lib/xero-api-errors", () => ({
   getXeroApiErrorInfo: vi.fn().mockReturnValue({ handled: true }),

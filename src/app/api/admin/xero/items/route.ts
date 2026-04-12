@@ -41,7 +41,7 @@ export async function GET() {
     const raw = response.body.items ?? [];
 
     const items: XeroItem[] = raw
-      .filter((item) => item.code && item.name)
+      .filter((item) => item.code && item.name && item.isSold !== false)
       .map((item) => ({
         itemID: item.itemID ?? "",
         code: item.code!,

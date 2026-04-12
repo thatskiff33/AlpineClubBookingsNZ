@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { AGE_TIER_VALUES, ageTierEnum } from "@/lib/age-tier-schema";
 import { AgeTier } from "@prisma/client";
@@ -66,6 +66,16 @@ const createMemberSchema = z.object({
 });
 
 const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
+
+function scheduleAfterResponse(task: () => Promise<void>) {
+  try {
+    after(task);
+  } catch {
+    queueMicrotask(() => {
+      void task();
+    });
+  }
+}
 
 /**
  * GET /api/admin/members
@@ -538,14 +548,15 @@ export async function POST(req: NextRequest) {
       return created;
     });
 
-    // Create Xero entrance fee invoice (fire-and-forget, non-blocking)
-    let entranceFeeWarning: string | undefined;
-    try {
-      await createXeroEntranceFeeInvoice(member.id);
-    } catch (xeroErr) {
-      logger.error({ err: xeroErr, memberId: member.id }, "Failed to create entrance fee invoice");
-      entranceFeeWarning = "Member created but entrance fee invoice failed to generate";
-    }
+    // Create the Xero entrance fee invoice after the response is sent so member
+    // creation latency does not depend on Xero availability.
+    scheduleAfterResponse(async () => {
+      try {
+        await createXeroEntranceFeeInvoice(member.id);
+      } catch (xeroErr) {
+        logger.error({ err: xeroErr, memberId: member.id }, "Failed to create entrance fee invoice");
+      }
+    });
 
     // Send invite email if requested
     let inviteWarning: string | undefined;
@@ -563,7 +574,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const warnings = [inviteWarning, entranceFeeWarning].filter(Boolean);
+    const warnings = [inviteWarning].filter(Boolean);
     return NextResponse.json(
       { ...member, ...(warnings.length > 0 ? { warning: warnings.join("; ") } : {}) },
       { status: 201 },

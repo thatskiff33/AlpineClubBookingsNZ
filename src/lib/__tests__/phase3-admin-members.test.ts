@@ -40,15 +40,18 @@ const {
   mockIsXeroConnected,
   mockGetXeroContactGroupMemberships,
   mockUpdateXeroContact,
+  mockCreateXeroEntranceFeeInvoice,
 } = vi.hoisted(() => ({
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
   mockGetXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
   mockUpdateXeroContact: vi.fn(),
+  mockCreateXeroEntranceFeeInvoice: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: mockIsXeroConnected,
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   updateXeroContact: mockUpdateXeroContact,
+  createXeroEntranceFeeInvoice: mockCreateXeroEntranceFeeInvoice,
 }));
 vi.mock("@/lib/email", () => ({ sendPasswordResetEmail: vi.fn() }));
 vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
