@@ -11,6 +11,9 @@ import { AgeTier } from "@prisma/client";
 import { isXeroConnected, findOrCreateXeroContact } from "@/lib/xero";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
+import { copyStreetAddressToPostal } from "@/lib/member-address";
+
+const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
 const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -21,6 +24,19 @@ const registerSchema = z.object({
   phoneCountryCode: z.string().max(5).optional(),
   phoneAreaCode: z.string().max(5).optional(),
   phoneNumber: z.string().max(15).optional(),
+  streetAddressLine1: maxStr(200),
+  streetAddressLine2: maxStr(200),
+  streetCity: maxStr(200),
+  streetRegion: maxStr(200),
+  streetPostalCode: maxStr(20),
+  streetCountry: maxStr(100),
+  postalAddressLine1: maxStr(200),
+  postalAddressLine2: maxStr(200),
+  postalCity: maxStr(200),
+  postalRegion: maxStr(200),
+  postalPostalCode: maxStr(20),
+  postalCountry: maxStr(100),
+  postalSameAsPhysical: z.boolean().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -38,7 +54,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email, password, firstName, lastName, dateOfBirth, phoneCountryCode, phoneAreaCode, phoneNumber } = parsed.data;
+    const {
+      email,
+      password,
+      firstName,
+      lastName,
+      dateOfBirth,
+      phoneCountryCode,
+      phoneAreaCode,
+      phoneNumber,
+      streetAddressLine1,
+      streetAddressLine2,
+      streetCity,
+      streetRegion,
+      streetPostalCode,
+      streetCountry,
+      postalAddressLine1,
+      postalAddressLine2,
+      postalCity,
+      postalRegion,
+      postalPostalCode,
+      postalCountry,
+      postalSameAsPhysical,
+    } = parsed.data;
 
     const existing = await prisma.member.findFirst({
       where: { email: email.toLowerCase(), canLogin: true },
@@ -57,6 +95,24 @@ export async function POST(req: NextRequest) {
       ? await computeAgeTier(new Date(dateOfBirth), getSeasonStartDate(getSeasonYear()))
       : AgeTier.ADULT;
 
+    const postalAddress = postalSameAsPhysical
+      ? copyStreetAddressToPostal({
+          streetAddressLine1,
+          streetAddressLine2,
+          streetCity,
+          streetRegion,
+          streetPostalCode,
+          streetCountry,
+        })
+      : {
+          postalAddressLine1,
+          postalAddressLine2,
+          postalCity,
+          postalRegion,
+          postalPostalCode,
+          postalCountry,
+        };
+
     const member = await prisma.member.create({
       data: {
         email: email.toLowerCase(),
@@ -69,6 +125,18 @@ export async function POST(req: NextRequest) {
         phoneCountryCode: phoneCountryCode?.trim() || null,
         phoneAreaCode: phoneAreaCode?.trim() || null,
         phoneNumber: phoneNumber?.trim() || null,
+        streetAddressLine1: streetAddressLine1?.trim() || null,
+        streetAddressLine2: streetAddressLine2?.trim() || null,
+        streetCity: streetCity?.trim() || null,
+        streetRegion: streetRegion?.trim() || null,
+        streetPostalCode: streetPostalCode?.trim() || null,
+        streetCountry: streetCountry?.trim() || null,
+        postalAddressLine1: postalAddress.postalAddressLine1?.trim() || null,
+        postalAddressLine2: postalAddress.postalAddressLine2?.trim() || null,
+        postalCity: postalAddress.postalCity?.trim() || null,
+        postalRegion: postalAddress.postalRegion?.trim() || null,
+        postalPostalCode: postalAddress.postalPostalCode?.trim() || null,
+        postalCountry: postalAddress.postalCountry?.trim() || null,
       },
     });
 

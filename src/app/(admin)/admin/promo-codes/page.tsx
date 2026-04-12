@@ -39,6 +39,8 @@ interface PromoCode {
   currentRedemptions: number;
   validFrom: string | null;
   validUntil: string | null;
+  bookingStartFrom: string | null;
+  bookingStartUntil: string | null;
   membersOnly: boolean;
   singleUse: boolean;
   active: boolean;
@@ -76,6 +78,8 @@ export default function PromoCodesPage() {
   const [maxRedemptions, setMaxRedemptions] = useState("");
   const [validFrom, setValidFrom] = useState("");
   const [validUntil, setValidUntil] = useState("");
+  const [bookingStartFrom, setBookingStartFrom] = useState("");
+  const [bookingStartUntil, setBookingStartUntil] = useState("");
   const [membersOnly, setMembersOnly] = useState(false);
   const [singleUse, setSingleUse] = useState(false);
   const [active, setActive] = useState(true);
@@ -175,6 +179,8 @@ export default function PromoCodesPage() {
     setMaxRedemptions("");
     setValidFrom("");
     setValidUntil("");
+    setBookingStartFrom("");
+    setBookingStartUntil("");
     setMembersOnly(false);
     setSingleUse(false);
     setActive(true);
@@ -202,6 +208,8 @@ export default function PromoCodesPage() {
     );
     setValidFrom(promo.validFrom ? promo.validFrom.split("T")[0] : "");
     setValidUntil(promo.validUntil ? promo.validUntil.split("T")[0] : "");
+    setBookingStartFrom(promo.bookingStartFrom ? promo.bookingStartFrom.split("T")[0] : "");
+    setBookingStartUntil(promo.bookingStartUntil ? promo.bookingStartUntil.split("T")[0] : "");
     setMembersOnly(promo.membersOnly);
     setSingleUse(promo.singleUse);
     setActive(promo.active);
@@ -224,6 +232,8 @@ export default function PromoCodesPage() {
       active,
       validFrom: validFrom || null,
       validUntil: validUntil || null,
+      bookingStartFrom: bookingStartFrom || null,
+      bookingStartUntil: bookingStartUntil || null,
       maxRedemptions: maxRedemptions ? parseInt(maxRedemptions) : null,
       assignedMemberIds,
     };
@@ -608,6 +618,33 @@ export default function PromoCodesPage() {
                     value={validUntil}
                     onChange={(e) => setValidUntil(e.target.value)}
                   />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="bookingStartFrom">Booking Check-in From (optional)</Label>
+                  <Input
+                    id="bookingStartFrom"
+                    type="date"
+                    value={bookingStartFrom}
+                    onChange={(e) => setBookingStartFrom(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Only apply to bookings with check-in on or after this date
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="bookingStartUntil">Booking Check-in Until (optional)</Label>
+                  <Input
+                    id="bookingStartUntil"
+                    type="date"
+                    value={bookingStartUntil}
+                    onChange={(e) => setBookingStartUntil(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Only apply to bookings with check-in before this date
+                  </p>
                 </div>
               </div>
 

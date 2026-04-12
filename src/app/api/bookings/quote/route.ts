@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { calculateBookingPrice, type SeasonRateData } from "@/lib/pricing";
+import { calculateBookingPrice, type SeasonRateData, type GroupDiscountConfig } from "@/lib/pricing";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
@@ -90,6 +90,7 @@ export async function POST(request: NextRequest) {
     seasonId: s.id,
     startDate: s.startDate,
     endDate: s.endDate,
+    type: s.type,
     rates: s.rates.map((r) => ({
       ageTier: r.ageTier,
       isMember: r.isMember,
@@ -97,10 +98,17 @@ export async function POST(request: NextRequest) {
     })),
   }));
 
+  // Load group discount settings
+  let groupDiscount: GroupDiscountConfig | undefined;
+  const gds = await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } });
+  if (gds && gds.enabled) {
+    groupDiscount = { minGroupSize: gds.minGroupSize, summerOnly: gds.summerOnly, enabled: true };
+  }
+
   try {
-    const price = calculateBookingPrice(checkIn, checkOut, guests, seasonData);
+    const price = calculateBookingPrice(checkIn, checkOut, guests, seasonData, groupDiscount);
     const availableCreditCents = await getMemberCreditBalance(effectiveMemberId);
-    return NextResponse.json({ ...price, availableCreditCents });
+    return NextResponse.json({ ...price, availableCreditCents, groupDiscountApplied: !!groupDiscount && guests.length >= (groupDiscount.minGroupSize) });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to calculate price";
     return NextResponse.json({ error: message }, { status: 400 });

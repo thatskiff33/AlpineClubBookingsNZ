@@ -7,6 +7,7 @@ import { getSeasonYear } from "@/lib/utils";
 import { isXeroConnected, updateXeroContact } from "@/lib/xero";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { copyStreetAddressToPostal } from "@/lib/member-address";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -36,6 +37,7 @@ const profileSchema = z.object({
   postalRegion: maxStr(200),
   postalPostalCode: maxStr(20),
   postalCountry: maxStr(100),
+  postalSameAsPhysical: z.boolean().optional(),
 });
 
 const PHONE_FIELDS = ["phoneCountryCode", "phoneAreaCode", "phoneNumber"] as const;
@@ -84,6 +86,21 @@ export async function PUT(req: NextRequest) {
   for (const f of [...STREET_FIELDS, ...POSTAL_FIELDS]) {
     if (data[f] !== undefined) {
       updateData[f] = data[f]?.trim() || null;
+    }
+  }
+
+  if (data.postalSameAsPhysical) {
+    const postalAddress = copyStreetAddressToPostal({
+      streetAddressLine1: data.streetAddressLine1,
+      streetAddressLine2: data.streetAddressLine2,
+      streetCity: data.streetCity,
+      streetRegion: data.streetRegion,
+      streetPostalCode: data.streetPostalCode,
+      streetCountry: data.streetCountry,
+    });
+
+    for (const field of POSTAL_FIELDS) {
+      updateData[field] = postalAddress[field]?.trim() || null;
     }
   }
 

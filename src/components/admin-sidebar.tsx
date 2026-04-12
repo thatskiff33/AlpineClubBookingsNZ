@@ -29,6 +29,7 @@ import {
   Tablet,
   UsersRound,
   Bell,
+  RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,7 @@ const navSections: NavSection[] = [
       { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
       { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
       { href: "/admin/payments", label: "Payments", icon: CreditCard },
+      { href: "/admin/refund-requests", label: "Refund Appeals", icon: RotateCcw },
       { href: "/admin/reports", label: "Reports", icon: BarChart2 },
     ],
   },

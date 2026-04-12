@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
 
   const validationError = validatePromoCodeRules(
     promoCode,
-    { memberId: effectiveMemberId },
+    { memberId: effectiveMemberId, bookingCheckIn: checkIn },
     new Date(),
     memberRedemptionCount,
     assignedMemberIds

@@ -12,6 +12,7 @@ vi.mock("@/lib/prisma", () => ({
     familyGroupMember: { findMany: vi.fn() },
     memberSubscription: { findFirst: vi.fn() },
     payment: { create: vi.fn() },
+    groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
   },
@@ -365,7 +366,8 @@ describe("Quote API - forMemberId", () => {
       expect.any(Date),
       expect.any(Date),
       [expect.objectContaining({ ageTier: "ADULT", isMember: false })],
-      expect.any(Array)
+      expect.any(Array),
+      undefined
     );
   });
 });

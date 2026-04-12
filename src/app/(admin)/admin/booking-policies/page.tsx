@@ -26,6 +26,7 @@ interface PolicyRule {
   daysBeforeStay: number
   refundPercentage: number
   creditRefundPercentage: number
+  fixedFeeCents: number
 }
 
 interface BookingPeriod {
@@ -50,7 +51,7 @@ function CancellationRulesEditor({
   disabled?: boolean
 }) {
   function addRule() {
-    onChange([...rules, { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 }])
+    onChange([...rules, { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0 }])
   }
   function removeRule(index: number) {
     onChange(rules.filter((_, i) => i !== index))
@@ -67,6 +68,7 @@ function CancellationRulesEditor({
             <TableHead>Days Before Stay (min)</TableHead>
             <TableHead>Card Refund %</TableHead>
             <TableHead>Credit Refund %</TableHead>
+            <TableHead>Fixed Fee ($)</TableHead>
             <TableHead className="w-20"></TableHead>
           </TableRow>
         </TableHeader>
@@ -121,6 +123,22 @@ function CancellationRulesEditor({
                 </div>
               </TableCell>
               <TableCell>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-muted-foreground">$</span>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={((rule.fixedFeeCents ?? 0) / 100).toFixed(2)}
+                    onChange={(e) =>
+                      updateRule(index, "fixedFeeCents", Math.round((parseFloat(e.target.value) || 0) * 100))
+                    }
+                    className={`w-24 ${disabled ? "bg-slate-50 text-slate-700" : ""}`}
+                    disabled={disabled}
+                  />
+                </div>
+              </TableCell>
+              <TableCell>
                 {!disabled && (
                   <Button
                     variant="ghost"
@@ -162,9 +180,11 @@ function PolicyPreview({ rules }: { rules: PolicyRule[] }) {
           prefix = `${rule.daysBeforeStay}-${prevDays - 1} days:`
         }
         const creditDiffers = rule.creditRefundPercentage !== rule.refundPercentage
+        const fixedFee = rule.fixedFeeCents ?? 0
+        const feeStr = fixedFee > 0 ? ` minus $${(fixedFee / 100).toFixed(2)} fee` : ""
         const description = creditDiffers
-          ? `${prefix} ${rule.refundPercentage}% card / ${rule.creditRefundPercentage}% credit`
-          : `${prefix} ${rule.refundPercentage}% refund`
+          ? `${prefix} ${rule.refundPercentage}% card / ${rule.creditRefundPercentage}% credit${feeStr}`
+          : `${prefix} ${rule.refundPercentage}% refund${feeStr}`
         return (
           <li key={index} className="flex items-center space-x-2">
             <div
@@ -205,11 +225,20 @@ export default function BookingPoliciesPage() {
   const [periodEnd, setPeriodEnd] = useState("")
   const [periodHoldDays, setPeriodHoldDays] = useState(5)
   const [periodRules, setPeriodRules] = useState<PolicyRule[]>([
-    { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100 },
-    { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50 },
-    { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
+    { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0 },
+    { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0 },
+    { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0 },
   ])
   const [savingPeriod, setSavingPeriod] = useState(false)
+
+  // Group discount state
+  const [groupMinSize, setGroupMinSize] = useState(5)
+  const [groupSummerOnly, setGroupSummerOnly] = useState(true)
+  const [groupEnabled, setGroupEnabled] = useState(false)
+  const [loadingGroup, setLoadingGroup] = useState(true)
+  const [savingGroup, setSavingGroup] = useState(false)
+  const [editingGroup, setEditingGroup] = useState(false)
+  const [savedGroup, setSavedGroup] = useState({ minGroupSize: 5, summerOnly: true, enabled: false })
 
   // Minimum stay state
   const [minStayPolicies, setMinStayPolicies] = useState<MinStayPolicy[]>([])
@@ -234,11 +263,11 @@ export default function BookingPoliciesPage() {
       if (!res.ok) throw new Error("Failed to fetch policy")
       const data = await res.json()
       const rules = data.rules && data.rules.length > 0
-        ? data.rules
+        ? data.rules.map((r: PolicyRule) => ({ ...r, fixedFeeCents: r.fixedFeeCents ?? 0 }))
         : [
-            { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100 },
-            { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50 },
-            { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
+            { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0 },
+            { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0 },
+            { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0 },
           ]
       const holdDays = data.nonMemberHoldDays ?? 7
       setDefaultRules(rules)
@@ -278,11 +307,28 @@ export default function BookingPoliciesPage() {
     }
   }, [])
 
+  const fetchGroupDiscount = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/booking-policies/group-discount")
+      if (!res.ok) throw new Error("Failed to fetch group discount")
+      const data = await res.json()
+      setGroupMinSize(data.minGroupSize)
+      setGroupSummerOnly(data.summerOnly)
+      setGroupEnabled(data.enabled)
+      setSavedGroup({ minGroupSize: data.minGroupSize, summerOnly: data.summerOnly, enabled: data.enabled })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error")
+    } finally {
+      setLoadingGroup(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchDefaults()
     fetchPeriods()
     fetchMinStay()
-  }, [fetchDefaults, fetchPeriods, fetchMinStay])
+    fetchGroupDiscount()
+  }, [fetchDefaults, fetchPeriods, fetchMinStay, fetchGroupDiscount])
 
   // ─── Save defaults ────────────────────────────────────────────────────────
 
@@ -333,9 +379,9 @@ export default function BookingPoliciesPage() {
     setPeriodEnd("")
     setPeriodHoldDays(5)
     setPeriodRules([
-      { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100 },
-      { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50 },
-      { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
+      { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0 },
+      { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0 },
+      { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0 },
     ])
   }
 
@@ -499,7 +545,46 @@ export default function BookingPoliciesPage() {
     }
   }
 
-  if (loadingDefaults || loadingPeriods || loadingMinStay) {
+  function handleCancelGroup() {
+    setGroupMinSize(savedGroup.minGroupSize)
+    setGroupSummerOnly(savedGroup.summerOnly)
+    setGroupEnabled(savedGroup.enabled)
+    setEditingGroup(false)
+  }
+
+  async function handleSaveGroup() {
+    setSavingGroup(true)
+    setError("")
+    setSuccess("")
+    try {
+      const res = await fetch("/api/admin/booking-policies/group-discount", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          minGroupSize: groupMinSize,
+          summerOnly: groupSummerOnly,
+          enabled: groupEnabled,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to save")
+      }
+      const data = await res.json()
+      setGroupMinSize(data.minGroupSize)
+      setGroupSummerOnly(data.summerOnly)
+      setGroupEnabled(data.enabled)
+      setSavedGroup({ minGroupSize: data.minGroupSize, summerOnly: data.summerOnly, enabled: data.enabled })
+      setEditingGroup(false)
+      setSuccess("Group discount settings saved")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error")
+    } finally {
+      setSavingGroup(false)
+    }
+  }
+
+  if (loadingDefaults || loadingPeriods || loadingMinStay || loadingGroup) {
     return <div className="text-center py-8">Loading...</div>
   }
 
@@ -718,6 +803,80 @@ export default function BookingPoliciesPage() {
                   </CardContent>
                 </Card>
               ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Group Discount ──────────────────────────────────────────────── */}
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Group Discount</CardTitle>
+            <CardDescription>
+              When a booking has enough guests, all guests are charged at member rates.
+            </CardDescription>
+          </div>
+          {!editingGroup && (
+            <Button variant="outline" size="sm" onClick={() => setEditingGroup(true)}>
+              Edit
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="groupEnabled"
+              checked={groupEnabled}
+              onChange={(e) => setGroupEnabled(e.target.checked)}
+              className="rounded border-input"
+              disabled={!editingGroup}
+            />
+            <Label htmlFor="groupEnabled">Enabled</Label>
+          </div>
+
+          <div className="space-y-2 max-w-xs">
+            <Label htmlFor="groupMinSize">Minimum group size</Label>
+            <div className="flex items-center space-x-2">
+              <Input
+                id="groupMinSize"
+                type="number"
+                min="2"
+                max="29"
+                value={groupMinSize}
+                onChange={(e) => setGroupMinSize(parseInt(e.target.value) || 5)}
+                className={`w-20 ${!editingGroup ? "bg-slate-50 text-slate-700" : ""}`}
+                disabled={!editingGroup}
+              />
+              <span className="text-sm text-muted-foreground">guests</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Bookings with this many or more guests will have all guests charged at member rates.
+            </p>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="groupSummerOnly"
+              checked={groupSummerOnly}
+              onChange={(e) => setGroupSummerOnly(e.target.checked)}
+              className="rounded border-input"
+              disabled={!editingGroup}
+            />
+            <Label htmlFor="groupSummerOnly">Summer seasons only</Label>
+          </div>
+
+          {editingGroup && (
+            <div className="flex space-x-3">
+              <Button onClick={handleSaveGroup} disabled={savingGroup}>
+                {savingGroup ? "Saving..." : "Save Group Discount"}
+              </Button>
+              <Button variant="outline" onClick={handleCancelGroup} disabled={savingGroup}>
+                Cancel
+              </Button>
             </div>
           )}
         </CardContent>
