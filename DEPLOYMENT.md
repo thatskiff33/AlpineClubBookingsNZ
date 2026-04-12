@@ -173,6 +173,9 @@ STRIPE_SECRET_KEY=sk_live_...
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_placeholder   # Updated in Step 10
 
+# Addressfinder.nz (browser autocomplete)
+NEXT_PUBLIC_ADDRESSFINDER_KEY=<your-addressfinder-browser-key>
+
 # Xero
 XERO_CLIENT_ID=<your-xero-client-id>
 XERO_CLIENT_SECRET=<your-xero-client-secret>
@@ -234,7 +237,7 @@ You should see `postgres`, `app`, and `caddy` all showing "healthy" or "running"
 docker compose logs app
 ```
 
-Common causes: missing `.env` values, or `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` not set at build time (it's baked into the client bundle). If you need to fix env vars, edit `.env` and rebuild:
+Common causes: missing `.env` values, or `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` / `NEXT_PUBLIC_ADDRESSFINDER_KEY` not set at build time (public `NEXT_PUBLIC_*` values are baked into the client bundle). If you need to fix env vars, edit `.env` and rebuild:
 
 ```bash
 docker compose up -d --build
@@ -458,7 +461,7 @@ free -m                  # Memory
 - Check logs: `docker compose logs app`
 - Verify all required `.env` values are set
 - Ensure postgres is healthy: `docker compose ps`
-- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` must be set before build (it's baked into client JS)
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` and `NEXT_PUBLIC_ADDRESSFINDER_KEY` must be set before build (they are baked into client JS)
 
 ### Emails not sending
 - Check SES sandbox status — sandbox can only send to verified addresses

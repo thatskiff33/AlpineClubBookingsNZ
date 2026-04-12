@@ -60,6 +60,8 @@ const ADDRESSFINDER_SCRIPT_URL =
   "https://api.addressfinder.io/assets/v3/widget.js";
 
 let addressfinderScriptPromise: Promise<void> | null = null;
+let hasWarnedAboutMissingKey = false;
+let hasWarnedAboutLoadFailure = false;
 
 function loadAddressfinderScript() {
   if (typeof window === "undefined") {
@@ -143,7 +145,17 @@ export function AddressAutocomplete({
   const addressParamsKey = JSON.stringify(addressParams ?? {});
 
   useEffect(() => {
-    if (!addressfinderKey || !inputRef.current || widgetRef.current) {
+    if (!addressfinderKey) {
+      if (!hasWarnedAboutMissingKey) {
+        hasWarnedAboutMissingKey = true;
+        console.warn(
+          "Addressfinder autocomplete is disabled because NEXT_PUBLIC_ADDRESSFINDER_KEY is not set at build time.",
+        );
+      }
+      return;
+    }
+
+    if (!inputRef.current || widgetRef.current) {
       return;
     }
 
@@ -181,7 +193,14 @@ export function AddressAutocomplete({
           widget.disable?.();
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        if (!hasWarnedAboutLoadFailure) {
+          hasWarnedAboutLoadFailure = true;
+          console.warn(
+            "Addressfinder autocomplete failed to initialise. Check CSP and outbound access to api.addressfinder.io.",
+            error,
+          );
+        }
         widgetRef.current = null;
       });
 
