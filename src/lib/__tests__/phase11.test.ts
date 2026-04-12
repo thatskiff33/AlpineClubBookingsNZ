@@ -86,33 +86,33 @@ describe("GET /api/admin/xero/account-mappings", () => {
 
   it("returns all mapping keys with DB values", async () => {
     mockPrisma.xeroAccountMapping.findMany.mockResolvedValue([
-      { key: "hutFeesIncome", code: "201" },
-      { key: "hutFeeRefunds", code: "202" },
-      { key: "stripeBankAccount", code: "607" },
-      { key: "stripeFees", code: "490" },
-      { key: "subscriptionIncome", code: "205" },
+      { key: "hutFeesIncome", code: "201", itemCode: null },
+      { key: "hutFeeRefunds", code: "202", itemCode: null },
+      { key: "stripeBankAccount", code: "607", itemCode: null },
+      { key: "stripeFees", code: "490", itemCode: null },
+      { key: "subscriptionIncome", code: "205", itemCode: null },
     ]);
     const res = await getMappings();
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.hutFeesIncome).toBe("201");
-    expect(data.hutFeeRefunds).toBe("202");
-    expect(data.stripeBankAccount).toBe("607");
-    expect(data.stripeFees).toBe("490");
-    expect(data.subscriptionIncome).toBe("205");
+    expect(data.hutFeesIncome).toEqual({ code: "201", itemCode: null });
+    expect(data.hutFeeRefunds).toEqual({ code: "202", itemCode: null });
+    expect(data.stripeBankAccount).toEqual({ code: "607", itemCode: null });
+    expect(data.stripeFees).toEqual({ code: "490", itemCode: null });
+    expect(data.subscriptionIncome).toEqual({ code: "205", itemCode: null });
   });
 
   it("returns null for keys not in DB", async () => {
     mockPrisma.xeroAccountMapping.findMany.mockResolvedValue([
-      { key: "hutFeesIncome", code: "201" },
+      { key: "hutFeesIncome", code: "201", itemCode: null },
     ]);
     const res = await getMappings();
     const data = await res.json();
-    expect(data.hutFeesIncome).toBe("201");
-    expect(data.hutFeeRefunds).toBeNull();
-    expect(data.stripeBankAccount).toBeNull();
-    expect(data.stripeFees).toBeNull();
-    expect(data.subscriptionIncome).toBeNull();
+    expect(data.hutFeesIncome).toEqual({ code: "201", itemCode: null });
+    expect(data.hutFeeRefunds).toEqual({ code: null, itemCode: null });
+    expect(data.stripeBankAccount).toEqual({ code: null, itemCode: null });
+    expect(data.stripeFees).toEqual({ code: null, itemCode: null });
+    expect(data.subscriptionIncome).toEqual({ code: null, itemCode: null });
   });
 
   it("returns 500 on DB error", async () => {
@@ -130,17 +130,17 @@ describe("PUT /api/admin/xero/account-mappings", () => {
     mockAuth.mockResolvedValue(adminSession());
     mockPrisma.xeroAccountMapping.upsert.mockResolvedValue({});
     mockPrisma.xeroAccountMapping.findMany.mockResolvedValue([
-      { key: "hutFeesIncome", code: "201" },
-      { key: "hutFeeRefunds", code: "200" },
-      { key: "stripeBankAccount", code: "606" },
-      { key: "stripeFees", code: null },
-      { key: "subscriptionIncome", code: "203" },
+      { key: "hutFeesIncome", code: "201", itemCode: null },
+      { key: "hutFeeRefunds", code: "200", itemCode: null },
+      { key: "stripeBankAccount", code: "606", itemCode: null },
+      { key: "stripeFees", code: null, itemCode: null },
+      { key: "subscriptionIncome", code: "203", itemCode: null },
     ]);
   });
 
   it("returns 401 for non-admin", async () => {
     mockAuth.mockResolvedValue({ user: { role: "MEMBER" } });
-    const req = makePutRequest({ hutFeesIncome: "201" });
+    const req = makePutRequest({ hutFeesIncome: { code: "201" } });
     const res = await putMappings(req);
     expect(res.status).toBe(401);
   });
@@ -156,16 +156,16 @@ describe("PUT /api/admin/xero/account-mappings", () => {
   });
 
   it("upserts provided keys and returns updated mappings", async () => {
-    const req = makePutRequest({ hutFeesIncome: "201", stripeBankAccount: "607" });
+    const req = makePutRequest({ hutFeesIncome: { code: "201" }, stripeBankAccount: { code: "607" } });
     const res = await putMappings(req);
     expect(res.status).toBe(200);
     expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledTimes(2);
     const data = await res.json();
-    expect(data.hutFeesIncome).toBe("201");
+    expect(data.hutFeesIncome).toEqual({ code: "201", itemCode: null });
   });
 
   it("accepts null codes (clears mapping)", async () => {
-    const req = makePutRequest({ stripeFees: null });
+    const req = makePutRequest({ stripeFees: { code: null } });
     const res = await putMappings(req);
     expect(res.status).toBe(200);
     expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledWith(
@@ -177,11 +177,23 @@ describe("PUT /api/admin/xero/account-mappings", () => {
   });
 
   it("ignores unknown keys (they fail Zod schema)", async () => {
-    const req = makePutRequest({ unknownKey: "999", hutFeesIncome: "201" });
+    const req = makePutRequest({ unknownKey: { code: "999" }, hutFeesIncome: { code: "201" } });
     const res = await putMappings(req);
     // unknownKey stripped by Zod, only hutFeesIncome upserted
     expect(res.status).toBe(200);
     expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("upserts itemCode when provided", async () => {
+    const req = makePutRequest({ hutFeeItem: { itemCode: "HUT-FEE" } });
+    const res = await putMappings(req);
+    expect(res.status).toBe(200);
+    expect(mockPrisma.xeroAccountMapping.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: "hutFeeItem" },
+        update: { itemCode: "HUT-FEE" },
+      })
+    );
   });
 });
 

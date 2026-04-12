@@ -9,7 +9,9 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import type { XeroAccount } from "@/app/api/admin/xero/chart-of-accounts/route"
+import type { XeroItem } from "@/app/api/admin/xero/items/route"
 
 interface XeroStatus {
   connected: boolean
@@ -89,15 +91,27 @@ interface DuplicateResult {
   filteredByFamilyGroup: number
 }
 
-type AccountMappings = {
-  hutFeesIncome: string | null
-  hutFeeRefunds: string | null
-  stripeBankAccount: string | null
-  stripeFees: string | null
-  subscriptionIncome: string | null
+type MappingValue = {
+  code: string | null
+  itemCode: string | null
 }
 
-const MAPPING_LABELS: Record<keyof AccountMappings, string> = {
+type AccountMappings = {
+  hutFeesIncome: MappingValue
+  hutFeeRefunds: MappingValue
+  stripeBankAccount: MappingValue
+  stripeFees: MappingValue
+  subscriptionIncome: MappingValue
+  hutFeeItem: MappingValue
+  hutFeeRefundItem: MappingValue
+  entranceFeeItem: MappingValue
+  entranceFeeAmountCents: MappingValue
+}
+
+// Account code mapping keys (shown with chart-of-accounts dropdown)
+const ACCOUNT_MAPPING_KEYS = ["hutFeesIncome", "hutFeeRefunds", "stripeBankAccount", "stripeFees", "subscriptionIncome"] as const
+
+const MAPPING_LABELS: Record<string, string> = {
   hutFeesIncome: "Hut Fees Income",
   hutFeeRefunds: "Hut Fee Refunds",
   stripeBankAccount: "Stripe Bank Account",
@@ -105,7 +119,7 @@ const MAPPING_LABELS: Record<keyof AccountMappings, string> = {
   subscriptionIncome: "Subscription Income",
 }
 
-const MAPPING_DESCRIPTIONS: Record<keyof AccountMappings, string> = {
+const MAPPING_DESCRIPTIONS: Record<string, string> = {
   hutFeesIncome: "Sales account for booking income line items",
   hutFeeRefunds: "Account for refund credit notes",
   stripeBankAccount: "Bank account used to record Stripe payments",
@@ -113,8 +127,23 @@ const MAPPING_DESCRIPTIONS: Record<keyof AccountMappings, string> = {
   subscriptionIncome: "Account code used to detect annual subscription invoices",
 }
 
+// Item code mapping keys
+const ITEM_MAPPING_KEYS = ["hutFeeItem", "hutFeeRefundItem", "entranceFeeItem"] as const
+
+const ITEM_MAPPING_LABELS: Record<string, string> = {
+  hutFeeItem: "Hut Fee Item",
+  hutFeeRefundItem: "Hut Fee Refund Item",
+  entranceFeeItem: "Entrance Fee Item",
+}
+
+const ITEM_MAPPING_DESCRIPTIONS: Record<string, string> = {
+  hutFeeItem: "Xero Item for booking invoice line items (auto-fills account code from Item config)",
+  hutFeeRefundItem: "Xero Item for refund credit note line items",
+  entranceFeeItem: "Xero Item for entrance fee invoices",
+}
+
 /** Which Xero account types each mapping accepts */
-const MAPPING_TYPE_FILTER: Record<keyof AccountMappings, string> = {
+const MAPPING_TYPE_FILTER: Record<string, string> = {
   hutFeesIncome: "REVENUE",
   hutFeeRefunds: "REVENUE",
   stripeBankAccount: "BANK",
@@ -252,6 +281,7 @@ export default function XeroPage() {
   const [accountMappings, setAccountMappings] = useState<AccountMappings | null>(null)
   const [savedMappings, setSavedMappings] = useState<AccountMappings | null>(null)
   const [chartOfAccounts, setChartOfAccounts] = useState<XeroAccount[]>([])
+  const [xeroItems, setXeroItems] = useState<XeroItem[]>([])
   const [loadingMappings, setLoadingMappings] = useState(false)
   const [savingMappings, setSavingMappings] = useState(false)
   const [mappingError, setMappingError] = useState("")
@@ -274,9 +304,10 @@ export default function XeroPage() {
   const fetchAccountMappings = useCallback(async () => {
     setLoadingMappings(true)
     try {
-      const [mappingsRes, accountsRes] = await Promise.all([
+      const [mappingsRes, accountsRes, itemsRes] = await Promise.all([
         fetch("/api/admin/xero/account-mappings"),
         fetch("/api/admin/xero/chart-of-accounts"),
+        fetch("/api/admin/xero/items"),
       ])
       if (mappingsRes.ok) {
         const data = await mappingsRes.json()
@@ -286,6 +317,10 @@ export default function XeroPage() {
       if (accountsRes.ok) {
         const data = await accountsRes.json()
         setChartOfAccounts(data.accounts ?? [])
+      }
+      if (itemsRes.ok) {
+        const data = await itemsRes.json()
+        setXeroItems(data.items ?? [])
       }
     } catch {
       setMappingError("Failed to load account mappings")
@@ -625,10 +660,12 @@ export default function XeroPage() {
                 {mappingSaved && (
                   <p className="text-sm text-green-700">Account mappings saved.</p>
                 )}
-                {accountMappings && (Object.keys(MAPPING_LABELS) as Array<keyof AccountMappings>).map((key) => {
+                {/* Account Code Mappings */}
+                <h4 className="text-sm font-semibold text-slate-700">Account Code Mappings</h4>
+                {accountMappings && ACCOUNT_MAPPING_KEYS.map((key) => {
                   const typeFilter = MAPPING_TYPE_FILTER[key]
                   const filtered = chartOfAccounts.filter((a) => a.type === typeFilter)
-                  const currentCode = accountMappings[key]
+                  const currentCode = accountMappings[key]?.code
                   const matchedAccount = filtered.find((a) => a.code === currentCode)
                   return (
                     <div key={key} className="grid grid-cols-3 gap-4 items-start">
@@ -642,7 +679,7 @@ export default function XeroPage() {
                             value={currentCode ?? "__none__"}
                             onValueChange={(val) =>
                               setAccountMappings((prev) =>
-                                prev ? { ...prev, [key]: val === "__none__" ? null : val } : prev
+                                prev ? { ...prev, [key]: { ...prev[key], code: val === "__none__" ? null : val } } : prev
                               )
                             }
                           >
@@ -678,6 +715,110 @@ export default function XeroPage() {
                     </div>
                   )
                 })}
+
+                {/* Item Code Mappings */}
+                <Separator />
+                <h4 className="text-sm font-semibold text-slate-700">Item Code Mappings</h4>
+                <p className="text-xs text-muted-foreground">
+                  Map transactions to Xero Items (products/services). When an Item Code is set, Xero auto-fills the
+                  account code from the Item&apos;s configuration. If both are set, the Account Code overrides the Item&apos;s default.
+                </p>
+                {accountMappings && ITEM_MAPPING_KEYS.map((key) => {
+                  const currentItemCode = accountMappings[key]?.itemCode
+                  const matchedItem = xeroItems.find((i) => i.code === currentItemCode)
+                  return (
+                    <div key={key} className="grid grid-cols-3 gap-4 items-start">
+                      <div>
+                        <p className="text-sm font-medium">{ITEM_MAPPING_LABELS[key]}</p>
+                        <p className="text-xs text-muted-foreground">{ITEM_MAPPING_DESCRIPTIONS[key]}</p>
+                      </div>
+                      <div className="col-span-2">
+                        {isEditingMappings ? (
+                          <Select
+                            value={currentItemCode ?? "__none__"}
+                            onValueChange={(val) =>
+                              setAccountMappings((prev) =>
+                                prev ? { ...prev, [key]: { ...prev[key], itemCode: val === "__none__" ? null : val } } : prev
+                              )
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select item..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">
+                                <span className="text-muted-foreground">Not configured</span>
+                              </SelectItem>
+                              {xeroItems.map((item) => (
+                                <SelectItem key={item.code} value={item.code}>
+                                  {item.code} — {item.name}
+                                </SelectItem>
+                              ))}
+                              {xeroItems.length === 0 && (
+                                <SelectItem value="__empty__" disabled>
+                                  No items found in Xero
+                                </SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <p className="text-sm py-2 px-3 bg-slate-50 rounded-md border border-slate-200">
+                            {matchedItem
+                              ? `${matchedItem.code} — ${matchedItem.name}`
+                              : currentItemCode
+                                ? currentItemCode
+                                : <span className="text-muted-foreground">Not configured</span>}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Entrance Fee */}
+                <Separator />
+                <h4 className="text-sm font-semibold text-slate-700">Entrance Fee</h4>
+                <p className="text-xs text-muted-foreground">
+                  When configured, a Xero invoice for this amount is automatically created when an admin adds a new member.
+                </p>
+                {accountMappings && (
+                  <div className="grid grid-cols-3 gap-4 items-start">
+                    <div>
+                      <p className="text-sm font-medium">Entrance Fee Amount</p>
+                      <p className="text-xs text-muted-foreground">Amount in dollars (incl. GST). Leave empty to disable.</p>
+                    </div>
+                    <div className="col-span-2">
+                      {isEditingMappings ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">$</span>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            value={accountMappings.entranceFeeAmountCents?.code
+                              ? (parseInt(accountMappings.entranceFeeAmountCents.code, 10) / 100).toFixed(2)
+                              : ""}
+                            onChange={(e) => {
+                              const dollars = parseFloat(e.target.value)
+                              const cents = isNaN(dollars) || dollars <= 0 ? null : Math.round(dollars * 100).toString()
+                              setAccountMappings((prev) =>
+                                prev ? { ...prev, entranceFeeAmountCents: { ...prev.entranceFeeAmountCents, code: cents } } : prev
+                              )
+                            }}
+                            className="w-32"
+                          />
+                        </div>
+                      ) : (
+                        <p className="text-sm py-2 px-3 bg-slate-50 rounded-md border border-slate-200">
+                          {accountMappings.entranceFeeAmountCents?.code
+                            ? `$${(parseInt(accountMappings.entranceFeeAmountCents.code, 10) / 100).toFixed(2)}`
+                            : <span className="text-muted-foreground">Not configured (disabled)</span>}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className="pt-2 flex gap-2">
                   {isEditingMappings ? (
                     <>

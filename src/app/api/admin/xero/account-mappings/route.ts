@@ -5,11 +5,14 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 
-const VALID_KEYS = ["hutFeesIncome", "hutFeeRefunds", "stripeBankAccount", "stripeFees", "subscriptionIncome"] as const;
+const VALID_KEYS = [
+  "hutFeesIncome", "hutFeeRefunds", "stripeBankAccount", "stripeFees", "subscriptionIncome",
+  "hutFeeItem", "hutFeeRefundItem", "entranceFeeItem", "entranceFeeAmountCents",
+] as const;
 
 /**
  * GET /api/admin/xero/account-mappings
- * Returns all Xero account code mappings.
+ * Returns all Xero account code and item code mappings.
  */
 export async function GET() {
   const session = await auth();
@@ -23,16 +26,16 @@ export async function GET() {
 
   try {
     const mappings = await prisma.xeroAccountMapping.findMany({
-      select: { key: true, code: true },
+      select: { key: true, code: true, itemCode: true },
     });
 
-    // Return as a key→code object for easy consumption
-    const result: Record<string, string | null> = {};
+    // Return as a key→{code, itemCode} object for easy consumption
+    const result: Record<string, { code: string | null; itemCode: string | null }> = {};
     for (const key of VALID_KEYS) {
-      result[key] = null;
+      result[key] = { code: null, itemCode: null };
     }
     for (const m of mappings) {
-      result[m.key] = m.code;
+      result[m.key] = { code: m.code, itemCode: m.itemCode };
     }
 
     return NextResponse.json(result);
@@ -42,17 +45,26 @@ export async function GET() {
   }
 }
 
+const MappingValueSchema = z.object({
+  code: z.string().nullable().optional(),
+  itemCode: z.string().nullable().optional(),
+});
+
 const UpdateMappingsSchema = z.object({
-  hutFeesIncome: z.string().nullable().optional(),
-  hutFeeRefunds: z.string().nullable().optional(),
-  stripeBankAccount: z.string().nullable().optional(),
-  stripeFees: z.string().nullable().optional(),
-  subscriptionIncome: z.string().nullable().optional(),
+  hutFeesIncome: MappingValueSchema.optional(),
+  hutFeeRefunds: MappingValueSchema.optional(),
+  stripeBankAccount: MappingValueSchema.optional(),
+  stripeFees: MappingValueSchema.optional(),
+  subscriptionIncome: MappingValueSchema.optional(),
+  hutFeeItem: MappingValueSchema.optional(),
+  hutFeeRefundItem: MappingValueSchema.optional(),
+  entranceFeeItem: MappingValueSchema.optional(),
+  entranceFeeAmountCents: MappingValueSchema.optional(),
 });
 
 /**
  * PUT /api/admin/xero/account-mappings
- * Updates Xero account code mappings. Accepts partial updates.
+ * Updates Xero account code and item code mappings. Accepts partial updates.
  */
 export async function PUT(request: NextRequest) {
   const session = await auth();
@@ -79,15 +91,19 @@ export async function PUT(request: NextRequest) {
   const updates = parsed.data;
 
   try {
-    const ops = (Object.entries(updates) as [typeof VALID_KEYS[number], string | null | undefined][])
+    type MappingValue = { code?: string | null; itemCode?: string | null };
+    const ops = (Object.entries(updates) as [typeof VALID_KEYS[number], MappingValue | undefined][])
       .filter(([, val]) => val !== undefined)
-      .map(([key, code]) =>
-        prisma.xeroAccountMapping.upsert({
+      .map(([key, val]) => {
+        const updateData: { code?: string | null; itemCode?: string | null } = {};
+        if (val!.code !== undefined) updateData.code = val!.code ?? null;
+        if (val!.itemCode !== undefined) updateData.itemCode = val!.itemCode ?? null;
+        return prisma.xeroAccountMapping.upsert({
           where: { key },
-          update: { code: code ?? null },
-          create: { key, code: code ?? null },
-        })
-      );
+          update: updateData,
+          create: { key, code: updateData.code ?? null, itemCode: updateData.itemCode ?? null },
+        });
+      });
 
     await Promise.all(ops);
 
@@ -99,14 +115,14 @@ export async function PUT(request: NextRequest) {
 
     // Return the full updated set
     const all = await prisma.xeroAccountMapping.findMany({
-      select: { key: true, code: true },
+      select: { key: true, code: true, itemCode: true },
     });
-    const result: Record<string, string | null> = {};
+    const result: Record<string, { code: string | null; itemCode: string | null }> = {};
     for (const key of VALID_KEYS) {
-      result[key] = null;
+      result[key] = { code: null, itemCode: null };
     }
     for (const m of all) {
-      result[m.key] = m.code;
+      result[m.key] = { code: m.code, itemCode: m.itemCode };
     }
 
     return NextResponse.json(result);

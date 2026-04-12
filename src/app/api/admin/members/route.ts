@@ -12,6 +12,7 @@ import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
   isXeroConnected,
+  createXeroEntranceFeeInvoice,
 } from "@/lib/xero";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
@@ -537,6 +538,15 @@ export async function POST(req: NextRequest) {
       return created;
     });
 
+    // Create Xero entrance fee invoice (fire-and-forget, non-blocking)
+    let entranceFeeWarning: string | undefined;
+    try {
+      await createXeroEntranceFeeInvoice(member.id);
+    } catch (xeroErr) {
+      logger.error({ err: xeroErr, memberId: member.id }, "Failed to create entrance fee invoice");
+      entranceFeeWarning = "Member created but entrance fee invoice failed to generate";
+    }
+
     // Send invite email if requested
     let inviteWarning: string | undefined;
     if (data.sendInvite) {
@@ -553,8 +563,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const warnings = [inviteWarning, entranceFeeWarning].filter(Boolean);
     return NextResponse.json(
-      { ...member, ...(inviteWarning ? { warning: inviteWarning } : {}) },
+      { ...member, ...(warnings.length > 0 ? { warning: warnings.join("; ") } : {}) },
       { status: 201 },
     );
   } catch (error) {

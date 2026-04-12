@@ -855,8 +855,9 @@ model FamilyGroupJoinRequest {
 
 model XeroAccountMapping {
   id        String   @id @default(cuid())
-  key       String   @unique  // hutFeesIncome | hutFeeRefunds | stripeBankAccount | stripeFees | subscriptionIncome
-  code      String?           // null = not configured, use application default
+  key       String   @unique  // hutFeesIncome | hutFeeRefunds | stripeBankAccount | stripeFees | subscriptionIncome | hutFeeItem | hutFeeRefundItem | entranceFeeItem | entranceFeeAmountCents
+  code      String?           // null = not configured, use application default (GL account code or amount string)
+  itemCode  String?           // Xero Item Code — when set, Xero auto-fills account from Item config
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
