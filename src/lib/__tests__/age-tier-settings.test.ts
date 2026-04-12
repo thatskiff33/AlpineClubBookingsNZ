@@ -8,6 +8,7 @@ import {
   getSeasonStartDate,
   computeAge,
   invalidateAgeTierCache,
+  normalizeAgeTierSettings,
   type AgeTierSettingData,
 } from "../age-tier";
 
@@ -168,6 +169,47 @@ describe("getAgeTierSettings fallback", () => {
     const { getAgeTierSettings, AGE_TIER_DEFAULTS: defaults } = await import("../age-tier");
     const result = await getAgeTierSettings();
     expect(result).toEqual(defaults);
+  });
+
+  it("normalizes the legacy 3-tier DB rows to the INFANT-aware defaults", async () => {
+    vi.doMock("../prisma", () => ({
+      prisma: {
+        ageTierSetting: {
+          findMany: vi.fn().mockResolvedValue([
+            { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
+            { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
+            { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", sortOrder: 3 },
+          ]),
+        },
+      },
+    }));
+
+    const { getAgeTierSettings, AGE_TIER_DEFAULTS: defaults } = await import("../age-tier");
+    const result = await getAgeTierSettings();
+    expect(result).toEqual(defaults);
+  });
+});
+
+describe("normalizeAgeTierSettings", () => {
+  it("rewrites the legacy 3-tier settings to the default 4-tier layout", () => {
+    const legacyRows: AgeTierSettingData[] = [
+      { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
+      { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
+      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", sortOrder: 3 },
+    ];
+
+    expect(normalizeAgeTierSettings(legacyRows)).toEqual(AGE_TIER_DEFAULTS);
+  });
+
+  it("preserves custom 4-tier settings", () => {
+    const customRows: AgeTierSettingData[] = [
+      { tier: "INFANT", minAge: 0, maxAge: 2, label: "Baby (0-2)", sortOrder: 0 },
+      { tier: "CHILD", minAge: 3, maxAge: 12, label: "Child (3-12)", sortOrder: 1 },
+      { tier: "YOUTH", minAge: 13, maxAge: 17, label: "Teen (13-17)", sortOrder: 2 },
+      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
+    ];
+
+    expect(normalizeAgeTierSettings(customRows)).toEqual(customRows);
   });
 });
 

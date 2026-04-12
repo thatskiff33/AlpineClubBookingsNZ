@@ -45,6 +45,45 @@ export type AgeTierSettingData = {
   sortOrder: number;
 };
 
+const LEGACY_THREE_TIER_SETTINGS = [
+  { tier: "CHILD" as AgeTier, minAge: 0, maxAge: 9 as number | null, sortOrder: 1 },
+  { tier: "YOUTH" as AgeTier, minAge: 10, maxAge: 17 as number | null, sortOrder: 2 },
+  { tier: "ADULT" as AgeTier, minAge: 18, maxAge: null as number | null, sortOrder: 3 },
+];
+
+function cloneAgeTierSettings(settings: AgeTierSettingData[]): AgeTierSettingData[] {
+  return settings.map((setting) => ({ ...setting }));
+}
+
+function isLegacyThreeTierSettings(settings: AgeTierSettingData[]): boolean {
+  if (settings.length !== LEGACY_THREE_TIER_SETTINGS.length) {
+    return false;
+  }
+
+  const sorted = [...settings].sort((a, b) => a.sortOrder - b.sortOrder);
+  return LEGACY_THREE_TIER_SETTINGS.every((legacy, index) => {
+    const actual = sorted[index];
+    return (
+      actual?.tier === legacy.tier &&
+      actual.minAge === legacy.minAge &&
+      actual.maxAge === legacy.maxAge &&
+      actual.sortOrder === legacy.sortOrder
+    );
+  });
+}
+
+export function normalizeAgeTierSettings(
+  settings: AgeTierSettingData[]
+): AgeTierSettingData[] {
+  if (settings.length === 0 || isLegacyThreeTierSettings(settings)) {
+    return cloneAgeTierSettings(AGE_TIER_DEFAULTS);
+  }
+
+  return cloneAgeTierSettings(
+    [...settings].sort((a, b) => a.sortOrder - b.sortOrder)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Pure synchronous core (testable without DB)
 // ---------------------------------------------------------------------------
@@ -99,14 +138,17 @@ export async function getAgeTierSettings(): Promise<AgeTierSettingData[]> {
     const rows = await prisma.ageTierSetting.findMany({
       orderBy: { sortOrder: "asc" },
     });
-    if (rows.length > 0) {
-      _cachedSettings = rows.map((r) => ({
+    const normalized = normalizeAgeTierSettings(
+      rows.map((r) => ({
         tier: r.tier,
         minAge: r.minAge,
         maxAge: r.maxAge,
         label: r.label,
         sortOrder: r.sortOrder,
-      }));
+      }))
+    );
+    if (normalized.length > 0) {
+      _cachedSettings = normalized;
       _cacheExpiry = now + CACHE_TTL_MS;
       return _cachedSettings;
     }
@@ -114,7 +156,7 @@ export async function getAgeTierSettings(): Promise<AgeTierSettingData[]> {
     // DB unavailable — fall through to defaults
   }
 
-  return AGE_TIER_DEFAULTS;
+  return cloneAgeTierSettings(AGE_TIER_DEFAULTS);
 }
 
 // ---------------------------------------------------------------------------

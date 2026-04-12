@@ -6,7 +6,11 @@ import type { AgeTier } from "@prisma/client";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import { logAudit } from "@/lib/audit";
-import { invalidateAgeTierCache } from "@/lib/age-tier";
+import {
+  AGE_TIER_DEFAULTS,
+  invalidateAgeTierCache,
+  normalizeAgeTierSettings,
+} from "@/lib/age-tier";
 
 type AgeTierSettingInput = {
   tier: AgeTier;
@@ -45,7 +49,7 @@ export async function GET() {
     select: { tier: true, minAge: true, maxAge: true, label: true, sortOrder: true },
   });
 
-  return NextResponse.json({ settings });
+  return NextResponse.json({ settings: normalizeAgeTierSettings(settings) });
 }
 
 export async function PUT(request: NextRequest) {
@@ -71,6 +75,21 @@ export async function PUT(request: NextRequest) {
     ...setting,
     tier: setting.tier as AgeTier,
   }));
+  const requiredTiers = new Set(AGE_TIER_DEFAULTS.map((setting) => setting.tier));
+  const providedTiers = new Set(settings.map((setting) => setting.tier));
+
+  if (
+    settings.length !== requiredTiers.size ||
+    providedTiers.size !== requiredTiers.size ||
+    [...requiredTiers].some((tier) => !providedTiers.has(tier))
+  ) {
+    return NextResponse.json(
+      {
+        error: `Age tier settings must include each tier exactly once: ${[...requiredTiers].join(", ")}`,
+      },
+      { status: 400 }
+    );
+  }
 
   // Validate: tiers must be contiguous — no gaps or overlaps
   const sorted = [...settings].sort((a, b) => a.minAge - b.minAge);
@@ -127,5 +146,5 @@ export async function PUT(request: NextRequest) {
     select: { tier: true, minAge: true, maxAge: true, label: true, sortOrder: true },
   });
 
-  return NextResponse.json({ settings: updated });
+  return NextResponse.json({ settings: normalizeAgeTierSettings(updated) });
 }
