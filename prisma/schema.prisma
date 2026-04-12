@@ -584,7 +584,8 @@ model CancellationPolicy {
   daysBeforeStay         Int
   refundPercentage       Int // Card refund percentage
   creditRefundPercentage Int? // Credit refund percentage (null = same as refundPercentage)
-  fixedFeeCents          Int      @default(0) // Fixed fee deducted from refund per tier
+  fixedFeeCents          Int      @default(0) // Fixed fee deducted from card refunds per tier
+  creditFixedFeeCents    Int? // Fixed fee deducted from credit refunds per tier (null = same as fixedFeeCents)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 

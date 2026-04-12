@@ -214,6 +214,7 @@ describe("shared age tier validation", () => {
 
 describe("P5.3: Promo code booking date gating", () => {
   const basePromo = {
+    id: "promo-1",
     active: true,
     validFrom: null as Date | null,
     validUntil: null as Date | null,
@@ -292,34 +293,37 @@ describe("P5.3: Promo code booking date gating", () => {
 
 // ─── P5.5: Mixed Cancellation Fees ──────────────────────────────────────────
 
-describe("P5.5: Mixed cancellation fees (fixedFeeCents)", () => {
+describe("P5.5: Mixed cancellation fees (per refund method)", () => {
   const policyRules: CancellationRule[] = [
-    { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 1000 },
-    { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 75, fixedFeeCents: 2000 },
-    { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0 },
+    { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 1000, creditFixedFeeCents: 500 },
+    { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 75, fixedFeeCents: 2000, creditFixedFeeCents: 1000 },
+    { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, creditFixedFeeCents: 0 },
   ];
 
   describe("getRefundTier", () => {
-    it("returns fixedFeeCents from the matched tier", () => {
+    it("returns both fixed-fee values from the matched tier", () => {
       const tier = getRefundTier(20, policyRules);
       expect(tier.fixedFeeCents).toBe(1000);
+      expect(tier.creditFixedFeeCents).toBe(500);
       expect(tier.refundPercentage).toBe(100);
     });
 
-    it("returns fixedFeeCents for mid tier", () => {
+    it("returns both fixed fees for mid tier", () => {
       const tier = getRefundTier(10, policyRules);
       expect(tier.fixedFeeCents).toBe(2000);
+      expect(tier.creditFixedFeeCents).toBe(1000);
       expect(tier.refundPercentage).toBe(50);
     });
 
-    it("returns 0 fixedFeeCents when no rules", () => {
+    it("returns 0 fixed fees when no rules", () => {
       const tier = getRefundTier(10, []);
       expect(tier.fixedFeeCents).toBe(0);
+      expect(tier.creditFixedFeeCents).toBe(0);
     });
   });
 
-  describe("calculateRefundAmount with fixedFeeCents", () => {
-    it("deducts fixed fee from percentage refund", () => {
+  describe("calculateRefundAmount with method-specific fees", () => {
+    it("deducts the card fixed fee from card refunds", () => {
       // 100% of 10000 = 10000, minus 1000 fee = 9000
       const result = calculateRefundAmount(10000, 20, policyRules);
       expect(result.refundAmountCents).toBe(9000);
@@ -339,34 +343,42 @@ describe("P5.5: Mixed cancellation fees (fixedFeeCents)", () => {
       expect(result.refundAmountCents).toBe(0);
     });
 
-    it("credit refund also deducts fixed fee", () => {
-      // credit: 75% of 10000 = 7500, minus 2000 fee = 5500
+    it("credit refunds deduct the credit fixed fee", () => {
+      // credit: 75% of 10000 = 7500, minus 1000 fee = 6500
       const result = calculateRefundAmount(10000, 10, policyRules, "credit");
-      expect(result.refundAmountCents).toBe(5500);
+      expect(result.refundAmountCents).toBe(6500);
     });
 
-    it("works with zero fixed fee", () => {
+    it("falls back to the card fee when credit fee is missing", () => {
+      const fallbackRules: CancellationRule[] = [
+        { daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 75, fixedFeeCents: 900 },
+      ];
+      const result = calculateRefundAmount(10000, 5, fallbackRules, "credit");
+      expect(result.refundAmountCents).toBe(6600);
+    });
+
+    it("works with zero fixed fees", () => {
       const noFeeRules: CancellationRule[] = [
-        { daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0 },
+        { daysBeforeStay: 0, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 },
       ];
       const result = calculateRefundAmount(10000, 5, noFeeRules);
       expect(result.refundAmountCents).toBe(5000);
     });
   });
 
-  describe("calculateDualRefundAmounts with fixedFeeCents", () => {
-    it("applies fixed fee to both card and credit refunds", () => {
+  describe("calculateDualRefundAmounts with method-specific fees", () => {
+    it("applies each method's fee independently", () => {
       // Card: 50% of 10000 = 5000, minus 2000 = 3000
-      // Credit: 75% of 10000 = 7500, minus 2000 = 5500
+      // Credit: 75% of 10000 = 7500, minus 1000 = 6500
       const result = calculateDualRefundAmounts(10000, 10, policyRules);
       expect(result.cardRefundAmountCents).toBe(3000);
-      expect(result.creditRefundAmountCents).toBe(5500);
+      expect(result.creditRefundAmountCents).toBe(6500);
     });
 
     it("floors both at zero", () => {
       const result = calculateDualRefundAmounts(1000, 10, policyRules);
       // Card: 50% of 1000 = 500, minus 2000 = -1500 → 0
-      // Credit: 75% of 1000 = 750, minus 2000 = -1250 → 0
+      // Credit: 75% of 1000 = 750, minus 1000 = -250 → 0
       expect(result.cardRefundAmountCents).toBe(0);
       expect(result.creditRefundAmountCents).toBe(0);
     });

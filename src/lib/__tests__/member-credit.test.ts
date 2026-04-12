@@ -249,7 +249,7 @@ describe("cancellation dual refund percentages", () => {
       const { getRefundTier } = await import("@/lib/cancellation");
 
       const policy = [
-        { daysBeforeStay: 14, refundPercentage: 90, creditRefundPercentage: 100 },
+        { daysBeforeStay: 14, refundPercentage: 90, creditRefundPercentage: 100, fixedFeeCents: 800, creditFixedFeeCents: 200 },
         { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 75 },
         { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
       ];
@@ -257,6 +257,8 @@ describe("cancellation dual refund percentages", () => {
       const tier = getRefundTier(15, policy);
       expect(tier.refundPercentage).toBe(90);
       expect(tier.creditRefundPercentage).toBe(100);
+      expect(tier.fixedFeeCents).toBe(800);
+      expect(tier.creditFixedFeeCents).toBe(200);
     });
 
     it("returns correct tier for mid-range days", async () => {
@@ -286,12 +288,12 @@ describe("cancellation dual refund percentages", () => {
       const { calculateRefundAmount } = await import("@/lib/cancellation");
 
       const policy = [
-        { daysBeforeStay: 14, refundPercentage: 90, creditRefundPercentage: 100 },
+        { daysBeforeStay: 14, refundPercentage: 90, creditRefundPercentage: 100, fixedFeeCents: 1000, creditFixedFeeCents: 300 },
         { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
       ];
 
       const result = calculateRefundAmount(10000, 15, policy);
-      expect(result.refundAmountCents).toBe(9000);
+      expect(result.refundAmountCents).toBe(8000);
       expect(result.refundPercentage).toBe(90);
     });
 
@@ -299,12 +301,12 @@ describe("cancellation dual refund percentages", () => {
       const { calculateRefundAmount } = await import("@/lib/cancellation");
 
       const policy = [
-        { daysBeforeStay: 14, refundPercentage: 90, creditRefundPercentage: 100 },
+        { daysBeforeStay: 14, refundPercentage: 90, creditRefundPercentage: 100, fixedFeeCents: 1000, creditFixedFeeCents: 300 },
         { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
       ];
 
       const result = calculateRefundAmount(10000, 15, policy, "credit");
-      expect(result.refundAmountCents).toBe(10000);
+      expect(result.refundAmountCents).toBe(9700);
       expect(result.refundPercentage).toBe(100);
     });
   });
@@ -314,15 +316,15 @@ describe("cancellation dual refund percentages", () => {
       const { calculateDualRefundAmounts } = await import("@/lib/cancellation");
 
       const policy = [
-        { daysBeforeStay: 14, refundPercentage: 90, creditRefundPercentage: 100 },
+        { daysBeforeStay: 14, refundPercentage: 90, creditRefundPercentage: 100, fixedFeeCents: 1000, creditFixedFeeCents: 250 },
         { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 75 },
         { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0 },
       ];
 
       const result = calculateDualRefundAmounts(10000, 15, policy);
-      expect(result.cardRefundAmountCents).toBe(9000);
+      expect(result.cardRefundAmountCents).toBe(8000);
       expect(result.cardRefundPercentage).toBe(90);
-      expect(result.creditRefundAmountCents).toBe(10000);
+      expect(result.creditRefundAmountCents).toBe(9750);
       expect(result.creditRefundPercentage).toBe(100);
     });
 
@@ -366,6 +368,8 @@ describe("schema contracts", () => {
           daysBeforeStay: z.number().int().min(0),
           refundPercentage: z.number().int().min(0).max(100),
           creditRefundPercentage: z.number().int().min(0).max(100).optional(),
+          fixedFeeCents: z.number().int().min(0).optional(),
+          creditFixedFeeCents: z.number().int().min(0).optional(),
         })
       ).min(1),
     });
@@ -376,6 +380,10 @@ describe("schema contracts", () => {
 
     expect(policySchema.safeParse({
       rules: [{ daysBeforeStay: 14, refundPercentage: 90, creditRefundPercentage: 100 }],
+    }).success).toBe(true);
+
+    expect(policySchema.safeParse({
+      rules: [{ daysBeforeStay: 14, refundPercentage: 90, fixedFeeCents: 500, creditFixedFeeCents: 250 }],
     }).success).toBe(true);
   });
 });

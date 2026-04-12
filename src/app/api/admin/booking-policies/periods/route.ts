@@ -1,13 +1,20 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import {
+  normalizeCancellationRule,
+  normalizeStoredCancellationRules,
+} from "@/lib/cancellation-rules";
 
 const cancellationRuleSchema = z.object({
   daysBeforeStay: z.number().int().min(0),
   refundPercentage: z.number().int().min(0).max(100),
   creditRefundPercentage: z.number().int().min(0).max(100).optional(),
+  fixedFeeCents: z.number().int().min(0).optional(),
+  creditFixedFeeCents: z.number().int().min(0).optional(),
 });
 
 const createSchema = z.object({
@@ -33,7 +40,12 @@ export async function GET() {
     orderBy: { startDate: "asc" },
   });
 
-  return NextResponse.json(periods);
+  return NextResponse.json(
+    periods.map((period) => ({
+      ...period,
+      cancellationRules: normalizeStoredCancellationRules(period.cancellationRules),
+    }))
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -66,7 +78,7 @@ export async function POST(request: NextRequest) {
         startDate,
         endDate,
         nonMemberHoldDays: data.nonMemberHoldDays,
-        cancellationRules: data.cancellationRules,
+        cancellationRules: data.cancellationRules.map(normalizeCancellationRule) as Prisma.InputJsonValue,
         active: data.active ?? true,
       },
     });

@@ -4,6 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { logAudit } from "@/lib/audit"
+import { normalizeCancellationRule } from "@/lib/cancellation-rules"
 
 const policySchema = z.object({
   rules: z.array(
@@ -12,6 +13,7 @@ const policySchema = z.object({
       refundPercentage: z.number().int().min(0).max(100),
       creditRefundPercentage: z.number().int().min(0).max(100).optional(),
       fixedFeeCents: z.number().int().min(0).optional(),
+      creditFixedFeeCents: z.number().int().min(0).optional(),
     })
   ).min(1, "At least one rule is required"),
   nonMemberHoldDays: z.number().int().min(1).max(30).optional(),
@@ -36,7 +38,7 @@ export async function GET() {
   })
 
   return NextResponse.json({
-    rules: policies,
+    rules: policies.map(normalizeCancellationRule),
     nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
   })
 }
@@ -64,7 +66,9 @@ export async function PUT(req: NextRequest) {
   const { rules, nonMemberHoldDays } = parsed.data
 
   // Validate: days must be unique
-  const sortedRules = [...rules].sort((a, b) => b.daysBeforeStay - a.daysBeforeStay)
+  const sortedRules = [...rules]
+    .map(normalizeCancellationRule)
+    .sort((a, b) => b.daysBeforeStay - a.daysBeforeStay)
   const dayValues = sortedRules.map((r) => r.daysBeforeStay)
   if (new Set(dayValues).size !== dayValues.length) {
     return NextResponse.json(
@@ -80,8 +84,9 @@ export async function PUT(req: NextRequest) {
       data: sortedRules.map((rule) => ({
         daysBeforeStay: rule.daysBeforeStay,
         refundPercentage: rule.refundPercentage,
-        creditRefundPercentage: rule.creditRefundPercentage ?? rule.refundPercentage,
-        fixedFeeCents: rule.fixedFeeCents ?? 0,
+        creditRefundPercentage: rule.creditRefundPercentage,
+        fixedFeeCents: rule.fixedFeeCents,
+        creditFixedFeeCents: rule.creditFixedFeeCents,
       })),
     })
 
@@ -102,7 +107,7 @@ export async function PUT(req: NextRequest) {
     })
 
     return {
-      rules: policies,
+      rules: policies.map(normalizeCancellationRule),
       nonMemberHoldDays: defaults?.nonMemberHoldDays ?? 7,
     }
   })

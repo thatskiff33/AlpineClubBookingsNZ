@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
+import { normalizeCancellationRule, type NormalizedCancellationRule } from "@/lib/cancellation-rules"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -21,13 +22,7 @@ interface MinStayPolicy {
   active: boolean
 }
 
-interface PolicyRule {
-  id?: string
-  daysBeforeStay: number
-  refundPercentage: number
-  creditRefundPercentage: number
-  fixedFeeCents: number
-}
+type PolicyRule = NormalizedCancellationRule & { id?: string }
 
 interface BookingPeriod {
   id: string
@@ -51,7 +46,16 @@ function CancellationRulesEditor({
   disabled?: boolean
 }) {
   function addRule() {
-    onChange([...rules, { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0 }])
+    onChange([
+      ...rules,
+      {
+        daysBeforeStay: 0,
+        refundPercentage: 0,
+        creditRefundPercentage: 0,
+        fixedFeeCents: 0,
+        creditFixedFeeCents: 0,
+      },
+    ])
   }
   function removeRule(index: number) {
     onChange(rules.filter((_, i) => i !== index))
@@ -68,7 +72,8 @@ function CancellationRulesEditor({
             <TableHead>Days Before Stay (min)</TableHead>
             <TableHead>Card Refund %</TableHead>
             <TableHead>Credit Refund %</TableHead>
-            <TableHead>Fixed Fee ($)</TableHead>
+            <TableHead>Card Fixed Fee ($)</TableHead>
+            <TableHead>Credit Fixed Fee ($)</TableHead>
             <TableHead className="w-20"></TableHead>
           </TableRow>
         </TableHeader>
@@ -139,6 +144,26 @@ function CancellationRulesEditor({
                 </div>
               </TableCell>
               <TableCell>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-muted-foreground">$</span>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={((rule.creditFixedFeeCents ?? 0) / 100).toFixed(2)}
+                    onChange={(e) =>
+                      updateRule(
+                        index,
+                        "creditFixedFeeCents",
+                        Math.round((parseFloat(e.target.value) || 0) * 100)
+                      )
+                    }
+                    className={`w-24 ${disabled ? "bg-slate-50 text-slate-700" : ""}`}
+                    disabled={disabled}
+                  />
+                </div>
+              </TableCell>
+              <TableCell>
                 {!disabled && (
                   <Button
                     variant="ghost"
@@ -180,11 +205,16 @@ function PolicyPreview({ rules }: { rules: PolicyRule[] }) {
           prefix = `${rule.daysBeforeStay}-${prevDays - 1} days:`
         }
         const creditDiffers = rule.creditRefundPercentage !== rule.refundPercentage
-        const fixedFee = rule.fixedFeeCents ?? 0
-        const feeStr = fixedFee > 0 ? ` minus $${(fixedFee / 100).toFixed(2)} fee` : ""
-        const description = creditDiffers
-          ? `${prefix} ${rule.refundPercentage}% card / ${rule.creditRefundPercentage}% credit${feeStr}`
-          : `${prefix} ${rule.refundPercentage}% refund${feeStr}`
+        const creditFeeDiffers = rule.creditFixedFeeCents !== rule.fixedFeeCents
+        const cardFeeStr =
+          rule.fixedFeeCents > 0 ? ` less $${(rule.fixedFeeCents / 100).toFixed(2)} fee` : ""
+        const creditFeeStr =
+          rule.creditFixedFeeCents > 0
+            ? ` less $${(rule.creditFixedFeeCents / 100).toFixed(2)} fee`
+            : ""
+        const description = creditDiffers || creditFeeDiffers
+          ? `${prefix} ${rule.refundPercentage}% card${cardFeeStr} / ${rule.creditRefundPercentage}% credit${creditFeeStr}`
+          : `${prefix} ${rule.refundPercentage}% refund${cardFeeStr}`
         return (
           <li key={index} className="flex items-center space-x-2">
             <div
@@ -225,9 +255,9 @@ export default function BookingPoliciesPage() {
   const [periodEnd, setPeriodEnd] = useState("")
   const [periodHoldDays, setPeriodHoldDays] = useState(5)
   const [periodRules, setPeriodRules] = useState<PolicyRule[]>([
-    { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0 },
-    { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0 },
-    { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0 },
+    { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+    { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+    { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, creditFixedFeeCents: 0 },
   ])
   const [savingPeriod, setSavingPeriod] = useState(false)
 
@@ -263,11 +293,11 @@ export default function BookingPoliciesPage() {
       if (!res.ok) throw new Error("Failed to fetch policy")
       const data = await res.json()
       const rules = data.rules && data.rules.length > 0
-        ? data.rules.map((r: PolicyRule) => ({ ...r, fixedFeeCents: r.fixedFeeCents ?? 0 }))
+        ? data.rules.map((r: PolicyRule) => normalizeCancellationRule(r))
         : [
-            { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0 },
-            { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0 },
-            { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0 },
+            { daysBeforeStay: 14, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+            { daysBeforeStay: 7, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+            { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, creditFixedFeeCents: 0 },
           ]
       const holdDays = data.nonMemberHoldDays ?? 7
       setDefaultRules(rules)
@@ -286,7 +316,12 @@ export default function BookingPoliciesPage() {
       const res = await fetch("/api/admin/booking-policies/periods")
       if (!res.ok) throw new Error("Failed to fetch periods")
       const data = await res.json()
-      setPeriods(data)
+      setPeriods(
+        data.map((period: BookingPeriod) => ({
+          ...period,
+          cancellationRules: period.cancellationRules.map((rule) => normalizeCancellationRule(rule)),
+        }))
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error")
     } finally {
@@ -356,9 +391,10 @@ export default function BookingPoliciesPage() {
         throw new Error(data.error || "Failed to save")
       }
       const data = await res.json()
-      setDefaultRules(data.rules)
+      const rules = data.rules.map((rule: PolicyRule) => normalizeCancellationRule(rule))
+      setDefaultRules(rules)
       setDefaultHoldDays(data.nonMemberHoldDays)
-      setSavedDefaultRules(data.rules)
+      setSavedDefaultRules(rules)
       setSavedDefaultHoldDays(data.nonMemberHoldDays)
       setEditingDefaults(false)
       setSuccess("Default policy saved")
@@ -379,9 +415,9 @@ export default function BookingPoliciesPage() {
     setPeriodEnd("")
     setPeriodHoldDays(5)
     setPeriodRules([
-      { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0 },
-      { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0 },
-      { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0 },
+      { daysBeforeStay: 21, refundPercentage: 100, creditRefundPercentage: 100, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+      { daysBeforeStay: 14, refundPercentage: 50, creditRefundPercentage: 50, fixedFeeCents: 0, creditFixedFeeCents: 0 },
+      { daysBeforeStay: 0, refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, creditFixedFeeCents: 0 },
     ])
   }
 
@@ -391,7 +427,7 @@ export default function BookingPoliciesPage() {
     setPeriodStart(period.startDate.split("T")[0])
     setPeriodEnd(period.endDate.split("T")[0])
     setPeriodHoldDays(period.nonMemberHoldDays)
-    setPeriodRules(period.cancellationRules)
+    setPeriodRules(period.cancellationRules.map((rule) => normalizeCancellationRule(rule)))
     setShowPeriodForm(true)
   }
 

@@ -1,13 +1,20 @@
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
+import {
+  normalizeCancellationRule,
+  normalizeStoredCancellationRules,
+} from "@/lib/cancellation-rules";
 
 const cancellationRuleSchema = z.object({
   daysBeforeStay: z.number().int().min(0),
   refundPercentage: z.number().int().min(0).max(100),
   creditRefundPercentage: z.number().int().min(0).max(100).optional(),
+  fixedFeeCents: z.number().int().min(0).optional(),
+  creditFixedFeeCents: z.number().int().min(0).optional(),
 });
 
 const updateSchema = z.object({
@@ -39,7 +46,10 @@ export async function GET(
     return NextResponse.json({ error: "Period not found" }, { status: 404 });
   }
 
-  return NextResponse.json(period);
+  return NextResponse.json({
+    ...period,
+    cancellationRules: normalizeStoredCancellationRules(period.cancellationRules),
+  });
 }
 
 export async function PUT(
@@ -86,7 +96,7 @@ export async function PUT(
           nonMemberHoldDays: data.nonMemberHoldDays,
         }),
         ...(data.cancellationRules && {
-          cancellationRules: data.cancellationRules,
+          cancellationRules: data.cancellationRules.map(normalizeCancellationRule) as Prisma.InputJsonValue,
         }),
         ...(data.active !== undefined && { active: data.active }),
       },

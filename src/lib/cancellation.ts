@@ -1,11 +1,7 @@
+import { normalizeCancellationRule, type CancellationRuleLike } from "./cancellation-rules";
 import { prisma } from "./prisma";
 
-export interface CancellationRule {
-  daysBeforeStay: number;
-  refundPercentage: number;
-  creditRefundPercentage?: number; // Typically >= refundPercentage (no Stripe fees)
-  fixedFeeCents: number; // Fixed fee deducted from refund per tier
-}
+export type CancellationRule = CancellationRuleLike;
 
 /**
  * Find the active BookingPeriod that covers a given check-in date, if any.
@@ -47,9 +43,21 @@ export async function getNonMemberHoldDays(checkIn: Date): Promise<number> {
 export function getRefundTier(
   daysUntilCheckIn: number,
   policyRules: CancellationRule[]
-): { refundPercentage: number; creditRefundPercentage: number; fixedFeeCents: number; daysBeforeStay: number } {
+): {
+  refundPercentage: number;
+  creditRefundPercentage: number;
+  fixedFeeCents: number;
+  creditFixedFeeCents: number;
+  daysBeforeStay: number;
+} {
   if (policyRules.length === 0) {
-    return { refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, daysBeforeStay: 0 };
+    return {
+      refundPercentage: 0,
+      creditRefundPercentage: 0,
+      fixedFeeCents: 0,
+      creditFixedFeeCents: 0,
+      daysBeforeStay: 0,
+    };
   }
 
   const sortedRules = [...policyRules].sort(
@@ -58,17 +66,17 @@ export function getRefundTier(
 
   for (const rule of sortedRules) {
     if (daysUntilCheckIn >= rule.daysBeforeStay) {
-      return {
-        refundPercentage: rule.refundPercentage,
-        creditRefundPercentage:
-          rule.creditRefundPercentage ?? rule.refundPercentage,
-        fixedFeeCents: rule.fixedFeeCents ?? 0,
-        daysBeforeStay: rule.daysBeforeStay,
-      };
+      return normalizeCancellationRule(rule);
     }
   }
 
-  return { refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, daysBeforeStay: 0 };
+  return {
+    refundPercentage: 0,
+    creditRefundPercentage: 0,
+    fixedFeeCents: 0,
+    creditFixedFeeCents: 0,
+    daysBeforeStay: 0,
+  };
 }
 
 /**
@@ -92,9 +100,13 @@ export function calculateRefundAmount(
     refundMethod === "credit"
       ? tier.creditRefundPercentage
       : tier.refundPercentage;
+  const fixedFeeCents =
+    refundMethod === "credit"
+      ? tier.creditFixedFeeCents
+      : tier.fixedFeeCents;
   const refundAmountCents = Math.max(
     0,
-    Math.round((paidAmountCents * refundPercentage) / 100) - (tier.fixedFeeCents ?? 0)
+    Math.round((paidAmountCents * refundPercentage) / 100) - fixedFeeCents
   );
   return { refundAmountCents, refundPercentage };
 }
@@ -113,16 +125,15 @@ export function calculateDualRefundAmounts(
   creditRefundPercentage: number;
 } {
   const tier = getRefundTier(daysUntilCheckIn, policyRules);
-  const fixedFee = tier.fixedFeeCents ?? 0;
   return {
     cardRefundAmountCents: Math.max(
       0,
-      Math.round((paidAmountCents * tier.refundPercentage) / 100) - fixedFee
+      Math.round((paidAmountCents * tier.refundPercentage) / 100) - tier.fixedFeeCents
     ),
     cardRefundPercentage: tier.refundPercentage,
     creditRefundAmountCents: Math.max(
       0,
-      Math.round((paidAmountCents * tier.creditRefundPercentage) / 100) - fixedFee
+      Math.round((paidAmountCents * tier.creditRefundPercentage) / 100) - tier.creditFixedFeeCents
     ),
     creditRefundPercentage: tier.creditRefundPercentage,
   };
@@ -152,14 +163,10 @@ export async function loadCancellationPolicy(
         refundPercentage: number;
         creditRefundPercentage?: number;
         fixedFeeCents?: number;
+        creditFixedFeeCents?: number;
       }>;
       return rawRules
-        .map((r) => ({
-          daysBeforeStay: r.daysBeforeStay,
-          refundPercentage: r.refundPercentage,
-          creditRefundPercentage: r.creditRefundPercentage ?? r.refundPercentage,
-          fixedFeeCents: r.fixedFeeCents ?? 0,
-        }))
+        .map(normalizeCancellationRule)
         .sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
     }
   }
@@ -168,12 +175,7 @@ export async function loadCancellationPolicy(
     orderBy: { daysBeforeStay: "desc" },
   });
 
-  return rules.map((r) => ({
-    daysBeforeStay: r.daysBeforeStay,
-    refundPercentage: r.refundPercentage,
-    creditRefundPercentage: r.creditRefundPercentage ?? r.refundPercentage,
-    fixedFeeCents: r.fixedFeeCents ?? 0,
-  }));
+  return rules.map(normalizeCancellationRule);
 }
 
 /**
