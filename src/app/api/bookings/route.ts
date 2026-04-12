@@ -485,6 +485,7 @@ export async function POST(request: NextRequest) {
         seasonId: s.id,
         startDate: s.startDate,
         endDate: s.endDate,
+        type: s.type,
         rates: s.rates.map((r) => ({
           ageTier: r.ageTier,
           isMember: r.isMember,
@@ -772,6 +773,7 @@ export async function POST(request: NextRequest) {
           notes,
           promoCodeStr,
           expectedArrivalTime,
+          groupDiscount,
           isOnBehalf,
           sessionUserId: session!.user.id,
         });
@@ -797,10 +799,22 @@ async function createWaitlistedBooking(params: {
   notes?: string;
   promoCodeStr?: string;
   expectedArrivalTime?: string;
+  groupDiscount?: GroupDiscountConfig;
   isOnBehalf: boolean;
   sessionUserId: string;
 }) {
-  const { effectiveMemberId, checkIn, checkOut, guests, notes, promoCodeStr, expectedArrivalTime, isOnBehalf, sessionUserId } = params;
+  const {
+    effectiveMemberId,
+    checkIn,
+    checkOut,
+    guests,
+    notes,
+    promoCodeStr,
+    expectedArrivalTime,
+    groupDiscount,
+    isOnBehalf,
+    sessionUserId,
+  } = params;
 
   // Calculate pricing (locked in at waitlist time)
   const seasons = await prisma.season.findMany({
@@ -812,6 +826,7 @@ async function createWaitlistedBooking(params: {
     seasonId: s.id,
     startDate: s.startDate,
     endDate: s.endDate,
+    type: s.type,
     rates: s.rates.map((r) => ({
       ageTier: r.ageTier,
       isMember: r.isMember,
@@ -824,7 +839,13 @@ async function createWaitlistedBooking(params: {
     isMember: g.isMember,
   }));
 
-  const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData);
+  const price = calculateBookingPrice(
+    checkIn,
+    checkOut,
+    guestInputs,
+    seasonData,
+    groupDiscount
+  );
 
   let discountCents = 0;
   let promoCodeRecord: { id: string; type: string; valueCents: number | null; percentOff: number | null; freeNights: number | null } | null = null;
@@ -846,7 +867,7 @@ async function createWaitlistedBooking(params: {
       : null;
     const validationError = validatePromoCodeRules(
       promoCode,
-      { memberId: effectiveMemberId },
+      { memberId: effectiveMemberId, bookingCheckIn: checkIn },
       new Date(),
       memberRedemptionCount,
       assignedMemberIds

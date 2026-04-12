@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { calculateBookingPrice, type SeasonRateData, type GroupDiscountConfig } from "@/lib/pricing";
+import {
+  calculateBookingPrice,
+  type GroupDiscountConfig,
+  type SeasonRateData,
+} from "@/lib/pricing";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
@@ -108,7 +112,24 @@ export async function POST(request: NextRequest) {
   try {
     const price = calculateBookingPrice(checkIn, checkOut, guests, seasonData, groupDiscount);
     const availableCreditCents = await getMemberCreditBalance(effectiveMemberId);
-    return NextResponse.json({ ...price, availableCreditCents, groupDiscountApplied: !!groupDiscount && guests.length >= (groupDiscount.minGroupSize) });
+    const groupDiscountApplied =
+      Boolean(groupDiscount) &&
+      guests.length >= (groupDiscount?.minGroupSize ?? Number.MAX_SAFE_INTEGER) &&
+      (
+        !groupDiscount?.summerOnly ||
+        seasonData.some(
+          (season) =>
+            season.type === "SUMMER" &&
+            season.startDate < checkOut &&
+            season.endDate >= checkIn
+        )
+      );
+
+    return NextResponse.json({
+      ...price,
+      availableCreditCents,
+      groupDiscountApplied,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to calculate price";
     return NextResponse.json({ error: message }, { status: 400 });

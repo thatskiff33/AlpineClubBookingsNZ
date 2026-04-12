@@ -1,11 +1,14 @@
+import { AgeTier } from "@prisma/client";
 import { describe, it, expect } from "vitest";
 import {
   isGroupDiscountApplicable,
+  isGroupDiscountAppliedToStay,
   calculateBookingPrice,
   type SeasonRateData,
   type GroupDiscountConfig,
 } from "../pricing";
 import { validatePromoCodeRules } from "../promo";
+import { AGE_TIER_VALUES, ageTierEnum } from "../age-tier-schema";
 import {
   calculateRefundAmount,
   calculateDualRefundAmounts,
@@ -106,6 +109,32 @@ describe("P5.1: Group booking discount", () => {
     });
   });
 
+  describe("isGroupDiscountAppliedToStay", () => {
+    it("returns true when at least one stay night qualifies", () => {
+      expect(
+        isGroupDiscountAppliedToStay(
+          new Date(2026, 11, 10),
+          new Date(2026, 11, 12),
+          5,
+          allSeasons,
+          defaultGroupDiscount
+        )
+      ).toBe(true);
+    });
+
+    it("returns false when no stay nights qualify", () => {
+      expect(
+        isGroupDiscountAppliedToStay(
+          new Date(2026, 6, 10),
+          new Date(2026, 6, 12),
+          5,
+          allSeasons,
+          defaultGroupDiscount
+        )
+      ).toBe(false);
+    });
+  });
+
   describe("calculateBookingPrice with group discount", () => {
     it("charges member rates for all guests when group discount applies in summer", () => {
       const checkIn = new Date(2026, 11, 10); // Dec 10 (summer)
@@ -168,6 +197,16 @@ describe("P5.1: Group booking discount", () => {
       // Winter, summerOnly = true, so non-member rate 6500
       expect(result.totalPriceCents).toBe(6 * 6500);
     });
+  });
+});
+
+describe("shared age tier validation", () => {
+  it("stays aligned with the Prisma AgeTier enum", () => {
+    expect(AGE_TIER_VALUES).toEqual(Object.values(AgeTier));
+
+    for (const ageTier of Object.values(AgeTier)) {
+      expect(ageTierEnum.safeParse(ageTier).success).toBe(true);
+    }
   });
 });
 
