@@ -301,7 +301,7 @@ export default function RegisterPage() {
               className="underline underline-offset-4 hover:text-foreground"
               target="_blank"
             >
-              Terms of Use
+              Terms of Service
             </Link>{" "}
             and{" "}
             <Link
@@ -312,6 +312,16 @@ export default function RegisterPage() {
               Privacy Policy
             </Link>
             .
+          </p>
+
+          <p className="text-sm text-center text-muted-foreground">
+            Already have an account?{" "}
+            <Link
+              href="/login"
+              className="text-foreground font-medium underline-offset-4 hover:underline"
+            >
+              Sign in
+            </Link>
           </p>
         </CardFooter>
       </form>
