@@ -360,6 +360,57 @@ describe("Admin: Create dependent member", () => {
     expect(res.status).toBe(201);
   });
 
+  it("defaults dependent email inheritance to the parent's existing email source", async () => {
+    vi.mocked(auth).mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "parent1",
+      ageTier: "ADULT",
+      inheritEmailFromId: "lead-adult",
+    } as any);
+
+    const txMemberCreate = vi.fn().mockResolvedValue({
+      id: "dep2",
+      firstName: "Child",
+      lastName: "Smith",
+      email: "lead@test.com",
+      role: "MEMBER",
+      ageTier: "CHILD",
+      active: true,
+      canLogin: false,
+      parentMemberId: "parent1",
+      inheritParentEmail: true,
+      inheritEmailFromId: "lead-adult",
+      xeroContactId: null,
+      joinedDate: null,
+      createdAt: new Date(),
+    });
+    vi.mocked(prisma.$transaction).mockImplementation(async (cb: any) => {
+      const tx = {
+        member: { create: txMemberCreate },
+        familyGroupMember: { createMany: vi.fn() },
+      };
+      return cb(tx);
+    });
+
+    const res = await createMember(makePostRequest({
+      email: "lead@test.com",
+      firstName: "Child",
+      lastName: "Smith",
+      dateOfBirth: "2020-06-15",
+      parentMemberId: "parent1",
+      inheritParentEmail: true,
+      canLogin: false,
+    }));
+
+    expect(res.status).toBe(201);
+    expect(txMemberCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        inheritEmailFromId: "lead-adult",
+      }),
+    }));
+  });
+
   it("rejects dependent creation under non-adult parent", async () => {
     vi.mocked(auth).mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ id: "youth1", ageTier: "YOUTH" } as any);

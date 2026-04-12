@@ -245,10 +245,12 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const openDependentDialog = () => {
     if (!member) return
 
+    const inheritedEmailAddress = member.inheritEmailFrom?.email || member.email
+
     setDependentForm({
       firstName: "",
       lastName: member.lastName,
-      email: member.email,
+      email: inheritedEmailAddress,
       dateOfBirth: "",
       phoneCountryCode: member.phoneCountryCode || "",
       phoneAreaCode: member.phoneAreaCode || "",
@@ -334,6 +336,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const handleCreateDependent = async () => {
     if (!member) return
 
+    const inheritedEmailSourceId = member.inheritEmailFromId || member.id
+
     setDependentSaving(true)
     setDependentFormError("")
 
@@ -355,7 +359,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           canLogin: false,
           parentMemberId: member.id,
           inheritParentEmail: true,
-          inheritEmailFromId: member.id,
+          inheritEmailFromId: inheritedEmailSourceId,
           streetAddressLine1: dependentForm.streetAddressLine1 || null,
           streetAddressLine2: dependentForm.streetAddressLine2 || null,
           streetCity: dependentForm.streetCity || null,
