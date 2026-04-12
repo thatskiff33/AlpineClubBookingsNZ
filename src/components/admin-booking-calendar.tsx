@@ -73,7 +73,9 @@ export function AdminBookingCalendar() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ calendarMonth: monthKey });
-      if (statusParam && statusParam !== "all") params.set("status", statusParam);
+      // Always pass status=all so the API returns every status (including CANCELLED);
+      // the calendar's client-side toggle buttons handle visibility filtering.
+      params.set("status", statusParam && statusParam !== "all" ? statusParam : "all");
       const res = await fetch(`/api/admin/bookings?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
