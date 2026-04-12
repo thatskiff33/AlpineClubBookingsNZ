@@ -189,6 +189,7 @@ model Member {
   deletionRequests           DeletionRequest[]
   credits                    MemberCredit[]
   bookingsCreatedOnBehalf    Booking[]       @relation("BookingsCreatedBy")
+  refundRequests             RefundRequest[]
 
   @@index([email])
   @@index([xeroContactId])
@@ -335,6 +336,7 @@ model Booking {
   modifications    BookingModification[]
   creditsFromCancellation MemberCredit[] @relation("CreditSource")
   creditsApplied          MemberCredit[] @relation("CreditApplied")
+  refundRequests          RefundRequest[]
 
   @@index([memberId])
   @@index([checkIn, checkOut])
@@ -418,6 +420,8 @@ model PromoCode {
   currentRedemptions  Int           @default(0)
   validFrom           DateTime?
   validUntil          DateTime?
+  bookingStartFrom    DateTime?     // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
+  bookingStartUntil   DateTime?     // Gate by booking CHECK-IN date (separate from validFrom/validUntil)
   membersOnly         Boolean       @default(false)
   singleUse           Boolean       @default(false)
   active              Boolean       @default(true)
@@ -525,6 +529,7 @@ model CancellationPolicy {
   daysBeforeStay          Int
   refundPercentage        Int      // Card refund percentage
   creditRefundPercentage  Int?     // Credit refund percentage (null = same as refundPercentage)
+  fixedFeeCents           Int      @default(0) // Fixed fee deducted from refund per tier
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
@@ -717,8 +722,9 @@ model NotificationPreference {
   adminXeroSyncError   Boolean  @default(true)
   adminCapacityWarning Boolean  @default(true)
   adminDailyDigest     Boolean  @default(true)
-  adminWaitlistOffer          Boolean  @default(true)
-  adminFamilyGroupRequest     Boolean  @default(true)
+  adminWaitlistOffer   Boolean  @default(true)
+  adminFamilyGroupRequest Boolean @default(true)
+  adminRefundRequest   Boolean  @default(true)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -924,6 +930,51 @@ model MemberCredit {
   @@index([memberId])
   @@index([sourceBookingId])
   @@index([appliedToBookingId])
+}
+
+// ---------------------------------------------------------------------------
+// Group Discount Settings (P5.1)
+// ---------------------------------------------------------------------------
+
+model GroupDiscountSetting {
+  id           String   @id @default("default")
+  minGroupSize Int      @default(5)
+  summerOnly   Boolean  @default(true)
+  enabled      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Refund Requests / Appeals (P5.4)
+// ---------------------------------------------------------------------------
+
+enum RefundRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model RefundRequest {
+  id                   String              @id @default(cuid())
+  bookingId            String
+  memberId             String
+  reason               String
+  requestedAmountCents Int?
+  status               RefundRequestStatus @default(PENDING)
+  adminNotes           String?
+  approvedAmountCents  Int?
+  reviewedBy           String?
+  reviewedAt           DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  member  Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([memberId])
+  @@index([status])
 }
 
 // ---------------------------------------------------------------------------

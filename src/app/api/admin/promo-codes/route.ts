@@ -15,6 +15,8 @@ const promoCodeSchema = z.object({
   maxRedemptions: z.number().int().min(1).optional().nullable(),
   validFrom: z.string().optional().nullable(),
   validUntil: z.string().optional().nullable(),
+  bookingStartFrom: z.string().optional().nullable(),
+  bookingStartUntil: z.string().optional().nullable(),
   membersOnly: z.boolean().default(false),
   singleUse: z.boolean().default(false),
   active: z.boolean().default(true),
@@ -101,6 +103,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (
+    data.bookingStartFrom &&
+    data.bookingStartUntil &&
+    new Date(data.bookingStartUntil) <= new Date(data.bookingStartFrom)
+  ) {
+    return NextResponse.json(
+      { error: "Booking check-in until must be after booking check-in from" },
+      { status: 400 }
+    );
+  }
+
   // Check for duplicate code
   const existing = await prisma.promoCode.findUnique({
     where: { code: data.code },
@@ -124,6 +137,8 @@ export async function POST(req: NextRequest) {
         maxRedemptions: data.maxRedemptions || null,
         validFrom: data.validFrom ? new Date(data.validFrom) : null,
         validUntil: data.validUntil ? new Date(data.validUntil) : null,
+        bookingStartFrom: data.bookingStartFrom ? new Date(data.bookingStartFrom) : null,
+        bookingStartUntil: data.bookingStartUntil ? new Date(data.bookingStartUntil) : null,
         membersOnly: data.membersOnly,
         singleUse: data.singleUse,
         active: data.active,

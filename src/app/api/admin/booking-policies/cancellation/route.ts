@@ -11,6 +11,7 @@ const policySchema = z.object({
       daysBeforeStay: z.number().int().min(0),
       refundPercentage: z.number().int().min(0).max(100),
       creditRefundPercentage: z.number().int().min(0).max(100).optional(),
+      fixedFeeCents: z.number().int().min(0).optional(),
     })
   ).min(1, "At least one rule is required"),
   nonMemberHoldDays: z.number().int().min(1).max(30).optional(),
@@ -80,6 +81,7 @@ export async function PUT(req: NextRequest) {
         daysBeforeStay: rule.daysBeforeStay,
         refundPercentage: rule.refundPercentage,
         creditRefundPercentage: rule.creditRefundPercentage ?? rule.refundPercentage,
+        fixedFeeCents: rule.fixedFeeCents ?? 0,
       })),
     })
 

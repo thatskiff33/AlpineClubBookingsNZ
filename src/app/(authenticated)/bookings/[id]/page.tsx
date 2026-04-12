@@ -15,6 +15,7 @@ import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { canModifyBookingStatus } from "@/lib/booking-modify-permissions";
+import { RefundAppealButton } from "@/components/refund-appeal-button";
 
 export default async function BookingDetailPage({
   params,
@@ -234,6 +235,18 @@ export default async function BookingDetailPage({
       {canCancel && (
         <CancelBookingButton bookingId={booking.id} />
       )}
+
+      {booking.status === "CANCELLED" &&
+        booking.payment &&
+        booking.payment.status !== "REFUNDED" &&
+        booking.payment.amountCents - booking.payment.refundedAmountCents > 0 && (
+          <RefundAppealButton
+            bookingId={booking.id}
+            maxRefundableCents={
+              booking.payment.amountCents - booking.payment.refundedAmountCents
+            }
+          />
+        )}
 
       <Card>
         <CardHeader>

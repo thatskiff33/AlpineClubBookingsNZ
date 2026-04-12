@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { AGE_TIER_VALUES, ageTierEnum } from "@/lib/age-tier-schema";
+import { AgeTier } from "@prisma/client";
 import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";
-import { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -34,7 +35,7 @@ const createMemberSchema = z.object({
     .optional()
     .nullable(),
   role: z.enum(["MEMBER", "ADMIN"]).default("MEMBER"),
-  ageTier: z.enum(["ADULT", "YOUTH", "CHILD", "INFANT"]).optional(),
+  ageTier: ageTierEnum.optional(),
   active: z.boolean().default(true),
   sendInvite: z.boolean().default(false),
   canLogin: z.boolean().optional(),
@@ -150,7 +151,10 @@ export async function GET(req: NextRequest) {
 
   // Filter: ageTier
   const ageTierFilter = sp.get("ageTier");
-  if (ageTierFilter && ["ADULT", "YOUTH", "CHILD", "INFANT"].includes(ageTierFilter)) {
+  if (
+    ageTierFilter &&
+    AGE_TIER_VALUES.includes(ageTierFilter as (typeof AGE_TIER_VALUES)[number])
+  ) {
     andConditions.push({ ageTier: ageTierFilter });
   }
 
@@ -405,7 +409,6 @@ export async function POST(req: NextRequest) {
     (data.inheritParentEmail && parentMember
       ? parentMember.inheritEmailFromId || parentMember.id
       : null);
-
   // Determine age tier from DOB if provided, otherwise use explicit value or default
   let ageTier = data.ageTier || "ADULT";
   let dateOfBirth: Date | null = null;

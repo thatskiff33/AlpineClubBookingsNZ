@@ -46,29 +46,16 @@ export const STREET_TO_POSTAL_FIELD_MAP: Record<
   streetCountry: "postalCountry",
 };
 
-export function withDefaultNzCountry(value: AddressValue) {
-  return normalizeAddressValue(value) || NZ_COUNTRY_CODE;
-}
-
 export function normalizeAddressValue(value: AddressValue) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function pickStreetAddressValues<T>(
-  values: StreetAddressValues<T> & Partial<PostalAddressValues<T>>,
-) {
-  return {
-    streetAddressLine1: values.streetAddressLine1,
-    streetAddressLine2: values.streetAddressLine2,
-    streetCity: values.streetCity,
-    streetRegion: values.streetRegion,
-    streetPostalCode: values.streetPostalCode,
-    streetCountry: values.streetCountry,
-  };
+export function withDefaultNzCountry(value: AddressValue) {
+  return normalizeAddressValue(value) || NZ_COUNTRY_CODE;
 }
 
 export function copyStreetAddressToPostal<T>(
-  values: StreetAddressValues<T>,
+  values: StreetAddressValues<T>
 ): PostalAddressValues<T> {
   return {
     postalAddressLine1: values.streetAddressLine1,
@@ -81,7 +68,7 @@ export function copyStreetAddressToPostal<T>(
 }
 
 export function postalMatchesPhysical(
-  values: Partial<Record<MemberAddressField, AddressValue>>,
+  values: Partial<Record<MemberAddressField, AddressValue>>
 ) {
   return STREET_ADDRESS_FIELDS.every((streetField) => {
     const postalField = STREET_TO_POSTAL_FIELD_MAP[streetField];
@@ -90,4 +77,17 @@ export function postalMatchesPhysical(
       normalizeAddressValue(values[postalField])
     );
   });
+}
+
+export function pickStreetAddressValues<T>(
+  values: StreetAddressValues<T> & Partial<PostalAddressValues<T>>
+) {
+  return {
+    streetAddressLine1: values.streetAddressLine1,
+    streetAddressLine2: values.streetAddressLine2,
+    streetCity: values.streetCity,
+    streetRegion: values.streetRegion,
+    streetPostalCode: values.streetPostalCode,
+    streetCountry: values.streetCountry,
+  };
 }

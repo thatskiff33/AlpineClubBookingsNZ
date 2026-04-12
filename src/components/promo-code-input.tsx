@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,6 +21,7 @@ interface PromoCodeInputProps {
   onPromoApplied: (result: PromoResult | null) => void;
   appliedPromo: PromoResult | null;
   forMemberId?: string;
+  prefillCode?: string;
 }
 
 export function PromoCodeInput({
@@ -30,10 +31,17 @@ export function PromoCodeInput({
   onPromoApplied,
   appliedPromo,
   forMemberId,
+  prefillCode,
 }: PromoCodeInputProps) {
   const [code, setCode] = useState(appliedPromo?.code || "");
   const [validating, setValidating] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (prefillCode && !appliedPromo) {
+      setCode(prefillCode);
+    }
+  }, [prefillCode, appliedPromo]);
 
   async function handleApply() {
     if (!code.trim()) {

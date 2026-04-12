@@ -4,6 +4,7 @@ export interface CancellationRule {
   daysBeforeStay: number;
   refundPercentage: number;
   creditRefundPercentage?: number; // Typically >= refundPercentage (no Stripe fees)
+  fixedFeeCents: number; // Fixed fee deducted from refund per tier
 }
 
 /**
@@ -46,9 +47,9 @@ export async function getNonMemberHoldDays(checkIn: Date): Promise<number> {
 export function getRefundTier(
   daysUntilCheckIn: number,
   policyRules: CancellationRule[]
-): { refundPercentage: number; creditRefundPercentage: number; daysBeforeStay: number } {
+): { refundPercentage: number; creditRefundPercentage: number; fixedFeeCents: number; daysBeforeStay: number } {
   if (policyRules.length === 0) {
-    return { refundPercentage: 0, creditRefundPercentage: 0, daysBeforeStay: 0 };
+    return { refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, daysBeforeStay: 0 };
   }
 
   const sortedRules = [...policyRules].sort(
@@ -61,12 +62,13 @@ export function getRefundTier(
         refundPercentage: rule.refundPercentage,
         creditRefundPercentage:
           rule.creditRefundPercentage ?? rule.refundPercentage,
+        fixedFeeCents: rule.fixedFeeCents ?? 0,
         daysBeforeStay: rule.daysBeforeStay,
       };
     }
   }
 
-  return { refundPercentage: 0, creditRefundPercentage: 0, daysBeforeStay: 0 };
+  return { refundPercentage: 0, creditRefundPercentage: 0, fixedFeeCents: 0, daysBeforeStay: 0 };
 }
 
 /**
@@ -90,8 +92,9 @@ export function calculateRefundAmount(
     refundMethod === "credit"
       ? tier.creditRefundPercentage
       : tier.refundPercentage;
-  const refundAmountCents = Math.round(
-    (paidAmountCents * refundPercentage) / 100
+  const refundAmountCents = Math.max(
+    0,
+    Math.round((paidAmountCents * refundPercentage) / 100) - (tier.fixedFeeCents ?? 0)
   );
   return { refundAmountCents, refundPercentage };
 }
@@ -110,13 +113,16 @@ export function calculateDualRefundAmounts(
   creditRefundPercentage: number;
 } {
   const tier = getRefundTier(daysUntilCheckIn, policyRules);
+  const fixedFee = tier.fixedFeeCents ?? 0;
   return {
-    cardRefundAmountCents: Math.round(
-      (paidAmountCents * tier.refundPercentage) / 100
+    cardRefundAmountCents: Math.max(
+      0,
+      Math.round((paidAmountCents * tier.refundPercentage) / 100) - fixedFee
     ),
     cardRefundPercentage: tier.refundPercentage,
-    creditRefundAmountCents: Math.round(
-      (paidAmountCents * tier.creditRefundPercentage) / 100
+    creditRefundAmountCents: Math.max(
+      0,
+      Math.round((paidAmountCents * tier.creditRefundPercentage) / 100) - fixedFee
     ),
     creditRefundPercentage: tier.creditRefundPercentage,
   };
@@ -145,12 +151,14 @@ export async function loadCancellationPolicy(
         daysBeforeStay: number;
         refundPercentage: number;
         creditRefundPercentage?: number;
+        fixedFeeCents?: number;
       }>;
       return rawRules
         .map((r) => ({
           daysBeforeStay: r.daysBeforeStay,
           refundPercentage: r.refundPercentage,
           creditRefundPercentage: r.creditRefundPercentage ?? r.refundPercentage,
+          fixedFeeCents: r.fixedFeeCents ?? 0,
         }))
         .sort((a, b) => b.daysBeforeStay - a.daysBeforeStay);
     }
@@ -164,6 +172,7 @@ export async function loadCancellationPolicy(
     daysBeforeStay: r.daysBeforeStay,
     refundPercentage: r.refundPercentage,
     creditRefundPercentage: r.creditRefundPercentage ?? r.refundPercentage,
+    fixedFeeCents: r.fixedFeeCents ?? 0,
   }));
 }
 

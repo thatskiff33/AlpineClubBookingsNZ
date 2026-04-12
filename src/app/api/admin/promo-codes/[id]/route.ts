@@ -15,6 +15,8 @@ const updatePromoCodeSchema = z.object({
   maxRedemptions: z.number().int().min(1).optional().nullable(),
   validFrom: z.string().optional().nullable(),
   validUntil: z.string().optional().nullable(),
+  bookingStartFrom: z.string().optional().nullable(),
+  bookingStartUntil: z.string().optional().nullable(),
   membersOnly: z.boolean().optional(),
   singleUse: z.boolean().optional(),
   active: z.boolean().optional(),
@@ -136,6 +138,26 @@ export async function PUT(
     );
   }
 
+  const effectiveBookingStartFrom =
+    data.bookingStartFrom !== undefined
+      ? data.bookingStartFrom
+      : existing.bookingStartFrom?.toISOString() ?? null;
+  const effectiveBookingStartUntil =
+    data.bookingStartUntil !== undefined
+      ? data.bookingStartUntil
+      : existing.bookingStartUntil?.toISOString() ?? null;
+
+  if (
+    effectiveBookingStartFrom &&
+    effectiveBookingStartUntil &&
+    new Date(effectiveBookingStartUntil) <= new Date(effectiveBookingStartFrom)
+  ) {
+    return NextResponse.json(
+      { error: "Booking check-in until must be after booking check-in from" },
+      { status: 400 }
+    );
+  }
+
   const updated = await prisma.$transaction(async (tx) => {
     await tx.promoCode.update({
       where: { id },
@@ -158,6 +180,12 @@ export async function PUT(
         }),
         ...(data.validUntil !== undefined && {
           validUntil: data.validUntil ? new Date(data.validUntil) : null,
+        }),
+        ...(data.bookingStartFrom !== undefined && {
+          bookingStartFrom: data.bookingStartFrom ? new Date(data.bookingStartFrom) : null,
+        }),
+        ...(data.bookingStartUntil !== undefined && {
+          bookingStartUntil: data.bookingStartUntil ? new Date(data.bookingStartUntil) : null,
         }),
         ...(data.membersOnly !== undefined && { membersOnly: data.membersOnly }),
         ...(data.singleUse !== undefined && { singleUse: data.singleUse }),

@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { calculateBookingPrice, calculatePromoDiscount, type SeasonRateData } from "@/lib/pricing";
+import {
+  calculateBookingPrice,
+  calculatePromoDiscount,
+  type GroupDiscountConfig,
+  type SeasonRateData,
+} from "@/lib/pricing";
 import { validatePromoCodeRules } from "@/lib/promo";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
@@ -77,7 +82,7 @@ export async function POST(req: NextRequest) {
 
   const validationError = validatePromoCodeRules(
     promoCode,
-    { memberId: effectiveMemberId },
+    { memberId: effectiveMemberId, bookingCheckIn: checkIn },
     new Date(),
     memberRedemptionCount,
     assignedMemberIds
@@ -101,6 +106,7 @@ export async function POST(req: NextRequest) {
     seasonId: s.id,
     startDate: s.startDate,
     endDate: s.endDate,
+    type: s.type,
     rates: s.rates.map((r) => ({
       ageTier: r.ageTier,
       isMember: r.isMember,
@@ -108,8 +114,26 @@ export async function POST(req: NextRequest) {
     })),
   }));
 
+  let groupDiscount: GroupDiscountConfig | undefined;
+  const gds = await prisma.groupDiscountSetting.findUnique({
+    where: { id: "default" },
+  });
+  if (gds?.enabled) {
+    groupDiscount = {
+      minGroupSize: gds.minGroupSize,
+      summerOnly: gds.summerOnly,
+      enabled: true,
+    };
+  }
+
   try {
-    const price = calculateBookingPrice(checkIn, checkOut, guests, seasonData);
+    const price = calculateBookingPrice(
+      checkIn,
+      checkOut,
+      guests,
+      seasonData,
+      groupDiscount
+    );
 
     // Collect all per-night rates across all guests for FREE_NIGHTS
     const allPerNightRates = price.guests.flatMap((g) => g.perNightCents);
