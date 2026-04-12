@@ -78,3 +78,16 @@ export function postalMatchesPhysical(
     );
   });
 }
+
+export function pickStreetAddressValues<T>(
+  values: StreetAddressValues<T> & Partial<PostalAddressValues<T>>
+) {
+  return {
+    streetAddressLine1: values.streetAddressLine1,
+    streetAddressLine2: values.streetAddressLine2,
+    streetCity: values.streetCity,
+    streetRegion: values.streetRegion,
+    streetPostalCode: values.streetPostalCode,
+    streetCountry: values.streetCountry,
+  };
+}

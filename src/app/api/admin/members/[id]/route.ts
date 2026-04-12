@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { ageTierEnum } from "@/lib/age-tier-schema";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -35,7 +34,7 @@ const updateMemberSchema = z.object({
     .nullable()
     .or(z.literal("")),
   role: z.enum(["MEMBER", "ADMIN"]).optional(),
-  ageTier: ageTierEnum.optional(),
+  ageTier: z.enum(["ADULT", "YOUTH", "CHILD", "INFANT"]).optional(),
   active: z.boolean().optional(),
   canLogin: z.boolean().optional(),
   forcePasswordChange: z.boolean().optional(),

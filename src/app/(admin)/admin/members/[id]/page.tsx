@@ -3,6 +3,7 @@
 import { useEffect, useState, use } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
+import { MemberAddressFields } from "@/components/member-address-fields"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -12,6 +13,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ArrowLeft, ExternalLink, User, Calendar, CreditCard, Clock, Pencil, Search, Link2, Plus } from "lucide-react"
+import {
+  NZ_COUNTRY_CODE,
+  postalMatchesPhysical,
+  withDefaultNzCountry,
+  type MemberAddressValues,
+} from "@/lib/member-address"
 import { bookingStatusClass, subscriptionStatusClass } from "@/lib/status-colors"
 
 interface XeroSearchResult {
@@ -33,6 +40,7 @@ interface MemberDetail {
   bookings: Array<{ id: string; checkIn: string; checkOut: string; status: string; finalPriceCents: number; _count: { guests: number } }>
   auditLogs: Array<{ id: string; action: string; details: string | null; createdAt: string }>
   stats: { totalBookings: number; totalSpendCents: number; lastStay: string | null }
+  dependents: Array<{ id: string; firstName: string; lastName: string; ageTier: string; active: boolean; dateOfBirth: string | null; canLogin: boolean }>
   streetAddressLine1: string | null; streetAddressLine2: string | null; streetCity: string | null
   streetRegion: string | null; streetPostalCode: string | null; streetCountry: string | null
   postalAddressLine1: string | null; postalAddressLine2: string | null; postalCity: string | null
@@ -60,6 +68,50 @@ interface EditForm {
   postalRegion: string; postalPostalCode: string; postalCountry: string
 }
 
+interface DependentForm extends MemberAddressValues {
+  firstName: string
+  lastName: string
+  email: string
+  dateOfBirth: string
+  phoneCountryCode: string
+  phoneAreaCode: string
+  phoneNumber: string
+}
+
+function memberUsesSamePostalAddress(member: Pick<MemberDetail, keyof MemberAddressValues>) {
+  const postalHasValues = [
+    member.postalAddressLine1,
+    member.postalAddressLine2,
+    member.postalCity,
+    member.postalRegion,
+    member.postalPostalCode,
+    member.postalCountry,
+  ].some((value) => value?.trim())
+
+  if (!postalHasValues) {
+    return Boolean(
+      member.streetAddressLine1?.trim() ||
+      member.streetCity?.trim() ||
+      member.streetPostalCode?.trim(),
+    )
+  }
+
+  return postalMatchesPhysical({
+    streetAddressLine1: member.streetAddressLine1,
+    streetAddressLine2: member.streetAddressLine2,
+    streetCity: member.streetCity,
+    streetRegion: member.streetRegion,
+    streetPostalCode: member.streetPostalCode,
+    streetCountry: withDefaultNzCountry(member.streetCountry),
+    postalAddressLine1: member.postalAddressLine1,
+    postalAddressLine2: member.postalAddressLine2,
+    postalCity: member.postalCity,
+    postalRegion: member.postalRegion,
+    postalPostalCode: member.postalPostalCode,
+    postalCountry: withDefaultNzCountry(member.postalCountry),
+  })
+}
+
 export default function MemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
@@ -71,8 +123,14 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [xeroError, setXeroError] = useState("")
   const [editOpen, setEditOpen] = useState(false)
   const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", role: "MEMBER", active: true, forcePasswordChange: false, inheritEmailFromId: null, streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: "", postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: "" })
+  const [editPostalSameAsPhysical, setEditPostalSameAsPhysical] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState("")
+  const [dependentOpen, setDependentOpen] = useState(false)
+  const [dependentForm, setDependentForm] = useState<DependentForm>({ firstName: "", lastName: "", email: "", dateOfBirth: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: NZ_COUNTRY_CODE, postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: NZ_COUNTRY_CODE })
+  const [dependentPostalSameAsPhysical, setDependentPostalSameAsPhysical] = useState(false)
+  const [dependentSaving, setDependentSaving] = useState(false)
+  const [dependentFormError, setDependentFormError] = useState("")
   // Account credit state
   const [creditBalance, setCreditBalance] = useState<number>(0)
   const [creditHistory, setCreditHistory] = useState<CreditHistoryItem[]>([])
@@ -91,6 +149,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [xeroSearching, setXeroSearching] = useState(false)
   const [xeroLinking, setXeroLinking] = useState(false)
   const [xeroPushing, setXeroPushing] = useState(false)
+  const isAdultMember = member?.ageTier === "ADULT"
 
   const fetchMember = async () => {
     try {
@@ -157,16 +216,74 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       streetCity: member.streetCity || "",
       streetRegion: member.streetRegion || "",
       streetPostalCode: member.streetPostalCode || "",
-      streetCountry: member.streetCountry || "",
+      streetCountry: withDefaultNzCountry(member.streetCountry),
       postalAddressLine1: member.postalAddressLine1 || "",
       postalAddressLine2: member.postalAddressLine2 || "",
       postalCity: member.postalCity || "",
       postalRegion: member.postalRegion || "",
       postalPostalCode: member.postalPostalCode || "",
-      postalCountry: member.postalCountry || "",
+      postalCountry: withDefaultNzCountry(member.postalCountry),
     })
+    setEditPostalSameAsPhysical(memberUsesSamePostalAddress({
+      streetAddressLine1: member.streetAddressLine1,
+      streetAddressLine2: member.streetAddressLine2,
+      streetCity: member.streetCity,
+      streetRegion: member.streetRegion,
+      streetPostalCode: member.streetPostalCode,
+      streetCountry: member.streetCountry,
+      postalAddressLine1: member.postalAddressLine1,
+      postalAddressLine2: member.postalAddressLine2,
+      postalCity: member.postalCity,
+      postalRegion: member.postalRegion,
+      postalPostalCode: member.postalPostalCode,
+      postalCountry: member.postalCountry,
+    } as Pick<MemberDetail, keyof MemberAddressValues>))
     setFormError("")
     setEditOpen(true)
+  }
+
+  const openDependentDialog = () => {
+    if (!member) return
+
+    const inheritedEmailAddress = member.inheritEmailFrom?.email || member.email
+
+    setDependentForm({
+      firstName: "",
+      lastName: member.lastName,
+      email: inheritedEmailAddress,
+      dateOfBirth: "",
+      phoneCountryCode: member.phoneCountryCode || "",
+      phoneAreaCode: member.phoneAreaCode || "",
+      phoneNumber: member.phoneNumber || "",
+      streetAddressLine1: member.streetAddressLine1 || "",
+      streetAddressLine2: member.streetAddressLine2 || "",
+      streetCity: member.streetCity || "",
+      streetRegion: member.streetRegion || "",
+      streetPostalCode: member.streetPostalCode || "",
+      streetCountry: withDefaultNzCountry(member.streetCountry),
+      postalAddressLine1: member.postalAddressLine1 || "",
+      postalAddressLine2: member.postalAddressLine2 || "",
+      postalCity: member.postalCity || "",
+      postalRegion: member.postalRegion || "",
+      postalPostalCode: member.postalPostalCode || "",
+      postalCountry: withDefaultNzCountry(member.postalCountry),
+    })
+    setDependentPostalSameAsPhysical(memberUsesSamePostalAddress({
+      streetAddressLine1: member.streetAddressLine1,
+      streetAddressLine2: member.streetAddressLine2,
+      streetCity: member.streetCity,
+      streetRegion: member.streetRegion,
+      streetPostalCode: member.streetPostalCode,
+      streetCountry: member.streetCountry,
+      postalAddressLine1: member.postalAddressLine1,
+      postalAddressLine2: member.postalAddressLine2,
+      postalCity: member.postalCity,
+      postalRegion: member.postalRegion,
+      postalPostalCode: member.postalPostalCode,
+      postalCountry: member.postalCountry,
+    } as Pick<MemberDetail, keyof MemberAddressValues>))
+    setDependentFormError("")
+    setDependentOpen(true)
   }
 
   const handleSave = async () => {
@@ -199,6 +316,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           postalRegion: form.postalRegion || null,
           postalPostalCode: form.postalPostalCode || null,
           postalCountry: form.postalCountry || null,
+          postalSameAsPhysical: editPostalSameAsPhysical,
         }),
       })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Save failed") }
@@ -209,6 +327,74 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       await fetchMember()
     } catch (err) { setFormError(err instanceof Error ? err.message : "Save failed") }
     finally { setSaving(false) }
+  }
+
+  const updateEditAddressFields = (patch: Partial<MemberAddressValues>) => {
+    setForm((current) => ({ ...current, ...patch }))
+  }
+
+  const handleCreateDependent = async () => {
+    if (!member) return
+
+    const inheritedEmailSourceId = member.inheritEmailFromId || member.id
+
+    setDependentSaving(true)
+    setDependentFormError("")
+
+    try {
+      const res = await fetch("/api/admin/members", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: dependentForm.firstName,
+          lastName: dependentForm.lastName,
+          email: dependentForm.email,
+          dateOfBirth: dependentForm.dateOfBirth || null,
+          phoneCountryCode: dependentForm.phoneCountryCode || null,
+          phoneAreaCode: dependentForm.phoneAreaCode || null,
+          phoneNumber: dependentForm.phoneNumber || null,
+          role: "MEMBER",
+          ageTier: "CHILD",
+          active: true,
+          canLogin: false,
+          parentMemberId: member.id,
+          inheritParentEmail: true,
+          inheritEmailFromId: inheritedEmailSourceId,
+          streetAddressLine1: dependentForm.streetAddressLine1 || null,
+          streetAddressLine2: dependentForm.streetAddressLine2 || null,
+          streetCity: dependentForm.streetCity || null,
+          streetRegion: dependentForm.streetRegion || null,
+          streetPostalCode: dependentForm.streetPostalCode || null,
+          streetCountry: dependentForm.streetCountry || null,
+          postalAddressLine1: dependentForm.postalAddressLine1 || null,
+          postalAddressLine2: dependentForm.postalAddressLine2 || null,
+          postalCity: dependentForm.postalCity || null,
+          postalRegion: dependentForm.postalRegion || null,
+          postalPostalCode: dependentForm.postalPostalCode || null,
+          postalCountry: dependentForm.postalCountry || null,
+          postalSameAsPhysical: dependentPostalSameAsPhysical,
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to create dependent")
+      }
+
+      setDependentOpen(false)
+      setSuccess("Dependent created successfully")
+      setTimeout(() => setSuccess(""), 3000)
+      setLoading(true)
+      await fetchMember()
+    } catch (err) {
+      setDependentFormError(err instanceof Error ? err.message : "Failed to create dependent")
+    } finally {
+      setDependentSaving(false)
+    }
+  }
+
+  const updateDependentAddressFields = (patch: Partial<MemberAddressValues>) => {
+    setDependentForm((current) => ({ ...current, ...patch }))
   }
 
   const handleXeroSearch = async () => {
@@ -289,6 +475,12 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             </div>
           </div>
           <div className="flex gap-2 shrink-0 flex-wrap">
+            {isAdultMember && (
+              <Button variant="outline" size="sm" onClick={openDependentDialog}>
+                <Plus className="h-4 w-4 mr-1" />
+                Add Dependent
+              </Button>
+            )}
             {member.xeroContactId ? (
               <a href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`} target="_blank" rel="noopener noreferrer">
                 <Button variant="outline" size="sm"><ExternalLink className="h-4 w-4 mr-1" />View in Xero</Button>
@@ -345,6 +537,81 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           </dd>
         </div>
       </dl></CardContent></Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base font-medium">Dependents</CardTitle>
+          {isAdultMember && (
+            <Button variant="outline" size="sm" onClick={openDependentDialog}>
+              <Plus className="h-4 w-4 mr-1" />
+              Add Dependent
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent>
+          {member.dependents.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {isAdultMember
+                ? "No dependents linked to this member yet."
+                : "Only adult members can manage dependents."}
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Age Tier</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Date of Birth</TableHead>
+                  <TableHead>Login</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {member.dependents.map((dependent) => (
+                  <TableRow key={dependent.id}>
+                    <TableCell className="font-medium">
+                      {dependent.firstName} {dependent.lastName}
+                    </TableCell>
+                    <TableCell>
+                      {dependent.ageTier.charAt(0) + dependent.ageTier.slice(1).toLowerCase()}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={dependent.active ? "default" : "destructive"}
+                        className={dependent.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}
+                      >
+                        {dependent.active ? "Active" : "Inactive"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{dependent.dateOfBirth ? fmtDate(dependent.dateOfBirth) : "-"}</TableCell>
+                    <TableCell>
+                      {dependent.canLogin ? (
+                        <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
+                          Can Login
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">
+                          Non-Login
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push(`/admin/members/${dependent.id}`)}
+                      >
+                        View
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       <Card><CardHeader><CardTitle className="text-base font-medium">Subscription History</CardTitle></CardHeader><CardContent>
         {member.subscriptions.length === 0 ? <p className="text-sm text-slate-500">No subscription records</p> : (
@@ -441,8 +708,91 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         </DialogContent>
       </Dialog>
 
+      <Dialog open={dependentOpen} onOpenChange={setDependentOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add Dependent</DialogTitle>
+            <DialogDescription>
+              Create a dependent managed under {member.firstName} {member.lastName}. Phone and address default from the parent and can be adjusted before saving.
+            </DialogDescription>
+          </DialogHeader>
+          {dependentFormError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{dependentFormError}</div>}
+          <div className="grid gap-4 py-2">
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              This dependent will be created as a non-login member and inherit notifications from the parent email.
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="dependent-firstName">First Name *</Label>
+                <Input
+                  id="dependent-firstName"
+                  value={dependentForm.firstName}
+                  onChange={e => setDependentForm(f => ({ ...f, firstName: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="dependent-lastName">Last Name *</Label>
+                <Input
+                  id="dependent-lastName"
+                  value={dependentForm.lastName}
+                  onChange={e => setDependentForm(f => ({ ...f, lastName: e.target.value }))}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="dependent-email">Email *</Label>
+              <Input
+                id="dependent-email"
+                type="email"
+                value={dependentForm.email}
+                onChange={e => setDependentForm(f => ({ ...f, email: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                This can match the parent email. Delivery will still be controlled by the inherited-email settings.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="dependent-dateOfBirth">Date of Birth *</Label>
+              <Input
+                id="dependent-dateOfBirth"
+                type="date"
+                value={dependentForm.dateOfBirth}
+                onChange={e => setDependentForm(f => ({ ...f, dateOfBirth: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">Age tier will be calculated automatically from date of birth.</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Phone</Label>
+              <div className="flex gap-2">
+                <Input className="w-20" placeholder="64" value={dependentForm.phoneCountryCode} onChange={e => setDependentForm(f => ({ ...f, phoneCountryCode: e.target.value }))} maxLength={5} aria-label="Country code" />
+                <Input className="w-20" placeholder="27" value={dependentForm.phoneAreaCode} onChange={e => setDependentForm(f => ({ ...f, phoneAreaCode: e.target.value }))} maxLength={5} aria-label="Area code" />
+                <Input className="flex-1" placeholder="123 4567" value={dependentForm.phoneNumber} onChange={e => setDependentForm(f => ({ ...f, phoneNumber: e.target.value }))} maxLength={15} aria-label="Phone number" />
+              </div>
+            </div>
+
+            <MemberAddressFields
+              idPrefix="dependent"
+              onSameAsPhysicalChange={setDependentPostalSameAsPhysical}
+              onValuesChange={updateDependentAddressFields}
+              sameAsPhysical={dependentPostalSameAsPhysical}
+              values={dependentForm}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDependentOpen(false)} disabled={dependentSaving}>Cancel</Button>
+            <Button onClick={handleCreateDependent} disabled={dependentSaving}>
+              {dependentSaving ? "Creating..." : "Create Dependent"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Member</DialogTitle>
             <DialogDescription>Update details for {member.firstName} {member.lastName}.</DialogDescription>
@@ -514,32 +864,13 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 )}
               </div>
             )}
-            <fieldset className="space-y-2 pt-2 border-t">
-              <legend className="text-sm font-medium">Physical Address</legend>
-              <Input placeholder="Address line 1" value={form.streetAddressLine1} onChange={e => setForm(f => ({ ...f, streetAddressLine1: e.target.value }))} maxLength={200} />
-              <Input placeholder="Address line 2" value={form.streetAddressLine2} onChange={e => setForm(f => ({ ...f, streetAddressLine2: e.target.value }))} maxLength={200} />
-              <div className="grid grid-cols-2 gap-2">
-                <Input placeholder="City" value={form.streetCity} onChange={e => setForm(f => ({ ...f, streetCity: e.target.value }))} maxLength={200} />
-                <Input placeholder="Region" value={form.streetRegion} onChange={e => setForm(f => ({ ...f, streetRegion: e.target.value }))} maxLength={200} />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Input placeholder="Postal code" value={form.streetPostalCode} onChange={e => setForm(f => ({ ...f, streetPostalCode: e.target.value }))} maxLength={20} />
-                <Input placeholder="Country" value={form.streetCountry} onChange={e => setForm(f => ({ ...f, streetCountry: e.target.value }))} maxLength={100} />
-              </div>
-            </fieldset>
-            <fieldset className="space-y-2 pt-2 border-t">
-              <legend className="text-sm font-medium">Postal Address</legend>
-              <Input placeholder="Address line 1" value={form.postalAddressLine1} onChange={e => setForm(f => ({ ...f, postalAddressLine1: e.target.value }))} maxLength={200} />
-              <Input placeholder="Address line 2" value={form.postalAddressLine2} onChange={e => setForm(f => ({ ...f, postalAddressLine2: e.target.value }))} maxLength={200} />
-              <div className="grid grid-cols-2 gap-2">
-                <Input placeholder="City" value={form.postalCity} onChange={e => setForm(f => ({ ...f, postalCity: e.target.value }))} maxLength={200} />
-                <Input placeholder="Region" value={form.postalRegion} onChange={e => setForm(f => ({ ...f, postalRegion: e.target.value }))} maxLength={200} />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Input placeholder="Postal code" value={form.postalPostalCode} onChange={e => setForm(f => ({ ...f, postalPostalCode: e.target.value }))} maxLength={20} />
-                <Input placeholder="Country" value={form.postalCountry} onChange={e => setForm(f => ({ ...f, postalCountry: e.target.value }))} maxLength={100} />
-              </div>
-            </fieldset>
+            <MemberAddressFields
+              idPrefix="edit-member"
+              onSameAsPhysicalChange={setEditPostalSameAsPhysical}
+              onValuesChange={updateEditAddressFields}
+              sameAsPhysical={editPostalSameAsPhysical}
+              values={form}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)} disabled={saving}>Cancel</Button>

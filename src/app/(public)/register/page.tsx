@@ -4,12 +4,17 @@ import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { MemberAddressFields } from "@/components/member-address-fields";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  NZ_COUNTRY_CODE,
+  type MemberAddressValues,
+} from "@/lib/member-address";
 
-interface FormData {
+type RegisterFormData = MemberAddressValues & {
   firstName: string;
   lastName: string;
   email: string;
@@ -19,11 +24,11 @@ interface FormData {
   phoneCountryCode: string;
   phoneAreaCode: string;
   phoneNumber: string;
-}
+};
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [form, setForm] = useState<FormData>({
+  const [form, setForm] = useState<RegisterFormData>({
     firstName: "",
     lastName: "",
     email: "",
@@ -33,20 +38,37 @@ export default function RegisterPage() {
     phoneCountryCode: "",
     phoneAreaCode: "",
     phoneNumber: "",
+    streetAddressLine1: "",
+    streetAddressLine2: "",
+    streetCity: "",
+    streetRegion: "",
+    streetPostalCode: "",
+    streetCountry: NZ_COUNTRY_CODE,
+    postalAddressLine1: "",
+    postalAddressLine2: "",
+    postalCity: "",
+    postalRegion: "",
+    postalPostalCode: "",
+    postalCountry: NZ_COUNTRY_CODE,
   });
+  const [sameAsPhysical, setSameAsPhysical] = useState(true);
   const [error, setError] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormData, string>>>({});
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof RegisterFormData, string>>>({});
   const [loading, setLoading] = useState(false);
 
-  function updateField(field: keyof FormData) {
+  function updateField(field: keyof RegisterFormData) {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
       setFieldErrors((prev) => ({ ...prev, [field]: undefined }));
     };
   }
 
+  function updateAddressFields(patch: Partial<MemberAddressValues>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+  }
+
   function validateForm(): boolean {
-    const errors: Partial<Record<keyof FormData, string>> = {};
+    const errors: Partial<Record<keyof RegisterFormData, string>> = {};
 
     if (!form.firstName.trim()) errors.firstName = "First name is required";
     if (!form.lastName.trim()) errors.lastName = "Last name is required";
@@ -84,6 +106,19 @@ export default function RegisterPage() {
           phoneCountryCode: form.phoneCountryCode || undefined,
           phoneAreaCode: form.phoneAreaCode || undefined,
           phoneNumber: form.phoneNumber || undefined,
+          streetAddressLine1: form.streetAddressLine1 || null,
+          streetAddressLine2: form.streetAddressLine2 || null,
+          streetCity: form.streetCity || null,
+          streetRegion: form.streetRegion || null,
+          streetPostalCode: form.streetPostalCode || null,
+          streetCountry: form.streetCountry || null,
+          postalAddressLine1: form.postalAddressLine1 || null,
+          postalAddressLine2: form.postalAddressLine2 || null,
+          postalCity: form.postalCity || null,
+          postalRegion: form.postalRegion || null,
+          postalPostalCode: form.postalPostalCode || null,
+          postalCountry: form.postalCountry || null,
+          postalSameAsPhysical: sameAsPhysical,
         }),
       });
 
@@ -93,9 +128,9 @@ export default function RegisterPage() {
         if (res.status === 409) {
           setFieldErrors({ email: "An account with this email already exists" });
         } else if (data.details) {
-          const serverErrors: Partial<Record<keyof FormData, string>> = {};
+          const serverErrors: Partial<Record<keyof RegisterFormData, string>> = {};
           for (const [field, messages] of Object.entries(data.details)) {
-            serverErrors[field as keyof FormData] = (messages as string[])[0];
+            serverErrors[field as keyof RegisterFormData] = (messages as string[])[0];
           }
           setFieldErrors(serverErrors);
         } else {
@@ -104,7 +139,6 @@ export default function RegisterPage() {
         return;
       }
 
-      // Auto-sign-in after successful registration
       const signInResult = await signIn("credentials", {
         email: form.email,
         password: form.password,
@@ -112,7 +146,6 @@ export default function RegisterPage() {
       });
 
       if (signInResult?.error) {
-        // Registration succeeded but auto-login failed — send to login page
         router.push("/login");
       } else {
         router.push("/dashboard");
@@ -125,7 +158,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <Card className="w-full max-w-lg">
+    <Card className="w-full max-w-2xl">
       <CardHeader className="space-y-1">
         <CardTitle className="text-2xl font-bold text-center">Create an account</CardTitle>
         <CardDescription className="text-center">
@@ -244,6 +277,16 @@ export default function RegisterPage() {
               <p className="text-xs text-muted-foreground">Country code, area code, and number</p>
             </div>
           </div>
+
+          <MemberAddressFields
+            className="pt-2"
+            collapsible
+            idPrefix="register"
+            onSameAsPhysicalChange={setSameAsPhysical}
+            onValuesChange={updateAddressFields}
+            sameAsPhysical={sameAsPhysical}
+            values={form}
+          />
         </CardContent>
 
         <CardFooter className="flex flex-col gap-4">

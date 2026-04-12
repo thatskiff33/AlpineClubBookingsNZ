@@ -342,6 +342,10 @@ export async function POST(req: NextRequest) {
 
   const data = parsed.data;
   const email = data.email.toLowerCase().trim();
+  const requestedInheritEmailFromId = data.inheritEmailFromId?.trim() || null;
+  let parentMember:
+    | { id: string; ageTier: AgeTier; inheritEmailFromId: string | null }
+    | null = null;
 
   // Validate family group assignments
   if (data.familyGroupIds && data.familyGroupIds.length > 0) {
@@ -362,9 +366,9 @@ export async function POST(req: NextRequest) {
   }
 
   if (data.parentMemberId) {
-    const parentMember = await prisma.member.findUnique({
+    parentMember = await prisma.member.findUnique({
       where: { id: data.parentMemberId },
-      select: { id: true, ageTier: true },
+      select: { id: true, ageTier: true, inheritEmailFromId: true },
     });
 
     if (!parentMember) {
@@ -379,9 +383,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (data.inheritEmailFromId) {
+  if (requestedInheritEmailFromId) {
     const inheritEmailFrom = await prisma.member.findUnique({
-      where: { id: data.inheritEmailFromId },
+      where: { id: requestedInheritEmailFromId },
       select: { id: true, ageTier: true },
     });
 
@@ -400,6 +404,11 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const resolvedInheritEmailFromId =
+    requestedInheritEmailFromId ||
+    (data.inheritParentEmail && parentMember
+      ? parentMember.inheritEmailFromId || parentMember.id
+      : null);
   // Determine age tier from DOB if provided, otherwise use explicit value or default
   let ageTier = data.ageTier || "ADULT";
   let dateOfBirth: Date | null = null;
@@ -475,7 +484,7 @@ export async function POST(req: NextRequest) {
           canLogin,
           parentMemberId: data.parentMemberId?.trim() || null,
           inheritParentEmail: data.inheritParentEmail ?? Boolean(data.parentMemberId),
-          inheritEmailFromId: data.inheritEmailFromId?.trim() || null,
+          inheritEmailFromId: resolvedInheritEmailFromId,
           passwordHash: placeholderHash,
           emailVerified: !canLogin, // Non-login members don't need verification
           joinedDate,
