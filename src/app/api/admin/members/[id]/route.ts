@@ -18,7 +18,6 @@ import {
   copyStreetAddressToPostal,
   POSTAL_ADDRESS_FIELDS,
 } from "@/lib/member-address";
-import { ageTierEnum } from "@/lib/age-tier-schema";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
