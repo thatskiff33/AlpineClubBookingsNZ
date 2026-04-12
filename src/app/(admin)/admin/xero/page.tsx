@@ -1,5 +1,6 @@
 "use client"
 
+import type { AgeTier } from "@prisma/client"
 import { useEffect, useState, useCallback } from "react"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -55,7 +56,7 @@ interface ContactGroup {
 interface GroupMapping {
   groupId: string
   groupName: string
-  ageTier: string // "ADULT" | "YOUTH" | "CHILD" | "SKIP"
+  ageTier: AgeTier | "SKIP"
 }
 
 interface DuplicateContact {
@@ -442,7 +443,7 @@ export default function XeroPage() {
     }
   }
 
-  const updateGroupMapping = (groupId: string, ageTier: string) => {
+  const updateGroupMapping = (groupId: string, ageTier: GroupMapping["ageTier"]) => {
     setGroupMappings((prev) =>
       prev.map((m) => (m.groupId === groupId ? { ...m, ageTier } : m))
     )
@@ -750,16 +751,17 @@ export default function XeroPage() {
                           <div className="w-40">
                             <Select
                               value={mapping?.ageTier || "SKIP"}
-                              onValueChange={(value) => updateGroupMapping(group.id, value)}
+                              onValueChange={(value) => updateGroupMapping(group.id, value as GroupMapping["ageTier"])}
                             >
                               <SelectTrigger>
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="SKIP">Skip</SelectItem>
-                                <SelectItem value="ADULT">Adult</SelectItem>
-                                <SelectItem value="YOUTH">Youth</SelectItem>
+                                <SelectItem value="INFANT">Infant</SelectItem>
                                 <SelectItem value="CHILD">Child</SelectItem>
+                                <SelectItem value="YOUTH">Youth</SelectItem>
+                                <SelectItem value="ADULT">Adult</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>

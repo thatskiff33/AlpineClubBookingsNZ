@@ -166,6 +166,18 @@ describe("#27: Scan for Duplicates wording update", () => {
   });
 });
 
+describe("#27: Xero import supports INFANT tier mapping", () => {
+  it("includes an Infant option in the group import age-tier selector", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const content = fs.readFileSync(
+      path.resolve("src/app/(admin)/admin/xero/page.tsx"),
+      "utf-8"
+    );
+    expect(content).toContain('<SelectItem value="INFANT">Infant</SelectItem>');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // #32: Admin Subscriptions API
 // ---------------------------------------------------------------------------

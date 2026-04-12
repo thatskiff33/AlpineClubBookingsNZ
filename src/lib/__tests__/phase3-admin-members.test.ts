@@ -234,6 +234,16 @@ describe("Phase 3: Admin Member Management", () => {
       expect(call.where?.AND).toEqual(expect.arrayContaining([{ active: false }]));
     });
 
+    it("filters by INFANT age tier", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(new NextRequest("http://localhost/api/admin/members?ageTier=INFANT"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([{ ageTier: "INFANT" }]));
+    });
+
     it("combines text search with filters (AND logic)", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
@@ -326,6 +336,15 @@ describe("Phase 3: Admin Member Management", () => {
         { role: "ADMIN" },
         { active: true },
       ]));
+    });
+
+    it("applies INFANT age tier filter to export", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+
+      await exportMembers(new NextRequest("http://localhost/api/admin/members/export?ageTier=INFANT"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([{ ageTier: "INFANT" }]));
     });
   });
 
