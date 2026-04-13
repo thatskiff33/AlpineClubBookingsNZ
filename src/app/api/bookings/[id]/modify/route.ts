@@ -15,6 +15,7 @@ import {
 } from "@/lib/cancellation";
 import {
   calculatePromoDiscountForGuestRates,
+  getMemberFreeNightsUsed,
   validatePromoCodeRules,
   redeemPromoCode,
 } from "@/lib/promo";
@@ -311,12 +312,22 @@ export async function PUT(
 
         if (!promoCode) throw new ApiError("Promo code not found", 400);
 
-        // Check single-use
+        // Check single-use (exclude current booking since we just removed old redemption)
         let memberRedemptionCount = 0;
         if (promoCode.singleUse) {
           memberRedemptionCount = await tx.promoRedemption.count({
-            where: { promoCodeId: promoCode.id, memberId: booking.memberId },
+            where: { promoCodeId: promoCode.id, memberId: booking.memberId, bookingId: { not: bookingId } },
           });
+        }
+
+        // For FREE_NIGHTS, get cumulative free nights used (exclude current booking)
+        let memberFreeNightsUsed = 0;
+        if (promoCode.type === "FREE_NIGHTS" && promoCode.freeNights) {
+          memberFreeNightsUsed = await getMemberFreeNightsUsed(
+            promoCode.id,
+            booking.memberId,
+            bookingId
+          );
         }
 
         const assignedMemberIds = promoCode.assignments.length
@@ -327,12 +338,16 @@ export async function PUT(
           { memberId: booking.memberId },
           new Date(),
           memberRedemptionCount,
-          assignedMemberIds
+          assignedMemberIds,
+          memberFreeNightsUsed
         );
 
         if (validationError) throw new ApiError(validationError, 400);
 
-        newDiscountCents = calculatePromoDiscountForGuestRates(
+        const remainingFreeNights = promoCode.type === "FREE_NIGHTS" && promoCode.freeNights
+          ? promoCode.freeNights - memberFreeNightsUsed
+          : undefined;
+        const promoResult = calculatePromoDiscountForGuestRates(
           {
             type: promoCode.type,
             valueCents: promoCode.valueCents,
@@ -342,14 +357,20 @@ export async function PUT(
           newTotalPriceCents,
           booking.memberId,
           guestNightRates,
-          assignedMemberIds
+          assignedMemberIds,
+          undefined,
+          remainingFreeNights
         );
+        newDiscountCents = promoResult.discountCents;
 
-        await redeemPromoCode(tx, promoCode.id, bookingId, booking.memberId, newDiscountCents);
+        await redeemPromoCode(tx, promoCode.id, bookingId, booking.memberId, newDiscountCents, promoResult.freeNightsUsed);
         promoChanged = true;
       } else if (!removePromoCode && !promoRemoved && booking.promoRedemption?.promoCode) {
         // Keep existing promo, recalculate discount
         const promo = booking.promoRedemption.promoCode;
+        const memberFreeNightsUsed = promo.type === "FREE_NIGHTS" && promo.freeNights
+          ? await getMemberFreeNightsUsed(promo.id, booking.memberId, bookingId)
+          : 0;
         const validationError = validatePromoCodeRules(
           promo,
           { memberId: booking.memberId },
@@ -357,7 +378,8 @@ export async function PUT(
           0,
           promo.assignments.length > 0
             ? promo.assignments.map((assignment) => assignment.memberId)
-            : null
+            : null,
+          memberFreeNightsUsed
         );
 
         if (validationError) {
@@ -369,7 +391,10 @@ export async function PUT(
           });
           promoRemoved = true;
         } else {
-          newDiscountCents = calculatePromoDiscountForGuestRates(
+          const remainingFreeNights = promo.type === "FREE_NIGHTS" && promo.freeNights
+            ? promo.freeNights - memberFreeNightsUsed
+            : undefined;
+          const promoResult = calculatePromoDiscountForGuestRates(
             {
               type: promo.type,
               valueCents: promo.valueCents,
@@ -381,12 +406,18 @@ export async function PUT(
             guestNightRates,
             promo.assignments.length > 0
               ? promo.assignments.map((assignment) => assignment.memberId)
-              : null
+              : null,
+            undefined,
+            remainingFreeNights
           );
+          newDiscountCents = promoResult.discountCents;
 
           await tx.promoRedemption.update({
             where: { id: booking.promoRedemption.id },
-            data: { discountCents: newDiscountCents },
+            data: {
+              discountCents: newDiscountCents,
+              freeNightsUsed: promoResult.freeNightsUsed || null,
+            },
           });
         }
       }

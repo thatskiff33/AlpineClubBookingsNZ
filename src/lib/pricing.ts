@@ -203,38 +203,54 @@ export function calculateBookingPrice(
   };
 }
 
+export interface PromoDiscountResult {
+  discountCents: number;
+  freeNightsUsed: number;
+}
+
 /**
  * Apply a promo code discount to a booking total.
- * Returns the discount amount in cents.
+ * Returns the discount amount in cents and the number of free nights used.
+ * For FREE_NIGHTS promos, remainingFreeNights caps how many nights can be
+ * discounted (supports cumulative tracking across multiple bookings).
  */
 export function calculatePromoDiscount(
   promo: PromoCodeInput,
   totalPriceCents: number,
-  perNightRates?: number[]
-): number {
+  perNightRates?: number[],
+  remainingFreeNights?: number
+): PromoDiscountResult {
   switch (promo.type) {
     case "PERCENTAGE": {
-      if (!promo.percentOff) return 0;
-      return Math.round((totalPriceCents * promo.percentOff) / 100);
+      if (!promo.percentOff) return { discountCents: 0, freeNightsUsed: 0 };
+      return { discountCents: Math.round((totalPriceCents * promo.percentOff) / 100), freeNightsUsed: 0 };
     }
 
     case "FIXED_AMOUNT": {
-      if (!promo.valueCents) return 0;
-      return Math.min(promo.valueCents, totalPriceCents);
+      if (!promo.valueCents) return { discountCents: 0, freeNightsUsed: 0 };
+      return { discountCents: Math.min(promo.valueCents, totalPriceCents), freeNightsUsed: 0 };
     }
 
     case "FREE_NIGHTS": {
-      if (!promo.freeNights || promo.freeNights <= 0) return 0;
-      if (!perNightRates) return 0;
+      if (!promo.freeNights || promo.freeNights <= 0) return { discountCents: 0, freeNightsUsed: 0 };
+      if (!perNightRates) return { discountCents: 0, freeNightsUsed: 0 };
+
+      // Cap by remaining allowance if provided (cumulative tracking)
+      const effectiveFreeNights = remainingFreeNights !== undefined
+        ? Math.min(promo.freeNights, remainingFreeNights)
+        : promo.freeNights;
+
+      if (effectiveFreeNights <= 0) return { discountCents: 0, freeNightsUsed: 0 };
 
       // Sort ascending to find cheapest nights
       const sorted = [...perNightRates].sort((a, b) => a - b);
-      const freeCount = Math.min(promo.freeNights, sorted.length);
-      return sorted.slice(0, freeCount).reduce((sum, r) => sum + r, 0);
+      const freeCount = Math.min(effectiveFreeNights, sorted.length);
+      const discountCents = sorted.slice(0, freeCount).reduce((sum, r) => sum + r, 0);
+      return { discountCents, freeNightsUsed: freeCount };
     }
 
     default:
-      return 0;
+      return { discountCents: 0, freeNightsUsed: 0 };
   }
 }
 
@@ -245,7 +261,8 @@ export function applyPromoDiscount(
   totalPriceCents: number,
   promoType: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS",
   promoValue: { percentOff?: number; valueCents?: number; freeNights?: number },
-  perNightRates?: number[]
+  perNightRates?: number[],
+  remainingFreeNights?: number
 ): number {
   switch (promoType) {
     case "PERCENTAGE": {
@@ -258,8 +275,12 @@ export function applyPromoDiscount(
     }
     case "FREE_NIGHTS": {
       if (!perNightRates || !promoValue.freeNights) return 0;
+      const effectiveFreeNights = remainingFreeNights !== undefined
+        ? Math.min(promoValue.freeNights, remainingFreeNights)
+        : promoValue.freeNights;
+      if (effectiveFreeNights <= 0) return 0;
       const sorted = [...perNightRates].sort((a, b) => a - b);
-      const freeCount = Math.min(promoValue.freeNights, sorted.length);
+      const freeCount = Math.min(effectiveFreeNights, sorted.length);
       return sorted.slice(0, freeCount).reduce((sum, r) => sum + r, 0);
     }
     default:

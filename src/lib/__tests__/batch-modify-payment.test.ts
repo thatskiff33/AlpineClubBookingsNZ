@@ -50,9 +50,10 @@ vi.mock("@/lib/cancellation", () => ({
 }));
 
 vi.mock("@/lib/promo", () => ({
-  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue(0),
+  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0 }),
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   redeemPromoCode: vi.fn(),
+  getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock("@/lib/stripe", () => ({

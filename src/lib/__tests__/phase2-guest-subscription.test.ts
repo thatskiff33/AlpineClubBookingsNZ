@@ -70,7 +70,7 @@ vi.mock("@/lib/booking-policies", () => ({
 }));
 vi.mock("@/lib/capacity", () => ({ LODGE_CAPACITY: 29 }));
 vi.mock("@/lib/bumping", () => ({ bumpPendingBookings: vi.fn(), sendBumpedNotifications: vi.fn() }));
-vi.mock("@/lib/promo", () => ({ validatePromoCodeRules: vi.fn().mockReturnValue(null), redeemPromoCode: vi.fn() }));
+vi.mock("@/lib/promo", () => ({ validatePromoCodeRules: vi.fn().mockReturnValue(null), redeemPromoCode: vi.fn(), getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0) }));
 vi.mock("@/lib/rate-limit", () => ({ applyRateLimit: vi.fn().mockReturnValue(null), rateLimiters: { bookingCreate: {} } }));
 vi.mock("@/lib/email", () => ({
   sendBookingPendingEmail: vi.fn().mockResolvedValue(undefined),

@@ -8,7 +8,7 @@ import {
   type GroupDiscountConfig,
   type SeasonRateData,
 } from "@/lib/pricing";
-import { validatePromoCodeRules } from "@/lib/promo";
+import { getMemberFreeNightsUsed, validatePromoCodeRules } from "@/lib/promo";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
@@ -80,12 +80,22 @@ export async function POST(req: NextRequest) {
     ? promoCode.assignments.map((a) => a.memberId)
     : null;
 
+  // For FREE_NIGHTS, get cumulative free nights used by this member
+  let memberFreeNightsUsed = 0;
+  if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights) {
+    memberFreeNightsUsed = await getMemberFreeNightsUsed(
+      promoCode.id,
+      effectiveMemberId
+    );
+  }
+
   const validationError = validatePromoCodeRules(
     promoCode,
     { memberId: effectiveMemberId, bookingCheckIn: checkIn },
     new Date(),
     memberRedemptionCount,
-    assignedMemberIds
+    assignedMemberIds,
+    memberFreeNightsUsed
   );
 
   if (validationError) {
@@ -138,7 +148,12 @@ export async function POST(req: NextRequest) {
     // Collect all per-night rates across all guests for FREE_NIGHTS
     const allPerNightRates = price.guests.flatMap((g) => g.perNightCents);
 
-    const discountCents = calculatePromoDiscount(
+    // Calculate remaining free nights for this member
+    const remainingFreeNights = promoCode!.type === "FREE_NIGHTS" && promoCode!.freeNights
+      ? promoCode!.freeNights - memberFreeNightsUsed
+      : undefined;
+
+    const promoResult = calculatePromoDiscount(
       {
         type: promoCode!.type,
         valueCents: promoCode!.valueCents,
@@ -146,7 +161,8 @@ export async function POST(req: NextRequest) {
         freeNights: promoCode!.freeNights,
       },
       price.totalPriceCents,
-      allPerNightRates
+      allPerNightRates,
+      remainingFreeNights
     );
 
     return NextResponse.json({
@@ -154,9 +170,11 @@ export async function POST(req: NextRequest) {
       code: promoCode!.code,
       description: promoCode!.description,
       type: promoCode!.type,
-      discountCents,
+      discountCents: promoResult.discountCents,
+      freeNightsUsed: promoResult.freeNightsUsed,
+      remainingFreeNights,
       totalPriceCents: price.totalPriceCents,
-      finalPriceCents: price.totalPriceCents - discountCents,
+      finalPriceCents: price.totalPriceCents - promoResult.discountCents,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to calculate price";

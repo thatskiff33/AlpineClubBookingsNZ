@@ -16,6 +16,7 @@ import {
 } from "@/lib/cancellation";
 import {
   calculatePromoDiscountForGuestRates,
+  getMemberFreeNightsUsed,
   validatePromoCodeRules,
   validatePromoCodeFull,
 } from "@/lib/promo";
@@ -403,7 +404,7 @@ export async function POST(
       }),
       memberId: booking.memberId,
       guestNightRates: getGuestNightRates(),
-    });
+    }, bookingId);
 
     if (validation.valid) {
       newDiscountCents = validation.discountCents ?? 0;
@@ -422,6 +423,9 @@ export async function POST(
   } else if (booking.promoRedemption?.promoCode) {
     // Keep existing promo, recalculate with new price
     const promo = booking.promoRedemption.promoCode;
+    const memberFreeNightsUsed = promo.type === "FREE_NIGHTS" && promo.freeNights
+      ? await getMemberFreeNightsUsed(promo.id, booking.memberId, bookingId)
+      : 0;
     const validationError = validatePromoCodeRules(
       promo,
       { memberId: booking.memberId },
@@ -429,13 +433,17 @@ export async function POST(
       0,
       promo.assignments.length > 0
         ? promo.assignments.map((assignment) => assignment.memberId)
-        : null
+        : null,
+      memberFreeNightsUsed
     );
 
     if (validationError) {
       promoStillValid = false;
     } else {
-      newDiscountCents = calculatePromoDiscountForGuestRates(
+      const remainingFreeNights = promo.type === "FREE_NIGHTS" && promo.freeNights
+        ? promo.freeNights - memberFreeNightsUsed
+        : undefined;
+      const promoResult = calculatePromoDiscountForGuestRates(
         {
           type: promo.type,
           valueCents: promo.valueCents,
@@ -447,8 +455,11 @@ export async function POST(
         getGuestNightRates(),
         promo.assignments.length > 0
           ? promo.assignments.map((assignment) => assignment.memberId)
-          : null
+          : null,
+        undefined,
+        remainingFreeNights
       );
+      newDiscountCents = promoResult.discountCents;
     }
   }
 

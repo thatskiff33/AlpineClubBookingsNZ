@@ -18,6 +18,7 @@ import {
   validatePromoCodeRules,
   redeemPromoCode,
   calculatePromoDiscountForGuestRates,
+  getMemberFreeNightsUsed,
 } from "@/lib/promo";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBookingAlert, sendWaitlistConfirmationEmail } from "@/lib/email";
@@ -289,6 +290,7 @@ export async function POST(request: NextRequest) {
     const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData, groupDiscount);
 
     let discountCents = 0;
+    let promoFreeNightsUsed = 0;
     let promoCodeRecord: { id: string; type: string; valueCents: number | null; percentOff: number | null; freeNights: number | null } | null = null;
 
     if (promoCodeStr) {
@@ -303,6 +305,11 @@ export async function POST(request: NextRequest) {
           where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
         });
       }
+      // Get cumulative free nights used for FREE_NIGHTS promos
+      let memberFreeNightsUsed = 0;
+      if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights) {
+        memberFreeNightsUsed = await getMemberFreeNightsUsed(promoCode.id, effectiveMemberId);
+      }
       const assignedMemberIds = promoCode?.assignments?.length
         ? promoCode.assignments.map((a) => a.memberId)
         : null;
@@ -311,16 +318,20 @@ export async function POST(request: NextRequest) {
         { memberId: effectiveMemberId, bookingCheckIn: checkIn },
         new Date(),
         memberRedemptionCount,
-        assignedMemberIds
+        assignedMemberIds,
+        memberFreeNightsUsed
       );
       if (validationError) {
         return NextResponse.json({ error: validationError }, { status: 400 });
       }
+      const remainingFreeNights = promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights
+        ? promoCode.freeNights - memberFreeNightsUsed
+        : undefined;
       const guestNightRates = guests.map((guest, index) => ({
         memberId: guest.memberId ?? null,
         perNightRates: price.guests[index].perNightCents,
       }));
-      discountCents = calculatePromoDiscountForGuestRates(
+      const promoResult = calculatePromoDiscountForGuestRates(
         {
           type: promoCode!.type,
           valueCents: promoCode!.valueCents,
@@ -330,8 +341,12 @@ export async function POST(request: NextRequest) {
         price.totalPriceCents,
         effectiveMemberId,
         guestNightRates,
-        assignedMemberIds
+        assignedMemberIds,
+        undefined,
+        remainingFreeNights
       );
+      discountCents = promoResult.discountCents;
+      promoFreeNightsUsed = promoResult.freeNightsUsed;
       promoCodeRecord = promoCode!;
     }
 
@@ -375,7 +390,8 @@ export async function POST(request: NextRequest) {
         promoCodeRecord.id,
         newBooking.id,
         effectiveMemberId,
-        discountCents
+        discountCents,
+        promoFreeNightsUsed || undefined
       );
     }
 
@@ -521,6 +537,7 @@ export async function POST(request: NextRequest) {
 
       // Handle promo code if provided
       let discountCents = 0;
+      let promoFreeNightsUsed = 0;
       let promoCodeRecord: { id: string; type: string; valueCents: number | null; percentOff: number | null; freeNights: number | null } | null = null;
 
       if (promoCodeStr) {
@@ -542,6 +559,16 @@ export async function POST(request: NextRequest) {
           });
         }
 
+        // Get cumulative free nights used for FREE_NIGHTS promos
+        let memberFreeNightsUsed = 0;
+        if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights) {
+          const result = await tx.promoRedemption.aggregate({
+            where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
+            _sum: { freeNightsUsed: true },
+          });
+          memberFreeNightsUsed = result._sum.freeNightsUsed ?? 0;
+        }
+
         // Check member assignments
         let assignedMemberIds: string[] | null = null;
         if (promoCode) {
@@ -559,19 +586,24 @@ export async function POST(request: NextRequest) {
           { memberId: effectiveMemberId, bookingCheckIn: checkIn },
           new Date(),
           memberRedemptionCount,
-          assignedMemberIds
+          assignedMemberIds,
+          memberFreeNightsUsed
         );
 
         if (validationError) {
           throw new Error(validationError);
         }
 
+        const remainingFreeNights = promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights
+          ? promoCode.freeNights - memberFreeNightsUsed
+          : undefined;
+
         const guestNightRates = guests.map((guest, index) => ({
           memberId: guest.memberId ?? null,
           perNightRates: price.guests[index].perNightCents,
         }));
 
-        discountCents = calculatePromoDiscountForGuestRates(
+        const promoResult = calculatePromoDiscountForGuestRates(
           {
             type: promoCode!.type,
             valueCents: promoCode!.valueCents,
@@ -581,9 +613,13 @@ export async function POST(request: NextRequest) {
           price.totalPriceCents,
           effectiveMemberId,
           guestNightRates,
-          assignedMemberIds
+          assignedMemberIds,
+          undefined,
+          remainingFreeNights
         );
 
+        discountCents = promoResult.discountCents;
+        promoFreeNightsUsed = promoResult.freeNightsUsed;
         promoCodeRecord = promoCode!;
       }
 
@@ -646,7 +682,8 @@ export async function POST(request: NextRequest) {
           promoCodeRecord.id,
           newBooking.id,
           effectiveMemberId,
-          discountCents
+          discountCents,
+          promoFreeNightsUsed || undefined
         );
       }
 
@@ -870,6 +907,7 @@ async function createWaitlistedBooking(params: {
   );
 
   let discountCents = 0;
+  let promoFreeNightsUsed = 0;
   let promoCodeRecord: { id: string; type: string; valueCents: number | null; percentOff: number | null; freeNights: number | null } | null = null;
 
   if (promoCodeStr) {
@@ -884,6 +922,11 @@ async function createWaitlistedBooking(params: {
         where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
       });
     }
+    // Get cumulative free nights used for FREE_NIGHTS promos
+    let memberFreeNightsUsed = 0;
+    if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights) {
+      memberFreeNightsUsed = await getMemberFreeNightsUsed(promoCode.id, effectiveMemberId);
+    }
     const assignedMemberIds = promoCode?.assignments?.length
       ? promoCode.assignments.map((a) => a.memberId)
       : null;
@@ -892,16 +935,20 @@ async function createWaitlistedBooking(params: {
       { memberId: effectiveMemberId, bookingCheckIn: checkIn },
       new Date(),
       memberRedemptionCount,
-      assignedMemberIds
+      assignedMemberIds,
+      memberFreeNightsUsed
     );
     if (validationError) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
+    const remainingFreeNights = promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights
+      ? promoCode.freeNights - memberFreeNightsUsed
+      : undefined;
     const guestNightRates = guests.map((guest, index) => ({
       memberId: guest.memberId ?? null,
       perNightRates: price.guests[index].perNightCents,
     }));
-    discountCents = calculatePromoDiscountForGuestRates(
+    const promoResult = calculatePromoDiscountForGuestRates(
       {
         type: promoCode!.type,
         valueCents: promoCode!.valueCents,
@@ -911,8 +958,12 @@ async function createWaitlistedBooking(params: {
       price.totalPriceCents,
       effectiveMemberId,
       guestNightRates,
-      assignedMemberIds
+      assignedMemberIds,
+      undefined,
+      remainingFreeNights
     );
+    discountCents = promoResult.discountCents;
+    promoFreeNightsUsed = promoResult.freeNightsUsed;
     promoCodeRecord = promoCode!;
   }
 
@@ -959,7 +1010,8 @@ async function createWaitlistedBooking(params: {
       promoCodeRecord.id,
       newBooking.id,
       effectiveMemberId,
-      discountCents
+      discountCents,
+      promoFreeNightsUsed || undefined
     );
   }
 

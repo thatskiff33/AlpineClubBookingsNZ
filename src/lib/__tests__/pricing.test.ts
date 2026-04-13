@@ -214,48 +214,48 @@ describe("calculatePromoDiscount", () => {
 
   it("applies percentage discount", () => {
     const promo: PromoCodeInput = { type: "PERCENTAGE", percentOff: 20 }
-    const discount = calculatePromoDiscount(promo, totalPrice)
-    expect(discount).toBe(2400) // 20% of $120 = $24
+    const result = calculatePromoDiscount(promo, totalPrice)
+    expect(result.discountCents).toBe(2400) // 20% of $120 = $24
   })
 
   it("applies fixed amount discount", () => {
     const promo: PromoCodeInput = { type: "FIXED_AMOUNT", valueCents: 5000 }
-    const discount = calculatePromoDiscount(promo, totalPrice)
-    expect(discount).toBe(5000) // $50 off
+    const result = calculatePromoDiscount(promo, totalPrice)
+    expect(result.discountCents).toBe(5000) // $50 off
   })
 
   it("caps fixed amount at total price", () => {
     const promo: PromoCodeInput = { type: "FIXED_AMOUNT", valueCents: 99999 }
-    const discount = calculatePromoDiscount(promo, totalPrice)
-    expect(discount).toBe(12000) // capped at total
+    const result = calculatePromoDiscount(promo, totalPrice)
+    expect(result.discountCents).toBe(12000) // capped at total
   })
 
   it("applies free nights discount - cheapest nights first", () => {
     const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNights: 2 }
     const perNightRates = [1500, 1500, 4500, 4500]
-    const discount = calculatePromoDiscount(promo, totalPrice, perNightRates)
+    const result = calculatePromoDiscount(promo, totalPrice, perNightRates)
     // 2 cheapest = 1500 + 1500 = 3000
-    expect(discount).toBe(3000)
+    expect(result.discountCents).toBe(3000)
   })
 
   it("handles free nights exceeding total nights", () => {
     const promo: PromoCodeInput = { type: "FREE_NIGHTS", freeNights: 100 }
     const perNightRates = [1500, 1500, 4500, 4500]
-    const discount = calculatePromoDiscount(promo, totalPrice, perNightRates)
+    const result = calculatePromoDiscount(promo, totalPrice, perNightRates)
     // All 4 guest-nights free = 1500+1500+4500+4500 = 12000
-    expect(discount).toBe(12000)
+    expect(result.discountCents).toBe(12000)
   })
 
   it("returns 0 for zero percentage", () => {
     const promo: PromoCodeInput = { type: "PERCENTAGE", percentOff: 0 }
-    const discount = calculatePromoDiscount(promo, totalPrice)
-    expect(discount).toBe(0)
+    const result = calculatePromoDiscount(promo, totalPrice)
+    expect(result.discountCents).toBe(0)
   })
 
   it("returns 0 for null values", () => {
     const promo: PromoCodeInput = { type: "PERCENTAGE", percentOff: null }
-    const discount = calculatePromoDiscount(promo, totalPrice)
-    expect(discount).toBe(0)
+    const result = calculatePromoDiscount(promo, totalPrice)
+    expect(result.discountCents).toBe(0)
   })
 })
 
