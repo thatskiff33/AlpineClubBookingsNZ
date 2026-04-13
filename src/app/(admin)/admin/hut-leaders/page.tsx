@@ -44,6 +44,7 @@ export default function HutLeadersPage() {
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingMember, setEditingMember] = useState<string | null>(null);
+  const [editDates, setEditDates] = useState({ startDate: "", endDate: "" });
   const [formData, setFormData] = useState({
     memberId: "",
     startDate: "",
@@ -117,10 +118,13 @@ export default function HutLeadersPage() {
     setError("");
     setCreating(true);
     try {
+      const submitData = editingMember
+        ? { memberId: editingMember, startDate: editDates.startDate, endDate: editDates.endDate }
+        : formData;
       const res = await fetch("/api/admin/hut-leaders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(submitData),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -167,8 +171,7 @@ export default function HutLeadersPage() {
 
   function handleEditAndAssign(member: EligibleMember) {
     setEditingMember(member.id);
-    setFormData({
-      memberId: member.id,
+    setEditDates({
       startDate: member.suggestedStartDate,
       endDate: member.suggestedEndDate,
     });
@@ -339,8 +342,8 @@ export default function HutLeadersPage() {
                                 <Input
                                   id={`edit-start-${m.id}`}
                                   type="date"
-                                  value={formData.startDate}
-                                  onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                                  value={editDates.startDate}
+                                  onChange={(e) => setEditDates({ ...editDates, startDate: e.target.value })}
                                   className="mt-1"
                                 />
                               </div>
@@ -349,8 +352,8 @@ export default function HutLeadersPage() {
                                 <Input
                                   id={`edit-end-${m.id}`}
                                   type="date"
-                                  value={formData.endDate}
-                                  onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                                  value={editDates.endDate}
+                                  onChange={(e) => setEditDates({ ...editDates, endDate: e.target.value })}
                                   className="mt-1"
                                 />
                               </div>
@@ -359,7 +362,7 @@ export default function HutLeadersPage() {
                               <Button
                                 type="submit"
                                 size="sm"
-                                disabled={creating || !formData.startDate || !formData.endDate}
+                                disabled={creating || !editDates.startDate || !editDates.endDate}
                               >
                                 {creating ? "Saving..." : "Save Assignment"}
                               </Button>
