@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
-import { addDaysDateOnly, parseDateOnly } from "@/lib/date-only";
+import {
+  addDaysDateOnly,
+  formatDateOnly,
+  getTodayDateOnly,
+  parseDateOnly,
+} from "@/lib/date-only";
+import { formatXeroPhone } from "@/lib/phone";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 
@@ -13,12 +19,15 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
  * with arriving/departing indicators and expected arrival times.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
   const { date: dateStr } = await params;
 
-  const { error, status, tier } = await checkLodgeAuth(dateStr);
+  const { error, status, tier } = await checkLodgeAuth(dateStr, {
+    request: req,
+    allowPublicReadOnly: true,
+  });
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
@@ -30,6 +39,10 @@ export async function GET(
   const date = parseDateOnly(dateStr);
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
+  }
+
+  if (tier === "none" && dateStr !== formatDateOnly(getTodayDateOnly())) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const nextDay = addDaysDateOnly(date, 1);
@@ -45,7 +58,12 @@ export async function GET(
       guests: {
         include: {
           member: {
-            select: { ageTier: true },
+            select: {
+              ageTier: true,
+              phoneCountryCode: true,
+              phoneAreaCode: true,
+              phoneNumber: true,
+            },
           },
         },
       },
@@ -68,6 +86,7 @@ export async function GET(
       isDeparting: b.checkOut.getTime() === nextDay.getTime(),
       arrivedAt: g.arrivedAt?.toISOString() ?? null,
       departedAt: g.departedAt?.toISOString() ?? null,
+      phone: g.member ? formatXeroPhone(g.member) : null,
     })),
   }));
 

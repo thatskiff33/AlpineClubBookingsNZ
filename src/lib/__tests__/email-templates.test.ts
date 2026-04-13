@@ -7,6 +7,7 @@ import {
   bookingBumpedTemplate,
   bookingCancelledTemplate,
   choreRosterTemplate,
+  hutLeaderAssignmentTemplate,
 } from "../email-templates";
 
 describe("email-templates", () => {
@@ -135,6 +136,35 @@ describe("email-templates", () => {
     it("includes heater/fire safety reminder", () => {
       const html = choreRosterTemplate("Test", "2026-07-15", []);
       expect(html).toContain("heaters and fire");
+    });
+  });
+
+  describe("hutLeaderAssignmentTemplate", () => {
+    const startDate = new Date("2026-07-15");
+    const endDate = new Date("2026-07-18");
+
+    it("includes the hut leader PIN and lodge link", () => {
+      const html = hutLeaderAssignmentTemplate({
+        firstName: "Alice",
+        startDate,
+        endDate,
+        pin: "123456",
+      });
+
+      expect(html).toContain("123456");
+      expect(html).toContain("/lodge");
+    });
+
+    it("includes assignment responsibilities", () => {
+      const html = hutLeaderAssignmentTemplate({
+        firstName: "Alice",
+        startDate,
+        endDate,
+        pin: "123456",
+      });
+
+      expect(html).toContain("arrivals");
+      expect(html).toContain("roster");
     });
   });
 });

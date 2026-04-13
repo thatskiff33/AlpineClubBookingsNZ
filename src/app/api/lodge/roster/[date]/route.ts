@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
 import { assignmentExistsForDate } from "@/lib/lodge-date-scoping";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
-import { parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -25,12 +25,16 @@ const rosterActionSchema = z.discriminatedUnion("action", [
  * Returns the roster for a date (assignments only, no auto-suggest).
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ date: string }> }
 ) {
   const { date: dateStr } = await params;
 
-  const { error, status } = await checkLodgeAuth(dateStr);
+  const authResult = await checkLodgeAuth(dateStr, {
+    request: req,
+    allowPublicReadOnly: true,
+  });
+  const { error, status, tier } = authResult;
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
@@ -42,6 +46,10 @@ export async function GET(
   const date = parseDateOnly(dateStr);
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
+  }
+
+  if (tier === "none" && dateStr !== formatDateOnly(getTodayDateOnly())) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const assignments = await prisma.choreAssignment.findMany({
@@ -94,7 +102,7 @@ export async function PUT(
 ) {
   const { date: dateStr } = await params;
 
-  const { error, status, tier } = await checkLodgeAuth(dateStr);
+  const { error, status, tier } = await checkLodgeAuth(dateStr, { request: req });
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }

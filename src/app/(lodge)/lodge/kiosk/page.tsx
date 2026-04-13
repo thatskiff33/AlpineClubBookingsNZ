@@ -8,6 +8,7 @@ interface Guest {
   firstName: string;
   lastName: string;
   ageTier: string;
+  phone: string | null;
   isMember: boolean;
   isArriving: boolean;
   isDeparting: boolean;
@@ -80,6 +81,10 @@ export default function KioskPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [failCount, setFailCount] = useState(0);
+  const [showPinForm, setShowPinForm] = useState(false);
+  const [pin, setPin] = useState("");
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [pinLoading, setPinLoading] = useState(false);
 
   // Effective tier (admin can preview other tiers)
   const effectiveTier = viewAs ?? access?.tier ?? "none";
@@ -164,6 +169,35 @@ export default function KioskPage() {
   const showActionError = (message: string) => {
     setActionError(message);
     setTimeout(() => setActionError(null), 3000);
+  };
+
+  const submitPin = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setPinError(null);
+    setPinLoading(true);
+
+    try {
+      const res = await fetch("/api/lodge/pin-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setPinError(data?.error || "PIN login failed");
+        return;
+      }
+
+      setPin("");
+      setShowPinForm(false);
+      setLoading(true);
+      await fetchData();
+    } catch {
+      setPinError("PIN login failed");
+    } finally {
+      setPinLoading(false);
+    }
   };
 
   const toggleChore = async (assignmentId: string, currentStatus: string) => {
@@ -314,7 +348,7 @@ export default function KioskPage() {
           <p className="text-slate-400 text-lg">
             {totalGuests} guest{totalGuests !== 1 ? "s" : ""} staying
           </p>
-          {effectiveTier === "staying-guest" && (
+          {(effectiveTier === "staying-guest" || effectiveTier === "none") && (
             <p className="text-blue-400 text-sm mt-1">Read-only view</p>
           )}
         </div>
@@ -336,6 +370,87 @@ export default function KioskPage() {
         <div className="bg-red-900/50 text-red-200 rounded-xl p-4 mb-4 text-lg">
           {error}
         </div>
+      )}
+
+      {(effectiveTier === "none" || effectiveTier === "staying-guest") && (
+        <section className="bg-slate-800 rounded-2xl p-4 mb-4 border border-slate-700">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-white">
+                Hut leader controls
+              </h2>
+              <p className="text-sm text-slate-300 mt-1">
+                Enter the 6-digit hut leader PIN to unlock arrivals, departures,
+                and roster management on this kiosk.
+              </p>
+            </div>
+            {!showPinForm && (
+              <button
+                onClick={() => {
+                  setShowPinForm(true);
+                  setPinError(null);
+                }}
+                className="inline-flex items-center justify-center rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-500 active:bg-blue-400"
+              >
+                Enter PIN
+              </button>
+            )}
+          </div>
+
+          {showPinForm && (
+            <form
+              onSubmit={submitPin}
+              className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end"
+            >
+              <div className="flex-1">
+                <label
+                  htmlFor="hut-leader-pin"
+                  className="block text-sm font-medium text-slate-300 mb-2"
+                >
+                  Hut leader PIN
+                </label>
+                <input
+                  id="hut-leader-pin"
+                  type="password"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  value={pin}
+                  onChange={(event) =>
+                    setPin(event.target.value.replace(/\D/g, "").slice(0, 6))
+                  }
+                  className="w-full rounded-xl border border-slate-600 bg-slate-900 px-4 py-3 text-lg tracking-[0.35em] text-white outline-none transition-colors focus:border-blue-400"
+                  placeholder="123456"
+                  autoComplete="one-time-code"
+                  required
+                />
+                {pinError && (
+                  <p className="mt-2 text-sm text-red-300">{pinError}</p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={pinLoading || pin.length !== 6}
+                  className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-500 active:bg-blue-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                >
+                  {pinLoading ? "Checking..." : "Unlock"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPinForm(false);
+                    setPin("");
+                    setPinError(null);
+                  }}
+                  className="rounded-xl bg-slate-700 px-4 py-3 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-600 active:bg-slate-500"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </section>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -382,13 +497,20 @@ export default function KioskPage() {
                               : "bg-slate-700/50"
                         }`}
                       >
-                        <div className="flex items-center gap-3">
-                          <span className="text-lg font-medium">
-                            {guest.firstName} {guest.lastName}
-                          </span>
-                          <span className="text-sm text-slate-400">
-                            {guest.ageTier}
-                          </span>
+                        <div>
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span className="text-lg font-medium">
+                              {guest.firstName} {guest.lastName}
+                            </span>
+                            <span className="text-sm text-slate-400">
+                              {guest.ageTier}
+                            </span>
+                          </div>
+                          <p className="text-sm text-slate-400 mt-1">
+                            {guest.phone
+                              ? `Phone ${guest.phone}`
+                              : "Phone not available"}
+                          </p>
                         </div>
                         <div className="flex gap-2 items-center">
                           {guest.isArriving && (

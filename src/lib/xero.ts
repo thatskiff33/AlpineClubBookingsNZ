@@ -12,6 +12,7 @@ import { prisma } from "./prisma";
 import { sendPasswordResetEmail } from "./email";
 import { AgeTier } from "@prisma/client";
 import { getSeasonYear, getStayNights } from "./pricing";
+import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
 import { getXeroErrorHeader, getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 
@@ -1010,19 +1011,6 @@ export async function getXeroContactIdsForGroup(
   return contacts
     .map((c) => c.contactID)
     .filter((id): id is string => Boolean(id));
-}
-
-/**
- * Assemble a full phone number from Xero's split fields (countryCode, areaCode, number).
- * e.g. countryCode="64", areaCode="27", number="4224115" → "+64 27 4224115"
- */
-function formatXeroPhone(phone: { phoneCountryCode?: string | null; phoneAreaCode?: string | null; phoneNumber?: string | null }): string | null {
-  if (!phone.phoneNumber) return null;
-  const parts: string[] = [];
-  if (phone.phoneCountryCode) parts.push(`+${phone.phoneCountryCode.replace(/^\+/, '')}`);
-  if (phone.phoneAreaCode) parts.push(phone.phoneAreaCode);
-  parts.push(phone.phoneNumber);
-  return parts.join(' ');
 }
 
 /**
