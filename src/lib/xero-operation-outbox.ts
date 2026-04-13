@@ -13,6 +13,7 @@ import {
   createXeroEntranceFeeInvoice,
   createXeroInvoiceForBooking,
   createXeroSupplementaryInvoice,
+  createUnappliedXeroCreditNote,
   getEntranceFeeContext,
   isXeroConnected,
   type EntranceFeeContext,
@@ -21,6 +22,7 @@ import {
 const XERO_OUTBOX_ENTRANCE_FEE_TYPE = "ENTRANCE_FEE_INVOICE";
 const XERO_OUTBOX_BOOKING_INVOICE_TYPE = "BOOKING_INVOICE";
 const XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE = "REFUND_CREDIT_NOTE";
+const XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE = "ACCOUNT_CREDIT_NOTE";
 const XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE = "SUPPLEMENTARY_INVOICE";
 const XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE = "MODIFICATION_CREDIT_NOTE";
 
@@ -38,6 +40,11 @@ interface QueuedBookingInvoiceOutboxPayload {
 
 interface QueuedRefundCreditNoteOutboxPayload {
   queueType: typeof XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE;
+  refundAmountCents: number;
+}
+
+interface QueuedAccountCreditNoteOutboxPayload {
+  queueType: typeof XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE;
   refundAmountCents: number;
 }
 
@@ -60,6 +67,7 @@ type QueuedOutboxPayload =
   | QueuedEntranceFeeOutboxPayload
   | QueuedBookingInvoiceOutboxPayload
   | QueuedRefundCreditNoteOutboxPayload
+  | QueuedAccountCreditNoteOutboxPayload
   | QueuedSupplementaryInvoiceOutboxPayload
   | QueuedModificationCreditNoteOutboxPayload;
 
@@ -118,6 +126,18 @@ function readQueuedOutboxPayload(value: unknown): QueuedOutboxPayload | null {
   }
 
   if (queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE) {
+    const refundAmountCents = readNumber(payload.refundAmountCents);
+    if (refundAmountCents === null) {
+      return null;
+    }
+
+    return {
+      queueType,
+      refundAmountCents,
+    };
+  }
+
+  if (queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE) {
     const refundAmountCents = readNumber(payload.refundAmountCents);
     if (refundAmountCents === null) {
       return null;
@@ -532,6 +552,101 @@ export async function enqueueXeroRefundCreditNoteOperation(
   };
 }
 
+export async function enqueueXeroAccountCreditNoteOperation(
+  paymentId: string,
+  refundAmountCents: number,
+  options?: { createdByMemberId?: string }
+) {
+  if (refundAmountCents <= 0) {
+    return {
+      queueOperationId: null,
+      message: "No account-credit note is required for this refund.",
+    };
+  }
+
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!payment) {
+    throw new Error(`Payment not found: ${paymentId}`);
+  }
+
+  const existingLink = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectType: "CREDIT_NOTE",
+      role: "ACCOUNT_CREDIT_NOTE",
+      active: true,
+    },
+    select: { id: true },
+  });
+
+  if (existingLink) {
+    return {
+      queueOperationId: null,
+      message: "Xero account-credit note already linked for this payment.",
+    };
+  }
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "payment",
+    paymentId,
+    "unapplied-credit-note",
+    refundAmountCents,
+    "v1"
+  );
+
+  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey,
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: paymentId,
+      status: {
+        in: ["PENDING", "RUNNING"],
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  if (existingQueuedOperation) {
+    return {
+      queueOperationId: existingQueuedOperation.id,
+      message: "Xero account-credit note is already queued for background processing.",
+    };
+  }
+
+  const queuedOperation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: "Payment",
+    localId: paymentId,
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
+      refundAmountCents,
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  return {
+    queueOperationId: queuedOperation.id,
+    message: "Xero account-credit note queued for background processing.",
+  };
+}
+
 export async function enqueueXeroSupplementaryInvoiceOperation(
   params: {
     bookingId: string;
@@ -827,6 +942,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
         {
           requestPayload: {
             path: ["queueType"],
+            equals: XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE,
+          },
+        },
+        {
+          requestPayload: {
+            path: ["queueType"],
             equals: XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
           },
         },
@@ -857,13 +978,14 @@ export async function processQueuedXeroOutboxOperations(options?: {
     const queueType = readQueueType(queuedOperation.requestPayload);
     const expectedOperation =
       queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE
+      || queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE
       || queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE
         ? {
             entityType: "CREDIT_NOTE" as const,
             localModels:
-              queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE
-                ? (["Payment"] as const)
-                : (["Booking", "BookingModification"] as const),
+              queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE
+                ? (["Booking", "BookingModification"] as const)
+                : (["Payment"] as const),
           }
         : {
             entityType: "INVOICE" as const,
@@ -907,6 +1029,18 @@ export async function processQueuedXeroOutboxOperations(options?: {
         queuedOperation.localId
       ) {
         await createXeroCreditNote(
+          queuedOperation.localId,
+          payload.refundAmountCents,
+          {
+            createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+            syncOperationId: queuedOperation.id,
+          }
+        );
+      } else if (
+        payload?.queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE &&
+        queuedOperation.localId
+      ) {
+        await createUnappliedXeroCreditNote(
           queuedOperation.localId,
           payload.refundAmountCents,
           {

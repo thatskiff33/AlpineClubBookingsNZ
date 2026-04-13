@@ -10,7 +10,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { prisma } from "./prisma";
 import { sendPasswordResetEmail } from "./email";
-import { AgeTier, EntranceFeeCategory } from "@prisma/client";
+import { AgeTier, CreditType, EntranceFeeCategory } from "@prisma/client";
 import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
@@ -89,6 +89,11 @@ export interface CreateXeroSupplementaryInvoiceOptions
 }
 
 export interface CreateXeroModificationCreditNoteOptions
+  extends FindOrCreateXeroContactOptions {
+  syncOperationId?: string;
+}
+
+export interface CreateXeroUnappliedCreditNoteOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;
 }
@@ -3662,6 +3667,28 @@ export async function createXeroCreditNote(
   }
 }
 
+async function backfillCancellationCreditXeroNote(params: {
+  memberId: string;
+  bookingId: string;
+  refundAmountCents: number;
+  creditNoteId: string;
+}) {
+  const bookingLabel = params.bookingId.slice(0, 8);
+  await prisma.memberCredit.updateMany({
+    where: {
+      memberId: params.memberId,
+      sourceBookingId: params.bookingId,
+      amountCents: params.refundAmountCents,
+      type: CreditType.CANCELLATION_REFUND,
+      description: `Cancellation refund for booking ${bookingLabel}`,
+      xeroCreditNoteId: null,
+    },
+    data: {
+      xeroCreditNoteId: params.creditNoteId,
+    },
+  });
+}
+
 /**
  * Create an UNAPPLIED Xero credit note for account credit refunds.
  * Unlike createXeroCreditNote(), this:
@@ -3672,7 +3699,7 @@ export async function createXeroCreditNote(
 export async function createUnappliedXeroCreditNote(
   paymentId: string,
   refundAmountCents: number,
-  options?: FindOrCreateXeroContactOptions
+  options?: CreateXeroUnappliedCreditNoteOptions
 ): Promise<string> {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
@@ -3684,6 +3711,57 @@ export async function createUnappliedXeroCreditNote(
   });
 
   if (!payment) throw new Error(`Payment not found: ${paymentId}`);
+  const queuedOperationId = options?.syncOperationId ?? null;
+  const existingLink = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectType: "CREDIT_NOTE",
+      role: "ACCOUNT_CREDIT_NOTE",
+      active: true,
+    },
+    select: {
+      xeroObjectId: true,
+      xeroObjectNumber: true,
+    },
+  });
+
+  if (existingLink?.xeroObjectId) {
+    await backfillCancellationCreditXeroNote({
+      memberId: payment.booking.memberId,
+      bookingId: payment.booking.id,
+      refundAmountCents,
+      creditNoteId: existingLink.xeroObjectId,
+    });
+
+    if (queuedOperationId) {
+      await completeXeroSyncOperation(queuedOperationId, {
+        responsePayload: {
+          existingCreditNoteId: existingLink.xeroObjectId,
+        },
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: existingLink.xeroObjectId,
+        xeroObjectNumber: existingLink.xeroObjectNumber ?? null,
+        extraLinks: [
+          {
+            localModel: "Payment",
+            localId: paymentId,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: existingLink.xeroObjectId,
+            xeroObjectNumber: existingLink.xeroObjectNumber ?? null,
+            role: "ACCOUNT_CREDIT_NOTE",
+          },
+        ],
+      });
+    }
+
+    logger.info(
+      { paymentId, creditNoteId: existingLink.xeroObjectId },
+      "Xero account-credit note already exists, skipping"
+    );
+
+    return existingLink.xeroObjectId;
+  }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = await findOrCreateXeroContact(payment.booking.memberId, options);
@@ -3720,24 +3798,37 @@ export async function createUnappliedXeroCreditNote(
     refundAmountCents,
     "v1"
   );
-  const operation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "CREDIT_NOTE",
-    operationType: "CREATE",
-    localModel: "Payment",
-    localId: paymentId,
-    idempotencyKey,
-    correlationKey: idempotencyKey,
-    requestPayload: { creditNotes: [buildCreditNote(contactId)] },
-    createdByMemberId: options?.createdByMemberId ?? null,
-  });
+  let operationId = queuedOperationId;
+  const requestPayload = { creditNotes: [buildCreditNote(contactId)] };
+
+  if (operationId) {
+    await prisma.xeroSyncOperation.update({
+      where: { id: operationId },
+      data: {
+        requestPayload: sanitizeForJson(requestPayload),
+      },
+    });
+  } else {
+    const operation = await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: paymentId,
+      idempotencyKey,
+      correlationKey: idempotencyKey,
+      requestPayload,
+      createdByMemberId: options?.createdByMemberId ?? null,
+    });
+    operationId = operation.id;
+  }
 
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: payment.booking.memberId,
       currentContactId: contactId,
       workflow: "createUnappliedXeroCreditNote",
-      operationId: operation.id,
+      operationId: operationId!,
       repairExistingLink: options?.repairExistingLink,
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
@@ -3767,7 +3858,14 @@ export async function createUnappliedXeroCreditNote(
       throw new Error("Failed to create unapplied Xero credit note");
     }
 
-    await completeXeroSyncOperation(operation.id, {
+    await backfillCancellationCreditXeroNote({
+      memberId: payment.booking.memberId,
+      bookingId: payment.booking.id,
+      refundAmountCents,
+      creditNoteId: createdNote.creditNoteID,
+    });
+
+    await completeXeroSyncOperation(operationId!, {
       responsePayload: response.body,
       xeroObjectType: "CREDIT_NOTE",
       xeroObjectId: createdNote.creditNoteID,
@@ -3791,7 +3889,7 @@ export async function createUnappliedXeroCreditNote(
 
     return createdNote.creditNoteID;
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operationId!, error);
     throw error;
   }
 }

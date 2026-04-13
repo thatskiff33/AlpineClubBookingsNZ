@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   startXeroSyncOperation: vi.fn(),
   failXeroSyncOperation: vi.fn(),
   getEntranceFeeContext: vi.fn(),
+  createUnappliedXeroCreditNote: vi.fn(),
   createXeroCreditNote: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
   createXeroEntranceFeeInvoice: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock("@/lib/xero", () => ({
     category: string,
     amountCents: number
   ) => `member:${memberId}:entrance-fee-invoice:${category}:${amountCents}:v1`,
+  createUnappliedXeroCreditNote: mocks.createUnappliedXeroCreditNote,
   createXeroCreditNote: mocks.createXeroCreditNote,
   createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
   getEntranceFeeContext: mocks.getEntranceFeeContext,
@@ -72,6 +74,7 @@ vi.mock("@/lib/xero", () => ({
 }));
 
 import {
+  enqueueXeroAccountCreditNoteOperation,
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroEntranceFeeInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation,
@@ -333,6 +336,60 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
   });
 });
 
+describe("enqueueXeroAccountCreditNoteOperation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirstLink.mockResolvedValue(null);
+    mocks.findUniquePayment.mockResolvedValue({
+      id: "payment_1",
+    });
+    mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_account_credit_1" });
+  });
+
+  it("creates a pending primary Xero sync operation for account-credit notes", async () => {
+    await expect(
+      enqueueXeroAccountCreditNoteOperation("payment_1", 4200, {
+        createdByMemberId: "admin_1",
+      })
+    ).resolves.toEqual({
+      queueOperationId: "op_account_credit_1",
+      message: "Xero account-credit note queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "payment_1",
+        status: "PENDING",
+        idempotencyKey: "payment:payment_1:unapplied-credit-note:4200:v1",
+        correlationKey: "payment:payment_1:unapplied-credit-note:4200:v1",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "ACCOUNT_CREDIT_NOTE",
+          refundAmountCents: 4200,
+        },
+      })
+    );
+  });
+
+  it("skips queueing when the account-credit note is already linked", async () => {
+    mocks.findFirstLink.mockResolvedValue({ id: "link_account_credit_1" });
+
+    await expect(
+      enqueueXeroAccountCreditNoteOperation("payment_1", 4200)
+    ).resolves.toEqual({
+      queueOperationId: null,
+      message: "Xero account-credit note already linked for this payment.",
+    });
+
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+});
+
 describe("enqueueXeroModificationCreditNoteOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -484,6 +541,35 @@ describe("processQueuedXeroOutboxOperations", () => {
     expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("payment_1", 5000, {
       createdByMemberId: "admin_1",
       syncOperationId: "op_credit_note_1",
+    });
+  });
+
+  it("claims and processes queued account-credit note operations", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_account_credit_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "ACCOUNT_CREDIT_NOTE",
+          refundAmountCents: 4200,
+        },
+      },
+    ]);
+    mocks.createUnappliedXeroCreditNote.mockResolvedValue("cn_account_1");
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("payment_1", 4200, {
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_account_credit_1",
     });
   });
 

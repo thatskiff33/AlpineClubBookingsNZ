@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { processRefund } from "./stripe";
-import { isXeroConnected, createUnappliedXeroCreditNote } from "./xero";
+import { isXeroConnected } from "./xero";
 import {
   calculateRefundAmount,
   daysUntilDate,
@@ -11,6 +11,7 @@ import { logAudit } from "./audit";
 import { createCancellationCredit, restoreCreditFromBooking } from "./member-credit";
 import { processWaitlistForDates } from "./waitlist";
 import {
+  enqueueXeroAccountCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "./xero-operation-outbox";
@@ -225,6 +226,7 @@ export async function cancelBooking(
   // Process refund based on method
   if (refundAmountCents > 0 && refundMethod === "credit") {
     // ── Credit path: skip Stripe, create MemberCredit record ──────────
+    const paymentId = booking.payment.id;
 
     const newRefundedTotal =
       booking.payment.refundedAmountCents + refundAmountCents;
@@ -247,30 +249,37 @@ export async function cancelBooking(
       }),
     ]);
 
-    // Create unapplied Xero credit note (stays as open credit)
-    let xeroCreditNoteId: string | undefined;
-    try {
-      if (await isXeroConnected()) {
-        xeroCreditNoteId = await createUnappliedXeroCreditNote(
-          booking.payment.id,
-          refundAmountCents,
-          { createdByMemberId: sessionUserId }
-        );
-      }
-    } catch (xeroErr) {
-      logger.error(
-        { err: xeroErr, bookingId, paymentId: booking.payment.id },
-        "Failed to create unapplied Xero credit note"
-      );
-    }
-
-    // Create account credit record
+    // Create the local credit ledger entry immediately, then queue the
+    // Xero-side open credit note as background work.
     await createCancellationCredit(
       booking.memberId,
       refundAmountCents,
-      bookingId,
-      xeroCreditNoteId
+      bookingId
     );
+
+    try {
+      const queuedCreditNote = await enqueueXeroAccountCreditNoteOperation(
+        paymentId,
+        refundAmountCents,
+        {
+          createdByMemberId: sessionUserId,
+        }
+      );
+
+      if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
+        void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) => {
+          logger.error(
+            { err: xeroErr, bookingId, paymentId },
+            "Failed to kick Xero account-credit note outbox worker"
+          );
+        });
+      }
+    } catch (xeroErr) {
+      logger.error(
+        { err: xeroErr, bookingId, paymentId },
+        "Failed to queue unapplied Xero credit note"
+      );
+    }
 
     await cleanupPromoRedemption(bookingId);
 

@@ -8,6 +8,18 @@ Last updated: 2026-04-14
 
 Completed in this pass:
 
+- Extended the primary-write outbox in `src/lib/xero-operation-outbox.ts` from standard refund credit notes to unapplied account-credit notes:
+  - added an `ACCOUNT_CREDIT_NOTE` queue payload beside the existing entrance-fee, booking-invoice, refund-credit-note, supplementary-invoice, and modification-credit-note payloads
+  - the worker now claims and executes queued account-credit notes on the same durable `XeroSyncOperation` row used for queueing
+- Updated `createUnappliedXeroCreditNote()` in `src/lib/xero.ts` so it can execute against an existing pending outbox row instead of always creating a fresh ledger entry.
+  - queued runs now short-circuit cleanly when the account-credit note is already linked
+  - successful writes now backfill the matching `MemberCredit.xeroCreditNoteId` row after the Xero credit note is created
+- Moved credit-refund booking cancellations onto the durable outbox path in `src/lib/booking-cancel.ts`:
+  - the local `MemberCredit` ledger row is created first
+  - the Xero-side open credit note is then queued and kicked best-effort instead of being created inline inside the request
+- Added focused regression coverage for the account-credit-note outbox extension and cancellation rewiring:
+  - `src/lib/__tests__/xero-operation-outbox.test.ts`
+  - `src/lib/__tests__/booking-cancel.test.ts`
 - Extended the primary-write outbox in `src/lib/xero-operation-outbox.ts` from standard refund credit notes to the two booking-modification write types:
   - added `SUPPLEMENTARY_INVOICE` and `MODIFICATION_CREDIT_NOTE` queue payloads beside the existing entrance-fee, booking-invoice, and refund-credit-note payloads
   - the worker now claims and executes queued supplementary invoices and queued modification credit notes on the same durable `XeroSyncOperation` row used for queueing
@@ -31,8 +43,6 @@ Completed in this pass:
   - Stripe `charge.refunded` webhooks in `src/app/api/webhooks/stripe/route.ts`
   - card-refund booking cancellations in `src/lib/booking-cancel.ts`
   - approved admin refund appeals in `src/app/api/admin/refund-requests/[id]/route.ts`
-- Left the unapplied account-credit note path synchronous for now:
-  - `createUnappliedXeroCreditNote()` is still called inline from the credit-cancellation path in `src/lib/booking-cancel.ts` because `MemberCredit.xeroCreditNoteId` is still populated directly during that request flow.
 - Added focused regression coverage for the refund-credit-note outbox extension and trigger rewiring:
   - `src/lib/__tests__/xero-operation-outbox.test.ts`
   - `src/lib/__tests__/stripe-webhook-alerts.test.ts`
@@ -174,16 +184,16 @@ Work remaining after this pass:
   - entrance-fee invoice creation
   - automatic booking invoice creation across booking creation, draft confirmation, waitlist confirmation, saved-card charging, Stripe payment webhooks, and pending-confirmation cron
   - standard allocated refund credit note creation across Stripe refund webhooks, card-refund booking cancellations, and approved admin refund appeals
+  - unapplied account-credit note creation on credit cancellations
   - booking-modification supplementary invoice creation across date-change, batch-modify, guest-add, and guest-remove flows
   - booking-modification credit note creation across date-change, batch-modify, and guest-remove flows
-  Remaining high-value initial-write candidates are still inline and should move onto the same durable pattern next:
-  - unapplied account-credit note creation on credit cancellations
-  - decide whether the manual admin booking-invoice repair route and any future operator-triggered refund repair routes should stay intentionally synchronous or also enqueue onto the outbox
+  The remaining design decision in this track is whether intentionally operator-triggered repair/generation paths should stay synchronous or also enqueue onto the outbox:
+  - `src/app/api/admin/payments/[id]/generate-invoice/route.ts`
+  - any future operator-triggered refund/account-credit repair routes
 - Phase 2: incremental invoice sync to replace full daily membership polling.
 - Phase 3: local cache tables for Xero contact groups and memberships so member pages and filters can stay local-only without the temporary "not loaded" fallback.
 - Phase 4: incremental contact sync and group import so default admin syncs stop doing full scans plus per-contact invoice lookups.
 - Phase 6 still remaining:
-  - extend the same shared outbox/deduping pattern from the current automatic booking invoice / refund / modification flows to unapplied account-credit notes
   - decide whether any remaining operator-triggered repair/generation routes should also converge on the outbox or stay intentionally synchronous
 - Phase 7 still remaining:
   - webhook-driven targeted updates for any remaining local business state that is not yet advanced from inbound events
