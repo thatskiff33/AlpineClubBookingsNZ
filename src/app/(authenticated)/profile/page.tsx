@@ -233,7 +233,7 @@ export default async function ProfilePage() {
       </Card>
 
       {/* Family Group */}
-      <Card>
+      <Card id="family-group">
         <CardHeader>
           <CardTitle>Family Group</CardTitle>
           <CardDescription>
