@@ -18,6 +18,7 @@ const {
   mockSendBookingConfirmedEmail,
   mockSendAdminPaymentFailureAlert,
   mockSendSetupIntentFailedEmail,
+  mockLogAudit,
 } = vi.hoisted(() => ({
   mockConstructWebhookEvent: vi.fn(),
   mockProcessedWebhookCreate: vi.fn(),
@@ -35,6 +36,7 @@ const {
   mockSendBookingConfirmedEmail: vi.fn().mockResolvedValue(undefined),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
   mockSendSetupIntentFailedEmail: vi.fn().mockResolvedValue(undefined),
+  mockLogAudit: vi.fn(),
 }));
 
 vi.mock("@/lib/stripe", () => ({
@@ -77,6 +79,10 @@ vi.mock("@/lib/email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendBookingConfirmedEmail(...args),
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
   sendSetupIntentFailedEmail: (...args: unknown[]) => mockSendSetupIntentFailedEmail(...args),
+}));
+
+vi.mock("@/lib/audit", () => ({
+  logAudit: (...args: unknown[]) => mockLogAudit(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({

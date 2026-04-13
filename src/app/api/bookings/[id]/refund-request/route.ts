@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import { sendAdminRefundRequestAlert } from "@/lib/email";
+import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
 
 const createSchema = z.object({
   reason: z.string().min(10).max(2000),
@@ -75,9 +76,14 @@ export async function POST(
 
   const { reason, requestedAmountCents } = parsed.data;
 
-  // Validate requested amount doesn't exceed what was paid minus already refunded
-  const maxRefundable =
-    booking.payment.amountCents - booking.payment.refundedAmountCents;
+  const maxRefundable = getRemainingRefundableCents(booking.payment);
+  if (maxRefundable <= 0) {
+    return NextResponse.json(
+      { error: "No successful payment was captured for this booking" },
+      { status: 400 }
+    );
+  }
+
   if (requestedAmountCents && requestedAmountCents > maxRefundable) {
     return NextResponse.json(
       {

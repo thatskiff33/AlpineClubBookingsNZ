@@ -9,6 +9,7 @@ import { isXeroConnected, createXeroCreditNote } from "@/lib/xero";
 import { sendEmail } from "@/lib/email";
 import { refundRequestResolvedTemplate } from "@/lib/email-templates";
 import logger from "@/lib/logger";
+import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
@@ -76,7 +77,7 @@ export async function PUT(
       );
     }
 
-    const maxRefundable = payment.amountCents - payment.refundedAmountCents;
+    const maxRefundable = getRemainingRefundableCents(payment);
     if (approvedAmountCents > maxRefundable) {
       return NextResponse.json(
         {
