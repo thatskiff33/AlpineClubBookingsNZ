@@ -376,12 +376,6 @@ export default function JoinApplyPage() {
 
             <form onSubmit={handleSubmit}>
               <CardContent className="space-y-6">
-                {error && (
-                  <div className="rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                    {error}
-                  </div>
-                )}
-
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="applicantFirstName">First name</Label>
@@ -630,6 +624,12 @@ export default function JoinApplyPage() {
               </CardContent>
 
               <CardFooter className="flex flex-col gap-4">
+                {error && (
+                  <div className="w-full rounded-md border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    {error}
+                  </div>
+                )}
+
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? "Submitting application..." : "Submit membership application"}
                 </Button>
