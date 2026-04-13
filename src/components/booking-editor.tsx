@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EditBookingPanel } from "@/components/edit-booking-panel";
 import { formatCents } from "@/lib/utils";
-import { bookingStatusClass } from "@/lib/status-colors";
+import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 
 interface Guest {
   id: string;
@@ -85,7 +85,9 @@ export function BookingEditor({
                 </Button>
               )}
             </div>
-            <Badge variant="secondary" className={bookingStatusClass(booking.status)}>{booking.status}</Badge>
+            <Badge variant="secondary" className={bookingStatusClass(booking.status)}>
+              {bookingStatusLabel(booking.status)}
+            </Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">

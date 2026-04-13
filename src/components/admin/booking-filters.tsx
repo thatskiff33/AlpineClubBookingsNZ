@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { bookingFilterDateRangePresets } from "@/lib/date-range-presets";
+import { bookingStatusLabel } from "@/lib/status-colors";
 
 export function BookingFilters() {
   const router = useRouter();
@@ -17,6 +18,7 @@ export function BookingFilters() {
   const [search, setSearch] = useState(searchParams.get("search") || "");
   const [sort, setSort] = useState(searchParams.get("sort") || "updatedAt");
   const [month, setMonth] = useState(searchParams.get("month") || "");
+  const bookingStatuses = ["CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED", "CANCELLED", "BUMPED", "COMPLETED", "DRAFT"] as const;
 
   // Generate month options: current year ±1
   const monthOptions: Array<{ value: string; label: string }> = [];
@@ -60,15 +62,11 @@ export function BookingFilters() {
           className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
         >
           <option value="all">All</option>
-          <option value="CONFIRMED">Confirmed</option>
-          <option value="PAID">Paid</option>
-          <option value="PENDING">Pending</option>
-          <option value="WAITLISTED">Waitlisted</option>
-          <option value="WAITLIST_OFFERED">Waitlist Offered</option>
-          <option value="CANCELLED">Cancelled</option>
-          <option value="BUMPED">Bumped</option>
-          <option value="COMPLETED">Completed</option>
-          <option value="DRAFT">Draft</option>
+          {bookingStatuses.map((bookingStatus) => (
+            <option key={bookingStatus} value={bookingStatus}>
+              {bookingStatusLabel(bookingStatus)}
+            </option>
+          ))}
         </select>
       </div>
       <div className="space-y-1">

@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { eachDayOfInterval, addDays } from "date-fns";
 import { formatCents } from "@/lib/utils";
-import { bookingStatusClass } from "@/lib/status-colors";
+import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 
 async function getStats() {
   const now = new Date();
@@ -202,7 +202,7 @@ export default async function AdminDashboardPage() {
             <CardContent>
               <div className="text-3xl font-bold">{stats.activeBookings}</div>
               <p className="text-xs text-muted-foreground mt-1">
-                Confirmed + Pending
+                Payment Due + Paid + Pending
               </p>
             </CardContent>
           </Card>
@@ -315,7 +315,7 @@ export default async function AdminDashboardPage() {
                         variant="secondary"
                         className={bookingStatusClass(booking.status)}
                       >
-                        {booking.status}
+                        {bookingStatusLabel(booking.status)}
                       </Badge>
                     </div>
                   </Link>

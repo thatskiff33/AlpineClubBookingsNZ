@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
-import { bookingStatusClass } from "@/lib/status-colors";
+import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
 
 export default async function AdminBookingsPage({
@@ -144,7 +144,9 @@ export default async function AdminBookingsPage({
                     <td className="px-4 py-3 text-sm font-medium">{formatCents(booking.finalPriceCents)}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="secondary" className={bookingStatusClass(booking.status)}>{booking.status}</Badge>
+                        <Badge variant="secondary" className={bookingStatusClass(booking.status)}>
+                          {bookingStatusLabel(booking.status)}
+                        </Badge>
                         {booking.requiresAdminReview ? (
                           <Badge variant="secondary" className="bg-amber-100 text-amber-900">
                             Review

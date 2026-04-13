@@ -19,7 +19,7 @@ import {
   withDefaultNzCountry,
   type MemberAddressValues,
 } from "@/lib/member-address"
-import { bookingStatusClass, subscriptionStatusClass } from "@/lib/status-colors"
+import { bookingStatusClass, bookingStatusLabel, subscriptionStatusClass } from "@/lib/status-colors"
 
 interface XeroSearchResult {
   contactId: string; name: string; email: string | null; isLinked: boolean; linkedMemberName: string | null
@@ -623,7 +623,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       <Card><CardHeader><CardTitle className="text-base font-medium">Booking History</CardTitle></CardHeader><CardContent>
         {member.bookings.length === 0 ? <p className="text-sm text-slate-500">No bookings yet</p> : (
           <Table><TableHeader><TableRow><TableHead>Check In</TableHead><TableHead>Check Out</TableHead><TableHead>Status</TableHead><TableHead>Guests</TableHead><TableHead>Amount</TableHead></TableRow></TableHeader><TableBody>{member.bookings.map((booking) => (
-            <TableRow key={booking.id}><TableCell>{fmtDate(booking.checkIn)}</TableCell><TableCell>{fmtDate(booking.checkOut)}</TableCell><TableCell><Badge variant="secondary" className={bookingStatusClass(booking.status)}>{booking.status}</Badge></TableCell><TableCell>{booking._count.guests}</TableCell><TableCell>{fmt(booking.finalPriceCents)}</TableCell></TableRow>
+            <TableRow key={booking.id}><TableCell>{fmtDate(booking.checkIn)}</TableCell><TableCell>{fmtDate(booking.checkOut)}</TableCell><TableCell><Badge variant="secondary" className={bookingStatusClass(booking.status)}>{bookingStatusLabel(booking.status)}</Badge></TableCell><TableCell>{booking._count.guests}</TableCell><TableCell>{fmt(booking.finalPriceCents)}</TableCell></TableRow>
           ))}</TableBody></Table>)}
       </CardContent></Card>
 

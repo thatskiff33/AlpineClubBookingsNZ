@@ -36,6 +36,7 @@ import {
 import type { RevenueGranularity } from "@/lib/admin-reports";
 import { getRevenueGranularityLabel } from "@/lib/admin-reports";
 import { formatCents } from "@/lib/utils";
+import { bookingStatusLabel } from "@/lib/status-colors";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { reportsDateRangePresets } from "@/lib/date-range-presets";
 
@@ -171,7 +172,7 @@ export default function ReportsPage() {
 
   const statusPieData = data
     ? [
-        { name: "Confirmed", value: data.statusBreakdown.confirmed },
+        { name: bookingStatusLabel("CONFIRMED"), value: data.statusBreakdown.confirmed },
         { name: "Paid", value: data.statusBreakdown.paid },
         { name: "Completed", value: data.statusBreakdown.completed },
         { name: "Pending", value: data.statusBreakdown.pending },
@@ -230,7 +231,7 @@ export default function ReportsPage() {
     }
     rows.push([]);
     rows.push(["Booking Trends by Week"]);
-    rows.push(["Week", "Total", "Confirmed", "Cancelled", "Bumped", "Pending"]);
+    rows.push(["Week", "Total", bookingStatusLabel("CONFIRMED"), "Cancelled", "Bumped", "Pending"]);
     for (const entry of data.trends) {
       rows.push([
         entry.week,
@@ -527,7 +528,7 @@ export default function ReportsPage() {
                           dataKey="confirmed"
                           stroke="#22c55e"
                           strokeWidth={2}
-                          name="Confirmed"
+                          name={bookingStatusLabel("CONFIRMED")}
                         />
                         <Line
                           type="monotone"

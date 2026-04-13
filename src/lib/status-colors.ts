@@ -15,6 +15,18 @@ export const bookingStatusClasses: Record<string, string> = {
   WAITLIST_OFFERED: "bg-teal-100 text-teal-800",
 };
 
+export const bookingStatusLabels: Record<string, string> = {
+  DRAFT: "Draft",
+  PENDING: "Pending",
+  CONFIRMED: "Payment Due",
+  PAID: "Paid",
+  COMPLETED: "Completed",
+  CANCELLED: "Cancelled",
+  BUMPED: "Bumped",
+  WAITLISTED: "Waitlisted",
+  WAITLIST_OFFERED: "Waitlist Offered",
+};
+
 export const paymentStatusClasses: Record<string, string> = {
   PENDING:            "bg-yellow-100 text-yellow-800",
   PROCESSING:         "bg-indigo-100 text-indigo-800",
@@ -26,6 +38,10 @@ export const paymentStatusClasses: Record<string, string> = {
 
 export function bookingStatusClass(status: string): string {
   return bookingStatusClasses[status] ?? "bg-gray-100 text-gray-700";
+}
+
+export function bookingStatusLabel(status: string): string {
+  return bookingStatusLabels[status] ?? status.replace(/_/g, " ");
 }
 
 export function paymentStatusClass(status: string): string {

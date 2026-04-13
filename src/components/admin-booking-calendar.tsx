@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { bookingStatusLabel } from "@/lib/status-colors";
 
 interface CalendarBooking {
   id: string;
@@ -203,7 +204,7 @@ export function AdminBookingCalendar() {
                   : "bg-white text-slate-500 border-slate-300"
               }`}
             >
-              {status.replace("_", " ")}
+              {bookingStatusLabel(status)}
             </button>
           );
         })}
@@ -328,7 +329,7 @@ export function AdminBookingCalendar() {
         {Object.entries(STATUS_COLORS).map(([status, color]) => (
           <div key={status} className={`flex items-center gap-1.5 ${enabledStatuses.has(status) ? "" : "opacity-30"}`}>
             <div className={`w-3.5 h-2.5 rounded-sm ${color}`} />
-            <span className="text-slate-600">{status.replace("_", " ")}</span>
+            <span className="text-slate-600">{bookingStatusLabel(status)}</span>
           </div>
         ))}
       </div>

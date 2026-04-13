@@ -23,7 +23,7 @@ import {
   TicketPercent,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
-import { bookingStatusClass } from "@/lib/status-colors";
+import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { isHutLeader } from "@/lib/hut-leader";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { summarizeMemberPaymentOwed } from "@/lib/member-dashboard";
@@ -408,7 +408,7 @@ export default async function DashboardPage() {
                       variant="secondary"
                       className={bookingStatusClass(booking.status)}
                     >
-                      {booking.status}
+                      {bookingStatusLabel(booking.status)}
                     </Badge>
                   </Link>
                 ))}

@@ -3,6 +3,8 @@ import {
   bookingStatusClasses,
   paymentStatusClasses,
   bookingStatusClass,
+  bookingStatusLabel,
+  bookingStatusLabels,
   paymentStatusClass,
   subscriptionStatusClasses,
   subscriptionStatusClass,
@@ -60,6 +62,18 @@ describe("bookingStatusClass helper", () => {
     const fallback = bookingStatusClass("UNKNOWN_STATUS");
     expect(fallback).toBeTruthy();
     expect(fallback).toContain("bg-gray-100");
+  });
+});
+
+describe("bookingStatusLabel helper", () => {
+  it("returns the expected labels for booking statuses", () => {
+    expect(bookingStatusLabels["CONFIRMED"]).toBe("Payment Due");
+    expect(bookingStatusLabel("CONFIRMED")).toBe("Payment Due");
+    expect(bookingStatusLabel("WAITLIST_OFFERED")).toBe("Waitlist Offered");
+  });
+
+  it("falls back to replacing underscores for unknown statuses", () => {
+    expect(bookingStatusLabel("CUSTOM_STATUS")).toBe("CUSTOM STATUS");
   });
 });
 

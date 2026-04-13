@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCents } from "@/lib/utils";
-import { bookingStatusClass } from "@/lib/status-colors";
+import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 
 export default async function MyBookingsPage() {
   const session = await auth();
@@ -56,7 +56,9 @@ export default async function MyBookingsPage() {
                       {formatCents(booking.finalPriceCents)}
                     </p>
                   </div>
-                  <Badge variant="secondary" className={bookingStatusClass(booking.status)}>{booking.status}</Badge>
+                  <Badge variant="secondary" className={bookingStatusClass(booking.status)}>
+                    {bookingStatusLabel(booking.status)}
+                  </Badge>
                 </CardContent>
               </Card>
             </Link>

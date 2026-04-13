@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { bookingStatusClass } from "@/lib/status-colors";
+import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 
 interface WaitlistEntry {
   id: string;
@@ -178,7 +178,7 @@ export default function AdminWaitlistPage() {
                   </td>
                   <td className="px-3 py-2">
                     <Badge variant="secondary" className={bookingStatusClass(entry.status)}>
-                      {entry.status.replace("_", " ")}
+                      {bookingStatusLabel(entry.status)}
                     </Badge>
                   </td>
                   <td className="px-3 py-2 text-xs">
