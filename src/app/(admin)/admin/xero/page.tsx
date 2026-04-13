@@ -126,21 +126,6 @@ const MAPPING_DESCRIPTIONS: Record<string, string> = {
   subscriptionIncome: "Account code used to detect annual subscription invoices",
 }
 
-// Item code mapping keys
-const ITEM_MAPPING_KEYS = ["hutFeeItem", "hutFeeRefundItem", "entranceFeeItem"] as const
-
-const ITEM_MAPPING_LABELS: Record<string, string> = {
-  hutFeeItem: "Hut Fee Item",
-  hutFeeRefundItem: "Hut Fee Refund Item",
-  entranceFeeItem: "Entrance Fee Item",
-}
-
-const ITEM_MAPPING_DESCRIPTIONS: Record<string, string> = {
-  hutFeeItem: "Xero Item for booking invoice line items (auto-fills account code from Item config)",
-  hutFeeRefundItem: "Xero Item for refund credit note line items",
-  entranceFeeItem: "Xero Item for entrance fee invoices",
-}
-
 /** Which Xero account types each mapping accepts */
 const MAPPING_TYPE_FILTER: Record<string, string> = {
   hutFeesIncome: "REVENUE",
