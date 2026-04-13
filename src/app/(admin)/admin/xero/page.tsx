@@ -120,6 +120,50 @@ interface XeroOperation {
   reason: string | null
 }
 
+interface XeroUsageBucket {
+  label: string
+  count: number
+  successCount: number
+  failureCount: number
+}
+
+interface XeroUsageFailure {
+  id: string
+  operation: string
+  workflow: string | null
+  resourceType: string
+  rateLimitCategory: string | null
+  statusCode: number | null
+  errorMessage: string | null
+  createdAt: string
+}
+
+interface XeroUsageSummary {
+  budget: {
+    limit: number
+    thresholds: Array<{
+      fraction: number
+      callCount: number
+    }>
+  }
+  today: {
+    usageDate: string
+    totalCalls: number
+    successfulCalls: number
+    failedCalls: number
+    dayRateLimitHits: number
+    minuteRateLimitHits: number
+    lastRateLimitCategory: string | null
+    lastRateLimitAt: string | null
+    usagePercent: number
+    budgetStatus: "healthy" | "warning" | "critical" | "exhausted"
+  }
+  byOperation: XeroUsageBucket[]
+  topWorkflows: XeroUsageBucket[]
+  recentFailures: XeroUsageFailure[]
+  lastDailyLimitEvent: XeroUsageFailure | null
+}
+
 type MappingValue = {
   code: string | null
   itemCode: string | null
@@ -308,6 +352,8 @@ export default function XeroPage() {
   const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
   const [queueingOperationId, setQueueingOperationId] = useState<string | null>(null)
   const [operationMessage, setOperationMessage] = useState("")
+  const [usageSummary, setUsageSummary] = useState<XeroUsageSummary | null>(null)
+  const [loadingUsage, setLoadingUsage] = useState(false)
 
   // Granular item code mappings state
   type HutFeeMap = Record<string, { itemCode: string }>
@@ -386,6 +432,20 @@ export default function XeroPage() {
     }
   }, [])
 
+  const fetchUsage = useCallback(async () => {
+    setLoadingUsage(true)
+    try {
+      const res = await fetch("/api/admin/xero/usage")
+      if (!res.ok) throw new Error("Failed to fetch Xero API usage")
+      const data = await res.json()
+      setUsageSummary(data)
+    } catch {
+      setError("Failed to load Xero API usage")
+    } finally {
+      setLoadingUsage(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchStatus()
   }, [fetchStatus])
@@ -413,6 +473,12 @@ export default function XeroPage() {
       fetchOperations(operationStatusFilter, operationEntityFilter)
     }
   }, [status?.connected, operationStatusFilter, operationEntityFilter, fetchOperations])
+
+  useEffect(() => {
+    if (status?.connected) {
+      fetchUsage()
+    }
+  }, [status?.connected, fetchUsage])
 
   const handleRetryOperation = async (operationId: string) => {
     setRetryingOperationId(operationId)
@@ -710,6 +776,19 @@ export default function XeroPage() {
   const shortId = (value: string | null | undefined) =>
     value ? (value.length > 12 ? `${value.slice(0, 12)}...` : value) : "-"
 
+  const usageToneClass = (status: XeroUsageSummary["today"]["budgetStatus"] | undefined) => {
+    switch (status) {
+      case "warning":
+        return "bg-amber-500"
+      case "critical":
+        return "bg-orange-600"
+      case "exhausted":
+        return "bg-red-600"
+      default:
+        return "bg-green-600"
+    }
+  }
+
   if (loading) {
     return (
       <div className="p-6">
@@ -792,6 +871,148 @@ export default function XeroPage() {
           )}
         </CardContent>
       </Card>
+
+      {status?.connected && (
+        <Card className="mb-6">
+          <CardHeader className="flex flex-row items-start justify-between gap-4">
+            <div>
+              <CardTitle>Xero API Budget</CardTitle>
+              <CardDescription>
+                Daily call volume, hot spots, and recent failures from local metering.
+              </CardDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={fetchUsage} disabled={loadingUsage}>
+              {loadingUsage ? "Refreshing..." : "Refresh Usage"}
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {loadingUsage && !usageSummary ? (
+              <p className="text-sm text-muted-foreground">Loading usage summary...</p>
+            ) : usageSummary ? (
+              <div className="space-y-5">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Calls Today</p>
+                    <p className="mt-1 text-2xl font-semibold">{usageSummary.today.totalCalls}</p>
+                    <p className="text-xs text-muted-foreground">of {usageSummary.budget.limit} daily budget</p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Successful</p>
+                    <p className="mt-1 text-2xl font-semibold">{usageSummary.today.successfulCalls}</p>
+                    <p className="text-xs text-muted-foreground">Failed: {usageSummary.today.failedCalls}</p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Rate Limits</p>
+                    <p className="mt-1 text-2xl font-semibold">
+                      {usageSummary.today.dayRateLimitHits + usageSummary.today.minuteRateLimitHits}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Day: {usageSummary.today.dayRateLimitHits} • Minute: {usageSummary.today.minuteRateLimitHits}
+                    </p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Status</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <Badge className={usageToneClass(usageSummary.today.budgetStatus)}>
+                        {usageSummary.today.budgetStatus}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Last rate limit: {usageSummary.today.lastRateLimitAt
+                        ? new Date(usageSummary.today.lastRateLimitAt).toLocaleString("en-NZ")
+                        : "none"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>Budget progress</span>
+                    <span>{Math.round(usageSummary.today.usagePercent * 100)}%</span>
+                  </div>
+                  <div className="h-3 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className={`h-full ${usageToneClass(usageSummary.today.budgetStatus)}`}
+                      style={{ width: `${Math.min(usageSummary.today.usagePercent * 100, 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Thresholds: {usageSummary.budget.thresholds.map((threshold) => threshold.callCount).join(" / ")} calls
+                  </p>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-md border p-3">
+                    <p className="mb-2 text-sm font-medium">Top Operations</p>
+                    {usageSummary.byOperation.length > 0 ? (
+                      <div className="space-y-2 text-sm">
+                        {usageSummary.byOperation.map((bucket) => (
+                          <div key={bucket.label} className="flex items-center justify-between gap-3">
+                            <span className="truncate">{bucket.label}</span>
+                            <span className="text-muted-foreground">
+                              {bucket.count} calls
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No Xero calls recorded yet today.</p>
+                    )}
+                  </div>
+
+                  <div className="rounded-md border p-3">
+                    <p className="mb-2 text-sm font-medium">Top Workflows</p>
+                    {usageSummary.topWorkflows.length > 0 ? (
+                      <div className="space-y-2 text-sm">
+                        {usageSummary.topWorkflows.map((bucket) => (
+                          <div key={bucket.label} className="flex items-center justify-between gap-3">
+                            <span className="truncate">{bucket.label}</span>
+                            <span className="text-muted-foreground">
+                              {bucket.count} calls
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No workflow hotspots recorded yet today.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-md border p-3">
+                  <p className="mb-2 text-sm font-medium">Recent Failures</p>
+                  {usageSummary.recentFailures.length > 0 ? (
+                    <div className="space-y-3">
+                      {usageSummary.recentFailures.map((failure) => (
+                        <div key={failure.id} className="rounded-md bg-slate-50 p-3 text-sm">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="font-medium">{failure.workflow ?? failure.operation}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(failure.createdAt).toLocaleString("en-NZ")}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {failure.operation} • {failure.resourceType}
+                            {failure.statusCode ? ` • HTTP ${failure.statusCode}` : ""}
+                            {failure.rateLimitCategory ? ` • rate limit ${failure.rateLimitCategory}` : ""}
+                          </p>
+                          {failure.errorMessage && (
+                            <p className="mt-2 text-xs text-red-700">{failure.errorMessage}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No failed Xero calls recorded yet today.</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No Xero usage data recorded yet.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Account Mappings - only show when connected */}
       {status?.connected && (

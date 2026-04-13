@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { Account } from "xero-node";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { getAuthenticatedXeroClient } from "@/lib/xero";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
 import {
   type XeroAccount,
   getCachedChartOfAccounts,
@@ -32,7 +32,15 @@ export async function GET() {
 
   try {
     const { xero, tenantId } = await getAuthenticatedXeroClient();
-    const response = await xero.accountingApi.getAccounts(tenantId);
+    const response = await callXeroApi(
+      () => xero.accountingApi.getAccounts(tenantId),
+      {
+        operation: "getAccounts",
+        resourceType: "ACCOUNT",
+        workflow: "adminFetchChartOfAccounts",
+        context: "admin/xero/chart-of-accounts",
+      }
+    );
     const raw = response.body.accounts ?? [];
 
     const accounts: XeroAccount[] = raw

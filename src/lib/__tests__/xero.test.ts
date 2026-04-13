@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
+
+const mocks = vi.hoisted(() => ({
+  recordXeroApiUsage: vi.fn(),
+}))
+
+vi.mock("@/lib/xero-api-usage", () => ({
+  recordXeroApiUsage: mocks.recordXeroApiUsage,
+}))
+
 import {
+  callXeroApi,
   encryptToken,
   decryptToken,
   findSubscriptionInvoice,
@@ -13,6 +23,7 @@ import { Invoice } from "xero-node"
 
 beforeEach(() => {
   resetXeroRateLimitStateForTests()
+  mocks.recordXeroApiUsage.mockReset()
 })
 
 // ---------------------------------------------------------------------------
@@ -530,6 +541,70 @@ describe("withXeroRetry", () => {
     const result = await withXeroRetry(fn, { maxRetries: 1, maxWaitSec: 0 })
     expect(result).toBe("done")
     expect(Date.now() - start).toBeLessThan(2000) // Should not have waited 999 seconds
+  })
+})
+
+describe("callXeroApi", () => {
+  it("records successful calls and preserves observed rate-limit category", async () => {
+    let calls = 0
+
+    const result = await callXeroApi(
+      () => {
+        calls++
+        if (calls === 1) {
+          return Promise.reject({
+            response: {
+              statusCode: 429,
+              headers: { "retry-after": "0", "x-rate-limit-problem": "minute" },
+            },
+          })
+        }
+        return Promise.resolve("ok")
+      },
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "syncContactsFromXero",
+        context: "syncContacts test",
+        maxRetries: 1,
+        maxWaitSec: 0,
+      }
+    )
+
+    expect(result).toBe("ok")
+    expect(mocks.recordXeroApiUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "syncContactsFromXero",
+        success: true,
+        rateLimitCategory: "minute",
+      })
+    )
+  })
+
+  it("records failed calls with status code and error message", async () => {
+    const error = { response: { statusCode: 500 }, message: "Xero exploded" }
+
+    await expect(
+      callXeroApi(() => Promise.reject(error), {
+        operation: "getInvoice",
+        resourceType: "INVOICE",
+        workflow: "reconcileXeroInvoice",
+        context: "reconcile invoice test",
+      })
+    ).rejects.toBe(error)
+
+    expect(mocks.recordXeroApiUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "getInvoice",
+        resourceType: "INVOICE",
+        workflow: "reconcileXeroInvoice",
+        success: false,
+        statusCode: 500,
+        errorMessage: "Xero exploded",
+      })
+    )
   })
 })
 

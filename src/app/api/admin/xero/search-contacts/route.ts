@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { getAuthenticatedXeroClient, withXeroRetry } from "@/lib/xero";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
   try {
     const { xero, tenantId } = await getAuthenticatedXeroClient();
 
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.getContacts(
           tenantId,
@@ -42,7 +42,12 @@ export async function GET(request: NextRequest) {
           q.replace(/"/g, ""),
           20 // pageSize
         ),
-      { context: `searchContacts(${q})` }
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "adminSearchXeroContacts",
+        context: `searchContacts(${q})`,
+      }
     );
 
     const contacts = response.body.contacts ?? [];

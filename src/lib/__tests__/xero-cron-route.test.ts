@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   refreshAllMembershipStatuses: vi.fn(),
   isXeroConnected: vi.fn(),
   processQueuedXeroOperationRetries: vi.fn(),
+  processStoredXeroInboundEvents: vi.fn(),
   backfillHistoricalXeroObjectLinks: vi.fn(),
   sendXeroReconciliationReport: vi.fn(),
 }));
@@ -16,6 +17,10 @@ vi.mock("@/lib/xero", () => ({
 
 vi.mock("@/lib/xero-operation-queue", () => ({
   processQueuedXeroOperationRetries: mocks.processQueuedXeroOperationRetries,
+}));
+
+vi.mock("@/lib/xero-inbound-reconciliation", () => ({
+  processStoredXeroInboundEvents: mocks.processStoredXeroInboundEvents,
 }));
 
 vi.mock("@/lib/xero-hardening", () => ({
@@ -92,6 +97,13 @@ describe("POST /api/cron/xero", () => {
       failed: 0,
       skipped: 0,
     });
+    mocks.processStoredXeroInboundEvents.mockResolvedValue({
+      found: 2,
+      processed: 2,
+      succeeded: 2,
+      failed: 0,
+      skipped: 0,
+    });
     mocks.backfillHistoricalXeroObjectLinks.mockResolvedValue({
       totals: {
         scanned: 4,
@@ -119,6 +131,13 @@ describe("POST /api/cron/xero", () => {
       found: 1,
       processed: 1,
       succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+    expect(body.inboundReconciliation).toEqual({
+      found: 2,
+      processed: 2,
+      succeeded: 2,
       failed: 0,
       skipped: 0,
     });
@@ -152,5 +171,30 @@ describe("POST /api/cron/xero", () => {
       reason: "Daily membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH",
     });
     expect(mocks.refreshAllMembershipStatuses).not.toHaveBeenCalled();
+  });
+
+  it("runs inbound reconciliation on demand", async () => {
+    mocks.isXeroConnected.mockResolvedValue(true);
+    mocks.processStoredXeroInboundEvents.mockResolvedValue({
+      found: 3,
+      processed: 3,
+      succeeded: 2,
+      failed: 1,
+      skipped: 0,
+    });
+
+    const response = await POST(makeRequest("inbound"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.message).toBe("Xero inbound reconciliation processed");
+    expect(body.inboundReconciliation).toEqual({
+      found: 3,
+      processed: 3,
+      succeeded: 2,
+      failed: 1,
+      skipped: 0,
+    });
+    expect(mocks.processStoredXeroInboundEvents).toHaveBeenCalled();
   });
 });

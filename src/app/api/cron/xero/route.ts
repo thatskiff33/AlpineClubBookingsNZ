@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { refreshAllMembershipStatuses, isXeroConnected } from "@/lib/xero";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
+import { processStoredXeroInboundEvents } from "@/lib/xero-inbound-reconciliation";
 import {
   backfillHistoricalXeroObjectLinks,
   sendXeroReconciliationReport,
@@ -27,9 +28,9 @@ export async function POST(request: NextRequest) {
   }
 
   const task = request.nextUrl.searchParams.get("task") ?? "memberships";
-  if (!["memberships", "retries", "backfill", "report", "all"].includes(task)) {
+  if (!["memberships", "retries", "inbound", "backfill", "report", "all"].includes(task)) {
     return NextResponse.json(
-      { error: "Invalid task. Expected memberships, retries, backfill, report, or all." },
+      { error: "Invalid task. Expected memberships, retries, inbound, backfill, report, or all." },
       { status: 400 }
     );
   }
@@ -55,6 +56,12 @@ export async function POST(request: NextRequest) {
           ? await processQueuedXeroOperationRetries()
           : { skipped: true, reason: "Xero not connected" }
         : null;
+    const inboundReconciliation =
+      task === "inbound" || task === "all"
+        ? connected
+          ? await processStoredXeroInboundEvents()
+          : { skipped: true, reason: "Xero not connected" }
+        : null;
     const linkBackfill =
       task === "backfill" || task === "all"
         ? await backfillHistoricalXeroObjectLinks()
@@ -72,13 +79,16 @@ export async function POST(request: NextRequest) {
             ? "Xero reconciliation report completed"
             : task === "backfill"
               ? "Historical Xero link backfill completed"
-          : task === "retries"
-            ? "Queued Xero retries processed"
-            : "Membership status refresh completed",
+            : task === "inbound"
+              ? "Xero inbound reconciliation processed"
+              : task === "retries"
+                ? "Queued Xero retries processed"
+                : "Membership status refresh completed",
       task,
       connected,
       membershipRefresh,
       queuedRetries,
+      inboundReconciliation,
       linkBackfill,
       reconciliationReport,
     });

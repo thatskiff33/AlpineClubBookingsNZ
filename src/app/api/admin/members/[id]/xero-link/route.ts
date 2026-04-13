@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { getAuthenticatedXeroClient, withXeroRetry } from "@/lib/xero";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
@@ -56,9 +56,14 @@ export async function POST(
   try {
     // Verify the Xero contact exists
     const { xero, tenantId } = await getAuthenticatedXeroClient();
-    const contactRes = await withXeroRetry(
+    const contactRes = await callXeroApi(
       () => xero.accountingApi.getContact(tenantId, parsed.data.xeroContactId),
-      { context: `verifyContact(${parsed.data.xeroContactId})` }
+      {
+        operation: "getContact",
+        resourceType: "CONTACT",
+        workflow: "adminLinkMemberToXeroContact",
+        context: `verifyContact(${parsed.data.xeroContactId})`,
+      }
     );
     const contact = contactRes.body.contacts?.[0];
     if (!contact) {
