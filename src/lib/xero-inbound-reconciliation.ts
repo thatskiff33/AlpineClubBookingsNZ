@@ -48,6 +48,16 @@ export interface ProcessStoredXeroInboundEventsResult {
   skipped: number;
 }
 
+export class XeroInboundReplayError extends Error {
+  status: number;
+
+  constructor(message: string, status = 400) {
+    super(message);
+    this.name = "XeroInboundReplayError";
+    this.status = status;
+  }
+}
+
 function isPrismaUniqueConstraintError(error: unknown): boolean {
   return Boolean(
     error &&
@@ -601,13 +611,23 @@ async function releaseProcessedWebhookEventClaim(event: StoredXeroInboundEvent) 
 
 export async function processStoredXeroInboundEvents(options?: {
   limit?: number;
+  eventIds?: string[];
 }): Promise<ProcessStoredXeroInboundEventsResult> {
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
+  const eventIds =
+    options?.eventIds?.filter((value): value is string => typeof value === "string" && value.trim().length > 0) ?? [];
   const events = await prisma.xeroInboundEvent.findMany({
     where: {
       status: {
         in: ["RECEIVED", "FAILED"],
       },
+      ...(eventIds.length > 0
+        ? {
+            id: {
+              in: eventIds,
+            },
+          }
+        : {}),
     },
     orderBy: {
       createdAt: "asc",
@@ -687,4 +707,86 @@ export async function processStoredXeroInboundEvents(options?: {
   }
 
   return result;
+}
+
+export async function replayStoredXeroInboundEvent(eventId: string) {
+  const event = await prisma.xeroInboundEvent.findUnique({
+    where: {
+      id: eventId,
+    },
+    select: {
+      id: true,
+      correlationKey: true,
+      status: true,
+      errorMessage: true,
+      processedAt: true,
+    },
+  });
+
+  if (!event) {
+    throw new XeroInboundReplayError("Xero inbound event not found.", 404);
+  }
+
+  if (event.status === "PROCESSING") {
+    throw new XeroInboundReplayError(
+      "This inbound event is already being processed.",
+      409
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.processedWebhookEvent.deleteMany({
+      where: {
+        eventId: event.correlationKey,
+        source: "xero",
+      },
+    });
+
+    await tx.xeroInboundEvent.update({
+      where: {
+        id: event.id,
+      },
+      data: {
+        status: "RECEIVED",
+        errorMessage: null,
+        processedAt: null,
+      },
+    });
+  });
+
+  const result = await processStoredXeroInboundEvents({
+    limit: 1,
+    eventIds: [event.id],
+  });
+
+  const replayedEvent = await prisma.xeroInboundEvent.findUnique({
+    where: {
+      id: event.id,
+    },
+    select: {
+      id: true,
+      status: true,
+      errorMessage: true,
+      processedAt: true,
+    },
+  });
+
+  if (!replayedEvent) {
+    throw new XeroInboundReplayError(
+      "Xero inbound event disappeared during replay.",
+      500
+    );
+  }
+
+  if (replayedEvent.status === "FAILED") {
+    throw new XeroInboundReplayError(
+      replayedEvent.errorMessage ?? "Xero inbound event replay failed.",
+      409
+    );
+  }
+
+  return {
+    result,
+    event: replayedEvent,
+  };
 }
