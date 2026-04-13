@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   countOperations: vi.fn(),
   groupByOperations: vi.fn(),
   findManyLinks: vi.fn(),
+  findManyInboundEvents: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -39,6 +40,9 @@ vi.mock("@/lib/prisma", () => ({
     xeroObjectLink: {
       findMany: mocks.findManyLinks,
     },
+    xeroInboundEvent: {
+      findMany: mocks.findManyInboundEvents,
+    },
   },
 }));
 
@@ -65,6 +69,7 @@ describe("getXeroRecordActivity", () => {
       { status: "SUCCEEDED", _count: 1 },
     ]);
     mocks.findManyLinks.mockResolvedValue([]);
+    mocks.findManyInboundEvents.mockResolvedValue([]);
   });
 
   it("builds booking scope activity across the booking, payment, and modifications", async () => {
@@ -122,6 +127,21 @@ describe("getXeroRecordActivity", () => {
         updatedAt: new Date("2026-05-01T01:01:00.000Z"),
       },
     ]);
+    mocks.findManyInboundEvents.mockResolvedValue([
+      {
+        id: "evt_1",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "xero_inv_1",
+        correlationKey: "corr_evt_1",
+        payload: { invoiceId: "xero_inv_1" },
+        status: "FAILED",
+        errorMessage: "sync failed",
+        processedAt: null,
+        createdAt: new Date("2026-05-01T02:00:00.000Z"),
+      },
+    ]);
 
     const result = await getXeroRecordActivity("Booking", "book_1", 25);
 
@@ -142,6 +162,12 @@ describe("getXeroRecordActivity", () => {
     expect(result?.links[0]).toMatchObject({
       localUrl: "/admin/xero/records/Payment/pay_1",
       xeroObjectUrl: "https://xero.test/INVOICE/xero_inv_1",
+    });
+    expect(result?.inboundEvents[0]).toMatchObject({
+      id: "evt_1",
+      eventCategory: "INVOICE",
+      xeroObjectUrl: "https://xero.test/INVOICE/xero_inv_1",
+      canReplay: true,
     });
     expect(result?.summary).toEqual({
       totalOperations: 3,
@@ -166,6 +192,13 @@ describe("getXeroRecordActivity", () => {
         },
       })
     );
+    expect(mocks.findManyInboundEvents).toHaveBeenCalledWith({
+      where: {
+        OR: [{ eventCategory: "INVOICE", resourceId: "xero_inv_1" }],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+    });
   });
 
   it("includes member subscriptions in member-scoped activity", async () => {

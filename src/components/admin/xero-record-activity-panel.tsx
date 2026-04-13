@@ -199,6 +199,7 @@ export function XeroRecordActivityPanel({
   const [message, setMessage] = useState<string | null>(null)
   const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
   const [queueingOperationId, setQueueingOperationId] = useState<string | null>(null)
+  const [replayingInboundEventId, setReplayingInboundEventId] = useState<string | null>(null)
 
   const loadActivity = useCallback(async (showLoading: boolean) => {
     if (showLoading) {
@@ -280,6 +281,33 @@ export function XeroRecordActivityPanel({
     } finally {
       setQueueingOperationId(null)
     }
+  }
+
+  async function handleReplayInboundEvent(eventId: string) {
+    setReplayingInboundEventId(eventId)
+    setMessage(null)
+    setError(null)
+
+    try {
+      const res = await fetch(`/api/admin/xero/inbound-events/${eventId}/replay`, {
+        method: "POST",
+      })
+      const payload = await res.json()
+      if (!res.ok) {
+        throw new Error(payload.error || "Failed to replay Xero inbound event")
+      }
+
+      setMessage(payload.message || "Xero inbound event replayed.")
+      await loadActivity(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to replay Xero inbound event")
+    } finally {
+      setReplayingInboundEventId(null)
+    }
+  }
+
+  function inboundEventActionLabel(status: string) {
+    return status === "PROCESSED" ? "Replay" : "Retry"
   }
 
   const activityUrl = buildXeroRecordActivityUrl(localModel, localId)
@@ -563,6 +591,98 @@ export function XeroRecordActivityPanel({
                   retrying={retryingOperationId === operation.id}
                   queueing={queueingOperationId === operation.id}
                 />
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Inbound Events</CardTitle>
+          <CardDescription>
+            Stored Xero webhook events that match the current record scope. Replay them here after
+            handler changes or to retry a failed reconciliation.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <p className="text-sm text-slate-500">Loading stored inbound events...</p>
+          ) : !data || data.inboundEvents.length === 0 ? (
+            <p className="text-sm text-slate-500">No stored inbound events matched this scope yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {data.inboundEvents.map((event) => (
+                <div key={event.id} className="rounded-md border p-3 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="default" className={operationStatusClass(event.status)}>
+                      {event.status}
+                    </Badge>
+                    <span className="text-sm font-medium">
+                      {event.eventCategory ?? "UNKNOWN"} {event.eventType}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{formatTimestamp(event.createdAt)}</span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                    <span>Source: {event.source}</span>
+                    <span>
+                      Correlation: <code>{shortId(event.correlationKey)}</code>
+                    </span>
+                    {event.resourceId && (
+                      <span>
+                        Resource:{" "}
+                        {event.xeroObjectUrl ? (
+                          <a
+                            href={event.xeroObjectUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-blue-600 hover:underline"
+                          >
+                            {shortId(event.resourceId)}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        ) : (
+                          shortId(event.resourceId)
+                        )}
+                      </span>
+                    )}
+                    {event.processedAt && <span>Processed: {formatTimestamp(event.processedAt)}</span>}
+                  </div>
+
+                  {event.errorMessage && (
+                    <p className="text-sm text-red-700">{event.errorMessage}</p>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleReplayInboundEvent(event.id)}
+                      disabled={!event.canReplay || replayingInboundEventId === event.id}
+                    >
+                      {replayingInboundEventId === event.id
+                        ? "Replaying..."
+                        : inboundEventActionLabel(event.status)}
+                    </Button>
+                    {!event.canReplay && (
+                      <p className="text-xs text-muted-foreground">
+                        This event is currently being processed.
+                      </p>
+                    )}
+                  </div>
+
+                  <details className="rounded-md bg-slate-50 p-2">
+                    <summary className="cursor-pointer text-xs font-medium text-slate-700">
+                      View stored payload
+                    </summary>
+                    <div className="mt-2">
+                      <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">
+                        {formatJson(event.payload)}
+                      </pre>
+                    </div>
+                  </details>
+                </div>
               ))}
             </div>
           )}

@@ -10,6 +10,10 @@ import {
   isXeroConnected,
   updateXeroContact,
 } from "@/lib/xero";
+import {
+  buildXeroContactUpdatePayload,
+  hasMemberXeroContactChanges,
+} from "@/lib/xero-contact-sync";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
@@ -414,34 +418,21 @@ export async function PUT(
     });
 
     // Sync to Xero if connected and member has a linked contact
-    if (updated.xeroContactId) {
+    if (
+      updated.xeroContactId &&
+      hasMemberXeroContactChanges(existing, updated)
+    ) {
       try {
         if (await isXeroConnected()) {
-          await updateXeroContact(updated.xeroContactId, {
-            firstName: updated.firstName,
-            lastName: updated.lastName,
-            email: updated.email,
-            dateOfBirth: updated.dateOfBirth,
-            phoneCountryCode: updated.phoneCountryCode,
-            phoneAreaCode: updated.phoneAreaCode,
-            phoneNumber: updated.phoneNumber,
-            streetAddressLine1: updated.streetAddressLine1,
-            streetAddressLine2: updated.streetAddressLine2,
-            streetCity: updated.streetCity,
-            streetRegion: updated.streetRegion,
-            streetPostalCode: updated.streetPostalCode,
-            streetCountry: updated.streetCountry,
-            postalAddressLine1: updated.postalAddressLine1,
-            postalAddressLine2: updated.postalAddressLine2,
-            postalCity: updated.postalCity,
-            postalRegion: updated.postalRegion,
-            postalPostalCode: updated.postalPostalCode,
-            postalCountry: updated.postalCountry,
-          }, {
-            localModel: "Member",
-            localId: id,
-            createdByMemberId: session.user.id,
-          });
+          await updateXeroContact(
+            updated.xeroContactId,
+            buildXeroContactUpdatePayload(updated),
+            {
+              localModel: "Member",
+              localId: id,
+              createdByMemberId: session.user.id,
+            }
+          );
         }
       } catch (xeroErr) {
         logger.error({ err: xeroErr, memberId: id }, "Xero sync failed for member update");

@@ -274,18 +274,19 @@ describe("Profile API: structured phone and address fields", () => {
     vi.mocked(auth).mockResolvedValue(memberSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
     vi.mocked(prisma.member.update).mockResolvedValue({
-      ...baseMember, xeroContactId: "xc1",
+      ...baseMember, firstName: "Alicia", xeroContactId: "xc1",
     } as any);
     vi.mocked(isXeroConnected).mockResolvedValue(true);
 
-    await updateProfile(makeProfilePut(validProfileBody));
+    await updateProfile(makeProfilePut({ ...validProfileBody, firstName: "Alicia" }));
 
     expect(updateXeroContact).toHaveBeenCalledWith(
       "xc1",
       expect.objectContaining({
-        firstName: "Alice",
+        firstName: "Alicia",
         lastName: "Smith",
         phoneCountryCode: "64",
+        dateOfBirth: new Date("1990-01-15"),
       }),
       expect.objectContaining({
         localModel: "Member",
@@ -293,6 +294,23 @@ describe("Profile API: structured phone and address fields", () => {
         createdByMemberId: "m1",
       })
     );
+  });
+
+  it("does not sync to Xero when Xero-mapped fields are unchanged", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      xeroContactId: "xc1",
+    } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      xeroContactId: "xc1",
+    } as any);
+
+    await updateProfile(makeProfilePut(validProfileBody));
+
+    expect(isXeroConnected).not.toHaveBeenCalled();
+    expect(updateXeroContact).not.toHaveBeenCalled();
   });
 
   it("does not sync to Xero when not connected", async () => {

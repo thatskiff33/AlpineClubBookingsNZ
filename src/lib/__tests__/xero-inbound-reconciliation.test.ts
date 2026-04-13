@@ -63,12 +63,17 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
-vi.mock("@/lib/xero-sync", () => ({
-  startXeroSyncOperation: mocks.startXeroSyncOperation,
-  completeXeroSyncOperation: mocks.completeXeroSyncOperation,
-  failXeroSyncOperation: mocks.failXeroSyncOperation,
-  upsertXeroObjectLink: mocks.upsertXeroObjectLink,
-}));
+vi.mock("@/lib/xero-sync", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+
+  return {
+    ...actual,
+    startXeroSyncOperation: mocks.startXeroSyncOperation,
+    completeXeroSyncOperation: mocks.completeXeroSyncOperation,
+    failXeroSyncOperation: mocks.failXeroSyncOperation,
+    upsertXeroObjectLink: mocks.upsertXeroObjectLink,
+  };
+});
 
 vi.mock("@/lib/xero-links", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/xero-links")>();
@@ -108,7 +113,7 @@ import {
 
 describe("processStoredXeroInboundEvents", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
@@ -351,11 +356,196 @@ describe("processStoredXeroInboundEvents", () => {
       })
     );
   });
+
+  it("reconciles payment events into restored payment links and subscription refresh", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_3",
+        source: "webhook",
+        eventCategory: "PAYMENT",
+        eventType: "CREATE",
+        resourceId: "xpay_1",
+        correlationKey: "corr_3",
+        payload: { resourceId: "xpay_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_3" });
+    mocks.linkFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          localModel: "Payment",
+          localId: "pay_1",
+          xeroObjectType: "INVOICE",
+          role: "PRIMARY_INVOICE",
+        },
+        {
+          localModel: "MemberSubscription",
+          localId: "sub_1",
+          xeroObjectType: "SUBSCRIPTION",
+          role: "SUBSCRIPTION_INVOICE",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    mocks.paymentFindMany.mockResolvedValue([
+      {
+        id: "pay_1",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+      },
+    ]);
+    mocks.subscriptionFindMany.mockResolvedValue([
+      {
+        id: "sub_1",
+        memberId: "mem_1",
+        seasonYear: 2026,
+      },
+    ]);
+    mocks.checkMembershipStatus.mockResolvedValue({
+      status: "PAID",
+      xeroInvoiceId: "inv_1",
+    });
+    const accountingApi = {
+      getPayment: vi.fn().mockResolvedValue({
+        body: {
+          payments: [
+            {
+              paymentID: "xpay_1",
+              amount: 123.45,
+              invoiceNumber: "INV-001",
+              invoice: {
+                invoiceID: "inv_1",
+                invoiceNumber: "INV-001",
+              },
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay_1" },
+      data: {
+        xeroInvoiceId: "inv_1",
+        xeroInvoiceNumber: "INV-001",
+      },
+    });
+    expect(mocks.checkMembershipStatus).toHaveBeenCalledWith("mem_1", 2026);
+    expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localModel: "Payment",
+        localId: "pay_1",
+        xeroObjectType: "PAYMENT",
+        xeroObjectId: "xpay_1",
+        role: "INVOICE_PAYMENT",
+      })
+    );
+  });
+
+  it("reconciles credit note events into canonical links, allocations, and refund payments", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_4",
+        source: "webhook",
+        eventCategory: "CREDIT_NOTE",
+        eventType: "UPDATE",
+        resourceId: "cn_1",
+        correlationKey: "corr_4",
+        payload: { resourceId: "cn_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_4" });
+    mocks.linkFindMany.mockResolvedValue([
+      {
+        localModel: "Payment",
+        localId: "pay_1",
+        xeroObjectType: "CREDIT_NOTE",
+        role: "REFUND_CREDIT_NOTE",
+      },
+    ]);
+    mocks.paymentFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_1",
+          xeroRefundCreditNoteId: null,
+        },
+      ]);
+    const accountingApi = {
+      getCreditNote: vi.fn().mockResolvedValue({
+        body: {
+          creditNotes: [
+            {
+              creditNoteID: "cn_1",
+              creditNoteNumber: "CN-001",
+              total: 50,
+              appliedAmount: 50,
+              remainingCredit: 0,
+              allocations: [
+                {
+                  amount: 50,
+                  invoice: { invoiceID: "inv_1" },
+                },
+              ],
+              payments: [
+                {
+                  paymentID: "refund_payment_1",
+                  amount: 50,
+                  creditNoteNumber: "CN-001",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay_1" },
+      data: {
+        xeroRefundCreditNoteId: "cn_1",
+      },
+    });
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_1",
+      expect.objectContaining({
+        responsePayload: expect.objectContaining({
+          allocationsUpdated: 1,
+          refundPaymentsUpdated: 1,
+          relatedLinksUpdated: 1,
+        }),
+      })
+    );
+  });
 });
 
 describe("replayStoredXeroInboundEvent", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
@@ -398,6 +588,46 @@ describe("replayStoredXeroInboundEvent", () => {
       },
     ]);
     mocks.processedCreate.mockResolvedValue({ id: "processed_replay" });
+    mocks.linkFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          localModel: "Payment",
+          localId: "pay_1",
+          xeroObjectType: "INVOICE",
+          role: "PRIMARY_INVOICE",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    mocks.paymentFindMany.mockResolvedValue([
+      {
+        id: "pay_1",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+      },
+    ]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    const accountingApi = {
+      getPayment: vi.fn().mockResolvedValue({
+        body: {
+          payments: [
+            {
+              paymentID: "pay_1",
+              amount: 42,
+              invoiceNumber: "INV-042",
+              invoice: {
+                invoiceID: "inv_42",
+                invoiceNumber: "INV-042",
+              },
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
 
     await expect(replayStoredXeroInboundEvent("evt_replay")).resolves.toEqual({
       result: {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { isXeroConnected, updateXeroContact } from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
+import { buildXeroContactUpdatePayload } from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
 
 export async function GET(request: NextRequest) {
@@ -19,6 +20,7 @@ export async function GET(request: NextRequest) {
         member: {
           select: {
             id: true, email: true, firstName: true, lastName: true, xeroContactId: true,
+            dateOfBirth: true,
             phoneCountryCode: true, phoneAreaCode: true, phoneNumber: true,
             streetAddressLine1: true, streetAddressLine2: true, streetCity: true,
             streetRegion: true, streetPostalCode: true, streetCountry: true,
@@ -76,30 +78,18 @@ export async function GET(request: NextRequest) {
       isXeroConnected()
         .then(async (connected) => {
           if (connected) {
-            await updateXeroContact(record.member.xeroContactId!, {
-              firstName: record.member.firstName,
-              lastName: record.member.lastName,
-              email: record.newEmail,
-              phoneCountryCode: record.member.phoneCountryCode,
-              phoneAreaCode: record.member.phoneAreaCode,
-              phoneNumber: record.member.phoneNumber,
-              streetAddressLine1: record.member.streetAddressLine1,
-              streetAddressLine2: record.member.streetAddressLine2,
-              streetCity: record.member.streetCity,
-              streetRegion: record.member.streetRegion,
-              streetPostalCode: record.member.streetPostalCode,
-              streetCountry: record.member.streetCountry,
-              postalAddressLine1: record.member.postalAddressLine1,
-              postalAddressLine2: record.member.postalAddressLine2,
-              postalCity: record.member.postalCity,
-              postalRegion: record.member.postalRegion,
-              postalPostalCode: record.member.postalPostalCode,
-              postalCountry: record.member.postalCountry,
-            }, {
-              localModel: "Member",
-              localId: record.member.id,
-              createdByMemberId: record.member.id,
-            });
+            await updateXeroContact(
+              record.member.xeroContactId!,
+              buildXeroContactUpdatePayload({
+                ...record.member,
+                email: record.newEmail,
+              }),
+              {
+                localModel: "Member",
+                localId: record.member.id,
+                createdByMemberId: record.member.id,
+              }
+            );
           }
         })
         .catch((err) => {

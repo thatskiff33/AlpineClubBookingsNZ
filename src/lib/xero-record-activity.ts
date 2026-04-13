@@ -9,6 +9,7 @@ import type {
   XeroRecordActivityData,
   XeroRecordActivityOperation,
   XeroRecordBackLink,
+  XeroRecordInboundEvent,
   XeroRecordObjectLink,
   XeroRecordReference,
 } from "@/lib/xero-record-types";
@@ -71,6 +72,20 @@ function getScopeWhere(records: XeroRecordReference[]) {
       localId: record.localId,
     })),
   };
+}
+
+function getInboundEventCategoryForObjectType(xeroObjectType: string): string | null {
+  switch (xeroObjectType) {
+    case "SUBSCRIPTION":
+      return "INVOICE";
+    case "CONTACT":
+    case "INVOICE":
+    case "PAYMENT":
+    case "CREDIT_NOTE":
+      return xeroObjectType;
+    default:
+      return null;
+  }
 }
 
 async function getMemberScope(localId: string): Promise<XeroRecordScope | null> {
@@ -425,6 +440,40 @@ export async function getXeroRecordActivity(
     }),
   ]);
 
+  const inboundEventTargets = Array.from(
+    new Map(
+      links
+        .flatMap((link) => {
+          const eventCategory = getInboundEventCategoryForObjectType(link.xeroObjectType);
+          if (!eventCategory) {
+            return [];
+          }
+
+          return [
+            [
+              `${eventCategory}:${link.xeroObjectId}`,
+              {
+                eventCategory,
+                resourceId: link.xeroObjectId,
+              },
+            ] as const,
+          ];
+        })
+    ).values()
+  );
+  const inboundEvents = inboundEventTargets.length
+    ? await prisma.xeroInboundEvent.findMany({
+        where: {
+          OR: inboundEventTargets.map((target) => ({
+            eventCategory: target.eventCategory,
+            resourceId: target.resourceId,
+          })),
+        },
+        orderBy: { createdAt: "desc" },
+        take: limit,
+      })
+    : [];
+
   const summaryCounts = new Map(
     operationStatusCounts.map((item) => [item.status, item._count])
   );
@@ -499,6 +548,24 @@ export async function getXeroRecordActivity(
       }
       return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
     });
+  const mappedInboundEvents: XeroRecordInboundEvent[] = inboundEvents.map((event) => ({
+    id: event.id,
+    source: event.source,
+    eventCategory: event.eventCategory,
+    eventType: event.eventType,
+    resourceId: event.resourceId,
+    correlationKey: event.correlationKey,
+    status: event.status,
+    errorMessage: event.errorMessage,
+    processedAt: toIsoString(event.processedAt),
+    createdAt: event.createdAt.toISOString(),
+    payload: event.payload,
+    xeroObjectUrl:
+      event.eventCategory && event.resourceId
+        ? buildXeroObjectUrl(event.eventCategory, event.resourceId)
+        : null,
+    canReplay: event.status !== "PROCESSING",
+  }));
 
   return {
     rootRecord: scope.rootRecord,
@@ -513,6 +580,7 @@ export async function getXeroRecordActivity(
     },
     operations: mappedOperations,
     links: mappedLinks,
+    inboundEvents: mappedInboundEvents,
     backLink: scope.backLink,
   };
 }

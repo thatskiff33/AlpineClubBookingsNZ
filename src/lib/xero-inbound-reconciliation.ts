@@ -1,4 +1,11 @@
-import { Address, Phone, type Contact, type Invoice, type XeroClient } from "xero-node";
+import {
+  Address,
+  Phone,
+  type Contact,
+  type Invoice,
+  type Payment as XeroPayment,
+  type XeroClient,
+} from "xero-node";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
@@ -12,9 +19,11 @@ import {
   XeroDailyLimitError,
 } from "@/lib/xero";
 import {
+  buildXeroIdempotencyKey,
   completeXeroSyncOperation,
   failXeroSyncOperation,
   startXeroSyncOperation,
+  type XeroObjectLinkInput,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
 
@@ -38,6 +47,13 @@ interface MemberBackfillCandidate {
   streetAddressLine1: string | null;
   postalAddressLine1: string | null;
   joinedDate: Date | null;
+}
+
+interface ResolvedXeroObjectLink {
+  localModel: string;
+  localId: string;
+  xeroObjectType: string;
+  role: string;
 }
 
 export interface ProcessStoredXeroInboundEventsResult {
@@ -92,6 +108,91 @@ function parseXeroDateOfBirth(value: string | undefined): Date | null {
 
   const date = new Date(Date.UTC(Number(match[3]), Number(match[2]) - 1, Number(match[1])));
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function buildSyntheticAllocationLinkId(
+  creditNoteId: string,
+  invoiceId: string,
+  amountCents: number
+): string {
+  return buildXeroIdempotencyKey(
+    "allocation",
+    creditNoteId,
+    invoiceId,
+    amountCents,
+    "v1"
+  );
+}
+
+function buildXeroPaymentDisplayNumber(payment: XeroPayment): string | null {
+  return payment.invoiceNumber ?? payment.creditNoteNumber ?? null;
+}
+
+function dedupeXeroObjectLinks(links: XeroObjectLinkInput[]): XeroObjectLinkInput[] {
+  const seen = new Map<string, XeroObjectLinkInput>();
+
+  for (const link of links) {
+    seen.set(
+      [
+        link.localModel,
+        link.localId,
+        link.xeroObjectType,
+        link.xeroObjectId,
+        link.role,
+      ].join(":"),
+      link
+    );
+  }
+
+  return Array.from(seen.values());
+}
+
+function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, "xeroObjectType" | "role">) {
+  if (link.xeroObjectType === "PAYMENT") {
+    return link.role;
+  }
+
+  switch (link.role) {
+    case "PRIMARY_INVOICE":
+      return "INVOICE_PAYMENT";
+    case "SUPPLEMENTARY_INVOICE":
+      return "SUPPLEMENTARY_INVOICE_PAYMENT";
+    case "SUBSCRIPTION_INVOICE":
+      return "SUBSCRIPTION_PAYMENT";
+    case "REFUND_CREDIT_NOTE":
+      return "REFUND_PAYMENT";
+    default:
+      return null;
+  }
+}
+
+function getDerivedInboundAllocationRole(creditNoteRole: string) {
+  return creditNoteRole === "MODIFICATION_CREDIT_NOTE"
+    ? "MODIFICATION_CREDIT_NOTE_ALLOCATION"
+    : "CREDIT_NOTE_ALLOCATION";
+}
+
+async function findActiveXeroObjectLinks(
+  xeroObjectType: string | string[],
+  xeroObjectId: string
+): Promise<ResolvedXeroObjectLink[]> {
+  return prisma.xeroObjectLink.findMany({
+    where: {
+      xeroObjectId,
+      xeroObjectType: Array.isArray(xeroObjectType)
+        ? {
+            in: xeroObjectType,
+          }
+        : xeroObjectType,
+      active: true,
+    },
+    select: {
+      localModel: true,
+      localId: true,
+      xeroObjectType: true,
+      role: true,
+    },
+  });
 }
 
 function extractContactPhone(contact: Contact) {
@@ -219,6 +320,107 @@ async function resolveMemberIdsForContact(contactId: string): Promise<string[]> 
   ]);
 
   return [...new Set([...members.map((member) => member.id), ...links.map((link) => link.localId)])];
+}
+
+async function syncLinkedPaymentInvoiceMetadata(
+  invoiceId: string,
+  invoiceNumber: string | null,
+  linkedPaymentIds: string[]
+) {
+  const paymentWhere = [
+    {
+      xeroInvoiceId: invoiceId,
+    },
+    ...(linkedPaymentIds.length > 0
+      ? [
+          {
+            id: {
+              in: linkedPaymentIds,
+            },
+          },
+        ]
+      : []),
+  ];
+  const payments = await prisma.payment.findMany({
+    where: {
+      OR: paymentWhere,
+    },
+    select: {
+      id: true,
+      xeroInvoiceId: true,
+      xeroInvoiceNumber: true,
+    },
+  });
+  const canApplyCanonicalPaymentLink = payments.length === 1;
+  let updatedPayments = 0;
+
+  for (const payment of payments) {
+    const updates: Record<string, unknown> = {};
+
+    if (!payment.xeroInvoiceId && canApplyCanonicalPaymentLink) {
+      updates.xeroInvoiceId = invoiceId;
+    }
+
+    if (invoiceNumber && payment.xeroInvoiceNumber !== invoiceNumber) {
+      updates.xeroInvoiceNumber = invoiceNumber;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await prisma.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: updates,
+      });
+      updatedPayments += 1;
+    }
+  }
+
+  return {
+    matchedPayments: payments.length,
+    updatedPayments,
+  };
+}
+
+async function refreshLinkedSubscriptionsForInvoice(
+  invoiceId: string,
+  linkedSubscriptionIds: string[]
+) {
+  const subscriptionWhere = [
+    {
+      xeroInvoiceId: invoiceId,
+    },
+    ...(linkedSubscriptionIds.length > 0
+      ? [
+          {
+            id: {
+              in: linkedSubscriptionIds,
+            },
+          },
+        ]
+      : []),
+  ];
+  const subscriptions = await prisma.memberSubscription.findMany({
+    where: {
+      OR: subscriptionWhere,
+    },
+    select: {
+      id: true,
+      memberId: true,
+      seasonYear: true,
+    },
+  });
+
+  const refreshedSubscriptions = new Set<string>();
+  for (const subscription of subscriptions) {
+    await checkMembershipStatus(subscription.memberId, subscription.seasonYear);
+    refreshedSubscriptions.add(`${subscription.memberId}:${subscription.seasonYear}`);
+  }
+
+  return {
+    subscriptions,
+    refreshedSubscriptions,
+  };
 }
 
 async function reconcileXeroContact(contactId: string) {
@@ -397,54 +599,12 @@ async function reconcileXeroInvoice(invoiceId: string) {
   const linkedPaymentIds = relatedLinks
     .filter((link) => link.localModel === "Payment" && link.role === "PRIMARY_INVOICE")
     .map((link) => link.localId);
-  const paymentWhere = [
-    {
-      xeroInvoiceId: invoice.invoiceID,
-    },
-    ...(linkedPaymentIds.length > 0
-      ? [
-          {
-            id: {
-              in: linkedPaymentIds,
-            },
-          },
-        ]
-      : []),
-  ];
-  const payments = await prisma.payment.findMany({
-    where: {
-      OR: paymentWhere,
-    },
-    select: {
-      id: true,
-      xeroInvoiceId: true,
-      xeroInvoiceNumber: true,
-    },
-  });
-  const canApplyCanonicalPaymentLink = payments.length === 1;
-  let updatedPayments = 0;
-
-  for (const payment of payments) {
-    const updates: Record<string, unknown> = {};
-
-    if (!payment.xeroInvoiceId && canApplyCanonicalPaymentLink) {
-      updates.xeroInvoiceId = invoice.invoiceID;
-    }
-
-    if (invoice.invoiceNumber && payment.xeroInvoiceNumber !== invoice.invoiceNumber) {
-      updates.xeroInvoiceNumber = invoice.invoiceNumber;
-    }
-
-    if (Object.keys(updates).length > 0) {
-      await prisma.payment.update({
-        where: {
-          id: payment.id,
-        },
-        data: updates,
-      });
-      updatedPayments += 1;
-    }
-  }
+  const { matchedPayments, updatedPayments } =
+    await syncLinkedPaymentInvoiceMetadata(
+      invoice.invoiceID,
+      invoice.invoiceNumber ?? null,
+      linkedPaymentIds
+    );
 
   const linkedSubscriptionIds = relatedLinks
     .filter(
@@ -453,36 +613,10 @@ async function reconcileXeroInvoice(invoiceId: string) {
         link.role === "SUBSCRIPTION_INVOICE"
     )
     .map((link) => link.localId);
-  const subscriptionWhere = [
-    {
-      xeroInvoiceId: invoice.invoiceID,
-    },
-    ...(linkedSubscriptionIds.length > 0
-      ? [
-          {
-            id: {
-              in: linkedSubscriptionIds,
-            },
-          },
-        ]
-      : []),
-  ];
-  const subscriptions = await prisma.memberSubscription.findMany({
-    where: {
-      OR: subscriptionWhere,
-    },
-    select: {
-      id: true,
-      memberId: true,
-      seasonYear: true,
-    },
-  });
-
-  const refreshedSubscriptions = new Set<string>();
-  for (const subscription of subscriptions) {
-    await checkMembershipStatus(subscription.memberId, subscription.seasonYear);
-    refreshedSubscriptions.add(`${subscription.memberId}:${subscription.seasonYear}`);
-  }
+  const { refreshedSubscriptions } = await refreshLinkedSubscriptionsForInvoice(
+    invoice.invoiceID,
+    linkedSubscriptionIds
+  );
 
   const seasonYear = buildSeasonYearFromInvoice(invoice);
   const subscriptionIncomeCode = (await getAccountMapping("subscriptionIncome")) ?? "203";
@@ -505,11 +639,348 @@ async function reconcileXeroInvoice(invoiceId: string) {
     kind: "INVOICE",
     resourceId: invoice.invoiceID,
     invoiceNumber: invoice.invoiceNumber ?? null,
-    matchedPayments: payments.length,
+    matchedPayments,
     updatedPayments,
     refreshedSubscriptions: refreshedSubscriptions.size,
     relatedLinksUpdated: relatedLinks.length,
     looksLikeSubscriptionInvoice,
+  };
+}
+
+async function reconcileXeroPayment(paymentId: string) {
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const response = await callXeroApi(
+    () => xero.accountingApi.getPayment(tenantId, paymentId),
+    {
+      operation: "getPayment",
+      resourceType: "PAYMENT",
+      workflow: "reconcileXeroPayment",
+      context: `reconcileXeroPayment(${paymentId})`,
+    }
+  );
+  const payment = response.body.payments?.[0];
+
+  if (!payment?.paymentID) {
+    throw new Error(`Xero payment ${paymentId} was not found`);
+  }
+
+  const invoiceId = payment.invoice?.invoiceID ?? null;
+  const creditNoteId = payment.creditNote?.creditNoteID ?? null;
+  const [existingPaymentLinks, invoiceLinks, creditNoteLinks] = await Promise.all([
+    findActiveXeroObjectLinks("PAYMENT", payment.paymentID),
+    invoiceId
+      ? findActiveXeroObjectLinks(["INVOICE", "SUBSCRIPTION"], invoiceId)
+      : Promise.resolve([]),
+    creditNoteId
+      ? findActiveXeroObjectLinks("CREDIT_NOTE", creditNoteId)
+      : Promise.resolve([]),
+  ]);
+
+  const paymentLinks = dedupeXeroObjectLinks(
+    [...existingPaymentLinks, ...invoiceLinks, ...creditNoteLinks]
+      .flatMap((link) => {
+        const role = getDerivedInboundPaymentRole(link);
+        if (!role) {
+          return [];
+        }
+
+        return [
+          {
+            localModel: link.localModel,
+            localId: link.localId,
+            xeroObjectType: "PAYMENT",
+            xeroObjectId: payment.paymentID!,
+            xeroObjectNumber: buildXeroPaymentDisplayNumber(payment),
+            role,
+            metadata: {
+              invoiceId,
+              creditNoteId,
+              amount: payment.amount ?? null,
+              date: payment.date ?? null,
+              paymentType: payment.paymentType ?? null,
+              status: payment.status ?? null,
+            },
+          },
+        ] satisfies XeroObjectLinkInput[];
+      })
+  );
+
+  for (const link of paymentLinks) {
+    await upsertXeroObjectLink(link);
+  }
+
+  const linkedPaymentIds = invoiceLinks
+    .filter((link) => link.localModel === "Payment" && link.role === "PRIMARY_INVOICE")
+    .map((link) => link.localId);
+  const linkedSubscriptionIds = invoiceLinks
+    .filter(
+      (link) =>
+        link.localModel === "MemberSubscription" &&
+        link.role === "SUBSCRIPTION_INVOICE"
+    )
+    .map((link) => link.localId);
+
+  const { matchedPayments, updatedPayments } = invoiceId
+    ? await syncLinkedPaymentInvoiceMetadata(
+        invoiceId,
+        payment.invoice?.invoiceNumber ?? payment.invoiceNumber ?? null,
+        linkedPaymentIds
+      )
+    : { matchedPayments: 0, updatedPayments: 0 };
+  const { refreshedSubscriptions } = invoiceId
+    ? await refreshLinkedSubscriptionsForInvoice(invoiceId, linkedSubscriptionIds)
+    : { refreshedSubscriptions: new Set<string>() };
+
+  return {
+    handled: true,
+    kind: "PAYMENT",
+    resourceId: payment.paymentID,
+    paymentNumber: buildXeroPaymentDisplayNumber(payment),
+    invoiceId,
+    creditNoteId,
+    matchedPayments,
+    updatedPayments,
+    refreshedSubscriptions: refreshedSubscriptions.size,
+    relatedLinksUpdated: paymentLinks.length,
+  };
+}
+
+async function reconcileXeroCreditNote(creditNoteId: string) {
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const response = await callXeroApi(
+    () => xero.accountingApi.getCreditNote(tenantId, creditNoteId),
+    {
+      operation: "getCreditNote",
+      resourceType: "CREDIT_NOTE",
+      workflow: "reconcileXeroCreditNote",
+      context: `reconcileXeroCreditNote(${creditNoteId})`,
+    }
+  );
+  const creditNote = response.body.creditNotes?.[0];
+
+  if (!creditNote?.creditNoteID) {
+    throw new Error(`Xero credit note ${creditNoteId} was not found`);
+  }
+
+  const [relatedLinks, canonicalPaymentLinks] = await Promise.all([
+    findActiveXeroObjectLinks("CREDIT_NOTE", creditNote.creditNoteID),
+    prisma.payment.findMany({
+      where: {
+        xeroRefundCreditNoteId: creditNote.creditNoteID,
+      },
+      select: {
+        id: true,
+      },
+    }),
+  ]);
+
+  const existingRefundPaymentIds = new Set(
+    relatedLinks
+      .filter((link) => link.localModel === "Payment" && link.role === "REFUND_CREDIT_NOTE")
+      .map((link) => link.localId)
+  );
+
+  const creditNoteLinks = dedupeXeroObjectLinks([
+    ...relatedLinks.map(
+      (link) =>
+        ({
+          localModel: link.localModel,
+          localId: link.localId,
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: creditNote.creditNoteID!,
+          xeroObjectNumber: creditNote.creditNoteNumber ?? null,
+          role: link.role,
+          metadata: {
+            status: creditNote.status ?? null,
+            total: creditNote.total ?? null,
+            appliedAmount: creditNote.appliedAmount ?? null,
+            remainingCredit: creditNote.remainingCredit ?? null,
+          },
+        }) satisfies XeroObjectLinkInput
+    ),
+    ...canonicalPaymentLinks
+      .filter((payment) => !existingRefundPaymentIds.has(payment.id))
+      .map(
+        (payment) =>
+          ({
+            localModel: "Payment",
+            localId: payment.id,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: creditNote.creditNoteID!,
+            xeroObjectNumber: creditNote.creditNoteNumber ?? null,
+            role: "REFUND_CREDIT_NOTE",
+            metadata: {
+              status: creditNote.status ?? null,
+              total: creditNote.total ?? null,
+              appliedAmount: creditNote.appliedAmount ?? null,
+              remainingCredit: creditNote.remainingCredit ?? null,
+            },
+          }) satisfies XeroObjectLinkInput
+      ),
+  ]);
+
+  for (const link of creditNoteLinks) {
+    await upsertXeroObjectLink(link);
+  }
+
+  const linkedRefundPaymentIds = creditNoteLinks
+    .filter((link) => link.localModel === "Payment" && link.role === "REFUND_CREDIT_NOTE")
+    .map((link) => link.localId);
+  const paymentCandidates = await prisma.payment.findMany({
+    where: {
+      OR: [
+        {
+          xeroRefundCreditNoteId: creditNote.creditNoteID,
+        },
+        ...(linkedRefundPaymentIds.length > 0
+          ? [
+              {
+                id: {
+                  in: linkedRefundPaymentIds,
+                },
+              },
+            ]
+          : []),
+      ],
+    },
+    select: {
+      id: true,
+      xeroRefundCreditNoteId: true,
+    },
+  });
+
+  const canApplyCanonicalRefundLink = paymentCandidates.length === 1;
+  let updatedPayments = 0;
+  for (const payment of paymentCandidates) {
+    if (!payment.xeroRefundCreditNoteId && canApplyCanonicalRefundLink) {
+      await prisma.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          xeroRefundCreditNoteId: creditNote.creditNoteID,
+        },
+      });
+      updatedPayments += 1;
+    }
+  }
+
+  const resolvedCreditNoteLinks = dedupeXeroObjectLinks([
+    ...creditNoteLinks,
+    ...paymentCandidates
+      .filter(
+        (payment) =>
+          !creditNoteLinks.some(
+            (link) =>
+              link.localModel === "Payment" &&
+              link.localId === payment.id &&
+              link.role === "REFUND_CREDIT_NOTE"
+          )
+      )
+      .map(
+        (payment) =>
+          ({
+            localModel: "Payment",
+            localId: payment.id,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: creditNote.creditNoteID!,
+            xeroObjectNumber: creditNote.creditNoteNumber ?? null,
+            role: "REFUND_CREDIT_NOTE",
+            metadata: {
+              status: creditNote.status ?? null,
+              total: creditNote.total ?? null,
+              appliedAmount: creditNote.appliedAmount ?? null,
+              remainingCredit: creditNote.remainingCredit ?? null,
+            },
+          }) satisfies XeroObjectLinkInput
+      ),
+  ]);
+
+  for (const link of resolvedCreditNoteLinks) {
+    await upsertXeroObjectLink(link);
+  }
+
+  const allocationLinks = dedupeXeroObjectLinks(
+    (creditNote.allocations ?? []).flatMap((allocation) => {
+      const invoiceId = allocation.invoice?.invoiceID ?? null;
+      const amount = allocation.amount;
+
+      if (!invoiceId || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+        return [];
+      }
+
+      const amountCents = Math.round(amount * 100);
+
+      return resolvedCreditNoteLinks.map(
+        (link) =>
+          ({
+            localModel: link.localModel,
+            localId: link.localId,
+            xeroObjectType: "ALLOCATION",
+            xeroObjectId: buildSyntheticAllocationLinkId(
+              creditNote.creditNoteID!,
+              invoiceId,
+              amountCents
+            ),
+            xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
+            role: getDerivedInboundAllocationRole(link.role),
+            metadata: {
+              creditNoteId: creditNote.creditNoteID,
+              invoiceId,
+              amountCents,
+            },
+          }) satisfies XeroObjectLinkInput
+      );
+    })
+  );
+
+  for (const link of allocationLinks) {
+    await upsertXeroObjectLink(link);
+  }
+
+  const refundPaymentLinks = dedupeXeroObjectLinks(
+    (creditNote.payments ?? []).flatMap((payment) => {
+      if (!payment.paymentID) {
+        return [];
+      }
+
+      return resolvedCreditNoteLinks
+        .filter((link) => link.role === "REFUND_CREDIT_NOTE")
+        .map(
+          (link) =>
+            ({
+              localModel: link.localModel,
+              localId: link.localId,
+              xeroObjectType: "PAYMENT",
+              xeroObjectId: payment.paymentID!,
+              xeroObjectNumber: buildXeroPaymentDisplayNumber(payment),
+              role: "REFUND_PAYMENT",
+              metadata: {
+                creditNoteId: creditNote.creditNoteID,
+                amount: payment.amount ?? null,
+                date: payment.date ?? null,
+                paymentType: payment.paymentType ?? null,
+                status: payment.status ?? null,
+              },
+            }) satisfies XeroObjectLinkInput
+        );
+    })
+  );
+
+  for (const link of refundPaymentLinks) {
+    await upsertXeroObjectLink(link);
+  }
+
+  return {
+    handled: true,
+    kind: "CREDIT_NOTE",
+    resourceId: creditNote.creditNoteID,
+    creditNoteNumber: creditNote.creditNoteNumber ?? null,
+    matchedPayments: paymentCandidates.length,
+    updatedPayments,
+    relatedLinksUpdated: resolvedCreditNoteLinks.length,
+    allocationsUpdated: allocationLinks.length,
+    refundPaymentsUpdated: refundPaymentLinks.length,
   };
 }
 
@@ -527,6 +998,10 @@ async function processXeroInboundEvent(event: StoredXeroInboundEvent) {
       return reconcileXeroContact(event.resourceId);
     case "INVOICE":
       return reconcileXeroInvoice(event.resourceId);
+    case "PAYMENT":
+      return reconcileXeroPayment(event.resourceId);
+    case "CREDIT_NOTE":
+      return reconcileXeroCreditNote(event.resourceId);
     default:
       return {
         handled: false,

@@ -67,6 +67,22 @@ export interface XeroRecordObjectLink {
   updatedAt: string
 }
 
+export interface XeroRecordInboundEvent {
+  id: string
+  source: string
+  eventCategory: string | null
+  eventType: string
+  resourceId: string | null
+  correlationKey: string
+  status: string
+  errorMessage: string | null
+  processedAt: string | null
+  createdAt: string
+  payload: unknown
+  xeroObjectUrl: string | null
+  canReplay: boolean
+}
+
 export interface XeroRecordActivityData {
   rootRecord: XeroRecordReference
   scopeRecords: XeroRecordReference[]
@@ -74,5 +90,6 @@ export interface XeroRecordActivityData {
   summary: XeroRecordActivitySummary
   operations: XeroRecordActivityOperation[]
   links: XeroRecordObjectLink[]
+  inboundEvents: XeroRecordInboundEvent[]
   backLink: XeroRecordBackLink | null
 }

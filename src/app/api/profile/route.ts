@@ -5,6 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { getSeasonYear } from "@/lib/utils";
 import { isXeroConnected, updateXeroContact } from "@/lib/xero";
+import {
+  buildXeroContactUpdatePayload,
+  hasMemberXeroContactChanges,
+} from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
@@ -43,6 +47,30 @@ const profileSchema = z.object({
 const PHONE_FIELDS = ["phoneCountryCode", "phoneAreaCode", "phoneNumber"] as const;
 const STREET_FIELDS = ["streetAddressLine1", "streetAddressLine2", "streetCity", "streetRegion", "streetPostalCode", "streetCountry"] as const;
 const POSTAL_FIELDS = ["postalAddressLine1", "postalAddressLine2", "postalCity", "postalRegion", "postalPostalCode", "postalCountry"] as const;
+const PROFILE_XERO_SYNC_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  phoneCountryCode: true,
+  phoneAreaCode: true,
+  phoneNumber: true,
+  dateOfBirth: true,
+  ageTier: true,
+  email: true,
+  xeroContactId: true,
+  streetAddressLine1: true,
+  streetAddressLine2: true,
+  streetCity: true,
+  streetRegion: true,
+  streetPostalCode: true,
+  streetCountry: true,
+  postalAddressLine1: true,
+  postalAddressLine2: true,
+  postalCity: true,
+  postalRegion: true,
+  postalPostalCode: true,
+  postalCountry: true,
+} as const;
 
 export async function PUT(req: NextRequest) {
   const session = await auth();
@@ -126,64 +154,37 @@ export async function PUT(req: NextRequest) {
     updateData.dateOfBirth = null;
   }
 
+  const existing = await prisma.member.findUnique({
+    where: { id: session.user.id },
+    select: PROFILE_XERO_SYNC_SELECT,
+  });
+  if (!existing) {
+    return NextResponse.json({ error: "Member not found" }, { status: 404 });
+  }
+
   try {
     const updated = await prisma.member.update({
       where: { id: session.user.id },
       data: updateData,
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        phoneCountryCode: true,
-        phoneAreaCode: true,
-        phoneNumber: true,
-        dateOfBirth: true,
-        ageTier: true,
-        email: true,
-        xeroContactId: true,
-        streetAddressLine1: true,
-        streetAddressLine2: true,
-        streetCity: true,
-        streetRegion: true,
-        streetPostalCode: true,
-        streetCountry: true,
-        postalAddressLine1: true,
-        postalAddressLine2: true,
-        postalCity: true,
-        postalRegion: true,
-        postalPostalCode: true,
-        postalCountry: true,
-      },
+      select: PROFILE_XERO_SYNC_SELECT,
     });
 
     // Sync to Xero if connected and member has a linked contact
-    if (updated.xeroContactId) {
+    if (
+      updated.xeroContactId &&
+      hasMemberXeroContactChanges(existing, updated)
+    ) {
       try {
         if (await isXeroConnected()) {
-          await updateXeroContact(updated.xeroContactId, {
-            firstName: updated.firstName,
-            lastName: updated.lastName,
-            email: updated.email,
-            phoneCountryCode: updated.phoneCountryCode,
-            phoneAreaCode: updated.phoneAreaCode,
-            phoneNumber: updated.phoneNumber,
-            streetAddressLine1: updated.streetAddressLine1,
-            streetAddressLine2: updated.streetAddressLine2,
-            streetCity: updated.streetCity,
-            streetRegion: updated.streetRegion,
-            streetPostalCode: updated.streetPostalCode,
-            streetCountry: updated.streetCountry,
-            postalAddressLine1: updated.postalAddressLine1,
-            postalAddressLine2: updated.postalAddressLine2,
-            postalCity: updated.postalCity,
-            postalRegion: updated.postalRegion,
-            postalPostalCode: updated.postalPostalCode,
-            postalCountry: updated.postalCountry,
-          }, {
-            localModel: "Member",
-            localId: session.user.id,
-            createdByMemberId: session.user.id,
-          });
+          await updateXeroContact(
+            updated.xeroContactId,
+            buildXeroContactUpdatePayload(updated),
+            {
+              localModel: "Member",
+              localId: session.user.id,
+              createdByMemberId: session.user.id,
+            }
+          );
         }
       } catch (xeroErr) {
         logger.error({ err: xeroErr, memberId: session.user.id }, "Xero sync failed for profile update");

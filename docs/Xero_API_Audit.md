@@ -64,16 +64,35 @@ Completed in this pass:
 - Added targeted replay and admin-route coverage in:
   - `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
   - `src/lib/__tests__/xero-inbound-events-routes.test.ts`
+- Added Phase 6 field-diff logic for TAC-to-Xero contact sync so local-only or no-op member edits stop emitting unnecessary Xero writes:
+  - new shared helper `src/lib/xero-contact-sync.ts`
+  - admin member edits now skip `updateXeroContact()` unless Xero-mapped fields actually changed in `src/app/api/admin/members/[id]/route.ts`
+  - profile edits now skip `updateXeroContact()` when the stored Xero payload is unchanged in `src/app/api/profile/route.ts`
+  - email-change confirmation now reuses the shared Xero contact payload builder in `src/app/api/auth/confirm-email-change/route.ts`
+- Added targeted test coverage for the Phase 6 write-overhead reduction:
+  - `src/lib/__tests__/xero-contact-sync.test.ts`
+  - `src/lib/__tests__/phase3b-member-detail-edit.test.ts`
+  - `src/lib/__tests__/phone-address-sync.test.ts`
+- Expanded Phase 7 inbound reconciliation beyond contact and invoice events:
+  - added `PAYMENT` webhook reconciliation in `src/lib/xero-inbound-reconciliation.ts` to restore payment links, refresh linked invoice metadata, and refresh linked subscriptions
+  - added `CREDIT_NOTE` webhook reconciliation in `src/lib/xero-inbound-reconciliation.ts` to restore refund-credit-note links, allocation links, and refund payment links
+  - added record-scoped inbound-event loading and replay controls in `src/lib/xero-record-activity.ts`, `src/lib/xero-record-types.ts`, and `src/components/admin/xero-record-activity-panel.tsx`
+- Added targeted test coverage for the broader inbound reconciliation and record activity surface:
+  - `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
+  - `src/lib/__tests__/xero-record-activity.test.ts`
 
 Work remaining after this pass:
 
 - Phase 2: incremental invoice sync to replace full daily membership polling.
 - Phase 3: local cache tables for Xero contact groups and memberships so member pages and filters can stay local-only without the temporary "not loaded" fallback.
 - Phase 4: incremental contact sync and group import so default admin syncs stop doing full scans plus per-contact invoice lookups.
-- Phase 6: trim write-path verification reads and duplicate trigger attempts on booking/payment flows.
-- Phase 7: the new inspection/replay tooling is only a supporting operator workflow; the main webhook-first reconciliation work still remains:
-  - broader inbound categories such as payment and credit-note events
-  - webhook-driven targeted updates for subscription status and other local business state
+- Phase 6 still remaining:
+  - trust an existing `member.xeroContactId` by default in `findOrCreateXeroContact()` instead of verifying it with a `getContact()` read on every write path
+  - add a durable local claim/outbox so invoice and credit-note writes do not get re-attempted from multiple booking/payment trigger paths
+  - reduce duplicate write attempts across booking creation, confirm-draft, waitlist confirmation, saved-card charging, Stripe webhooks, and pending-confirmation cron
+- Phase 7 still remaining:
+  - webhook-driven targeted updates for any remaining local business state that is not yet advanced from inbound events
+  - cached contact-group membership refresh driven from inbound changes where applicable
   - reducing daily polling to a safety net rather than the primary reconciliation path
 - Phase 8: durable shared cache for chart-of-accounts and items remains unstarted.
 
@@ -525,6 +544,12 @@ Primary files:
 
 ### Phase 6: Trim Write-Path Overhead And Remove Duplicate Trigger Attempts
 
+Status:
+
+- Partially implemented.
+- The field-diff portion is now in place for member/profile contact sync, so unchanged or local-only edits stop emitting unnecessary Xero contact updates.
+- The remaining work in this phase is still the read-side trust/repair change for existing links plus durable claim semantics for invoice and credit-note creation paths.
+
 Goal:
 
 - Keep necessary writes, but remove avoidable reads and duplicate attempts.
@@ -570,8 +595,9 @@ Status:
 - Current supporting pieces now include:
   - stored `XeroInboundEvent` persistence
   - claim / dedupe before handler execution
-  - first webhook-driven linked contact and invoice reconciliation handlers
+  - webhook-driven linked contact, invoice, payment, and credit-note reconciliation handlers
   - operator-facing inbound-event inspection and single-event replay from `/admin/xero`
+  - record-scoped inbound-event visibility and replay from the Xero record activity panels
 - This phase is still incomplete because webhook-driven reconciliation is not yet the main source of truth for the remaining affected business state, and daily polling has not yet been reduced to a pure safety net.
 
 Goal:

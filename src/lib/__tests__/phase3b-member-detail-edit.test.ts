@@ -238,6 +238,23 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     );
   });
 
+  it("does not call updateXeroContact when only local-only fields change", async () => {
+    const { isXeroConnected, updateXeroContact } = await import("@/lib/xero");
+
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, xeroContactId: "xc1" } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      role: "ADMIN",
+      xeroContactId: "xc1",
+    } as any);
+
+    await updateMember(makePutRequest("m1", { role: "ADMIN" }), { params: Promise.resolve({ id: "m1" }) });
+
+    expect(isXeroConnected).not.toHaveBeenCalled();
+    expect(updateXeroContact).not.toHaveBeenCalled();
+  });
+
   it("does not call updateXeroContact when Xero is not connected", async () => {
     const { isXeroConnected, updateXeroContact } = await import("@/lib/xero");
     vi.mocked(isXeroConnected).mockResolvedValue(false);
