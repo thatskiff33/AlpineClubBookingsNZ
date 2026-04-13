@@ -17,6 +17,15 @@ export interface PromoValidationResult {
   discountCents?: number;
 }
 
+export interface AvailablePromoCode {
+  code: string;
+  description: string | null;
+  type: PromoCodeType;
+  percentOff: number | null;
+  valueCents: number | null;
+  freeNights: number | null;
+}
+
 export interface BookingDetailsForPromo {
   totalPriceCents: number;
   perNightRates: number[];
@@ -51,6 +60,50 @@ export function calculatePromoDiscountForGuestRates(
   }
 
   return calculatePromoDiscount(promo, totalPriceCents, perNightRates);
+}
+
+export async function getAvailablePromoCodesForMember(
+  memberId: string,
+  now: Date = new Date()
+): Promise<AvailablePromoCode[]> {
+  const assignments = await prisma.promoCodeAssignment.findMany({
+    where: { memberId },
+    include: {
+      promoCode: {
+        include: {
+          redemptions: {
+            where: { memberId },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+
+  return assignments
+    .map((assignment) => assignment.promoCode)
+    .filter((promoCode) => {
+      if (!promoCode.active || promoCode.archivedAt) return false;
+      if (promoCode.validFrom && now < promoCode.validFrom) return false;
+      if (promoCode.validUntil && now >= promoCode.validUntil) return false;
+      if (
+        promoCode.maxRedemptions !== null &&
+        promoCode.currentRedemptions >= promoCode.maxRedemptions
+      ) {
+        return false;
+      }
+      if (promoCode.singleUse && promoCode.redemptions.length > 0) return false;
+      return true;
+    })
+    .map((promoCode) => ({
+      code: promoCode.code,
+      description: promoCode.description,
+      type: promoCode.type,
+      percentOff: promoCode.percentOff,
+      valueCents: promoCode.valueCents,
+      freeNights: promoCode.freeNights,
+    }));
 }
 
 /**

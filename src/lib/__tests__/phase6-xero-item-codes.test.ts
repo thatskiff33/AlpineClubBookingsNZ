@@ -1,3 +1,4 @@
+import type { AgeTier } from "@prisma/client";
 import { describe, it, expect } from "vitest";
 import { buildEntranceFeeLineItem, buildInvoiceLineItems } from "../xero";
 
@@ -242,29 +243,37 @@ describe("Account mapping response shape", () => {
 // ─── Entrance fee category determination (unit logic) ─────────────────────
 
 describe("Entrance fee category logic", () => {
+  function determineEntranceFeeCategory(ageTier: AgeTier): "ADULT" | "YOUTH" | "CHILD" {
+    return ageTier === "YOUTH"
+      ? "YOUTH"
+      : ageTier === "CHILD" || ageTier === "INFANT"
+        ? "CHILD"
+        : "ADULT";
+  }
+
   it("ADULT tier maps to ADULT category", () => {
     // Testing the pure logic used in determineEntranceFeeCategory
-    const ageTier = "ADULT";
-    expect(ageTier === "YOUTH" ? "YOUTH" : ageTier === "CHILD" || ageTier === "INFANT" ? "CHILD" : "ADULT").toBe("ADULT");
+    const ageTier: AgeTier = "ADULT";
+    expect(determineEntranceFeeCategory(ageTier)).toBe("ADULT");
   });
 
   it("YOUTH tier maps to YOUTH category", () => {
-    const ageTier = "YOUTH";
-    expect(ageTier === "YOUTH" ? "YOUTH" : ageTier === "CHILD" || ageTier === "INFANT" ? "CHILD" : "ADULT").toBe("YOUTH");
+    const ageTier: AgeTier = "YOUTH";
+    expect(determineEntranceFeeCategory(ageTier)).toBe("YOUTH");
   });
 
   it("CHILD tier maps to CHILD category", () => {
-    const ageTier = "CHILD";
-    expect(ageTier === "YOUTH" ? "YOUTH" : ageTier === "CHILD" || ageTier === "INFANT" ? "CHILD" : "ADULT").toBe("CHILD");
+    const ageTier: AgeTier = "CHILD";
+    expect(determineEntranceFeeCategory(ageTier)).toBe("CHILD");
   });
 
   it("INFANT tier maps to CHILD category", () => {
-    const ageTier = "INFANT";
-    expect(ageTier === "YOUTH" ? "YOUTH" : ageTier === "CHILD" || ageTier === "INFANT" ? "CHILD" : "ADULT").toBe("CHILD");
+    const ageTier: AgeTier = "INFANT";
+    expect(determineEntranceFeeCategory(ageTier)).toBe("CHILD");
   });
 
   it("FAMILY requires 2+ adults and 1+ dependents in group", () => {
-    const groupMembers = [
+    const groupMembers: Array<{ ageTier: AgeTier }> = [
       { ageTier: "ADULT" },
       { ageTier: "ADULT" },
       { ageTier: "CHILD" },
@@ -276,7 +285,7 @@ describe("Entrance fee category logic", () => {
   });
 
   it("does not qualify as FAMILY with only 1 adult", () => {
-    const groupMembers = [
+    const groupMembers: Array<{ ageTier: AgeTier }> = [
       { ageTier: "ADULT" },
       { ageTier: "CHILD" },
     ];
@@ -287,7 +296,7 @@ describe("Entrance fee category logic", () => {
   });
 
   it("does not qualify as FAMILY with only adults (no dependents)", () => {
-    const groupMembers = [
+    const groupMembers: Array<{ ageTier: AgeTier }> = [
       { ageTier: "ADULT" },
       { ageTier: "ADULT" },
     ];
