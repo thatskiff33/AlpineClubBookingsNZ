@@ -36,6 +36,7 @@ export async function register() {
     let isXeroBackfillCronRunning = false;
     let isXeroReportCronRunning = false;
     let isXeroReplayCronRunning = false;
+    let isXeroInboundCronRunning = false;
     let isWaitlistCronRunning = false;
 
     // Helper: record a cron job run
@@ -309,6 +310,64 @@ export async function register() {
     logger.info(
       { job: "xero-operation-replay" },
       "Scheduled queued Xero retry processing (every 15 minutes)"
+    );
+
+    // Xero inbound webhook reconciliation safety net (every 15 minutes)
+    cron.default.schedule("*/15 * * * *", async () => {
+      if (isXeroInboundCronRunning) {
+        logger.info({ job: "xero-inbound-reconcile" }, "Already running, skipping");
+        return;
+      }
+      isXeroInboundCronRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "xero-inbound-reconcile" }, "Processing stored Xero inbound events");
+
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "xero-inbound-reconcile", status: "in_progress" },
+        { schedule: { type: "crontab", value: "*/15 * * * *" }, checkinMargin: 10, maxRuntime: 30 }
+      );
+
+      try {
+        const { isXeroConnected } = await import("./lib/xero");
+        const { processStoredXeroInboundEvents } = await import(
+          "./lib/xero-inbound-reconciliation"
+        );
+
+        if (!(await isXeroConnected())) {
+          logger.info({ job: "xero-inbound-reconcile" }, "Xero not connected, skipping");
+          await recordCronRun("xero-inbound-reconcile", startedAt, "SKIPPED", {
+            reason: "Xero not connected",
+          });
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "ok" });
+          return;
+        }
+
+        const result = await processStoredXeroInboundEvents();
+        logger.info(
+          { job: "xero-inbound-reconcile", ...result },
+          "Stored Xero inbound reconciliation complete"
+        );
+        await recordCronRun(
+          "xero-inbound-reconcile",
+          startedAt,
+          "SUCCESS",
+          { ...result }
+        );
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "ok" });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "xero-inbound-reconcile" }, "Error processing stored Xero inbound events");
+        Sentry.captureException(err);
+        await recordCronRun("xero-inbound-reconcile", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-inbound-reconcile", status: "error" });
+      } finally {
+        isXeroInboundCronRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info(
+      { job: "xero-inbound-reconcile" },
+      "Scheduled stored Xero inbound reconciliation (every 15 minutes)"
     );
 
     // OBS-03: Cron job 3 - Database backup (daily at 3 AM)

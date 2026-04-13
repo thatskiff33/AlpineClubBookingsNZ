@@ -1,8 +1,20 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
 import { buildXeroIdempotencyKey, recordXeroInboundEvent } from "@/lib/xero-sync";
+import { processStoredXeroInboundEvents } from "@/lib/xero-inbound-reconciliation";
+import { isXeroConnected } from "@/lib/xero";
+
+function scheduleAfterResponse(task: () => Promise<void>) {
+  try {
+    after(task);
+  } catch {
+    queueMicrotask(() => {
+      void task();
+    });
+  }
+}
 
 /**
  * POST /api/webhooks/xero
@@ -126,6 +138,22 @@ export async function POST(request: NextRequest) {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  if (events.length > 0) {
+    scheduleAfterResponse(async () => {
+      try {
+        if (!(await isXeroConnected())) {
+          return;
+        }
+
+        await processStoredXeroInboundEvents({
+          limit: Math.min(Math.max(events.length, 1), 10),
+        });
+      } catch (error) {
+        logger.error({ err: error }, "Failed to kick Xero inbound reconciliation worker");
+      }
+    });
   }
 
   // Xero expects a 200 response

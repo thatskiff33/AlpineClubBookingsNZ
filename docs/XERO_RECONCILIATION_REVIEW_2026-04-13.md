@@ -9,9 +9,9 @@ This review focuses on how TACBookings should reconcile booking and membership d
 - failure visibility
 - safe retry and re-push workflows
 
-## Implementation Status (2026-04-13)
+## Implementation Status (2026-04-14)
 
-The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, and dedicated repair flows for the `PARTIAL` outbound states the code currently emits. The remaining work is now mostly around full outbox execution for initial writes, webhook-driven/incremental inbound reconcile jobs, richer drift detection, and optional Xero-side history/attachment enrichment.
+The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, and a first webhook-driven inbound reconciliation slice for linked contact and invoice events. The remaining work is now mostly around full outbox execution for initial writes, broadening inbound reconciliation beyond the first safe handlers, incremental pull support, richer drift detection, and optional Xero-side history/attachment enrichment.
 
 ### Delivered to date
 
@@ -42,6 +42,14 @@ The review below started as a design and gap-analysis document. The codebase now
 - updated modification routes so Xero artifacts can be tied to the specific `BookingModification` row, not only the parent booking
 - updated manual member link / unlink routes to maintain `XeroObjectLink`
 - updated `src/app/api/webhooks/xero/route.ts` to persist inbound webhook payloads into `XeroInboundEvent`
+- added the first stored-event inbound reconciliation worker:
+  - `src/lib/xero-inbound-reconciliation.ts`
+  - `ProcessedWebhookEvent` claim / dedupe for Xero inbound events using the stored correlation key
+  - linked contact reconciliation that safely backfills missing member canonical/contact fields and restores `XeroObjectLink`
+  - linked invoice reconciliation that refreshes payment invoice metadata and triggers membership subscription refresh for linked records
+  - after-response worker kick from `src/app/api/webhooks/xero/route.ts`
+  - manual and scheduled safety-net execution via `src/app/api/cron/xero/route.ts` and `src/instrumentation.ts`
+- hardened inbound event persistence in `src/lib/xero-sync.ts` so duplicate webhook deliveries do not reset already `PROCESSING` / `PROCESSED` rows back to `RECEIVED`
 - added an admin operations endpoint and UI surface:
   - `src/app/api/admin/xero/operations/route.ts`
   - operations section on `src/app/(admin)/admin/xero/page.tsx`
@@ -95,17 +103,18 @@ The review below started as a design and gap-analysis document. The codebase now
 - `npx vitest run src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/xero-cron-route.test.ts src/lib/__tests__/phase6b-notifications.test.ts`
 - `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-member-management.test.ts src/lib/__tests__/phase8c-integrations.test.ts src/lib/__tests__/phone-address-sync.test.ts src/lib/__tests__/phase3b-member-detail-edit.test.ts src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts src/lib/__tests__/xero-record-activity.test.ts src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/xero-cron-route.test.ts src/lib/__tests__/phase6b-notifications.test.ts`
 - `npx vitest run src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts src/lib/__tests__/xero-record-activity.test.ts src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/xero-cron-route.test.ts`
+- `npx vitest run src/lib/__tests__/xero-sync.test.ts src/lib/__tests__/xero-inbound-reconciliation.test.ts src/lib/__tests__/xero-cron-route.test.ts`
+- `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-api-usage.test.ts src/lib/__tests__/xero-member-management.test.ts src/lib/__tests__/member-subscription-status.test.ts src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/xero-cron-route.test.ts src/lib/__tests__/xero-sync.test.ts src/lib/__tests__/xero-inbound-reconciliation.test.ts`
 - `npm run build`
 
 ### Not yet implemented
 
-The remaining work is now concentrated in four implementation tracks plus one maintenance note:
+The remaining work is now concentrated in three implementation tracks plus one maintenance note:
 
 1. Move primary outbound writes to a true outbox flow.
-2. Build inbound reconciliation on top of stored `XeroInboundEvent` rows.
-3. Push remediation actions closer to the record-scoped Xero views.
-4. Extend hardening from canonical-link health into richer drift detection and supportability.
-5. Keep future/new `PARTIAL` operation types explicit, with dedicated repair handlers and tests.
+2. Extend inbound reconciliation beyond the first linked contact / invoice handlers.
+3. Extend hardening from canonical-link health into richer drift detection and supportability.
+4. Keep future/new `PARTIAL` operation types explicit, with dedicated repair handlers and tests.
 
 For the next agent, the important baseline is:
 
@@ -115,9 +124,11 @@ For the next agent, the important baseline is:
 - synchronous retry for supported failed outbound operations: implemented
 - queue-backed replay for supported failed outbound operations: implemented
 - dedicated repair flows for the currently emitted partial outbound operations: implemented
+- stored inbound event claim / dedupe and first webhook-driven contact / invoice reconcile handlers: implemented
 - repeated-failure alerting by correlation key: implemented
 - nightly reconciliation reporting: implemented
 - historical canonical-ID backfill into `XeroObjectLink` / `XeroSyncOperation`: implemented
+- incremental pull / broader inbound categories (`PAYMENT`, `CREDIT_NOTE`, richer drift application): pending
 
 ## Current State
 
@@ -157,16 +168,27 @@ Suggested first candidates:
 - modification credit note creation
 - entrance fee invoice creation
 
-### 2. Build inbound reconciliation on top of stored `XeroInboundEvent` rows
+### 2. Extend inbound reconciliation on top of stored `XeroInboundEvent` rows
 
-`src/app/api/webhooks/xero/route.ts` now persists webhook payloads into `XeroInboundEvent`, but the inbound side is still observability-first rather than reconciliation-first. The next layer should add:
+The inbound side is no longer observability-only. Stored events are now claimed and deduped against `ProcessedWebhookEvent`, processed after the webhook response as well as on a scheduled/manual safety-net path, and reconciled into local state through the first linked-record handlers.
 
-- claim/dedupe processing tied to `ProcessedWebhookEvent`
-- targeted reconcile jobs triggered from stored inbound events
-- applying inbound invoice/contact changes back to TACBookings business state
+What is implemented now:
+
+- `CONTACT` webhook events for linked members can safely:
+  - preserve canonical `xeroContactId` linkage where missing
+  - backfill missing local date-of-birth, phone, address, and joined-date fields
+  - restore canonical `XeroObjectLink` rows
+- `INVOICE` webhook events can now:
+  - refresh linked `Payment.xeroInvoiceId` / `xeroInvoiceNumber` metadata
+  - refresh linked `XeroObjectLink` invoice numbers / URLs
+  - trigger targeted membership subscription refresh for linked subscription/contact records
+
+What still remains in this track:
+
+- broader inbound categories such as Xero-side `PAYMENT` and `CREDIT_NOTE` events
+- richer business-state application beyond the current safe backfill / refresh handlers
 - incremental pull jobs using `If-Modified-Since`
-
-This is the main missing functional area if the goal is full two-way reconciliation rather than just outbound auditability.
+- operator-facing tooling for inspecting / replaying stored inbound failures beyond the cron/manual worker path
 
 ### 3. Push remediation actions closer to the record-scoped Xero views
 
@@ -179,12 +201,15 @@ The admin Xero screen is no longer the only place operators can inspect reconcil
 
 Entry points now exist from member detail, booking list, and payment list screens.
 
-What is still missing operationally is broader remediation from those scoped views:
+This track is mostly complete now.
 
-- direct retry / requeue / repair actions from the scoped views instead of relying on the central admin operations screen
+- direct retry / requeue controls are available from the scoped record activity panel, not only the central admin operations screen
+- the currently emitted `PARTIAL` cases remain covered through those same supported repair paths
+
+The remaining UX gap here is narrower:
+
 - booking and payment areas still enter the scoped activity view from list screens because those admin areas do not currently have dedicated detail pages
-
-The currently emitted `PARTIAL` cases are already covered. What remains is surfacing those actions where operators are already working.
+- additional record-specific shortcuts may still be worthwhile where operators spend most of their time
 
 ### 4. Extend hardening from canonical-link health into richer drift detection
 
@@ -401,8 +426,9 @@ Status: mostly implemented.
 - synchronous retry support for supported failed operations is implemented
 - queue-backed requeue / worker retry for supported failed operations is implemented
 - record-scoped Xero activity surfaces are now available from member, booking, and payment admin workflows
+- scoped record activity panels now expose retry / requeue controls for supported operations
 - targeted partial-operation repair is implemented for the currently emitted invoice / credit-note follow-up states
-- the remaining gap in this phase is moving retry / requeue / repair actions closer to the scoped record views
+- the remaining gap in this phase is mainly around broader navigation / entry-point polish, not the core retry capability itself
 
 ## Phase 4: Inbound reconciliation
 
@@ -414,7 +440,9 @@ Status: mostly implemented.
 Status: partially implemented.
 
 - `XeroInboundEvent` and webhook payload persistence were added
-- targeted reconcile jobs and incremental pull work are still pending
+- stored inbound events are now claimed / deduped and processed through a worker path
+- webhook-triggered linked contact and invoice reconciliation is implemented
+- targeted incremental pull work and broader inbound categories are still pending
 
 ## Phase 5: Hardening
 
@@ -452,6 +480,7 @@ Status: partially implemented.
 - `src/lib/webhook-log.ts`
 - `prisma/schema.prisma`
 - `src/lib/xero-sync.ts`
+- `src/lib/xero-inbound-reconciliation.ts`
 - `src/lib/xero-operation-retry.ts`
 - `src/lib/xero-links.ts`
 - `src/lib/xero-hardening.ts`
@@ -464,6 +493,8 @@ Status: partially implemented.
 - `src/app/(admin)/admin/xero/page.tsx`
 - `src/app/(admin)/admin/xero/records/[localModel]/[localId]/page.tsx`
 - `src/components/admin/xero-record-activity-panel.tsx`
+- `src/lib/__tests__/xero-sync.test.ts`
+- `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
 - `src/lib/__tests__/xero-operation-retry.test.ts`
 - `src/lib/__tests__/xero-record-activity.test.ts`
 - `src/lib/__tests__/xero-hardening.test.ts`

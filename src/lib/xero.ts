@@ -14,6 +14,7 @@ import { AgeTier, EntranceFeeCategory } from "@prisma/client";
 import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
+import { recordXeroApiUsage, type XeroRateLimitCategory } from "@/lib/xero-api-usage";
 import { getXeroErrorHeader, getXeroErrorStatusCode } from "@/lib/xero-error-shape";
 import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
@@ -561,7 +562,15 @@ export async function findOrCreateXeroContact(
     if (member.xeroContactId) {
       try {
         const { xero, tenantId } = await getAuthenticatedXeroClient();
-        await xero.accountingApi.getContact(tenantId, member.xeroContactId);
+        await callXeroApi(
+          () => xero.accountingApi.getContact(tenantId, member.xeroContactId!),
+          {
+            operation: "getContact",
+            resourceType: "CONTACT",
+            workflow: "findOrCreateXeroContact",
+            context: `findOrCreateXeroContact verifyContact(${memberId})`,
+          }
+        );
         await upsertXeroObjectLink({
           localModel: "Member",
           localId: memberId,
@@ -580,10 +589,19 @@ export async function findOrCreateXeroContact(
 
     // Search by email first
     try {
-      const contactsResponse = await xero.accountingApi.getContacts(
-        tenantId,
-        undefined, // ifModifiedSince
-        `EmailAddress="${member.email.replace(/"/g, "")}"` // where (strip quotes for OData safety)
+      const contactsResponse = await callXeroApi(
+        () =>
+          xero.accountingApi.getContacts(
+            tenantId,
+            undefined, // ifModifiedSince
+            `EmailAddress="${member.email.replace(/"/g, "")}"` // where (strip quotes for OData safety)
+          ),
+        {
+          operation: "getContacts",
+          resourceType: "CONTACT",
+          workflow: "findOrCreateXeroContact",
+          context: `findOrCreateXeroContact searchByEmail(${member.email})`,
+        }
       );
       const contacts = contactsResponse.body.contacts;
       if (contacts && contacts.length > 0) {
@@ -642,7 +660,7 @@ export async function findOrCreateXeroContact(
     });
 
     try {
-      const response = await withXeroRetry(
+      const response = await callXeroApi(
         () =>
           xero.accountingApi.createContacts(
             tenantId,
@@ -650,7 +668,12 @@ export async function findOrCreateXeroContact(
             undefined,
             idempotencyKey
           ),
-        { context: `createContacts(findOrCreate ${memberId})` }
+        {
+          operation: "createContacts",
+          resourceType: "CONTACT",
+          workflow: "findOrCreateXeroContact",
+          context: `createContacts(findOrCreate ${memberId})`,
+        }
       );
       const createdContact = response.body.contacts?.[0];
       if (!createdContact?.contactID) {
@@ -745,7 +768,7 @@ export async function createXeroContactForMember(
     });
 
     try {
-      const response = await withXeroRetry(
+      const response = await callXeroApi(
         () =>
           xero.accountingApi.createContacts(
             tenantId,
@@ -753,7 +776,12 @@ export async function createXeroContactForMember(
             undefined,
             idempotencyKey
           ),
-        { context: `createContacts(member ${memberId})` }
+        {
+          operation: "createContacts",
+          resourceType: "CONTACT",
+          workflow: "createXeroContactForMember",
+          context: `createContacts(member ${memberId})`,
+        }
       );
       const createdContact = response.body.contacts?.[0];
       if (!createdContact?.contactID) {
@@ -800,7 +828,7 @@ async function getContactFirstInvoiceDate(
   contactID: string
 ): Promise<Date | null> {
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () => xero.accountingApi.getInvoices(
         tenantId,
         undefined, // ifModifiedSince
@@ -816,7 +844,12 @@ async function getContactFirstInvoiceDate(
         undefined, // unitdp
         false // summaryOnly
       ),
-      { context: `getContactFirstInvoiceDate(${contactID})` }
+      {
+        operation: "getInvoices",
+        resourceType: "INVOICE",
+        workflow: "getContactFirstInvoiceDate",
+        context: `getContactFirstInvoiceDate(${contactID})`,
+      }
     );
     const invoices = response.body.invoices ?? [];
     if (invoices.length > 0 && invoices[0].date) {
@@ -872,6 +905,108 @@ export function resetXeroRateLimitStateForTests(): void {
   xeroDailyLimitUntilMs = 0;
 }
 
+interface XeroRetryRateLimitEvent {
+  attempt: number;
+  retryAfterSec: number;
+  rateLimitCategory: XeroRateLimitCategory;
+}
+
+interface XeroRetryOptions {
+  maxRetries?: number;
+  maxWaitSec?: number;
+  context?: string;
+  onRateLimit?: (event: XeroRetryRateLimitEvent) => void;
+}
+
+export interface MeteredXeroCallOptions extends XeroRetryOptions {
+  operation: string;
+  resourceType: string;
+  workflow?: string;
+}
+
+function getObservedXeroRateLimitCategory(err: unknown): XeroRateLimitCategory {
+  if (err instanceof XeroDailyLimitError) {
+    return "day";
+  }
+
+  if (getXeroErrorStatusCode(err) !== 429) {
+    return null;
+  }
+
+  const rateLimitProblem = getXeroErrorHeader(err, "x-rate-limit-problem");
+  if (rateLimitProblem === "day" || rateLimitProblem === "minute") {
+    return rateLimitProblem;
+  }
+
+  return "unknown";
+}
+
+function getXeroUsageErrorMessage(err: unknown): string | null {
+  if (err instanceof Error) {
+    return err.message;
+  }
+
+  if (err && typeof err === "object" && "message" in err && typeof err.message === "string") {
+    return err.message;
+  }
+
+  return err ? String(err) : null;
+}
+
+async function persistMeteredXeroApiUsage(
+  options: MeteredXeroCallOptions,
+  success: boolean,
+  durationMs: number,
+  err?: unknown,
+  observedRateLimitCategory?: XeroRateLimitCategory
+): Promise<void> {
+  await recordXeroApiUsage({
+    operation: options.operation,
+    resourceType: options.resourceType,
+    workflow: options.workflow ?? options.context,
+    success,
+    rateLimitCategory: observedRateLimitCategory ?? getObservedXeroRateLimitCategory(err),
+    statusCode: err ? getXeroErrorStatusCode(err) ?? null : null,
+    durationMs,
+    errorMessage: getXeroUsageErrorMessage(err),
+  });
+}
+
+export async function callXeroApi<T>(
+  fn: () => Promise<T>,
+  options: MeteredXeroCallOptions
+): Promise<T> {
+  const startedAt = Date.now();
+  let observedRateLimitCategory: XeroRateLimitCategory = null;
+
+  try {
+    const result = await withXeroRetry(fn, {
+      ...options,
+      onRateLimit: (event) => {
+        observedRateLimitCategory = event.rateLimitCategory;
+        options.onRateLimit?.(event);
+      },
+    });
+    await persistMeteredXeroApiUsage(
+      options,
+      true,
+      Date.now() - startedAt,
+      undefined,
+      observedRateLimitCategory
+    );
+    return result;
+  } catch (err) {
+    await persistMeteredXeroApiUsage(
+      options,
+      false,
+      Date.now() - startedAt,
+      err,
+      observedRateLimitCategory
+    );
+    throw err;
+  }
+}
+
 /**
  * Retry wrapper for Xero API calls with 429 rate-limit handling.
  * - On daily limit: throws XeroDailyLimitError immediately (no point waiting hours).
@@ -880,7 +1015,7 @@ export function resetXeroRateLimitStateForTests(): void {
  */
 export async function withXeroRetry<T>(
   fn: () => Promise<T>,
-  options?: { maxRetries?: number; maxWaitSec?: number; context?: string }
+  options?: XeroRetryOptions
 ): Promise<T> {
   throwIfXeroDailyLimitActive();
 
@@ -899,17 +1034,31 @@ export async function withXeroRetry<T>(
 
       const retryAfter = getXeroErrorHeader(err, "retry-after");
       const rateLimitProblem = getXeroErrorHeader(err, "x-rate-limit-problem");
+      const parsedRetryAfterSec = parseInt(
+        retryAfter || (rateLimitProblem === "day" ? "86400" : "30"),
+        10
+      );
+      const rateLimitCategory =
+        rateLimitProblem === "day" || rateLimitProblem === "minute"
+          ? rateLimitProblem
+          : "unknown";
+
+      options?.onRateLimit?.({
+        attempt: attempt + 1,
+        retryAfterSec: parsedRetryAfterSec,
+        rateLimitCategory,
+      });
 
       // Daily limit — abort immediately, no point retrying for hours
       if (rateLimitProblem === "day") {
-        const retryAfterSec = parseInt(retryAfter || "86400", 10);
+        const retryAfterSec = parsedRetryAfterSec;
         rememberXeroDailyLimit(retryAfterSec);
         throw new XeroDailyLimitError(retryAfterSec);
       }
 
       // Minute/app limit — retry if we have attempts left
       if (attempt < maxRetries) {
-        const waitSec = Math.min(parseInt(retryAfter || "30", 10), maxWaitSec);
+        const waitSec = Math.min(parsedRetryAfterSec, maxWaitSec);
         logger.warn(
           { context, attempt: attempt + 1, maxRetries, waitSec, rateLimitProblem },
           "Xero 429 rate limit hit, retrying after backoff"
@@ -953,7 +1102,7 @@ export async function syncContactsFromXero(): Promise<SyncReport> {
   let hasMore = true;
 
   while (hasMore) {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () => xero.accountingApi.getContacts(
         tenantId,
         undefined, // ifModifiedSince
@@ -963,7 +1112,12 @@ export async function syncContactsFromXero(): Promise<SyncReport> {
         page,
         false // includeArchived
       ),
-      { context: `syncContacts getContacts(page ${page})` }
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "syncContactsFromXero",
+        context: `syncContacts getContacts(page ${page})`,
+      }
     );
 
     const contacts = response.body.contacts ?? [];
@@ -1160,9 +1314,14 @@ export async function getXeroContactGroups(): Promise<
   Array<{ id: string; name: string; contactCount: number }>
 > {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const response = await withXeroRetry(
+  const response = await callXeroApi(
     () => xero.accountingApi.getContactGroups(tenantId),
-    { context: "getXeroContactGroups" }
+    {
+      operation: "getContactGroups",
+      resourceType: "CONTACT_GROUP",
+      workflow: "getXeroContactGroups",
+      context: "getXeroContactGroups",
+    }
   );
   const groups = (response.body.contactGroups ?? []).filter(
     (g) => g.contactGroupID && g.name && g.status === ContactGroup.StatusEnum.ACTIVE
@@ -1173,9 +1332,14 @@ export async function getXeroContactGroups(): Promise<
   const results: Array<{ id: string; name: string; contactCount: number }> = [];
   for (const g of groups) {
     try {
-      const detail = await withXeroRetry(
+      const detail = await callXeroApi(
         () => xero.accountingApi.getContactGroup(tenantId, g.contactGroupID!),
-        { context: `getContactGroup(${g.name})` }
+        {
+          operation: "getContactGroup",
+          resourceType: "CONTACT_GROUP",
+          workflow: "getXeroContactGroups",
+          context: `getContactGroup(${g.name})`,
+        }
       );
       const contacts = detail.body.contactGroups?.[0]?.contacts ?? [];
       results.push({
@@ -1212,7 +1376,7 @@ export async function getXeroContactGroupMemberships(
 
   for (let i = 0; i < uniqueContactIds.length; i += batchSize) {
     const batch = uniqueContactIds.slice(i, i + batchSize);
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.getContacts(
           tenantId,
@@ -1221,7 +1385,12 @@ export async function getXeroContactGroupMemberships(
           undefined, // order
           batch
         ),
-      { context: `getXeroContactGroupMemberships(batch ${Math.floor(i / batchSize) + 1})` }
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "getXeroContactGroupMemberships",
+        context: `getXeroContactGroupMemberships(batch ${Math.floor(i / batchSize) + 1})`,
+      }
     );
 
     for (const contact of response.body.contacts ?? []) {
@@ -1253,9 +1422,14 @@ export async function getXeroContactIdsForGroup(
   groupId: string
 ): Promise<string[]> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const detail = await withXeroRetry(
+  const detail = await callXeroApi(
     () => xero.accountingApi.getContactGroup(tenantId, groupId),
-    { context: `getXeroContactIdsForGroup(${groupId})` }
+    {
+      operation: "getContactGroup",
+      resourceType: "CONTACT_GROUP",
+      workflow: "getXeroContactIdsForGroup",
+      context: `getXeroContactIdsForGroup(${groupId})`,
+    }
   );
   const contacts = detail.body.contactGroups?.[0]?.contacts ?? [];
   return contacts
@@ -1522,9 +1696,14 @@ export async function importMembersFromXeroGroups(
   for (const mapping of groupMappings) {
     try {
       // Get contact IDs from the group
-      const response = await withXeroRetry(
+      const response = await callXeroApi(
         () => xero.accountingApi.getContactGroup(tenantId, mapping.groupId),
-        { context: `getContactGroup(${mapping.groupName})` }
+        {
+          operation: "getContactGroup",
+          resourceType: "CONTACT_GROUP",
+          workflow: "importMembersFromXeroGroups",
+          context: `getContactGroup(${mapping.groupName})`,
+        }
       );
       const groupContacts = response.body.contactGroups?.[0]?.contacts ?? [];
       groupsProcessed.push(mapping.groupName);
@@ -1540,7 +1719,7 @@ export async function importMembersFromXeroGroups(
       const batchSize = 50;
       for (let i = 0; i < contactIds.length; i += batchSize) {
         const batch = contactIds.slice(i, i + batchSize);
-        const fullResponse = await withXeroRetry(
+        const fullResponse = await callXeroApi(
           () => xero.accountingApi.getContacts(
             tenantId,
             undefined, // ifModifiedSince
@@ -1548,7 +1727,12 @@ export async function importMembersFromXeroGroups(
             undefined, // order
             batch       // iDs
           ),
-          { context: `getContacts(batch ${Math.floor(i / batchSize) + 1})` }
+          {
+            operation: "getContacts",
+            resourceType: "CONTACT",
+            workflow: "importMembersFromXeroGroups",
+            context: `getContacts(batch ${Math.floor(i / batchSize) + 1})`,
+          }
         );
         contacts.push(...(fullResponse.body.contacts ?? []));
       }
@@ -1939,7 +2123,7 @@ export async function updateXeroContact(
   });
 
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.updateContact(
           tenantId,
@@ -1947,7 +2131,12 @@ export async function updateXeroContact(
           { contacts: [contact] },
           idempotencyKey
         ),
-      { context: `updateContact(${xeroContactId})` }
+      {
+        operation: "updateContact",
+        resourceType: "CONTACT",
+        workflow: "updateXeroContact",
+        context: `updateContact(${xeroContactId})`,
+      }
     );
 
     await completeXeroSyncOperation(operation.id, {
@@ -2040,7 +2229,7 @@ export async function checkMembershipStatus(
   try {
     // Fetch invoices for this contact, filtered to the season year to avoid pagination issues.
     // Season year runs April to March, so filter invoices from season start to end.
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () => xero.accountingApi.getInvoices(
         tenantId,
         undefined, // ifModifiedSince
@@ -2053,7 +2242,12 @@ export async function checkMembershipStatus(
         1, // page
         false // includeArchived
       ),
-      { context: `checkMembershipStatus(${memberId})` }
+      {
+        operation: "getInvoices",
+        resourceType: "INVOICE",
+        workflow: "checkMembershipStatus",
+        context: `checkMembershipStatus(${memberId})`,
+      }
     );
 
     const invoices = response.body.invoices ?? [];
@@ -2081,7 +2275,15 @@ export async function checkMembershipStatus(
     let onlineInvoiceUrl: string | null = null;
     if (subscriptionInvoice.invoiceID) {
       try {
-        const onlineRes = await xero.accountingApi.getOnlineInvoice(tenantId, subscriptionInvoice.invoiceID);
+        const onlineRes = await callXeroApi(
+          () => xero.accountingApi.getOnlineInvoice(tenantId, subscriptionInvoice.invoiceID!),
+          {
+            operation: "getOnlineInvoice",
+            resourceType: "ONLINE_INVOICE",
+            workflow: "checkMembershipStatus",
+            context: `getOnlineInvoice(${subscriptionInvoice.invoiceID})`,
+          }
+        );
         const onlineInvoices = onlineRes.body.onlineInvoices;
         if (onlineInvoices && onlineInvoices.length > 0) {
           onlineInvoiceUrl = onlineInvoices[0].onlineInvoiceUrl ?? null;
@@ -2450,7 +2652,7 @@ export async function createXeroPaymentForInvoice(
   });
 
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.createPayments(
           tenantId,
@@ -2458,7 +2660,12 @@ export async function createXeroPaymentForInvoice(
           undefined,
           params.idempotencyKey
         ),
-      { context: `createPayment(${params.localModel} ${params.localId})` }
+      {
+        operation: "createPayments",
+        resourceType: "PAYMENT",
+        workflow: "createXeroPaymentForInvoice",
+        context: `createPayment(${params.localModel} ${params.localId})`,
+      }
     );
 
     const createdPayment = response.body.payments?.[0];
@@ -2535,7 +2742,7 @@ export async function createXeroRefundPaymentForInvoice(
   });
 
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.createPayments(
           tenantId,
@@ -2543,7 +2750,12 @@ export async function createXeroRefundPaymentForInvoice(
           undefined,
           idempotencyKey
         ),
-      { context: `createPayments(refund repair ${params.paymentId})` }
+      {
+        operation: "createPayments",
+        resourceType: "PAYMENT",
+        workflow: "createXeroRefundPaymentForInvoice",
+        context: `createPayments(refund repair ${params.paymentId})`,
+      }
     );
 
     const createdPayment = response.body.payments?.[0];
@@ -2723,7 +2935,7 @@ export async function createXeroInvoiceForBooking(
   });
 
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.createInvoices(
           tenantId,
@@ -2732,7 +2944,12 @@ export async function createXeroInvoiceForBooking(
           undefined,
           invoiceIdempotencyKey
         ),
-      { context: `createInvoices(booking ${bookingId})` }
+      {
+        operation: "createInvoices",
+        resourceType: "INVOICE",
+        workflow: "createXeroInvoiceForBooking",
+        context: `createInvoices(booking ${bookingId})`,
+      }
     );
 
     const createdInvoice = response.body.invoices?.[0];
@@ -2764,14 +2981,19 @@ export async function createXeroInvoiceForBooking(
       );
 
       try {
-        const paymentResponse = await withXeroRetry(
+        const paymentResponse = await callXeroApi(
           () =>
             xero.accountingApi.createPayment(
               tenantId,
               payment,
               paymentIdempotencyKey
             ),
-          { context: `createPayment(booking ${bookingId})` }
+          {
+            operation: "createPayment",
+            resourceType: "PAYMENT",
+            workflow: "createXeroInvoiceForBooking",
+            context: `createPayment(booking ${bookingId})`,
+          }
         );
         paymentResponseBody = paymentResponse.body;
       } catch (error) {
@@ -2939,7 +3161,7 @@ export async function createXeroCreditNote(
   });
 
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.createCreditNotes(
           tenantId,
@@ -2948,7 +3170,12 @@ export async function createXeroCreditNote(
           undefined,
           creditNoteIdempotencyKey
         ),
-      { context: `createCreditNotes(refund ${paymentId})` }
+      {
+        operation: "createCreditNotes",
+        resourceType: "CREDIT_NOTE",
+        workflow: "createXeroCreditNote",
+        context: `createCreditNotes(refund ${paymentId})`,
+      }
     );
 
     const createdNote = response.body.creditNotes?.[0];
@@ -2965,7 +3192,7 @@ export async function createXeroCreditNote(
     );
 
     try {
-      const allocationResponse = await withXeroRetry(
+      const allocationResponse = await callXeroApi(
         () =>
           xero.accountingApi.createCreditNoteAllocation(
             tenantId,
@@ -2982,7 +3209,12 @@ export async function createXeroCreditNote(
             undefined,
             allocationIdempotencyKey
           ),
-        { context: `createCreditNoteAllocation(refund ${paymentId})` }
+        {
+          operation: "createCreditNoteAllocation",
+          resourceType: "ALLOCATION",
+          workflow: "createXeroCreditNote",
+          context: `createCreditNoteAllocation(refund ${paymentId})`,
+        }
       );
 
       // Save credit note ID to prevent duplicate creation once the core reconciliation steps succeeded
@@ -3004,7 +3236,7 @@ export async function createXeroCreditNote(
           refundAmountCents,
           "v1"
         );
-        const refundPaymentResponse = await withXeroRetry(
+        const refundPaymentResponse = await callXeroApi(
           () =>
             xero.accountingApi.createPayments(
               tenantId,
@@ -3023,7 +3255,12 @@ export async function createXeroCreditNote(
               undefined,
               refundPaymentIdempotencyKey
             ),
-          { context: `createPayments(refund ${paymentId})` }
+          {
+            operation: "createPayments",
+            resourceType: "PAYMENT",
+            workflow: "createXeroCreditNote",
+            context: `createPayments(refund ${paymentId})`,
+          }
         );
         refundPaymentResponseBody = refundPaymentResponse.body.payments?.[0] ?? null;
         logger.info({ paymentId, creditNoteId: createdNote.creditNoteID }, "Xero refund payment created against Stripe bank account");
@@ -3189,7 +3426,7 @@ export async function createUnappliedXeroCreditNote(
   });
 
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.createCreditNotes(
           tenantId,
@@ -3198,7 +3435,12 @@ export async function createUnappliedXeroCreditNote(
           undefined,
           idempotencyKey
         ),
-      { context: `createCreditNotes(unapplied ${paymentId})` }
+      {
+        operation: "createCreditNotes",
+        resourceType: "CREDIT_NOTE",
+        workflow: "createUnappliedXeroCreditNote",
+        context: `createCreditNotes(unapplied ${paymentId})`,
+      }
     );
 
     const createdNote = response.body.creditNotes?.[0];
@@ -3277,7 +3519,7 @@ export async function allocateCreditNoteToInvoice(
   });
 
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.createCreditNoteAllocation(
           tenantId,
@@ -3294,7 +3536,12 @@ export async function allocateCreditNoteToInvoice(
           undefined,
           idempotencyKey
         ),
-      { context: `createCreditNoteAllocation(${creditNoteId} -> ${invoiceId})` }
+      {
+        operation: "createCreditNoteAllocation",
+        resourceType: "ALLOCATION",
+        workflow: "allocateCreditNoteToInvoice",
+        context: `createCreditNoteAllocation(${creditNoteId} -> ${invoiceId})`,
+      }
     );
 
     await completeXeroSyncOperation(operation.id, {
@@ -3441,7 +3688,7 @@ export async function createXeroSupplementaryInvoice(params: {
   });
 
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.createInvoices(
           tenantId,
@@ -3450,7 +3697,12 @@ export async function createXeroSupplementaryInvoice(params: {
           undefined,
           invoiceIdempotencyKey
         ),
-      { context: `createInvoices(supplementary ${localId})` }
+      {
+        operation: "createInvoices",
+        resourceType: "INVOICE",
+        workflow: "createXeroSupplementaryInvoice",
+        context: `createInvoices(supplementary ${localId})`,
+      }
     );
 
     const created = response.body.invoices?.[0];
@@ -3472,7 +3724,7 @@ export async function createXeroSupplementaryInvoice(params: {
         totalCents,
         "v1"
       );
-      const paymentResponse = await withXeroRetry(
+      const paymentResponse = await callXeroApi(
         () =>
           xero.accountingApi.createPayments(
             tenantId,
@@ -3488,7 +3740,12 @@ export async function createXeroSupplementaryInvoice(params: {
             undefined,
             paymentIdempotencyKey
           ),
-        { context: `createPayments(supplementary ${localId})` }
+        {
+          operation: "createPayments",
+          resourceType: "PAYMENT",
+          workflow: "createXeroSupplementaryInvoice",
+          context: `createPayments(supplementary ${localId})`,
+        }
       );
       paymentResponseBody = paymentResponse.body.payments?.[0] ?? null;
     } catch (error) {
@@ -3630,7 +3887,7 @@ export async function createXeroCreditNoteForModification(params: {
   });
 
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.createCreditNotes(
           tenantId,
@@ -3639,7 +3896,12 @@ export async function createXeroCreditNoteForModification(params: {
           undefined,
           creditNoteIdempotencyKey
         ),
-      { context: `createCreditNotes(modification ${localId})` }
+      {
+        operation: "createCreditNotes",
+        resourceType: "CREDIT_NOTE",
+        workflow: "createXeroCreditNoteForModification",
+        context: `createCreditNotes(modification ${localId})`,
+      }
     );
 
     const created = response.body.creditNotes?.[0];
@@ -3657,7 +3919,7 @@ export async function createXeroCreditNoteForModification(params: {
     );
 
     try {
-      const allocationResponse = await withXeroRetry(
+      const allocationResponse = await callXeroApi(
         () =>
           xero.accountingApi.createCreditNoteAllocation(
             tenantId,
@@ -3674,7 +3936,12 @@ export async function createXeroCreditNoteForModification(params: {
             undefined,
             allocationIdempotencyKey
           ),
-        { context: `createCreditNoteAllocation(modification ${localId})` }
+        {
+          operation: "createCreditNoteAllocation",
+          resourceType: "ALLOCATION",
+          workflow: "createXeroCreditNoteForModification",
+          context: `createCreditNoteAllocation(modification ${localId})`,
+        }
       );
 
       await completeXeroSyncOperation(operation.id, {
@@ -3827,7 +4094,7 @@ export async function createXeroEntranceFeeInvoice(
   });
 
   try {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () =>
         xero.accountingApi.createInvoices(
           tenantId,
@@ -3836,7 +4103,12 @@ export async function createXeroEntranceFeeInvoice(
           undefined,
           idempotencyKey
         ),
-      { context: `createInvoices(entranceFee ${memberId})` }
+      {
+        operation: "createInvoices",
+        resourceType: "INVOICE",
+        workflow: "createXeroEntranceFeeInvoice",
+        context: `createInvoices(entranceFee ${memberId})`,
+      }
     );
 
     const created = response.body.invoices?.[0];
@@ -3921,7 +4193,15 @@ export async function findDuplicateContacts(): Promise<{
   // Get org shortCode for deep links
   let shortCode = "";
   try {
-    const orgResponse = await xero.accountingApi.getOrganisations(tenantId);
+    const orgResponse = await callXeroApi(
+      () => xero.accountingApi.getOrganisations(tenantId),
+      {
+        operation: "getOrganisations",
+        resourceType: "ORGANISATION",
+        workflow: "findDuplicateContacts",
+        context: "findDuplicateContacts getOrganisations",
+      }
+    );
     shortCode = orgResponse.body.organisations?.[0]?.shortCode || "";
   } catch {
     // If we can't get shortCode, links will fall back to generic URL
@@ -3937,7 +4217,7 @@ export async function findDuplicateContacts(): Promise<{
   let hasMore = true;
 
   while (hasMore) {
-    const response = await withXeroRetry(
+    const response = await callXeroApi(
       () => xero.accountingApi.getContacts(
         tenantId,
         undefined, // ifModifiedSince
@@ -3947,7 +4227,12 @@ export async function findDuplicateContacts(): Promise<{
         page,
         false      // includeArchived
       ),
-      { context: `findDuplicateContacts getContacts(page ${page})` }
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "findDuplicateContacts",
+        context: `findDuplicateContacts getContacts(page ${page})`,
+      }
     );
 
     const contacts = response.body.contacts ?? [];
@@ -3987,7 +4272,7 @@ export async function findDuplicateContacts(): Promise<{
     for (const contact of contacts) {
       let invoiceCount = 0;
       try {
-        const invoiceResponse = await withXeroRetry(
+        const invoiceResponse = await callXeroApi(
           () => xero.accountingApi.getInvoices(
             tenantId,
             undefined, // ifModifiedSince
@@ -4004,12 +4289,17 @@ export async function findDuplicateContacts(): Promise<{
             true,      // summaryOnly
             1          // pageSize — we just need the count
           ),
-          { context: `findDuplicateContacts getInvoices(summary ${contact.contactID})` }
+          {
+            operation: "getInvoices",
+            resourceType: "INVOICE",
+            workflow: "findDuplicateContacts",
+            context: `findDuplicateContacts getInvoices(summary ${contact.contactID})`,
+          }
         );
         invoiceCount = invoiceResponse.body.invoices?.length ?? 0;
         // If we got 1 result with pageSize 1, there may be more — fetch count properly
         if (invoiceCount > 0) {
-          const fullResponse = await withXeroRetry(
+          const fullResponse = await callXeroApi(
             () => xero.accountingApi.getInvoices(
               tenantId,
               undefined,
@@ -4025,7 +4315,12 @@ export async function findDuplicateContacts(): Promise<{
               undefined,
               true
             ),
-            { context: `findDuplicateContacts getInvoices(full ${contact.contactID})` }
+            {
+              operation: "getInvoices",
+              resourceType: "INVOICE",
+              workflow: "findDuplicateContacts",
+              context: `findDuplicateContacts getInvoices(full ${contact.contactID})`,
+            }
           );
           invoiceCount = fullResponse.body.invoices?.length ?? 0;
         }

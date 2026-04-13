@@ -301,33 +301,49 @@ export async function recordXeroInboundEvent(input: {
   processedAt?: Date | null;
 }) {
   const payload = sanitizeForJson(input.payload) ?? Prisma.JsonNull;
-
-  return prisma.xeroInboundEvent.upsert({
+  const requestedStatus = input.status ?? "RECEIVED";
+  const existing = await prisma.xeroInboundEvent.findUnique({
     where: {
       correlationKey: input.correlationKey,
     },
-    create: {
-      source: input.source ?? "webhook",
-      eventCategory: input.eventCategory ?? null,
-      eventType: input.eventType,
-      resourceId: input.resourceId ?? null,
-      eventCreatedAt: input.eventCreatedAt ?? null,
-      correlationKey: input.correlationKey,
-      payload,
-      status: input.status ?? "RECEIVED",
-      errorMessage: input.errorMessage ?? null,
-      processedAt: input.processedAt ?? null,
+    select: {
+      id: true,
+      status: true,
+      processedAt: true,
     },
-    update: {
-      source: input.source ?? "webhook",
-      eventCategory: input.eventCategory ?? null,
-      eventType: input.eventType,
-      resourceId: input.resourceId ?? null,
-      eventCreatedAt: input.eventCreatedAt ?? null,
-      payload,
-      status: input.status ?? "RECEIVED",
-      errorMessage: input.errorMessage ?? null,
-      processedAt: input.processedAt ?? null,
+  });
+
+  const shouldPreserveTerminalState =
+    requestedStatus === "RECEIVED" &&
+    (existing?.status === "PROCESSING" || existing?.status === "PROCESSED");
+  const nextStatus = shouldPreserveTerminalState ? existing.status : requestedStatus;
+  const nextProcessedAt =
+    nextStatus === "PROCESSED"
+      ? existing?.processedAt ?? input.processedAt ?? new Date()
+      : shouldPreserveTerminalState
+        ? existing?.processedAt ?? null
+        : input.processedAt ?? null;
+  const data = {
+    source: input.source ?? "webhook",
+    eventCategory: input.eventCategory ?? null,
+    eventType: input.eventType,
+    resourceId: input.resourceId ?? null,
+    eventCreatedAt: input.eventCreatedAt ?? null,
+    correlationKey: input.correlationKey,
+    payload,
+    status: nextStatus,
+    errorMessage: input.errorMessage ?? null,
+    processedAt: nextProcessedAt,
+  };
+
+  if (!existing) {
+    return prisma.xeroInboundEvent.create({ data });
+  }
+
+  return prisma.xeroInboundEvent.update({
+    where: {
+      id: existing.id,
     },
+    data,
   });
 }

@@ -30,20 +30,20 @@ const {
   mockGetXeroContactGroupMemberships,
   mockGetXeroContactIdsForGroup,
   mockGetAuthenticatedXeroClient,
-  mockWithXeroRetry,
+  mockCallXeroApi,
 } = vi.hoisted(() => ({
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
   mockGetXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
   mockGetXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
   mockGetAuthenticatedXeroClient: vi.fn(),
-  mockWithXeroRetry: vi.fn(),
+  mockCallXeroApi: vi.fn(),
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: mockIsXeroConnected,
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   getXeroContactIdsForGroup: mockGetXeroContactIdsForGroup,
   getAuthenticatedXeroClient: mockGetAuthenticatedXeroClient,
-  withXeroRetry: mockWithXeroRetry,
+  callXeroApi: mockCallXeroApi,
   findOrCreateXeroContact: vi.fn(),
 }));
 
@@ -75,6 +75,7 @@ describe("Xero Member Management", () => {
     mockIsXeroConnected.mockResolvedValue(false);
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
     mockGetXeroContactIdsForGroup.mockResolvedValue([]);
+    mockCallXeroApi.mockReset();
     vi.mocked(prisma.member.count).mockResolvedValue(1);
     delete process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS;
   });
@@ -286,7 +287,7 @@ describe("Xero Member Management", () => {
         xero: { accountingApi: { getContacts: getContactsMock } },
         tenantId: "tenant-1",
       });
-      mockWithXeroRetry.mockImplementation(async (fn) => fn());
+      mockCallXeroApi.mockImplementation(async (fn) => fn());
       vi.mocked(prisma.member.findMany).mockResolvedValue([
         {
           xeroContactId: "xero-1",
@@ -301,7 +302,7 @@ describe("Xero Member Management", () => {
       const res = await searchXeroContacts(req);
 
       expect(res.status).toBe(200);
-      expect(mockWithXeroRetry).toHaveBeenCalledTimes(1);
+      expect(mockCallXeroApi).toHaveBeenCalledTimes(1);
 
       expect(getContactsMock).toHaveBeenCalledWith(
         "tenant-1",
@@ -351,7 +352,7 @@ describe("Xero Member Management", () => {
         xero: { accountingApi: { getContact: vi.fn() } },
         tenantId: "t1",
       });
-      mockWithXeroRetry.mockResolvedValue({
+      mockCallXeroApi.mockResolvedValue({
         body: { contacts: [{ contactID: "new-xero-id", name: "Jane Doe" }] },
       });
 
@@ -379,7 +380,7 @@ describe("Xero Member Management", () => {
         xero: { accountingApi: { getContact: vi.fn() } },
         tenantId: "t1",
       });
-      mockWithXeroRetry.mockResolvedValue({
+      mockCallXeroApi.mockResolvedValue({
         body: { contacts: [{ contactID: "xero-taken", name: "Taken Contact" }] },
       });
 

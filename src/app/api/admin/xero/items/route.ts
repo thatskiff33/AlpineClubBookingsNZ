@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { getAuthenticatedXeroClient } from "@/lib/xero";
+import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
 import {
   type XeroItem,
   getCachedItems,
@@ -31,7 +31,15 @@ export async function GET() {
 
   try {
     const { xero, tenantId } = await getAuthenticatedXeroClient();
-    const response = await xero.accountingApi.getItems(tenantId);
+    const response = await callXeroApi(
+      () => xero.accountingApi.getItems(tenantId),
+      {
+        operation: "getItems",
+        resourceType: "ITEM",
+        workflow: "adminFetchXeroItems",
+        context: "admin/xero/items",
+      }
+    );
     const raw = response.body.items ?? [];
 
     const items: XeroItem[] = raw

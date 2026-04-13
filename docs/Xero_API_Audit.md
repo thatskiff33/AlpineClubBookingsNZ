@@ -24,10 +24,38 @@ Completed in this pass:
   - `src/lib/__tests__/xero-cron-route.test.ts`
   - `src/lib/__tests__/xero-member-management.test.ts`
   - `src/lib/__tests__/phase3-admin-members.test.ts`
+- Added persisted Phase 1 Xero API metering models plus migration:
+  - `XeroApiUsageDaily`
+  - `XeroApiUsageEvent`
+  in `prisma/schema.prisma` and `prisma/migrations/20260414113000_add_xero_api_usage_metering/`.
+- Added `src/lib/xero-api-usage.ts` to:
+  - persist one usage event per metered Xero SDK call
+  - maintain daily aggregate counters
+  - compute rolling 24-hour hotspots and recent failures for the admin dashboard
+  - apply 70/85/95 percent budget thresholds against the 1000-calls-per-day budget.
+- Added `callXeroApi()` in `src/lib/xero.ts` as the shared metered wrapper layered on top of `withXeroRetry()`, including rate-limit-category capture from retried calls.
+- Routed all current non-test Xero SDK call sites through the shared metered wrapper, including:
+  - `src/lib/xero.ts`
+  - `src/lib/xero-inbound-reconciliation.ts`
+  - `src/app/api/admin/xero/chart-of-accounts/route.ts`
+  - `src/app/api/admin/xero/items/route.ts`
+  - `src/app/api/admin/xero/search-contacts/route.ts`
+  - `src/app/api/admin/members/[id]/xero-link/route.ts`
+- Added `GET /api/admin/xero/usage` in `src/app/api/admin/xero/usage/route.ts`.
+- Added a new Xero API Budget panel to `src/app/(admin)/admin/xero/page.tsx` showing:
+  - calls today versus the daily budget
+  - success/failure counts
+  - rate-limit hits
+  - rolling 24-hour top operations
+  - rolling 24-hour top workflows
+  - recent failed Xero calls
+  - a manual refresh action for the dashboard.
+- Added targeted test coverage for the new metering and summary logic:
+  - `src/lib/__tests__/xero.test.ts`
+  - `src/lib/__tests__/xero-api-usage.test.ts`
 
 Work remaining after this pass:
 
-- Phase 1: shared Xero call metering plus a daily budget dashboard.
 - Phase 2: incremental invoice sync to replace full daily membership polling.
 - Phase 3: local cache tables for Xero contact groups and memberships so member pages and filters can stay local-only without the temporary "not loaded" fallback.
 - Phases 4-8 remain unstarted in this pass.
@@ -293,6 +321,13 @@ Primary files:
 - `src/app/api/admin/members/[id]/route.ts`
 
 ### Phase 1: Add Xero Call Metering And A Daily Budget Dashboard
+
+Status:
+
+- Completed on 2026-04-14.
+- Shared metering now persists per-call events and daily aggregates locally.
+- `/admin/xero` now has a budget panel backed by local data plus rolling 24-hour hotspot/failure summaries.
+- All current non-test Xero SDK call sites are routed through `callXeroApi()` on top of `withXeroRetry()`.
 
 Goal:
 
