@@ -5,6 +5,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
+import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 
 const querySchema = z.object({
   status: z.string().optional().default("all"),
@@ -74,6 +75,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       data: operations.map((operation) => ({
         ...operation,
+        ...getXeroOperationRetryMeta(operation),
         xeroObjectUrl:
           operation.xeroObjectUrl ??
           (operation.xeroObjectType && operation.xeroObjectId

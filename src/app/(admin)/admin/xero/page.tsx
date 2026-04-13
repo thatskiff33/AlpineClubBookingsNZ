@@ -116,6 +116,8 @@ interface XeroOperation {
   completedAt: string | null
   createdAt: string
   updatedAt: string
+  supported: boolean
+  reason: string | null
 }
 
 type MappingValue = {
@@ -303,6 +305,8 @@ export default function XeroPage() {
   const [loadingOperations, setLoadingOperations] = useState(false)
   const [operationStatusFilter, setOperationStatusFilter] = useState("all")
   const [operationEntityFilter, setOperationEntityFilter] = useState("all")
+  const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
+  const [operationMessage, setOperationMessage] = useState("")
 
   // Granular item code mappings state
   type HutFeeMap = Record<string, { itemCode: string }>
@@ -408,6 +412,27 @@ export default function XeroPage() {
       fetchOperations(operationStatusFilter, operationEntityFilter)
     }
   }, [status?.connected, operationStatusFilter, operationEntityFilter, fetchOperations])
+
+  const handleRetryOperation = async (operationId: string) => {
+    setRetryingOperationId(operationId)
+    setOperationMessage("")
+    setError("")
+    try {
+      const res = await fetch(`/api/admin/xero/operations/${operationId}/retry`, {
+        method: "POST",
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to retry Xero operation")
+      }
+      setOperationMessage(data.message || "Xero operation retried.")
+      await fetchOperations(operationStatusFilter, operationEntityFilter)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to retry Xero operation")
+    } finally {
+      setRetryingOperationId(null)
+    }
+  }
 
   const handleConnect = () => {
     window.location.href = "/api/admin/xero/connect"
@@ -681,6 +706,15 @@ export default function XeroPage() {
         <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
           {error}
           <button onClick={() => setError("")} className="ml-2 underline">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {operationMessage && (
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">
+          {operationMessage}
+          <button onClick={() => setOperationMessage("")} className="ml-2 underline">
             Dismiss
           </button>
         </div>
@@ -1226,6 +1260,21 @@ export default function XeroPage() {
                         {operation.lastErrorMessage}
                       </p>
                     )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {operation.supported ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRetryOperation(operation.id)}
+                          disabled={retryingOperationId === operation.id}
+                        >
+                          {retryingOperationId === operation.id ? "Retrying..." : "Retry"}
+                        </Button>
+                      ) : operation.reason && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
+                        <p className="text-xs text-muted-foreground">{operation.reason}</p>
+                      ) : null}
+                    </div>
 
                     <details className="rounded-md bg-slate-50 p-2">
                       <summary className="cursor-pointer text-xs font-medium text-slate-700">
