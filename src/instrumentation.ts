@@ -262,7 +262,10 @@ export async function register() {
       }
       isXeroReplayCronRunning = true;
       const startedAt = new Date();
-      logger.info({ job: "xero-operation-replay" }, "Processing queued Xero retries");
+      logger.info(
+        { job: "xero-operation-replay" },
+        "Processing queued Xero outbox operations and retries"
+      );
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "xero-operation-replay", status: "in_progress" },
@@ -271,6 +274,9 @@ export async function register() {
 
       try {
         const { isXeroConnected } = await import("./lib/xero");
+        const { processQueuedXeroOutboxOperations } = await import(
+          "./lib/xero-operation-outbox"
+        );
         const { processQueuedXeroOperationRetries } = await import(
           "./lib/xero-operation-queue"
         );
@@ -284,16 +290,17 @@ export async function register() {
           return;
         }
 
-        const result = await processQueuedXeroOperationRetries();
+        const queuedOutboxOperations = await processQueuedXeroOutboxOperations();
+        const queuedRetries = await processQueuedXeroOperationRetries();
         logger.info(
-          { job: "xero-operation-replay", ...result },
-          "Queued Xero retry processing complete"
+          { job: "xero-operation-replay", queuedOutboxOperations, queuedRetries },
+          "Queued Xero outbox and retry processing complete"
         );
         await recordCronRun(
           "xero-operation-replay",
           startedAt,
           "SUCCESS",
-          { ...result }
+          { queuedOutboxOperations, queuedRetries }
         );
         Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "ok" });
       } catch (err) {

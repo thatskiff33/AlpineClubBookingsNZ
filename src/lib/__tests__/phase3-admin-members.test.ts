@@ -41,17 +41,34 @@ const {
   mockGetXeroContactGroupMemberships,
   mockUpdateXeroContact,
   mockCreateXeroEntranceFeeInvoice,
+  mockEnqueueXeroEntranceFeeInvoiceOperation,
+  mockProcessQueuedXeroOutboxOperations,
 } = vi.hoisted(() => ({
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
   mockGetXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
   mockUpdateXeroContact: vi.fn(),
   mockCreateXeroEntranceFeeInvoice: vi.fn().mockResolvedValue(null),
+  mockEnqueueXeroEntranceFeeInvoiceOperation: vi.fn().mockResolvedValue({
+    queueOperationId: null,
+    message: "not queued",
+  }),
+  mockProcessQueuedXeroOutboxOperations: vi.fn().mockResolvedValue({
+    found: 0,
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+  }),
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: mockIsXeroConnected,
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
   updateXeroContact: mockUpdateXeroContact,
   createXeroEntranceFeeInvoice: mockCreateXeroEntranceFeeInvoice,
+}));
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroEntranceFeeInvoiceOperation: mockEnqueueXeroEntranceFeeInvoiceOperation,
+  processQueuedXeroOutboxOperations: mockProcessQueuedXeroOutboxOperations,
 }));
 vi.mock("@/lib/email", () => ({ sendPasswordResetEmail: vi.fn() }));
 vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));

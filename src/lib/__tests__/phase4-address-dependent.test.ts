@@ -52,6 +52,19 @@ vi.mock("@/lib/xero", () => ({
   getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
   createXeroEntranceFeeInvoice: vi.fn().mockResolvedValue(null),
 }));
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroEntranceFeeInvoiceOperation: vi.fn().mockResolvedValue({
+    queueOperationId: null,
+    message: "not queued",
+  }),
+  processQueuedXeroOutboxOperations: vi.fn().mockResolvedValue({
+    found: 0,
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+  }),
+}));
 vi.mock("@/lib/xero-api-errors", () => ({
   getXeroApiErrorInfo: vi.fn().mockReturnValue({ handled: true }),
 }));
@@ -226,6 +239,7 @@ describe("Profile update with postalSameAsPhysical", () => {
 
   it("copies street to postal when postalSameAsPhysical is true", async () => {
     vi.mocked(auth).mockResolvedValue(memberSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
     vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember } as any);
 
     const res = await updateProfile(makeProfilePut({

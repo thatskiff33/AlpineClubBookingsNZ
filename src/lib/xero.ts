@@ -54,9 +54,23 @@ export class XeroContactValidationError extends Error {
   }
 }
 
-interface FindOrCreateXeroContactOptions {
+export interface FindOrCreateXeroContactOptions {
   createdByMemberId?: string;
   repairExistingLink?: boolean;
+}
+
+export interface EntranceFeeContext {
+  category: EntranceFeeCategory;
+  feeMapping: {
+    itemCode: string | null;
+    amountCents: number | null;
+  };
+}
+
+export interface CreateXeroEntranceFeeInvoiceOptions
+  extends FindOrCreateXeroContactOptions {
+  syncOperationId?: string;
+  precomputedEntranceFee?: EntranceFeeContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +426,30 @@ export async function determineEntranceFeeCategory(
   }
 
   return "ADULT";
+}
+
+export async function getEntranceFeeContext(
+  memberId: string
+): Promise<EntranceFeeContext> {
+  const category = await determineEntranceFeeCategory(memberId);
+  const feeMapping = await getEntranceFeeMapping(category);
+
+  return { category, feeMapping };
+}
+
+export function buildEntranceFeeInvoiceIdempotencyKey(
+  memberId: string,
+  category: EntranceFeeCategory,
+  amountCents: number
+) {
+  return buildXeroIdempotencyKey(
+    "member",
+    memberId,
+    "entrance-fee-invoice",
+    category,
+    amountCents,
+    "v1"
+  );
 }
 
 /**
@@ -4275,78 +4313,106 @@ export async function createXeroCreditNoteForModification(params: {
  */
 export async function createXeroEntranceFeeInvoice(
   memberId: string,
-  options?: FindOrCreateXeroContactOptions
+  options?: CreateXeroEntranceFeeInvoiceOptions
 ): Promise<string | null> {
-  // Determine the entrance fee category for this member
-  const category = await determineEntranceFeeCategory(memberId);
-  const feeMapping = await getEntranceFeeMapping(category);
+  const entranceFee = options?.precomputedEntranceFee ?? (await getEntranceFeeContext(memberId));
+  const { category, feeMapping } = entranceFee;
+  const queuedOperationId = options?.syncOperationId ?? null;
 
   if (!feeMapping.amountCents || feeMapping.amountCents <= 0) {
-    // Entrance fee not configured for this category — skip
+    if (queuedOperationId) {
+      await completeXeroSyncOperation(queuedOperationId, {
+        status: "SUCCEEDED",
+        responsePayload: {
+          skipped: true,
+          reason: "No entrance fee is configured for this member category.",
+          category,
+        },
+      });
+    }
+
     return null;
   }
 
   // Check Xero connectivity
-  let xero, tenantId;
-  try {
-    ({ xero, tenantId } = await getAuthenticatedXeroClient());
-  } catch {
-    // Xero not connected — skip silently
-    return null;
+  let xero: XeroClient | null = null;
+  let tenantId: string | null = null;
+  if (!queuedOperationId) {
+    try {
+      ({ xero, tenantId } = await getAuthenticatedXeroClient());
+    } catch {
+      // Xero not connected — skip silently on direct write paths.
+      return null;
+    }
   }
 
-  const contactId = await findOrCreateXeroContact(memberId, options);
-
-  const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
-  const incomeCode = incomeMapping.code ?? "200";
-
   const categoryLabel = category === "FAMILY" ? "Family" : category === "YOUTH" ? "Youth" : category === "CHILD" ? "Child" : "Adult";
-
-  const lineItem = buildEntranceFeeLineItem(
-    categoryLabel,
-    feeMapping.amountCents,
-    incomeCode,
-    feeMapping.itemCode,
-    incomeMapping.codeExplicitlyConfigured,
-  );
-
-  const buildInvoice = (resolvedContactId: string): Invoice => ({
-    type: Invoice.TypeEnum.ACCREC,
-    contact: { contactID: resolvedContactId },
-    lineItems: [lineItem],
-    date: formatDate(new Date()),
-    dueDate: formatDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), // Due in 30 days
-    reference: `Entrance fee (${categoryLabel}) - ${memberId.slice(0, 8)}`,
-    status: Invoice.StatusEnum.AUTHORISED,
-    lineAmountTypes: LineAmountTypes.Inclusive,
-  });
-
-  const idempotencyKey = buildXeroIdempotencyKey(
-    "member",
+  const idempotencyKey = buildEntranceFeeInvoiceIdempotencyKey(
     memberId,
-    "entrance-fee-invoice",
     category,
-    feeMapping.amountCents,
-    "v1"
+    feeMapping.amountCents
   );
-  const operation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "INVOICE",
-    operationType: "CREATE",
-    localModel: "Member",
-    localId: memberId,
-    idempotencyKey,
-    correlationKey: idempotencyKey,
-    requestPayload: { invoices: [buildInvoice(contactId)] },
-    createdByMemberId: options?.createdByMemberId ?? null,
-  });
+  let operationId = queuedOperationId;
 
   try {
+    if (!xero || !tenantId) {
+      ({ xero, tenantId } = await getAuthenticatedXeroClient());
+    }
+    const authenticatedXero = xero;
+    const authenticatedTenantId = tenantId;
+
+    const contactId = await findOrCreateXeroContact(memberId, options);
+    const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
+    const incomeCode = incomeMapping.code ?? "200";
+
+    const lineItem = buildEntranceFeeLineItem(
+      categoryLabel,
+      feeMapping.amountCents,
+      incomeCode,
+      feeMapping.itemCode,
+      incomeMapping.codeExplicitlyConfigured,
+    );
+
+    const buildInvoice = (resolvedContactId: string): Invoice => ({
+      type: Invoice.TypeEnum.ACCREC,
+      contact: { contactID: resolvedContactId },
+      lineItems: [lineItem],
+      date: formatDate(new Date()),
+      dueDate: formatDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), // Due in 30 days
+      reference: `Entrance fee (${categoryLabel}) - ${memberId.slice(0, 8)}`,
+      status: Invoice.StatusEnum.AUTHORISED,
+      lineAmountTypes: LineAmountTypes.Inclusive,
+    });
+
+    const requestPayload = { invoices: [buildInvoice(contactId)] };
+
+    if (operationId) {
+      await prisma.xeroSyncOperation.update({
+        where: { id: operationId },
+        data: {
+          requestPayload: sanitizeForJson(requestPayload),
+        },
+      });
+    } else {
+      const operation = await startXeroSyncOperation({
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "Member",
+        localId: memberId,
+        idempotencyKey,
+        correlationKey: idempotencyKey,
+        requestPayload,
+        createdByMemberId: options?.createdByMemberId ?? null,
+      });
+      operationId = operation.id;
+    }
+
     const response = await retryXeroWriteWithContactRepair({
       memberId,
       currentContactId: contactId,
       workflow: "createXeroEntranceFeeInvoice",
-      operationId: operation.id,
+      operationId: operationId!,
       repairExistingLink: options?.repairExistingLink,
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
@@ -4355,8 +4421,8 @@ export async function createXeroEntranceFeeInvoice(
       run: ({ contactId: resolvedContactId }) =>
         callXeroApi(
           () =>
-            xero.accountingApi.createInvoices(
-              tenantId,
+            authenticatedXero.accountingApi.createInvoices(
+              authenticatedTenantId,
               { invoices: [buildInvoice(resolvedContactId)] },
               undefined,
               undefined,
@@ -4376,7 +4442,7 @@ export async function createXeroEntranceFeeInvoice(
       throw new Error("Failed to create Xero entrance fee invoice");
     }
 
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operationId!, {
       responsePayload: response.body,
       xeroObjectType: "INVOICE",
       xeroObjectId: created.invoiceID,
@@ -4406,7 +4472,9 @@ export async function createXeroEntranceFeeInvoice(
 
     return created.invoiceID;
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    if (operationId) {
+      await failXeroSyncOperation(operationId, error);
+    }
     throw error;
   }
 }

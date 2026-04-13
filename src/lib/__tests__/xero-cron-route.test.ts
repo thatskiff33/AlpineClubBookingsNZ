@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   refreshAllMembershipStatuses: vi.fn(),
   isXeroConnected: vi.fn(),
+  processQueuedXeroOutboxOperations: vi.fn(),
   processQueuedXeroOperationRetries: vi.fn(),
   processStoredXeroInboundEvents: vi.fn(),
   backfillHistoricalXeroObjectLinks: vi.fn(),
@@ -13,6 +14,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/xero", () => ({
   refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
   isXeroConnected: mocks.isXeroConnected,
+}));
+
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  processQueuedXeroOutboxOperations: mocks.processQueuedXeroOutboxOperations,
 }));
 
 vi.mock("@/lib/xero-operation-queue", () => ({
@@ -73,6 +78,7 @@ describe("POST /api/cron/xero", () => {
     expect(response.status).toBe(200);
     expect(body.connected).toBe(false);
     expect(body.membershipRefresh).toBeNull();
+    expect(body.queuedOutboxOperations).toBeNull();
     expect(body.queuedRetries).toBeNull();
     expect(body.reconciliationReport).toEqual({
       sent: true,
@@ -90,6 +96,13 @@ describe("POST /api/cron/xero", () => {
     process.env.XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH = "true";
     mocks.isXeroConnected.mockResolvedValue(true);
     mocks.refreshAllMembershipStatuses.mockResolvedValue({ checked: 4, errors: 0 });
+    mocks.processQueuedXeroOutboxOperations.mockResolvedValue({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
     mocks.processQueuedXeroOperationRetries.mockResolvedValue({
       found: 1,
       processed: 1,
@@ -127,6 +140,13 @@ describe("POST /api/cron/xero", () => {
     expect(response.status).toBe(200);
     expect(body.message).toBe("Xero cron tasks completed");
     expect(body.membershipRefresh).toEqual({ checked: 4, errors: 0 });
+    expect(body.queuedOutboxOperations).toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
     expect(body.queuedRetries).toEqual({
       found: 1,
       processed: 1,

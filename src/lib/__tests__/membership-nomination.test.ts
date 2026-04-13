@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { prismaMock, emailMock, xeroMock } = vi.hoisted(() => ({
+const { prismaMock, emailMock, xeroMock, xeroOutboxMock } = vi.hoisted(() => ({
   prismaMock: {
     member: {
       findFirst: vi.fn(),
@@ -43,7 +43,19 @@ const { prismaMock, emailMock, xeroMock } = vi.hoisted(() => ({
   xeroMock: {
     isXeroConnected: vi.fn().mockResolvedValue(true),
     findOrCreateXeroContact: vi.fn().mockResolvedValue("xc-1"),
-    createXeroEntranceFeeInvoice: vi.fn().mockResolvedValue("inv-1"),
+  },
+  xeroOutboxMock: {
+    enqueueXeroEntranceFeeInvoiceOperation: vi.fn().mockResolvedValue({
+      queueOperationId: "queue_1",
+      message: "queued",
+    }),
+    processQueuedXeroOutboxOperations: vi.fn().mockResolvedValue({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    }),
   },
 }));
 
@@ -63,6 +75,8 @@ vi.mock("@/lib/utils", () => ({
 vi.mock("@/lib/email", () => emailMock);
 
 vi.mock("@/lib/xero", () => xeroMock);
+
+vi.mock("@/lib/xero-operation-outbox", () => xeroOutboxMock);
 
 vi.mock("@/lib/logger", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -91,9 +105,11 @@ import {
   sendNominationRequestEmail,
 } from "@/lib/email";
 import {
-  createXeroEntranceFeeInvoice,
   findOrCreateXeroContact,
 } from "@/lib/xero";
+import {
+  enqueueXeroEntranceFeeInvoiceOperation,
+} from "@/lib/xero-operation-outbox";
 
 describe("membership nomination workflow", () => {
   beforeEach(() => {
@@ -547,7 +563,9 @@ describe("membership nomination workflow", () => {
       })
     );
     expect(findOrCreateXeroContact).toHaveBeenCalledTimes(2);
-    expect(createXeroEntranceFeeInvoice).toHaveBeenCalledWith("member-1");
+    expect(enqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledWith("member-1", {
+      createdByMemberId: "admin-1",
+    });
     expect(sendMembershipApplicationApprovedEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         email: "jane@test.com",

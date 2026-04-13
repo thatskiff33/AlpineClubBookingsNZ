@@ -11,10 +11,26 @@ This review focuses on how TACBookings should reconcile booking and membership d
 
 ## Implementation Status (2026-04-14)
 
-The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, webhook-driven inbound reconciliation for linked contact, invoice, payment, and credit-note events, operator-facing admin tooling for inspecting and replaying stored inbound events both centrally and from the record-scoped activity view, and a Phase 6 steady-state reduction that now trusts persisted member contact links by default, lets retry/replay flows explicitly relink stale contacts, and auto-repairs stale contact references on the first steady-state write failure. The remaining work is now mostly around full outbox execution for initial writes, incremental pull support, richer business-state drift detection, optional Xero-side history/attachment enrichment, and any future inbound categories beyond the current safe handlers.
+The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, webhook-driven inbound reconciliation for linked contact, invoice, payment, and credit-note events, operator-facing admin tooling for inspecting and replaying stored inbound events both centrally and from the record-scoped activity view, a Phase 6 steady-state reduction that now trusts persisted member contact links by default, lets retry/replay flows explicitly relink stale contacts, and auto-repairs stale contact references on the first steady-state write failure, and now the first true initial-write outbox path for entrance-fee invoices. The remaining work is now mostly around extending that outbox execution to the other primary write paths, incremental pull support, richer business-state drift detection, optional Xero-side history/attachment enrichment, and any future inbound categories beyond the current safe handlers.
 
 ### Completed in this session
 
+- added the first true initial-write outbox flow in `src/lib/xero-operation-outbox.ts`
+  - entrance-fee invoice creation is now queued as a `PENDING` primary `XeroSyncOperation` row instead of running only as fire-and-forget inline work
+  - the worker claims that same row, executes the outbound write, and completes/fails the same ledger entry rather than creating a separate wrapper operation
+- updated `createXeroEntranceFeeInvoice()` in `src/lib/xero.ts` so it can execute against an existing pending operation row and reuse the precomputed entrance-fee context stored in the queue payload
+- moved the two current entrance-fee creation triggers onto the durable outbox path:
+  - admin member creation in `src/app/api/admin/members/route.ts`
+  - membership approval in `src/lib/nomination.ts`
+- added best-effort immediate outbox kicks plus durable scheduled/manual draining:
+  - `processQueuedXeroOutboxOperations()` is now run from `src/instrumentation.ts` alongside the retry worker
+  - `/api/cron/xero` now supports `task=outbox` and includes outbox processing in `task=all`
+- added focused coverage for the new outbox path and updated related tests:
+  - `src/lib/__tests__/xero-operation-outbox.test.ts`
+  - `src/lib/__tests__/xero-cron-route.test.ts`
+  - `src/lib/__tests__/membership-nomination.test.ts`
+  - `src/lib/__tests__/phase3-admin-members.test.ts`
+  - `src/lib/__tests__/phase4-address-dependent.test.ts`
 - removed the steady-state `getContact()` verification read from `findOrCreateXeroContact()` in `src/lib/xero.ts`
   - normal invoice / credit-note / entrance-fee write paths now trust `member.xeroContactId` directly and avoid the extra Xero read when the local canonical link already exists
   - `findOrCreateXeroContact()` now also supports an explicit repair/relookup mode that re-searches by email and relinks stale contacts when a retry/replay path opts in
@@ -97,10 +113,11 @@ The review below started as a design and gap-analysis document. The codebase now
 - hardened the steady-state outbound write paths so the first stale-contact failure now auto-repairs inline rather than waiting for an explicit retry/replay action
 - added queue-backed requeue and worker processing for supported failed operations:
   - `src/lib/xero-operation-queue.ts`
+  - `src/lib/xero-operation-outbox.ts` for the first primary-write outbox path
   - `src/app/api/admin/xero/operations/[id]/requeue/route.ts`
   - `PENDING` / `REQUEUE` controls and visibility in `src/app/(admin)/admin/xero/page.tsx`
   - scheduled replay worker in `src/instrumentation.ts`
-  - manual cron support in `src/app/api/cron/xero/route.ts` via `task=retries`, `task=report`, `task=backfill`, or `task=all`
+  - manual cron support in `src/app/api/cron/xero/route.ts` via `task=outbox`, `task=retries`, `task=report`, `task=backfill`, or `task=all`
 - added dedicated repair handling for the currently emitted `PARTIAL` outbound flows:
   - retry metadata and repair dispatch in `src/lib/xero-operation-retry.ts`
   - helper paths in `src/lib/xero.ts` to record missing invoice payments, record missing refund payments, and replay missing credit-note allocations against already-created Xero objects
@@ -210,7 +227,7 @@ The remaining contact-link work is now mostly maintenance:
 
 Supported failed outbound operations can now be requeued durably from the admin UI, stored as `PENDING` replay rows, and processed by a worker path that runs both after-response and on a scheduled cron cadence. That closes the immediate gap around background replay for known-safe failed operations.
 
-What is still missing is the same pattern for the initial outbound write itself:
+What is still missing is extending the same pattern across the remaining primary outbound writes:
 
 - create the primary outbound operation row in `PENDING`, then execute that same operation from a worker
 - recover automatically from crashes or timeouts that happen after local state commits but before the first Xero write attempt
@@ -222,7 +239,6 @@ Suggested first candidates:
 - refund credit note creation
 - supplementary invoice creation
 - modification credit note creation
-- entrance fee invoice creation
 
 ### 2. Extend inbound reconciliation on top of stored `XeroInboundEvent` rows
 

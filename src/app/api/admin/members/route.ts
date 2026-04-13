@@ -12,7 +12,6 @@ import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
   isXeroConnected,
-  createXeroEntranceFeeInvoice,
 } from "@/lib/xero";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
@@ -21,6 +20,10 @@ import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
 import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
+import {
+  enqueueXeroEntranceFeeInvoiceOperation,
+  processQueuedXeroOutboxOperations,
+} from "@/lib/xero-operation-outbox";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -557,17 +560,36 @@ export async function POST(req: NextRequest) {
       return created;
     });
 
-    // Create the Xero entrance fee invoice after the response is sent so member
-    // creation latency does not depend on Xero availability.
-    scheduleAfterResponse(async () => {
-      try {
-        await createXeroEntranceFeeInvoice(member.id, {
+    let entranceFeeWarning: string | undefined;
+    try {
+      const queuedEntranceFeeInvoice = await enqueueXeroEntranceFeeInvoiceOperation(
+        member.id,
+        {
           createdByMemberId: session.user.id,
+        }
+      );
+
+      if (queuedEntranceFeeInvoice.queueOperationId && (await isXeroConnected())) {
+        scheduleAfterResponse(async () => {
+          try {
+            await processQueuedXeroOutboxOperations({ limit: 1 });
+          } catch (xeroErr) {
+            logger.error(
+              { err: xeroErr, memberId: member.id },
+              "Failed to kick Xero entrance fee outbox worker"
+            );
+          }
         });
-      } catch (xeroErr) {
-        logger.error({ err: xeroErr, memberId: member.id }, "Failed to create entrance fee invoice");
       }
-    });
+    } catch (xeroErr) {
+      logger.error(
+        { err: xeroErr, memberId: member.id },
+        "Failed to queue entrance fee invoice"
+      );
+      entranceFeeWarning = `Member created but entrance fee invoice could not be queued: ${
+        xeroErr instanceof Error ? xeroErr.message : String(xeroErr)
+      }`;
+    }
 
     // Send invite email if requested
     let inviteWarning: string | undefined;
@@ -585,7 +607,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const warnings = [inviteWarning].filter(Boolean);
+    const warnings = [entranceFeeWarning, inviteWarning].filter(Boolean);
     return NextResponse.json(
       { ...member, ...(warnings.length > 0 ? { warning: warnings.join("; ") } : {}) },
       { status: 201 },

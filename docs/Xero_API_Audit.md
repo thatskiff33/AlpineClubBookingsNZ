@@ -8,6 +8,23 @@ Last updated: 2026-04-14
 
 Completed in this pass:
 
+- Started the first true primary-write outbox path for Xero initial writes:
+  - added `src/lib/xero-operation-outbox.ts`
+  - entrance-fee invoice creation is now queued as a `PENDING` primary `XeroSyncOperation` instead of being fire-and-forget inline work
+  - the same queued row is claimed, executed, and completed/failed by the worker rather than spawning a separate synthetic retry wrapper row
+- Updated `createXeroEntranceFeeInvoice()` in `src/lib/xero.ts` so it can execute against an existing pending operation row, persist its final status onto that same row, and reuse precomputed entrance-fee context from the queue payload.
+- Moved the two initial entrance-fee write triggers onto the new durable outbox path:
+  - admin member creation in `src/app/api/admin/members/route.ts`
+  - membership approval in `src/lib/nomination.ts`
+- Added best-effort immediate worker kicks plus durable scheduled/manual draining for the new outbox path:
+  - `/api/cron/xero?task=outbox` and `task=all` in `src/app/api/cron/xero/route.ts`
+  - scheduled outbox processing alongside queued retries in `src/instrumentation.ts`
+- Added targeted coverage for the new outbox path and updated dependent tests:
+  - `src/lib/__tests__/xero-operation-outbox.test.ts`
+  - `src/lib/__tests__/xero-cron-route.test.ts`
+  - `src/lib/__tests__/membership-nomination.test.ts`
+  - `src/lib/__tests__/phase3-admin-members.test.ts`
+  - `src/lib/__tests__/phase4-address-dependent.test.ts`
 - Added Phase 0 feature flags in `src/lib/xero-feature-flags.ts` and documented them in `.env.example`:
   - `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH`
   - `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS`
@@ -101,6 +118,11 @@ Completed in this pass:
 
 Work remaining after this pass:
 
+- Primary-write outbox work has now started for entrance-fee invoices only. The remaining high-value initial-write candidates are still inline and should be moved onto the same durable pattern next:
+  - booking invoice creation
+  - refund credit note creation
+  - supplementary invoice creation
+  - modification credit note creation
 - Phase 2: incremental invoice sync to replace full daily membership polling.
 - Phase 3: local cache tables for Xero contact groups and memberships so member pages and filters can stay local-only without the temporary "not loaded" fallback.
 - Phase 4: incremental contact sync and group import so default admin syncs stop doing full scans plus per-contact invoice lookups.

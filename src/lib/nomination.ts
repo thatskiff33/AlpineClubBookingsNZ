@@ -17,10 +17,13 @@ import { copyStreetAddressToPostal } from "@/lib/member-address";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
 import {
-  createXeroEntranceFeeInvoice,
   findOrCreateXeroContact,
   isXeroConnected,
 } from "@/lib/xero";
+import {
+  enqueueXeroEntranceFeeInvoiceOperation,
+  processQueuedXeroOutboxOperations,
+} from "@/lib/xero-operation-outbox";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format");
@@ -843,12 +846,27 @@ export async function approveMemberApplication(
   const warnings = await syncApprovedMembersToXero(approved.createdMemberIds);
 
   try {
-    await createXeroEntranceFeeInvoice(approved.applicantMember.id, {
-      createdByMemberId: adminMemberId,
-    });
+    const queuedEntranceFeeInvoice = await enqueueXeroEntranceFeeInvoiceOperation(
+      approved.applicantMember.id,
+      {
+        createdByMemberId: adminMemberId,
+      }
+    );
+
+    if (queuedEntranceFeeInvoice.queueOperationId && (await isXeroConnected())) {
+      void processQueuedXeroOutboxOperations({ limit: 1 }).catch((err) => {
+        logger.error(
+          { err, memberId: approved.applicantMember.id },
+          "Failed to kick Xero entrance fee outbox worker for approved application"
+        );
+      });
+    }
   } catch (err) {
-    logger.error({ err, memberId: approved.applicantMember.id }, "Failed to create entrance fee invoice for approved application");
-    warnings.push("Entrance fee invoice could not be created automatically");
+    logger.error(
+      { err, memberId: approved.applicantMember.id },
+      "Failed to queue entrance fee invoice for approved application"
+    );
+    warnings.push("Entrance fee invoice could not be queued automatically");
   }
 
   try {

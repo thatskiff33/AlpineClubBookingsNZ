@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { refreshAllMembershipStatuses, isXeroConnected } from "@/lib/xero";
+import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import { processStoredXeroInboundEvents } from "@/lib/xero-inbound-reconciliation";
 import {
@@ -28,9 +29,9 @@ export async function POST(request: NextRequest) {
   }
 
   const task = request.nextUrl.searchParams.get("task") ?? "memberships";
-  if (!["memberships", "retries", "inbound", "backfill", "report", "all"].includes(task)) {
+  if (!["memberships", "outbox", "retries", "inbound", "backfill", "report", "all"].includes(task)) {
     return NextResponse.json(
-      { error: "Invalid task. Expected memberships, retries, inbound, backfill, report, or all." },
+      { error: "Invalid task. Expected memberships, outbox, retries, inbound, backfill, report, or all." },
       { status: 400 }
     );
   }
@@ -49,6 +50,12 @@ export async function POST(request: NextRequest) {
           : connected
             ? await refreshAllMembershipStatuses()
             : { skipped: true, reason: "Xero not connected" }
+        : null;
+    const queuedOutboxOperations =
+      task === "outbox" || task === "all"
+        ? connected
+          ? await processQueuedXeroOutboxOperations()
+          : { skipped: true, reason: "Xero not connected" }
         : null;
     const queuedRetries =
       task === "retries" || task === "all"
@@ -79,14 +86,17 @@ export async function POST(request: NextRequest) {
             ? "Xero reconciliation report completed"
             : task === "backfill"
               ? "Historical Xero link backfill completed"
-            : task === "inbound"
-              ? "Xero inbound reconciliation processed"
-              : task === "retries"
+              : task === "inbound"
+                ? "Xero inbound reconciliation processed"
+                : task === "outbox"
+                  ? "Queued Xero outbox operations processed"
+                  : task === "retries"
                 ? "Queued Xero retries processed"
                 : "Membership status refresh completed",
       task,
       connected,
       membershipRefresh,
+      queuedOutboxOperations,
       queuedRetries,
       inboundReconciliation,
       linkBackfill,
