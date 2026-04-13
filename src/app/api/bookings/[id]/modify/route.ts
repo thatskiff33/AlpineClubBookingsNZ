@@ -35,6 +35,10 @@ import {
   normalizeBookingGuestInputs,
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
+import {
+  ADULT_SUPERVISION_REVIEW_REASON,
+  requiresAdultSupervisionReview,
+} from "@/lib/booking-review";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
 import {
   canModifyBookingStatus,
@@ -202,6 +206,10 @@ export async function PUT(
       ];
 
       const totalGuestCount = guestsForPricing.length;
+      const requiresAdminReview = requiresAdultSupervisionReview(guestsForPricing);
+      const adminReviewReason = requiresAdminReview
+        ? ADULT_SUPERVISION_REVIEW_REASON
+        : null;
 
       if (totalGuestCount > 29) {
         throw new ApiError("A booking cannot exceed 29 guests", 400);
@@ -528,6 +536,8 @@ export async function PUT(
           hasNonMembers,
           nonMemberHoldUntil: newNonMemberHoldUntil,
           status: newStatus,
+          requiresAdminReview,
+          adminReviewReason,
         },
         include: { guests: true, payment: true },
       });

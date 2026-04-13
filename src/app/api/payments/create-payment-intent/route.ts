@@ -5,6 +5,7 @@ import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { sendAdminNewBookingAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { BookingStatus } from "@prisma/client";
 
@@ -35,6 +36,7 @@ export async function POST(request: NextRequest) {
       where: { id: bookingId },
       include: {
         member: true,
+        guests: true,
         payment: true,
       },
     });
@@ -149,6 +151,20 @@ export async function POST(request: NextRequest) {
           data: { status: BookingStatus.CONFIRMED, draftExpiresAt: null },
         });
       });
+
+      if (booking.requiresAdminReview) {
+        sendAdminNewBookingAlert({
+          memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+          guestCount: booking.guests?.length ?? 0,
+          totalCents: booking.finalPriceCents,
+          status: BookingStatus.CONFIRMED,
+          reviewReason: booking.adminReviewReason,
+        }).catch((err) =>
+          logger.error({ err, bookingId }, "Failed to send admin review alert for activated draft booking")
+        );
+      }
     }
 
     // Find or create Stripe customer

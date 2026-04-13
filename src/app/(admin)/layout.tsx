@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { AdminSidebar } from "@/components/admin-sidebar";
+import { ReportIssueWidget } from "@/components/report-issue-widget";
 
 export default async function AdminLayout({
   children,
@@ -42,6 +43,7 @@ export default async function AdminLayout({
           </main>
         </div>
       </div>
+      <ReportIssueWidget />
     </div>
   );
 }

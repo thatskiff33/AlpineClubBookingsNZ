@@ -6,7 +6,7 @@ import { LODGE_CAPACITY } from "@/lib/capacity";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { getSeasonYear } from "@/lib/utils";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
-import { sendBookingConfirmedEmail } from "@/lib/email";
+import { sendAdminNewBookingAlert, sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
@@ -136,6 +136,20 @@ export async function POST(
       ? { discountCents: booking.discountCents, promoCode: booking.promoRedemption.promoCode.code }
       : undefined
   ).catch((err) => logger.error({ err, bookingId: id }, "Failed to send confirmation email for confirmed draft"));
+
+  if (booking.requiresAdminReview) {
+    sendAdminNewBookingAlert({
+      memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+      guestCount: booking.guests.length,
+      totalCents: booking.finalPriceCents,
+      status: BookingStatus.PAID,
+      reviewReason: booking.adminReviewReason,
+    }).catch((err) =>
+      logger.error({ err, bookingId: id }, "Failed to send admin review alert for confirmed draft")
+    );
+  }
 
   isXeroConnected().then((connected) => {
     if (connected) {

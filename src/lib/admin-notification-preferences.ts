@@ -40,6 +40,10 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
     label: "Refund requests",
     description: "Alerts when a member submits a refund appeal.",
   },
+  adminIssueReport: {
+    label: "Reported issues",
+    description: "Alerts when a logged-in user reports a site issue for admin follow-up.",
+  },
 } as const;
 
 export type AdminNotificationPreferenceKey =
@@ -65,6 +69,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_SELECT = {
   adminWaitlistOffer: true,
   adminFamilyGroupRequest: true,
   adminRefundRequest: true,
+  adminIssueReport: true,
 } as const;
 
 export function resolveAdminNotificationPreferences(
@@ -81,5 +86,6 @@ export function resolveAdminNotificationPreferences(
     adminWaitlistOffer: preferences?.adminWaitlistOffer ?? true,
     adminFamilyGroupRequest: preferences?.adminFamilyGroupRequest ?? true,
     adminRefundRequest: preferences?.adminRefundRequest ?? true,
+    adminIssueReport: preferences?.adminIssueReport ?? true,
   };
 }

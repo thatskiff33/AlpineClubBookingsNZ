@@ -197,6 +197,7 @@ model Member {
   credits                   MemberCredit[]
   bookingsCreatedOnBehalf   Booking[]                @relation("BookingsCreatedBy")
   refundRequests            RefundRequest[]
+  issueReports              IssueReport[]
 
   @@index([email])
   @@index([xeroContactId])
@@ -375,6 +376,8 @@ model Booking {
   notes                  String?       @db.VarChar(500)
   expectedArrivalTime    String?       @db.VarChar(5)
   createdById            String? // Admin who created this booking on behalf of the member
+  requiresAdminReview    Boolean       @default(false)
+  adminReviewReason      String?       @db.VarChar(300)
   waitlistPosition       Int?
   waitlistOfferedAt      DateTime?
   waitlistOfferExpiresAt DateTime?
@@ -781,10 +784,27 @@ model NotificationPreference {
   adminWaitlistOffer      Boolean  @default(true)
   adminFamilyGroupRequest Boolean  @default(true)
   adminRefundRequest      Boolean  @default(true)
+  adminIssueReport        Boolean  @default(true)
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+}
+
+model IssueReport {
+  id                String   @id @default(cuid())
+  memberId          String
+  pageUrl           String   @db.VarChar(2048)
+  pageTitle         String?  @db.VarChar(300)
+  description       String   @db.Text
+  screenshotDataUrl String?  @db.Text
+  browserInfo       String?  @db.Text
+  createdAt         DateTime @default(now())
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId, createdAt])
+  @@index([createdAt])
 }
 
 // ---------------------------------------------------------------------------

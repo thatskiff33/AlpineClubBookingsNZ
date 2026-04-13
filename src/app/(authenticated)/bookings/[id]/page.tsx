@@ -112,6 +112,13 @@ export default async function BookingDetailPage({
         </div>
       )}
 
+      {booking.requiresAdminReview && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <strong>Admin review required.</strong>{" "}
+          {booking.adminReviewReason ?? "This booking needs manual review by an admin."}
+        </div>
+      )}
+
       {/* Expected Arrival Time */}
       <Card>
         <CardHeader>

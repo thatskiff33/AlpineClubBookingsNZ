@@ -33,6 +33,10 @@ import {
   normalizeBookingGuestInputs,
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
+import {
+  ADULT_SUPERVISION_REVIEW_REASON,
+  requiresAdultSupervisionReview,
+} from "@/lib/booking-review";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -157,6 +161,11 @@ export async function POST(request: NextRequest) {
     }
     throw error;
   }
+
+  const requiresAdminReview = requiresAdultSupervisionReview(guests);
+  const adminReviewReason = requiresAdminReview
+    ? ADULT_SUPERVISION_REVIEW_REASON
+    : null;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -344,6 +353,8 @@ export async function POST(request: NextRequest) {
         notes: notes || null,
         expectedArrivalTime: expectedArrivalTime || null,
         createdById: isOnBehalf ? session.user.id : null,
+        requiresAdminReview,
+        adminReviewReason,
         guests: {
           create: guests.map((g, i) => ({
             firstName: g.firstName,
@@ -612,6 +623,8 @@ export async function POST(request: NextRequest) {
           notes: notes || null,
           expectedArrivalTime: expectedArrivalTime || null,
           createdById: isOnBehalf ? session.user.id : null,
+          requiresAdminReview,
+          adminReviewReason,
           guests: {
             create: guests.map((g, i) => ({
               firstName: g.firstName,
@@ -750,6 +763,7 @@ export async function POST(request: NextRequest) {
         guestCount: booking.guests.length,
         totalCents: booking.finalPriceCents,
         status: booking.status,
+        reviewReason: booking.adminReviewReason,
       }).catch((err) => logger.error({ err }, "Failed to send admin new booking alert"));
     }
 
@@ -904,6 +918,10 @@ async function createWaitlistedBooking(params: {
 
   const finalPriceCents = price.totalPriceCents - discountCents;
   const hasNonMembers = guests.some((g) => !g.isMember);
+  const requiresAdminReview = requiresAdultSupervisionReview(guests);
+  const adminReviewReason = requiresAdminReview
+    ? ADULT_SUPERVISION_REVIEW_REASON
+    : null;
 
   const newBooking = await prisma.booking.create({
     data: {
@@ -919,6 +937,8 @@ async function createWaitlistedBooking(params: {
       notes: notes || null,
       expectedArrivalTime: expectedArrivalTime || null,
       createdById: isOnBehalf ? sessionUserId : null,
+      requiresAdminReview,
+      adminReviewReason,
       guests: {
         create: guests.map((g, i) => ({
           firstName: g.firstName,
@@ -970,6 +990,7 @@ async function createWaitlistedBooking(params: {
       guestCount: newBooking.guests.length,
       totalCents: newBooking.finalPriceCents,
       status: newBooking.status,
+      reviewReason: newBooking.adminReviewReason,
     }).catch((err) => logger.error({ err }, "Failed to send admin alert for waitlisted booking"));
   }
 

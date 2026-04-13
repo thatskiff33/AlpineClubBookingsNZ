@@ -455,10 +455,12 @@ export function adminNewBookingTemplate(data: {
   guestCount: number;
   totalCents: number;
   status: string;
+  reviewReason?: string | null;
 }): string {
   return layout(`
     ${heading("New Booking Created")}
     ${paragraph("A new booking has been created.")}
+    ${data.reviewReason ? alertBox(escapeHtml(data.reviewReason), "warning") : ""}
     ${infoTable([
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Check-in", value: formatNZDate(data.checkIn) },
@@ -1157,6 +1159,28 @@ export function adminRefundRequestTemplate(data: {
     ])}
     ${alertBox(escapeHtml(data.reason), "info")}
     ${button("Review Appeal", BASE_URL + "/admin/refund-requests")}
+  `);
+}
+
+export function adminIssueReportTemplate(data: {
+  memberName: string;
+  memberEmail: string;
+  pageUrl: string;
+  pageTitle?: string | null;
+  description: string;
+  hasScreenshot: boolean;
+}): string {
+  return layout(`
+    ${heading("Issue Report Submitted")}
+    ${paragraph(escapeHtml(data.memberName) + " has reported an issue from the bookings site.")}
+    ${infoTable([
+      { label: "Member", value: escapeHtml(data.memberName) },
+      { label: "Email", value: escapeHtml(data.memberEmail) },
+      { label: "Page", value: escapeHtml(data.pageTitle || data.pageUrl) },
+      { label: "Screenshot", value: data.hasScreenshot ? "Attached" : "Not included" },
+    ])}
+    ${alertBox(escapeHtml(data.description), "info")}
+    ${button("Open Reported Page", data.pageUrl)}
   `);
 }
 

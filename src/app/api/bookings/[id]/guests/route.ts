@@ -26,6 +26,10 @@ import {
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
+import {
+  ADULT_SUPERVISION_REVIEW_REASON,
+  requiresAdultSupervisionReview,
+} from "@/lib/booking-review";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -223,6 +227,10 @@ export async function POST(
         })),
         ...newGuestInputs,
       ];
+      const requiresAdminReview = requiresAdultSupervisionReview(allGuestsForPricing);
+      const adminReviewReason = requiresAdminReview
+        ? ADULT_SUPERVISION_REVIEW_REASON
+        : null;
 
       const fullPriceBreakdown = calculateBookingPrice(
         booking.checkIn,
@@ -327,6 +335,8 @@ export async function POST(
           finalPriceCents: newFinalPriceCents,
           hasNonMembers,
           nonMemberHoldUntil,
+          requiresAdminReview,
+          adminReviewReason,
         },
         include: { guests: true, payment: true },
       });

@@ -43,6 +43,7 @@ const fullAdminPreferences = {
   adminWaitlistOffer: true,
   adminFamilyGroupRequest: true,
   adminRefundRequest: true,
+  adminIssueReport: true,
 };
 
 describe("Admin notifications API", () => {
@@ -127,6 +128,7 @@ describe("Admin notifications API", () => {
         adminNewBooking: true,
         adminPaymentFailure: true,
         adminDailyDigest: true,
+        adminIssueReport: true,
       }),
     });
 

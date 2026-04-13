@@ -143,7 +143,17 @@ export default async function AdminBookingsPage({
                     <td className="px-4 py-3 text-sm">{booking.guests.length}</td>
                     <td className="px-4 py-3 text-sm font-medium">{formatCents(booking.finalPriceCents)}</td>
                     <td className="px-4 py-3">
-                      <Badge variant="secondary" className={bookingStatusClass(booking.status)}>{booking.status}</Badge>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="secondary" className={bookingStatusClass(booking.status)}>{booking.status}</Badge>
+                        {booking.requiresAdminReview ? (
+                          <Badge variant="secondary" className="bg-amber-100 text-amber-900">
+                            Review
+                          </Badge>
+                        ) : null}
+                      </div>
+                      {booking.requiresAdminReview && booking.adminReviewReason ? (
+                        <p className="mt-1 text-xs text-amber-800">{booking.adminReviewReason}</p>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

@@ -296,6 +296,38 @@ describe("Create booking guest normalization", () => {
       })
     );
   });
+
+  it("flags minor-only draft bookings for admin review", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      active: true,
+      emailVerified: true,
+      xeroContactId: "xero-1",
+    });
+    (mockedPrisma.memberSubscription.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      status: "PAID",
+    });
+    (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "b2",
+      memberId: "m1",
+      status: "DRAFT",
+      guests: [],
+    });
+
+    const req = makeRequest({
+      checkIn,
+      checkOut,
+      draft: true,
+      guests: [{ firstName: "Junior", lastName: "Guest", ageTier: "YOUTH", isMember: false }],
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+
+    const createCall = (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(createCall.data.requiresAdminReview).toBe(true);
+    expect(createCall.data.adminReviewReason).toContain("does not include an adult");
+  });
 });
 
 describe("Quote API - forMemberId", () => {

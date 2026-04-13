@@ -16,6 +16,10 @@ import { sendBookingModifiedEmail } from "@/lib/email";
 import { createXeroCreditNoteForModification } from "@/lib/xero";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import {
+  ADULT_SUPERVISION_REVIEW_REASON,
+  requiresAdultSupervisionReview,
+} from "@/lib/booking-review";
 
 export async function DELETE(
   request: NextRequest,
@@ -199,6 +203,10 @@ export async function DELETE(
 
       const newFinalPriceCents = newTotalPriceCents - newDiscountCents;
       const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
+      const requiresAdminReview = requiresAdultSupervisionReview(remainingGuests);
+      const adminReviewReason = requiresAdminReview
+        ? ADULT_SUPERVISION_REVIEW_REASON
+        : null;
 
       // Handle refund for price decrease (Stripe call deferred to after tx)
       let refundAmountCents = 0;
@@ -253,6 +261,8 @@ export async function DELETE(
           nonMemberHoldUntil: hasNonMembers
             ? booking.nonMemberHoldUntil
             : null,
+          requiresAdminReview,
+          adminReviewReason,
         },
         include: { guests: true, payment: true },
       });

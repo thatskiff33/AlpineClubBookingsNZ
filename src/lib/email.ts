@@ -41,6 +41,7 @@ import {
   adminFamilyGroupRequestTemplate,
   joinRequestConfirmationTemplate,
   adminRefundRequestTemplate,
+  adminIssueReportTemplate,
 } from "./email-templates";
 import {
   ADMIN_NOTIFICATION_PREFERENCE_SELECT,
@@ -49,6 +50,12 @@ import {
 } from "./admin-notification-preferences";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+
+type EmailAttachment = {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+};
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "email-smtp.ap-southeast-2.amazonaws.com",
@@ -84,11 +91,13 @@ export async function sendEmail({
   subject,
   html,
   templateName = "unknown",
+  attachments,
 }: {
   to: string;
   subject: string;
   html: string;
   templateName?: string;
+  attachments?: EmailAttachment[];
 }) {
   const persistHtmlBody = shouldPersistEmailHtml(templateName);
 
@@ -137,6 +146,7 @@ export async function sendEmail({
       to,
       subject,
       html,
+      attachments,
     });
 
     // Update EmailLog to SENT
@@ -217,15 +227,17 @@ async function sendToAdmins({
   html,
   templateName,
   preferenceKey,
+  attachments,
 }: {
   subject: string;
   html: string;
   templateName: string;
   preferenceKey: AdminNotificationPreferenceKey;
+  attachments?: EmailAttachment[];
 }) {
   const emails = await getAdminAlertEmails(preferenceKey);
   for (const email of emails) {
-    sendEmail({ to: email, subject, html, templateName }).catch((err) =>
+    sendEmail({ to: email, subject, html, templateName, attachments }).catch((err) =>
       logger.error({ err, to: email, templateName }, "Failed to send admin alert")
     );
   }
@@ -514,9 +526,12 @@ export async function sendAdminNewBookingAlert(data: {
   guestCount: number;
   totalCents: number;
   status: string;
+  reviewReason?: string | null;
 }) {
   await sendToAdmins({
-    subject: `New Booking: ${data.memberName} (${data.status})`,
+    subject: data.reviewReason
+      ? `Booking Review Required: ${data.memberName}`
+      : `New Booking: ${data.memberName} (${data.status})`,
     html: adminNewBookingTemplate(data),
     templateName: "admin-new-booking",
     preferenceKey: "adminNewBooking",
@@ -925,5 +940,29 @@ export async function sendAdminRefundRequestAlert(data: {
     html: adminRefundRequestTemplate(data),
     templateName: "admin-refund-request",
     preferenceKey: "adminRefundRequest",
+  });
+}
+
+export async function sendAdminIssueReportAlert(data: {
+  memberName: string;
+  memberEmail: string;
+  pageUrl: string;
+  pageTitle?: string | null;
+  description: string;
+  screenshot?: EmailAttachment | null;
+}) {
+  await sendToAdmins({
+    subject: `Issue Report: ${data.memberName}`,
+    html: adminIssueReportTemplate({
+      memberName: data.memberName,
+      memberEmail: data.memberEmail,
+      pageUrl: data.pageUrl,
+      pageTitle: data.pageTitle,
+      description: data.description,
+      hasScreenshot: Boolean(data.screenshot),
+    }),
+    templateName: "admin-issue-report",
+    preferenceKey: "adminIssueReport",
+    attachments: data.screenshot ? [data.screenshot] : undefined,
   });
 }
