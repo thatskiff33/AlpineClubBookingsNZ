@@ -139,13 +139,17 @@ export default async function BookingDetailPage({
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600 mb-4">
-              This is a saved draft. Complete your booking by making payment below.
+              This is a saved draft. Review the details above, then confirm when
+              you&apos;re ready to pay and finalise the booking.
             </p>
             <BookingPaymentSection
               bookingId={booking.id}
               amountCents={booking.finalPriceCents}
               paymentMode={getBookingPaymentMode(booking.status)}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
+              showOnMount={false}
+              gateDescription="Draft bookings stay editable until you explicitly continue to payment. Payment is still collected immediately once you choose to complete the booking."
+              gateCtaLabel="Confirm & Continue to Payment"
             />
           </CardContent>
         </Card>

@@ -24,7 +24,7 @@ import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBooking
 import { getWaitlistPosition } from "@/lib/waitlist";
 import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
 import { getMemberCreditBalance, applyCreditToBooking } from "@/lib/member-credit";
-import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
+import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
 import { logAudit } from "@/lib/audit";
@@ -196,18 +196,26 @@ export async function POST(request: NextRequest) {
 
   // P2.3: Subscription check for all member guests (non-admin only)
   if (session.user.role !== "ADMIN") {
-    const unpaidMemberGuests = await findUnpaidMemberGuestNames(prisma, {
+    const unpaidMemberGuests = await findUnpaidMemberGuests(prisma, {
       bookingMemberId: effectiveMemberId,
       checkIn,
       guests,
     });
 
     if (unpaidMemberGuests.length > 0) {
+      const unpaidMemberNames = unpaidMemberGuests.map((member) => member.name);
       return NextResponse.json(
         {
-          error: `The following member guests have unpaid subscriptions: ${unpaidMemberGuests.join(", ")}. All member guests must have a paid subscription before booking.`,
+          error: `The following member guests have unpaid subscriptions: ${unpaidMemberNames.join(", ")}. All member guests must have a paid subscription before booking.`,
           code: "GUEST_SUBSCRIPTION_REQUIRED",
-          unpaidMembers: unpaidMemberGuests,
+          unpaidMembers: unpaidMemberNames,
+          unpaidMemberInvoices: unpaidMemberGuests.map((member) => ({
+            memberId: member.memberId,
+            name: member.name,
+            status: member.status,
+            invoiceUrl: member.invoiceUrl,
+            invoiceNumber: member.invoiceNumber,
+          })),
         },
         { status: 403 }
       );

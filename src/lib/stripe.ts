@@ -68,15 +68,20 @@ export async function createPaymentIntent({
 export async function createSetupIntent({
   customerId,
   metadata,
+  idempotencyKey,
 }: {
   customerId: string;
   metadata?: Record<string, string>;
+  idempotencyKey?: string;
 }): Promise<Stripe.SetupIntent> {
-  return stripe.setupIntents.create({
-    customer: customerId,
-    metadata: metadata ?? {},
-    automatic_payment_methods: { enabled: true },
-  });
+  return stripe.setupIntents.create(
+    {
+      customer: customerId,
+      metadata: metadata ?? {},
+      automatic_payment_methods: { enabled: true },
+    },
+    idempotencyKey ? { idempotencyKey } : undefined,
+  );
 }
 
 /**

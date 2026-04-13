@@ -13,6 +13,10 @@ import { Label } from "@/components/ui/label";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
+import {
+  getBookingErrorPaymentTargets,
+  type BookingErrorPaymentTarget,
+} from "@/lib/booking-error-payment-targets";
 import Link from "next/link";
 
 interface FamilyMember {
@@ -59,6 +63,9 @@ export default function BookPage() {
   const [priceQuote, setPriceQuote] = useState<PriceQuote | null>(null);
   const [priceLoading, setPriceLoading] = useState(false);
   const [error, setError] = useState("");
+  const [errorPaymentTargets, setErrorPaymentTargets] = useState<
+    BookingErrorPaymentTarget[]
+  >([]);
   const [subscriptionInvoiceUrl, setSubscriptionInvoiceUrl] = useState<string | null>(null);
   const [subscriptionInvoiceNumber, setSubscriptionInvoiceNumber] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -230,6 +237,7 @@ export default function BookPage() {
   async function handleSubmit() {
     setSubmitting(true);
     setError("");
+    setErrorPaymentTargets([]);
     setShowWaitlistPrompt(false);
 
     const res = await fetch("/api/bookings", {
@@ -257,14 +265,7 @@ export default function BookPage() {
         setError("");
       } else {
         setError(data.error || "Failed to create booking");
-        if (data.code === "SUBSCRIPTION_REQUIRED") {
-          if (data.invoiceUrl) {
-            setSubscriptionInvoiceUrl(data.invoiceUrl);
-          }
-          if (data.invoiceNumber) {
-            setSubscriptionInvoiceNumber(data.invoiceNumber);
-          }
-        }
+        setErrorPaymentTargets(getBookingErrorPaymentTargets(data));
       }
       setSubmitting(false);
     }
@@ -273,6 +274,7 @@ export default function BookPage() {
   async function handleJoinWaitlist() {
     setJoiningWaitlist(true);
     setError("");
+    setErrorPaymentTargets([]);
 
     const res = await fetch("/api/bookings", {
       method: "POST",
@@ -294,6 +296,7 @@ export default function BookPage() {
     } else {
       const data = await res.json();
       setError(data.error || "Failed to join waitlist");
+      setErrorPaymentTargets(getBookingErrorPaymentTargets(data));
       setJoiningWaitlist(false);
     }
   }
@@ -301,6 +304,7 @@ export default function BookPage() {
   async function handleSaveAsDraft() {
     setSavingDraft(true);
     setError("");
+    setErrorPaymentTargets([]);
 
     const res = await fetch("/api/bookings", {
       method: "POST",
@@ -323,6 +327,7 @@ export default function BookPage() {
     } else {
       const data = await res.json();
       setError(data.error || "Failed to save draft");
+      setErrorPaymentTargets(getBookingErrorPaymentTargets(data));
       setSavingDraft(false);
     }
   }
@@ -391,20 +396,31 @@ export default function BookPage() {
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>{error}</p>
-          {subscriptionInvoiceUrl ? (
-            <a
-              href={subscriptionInvoiceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-2 inline-block rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              Pay Your Subscription
-            </a>
-          ) : subscriptionInvoiceNumber ? (
-            <p className="mt-2 text-sm">
-              Invoice reference: <strong>{subscriptionInvoiceNumber}</strong> — check your email from Xero for the payment link.
-            </p>
-          ) : null}
+          {errorPaymentTargets.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {errorPaymentTargets.map((target) => (
+                <div key={`${target.name}-${target.invoiceNumber ?? target.invoiceUrl ?? "none"}`}>
+                  {target.invoiceUrl ? (
+                    <a
+                      href={target.invoiceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                    >
+                      {target.name === "Your subscription"
+                        ? "Pay Your Subscription"
+                        : `Pay ${target.name}'s Subscription`}
+                    </a>
+                  ) : target.invoiceNumber ? (
+                    <p className="text-sm">
+                      {target.name}: invoice reference{" "}
+                      <strong>{target.invoiceNumber}</strong> — check your email from Xero for the payment link.
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
