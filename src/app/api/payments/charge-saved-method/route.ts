@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { chargePaymentMethod } from "@/lib/stripe";
-import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
+import {
+  enqueueXeroBookingInvoiceOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import logger from "@/lib/logger";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
-import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import { logAudit } from "@/lib/audit";
 
 const ChargeSavedMethodSchema = z.object({
@@ -175,22 +177,19 @@ export async function POST(request: NextRequest) {
       }).catch(() => {});
     }
 
-    // Create Xero invoice if connected and payment succeeded
+    // Queue the invoice durably and try to kick the worker when payment succeeds.
     if (paymentIntent.status === "succeeded") {
       try {
-        if (await isXeroConnected()) {
-          await createXeroInvoiceForBooking(booking.id, {
-            createdByMemberId: session?.user?.id,
-          });
-          logger.info({ bookingId: booking.id }, "Xero invoice created for booking");
+        const queuedInvoice = await enqueueXeroBookingInvoiceOperation(booking.id, {
+          createdByMemberId: session?.user?.id,
+        });
+
+        if (queuedInvoice.queueOperationId) {
+          await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+          logger.info({ bookingId: booking.id }, "Xero invoice queued for booking");
         }
       } catch (xeroErr) {
-        logger.error({ err: xeroErr, bookingId: booking.id }, "Failed to create Xero invoice for booking");
-        await notifyXeroSyncError({
-          errorType: "INVOICE_CREATION",
-          operation: `Create invoice for booking ${booking.id} after saved-card charge`,
-          errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
-        });
+        logger.error({ err: xeroErr, bookingId: booking.id }, "Failed to queue Xero invoice for booking");
       }
     }
 

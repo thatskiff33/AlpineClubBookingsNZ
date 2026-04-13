@@ -12,7 +12,8 @@ const {
   mockTransaction,
   mockRecordWebhookLog,
   mockIsXeroConnected,
-  mockCreateXeroInvoiceForBooking,
+  mockEnqueueXeroBookingInvoiceOperation,
+  mockKickQueuedXeroOutboxOperationsIfConnected,
   mockCreateXeroCreditNote,
   mockNotifyXeroSyncError,
   mockSendBookingConfirmedEmail,
@@ -30,7 +31,17 @@ const {
   mockTransaction: vi.fn(),
   mockRecordWebhookLog: vi.fn().mockResolvedValue(undefined),
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
-  mockCreateXeroInvoiceForBooking: vi.fn().mockResolvedValue("inv_1"),
+  mockEnqueueXeroBookingInvoiceOperation: vi.fn().mockResolvedValue({
+    queueOperationId: "op_1",
+    message: "queued",
+  }),
+  mockKickQueuedXeroOutboxOperationsIfConnected: vi.fn().mockResolvedValue({
+    found: 1,
+    processed: 1,
+    succeeded: 1,
+    failed: 0,
+    skipped: 0,
+  }),
   mockCreateXeroCreditNote: vi.fn().mockResolvedValue("cn_1"),
   mockNotifyXeroSyncError: vi.fn().mockResolvedValue(undefined),
   mockSendBookingConfirmedEmail: vi.fn().mockResolvedValue(undefined),
@@ -67,8 +78,14 @@ vi.mock("@/lib/webhook-log", () => ({
 
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
-  createXeroInvoiceForBooking: (...args: unknown[]) => mockCreateXeroInvoiceForBooking(...args),
   createXeroCreditNote: (...args: unknown[]) => mockCreateXeroCreditNote(...args),
+}));
+
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceOperation: (...args: unknown[]) =>
+    mockEnqueueXeroBookingInvoiceOperation(...args),
+  kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
+    mockKickQueuedXeroOutboxOperationsIfConnected(...args),
 }));
 
 vi.mock("@/lib/xero-error-alert", () => ({
@@ -154,15 +171,14 @@ describe("Stripe webhook Xero alerting", () => {
       member: { firstName: "Alice", lastName: "Example", email: "alice@example.com" },
       promoRedemption: null,
     });
-    mockIsXeroConnected.mockResolvedValue(true);
-    mockCreateXeroInvoiceForBooking.mockRejectedValue(new Error("Xero invoice failed"));
+    mockEnqueueXeroBookingInvoiceOperation.mockRejectedValue(new Error("Xero invoice failed"));
 
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(200);
     expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
       errorType: "INVOICE_CREATION",
-      operation: "Create invoice for booking booking-1",
+      operation: "Queue invoice for booking booking-1",
       errorMessage: "Xero invoice failed",
     });
     expect(mockRecordWebhookLog).toHaveBeenCalledWith(

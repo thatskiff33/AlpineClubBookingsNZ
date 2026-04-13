@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
-import { isXeroConnected, createXeroInvoiceForBooking, createXeroCreditNote } from "@/lib/xero";
+import { createXeroCreditNote, isXeroConnected } from "@/lib/xero";
+import {
+  enqueueXeroBookingInvoiceOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupIntentFailedEmail } from "@/lib/email";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
@@ -246,19 +250,20 @@ async function handlePaymentIntentSucceeded(
     logger.error({ err: emailErr, bookingId }, "Failed to send confirmation email");
   }
 
-  // Create Xero invoice if connected
+  // Queue the booking invoice durably, then opportunistically kick the worker.
   try {
-    if (await isXeroConnected()) {
-      await createXeroInvoiceForBooking(bookingId);
-      logger.info({ bookingId }, "Xero invoice created for booking");
+    const queuedInvoice = await enqueueXeroBookingInvoiceOperation(bookingId);
+    if (queuedInvoice.queueOperationId) {
+      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+      logger.info({ bookingId }, "Xero invoice queued for booking");
     }
   } catch (xeroErr) {
-    logger.error({ err: xeroErr, bookingId }, "Failed to create Xero invoice for booking");
+    logger.error({ err: xeroErr, bookingId }, "Failed to queue Xero invoice for booking");
     // Alert admins through the deduplicated Xero notifier so repeated
     // webhook retries or repeated failures do not spam operators.
     notifyXeroSyncError({
       errorType: "INVOICE_CREATION",
-      operation: `Create invoice for booking ${bookingId}`,
+      operation: `Queue invoice for booking ${bookingId}`,
       errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
     }).catch(() => {});
   }

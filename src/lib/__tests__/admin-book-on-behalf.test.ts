@@ -38,6 +38,13 @@ vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
   createXeroInvoiceForBooking: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceOperation: vi.fn().mockResolvedValue({
+    queueOperationId: null,
+    message: "already linked",
+  }),
+  kickQueuedXeroOutboxOperationsIfConnected: vi.fn().mockResolvedValue(null),
+}));
 vi.mock("@/lib/bumping", () => ({
   bumpPendingBookings: vi.fn(),
   sendBumpedNotifications: vi.fn().mockResolvedValue(undefined),

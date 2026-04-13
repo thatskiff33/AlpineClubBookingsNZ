@@ -23,7 +23,10 @@ import {
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBookingAlert, sendWaitlistConfirmationEmail } from "@/lib/email";
 import { getWaitlistPosition } from "@/lib/waitlist";
-import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
+import {
+  enqueueXeroBookingInvoiceOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 import { getMemberCreditBalance, applyCreditToBooking } from "@/lib/member-credit";
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
@@ -762,15 +765,22 @@ export async function POST(request: NextRequest) {
               : undefined
           ).catch((err) => logger.error({ err, bookingId: booking.id }, "Failed to send confirmation email for $0 booking"));
 
-          isXeroConnected().then((connected) => {
-            if (connected) {
-              createXeroInvoiceForBooking(booking.id, {
-                createdByMemberId: session.user.id,
-              }).catch((err) =>
-                logger.error({ err, bookingId: booking.id }, "Failed to create Xero invoice for $0 booking")
-              );
-            }
-          }).catch((err) => logger.error({ err }, "Failed to check Xero connection for $0 booking"));
+          void enqueueXeroBookingInvoiceOperation(booking.id, {
+            createdByMemberId: session.user.id,
+          })
+            .then(async (queuedInvoice) => {
+              if (!queuedInvoice.queueOperationId) {
+                return;
+              }
+
+              await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+            })
+            .catch((err) =>
+              logger.error(
+                { err, bookingId: booking.id },
+                "Failed to queue Xero invoice for $0 booking"
+              )
+            );
         }
       } catch (err) {
         logger.error({ err, bookingId: booking.id }, "Error in post-creation handling for $0 booking");

@@ -4,28 +4,35 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
 
 const mockChargePaymentMethod = vi.fn();
-const mockIsXeroConnected = vi.fn().mockResolvedValue(false);
-const mockCreateXeroInvoiceForBooking = vi.fn().mockResolvedValue(undefined);
+const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({
+  queueOperationId: "op_1",
+  message: "queued",
+});
+const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue({
+  found: 1,
+  processed: 1,
+  succeeded: 1,
+  failed: 0,
+  skipped: 0,
+});
 vi.mock("../stripe", () => ({
   chargePaymentMethod: (...args: unknown[]) => mockChargePaymentMethod(...args),
 }));
-vi.mock("../xero", () => ({
-  isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
-  createXeroInvoiceForBooking: (...args: unknown[]) => mockCreateXeroInvoiceForBooking(...args),
+vi.mock("../xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceOperation: (...args: unknown[]) =>
+    mockEnqueueXeroBookingInvoiceOperation(...args),
+  kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
+    mockKickQueuedXeroOutboxOperationsIfConnected(...args),
 }));
 
 // Mock email
 const mockSendConfirmedEmail = vi.fn();
 const mockSendBumpedEmail = vi.fn();
 const mockSendAdminPaymentFailureAlert = vi.fn().mockResolvedValue(undefined);
-const mockNotifyXeroSyncError = vi.fn().mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
-}));
-vi.mock("../xero-error-alert", () => ({
-  notifyXeroSyncError: (...args: unknown[]) => mockNotifyXeroSyncError(...args),
 }));
 
 // Mock capacity
@@ -122,8 +129,17 @@ function makePendingBooking(
 describe("Cron: Confirm Pending Bookings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIsXeroConnected.mockResolvedValue(false);
-    mockCreateXeroInvoiceForBooking.mockResolvedValue(undefined);
+    mockEnqueueXeroBookingInvoiceOperation.mockResolvedValue({
+      queueOperationId: "op_1",
+      message: "queued",
+    });
+    mockKickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
     mockPrismaTransaction.mockImplementation(async (actions: unknown[]) => {
       // Execute all Prisma actions in the transaction array
@@ -344,7 +360,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     );
   });
 
-  it("notifies admins when Xero invoice creation fails during pending confirmation", async () => {
+  it("continues when Xero invoice queueing fails during pending confirmation", async () => {
     const booking = makePendingBooking("b1");
     mockBookingFindMany.mockResolvedValue([booking]);
     mockCheckCapacity.mockResolvedValue({
@@ -358,17 +374,12 @@ describe("Cron: Confirm Pending Bookings", () => {
       amount: 10000,
     });
     mockPaymentUpdate.mockResolvedValue({});
-    mockIsXeroConnected.mockResolvedValue(true);
-    mockCreateXeroInvoiceForBooking.mockRejectedValue(new Error("Xero unavailable"));
+    mockEnqueueXeroBookingInvoiceOperation.mockRejectedValue(new Error("Xero unavailable"));
 
     const result = await confirmPendingBookings();
 
     expect(result.confirmedBookingIds).toEqual(["b1"]);
-    expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
-      errorType: "INVOICE_CREATION",
-      operation: "Create invoice for booking b1 during pending confirmation",
-      errorMessage: "Xero unavailable",
-    });
+    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("b1");
   });
 
   it("does not revert or alert when local persistence fails after Stripe already succeeded", async () => {

@@ -123,6 +123,13 @@ vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
   createXeroInvoiceForBooking: vi.fn(),
 }));
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceOperation: vi.fn().mockResolvedValue({
+    queueOperationId: null,
+    message: "already linked",
+  }),
+  kickQueuedXeroOutboxOperationsIfConnected: vi.fn().mockResolvedValue(null),
+}));
 
 vi.mock("@/lib/stripe", () => ({
   createPaymentIntent: vi.fn(),

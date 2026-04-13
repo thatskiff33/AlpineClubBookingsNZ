@@ -7,7 +7,10 @@ import {
   sendBookingConfirmedEmail,
   sendBookingPendingEmail,
 } from "@/lib/email";
-import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
+import {
+  enqueueXeroBookingInvoiceOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 
@@ -73,13 +76,20 @@ export async function POST(
         : undefined
     ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation email after waitlist confirm"));
 
-    isXeroConnected().then((connected) => {
-      if (connected) {
-        createXeroInvoiceForBooking(bookingId).catch((err) =>
-          logger.error({ err, bookingId }, "Failed to create Xero invoice after waitlist confirm")
-        );
-      }
-    }).catch(() => {});
+    void enqueueXeroBookingInvoiceOperation(bookingId)
+      .then(async (queuedInvoice) => {
+        if (!queuedInvoice.queueOperationId) {
+          return;
+        }
+
+        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+      })
+      .catch((err) =>
+        logger.error(
+          { err, bookingId },
+          "Failed to queue Xero invoice after waitlist confirm"
+        )
+      );
 
     return NextResponse.json({
       success: true,

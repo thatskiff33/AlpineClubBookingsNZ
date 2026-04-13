@@ -2,14 +2,16 @@ import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { checkCapacity } from "./capacity";
 import { chargePaymentMethod } from "./stripe";
-import { isXeroConnected, createXeroInvoiceForBooking } from "./xero";
+import {
+  enqueueXeroBookingInvoiceOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "./xero-operation-outbox";
 import {
   sendBookingConfirmedEmail,
   sendBookingBumpedEmail,
   sendAdminPaymentFailureAlert,
 } from "./email";
 import { processWaitlistForDates } from "./waitlist";
-import { notifyXeroSyncError } from "./xero-error-alert";
 import logger from "@/lib/logger";
 
 export interface CronConfirmResult {
@@ -121,17 +123,16 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         result.confirmedBookingIds.push(booking.id);
 
         try {
-          if (await isXeroConnected()) {
-            await createXeroInvoiceForBooking(booking.id);
-            logger.info({ bookingId: booking.id, job: "confirmPendingBookings" }, "Xero invoice created for $0 booking");
+          const queuedInvoice = await enqueueXeroBookingInvoiceOperation(booking.id);
+          if (queuedInvoice.queueOperationId) {
+            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+            logger.info(
+              { bookingId: booking.id, job: "confirmPendingBookings" },
+              "Xero invoice queued for $0 booking"
+            );
           }
         } catch (xeroErr) {
-          logger.error({ err: xeroErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to create Xero invoice for $0 booking");
-          await notifyXeroSyncError({
-            errorType: "INVOICE_CREATION",
-            operation: `Create invoice for booking ${booking.id} during pending confirmation ($0 booking)`,
-            errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
-          });
+          logger.error({ err: xeroErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to queue Xero invoice for $0 booking");
         }
 
         try {
@@ -197,19 +198,18 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
         result.confirmedBookingIds.push(booking.id);
 
-        // Create Xero invoice if connected
+        // Queue the invoice durably and let the worker handle the actual Xero write.
         try {
-          if (await isXeroConnected()) {
-            await createXeroInvoiceForBooking(booking.id);
-            logger.info({ bookingId: booking.id, job: "confirmPendingBookings" }, "Xero invoice created");
+          const queuedInvoice = await enqueueXeroBookingInvoiceOperation(booking.id);
+          if (queuedInvoice.queueOperationId) {
+            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+            logger.info(
+              { bookingId: booking.id, job: "confirmPendingBookings" },
+              "Xero invoice queued"
+            );
           }
         } catch (xeroErr) {
-          logger.error({ err: xeroErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to create Xero invoice");
-          await notifyXeroSyncError({
-            errorType: "INVOICE_CREATION",
-            operation: `Create invoice for booking ${booking.id} during pending confirmation`,
-            errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
-          });
+          logger.error({ err: xeroErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to queue Xero invoice");
         }
 
         try {

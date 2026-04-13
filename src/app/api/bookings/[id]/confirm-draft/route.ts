@@ -5,7 +5,10 @@ import { BookingStatus } from "@prisma/client";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { getSeasonYear } from "@/lib/utils";
-import { isXeroConnected, createXeroInvoiceForBooking } from "@/lib/xero";
+import {
+  enqueueXeroBookingInvoiceOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 import { sendAdminNewBookingAlert, sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -151,15 +154,22 @@ export async function POST(
     );
   }
 
-  isXeroConnected().then((connected) => {
-    if (connected) {
-      createXeroInvoiceForBooking(id, {
-        createdByMemberId: session.user.id,
-      }).catch((err) =>
-        logger.error({ err, bookingId: id }, "Failed to create Xero invoice for confirmed draft")
-      );
-    }
-  }).catch((err) => logger.error({ err }, "Failed to check Xero connection for confirmed draft"));
+  void enqueueXeroBookingInvoiceOperation(id, {
+    createdByMemberId: session.user.id,
+  })
+    .then(async (queuedInvoice) => {
+      if (!queuedInvoice.queueOperationId) {
+        return;
+      }
+
+      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+    })
+    .catch((err) =>
+      logger.error(
+        { err, bookingId: id },
+        "Failed to queue Xero invoice for confirmed draft"
+      )
+    );
 
   return NextResponse.json({ success: true, status: BookingStatus.PAID });
 }

@@ -8,6 +8,29 @@ Last updated: 2026-04-14
 
 Completed in this pass:
 
+- Extended the primary-write outbox in `src/lib/xero-operation-outbox.ts` from entrance-fee invoices to booking invoices:
+  - added a `BOOKING_INVOICE` queue payload alongside the existing entrance-fee payload
+  - the worker now claims and executes both queued booking invoices and queued entrance-fee invoices
+  - booking-invoice outbox rows reuse the same durable `XeroSyncOperation` entry for claim, execution, and final success/failure state
+- Updated `createXeroInvoiceForBooking()` in `src/lib/xero.ts` so it can execute against an existing pending booking-invoice operation row and persist the final result back onto that same row instead of always creating a fresh ledger entry.
+- Moved the automatic booking-invoice trigger points onto the durable outbox path:
+  - zero-dollar booking creation in `src/app/api/bookings/route.ts`
+  - draft confirmation in `src/app/api/bookings/[id]/confirm-draft/route.ts`
+  - zero-dollar waitlist confirmation in `src/app/api/bookings/[id]/waitlist-confirm/route.ts`
+  - saved-card charging in `src/app/api/payments/charge-saved-method/route.ts`
+  - successful Stripe payment webhooks in `src/app/api/webhooks/stripe/route.ts`
+  - pending-booking confirmation cron in `src/lib/cron-confirm-pending.ts`
+- Left the explicit admin repair/generation path synchronous for now:
+  - `src/app/api/admin/payments/[id]/generate-invoice/route.ts` still calls `createXeroInvoiceForBooking()` directly so admins get an immediate success/failure response when intentionally regenerating a missing invoice.
+- Added focused regression coverage for the booking-invoice outbox extension and trigger rewiring:
+  - `src/lib/__tests__/xero-operation-outbox.test.ts`
+  - `src/lib/__tests__/charge-saved-method-route.test.ts`
+  - `src/lib/__tests__/cron-confirm-pending.test.ts`
+  - `src/lib/__tests__/stripe-webhook-alerts.test.ts`
+  - `src/lib/__tests__/zero-dollar-booking.test.ts`
+  - `src/lib/__tests__/admin-book-on-behalf.test.ts`
+  - `src/lib/__tests__/issue7-8-draft-subscription.test.ts`
+  - `src/lib/__tests__/phase2-guest-subscription.test.ts`
 - Started the first true primary-write outbox path for Xero initial writes:
   - added `src/lib/xero-operation-outbox.ts`
   - entrance-fee invoice creation is now queued as a `PENDING` primary `XeroSyncOperation` instead of being fire-and-forget inline work
@@ -118,17 +141,20 @@ Completed in this pass:
 
 Work remaining after this pass:
 
-- Primary-write outbox work has now started for entrance-fee invoices only. The remaining high-value initial-write candidates are still inline and should be moved onto the same durable pattern next:
-  - booking invoice creation
+- Primary-write outbox work now covers:
+  - entrance-fee invoice creation
+  - automatic booking invoice creation across booking creation, draft confirmation, waitlist confirmation, saved-card charging, Stripe payment webhooks, and pending-confirmation cron
+  Remaining high-value initial-write candidates are still inline and should move onto the same durable pattern next:
   - refund credit note creation
   - supplementary invoice creation
   - modification credit note creation
+  - decide whether the manual admin booking-invoice repair route should stay intentionally synchronous or also enqueue onto the outbox
 - Phase 2: incremental invoice sync to replace full daily membership polling.
 - Phase 3: local cache tables for Xero contact groups and memberships so member pages and filters can stay local-only without the temporary "not loaded" fallback.
 - Phase 4: incremental contact sync and group import so default admin syncs stop doing full scans plus per-contact invoice lookups.
 - Phase 6 still remaining:
-  - add a durable local claim/outbox so invoice and credit-note writes do not get re-attempted from multiple booking/payment trigger paths
-  - reduce duplicate write attempts across booking creation, confirm-draft, waitlist confirmation, saved-card charging, Stripe webhooks, and pending-confirmation cron
+  - extend the same shared outbox/deduping pattern from automatic booking invoices to refund and modification credit-note flows
+  - reduce duplicate write attempts across the remaining credit-note and supplementary-invoice trigger paths
 - Phase 7 still remaining:
   - webhook-driven targeted updates for any remaining local business state that is not yet advanced from inbound events
   - cached contact-group membership refresh driven from inbound changes where applicable

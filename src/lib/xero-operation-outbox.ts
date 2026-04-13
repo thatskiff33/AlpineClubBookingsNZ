@@ -1,22 +1,38 @@
 import type { EntranceFeeCategory } from "@prisma/client";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { failXeroSyncOperation, startXeroSyncOperation } from "@/lib/xero-sync";
+import {
+  buildXeroIdempotencyKey,
+  failXeroSyncOperation,
+  startXeroSyncOperation,
+} from "@/lib/xero-sync";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
   createXeroEntranceFeeInvoice,
+  createXeroInvoiceForBooking,
   getEntranceFeeContext,
+  isXeroConnected,
   type EntranceFeeContext,
 } from "@/lib/xero";
 
 const XERO_OUTBOX_ENTRANCE_FEE_TYPE = "ENTRANCE_FEE_INVOICE";
+const XERO_OUTBOX_BOOKING_INVOICE_TYPE = "BOOKING_INVOICE";
 
-interface QueuedOutboxPayload {
-  queueType?: string;
-  category?: EntranceFeeCategory;
-  itemCode?: string | null;
-  feeAmountCents?: number | null;
+interface QueuedEntranceFeeOutboxPayload {
+  queueType: typeof XERO_OUTBOX_ENTRANCE_FEE_TYPE;
+  category: EntranceFeeCategory;
+  itemCode: string | null;
+  feeAmountCents: number;
 }
+
+interface QueuedBookingInvoiceOutboxPayload {
+  queueType: typeof XERO_OUTBOX_BOOKING_INVOICE_TYPE;
+  bookingId: string;
+}
+
+type QueuedOutboxPayload =
+  | QueuedEntranceFeeOutboxPayload
+  | QueuedBookingInvoiceOutboxPayload;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -55,11 +71,31 @@ function readQueuedOutboxPayload(value: unknown): QueuedOutboxPayload | null {
     return null;
   }
 
-  const queueType = readString(payload.queueType);
+  const queueType = readQueueType(value);
+  if (!queueType) {
+    return null;
+  }
+
+  if (queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
+    const bookingId = readString(payload.bookingId);
+    if (!bookingId) {
+      return null;
+    }
+
+    return {
+      queueType,
+      bookingId,
+    };
+  }
+
+  if (queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE) {
+    return null;
+  }
+
   const category = readEntranceFeeCategory(payload.category);
   const feeAmountCents = readNumber(payload.feeAmountCents);
 
-  if (!queueType || !category || feeAmountCents === null) {
+  if (!category || feeAmountCents === null) {
     return null;
   }
 
@@ -76,7 +112,19 @@ function readQueuedOutboxPayload(value: unknown): QueuedOutboxPayload | null {
   };
 }
 
-async function claimQueuedOutboxOperation(operationId: string) {
+function readQueueType(value: unknown): string | null {
+  const payload = asRecord(value);
+  if (!payload) {
+    return null;
+  }
+
+  return readString(payload.queueType);
+}
+
+async function claimQueuedOutboxOperation(
+  operationId: string,
+  localModel: "Member" | "Payment"
+) {
   const result = await prisma.xeroSyncOperation.updateMany({
     where: {
       id: operationId,
@@ -84,7 +132,7 @@ async function claimQueuedOutboxOperation(operationId: string) {
       direction: "OUTBOUND",
       entityType: "INVOICE",
       operationType: "CREATE",
-      localModel: "Member",
+      localModel,
     },
     data: {
       status: "RUNNING",
@@ -205,12 +253,125 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   };
 }
 
+export async function enqueueXeroBookingInvoiceOperation(
+  bookingId: string,
+  options?: { createdByMemberId?: string }
+) {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    select: {
+      id: true,
+      payment: {
+        select: {
+          id: true,
+          xeroInvoiceId: true,
+        },
+      },
+    },
+  });
+
+  if (!booking) {
+    throw new Error(`Booking not found: ${bookingId}`);
+  }
+
+  if (!booking.payment) {
+    throw new Error(`No payment record for booking: ${bookingId}`);
+  }
+
+  if (booking.payment.xeroInvoiceId) {
+    return {
+      queueOperationId: null,
+      message: "Xero booking invoice already linked for this booking.",
+    };
+  }
+
+  const existingLink = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel: "Payment",
+      localId: booking.payment.id,
+      xeroObjectType: "INVOICE",
+      role: "PRIMARY_INVOICE",
+      active: true,
+    },
+    select: { id: true },
+  });
+
+  if (existingLink) {
+    return {
+      queueOperationId: null,
+      message: "Xero booking invoice already linked for this booking.",
+    };
+  }
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "booking",
+    bookingId,
+    "invoice",
+    "v1"
+  );
+
+  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey,
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: booking.payment.id,
+      status: {
+        in: ["PENDING", "RUNNING"],
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  if (existingQueuedOperation) {
+    return {
+      queueOperationId: existingQueuedOperation.id,
+      message: "Xero booking invoice is already queued for background processing.",
+    };
+  }
+
+  const queuedOperation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "INVOICE",
+    operationType: "CREATE",
+    localModel: "Payment",
+    localId: booking.payment.id,
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_BOOKING_INVOICE_TYPE,
+      bookingId,
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  return {
+    queueOperationId: queuedOperation.id,
+    message: "Xero booking invoice queued for background processing.",
+  };
+}
+
 export interface ProcessQueuedXeroOutboxOperationsResult {
   found: number;
   processed: number;
   succeeded: number;
   failed: number;
   skipped: number;
+}
+
+export async function kickQueuedXeroOutboxOperationsIfConnected(options?: {
+  limit?: number;
+}) {
+  if (!(await isXeroConnected())) {
+    return null;
+  }
+
+  return processQueuedXeroOutboxOperations(options);
 }
 
 export async function processQueuedXeroOutboxOperations(options?: {
@@ -223,7 +384,20 @@ export async function processQueuedXeroOutboxOperations(options?: {
       direction: "OUTBOUND",
       entityType: "INVOICE",
       operationType: "CREATE",
-      localModel: "Member",
+      OR: [
+        {
+          requestPayload: {
+            path: ["queueType"],
+            equals: XERO_OUTBOX_ENTRANCE_FEE_TYPE,
+          },
+        },
+        {
+          requestPayload: {
+            path: ["queueType"],
+            equals: XERO_OUTBOX_BOOKING_INVOICE_TYPE,
+          },
+        },
+      ],
     },
     orderBy: {
       createdAt: "asc",
@@ -240,7 +414,16 @@ export async function processQueuedXeroOutboxOperations(options?: {
   };
 
   for (const queuedOperation of queuedOperations) {
-    const claimed = await claimQueuedOutboxOperation(queuedOperation.id);
+    const payload = readQueuedOutboxPayload(queuedOperation.requestPayload);
+    const queueType = readQueueType(queuedOperation.requestPayload);
+    const expectedLocalModel =
+      queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE
+        ? "Payment"
+        : "Member";
+    const claimed = await claimQueuedOutboxOperation(
+      queuedOperation.id,
+      expectedLocalModel
+    );
     if (!claimed) {
       result.skipped += 1;
       continue;
@@ -248,33 +431,44 @@ export async function processQueuedXeroOutboxOperations(options?: {
 
     result.processed += 1;
 
-    const payload = readQueuedOutboxPayload(queuedOperation.requestPayload);
     const entranceFeeContext = payload
       ? buildPrecomputedEntranceFeeContext(payload)
       : null;
 
-    if (!queuedOperation.localId || !entranceFeeContext) {
-      await failXeroSyncOperation(
-        queuedOperation.id,
-        new Error("Queued Xero outbox payload is incomplete.")
-      );
-      result.failed += 1;
-      continue;
-    }
-
     try {
-      await createXeroEntranceFeeInvoice(queuedOperation.localId, {
-        createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
-        syncOperationId: queuedOperation.id,
-        precomputedEntranceFee: entranceFeeContext,
-      });
+      if (
+        payload?.queueType === XERO_OUTBOX_ENTRANCE_FEE_TYPE &&
+        queuedOperation.localId &&
+        entranceFeeContext
+      ) {
+        await createXeroEntranceFeeInvoice(queuedOperation.localId, {
+          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+          syncOperationId: queuedOperation.id,
+          precomputedEntranceFee: entranceFeeContext,
+        });
+      } else if (payload?.queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
+        await createXeroInvoiceForBooking(payload.bookingId, {
+          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+          syncOperationId: queuedOperation.id,
+        });
+      } else {
+        throw new Error("Queued Xero outbox payload is incomplete.");
+      }
+
       result.succeeded += 1;
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === "Queued Xero outbox payload is incomplete."
+      ) {
+        await failXeroSyncOperation(queuedOperation.id, error);
+      }
       logger.error(
         {
           err: error,
           queueOperationId: queuedOperation.id,
-          memberId: queuedOperation.localId,
+          localId: queuedOperation.localId,
+          queueType: payload?.queueType ?? null,
         },
         "Failed queued Xero outbox operation"
       );

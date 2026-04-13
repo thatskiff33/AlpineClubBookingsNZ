@@ -5,9 +5,8 @@ const {
   mockAuth,
   mockRequireActiveSessionUser,
   mockChargePaymentMethod,
-  mockIsXeroConnected,
-  mockCreateXeroInvoiceForBooking,
-  mockNotifyXeroSyncError,
+  mockEnqueueXeroBookingInvoiceOperation,
+  mockKickQueuedXeroOutboxOperationsIfConnected,
   mockSendAdminPaymentFailureAlert,
   mockLogAudit,
   mockBookingFindUnique,
@@ -19,9 +18,17 @@ const {
   mockAuth: vi.fn(),
   mockRequireActiveSessionUser: vi.fn().mockResolvedValue(null),
   mockChargePaymentMethod: vi.fn(),
-  mockIsXeroConnected: vi.fn().mockResolvedValue(false),
-  mockCreateXeroInvoiceForBooking: vi.fn(),
-  mockNotifyXeroSyncError: vi.fn().mockResolvedValue(undefined),
+  mockEnqueueXeroBookingInvoiceOperation: vi.fn().mockResolvedValue({
+    queueOperationId: "op_1",
+    message: "queued",
+  }),
+  mockKickQueuedXeroOutboxOperationsIfConnected: vi.fn().mockResolvedValue({
+    found: 1,
+    processed: 1,
+    succeeded: 1,
+    failed: 0,
+    skipped: 0,
+  }),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
   mockLogAudit: vi.fn(),
   mockBookingFindUnique: vi.fn(),
@@ -43,17 +50,15 @@ vi.mock("@/lib/stripe", () => ({
   chargePaymentMethod: (...args: unknown[]) => mockChargePaymentMethod(...args),
 }));
 
-vi.mock("@/lib/xero", () => ({
-  isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
-  createXeroInvoiceForBooking: (...args: unknown[]) => mockCreateXeroInvoiceForBooking(...args),
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceOperation: (...args: unknown[]) =>
+    mockEnqueueXeroBookingInvoiceOperation(...args),
+  kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
+    mockKickQueuedXeroOutboxOperationsIfConnected(...args),
 }));
 
 vi.mock("@/lib/email", () => ({
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
-}));
-
-vi.mock("@/lib/xero-error-alert", () => ({
-  notifyXeroSyncError: (...args: unknown[]) => mockNotifyXeroSyncError(...args),
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -172,13 +177,12 @@ describe("POST /api/payments/charge-saved-method", () => {
     });
   });
 
-  it("notifies admins when Xero invoice creation fails after a successful charge", async () => {
+  it("still succeeds when Xero invoice queueing fails after a successful charge", async () => {
     mockChargePaymentMethod.mockResolvedValue({
       id: "pi_success_3",
       status: "succeeded",
     });
-    mockIsXeroConnected.mockResolvedValue(true);
-    mockCreateXeroInvoiceForBooking.mockRejectedValue(new Error("Xero down"));
+    mockEnqueueXeroBookingInvoiceOperation.mockRejectedValue(new Error("Xero down"));
 
     const request = new NextRequest("http://localhost/api/payments/charge-saved-method", {
       method: "POST",
@@ -189,10 +193,8 @@ describe("POST /api/payments/charge-saved-method", () => {
     const response = await POST(request);
 
     expect(response.status).toBe(200);
-    expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
-      errorType: "INVOICE_CREATION",
-      operation: "Create invoice for booking booking-1 after saved-card charge",
-      errorMessage: "Xero down",
+    expect(mockEnqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith("booking-1", {
+      createdByMemberId: "admin-1",
     });
   });
 });

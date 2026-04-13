@@ -73,6 +73,11 @@ export interface CreateXeroEntranceFeeInvoiceOptions
   precomputedEntranceFee?: EntranceFeeContext;
 }
 
+export interface CreateXeroBookingInvoiceOptions
+  extends FindOrCreateXeroContactOptions {
+  syncOperationId?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -3016,7 +3021,7 @@ export async function createXeroRefundPaymentForInvoice(
  */
 export async function createXeroInvoiceForBooking(
   bookingId: string,
-  options?: FindOrCreateXeroContactOptions
+  options?: CreateXeroBookingInvoiceOptions
 ): Promise<string> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -3136,24 +3141,37 @@ export async function createXeroInvoiceForBooking(
     "invoice",
     "v1"
   );
-  const operation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "INVOICE",
-    operationType: "CREATE",
-    localModel: "Payment",
-    localId: booking.payment.id,
-    idempotencyKey: invoiceIdempotencyKey,
-    correlationKey: invoiceIdempotencyKey,
-    requestPayload: { invoices: [buildInvoice(contactId)] },
-    createdByMemberId: options?.createdByMemberId ?? null,
-  });
+  let operationId = options?.syncOperationId ?? null;
+  const requestPayload = { invoices: [buildInvoice(contactId)] };
+
+  if (operationId) {
+    await prisma.xeroSyncOperation.update({
+      where: { id: operationId },
+      data: {
+        requestPayload: sanitizeForJson(requestPayload),
+      },
+    });
+  } else {
+    const operation = await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: booking.payment.id,
+      idempotencyKey: invoiceIdempotencyKey,
+      correlationKey: invoiceIdempotencyKey,
+      requestPayload,
+      createdByMemberId: options?.createdByMemberId ?? null,
+    });
+    operationId = operation.id;
+  }
 
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: booking.memberId,
       currentContactId: contactId,
       workflow: "createXeroInvoiceForBooking",
-      operationId: operation.id,
+      operationId: operationId!,
       repairExistingLink: options?.repairExistingLink,
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
@@ -3240,7 +3258,7 @@ export async function createXeroInvoiceForBooking(
       },
     });
 
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operationId!, {
       status: paymentWriteError ? "PARTIAL" : "SUCCEEDED",
       responsePayload: {
         invoice: response.body,
@@ -3282,7 +3300,7 @@ export async function createXeroInvoiceForBooking(
 
     return createdInvoice.invoiceID;
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operationId!, error);
     throw error;
   }
 }

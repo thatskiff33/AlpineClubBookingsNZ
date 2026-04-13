@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findFirstLink: vi.fn(),
+  findUniqueBooking: vi.fn(),
   findFirstOperation: vi.fn(),
   findManyOperations: vi.fn(),
   updateManyOperation: vi.fn(),
@@ -9,10 +10,15 @@ const mocks = vi.hoisted(() => ({
   failXeroSyncOperation: vi.fn(),
   getEntranceFeeContext: vi.fn(),
   createXeroEntranceFeeInvoice: vi.fn(),
+  createXeroInvoiceForBooking: vi.fn(),
+  isXeroConnected: vi.fn().mockResolvedValue(false),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    booking: {
+      findUnique: mocks.findUniqueBooking,
+    },
     xeroObjectLink: {
       findFirst: mocks.findFirstLink,
     },
@@ -34,6 +40,11 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 vi.mock("@/lib/xero-sync", () => ({
+  buildXeroIdempotencyKey: (...parts: Array<string | number | boolean | null | undefined>) =>
+    parts
+      .filter((part): part is string | number | boolean => part !== null && part !== undefined && part !== "")
+      .map((part) => String(part))
+      .join(":"),
   startXeroSyncOperation: mocks.startXeroSyncOperation,
   failXeroSyncOperation: mocks.failXeroSyncOperation,
 }));
@@ -46,9 +57,12 @@ vi.mock("@/lib/xero", () => ({
   ) => `member:${memberId}:entrance-fee-invoice:${category}:${amountCents}:v1`,
   getEntranceFeeContext: mocks.getEntranceFeeContext,
   createXeroEntranceFeeInvoice: mocks.createXeroEntranceFeeInvoice,
+  createXeroInvoiceForBooking: mocks.createXeroInvoiceForBooking,
+  isXeroConnected: mocks.isXeroConnected,
 }));
 
 import {
+  enqueueXeroBookingInvoiceOperation,
   enqueueXeroEntranceFeeInvoiceOperation,
   processQueuedXeroOutboxOperations,
 } from "@/lib/xero-operation-outbox";
@@ -57,6 +71,13 @@ describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findFirstLink.mockResolvedValue(null);
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      payment: {
+        id: "payment_1",
+        xeroInvoiceId: null,
+      },
+    });
     mocks.findFirstOperation.mockResolvedValue(null);
     mocks.getEntranceFeeContext.mockResolvedValue({
       category: "ADULT",
@@ -119,6 +140,70 @@ describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
   });
 });
 
+describe("enqueueXeroBookingInvoiceOperation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirstLink.mockResolvedValue(null);
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      payment: {
+        id: "payment_1",
+        xeroInvoiceId: null,
+      },
+    });
+    mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_booking_1" });
+  });
+
+  it("creates a pending primary Xero sync operation for booking invoices", async () => {
+    await expect(
+      enqueueXeroBookingInvoiceOperation("booking_1", {
+        createdByMemberId: "admin_1",
+      })
+    ).resolves.toEqual({
+      queueOperationId: "op_booking_1",
+      message: "Xero booking invoice queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "OUTBOUND",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "payment_1",
+        status: "PENDING",
+        idempotencyKey: "booking:booking_1:invoice:v1",
+        correlationKey: "booking:booking_1:invoice:v1",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "BOOKING_INVOICE",
+          bookingId: "booking_1",
+        },
+      })
+    );
+  });
+
+  it("skips queueing when the booking payment is already linked to Xero", async () => {
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      payment: {
+        id: "payment_1",
+        xeroInvoiceId: "inv_existing",
+      },
+    });
+
+    await expect(
+      enqueueXeroBookingInvoiceOperation("booking_1")
+    ).resolves.toEqual({
+      queueOperationId: null,
+      message: "Xero booking invoice already linked for this booking.",
+    });
+
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+});
+
 describe("processQueuedXeroOutboxOperations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -162,10 +247,40 @@ describe("processQueuedXeroOutboxOperations", () => {
     });
   });
 
+  it("claims and processes queued booking invoice operations", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_booking_1",
+        localId: "payment_1",
+        localModel: "Payment",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "BOOKING_INVOICE",
+          bookingId: "booking_1",
+        },
+      },
+    ]);
+    mocks.createXeroInvoiceForBooking.mockResolvedValue("inv_1");
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.createXeroInvoiceForBooking).toHaveBeenCalledWith("booking_1", {
+      createdByMemberId: "admin_1",
+      syncOperationId: "op_booking_1",
+    });
+  });
+
   it("fails malformed queued payloads", async () => {
     mocks.findManyOperations.mockResolvedValue([
       {
         id: "op_entrance_1",
+        localModel: "Member",
         localId: "member_1",
         createdByMemberId: "admin_1",
         requestPayload: {

@@ -79,6 +79,13 @@ vi.mock("@/lib/email", () => ({
   sendWaitlistConfirmationEmail: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/xero", () => ({ isXeroConnected: vi.fn().mockResolvedValue(false), createXeroInvoiceForBooking: vi.fn() }));
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceOperation: vi.fn().mockResolvedValue({
+    queueOperationId: null,
+    message: "already linked",
+  }),
+  kickQueuedXeroOutboxOperationsIfConnected: vi.fn().mockResolvedValue(null),
+}));
 vi.mock("@/lib/stripe", () => ({ createPaymentIntent: vi.fn(), findOrCreateCustomer: vi.fn(), getPaymentIntent: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/waitlist", () => ({ getWaitlistPosition: vi.fn().mockResolvedValue(1) }));
