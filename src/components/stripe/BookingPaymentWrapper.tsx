@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { type BookingPaymentMode } from "@/lib/booking-payment-flow";
 import StripeProvider from "./StripeProvider";
 import PaymentForm from "./PaymentForm";
@@ -27,8 +27,9 @@ export default function BookingPaymentWrapper({
   onPaymentComplete,
 }: BookingPaymentWrapperProps) {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [initializationError, setInitializationError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const handleAlreadyComplete = useEffectEvent(() => onPaymentComplete());
 
   useEffect(() => {
     if (amountCents === 0) return; // No Stripe initialization needed for zero-dollar bookings
@@ -36,7 +37,7 @@ export default function BookingPaymentWrapper({
     const initializePayment = async () => {
       try {
         setLoading(true);
-        setError(null);
+        setInitializationError(null);
 
         const endpoint = paymentMode === "setup"
           ? "/api/payments/create-setup-intent"
@@ -51,13 +52,18 @@ export default function BookingPaymentWrapper({
         const data = await response.json();
 
         if (!response.ok) {
-          setError(data.error || "Failed to initialize payment");
+          setInitializationError(data.error || "Failed to initialize payment");
+          return;
+        }
+
+        if (data.alreadyPaid || data.alreadySaved) {
+          handleAlreadyComplete();
           return;
         }
 
         setClientSecret(data.clientSecret);
       } catch {
-        setError("Failed to connect to payment service");
+        setInitializationError("Failed to connect to payment service");
       } finally {
         setLoading(false);
       }
@@ -85,11 +91,11 @@ export default function BookingPaymentWrapper({
     );
   }
 
-  if (error) {
+  if (initializationError) {
     return (
       <div className="rounded-md bg-red-50 p-4 text-sm text-red-700">
         <p className="font-medium">Payment Error</p>
-        <p className="mt-1">{error}</p>
+        <p className="mt-1">{initializationError}</p>
       </div>
     );
   }
@@ -102,20 +108,34 @@ export default function BookingPaymentWrapper({
     );
   }
 
+  async function handlePaymentSuccess(paymentIntentId: string) {
+    try {
+      await fetch(`/api/bookings/${bookingId}/confirm-payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentIntentId }),
+      });
+    } catch {
+      // Non-fatal: the Stripe webhook will still reconcile the booking state.
+    }
+
+    onPaymentComplete();
+  }
+
   return (
     <StripeProvider clientSecret={clientSecret}>
       {paymentMode === "payment" ? (
         <PaymentForm
           amountCents={amountCents}
           returnUrl={returnUrl}
-          onSuccess={() => onPaymentComplete()}
-          onError={(err) => setError(err)}
+          onSuccess={handlePaymentSuccess}
+          onError={() => undefined}
         />
       ) : (
         <SetupForm
           returnUrl={returnUrl}
           onSuccess={() => onPaymentComplete()}
-          onError={(err) => setError(err)}
+          onError={() => undefined}
         />
       )}
     </StripeProvider>

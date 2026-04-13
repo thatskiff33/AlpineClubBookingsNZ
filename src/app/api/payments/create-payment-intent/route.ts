@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createPaymentIntent, findOrCreateCustomer, getPaymentIntent } from "@/lib/stripe";
+import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { CreatePaymentIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -50,23 +51,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // If a PaymentIntent already exists and payment is still in progress, return its clientSecret
-    if (booking.payment?.stripePaymentIntentId && booking.payment.status === "PROCESSING") {
+    // Reuse or reconcile an existing PaymentIntent before creating a new one.
+    if (booking.payment?.stripePaymentIntentId) {
       const existingIntent = await getPaymentIntent(booking.payment.stripePaymentIntentId);
-      if (existingIntent.client_secret && existingIntent.status !== "succeeded") {
+
+      if (existingIntent.status === "succeeded") {
+        if (booking.payment.status !== "SUCCEEDED" || booking.status !== "PAID") {
+          await markBookingPaymentSucceeded({
+            bookingId: booking.id,
+            paymentIntentId: existingIntent.id,
+            amountCents: existingIntent.amount,
+            paymentMethodId:
+              typeof existingIntent.payment_method === "string"
+                ? existingIntent.payment_method
+                : existingIntent.payment_method?.id ?? null,
+          });
+        }
+
+        return NextResponse.json({
+          alreadyPaid: true,
+          paymentIntentId: existingIntent.id,
+        });
+      }
+
+      if (existingIntent.client_secret && existingIntent.status !== "canceled") {
         return NextResponse.json({
           clientSecret: existingIntent.client_secret,
           paymentIntentId: existingIntent.id,
         });
       }
-    }
-
-    // Don't create a new PaymentIntent if one already succeeded
-    if (booking.payment?.stripePaymentIntentId && booking.payment.status === "SUCCEEDED") {
-      return NextResponse.json(
-        { error: "Payment already completed for this booking" },
-        { status: 409 }
-      );
     }
 
     // Only allow PaymentIntent for bookings that should be immediately confirmed
@@ -153,7 +166,7 @@ export async function POST(request: NextRequest) {
         bookingId: booking.id,
         memberId: booking.memberId,
       },
-      idempotencyKey: `pi_${booking.id}`,
+      idempotencyKey: `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
     });
 
     // Create or update Payment record

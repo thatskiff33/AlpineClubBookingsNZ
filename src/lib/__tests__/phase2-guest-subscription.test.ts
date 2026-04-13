@@ -177,7 +177,14 @@ beforeEach(() => {
   // Owner has paid subscription
   mockPrisma.memberSubscription.findFirst.mockResolvedValue({ id: "sub-1", status: "PAID" });
   // Guest subscription check — default: all paid
-  mockPrisma.memberSubscription.findMany.mockResolvedValue([{ memberId: "guest-member-1" }]);
+  mockPrisma.memberSubscription.findMany.mockResolvedValue([
+    {
+      memberId: "guest-member-1",
+      status: "PAID",
+      xeroOnlineInvoiceUrl: null,
+      xeroInvoiceNumber: null,
+    },
+  ]);
   mockPrisma.season.findMany.mockResolvedValue([]);
 
   mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx as unknown as typeof mockTx));
@@ -196,8 +203,14 @@ beforeEach(() => {
 describe("P2.3: Guest subscription check", () => {
   it("blocks booking when a member-guest has unpaid subscription", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
-    // Guest subscription check returns empty (no paid subs found for guests)
-    mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
+    mockPrisma.memberSubscription.findMany.mockResolvedValue([
+      {
+        memberId: "guest-member-1",
+        status: "UNPAID",
+        xeroOnlineInvoiceUrl: "https://pay.xero.com/rebecca",
+        xeroInvoiceNumber: "INV-REB-1",
+      },
+    ]);
     // member.findMany is called multiple times:
     // 1. resolveLinkedBookingMembers (needs ageTier for linked members)
     // 2. unpaid member name lookup (needs firstName/lastName)
@@ -216,12 +229,28 @@ describe("P2.3: Guest subscription check", () => {
     const body = await res.json();
     expect(body.code).toBe("GUEST_SUBSCRIPTION_REQUIRED");
     expect(body.unpaidMembers).toContain("Bob Jones");
+    expect(body.unpaidMemberInvoices).toContainEqual(
+      expect.objectContaining({
+        memberId: "guest-member-1",
+        name: "Bob Jones",
+        invoiceUrl: "https://pay.xero.com/rebecca",
+        invoiceNumber: "INV-REB-1",
+        status: "UNPAID",
+      })
+    );
   });
 
   it("allows booking when all member-guests have paid subscriptions", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
     // findMany returns paid sub for guest-member-1
-    mockPrisma.memberSubscription.findMany.mockResolvedValue([{ memberId: "guest-member-1" }]);
+    mockPrisma.memberSubscription.findMany.mockResolvedValue([
+      {
+        memberId: "guest-member-1",
+        status: "PAID",
+        xeroOnlineInvoiceUrl: null,
+        xeroInvoiceNumber: null,
+      },
+    ]);
 
     const req = makeRequest([
       { firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true },

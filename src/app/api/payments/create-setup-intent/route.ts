@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createSetupIntent, findOrCreateCustomer } from "@/lib/stripe";
+import { createSetupIntent, findOrCreateCustomer, getSetupIntent } from "@/lib/stripe";
+import { markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
 import { CreateSetupIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
@@ -65,12 +66,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Don't create a new SetupIntent if one already exists
     if (booking.payment?.stripeSetupIntentId) {
-      return NextResponse.json(
-        { error: "SetupIntent already created for this booking" },
-        { status: 409 }
-      );
+      const existingIntent = await getSetupIntent(booking.payment.stripeSetupIntentId);
+
+      if (existingIntent.status === "succeeded") {
+        const paymentMethodId =
+          typeof existingIntent.payment_method === "string"
+            ? existingIntent.payment_method
+            : existingIntent.payment_method?.id ?? null;
+
+        if (paymentMethodId) {
+          await markBookingSetupIntentSucceeded({
+            bookingId: booking.id,
+            setupIntentId: existingIntent.id,
+            paymentMethodId,
+          });
+        }
+
+        return NextResponse.json({
+          alreadySaved: true,
+          setupIntentId: existingIntent.id,
+        });
+      }
+
+      if (existingIntent.client_secret && existingIntent.status !== "canceled") {
+        return NextResponse.json({
+          clientSecret: existingIntent.client_secret,
+          setupIntentId: existingIntent.id,
+        });
+      }
     }
 
     // Find or create Stripe customer
@@ -87,6 +111,7 @@ export async function POST(request: NextRequest) {
         bookingId: booking.id,
         memberId: booking.memberId,
       },
+      idempotencyKey: `seti_${booking.id}_${booking.payment?.stripeSetupIntentId ?? "initial"}`,
     });
 
     // Create or update Payment record

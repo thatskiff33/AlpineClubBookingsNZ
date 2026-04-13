@@ -1,3 +1,4 @@
+import type { SubscriptionStatus } from "@prisma/client";
 import { getSeasonYear } from "@/lib/utils";
 
 interface BookingGuestLike {
@@ -11,10 +12,21 @@ interface BookingMemberGuestSubscriptionDb {
       where: {
         memberId: { in: string[] };
         seasonYear: number;
-        status: "PAID";
       };
-      select: { memberId: true };
-    }): Promise<Array<{ memberId: string }>>;
+      select: {
+        memberId: true;
+        status: true;
+        xeroOnlineInvoiceUrl: true;
+        xeroInvoiceNumber: true;
+      };
+    }): Promise<
+      Array<{
+        memberId: string;
+        status: SubscriptionStatus;
+        xeroOnlineInvoiceUrl: string | null;
+        xeroInvoiceNumber: string | null;
+      }>
+    >;
   };
   member: {
     findMany(args: {
@@ -24,14 +36,22 @@ interface BookingMemberGuestSubscriptionDb {
   };
 }
 
-export async function findUnpaidMemberGuestNames(
+export interface UnpaidMemberGuestInfo {
+  memberId: string;
+  name: string;
+  status: SubscriptionStatus;
+  invoiceUrl: string | null;
+  invoiceNumber: string | null;
+}
+
+export async function findUnpaidMemberGuests(
   db: BookingMemberGuestSubscriptionDb,
   params: {
     bookingMemberId: string;
     checkIn: Date;
     guests: BookingGuestLike[];
   }
-): Promise<string[]> {
+): Promise<UnpaidMemberGuestInfo[]> {
   const memberGuestIds = params.guests
     .filter(
       (guest) =>
@@ -46,19 +66,25 @@ export async function findUnpaidMemberGuestNames(
   }
 
   const uniqueIds = [...new Set(memberGuestIds)];
-  const paidSubscriptions = await db.memberSubscription.findMany({
+  const subscriptions = await db.memberSubscription.findMany({
     where: {
       memberId: { in: uniqueIds },
       seasonYear: getSeasonYear(params.checkIn),
-      status: "PAID",
     },
-    select: { memberId: true },
+    select: {
+      memberId: true,
+      status: true,
+      xeroOnlineInvoiceUrl: true,
+      xeroInvoiceNumber: true,
+    },
   });
 
-  const paidMemberIds = new Set(
-    paidSubscriptions.map((subscription) => subscription.memberId)
+  const subscriptionById = new Map(
+    subscriptions.map((subscription) => [subscription.memberId, subscription])
   );
-  const unpaidMemberIds = uniqueIds.filter((id) => !paidMemberIds.has(id));
+  const unpaidMemberIds = uniqueIds.filter(
+    (id) => subscriptionById.get(id)?.status !== "PAID"
+  );
 
   if (unpaidMemberIds.length === 0) {
     return [];
@@ -76,5 +102,26 @@ export async function findUnpaidMemberGuestNames(
     ])
   );
 
-  return unpaidMemberIds.map((id) => nameById.get(id) ?? id);
+  return unpaidMemberIds.map((id) => {
+    const subscription = subscriptionById.get(id);
+    return {
+      memberId: id,
+      name: nameById.get(id) ?? id,
+      status: subscription?.status ?? "NOT_INVOICED",
+      invoiceUrl: subscription?.xeroOnlineInvoiceUrl ?? null,
+      invoiceNumber: subscription?.xeroInvoiceNumber ?? null,
+    };
+  });
+}
+
+export async function findUnpaidMemberGuestNames(
+  db: BookingMemberGuestSubscriptionDb,
+  params: {
+    bookingMemberId: string;
+    checkIn: Date;
+    guests: BookingGuestLike[];
+  }
+): Promise<string[]> {
+  const unpaidMembers = await findUnpaidMemberGuests(db, params);
+  return unpaidMembers.map((member) => member.name);
 }
