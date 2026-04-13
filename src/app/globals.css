@@ -263,6 +263,11 @@
   }
 }
 
+/* AddressFinder autocomplete dropdown — rendered on document.body, must float above all page content */
+.af_list {
+  z-index: 9999 !important;
+}
+
 @media print {
   @page {
     size: A4 portrait;
