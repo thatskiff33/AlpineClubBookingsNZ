@@ -120,6 +120,24 @@ interface XeroOperation {
   reason: string | null
 }
 
+interface XeroInboundEvent {
+  id: string
+  source: string
+  eventCategory: string | null
+  eventType: string
+  resourceId: string | null
+  eventCreatedAt: string | null
+  correlationKey: string
+  payload: unknown
+  status: string
+  errorMessage: string | null
+  processedAt: string | null
+  createdAt: string
+  updatedAt: string
+  xeroObjectUrl: string | null
+  canReplay: boolean
+}
+
 interface XeroUsageBucket {
   label: string
   count: number
@@ -351,6 +369,11 @@ export default function XeroPage() {
   const [operationEntityFilter, setOperationEntityFilter] = useState("all")
   const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
   const [queueingOperationId, setQueueingOperationId] = useState<string | null>(null)
+  const [inboundEvents, setInboundEvents] = useState<XeroInboundEvent[]>([])
+  const [loadingInboundEvents, setLoadingInboundEvents] = useState(false)
+  const [inboundEventStatusFilter, setInboundEventStatusFilter] = useState("all")
+  const [inboundEventCategoryFilter, setInboundEventCategoryFilter] = useState("all")
+  const [replayingInboundEventId, setReplayingInboundEventId] = useState<string | null>(null)
   const [operationMessage, setOperationMessage] = useState("")
   const [usageSummary, setUsageSummary] = useState<XeroUsageSummary | null>(null)
   const [loadingUsage, setLoadingUsage] = useState(false)
@@ -432,6 +455,26 @@ export default function XeroPage() {
     }
   }, [])
 
+  const fetchInboundEvents = useCallback(async (statusFilter: string, categoryFilter: string) => {
+    setLoadingInboundEvents(true)
+    try {
+      const params = new URLSearchParams({
+        status: statusFilter,
+        eventCategory: categoryFilter,
+        source: "all",
+        limit: "25",
+      })
+      const res = await fetch(`/api/admin/xero/inbound-events?${params.toString()}`)
+      if (!res.ok) throw new Error("Failed to fetch Xero inbound events")
+      const data = await res.json()
+      setInboundEvents(data.data ?? [])
+    } catch {
+      setError("Failed to load Xero inbound events")
+    } finally {
+      setLoadingInboundEvents(false)
+    }
+  }, [])
+
   const fetchUsage = useCallback(async () => {
     setLoadingUsage(true)
     try {
@@ -473,6 +516,12 @@ export default function XeroPage() {
       fetchOperations(operationStatusFilter, operationEntityFilter)
     }
   }, [status?.connected, operationStatusFilter, operationEntityFilter, fetchOperations])
+
+  useEffect(() => {
+    if (status?.connected) {
+      fetchInboundEvents(inboundEventStatusFilter, inboundEventCategoryFilter)
+    }
+  }, [status?.connected, inboundEventStatusFilter, inboundEventCategoryFilter, fetchInboundEvents])
 
   useEffect(() => {
     if (status?.connected) {
@@ -519,6 +568,30 @@ export default function XeroPage() {
       setError(err instanceof Error ? err.message : "Failed to queue Xero operation retry")
     } finally {
       setQueueingOperationId(null)
+    }
+  }
+
+  const handleReplayInboundEvent = async (eventId: string) => {
+    setReplayingInboundEventId(eventId)
+    setOperationMessage("")
+    setError("")
+    try {
+      const res = await fetch(`/api/admin/xero/inbound-events/${eventId}/replay`, {
+        method: "POST",
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to replay Xero inbound event")
+      }
+      setOperationMessage(data.message || "Xero inbound event replayed.")
+      await Promise.all([
+        fetchInboundEvents(inboundEventStatusFilter, inboundEventCategoryFilter),
+        fetchOperations(operationStatusFilter, operationEntityFilter),
+      ])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to replay Xero inbound event")
+    } finally {
+      setReplayingInboundEventId(null)
     }
   }
 
@@ -757,17 +830,31 @@ export default function XeroPage() {
   const operationStatusClass = (status: string) => {
     switch (status) {
       case "SUCCEEDED":
+      case "PROCESSED":
         return "bg-green-600"
       case "PARTIAL":
         return "bg-amber-500"
       case "FAILED":
         return "bg-red-600"
       case "PENDING":
+      case "RECEIVED":
         return "bg-slate-600"
       case "RUNNING":
+      case "PROCESSING":
         return "bg-blue-600"
       default:
         return ""
+    }
+  }
+
+  const inboundEventActionLabel = (status: string) => {
+    switch (status) {
+      case "FAILED":
+        return "Retry"
+      case "RECEIVED":
+        return "Process Now"
+      default:
+        return "Replay"
     }
   }
 
@@ -1009,6 +1096,149 @@ export default function XeroPage() {
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No Xero usage data recorded yet.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {status?.connected && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Inbound Events</CardTitle>
+            <CardDescription>
+              Stored webhook events and their reconciliation state. Use replay to retry failed
+              events or re-run a previously processed event after handler changes.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center">
+              <div className="w-full md:w-48">
+                <Label className="mb-1 block text-xs text-muted-foreground">Status</Label>
+                <Select value={inboundEventStatusFilter} onValueChange={setInboundEventStatusFilter}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="FAILED">Failed</SelectItem>
+                    <SelectItem value="RECEIVED">Received</SelectItem>
+                    <SelectItem value="PROCESSING">Processing</SelectItem>
+                    <SelectItem value="PROCESSED">Processed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="w-full md:w-48">
+                <Label className="mb-1 block text-xs text-muted-foreground">Category</Label>
+                <Select value={inboundEventCategoryFilter} onValueChange={setInboundEventCategoryFilter}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All categories</SelectItem>
+                    <SelectItem value="CONTACT">Contact</SelectItem>
+                    <SelectItem value="INVOICE">Invoice</SelectItem>
+                    <SelectItem value="PAYMENT">Payment</SelectItem>
+                    <SelectItem value="CREDIT_NOTE">Credit Note</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="md:pt-5">
+                <Button
+                  variant="outline"
+                  onClick={() => fetchInboundEvents(inboundEventStatusFilter, inboundEventCategoryFilter)}
+                  disabled={loadingInboundEvents}
+                >
+                  {loadingInboundEvents ? "Refreshing..." : "Refresh"}
+                </Button>
+              </div>
+            </div>
+
+            {loadingInboundEvents ? (
+              <p className="text-sm text-muted-foreground">Loading stored inbound events...</p>
+            ) : inboundEvents.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No stored inbound events found.</p>
+            ) : (
+              <div className="space-y-3">
+                {inboundEvents.map((event) => (
+                  <div key={event.id} className="rounded-md border p-3 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="default" className={operationStatusClass(event.status)}>
+                        {event.status}
+                      </Badge>
+                      <span className="text-sm font-medium">
+                        {event.eventCategory ?? "UNKNOWN"} {event.eventType}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(event.createdAt).toLocaleString("en-NZ")}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                      <span>Source: {event.source}</span>
+                      <span>
+                        Correlation: <code>{shortId(event.correlationKey)}</code>
+                      </span>
+                      {event.resourceId && (
+                        <span>
+                          Resource:{" "}
+                          {event.xeroObjectUrl ? (
+                            <a
+                              href={event.xeroObjectUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline"
+                            >
+                              {shortId(event.resourceId)}
+                            </a>
+                          ) : (
+                            shortId(event.resourceId)
+                          )}
+                        </span>
+                      )}
+                      {event.processedAt && (
+                        <span>
+                          Processed: {new Date(event.processedAt).toLocaleString("en-NZ")}
+                        </span>
+                      )}
+                    </div>
+
+                    {event.errorMessage && (
+                      <p className="text-sm text-red-700">{event.errorMessage}</p>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleReplayInboundEvent(event.id)}
+                        disabled={!event.canReplay || replayingInboundEventId === event.id}
+                      >
+                        {replayingInboundEventId === event.id
+                          ? "Replaying..."
+                          : inboundEventActionLabel(event.status)}
+                      </Button>
+                      {!event.canReplay && (
+                        <p className="text-xs text-muted-foreground">
+                          This event is currently being processed.
+                        </p>
+                      )}
+                    </div>
+
+                    <details className="rounded-md bg-slate-50 p-2">
+                      <summary className="cursor-pointer text-xs font-medium text-slate-700">
+                        View stored payload
+                      </summary>
+                      <div className="mt-2">
+                        <pre className="max-h-64 overflow-auto rounded bg-white p-2 text-[11px] border">
+                          {formatJson(event.payload)}
+                        </pre>
+                      </div>
+                    </details>
+                  </div>
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>

@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   inboundFindMany: vi.fn(),
+  inboundFindUnique: vi.fn(),
   inboundUpdateMany: vi.fn(),
   inboundUpdate: vi.fn(),
   processedCreate: vi.fn(),
   processedDeleteMany: vi.fn(),
+  transaction: vi.fn(),
   memberFindMany: vi.fn(),
   memberUpdate: vi.fn(),
   linkFindMany: vi.fn(),
@@ -26,6 +28,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     xeroInboundEvent: {
       findMany: mocks.inboundFindMany,
+      findUnique: mocks.inboundFindUnique,
       updateMany: mocks.inboundUpdateMany,
       update: mocks.inboundUpdate,
     },
@@ -47,6 +50,7 @@ vi.mock("@/lib/prisma", () => ({
     memberSubscription: {
       findMany: mocks.subscriptionFindMany,
     },
+    $transaction: mocks.transaction,
   },
 }));
 
@@ -96,12 +100,26 @@ vi.mock("@/lib/xero", async (importOriginal) => {
   };
 });
 
-import { processStoredXeroInboundEvents } from "@/lib/xero-inbound-reconciliation";
+import {
+  processStoredXeroInboundEvents,
+  replayStoredXeroInboundEvent,
+  XeroInboundReplayError,
+} from "@/lib/xero-inbound-reconciliation";
 
 describe("processStoredXeroInboundEvents", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        processedWebhookEvent: {
+          deleteMany: mocks.processedDeleteMany,
+        },
+        xeroInboundEvent: {
+          update: mocks.inboundUpdate,
+        },
+      })
+    );
     mocks.getAccountMapping.mockResolvedValue("203");
     mocks.withXeroRetry.mockImplementation(async (fn: () => Promise<unknown>) => fn());
     mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_1" });
@@ -332,5 +350,104 @@ describe("processStoredXeroInboundEvents", () => {
         role: "PRIMARY_INVOICE",
       })
     );
+  });
+});
+
+describe("replayStoredXeroInboundEvent", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        processedWebhookEvent: {
+          deleteMany: mocks.processedDeleteMany,
+        },
+        xeroInboundEvent: {
+          update: mocks.inboundUpdate,
+        },
+      })
+    );
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_replay" });
+  });
+
+  it("replays a stored inbound event and clears the previous dedupe claim", async () => {
+    const processedAt = new Date("2026-04-14T08:00:00Z");
+    mocks.inboundFindUnique
+      .mockResolvedValueOnce({
+        id: "evt_replay",
+        correlationKey: "corr_replay",
+        status: "FAILED",
+        errorMessage: "old failure",
+        processedAt: null,
+      })
+      .mockResolvedValueOnce({
+        id: "evt_replay",
+        status: "PROCESSED",
+        errorMessage: null,
+        processedAt,
+      });
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_replay",
+        source: "webhook",
+        eventCategory: "PAYMENT",
+        eventType: "UPDATE",
+        resourceId: "pay_1",
+        correlationKey: "corr_replay",
+        payload: { resourceId: "pay_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_replay" });
+
+    await expect(replayStoredXeroInboundEvent("evt_replay")).resolves.toEqual({
+      result: {
+        found: 1,
+        processed: 1,
+        succeeded: 1,
+        failed: 0,
+        skipped: 0,
+      },
+      event: {
+        id: "evt_replay",
+        status: "PROCESSED",
+        errorMessage: null,
+        processedAt,
+      },
+    });
+
+    expect(mocks.processedDeleteMany).toHaveBeenCalledWith({
+      where: {
+        eventId: "corr_replay",
+        source: "xero",
+      },
+    });
+    expect(mocks.inboundUpdate).toHaveBeenCalledWith({
+      where: {
+        id: "evt_replay",
+      },
+      data: {
+        status: "RECEIVED",
+        errorMessage: null,
+        processedAt: null,
+      },
+    });
+  });
+
+  it("rejects replay when the event is already processing", async () => {
+    mocks.inboundFindUnique.mockResolvedValue({
+      id: "evt_processing",
+      correlationKey: "corr_processing",
+      status: "PROCESSING",
+      errorMessage: null,
+      processedAt: null,
+    });
+
+    await expect(replayStoredXeroInboundEvent("evt_processing")).rejects.toMatchObject({
+      name: "XeroInboundReplayError",
+      message: "This inbound event is already being processed.",
+      status: 409,
+    } satisfies Partial<XeroInboundReplayError>);
+
+    expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });
