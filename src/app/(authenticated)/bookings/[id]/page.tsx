@@ -15,6 +15,7 @@ import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { canModifyBookingStatus } from "@/lib/booking-modify-permissions";
+import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
 
 export default async function BookingDetailPage({
@@ -53,10 +54,6 @@ export default async function BookingDetailPage({
   const nights = Math.ceil(
     (new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) /
       (1000 * 60 * 60 * 24)
-  );
-  const currentTime = new Date().getTime();
-  const checkInDaysAway = Math.ceil(
-    (new Date(booking.checkIn).getTime() - currentTime) / (1000 * 60 * 60 * 24)
   );
 
   const isDraft = booking.status === "DRAFT";
@@ -147,8 +144,7 @@ export default async function BookingDetailPage({
             <BookingPaymentSection
               bookingId={booking.id}
               amountCents={booking.finalPriceCents}
-              hasNonMembers={booking.hasNonMembers}
-              checkInDaysAway={checkInDaysAway}
+              paymentMode={getBookingPaymentMode(booking.status)}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
           </CardContent>
@@ -193,8 +189,7 @@ export default async function BookingDetailPage({
             <BookingPaymentSection
               bookingId={booking.id}
               amountCents={booking.finalPriceCents}
-              hasNonMembers={booking.hasNonMembers}
-              checkInDaysAway={checkInDaysAway}
+              paymentMode={getBookingPaymentMode(booking.status)}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
           </CardContent>
@@ -214,8 +209,7 @@ export default async function BookingDetailPage({
             <BookingPaymentSection
               bookingId={booking.id}
               amountCents={booking.finalPriceCents}
-              hasNonMembers={booking.hasNonMembers}
-              checkInDaysAway={checkInDaysAway}
+              paymentMode={getBookingPaymentMode(booking.status)}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
           </CardContent>

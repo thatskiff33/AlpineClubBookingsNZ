@@ -1,21 +1,20 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { type BookingPaymentMode } from "@/lib/booking-payment-flow";
 import BookingPaymentWrapper from "@/components/stripe/BookingPaymentWrapper";
 
 interface BookingPaymentSectionProps {
   bookingId: string;
   amountCents: number;
-  hasNonMembers: boolean;
-  checkInDaysAway: number;
+  paymentMode: BookingPaymentMode;
   returnUrl: string;
 }
 
 export function BookingPaymentSection({
   bookingId,
   amountCents,
-  hasNonMembers,
-  checkInDaysAway,
+  paymentMode,
   returnUrl,
 }: BookingPaymentSectionProps) {
   const router = useRouter();
@@ -24,8 +23,7 @@ export function BookingPaymentSection({
     <BookingPaymentWrapper
       bookingId={bookingId}
       amountCents={amountCents}
-      hasNonMembers={hasNonMembers}
-      checkInDaysAway={checkInDaysAway}
+      paymentMode={paymentMode}
       returnUrl={returnUrl}
       onPaymentComplete={() => router.refresh()}
     />
