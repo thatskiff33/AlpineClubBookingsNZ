@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
+import { buildLocalAdminUrl } from "@/lib/xero-record-links";
 
 const querySchema = z.object({
   status: z.string().optional().default("all"),
@@ -13,26 +14,6 @@ const querySchema = z.object({
   direction: z.string().optional().default("all"),
   limit: z.coerce.number().int().min(1).max(100).optional().default(25),
 });
-
-function buildLocalAdminUrl(localModel: string | null, localId: string | null): string | null {
-  if (!localModel || !localId) {
-    return null;
-  }
-
-  switch (localModel) {
-    case "Member":
-      return `/admin/members/${localId}`;
-    case "Booking":
-    case "BookingModification":
-      return "/admin/bookings";
-    case "Payment":
-      return "/admin/payments";
-    case "MemberSubscription":
-      return "/admin/subscriptions";
-    default:
-      return null;
-  }
-}
 
 export async function GET(request: NextRequest) {
   const session = await auth();

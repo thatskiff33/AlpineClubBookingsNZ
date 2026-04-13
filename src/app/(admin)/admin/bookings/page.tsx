@@ -6,6 +6,7 @@ import { formatCents } from "@/lib/utils";
 import { BookingFilters } from "@/components/admin/booking-filters";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
+import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 
 export default async function AdminBookingsPage({
   searchParams,
@@ -123,6 +124,7 @@ export default async function AdminBookingsPage({
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Guests</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Xero</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -156,6 +158,14 @@ export default async function AdminBookingsPage({
                       {booking.requiresAdminReview && booking.adminReviewReason ? (
                         <p className="mt-1 text-xs text-amber-800">{booking.adminReviewReason}</p>
                       ) : null}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      <Link
+                        href={buildXeroRecordActivityUrl("Booking", booking.id)}
+                        className="text-blue-600 hover:underline"
+                      >
+                        Activity
+                      </Link>
                     </td>
                   </tr>
                 ))}

@@ -11,7 +11,7 @@ This review focuses on how TACBookings should reconcile booking and membership d
 
 ## Implementation Status (2026-04-13)
 
-The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, and a first queue-backed background replay path for queued retries. The remaining work is mostly around full outbox execution for initial writes, broader replay coverage, inbound reconcile jobs, and reporting/hardening.
+The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, and record-scoped Xero activity surfaces for the main admin workflows. The remaining work is now mostly around full outbox execution for initial writes, dedicated `PARTIAL` repair flows, inbound reconcile jobs, and reporting/hardening.
 
 ### Delivered to date
 
@@ -55,6 +55,17 @@ The review below started as a design and gap-analysis document. The codebase now
   - `PENDING` / `REQUEUE` controls and visibility in `src/app/(admin)/admin/xero/page.tsx`
   - scheduled replay worker in `src/instrumentation.ts`
   - manual cron support in `src/app/api/cron/xero/route.ts` via `task=retries` or `task=all`
+- added record-scoped Xero activity views and shared resolution helpers:
+  - `src/lib/xero-record-links.ts`
+  - `src/lib/xero-record-types.ts`
+  - `src/lib/xero-record-activity.ts`
+  - `src/app/api/admin/xero/records/[localModel]/[localId]/route.ts`
+  - `src/app/(admin)/admin/xero/records/[localModel]/[localId]/page.tsx`
+  - `src/components/admin/xero-record-activity-panel.tsx`
+- exposed record-scoped activity entry points from the main admin workflows:
+  - inline member Xero activity card on `src/app/(admin)/admin/members/[id]/page.tsx`
+  - booking activity links on `src/app/(admin)/admin/bookings/page.tsx`
+  - payment activity links on `src/app/(admin)/admin/payments/page.tsx`
 
 ### Verified to date
 
@@ -62,6 +73,7 @@ The review below started as a design and gap-analysis document. The codebase now
 - `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-member-management.test.ts src/lib/__tests__/phase8c-integrations.test.ts src/lib/__tests__/phone-address-sync.test.ts src/lib/__tests__/phase3b-member-detail-edit.test.ts`
 - `npx vitest run src/lib/__tests__/xero-operation-retry.test.ts`
 - `npx vitest run src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts`
+- `npx vitest run src/lib/__tests__/xero-record-activity.test.ts src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts`
 
 ### Not yet implemented
 
@@ -69,7 +81,6 @@ The following recommendations from this review are still open:
 
 - full outbox-style `PENDING`-first execution for primary outbound Xero writes
 - repair flows for `PARTIAL` operations
-- record-specific Xero operations surfaces on booking, payment, and member detail screens
 - webhook-driven targeted reconcile jobs that apply inbound changes to business state
 - Xero-specific event claim/dedupe processing tied to `ProcessedWebhookEvent`
 - incremental pull jobs using `If-Modified-Since`
@@ -138,14 +149,22 @@ Those need targeted follow-up actions that understand the already-created Xero a
 - applying inbound invoice/contact changes back to TACBookings business state
 - incremental pull jobs using `If-Modified-Since`
 
-### 4. Operational surfaces are still centralized and limited
+### 4. Operational surfaces now exist, but repair actions are still centralized
 
-The admin Xero screen now shows recent operations and supports retry for some failures, but operators still cannot see the same reconciliation context directly on the main record screens:
+The admin Xero screen is no longer the only place operators can inspect reconciliation context. There is now a record-scoped Xero activity view that groups operations, links, and errors for:
 
-- booking detail pages do not show related Xero operations and links
-- payment screens do not show the full Xero operation history for a payment
-- member detail screens do not show recent contact/subscription sync operations
-- there is no record-scoped drill-down view that groups operations, links, and errors for a single TACBookings record
+- members and their subscriptions
+- bookings and their related payment / modification records
+- individual payments
+- individual booking modifications
+
+Entry points now exist from member detail, booking list, and payment list screens.
+
+What is still missing operationally is broader remediation from those scoped views:
+
+- `PARTIAL` operations still require dedicated repair flows
+- repeat-failure alerting and nightly reporting are still only design items
+- booking and payment areas still enter the scoped activity view from list screens because those admin areas do not currently have dedicated detail pages
 
 There is now an active implementation plan for this gap. Another Codex session is currently working through the steps below, so this should be treated as in-flight work rather than completed functionality:
 
@@ -357,13 +376,13 @@ Status: implemented for the main existing Xero write flows in `src/lib/xero.ts`.
 - add retry / requeue endpoints
 - make booking/payment/member detail screens show related Xero operations
 
-Status: partially implemented.
+Status: mostly implemented.
 
 - admin operations API and UI were added to the Xero admin screen
 - synchronous retry support for supported failed operations is implemented
 - queue-backed requeue / worker retry for supported failed operations is implemented
+- record-scoped Xero activity surfaces are now available from member, booking, and payment admin workflows
 - partial-operation repair is still pending
-- record-specific surfaces for booking/payment/member detail pages are still pending
 - record-scoped activity work now has an explicit in-flight plan in another Codex session:
   - inspection of current ledger/link models and admin screens: completed
   - reusable record-scoped resolver and admin API/page: in progress
@@ -414,7 +433,14 @@ Status: not yet implemented.
 - `src/lib/xero-sync.ts`
 - `src/lib/xero-operation-retry.ts`
 - `src/lib/xero-links.ts`
+- `src/lib/xero-record-links.ts`
+- `src/lib/xero-record-types.ts`
+- `src/lib/xero-record-activity.ts`
 - `src/app/api/admin/xero/operations/route.ts`
 - `src/app/api/admin/xero/operations/[id]/retry/route.ts`
+- `src/app/api/admin/xero/records/[localModel]/[localId]/route.ts`
 - `src/app/(admin)/admin/xero/page.tsx`
+- `src/app/(admin)/admin/xero/records/[localModel]/[localId]/page.tsx`
+- `src/components/admin/xero-record-activity-panel.tsx`
 - `src/lib/__tests__/xero-operation-retry.test.ts`
+- `src/lib/__tests__/xero-record-activity.test.ts`

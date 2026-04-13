@@ -30,6 +30,7 @@ import {
 import Link from "next/link";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
+import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 
 function formatCents(cents: number): string {
   return "$" + (cents / 100).toFixed(2);
@@ -230,26 +231,36 @@ export default function PaymentsPage() {
                         ) : "—"}
                       </TableCell>
                       <TableCell>
-                        {p.xeroInvoiceId ? (
-                          <a
-                            href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${p.xeroInvoiceId}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
+                        <div className="space-y-1">
+                          {p.xeroInvoiceId ? (
+                            <a
+                              href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${p.xeroInvoiceId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
+                            >
+                              {p.xeroInvoiceNumber || p.xeroInvoiceId.slice(0, 8)}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          ) : p.status === "SUCCEEDED" ? (
+                            <button
+                              onClick={() => handleGenerateInvoice(p.id)}
+                              disabled={generatingInvoice === p.id}
+                              className="text-xs text-orange-600 hover:text-orange-800 hover:underline inline-flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <FileText className="h-3 w-3" />
+                              {generatingInvoice === p.id ? "Creating..." : "Generate Invoice"}
+                            </button>
+                          ) : (
+                            <span>—</span>
+                          )}
+                          <Link
+                            href={buildXeroRecordActivityUrl("Payment", p.id)}
+                            className="inline-flex text-xs text-slate-600 hover:text-slate-900 hover:underline"
                           >
-                            {p.xeroInvoiceNumber || p.xeroInvoiceId.slice(0, 8)}
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        ) : p.status === "SUCCEEDED" ? (
-                          <button
-                            onClick={() => handleGenerateInvoice(p.id)}
-                            disabled={generatingInvoice === p.id}
-                            className="text-xs text-orange-600 hover:text-orange-800 hover:underline inline-flex items-center gap-1 disabled:opacity-50"
-                          >
-                            <FileText className="h-3 w-3" />
-                            {generatingInvoice === p.id ? "Creating..." : "Generate Invoice"}
-                          </button>
-                        ) : "—"}
+                            View activity
+                          </Link>
+                        </div>
                       </TableCell>
                       <TableCell>
                         {p.refundedAmountCents > 0 ? (

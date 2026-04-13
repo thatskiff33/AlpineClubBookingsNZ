@@ -4,6 +4,7 @@ import { useEffect, useState, use } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
 import { MemberAddressFields } from "@/components/member-address-fields"
+import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -537,6 +538,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           </dd>
         </div>
       </dl></CardContent></Card>
+
+      <XeroRecordActivityPanel localModel="Member" localId={id} compact />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
