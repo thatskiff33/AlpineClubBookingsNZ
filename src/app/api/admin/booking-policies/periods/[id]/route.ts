@@ -5,7 +5,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import {
-  normalizeCancellationRule,
+  normalizeCancellationRules,
   normalizeStoredCancellationRules,
 } from "@/lib/cancellation-rules";
 
@@ -96,8 +96,9 @@ export async function PUT(
           nonMemberHoldDays: data.nonMemberHoldDays,
         }),
         ...(data.cancellationRules && {
-          cancellationRules:
-            data.cancellationRules.map(normalizeCancellationRule) as unknown as Prisma.InputJsonArray,
+          cancellationRules: normalizeCancellationRules(
+            data.cancellationRules
+          ) as unknown as Prisma.InputJsonValue,
         }),
         ...(data.active !== undefined && { active: data.active }),
       },

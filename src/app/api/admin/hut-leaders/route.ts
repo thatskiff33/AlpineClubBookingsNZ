@@ -6,6 +6,11 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { calculateOverlapDays } from "@/lib/hut-leader-overlap";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { sendHutLeaderAssignmentEmail } from "@/lib/email";
+import {
+  generateHutLeaderPin,
+  hashHutLeaderPin,
+} from "@/lib/lodge-pin-session";
 
 const createSchema = z.object({
   memberId: z.string().min(1),
@@ -82,7 +87,12 @@ export async function POST(req: NextRequest) {
 
   const member = await prisma.member.findUnique({
     where: { id: parsed.data.memberId },
-    select: { id: true, active: true },
+    select: {
+      id: true,
+      active: true,
+      email: true,
+      firstName: true,
+    },
   });
 
   if (!member || !member.active) {
@@ -120,20 +130,44 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const pin = generateHutLeaderPin();
+    const hutLeaderPin = await hashHutLeaderPin(pin);
+
     const assignment = await prisma.hutLeaderAssignment.create({
       data: {
         memberId: parsed.data.memberId,
         startDate: newStart,
         endDate: newEnd,
+        hutLeaderPin,
       },
     });
+
+    let emailSent = true;
+    try {
+      await sendHutLeaderAssignmentEmail({
+        email: member.email,
+        firstName: member.firstName,
+        startDate: newStart,
+        endDate: newEnd,
+        pin,
+      });
+    } catch (err) {
+      emailSent = false;
+      logger.error(
+        { err, assignmentId: assignment.id, memberId: member.id },
+        "Failed to send hut leader assignment email"
+      );
+    }
 
     logger.info(
       { assignmentId: assignment.id, memberId: parsed.data.memberId },
       "Hut leader assignment created"
     );
 
-    return NextResponse.json({ id: assignment.id }, { status: 201 });
+    return NextResponse.json(
+      { id: assignment.id, emailSent },
+      { status: 201 }
+    );
   } catch (err) {
     logger.error({ err }, "Error creating hut leader assignment");
     return NextResponse.json({ error: "Failed to create assignment" }, { status: 500 });

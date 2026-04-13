@@ -23,7 +23,7 @@ export async function PUT(
 ) {
   const { date: dateStr } = await params;
 
-  const { error, status, tier } = await checkLodgeAuth(dateStr);
+  const { error, status, tier } = await checkLodgeAuth(dateStr, { request: req });
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }

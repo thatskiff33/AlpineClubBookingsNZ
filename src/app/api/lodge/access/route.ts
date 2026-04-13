@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
-import { requireActiveSessionUser } from "@/lib/session-guards";
+import { checkLodgeAuth } from "@/lib/lodge-auth";
 import { getKioskAccessInfo } from "@/lib/kiosk-access";
-import { parseDateOnly } from "@/lib/date-only";
+import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
 import { z } from "zod";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -12,15 +11,6 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
  * Returns the user's kiosk access tier and capabilities for the given date.
  */
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
-  }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
-  }
-
   const dateStr = req.nextUrl.searchParams.get("date");
   if (!dateStr || !dateSchema.safeParse(dateStr).success) {
     return NextResponse.json({ error: "Invalid or missing date parameter" }, { status: 400 });
@@ -31,7 +21,40 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
   }
 
-  const access = await getKioskAccessInfo(session.user.id, session.user.role, date);
+  const authResult = await checkLodgeAuth(dateStr, {
+    request: req,
+    allowPublicReadOnly: true,
+  });
+  if (authResult.error) {
+    return NextResponse.json({ error: authResult.error }, { status: authResult.status! });
+  }
 
-  return NextResponse.json(access);
+  if (authResult.session?.user) {
+    const access = await getKioskAccessInfo(
+      authResult.session.user.id,
+      authResult.session.user.role,
+      date
+    );
+
+    return NextResponse.json(access);
+  }
+
+  if ("pinSession" in authResult && authResult.pinSession) {
+    return NextResponse.json({
+      tier: "hut-leader",
+      dateRange: authResult.pinSession.dateRange,
+      canManageRoster: true,
+      canMarkAttendance: true,
+      canCompleteChores: true,
+    });
+  }
+
+  const today = formatDateOnly(getTodayDateOnly());
+  return NextResponse.json({
+    tier: "none",
+    dateRange: { minDate: today, maxDate: today },
+    canManageRoster: false,
+    canMarkAttendance: false,
+    canCompleteChores: false,
+  });
 }

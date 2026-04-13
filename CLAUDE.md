@@ -37,7 +37,7 @@ There are 9 phases of improvements tracked as GitHub Issues #48–#56. **Work th
 | 5 | #52 | Pricing, Promos & Cancellation | NOT STARTED |
 | 6 | #53 | Xero Item Codes & Entrance Fees | NOT STARTED |
 | 7 | #54 | Membership Nomination Workflow | NOT STARTED |
-| 8 | #55 | Hut Leader & Kiosk Improvements | NOT STARTED |
+| 8 | #55 | Hut Leader & Kiosk Improvements | COMPLETE |
 | 9 | #56 | Reports & Analytics Enhancements | NOT STARTED |
 
 **To work on a phase:**
