@@ -22,6 +22,21 @@ import {
   getCancellationSettlementBreakdown,
   getPaymentDisplayStatus,
 } from "@/lib/payment-status-display";
+import {
+  buildBookingHistoryItems,
+  type BookingHistoryTone,
+} from "@/lib/booking-history";
+import {
+  getRemainingRefundableCents,
+  hasCapturedPayment,
+} from "@/lib/booking-payment-state";
+
+const historyToneClasses: Record<BookingHistoryTone, string> = {
+  default: "border-slate-200 bg-slate-100 text-slate-700",
+  success: "border-emerald-200 bg-emerald-100 text-emerald-800",
+  warning: "border-amber-200 bg-amber-100 text-amber-800",
+  danger: "border-rose-200 bg-rose-100 text-rose-800",
+};
 
 export default async function BookingDetailPage({
   params,
@@ -56,8 +71,10 @@ export default async function BookingDetailPage({
         select: {
           id: true,
           status: true,
+          reason: true,
           requestedAmountCents: true,
           approvedAmountCents: true,
+          adminNotes: true,
           createdAt: true,
           reviewedAt: true,
         },
@@ -72,6 +89,28 @@ export default async function BookingDetailPage({
   if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
     redirect("/bookings");
   }
+
+  const bookingAuditLogs = await prisma.auditLog.findMany({
+    where: {
+      targetId: booking.id,
+      action: {
+        in: [
+          "booking.payment.confirmed",
+          "booking.payment.failed",
+          "booking.modification.payment.confirmed",
+          "booking.modification.payment.failed",
+          "booking.cancel",
+        ],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      action: true,
+      details: true,
+      createdAt: true,
+    },
+  });
 
   const nights = Math.ceil(
     (new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) /
@@ -99,12 +138,7 @@ export default async function BookingDetailPage({
         credits: booking.creditsFromCancellation,
       })
     : null;
-  const originalPaymentCaptured = Boolean(
-    booking.payment &&
-      ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"].includes(
-        booking.payment.status
-      )
-  );
+  const originalPaymentCaptured = hasCapturedPayment(booking.payment);
   const retainedAfterCancellationCents = booking.payment
     ? Math.max(
         booking.payment.amountCents - booking.payment.refundedAmountCents,
@@ -112,6 +146,24 @@ export default async function BookingDetailPage({
       )
     : 0;
   const latestRefundAppeal = booking.refundRequests[0] ?? null;
+  const maxRefundableCents = getRemainingRefundableCents(booking.payment);
+  const bookingHistory = buildBookingHistoryItems({
+    createdAt: booking.createdAt,
+    payment: booking.payment
+      ? {
+          status: booking.payment.status,
+          amountCents: booking.payment.amountCents,
+          refundedAmountCents: booking.payment.refundedAmountCents,
+          additionalAmountCents: booking.payment.additionalAmountCents,
+          additionalPaymentStatus: booking.payment.additionalPaymentStatus,
+          createdAt: booking.payment.createdAt,
+          updatedAt: booking.payment.updatedAt,
+        }
+      : null,
+    modifications: booking.modifications,
+    refundRequests: booking.refundRequests,
+    auditLogs: bookingAuditLogs,
+  });
 
   const editorData: BookingEditorData = {
     id: booking.id,
@@ -293,12 +345,10 @@ export default async function BookingDetailPage({
       {booking.status === "CANCELLED" &&
         booking.payment &&
         booking.payment.status !== "REFUNDED" &&
-        booking.payment.amountCents - booking.payment.refundedAmountCents > 0 && (
+        maxRefundableCents > 0 && (
           <RefundAppealButton
             bookingId={booking.id}
-            maxRefundableCents={
-              booking.payment.amountCents - booking.payment.refundedAmountCents
-            }
+            maxRefundableCents={maxRefundableCents}
           />
         )}
 
@@ -366,14 +416,16 @@ export default async function BookingDetailPage({
                     </div>
                   )}
 
-                  {booking.payment.changeFeeCents > 0 && (
+                  {booking.payment?.changeFeeCents
+                    ? (
                     <div>
                       <span className="text-slate-500">
                         Included non-refundable change fees:
                       </span>{" "}
                       {formatCents(booking.payment.changeFeeCents)}
                     </div>
-                  )}
+                      )
+                    : null}
                 </>
               )}
 
@@ -422,97 +474,62 @@ export default async function BookingDetailPage({
         </CardContent>
       </Card>
 
-      {booking.modifications.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Modification History</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="divide-y">
-              {booking.modifications.map((mod) => {
-                const prev = mod.previousData as Record<string, unknown>;
-                const next = mod.newData as Record<string, unknown>;
-                const typeLabels: Record<string, string> = {
-                  DATE_CHANGE: "Dates Changed",
-                  GUEST_ADD: "Guests Added",
-                  GUEST_REMOVE: "Guest Removed",
-                  EXTEND_STAY: "Stay Extended",
-                  BATCH_MODIFY: "Booking Modified",
-                };
-                return (
-                  <div key={mod.id} className="py-3 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline">
-                          {typeLabels[mod.modificationType] || mod.modificationType}
-                        </Badge>
-                        <span className="text-sm text-gray-500">
-                          {new Date(mod.createdAt).toLocaleDateString("en-NZ", {
-                            day: "numeric",
-                            month: "short",
-                            year: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </div>
-                      {mod.priceDiffCents !== 0 && (
-                        <span
-                          className={`text-sm font-medium ${
-                            mod.priceDiffCents > 0
-                              ? "text-red-600"
-                              : "text-green-600"
-                          }`}
-                        >
-                          {mod.priceDiffCents > 0 ? "+" : ""}
-                          {formatCents(mod.priceDiffCents)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-sm text-gray-600">
-                      {mod.modificationType === "DATE_CHANGE" && (
-                        <p>
-                          {String(prev.checkIn)} &rarr; {String(next.checkIn)},{" "}
-                          {String(prev.checkOut)} &rarr; {String(next.checkOut)}
-                        </p>
-                      )}
-                      {mod.modificationType === "GUEST_ADD" && (
-                        <p>
-                          {String(prev.guestCount)} &rarr; {String(next.guestCount)} guests
-                        </p>
-                      )}
-                      {mod.modificationType === "GUEST_REMOVE" && (
-                        <p>
-                          Removed{" "}
-                          {(prev.removedGuest as { firstName: string; lastName: string })?.firstName}{" "}
-                          {(prev.removedGuest as { firstName: string; lastName: string })?.lastName}
-                          {" "}&middot;{" "}
-                          {String(prev.guestCount)} &rarr; {String(next.guestCount)} guests
-                        </p>
-                      )}
-                      {mod.modificationType === "BATCH_MODIFY" && (
-                        <p>
-                          {prev.checkIn !== next.checkIn || prev.checkOut !== next.checkOut
-                            ? `${String(prev.checkIn)}-${String(prev.checkOut)} → ${String(next.checkIn)}-${String(next.checkOut)}`
-                            : ""}
-                          {prev.guestCount !== next.guestCount
-                            ? `${prev.checkIn !== next.checkIn ? " · " : ""}${String(prev.guestCount)} → ${String(next.guestCount)} guests`
-                            : ""}
-                        </p>
-                      )}
-                    </div>
-                    {mod.changeFeeCents > 0 && (
-                      <p className="text-xs text-amber-600">
-                        Change fee: {formatCents(mod.changeFeeCents)}
-                      </p>
-                    )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Transaction History</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="divide-y">
+            {bookingHistory.map((item) => (
+              <div
+                key={item.id}
+                className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between"
+              >
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={historyToneClasses[item.tone]}
+                    >
+                      {item.category}
+                    </Badge>
+                    <span className="text-sm font-medium text-slate-900">
+                      {item.title}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {item.occurredAt.toLocaleDateString("en-NZ", {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                  {item.detail ? (
+                    <p className="text-sm text-slate-600">{item.detail}</p>
+                  ) : null}
+                </div>
+                {item.amountDisplay ? (
+                  <span
+                    className={`text-sm font-medium ${
+                      item.tone === "danger"
+                        ? "text-rose-700"
+                        : item.tone === "success"
+                          ? "text-emerald-700"
+                          : item.tone === "warning"
+                            ? "text-amber-700"
+                            : "text-slate-700"
+                    }`}
+                  >
+                    {item.amountDisplay}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

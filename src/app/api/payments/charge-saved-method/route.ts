@@ -9,6 +9,7 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
+import { logAudit } from "@/lib/audit";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -129,6 +130,20 @@ export async function POST(request: NextRequest) {
           data: { status: "PAID" },
         }),
       ]);
+
+      logAudit({
+        action: "booking.payment.confirmed",
+        memberId: isAdmin ? session?.user?.id : undefined,
+        targetId: booking.id,
+        details: JSON.stringify({
+          paymentIntentId: paymentIntent.id,
+          amountCents: booking.finalPriceCents,
+          source: isAuthorizedCron ? "cron" : "admin",
+        }),
+        ipAddress:
+          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+          "unknown",
+      });
     } else {
       // Payment requires additional action (e.g. 3D Secure/SCA) — revert to PENDING
       await prisma.$transaction([
@@ -185,6 +200,22 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     logger.error({ err: error }, "Error charging saved method");
+
+    if (claimedBookingId && !paymentSucceeded) {
+      logAudit({
+        action: "booking.payment.failed",
+        targetId: claimedBookingId,
+        details: JSON.stringify({
+          errorMessage:
+            error instanceof Error
+              ? error.message
+              : "Failed to charge saved payment method",
+        }),
+        ipAddress:
+          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+          "unknown",
+      });
+    }
 
     // Only roll the booking back when Stripe never confirmed a successful charge.
     // If Stripe already succeeded, keep the claimed state so the webhook/manual

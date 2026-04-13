@@ -9,6 +9,7 @@ const {
   mockCreateXeroInvoiceForBooking,
   mockNotifyXeroSyncError,
   mockSendAdminPaymentFailureAlert,
+  mockLogAudit,
   mockBookingFindUnique,
   mockBookingUpdateMany,
   mockBookingUpdate,
@@ -22,6 +23,7 @@ const {
   mockCreateXeroInvoiceForBooking: vi.fn(),
   mockNotifyXeroSyncError: vi.fn().mockResolvedValue(undefined),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
+  mockLogAudit: vi.fn(),
   mockBookingFindUnique: vi.fn(),
   mockBookingUpdateMany: vi.fn(),
   mockBookingUpdate: vi.fn(),
@@ -52,6 +54,10 @@ vi.mock("@/lib/email", () => ({
 
 vi.mock("@/lib/xero-error-alert", () => ({
   notifyXeroSyncError: (...args: unknown[]) => mockNotifyXeroSyncError(...args),
+}));
+
+vi.mock("@/lib/audit", () => ({
+  logAudit: (...args: unknown[]) => mockLogAudit(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({

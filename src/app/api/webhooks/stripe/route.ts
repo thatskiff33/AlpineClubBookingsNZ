@@ -8,6 +8,7 @@ import { recordWebhookLog } from "@/lib/webhook-log";
 import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
+import { logAudit } from "@/lib/audit";
 
 /**
  * Stripe webhook handler.
@@ -272,12 +273,36 @@ async function handlePaymentIntentFailed(
   const bookingId = paymentIntent.metadata?.bookingId;
   if (!bookingId) return;
 
-  await prisma.payment.update({
-    where: { bookingId },
-    data: { status: "FAILED" },
-  }).catch(() => {
-    // Payment record may not exist yet
-    logger.warn({ paymentIntentId: paymentIntent.id, bookingId }, "Could not update payment for failed intent");
+  const isAdditionalPayment =
+    paymentIntent.metadata?.type === "modification_additional";
+  const failureMessage =
+    paymentIntent.last_payment_error?.message || "Unknown payment error";
+
+  await prisma.payment
+    .update({
+      where: { bookingId },
+      data: isAdditionalPayment
+        ? { additionalPaymentStatus: "FAILED" }
+        : { status: "FAILED" },
+    })
+    .catch(() => {
+      // Payment record may not exist yet
+      logger.warn(
+        { paymentIntentId: paymentIntent.id, bookingId, isAdditionalPayment },
+        "Could not update payment for failed intent"
+      );
+    });
+
+  logAudit({
+    action: isAdditionalPayment
+      ? "booking.modification.payment.failed"
+      : "booking.payment.failed",
+    targetId: bookingId,
+    details: JSON.stringify({
+      paymentIntentId: paymentIntent.id,
+      amountCents: paymentIntent.amount,
+      errorMessage: failureMessage,
+    }),
   });
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Payment failed for booking");
@@ -289,13 +314,12 @@ async function handlePaymentIntentFailed(
       include: { member: true },
     });
     if (booking) {
-      const errorMsg = paymentIntent.last_payment_error?.message || "Unknown payment error";
       sendAdminPaymentFailureAlert({
         memberName: `${booking.member.firstName} ${booking.member.lastName}`,
         checkIn: booking.checkIn,
         checkOut: booking.checkOut,
         amountCents: paymentIntent.amount,
-        errorMessage: errorMsg,
+        errorMessage: failureMessage,
         paymentIntentId: paymentIntent.id,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to send admin payment failure alert")

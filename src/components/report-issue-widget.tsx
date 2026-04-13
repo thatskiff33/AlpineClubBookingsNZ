@@ -16,6 +16,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 const MAX_SCREENSHOT_DATA_URL_LENGTH = 1_500_000;
+const UNSUPPORTED_COLOR_FUNCTION_RE =
+  /\b(?:lab|lch|oklab|oklch|color-mix)\(/i;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -40,14 +42,78 @@ function compressCanvasToDataUrl(canvas: HTMLCanvasElement): string {
   return canvas.toDataURL("image/jpeg", 0.55);
 }
 
-async function captureViewportScreenshot(): Promise<string> {
+function resolveColorExpression(expression: string): string | null {
+  const probe = document.createElement("span");
+  probe.setAttribute("aria-hidden", "true");
+  probe.style.position = "fixed";
+  probe.style.pointerEvents = "none";
+  probe.style.opacity = "0";
+  probe.style.inset = "-9999px";
+  probe.style.color = expression;
+  document.body.appendChild(probe);
+
+  const resolved = getComputedStyle(probe).color.trim();
+  probe.remove();
+
+  if (!resolved || UNSUPPORTED_COLOR_FUNCTION_RE.test(resolved)) {
+    return null;
+  }
+
+  return resolved;
+}
+
+function collectResolvedCustomProperties(element: HTMLElement) {
+  const computedStyle = getComputedStyle(element);
+
+  return Array.from(computedStyle)
+    .filter((propertyName) => propertyName.startsWith("--"))
+    .map((propertyName) => {
+      const rawValue = computedStyle.getPropertyValue(propertyName).trim();
+      if (!rawValue || !UNSUPPORTED_COLOR_FUNCTION_RE.test(rawValue)) {
+        return null;
+      }
+
+      const resolvedValue = resolveColorExpression(`var(${propertyName})`);
+      return resolvedValue ? [propertyName, resolvedValue] : null;
+    })
+    .filter((entry): entry is [string, string] => entry !== null);
+}
+
+function applyResolvedCustomProperties(
+  element: HTMLElement,
+  resolvedEntries: Array<[string, string]>
+) {
+  for (const [propertyName, resolvedValue] of resolvedEntries) {
+    element.style.setProperty(propertyName, resolvedValue);
+  }
+}
+
+async function captureViewportScreenshot(options?: {
+  foreignObjectRendering?: boolean;
+  resolveUnsupportedColors?: boolean;
+}): Promise<string> {
+  const rootColorOverrides = options?.resolveUnsupportedColors
+    ? collectResolvedCustomProperties(document.documentElement)
+    : [];
+  const bodyColorOverrides = options?.resolveUnsupportedColors
+    ? collectResolvedCustomProperties(document.body)
+    : [];
+
   const fullCanvas = await html2canvas(document.body, {
     useCORS: true,
     backgroundColor: "#ffffff",
     logging: false,
+    foreignObjectRendering: options?.foreignObjectRendering ?? false,
     ignoreElements: (element) =>
       element instanceof HTMLElement &&
       element.dataset.reportIssueIgnore === "true",
+    onclone: (clonedDocument) => {
+      applyResolvedCustomProperties(
+        clonedDocument.documentElement,
+        rootColorOverrides
+      );
+      applyResolvedCustomProperties(clonedDocument.body, bodyColorOverrides);
+    },
   });
 
   const root = document.documentElement;
@@ -94,6 +160,14 @@ async function captureViewportScreenshot(): Promise<string> {
   return compressCanvasToDataUrl(viewportCanvas);
 }
 
+async function captureViewportScreenshotWithFallbacks(): Promise<string> {
+  try {
+    return await captureViewportScreenshot({ foreignObjectRendering: true });
+  } catch {
+    return captureViewportScreenshot({ resolveUnsupportedColors: true });
+  }
+}
+
 export function ReportIssueWidget() {
   const [open, setOpen] = useState(false);
   const [capturing, setCapturing] = useState(false);
@@ -126,7 +200,7 @@ export function ReportIssueWidget() {
       setPageTitle(document.title);
 
       await nextFrame();
-      const dataUrl = await captureViewportScreenshot();
+      const dataUrl = await captureViewportScreenshotWithFallbacks();
       setScreenshotDataUrl(dataUrl);
     } catch (error) {
       setScreenshotDataUrl(null);
