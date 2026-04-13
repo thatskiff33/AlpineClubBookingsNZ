@@ -7,6 +7,7 @@ import {
   bookingBumpedTemplate,
   bookingCancelledTemplate,
   choreRosterTemplate,
+  hutLeaderAssignmentTemplate,
   emailVerificationTemplate,
   emailChangeVerificationTemplate,
   emailChangeNotificationTemplate,
@@ -71,6 +72,7 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "age-up-invitation",
   "nomination-request",
   "membership-application-approved",
+  "hut-leader-assignment",
 ]);
 
 function shouldPersistEmailHtml(templateName: string): boolean {
@@ -342,6 +344,21 @@ export async function sendChoreRosterEmail(
     subject: `Your chore roster for ${formattedDate} - TAC Lodge`,
     html: choreRosterTemplate(guestName, date, chores, choreLink),
     templateName: "chore-roster",
+  });
+}
+
+export async function sendHutLeaderAssignmentEmail(params: {
+  email: string;
+  firstName: string;
+  startDate: Date;
+  endDate: Date;
+  pin: string;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: "Your TAC hut leader assignment",
+    html: hutLeaderAssignmentTemplate(params),
+    templateName: "hut-leader-assignment",
   });
 }
 

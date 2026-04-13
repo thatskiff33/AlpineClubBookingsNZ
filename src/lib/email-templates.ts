@@ -390,6 +390,28 @@ export function choreRosterTemplate(
   `);
 }
 
+export function hutLeaderAssignmentTemplate(params: {
+  firstName: string;
+  startDate: Date;
+  endDate: Date;
+  pin: string;
+}): string {
+  return layout(`
+    ${heading("Hut Leader Assignment")}
+    ${paragraph("Hi " + escapeHtml(params.firstName) + ", thanks for taking on hut leader duties for the lodge.")}
+    ${infoTable([
+      { label: "Start date", value: formatNZDate(params.startDate) },
+      { label: "End date", value: formatNZDate(params.endDate) },
+      { label: "Kiosk PIN", value: `<strong style="font-size: 18px; letter-spacing: 2px;">${escapeHtml(params.pin)}</strong>` },
+    ])}
+    ${paragraph("When you arrive, open the lodge kiosk and use this PIN to unlock hut leader controls for arrivals, departures, and roster management.")}
+    ${alertBox("Please keep this PIN private and share it only with the assigned hut leader team for these dates.", "warning")}
+    ${paragraph("Responsibilities include checking the lodge list, helping guests settle in, marking arrivals and departures, and making sure the daily chore roster is set up and completed.")}
+    ${button("Open Lodge View", BASE_URL + "/lodge")}
+    ${muted("If you have any issues accessing the kiosk, please contact a club administrator.")}
+  `);
+}
+
 // ---- N-01: Check-in Reminder ----
 
 export function checkinReminderTemplate(

@@ -631,14 +631,17 @@ describe("#24: Lodge Access API", () => {
     expect(data.dateRange).toBeNull();
   });
 
-  it("returns 401 for unauthenticated user", async () => {
+  it("returns read-only access for unauthenticated user", async () => {
     mockAuth.mockResolvedValue(null);
 
     const { NextRequest } = await import("next/server");
     const { GET } = await import("@/app/api/lodge/access/route");
     const req = new NextRequest("http://localhost/api/lodge/access?date=2026-04-08");
     const res = await GET(req);
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.tier).toBe("none");
+    expect(data.canManageRoster).toBe(false);
   });
 
   it("returns 403 for deactivated user with a stale session", async () => {
