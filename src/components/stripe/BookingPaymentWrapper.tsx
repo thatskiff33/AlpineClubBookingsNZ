@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { type BookingPaymentMode } from "@/lib/booking-payment-flow";
 import StripeProvider from "./StripeProvider";
 import PaymentForm from "./PaymentForm";
 import SetupForm from "./SetupForm";
@@ -8,35 +9,26 @@ import SetupForm from "./SetupForm";
 interface BookingPaymentWrapperProps {
   bookingId: string;
   amountCents: number;
-  hasNonMembers: boolean;
-  checkInDaysAway: number;
+  paymentMode: BookingPaymentMode;
   returnUrl: string;
   onPaymentComplete: () => void;
 }
 
 /**
- * Determines whether to show PaymentForm (immediate charge) or SetupForm (save card)
- * based on booking type:
- * - All members OR check-in <= 7 days: PaymentIntent (charge immediately)
- * - Has non-members AND check-in > 7 days: SetupIntent (save card for later)
+ * Renders the Stripe flow for a persisted booking state.
+ * Booking status is the source of truth for whether this page should charge now
+ * or only save a payment method for later.
  */
 export default function BookingPaymentWrapper({
   bookingId,
   amountCents,
-  hasNonMembers,
-  checkInDaysAway,
+  paymentMode,
   returnUrl,
   onPaymentComplete,
 }: BookingPaymentWrapperProps) {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [paymentType, setPaymentType] = useState<"payment" | "setup">(
-    "payment"
-  );
-
-  // Determine payment type: immediate charge vs save card for later
-  const needsSetupIntent = hasNonMembers && checkInDaysAway > 7;
 
   useEffect(() => {
     if (amountCents === 0) return; // No Stripe initialization needed for zero-dollar bookings
@@ -46,7 +38,7 @@ export default function BookingPaymentWrapper({
         setLoading(true);
         setError(null);
 
-        const endpoint = needsSetupIntent
+        const endpoint = paymentMode === "setup"
           ? "/api/payments/create-setup-intent"
           : "/api/payments/create-payment-intent";
 
@@ -64,7 +56,6 @@ export default function BookingPaymentWrapper({
         }
 
         setClientSecret(data.clientSecret);
-        setPaymentType(needsSetupIntent ? "setup" : "payment");
       } catch {
         setError("Failed to connect to payment service");
       } finally {
@@ -73,7 +64,7 @@ export default function BookingPaymentWrapper({
     };
 
     initializePayment();
-  }, [bookingId, needsSetupIntent, amountCents]);
+  }, [bookingId, paymentMode, amountCents]);
 
   // Zero-dollar booking: no payment is required
   if (amountCents === 0) {
@@ -113,7 +104,7 @@ export default function BookingPaymentWrapper({
 
   return (
     <StripeProvider clientSecret={clientSecret}>
-      {paymentType === "payment" ? (
+      {paymentMode === "payment" ? (
         <PaymentForm
           amountCents={amountCents}
           returnUrl={returnUrl}
