@@ -182,7 +182,7 @@ export function AddressAutocomplete({
           countryCode,
           {
             address_params: widgetAddressParams,
-            container: inputRef.current.parentElement ?? document.body,
+            container: document.body,
           },
         );
 
