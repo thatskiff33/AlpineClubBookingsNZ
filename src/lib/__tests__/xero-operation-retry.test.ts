@@ -3,15 +3,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findUniqueOperation: vi.fn(),
   findUniquePayment: vi.fn(),
+  updatePayment: vi.fn(),
   findUniqueBookingModification: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
   updateXeroContact: vi.fn(),
   createXeroInvoiceForBooking: vi.fn(),
   createXeroEntranceFeeInvoice: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
+  createXeroPaymentForInvoice: vi.fn(),
   createXeroCreditNote: vi.fn(),
   createUnappliedXeroCreditNote: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
+  createXeroRefundPaymentForInvoice: vi.fn(),
   allocateCreditNoteToInvoice: vi.fn(),
   checkMembershipStatus: vi.fn(),
 }));
@@ -23,6 +26,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: {
       findUnique: mocks.findUniquePayment,
+      update: mocks.updatePayment,
     },
     bookingModification: {
       findUnique: mocks.findUniqueBookingModification,
@@ -36,9 +40,11 @@ vi.mock("@/lib/xero", () => ({
   createXeroInvoiceForBooking: mocks.createXeroInvoiceForBooking,
   createXeroEntranceFeeInvoice: mocks.createXeroEntranceFeeInvoice,
   createXeroSupplementaryInvoice: mocks.createXeroSupplementaryInvoice,
+  createXeroPaymentForInvoice: mocks.createXeroPaymentForInvoice,
   createXeroCreditNote: mocks.createXeroCreditNote,
   createUnappliedXeroCreditNote: mocks.createUnappliedXeroCreditNote,
   createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
+  createXeroRefundPaymentForInvoice: mocks.createXeroRefundPaymentForInvoice,
   allocateCreditNoteToInvoice: mocks.allocateCreditNoteToInvoice,
   checkMembershipStatus: mocks.checkMembershipStatus,
 }));
@@ -60,6 +66,7 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
     localModel: "Payment",
     localId: "pay_123",
     requestPayload: null,
+    responsePayload: null,
     xeroObjectId: null,
     ...overrides,
   };
@@ -73,9 +80,30 @@ describe("getXeroOperationRetryMeta", () => {
     });
   });
 
-  it("blocks automatic retry for partial operations in this pass", () => {
+  it("marks repairable partial invoice operations as supported", () => {
+    expect(
+      getXeroOperationRetryMeta(
+        makeOperation({
+          status: "PARTIAL",
+          xeroObjectId: "inv_123",
+          responsePayload: {
+            invoice: {
+              invoices: [{ total: 45.67 }],
+            },
+          },
+        })
+      )
+    ).toEqual({
+      supported: true,
+      reason: null,
+    });
+  });
+
+  it("blocks partial repairs when the stored invoice state is incomplete", () => {
     expect(getXeroOperationRetryMeta(makeOperation({ status: "PARTIAL" })).supported).toBe(false);
-    expect(getXeroOperationRetryMeta(makeOperation({ status: "PARTIAL" })).reason).toContain("partial");
+    expect(getXeroOperationRetryMeta(makeOperation({ status: "PARTIAL" })).reason).toContain(
+      "incomplete"
+    );
   });
 
   it("requires a complete stored payload for contact updates", () => {
@@ -232,6 +260,118 @@ describe("retryXeroSyncOperation", () => {
       bookingModificationId: "mod_123",
       createdByMemberId: "admin_1",
     });
+  });
+
+  it("repairs partial booking invoice payment recording", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        xeroObjectId: "inv_123",
+        responsePayload: {
+          invoice: {
+            invoices: [{ total: 45.67 }],
+          },
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Repaired Xero booking invoice payment recording.",
+    });
+
+    expect(mocks.createXeroPaymentForInvoice).toHaveBeenCalledWith({
+      localModel: "Payment",
+      localId: "pay_123",
+      invoiceId: "inv_123",
+      amountCents: 4567,
+      idempotencyKey: "payment:pay_123:invoice-payment:v1",
+      reference: "TACBookings invoice payment pay_123",
+      role: "INVOICE_PAYMENT",
+      createdByMemberId: "admin_1",
+      metadata: {
+        invoiceId: "inv_123",
+        amountCents: 4567,
+      },
+    });
+  });
+
+  it("repairs partial refund credit note follow-up actions", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        xeroObjectId: "cn_123",
+        requestPayload: {
+          allocation: {
+            invoiceId: "inv_123",
+            amount: 12.34,
+          },
+        },
+        responsePayload: {
+          allocation: {
+            allocations: [{ amount: 12.34 }],
+          },
+        },
+      })
+    );
+    mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Repaired Xero refund credit note follow-up actions.",
+    });
+
+    expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+    expect(mocks.updatePayment).toHaveBeenCalledWith({
+      where: { id: "pay_123" },
+      data: { xeroRefundCreditNoteId: "cn_123" },
+    });
+    expect(mocks.createXeroRefundPaymentForInvoice).toHaveBeenCalledWith({
+      paymentId: "pay_123",
+      invoiceId: "inv_123",
+      creditNoteId: "cn_123",
+      refundAmountCents: 1234,
+      createdByMemberId: "admin_1",
+    });
+  });
+
+  it("repairs partial modification credit note allocations", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_123",
+        xeroObjectId: "cn_123",
+        requestPayload: {
+          invoiceId: "inv_123",
+          refundAmountCents: 2500,
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Repaired Xero modification credit note allocation.",
+    });
+
+    expect(mocks.allocateCreditNoteToInvoice).toHaveBeenCalledWith(
+      "cn_123",
+      "inv_123",
+      2500,
+      {
+        localModel: "BookingModification",
+        localId: "mod_123",
+        role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+        createdByMemberId: "admin_1",
+      }
+    );
   });
 
   it("throws a typed retry error for unsupported operations", async () => {

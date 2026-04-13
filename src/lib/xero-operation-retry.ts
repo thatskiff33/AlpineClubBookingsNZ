@@ -1,6 +1,7 @@
 import type { XeroContactUpdateData } from "@/lib/xero";
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
 
 type RetryableOperation = Pick<
   XeroSyncOperation,
@@ -13,6 +14,7 @@ type RetryableOperation = Pick<
   | "localModel"
   | "localId"
   | "requestPayload"
+  | "responsePayload"
   | "xeroObjectId"
 >;
 
@@ -193,6 +195,145 @@ function parseSubscriptionRetryInput(
   return { seasonYear };
 }
 
+function readStoredInvoiceTotalCents(
+  operation: Pick<RetryableOperation, "requestPayload" | "responsePayload">
+): number | null {
+  const responsePayload = asRecord(operation.responsePayload);
+  const invoiceResponse = asRecord(responsePayload?.invoice);
+  const responseInvoice = asRecord(asArray(invoiceResponse?.invoices)[0]);
+  const responseTotal = readNumber(responseInvoice?.total);
+  if (responseTotal !== null) {
+    return Math.round(responseTotal * 100);
+  }
+
+  const requestPayload = asRecord(operation.requestPayload);
+  const requestInvoice = asRecord(asArray(requestPayload?.invoices)[0]);
+  const lineItems = asArray(requestInvoice?.lineItems)
+    .map(asRecord)
+    .filter((value): value is Record<string, unknown> => Boolean(value));
+
+  if (lineItems.length === 0) {
+    return null;
+  }
+
+  const totalCents = lineItems.reduce((sum, lineItem) => {
+    const quantity = readNumber(lineItem.quantity) ?? 1;
+    const unitAmount = readNumber(lineItem.unitAmount);
+    if (unitAmount === null) {
+      return sum;
+    }
+
+    return sum + Math.round(unitAmount * quantity * 100);
+  }, 0);
+
+  return totalCents > 0 || lineItems.some((lineItem) => readNumber(lineItem.unitAmount) === 0)
+    ? totalCents
+    : null;
+}
+
+function parsePartialInvoiceRepairInput(
+  operation: Pick<RetryableOperation, "localModel" | "localId" | "xeroObjectId" | "requestPayload" | "responsePayload">
+): { invoiceId: string; amountCents: number; linkRole: string; idempotencyKey: string; reference: string } | null {
+  if (!operation.localModel || !operation.localId || !operation.xeroObjectId) {
+    return null;
+  }
+
+  const amountCents = readStoredInvoiceTotalCents(operation);
+  if (amountCents === null) {
+    return null;
+  }
+
+  if (operation.localModel === "Payment") {
+    return {
+      invoiceId: operation.xeroObjectId,
+      amountCents,
+      linkRole: "INVOICE_PAYMENT",
+      idempotencyKey: buildXeroIdempotencyKey(
+        "payment",
+        operation.localId,
+        "invoice-payment",
+        "v1"
+      ),
+      reference:
+        amountCents > 0
+          ? `TACBookings invoice payment ${operation.localId.slice(0, 8)}`
+          : "Zero-dollar booking (100% promo discount)",
+    };
+  }
+
+  if (operation.localModel === "Booking" || operation.localModel === "BookingModification") {
+    return {
+      invoiceId: operation.xeroObjectId,
+      amountCents,
+      linkRole: "SUPPLEMENTARY_INVOICE_PAYMENT",
+      idempotencyKey: buildXeroIdempotencyKey(
+        operation.localModel === "BookingModification" ? "booking-mod" : "booking",
+        operation.localId,
+        "supplementary-payment",
+        amountCents,
+        "v1"
+      ),
+      reference: `TACBookings supplementary payment ${operation.localId.slice(0, 8)}`,
+    };
+  }
+
+  return null;
+}
+
+function parseRefundCreditNoteRepairInput(
+  operation: Pick<RetryableOperation, "localModel" | "localId" | "requestPayload" | "responsePayload" | "xeroObjectId">
+): { creditNoteId: string; invoiceId: string; amountCents: number; needsAllocationRepair: boolean; needsRefundPaymentRepair: boolean } | null {
+  if (operation.localModel !== "Payment" || !operation.localId || !operation.xeroObjectId) {
+    return null;
+  }
+
+  const payload = asRecord(operation.requestPayload);
+  const allocation = asRecord(payload?.allocation);
+  const invoiceId = readString(allocation?.invoiceId);
+  const amount = readNumber(allocation?.amount);
+  if (!invoiceId || amount === null) {
+    return null;
+  }
+
+  const responsePayload = asRecord(operation.responsePayload);
+  return {
+    creditNoteId: operation.xeroObjectId,
+    invoiceId,
+    amountCents: Math.round(amount * 100),
+    needsAllocationRepair: !asRecord(responsePayload?.allocation),
+    needsRefundPaymentRepair: !asRecord(responsePayload?.refundPayment),
+  };
+}
+
+function parseModificationCreditNoteRepairInput(
+  operation: Pick<RetryableOperation, "localModel" | "localId" | "requestPayload" | "xeroObjectId">
+): { creditNoteId: string; invoiceId: string; amountCents: number; allocationRole: string } | null {
+  if (
+    (!operation.localModel || (operation.localModel !== "Booking" && operation.localModel !== "BookingModification")) ||
+    !operation.localId ||
+    !operation.xeroObjectId
+  ) {
+    return null;
+  }
+
+  const payload = asRecord(operation.requestPayload);
+  const invoiceId = readString(payload?.invoiceId);
+  const amountCents = readNumber(payload?.refundAmountCents);
+  if (!invoiceId || amountCents === null) {
+    return null;
+  }
+
+  return {
+    creditNoteId: operation.xeroObjectId,
+    invoiceId,
+    amountCents,
+    allocationRole:
+      operation.localModel === "BookingModification"
+        ? "MODIFICATION_CREDIT_NOTE_ALLOCATION"
+        : "CREDIT_NOTE_ALLOCATION",
+  };
+}
+
 export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOperationRetryMeta {
   if (!operation.replayable) {
     return {
@@ -201,20 +342,41 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     };
   }
 
-  if (operation.status !== "FAILED") {
-    return {
-      supported: false,
-      reason:
-        operation.status === "PARTIAL"
-          ? "Automatic retry for partial operations is not implemented in this pass."
-          : "Only failed operations can be retried from this screen.",
-    };
-  }
-
   if (operation.direction !== "OUTBOUND") {
     return {
       supported: false,
       reason: "Only outbound operations are retryable in this pass.",
+    };
+  }
+
+  if (operation.status === "PARTIAL") {
+    if (operation.entityType === "INVOICE" && operation.operationType === "CREATE") {
+      return parsePartialInvoiceRepairInput(operation)
+        ? { supported: true, reason: null }
+        : { supported: false, reason: "Stored invoice payload is incomplete for payment repair." };
+    }
+
+    if (operation.entityType === "CREDIT_NOTE" && operation.operationType === "CREATE") {
+      if (parseRefundCreditNoteRepairInput(operation) || parseModificationCreditNoteRepairInput(operation)) {
+        return { supported: true, reason: null };
+      }
+
+      return {
+        supported: false,
+        reason: "Stored credit note payload is incomplete for partial repair.",
+      };
+    }
+
+    return {
+      supported: false,
+      reason: "This partial Xero operation does not have a repair handler yet.",
+    };
+  }
+
+  if (operation.status !== "FAILED") {
+    return {
+      supported: false,
+      reason: "Only failed or partially-completed operations can be retried from this screen.",
     };
   }
 
@@ -329,6 +491,105 @@ export async function retryXeroSyncOperation(
 
   const xero = await import("@/lib/xero");
   const createdByMemberId = options?.createdByMemberId ?? undefined;
+
+  if (operation.status === "PARTIAL") {
+    const partialInvoiceRepair = parsePartialInvoiceRepairInput(operation);
+    if (
+      operation.entityType === "INVOICE" &&
+      operation.operationType === "CREATE" &&
+      partialInvoiceRepair &&
+      operation.localModel &&
+      operation.localId
+    ) {
+      await xero.createXeroPaymentForInvoice({
+        localModel: operation.localModel,
+        localId: operation.localId,
+        invoiceId: partialInvoiceRepair.invoiceId,
+        amountCents: partialInvoiceRepair.amountCents,
+        idempotencyKey: partialInvoiceRepair.idempotencyKey,
+        reference: partialInvoiceRepair.reference,
+        role: partialInvoiceRepair.linkRole,
+        createdByMemberId,
+        metadata: {
+          invoiceId: partialInvoiceRepair.invoiceId,
+          amountCents: partialInvoiceRepair.amountCents,
+        },
+      });
+
+      return {
+        message:
+          partialInvoiceRepair.linkRole === "INVOICE_PAYMENT"
+            ? "Repaired Xero booking invoice payment recording."
+            : "Repaired Xero supplementary invoice payment recording.",
+      };
+    }
+
+    const refundCreditNoteRepair = parseRefundCreditNoteRepairInput(operation);
+    if (
+      operation.entityType === "CREDIT_NOTE" &&
+      operation.operationType === "CREATE" &&
+      refundCreditNoteRepair
+    ) {
+      if (refundCreditNoteRepair.needsAllocationRepair) {
+        await xero.allocateCreditNoteToInvoice(
+          refundCreditNoteRepair.creditNoteId,
+          refundCreditNoteRepair.invoiceId,
+          refundCreditNoteRepair.amountCents,
+          {
+            localModel: "Payment",
+            localId: operation.localId ?? undefined,
+            createdByMemberId,
+          }
+        );
+      }
+
+      await prisma.payment.update({
+        where: { id: operation.localId! },
+        data: {
+          xeroRefundCreditNoteId: refundCreditNoteRepair.creditNoteId,
+        },
+      });
+
+      if (refundCreditNoteRepair.needsRefundPaymentRepair) {
+        await xero.createXeroRefundPaymentForInvoice({
+          paymentId: operation.localId!,
+          invoiceId: refundCreditNoteRepair.invoiceId,
+          creditNoteId: refundCreditNoteRepair.creditNoteId,
+          refundAmountCents: refundCreditNoteRepair.amountCents,
+          createdByMemberId,
+        });
+      }
+
+      return { message: "Repaired Xero refund credit note follow-up actions." };
+    }
+
+    const modificationCreditNoteRepair = parseModificationCreditNoteRepairInput(operation);
+    if (
+      operation.entityType === "CREDIT_NOTE" &&
+      operation.operationType === "CREATE" &&
+      modificationCreditNoteRepair &&
+      operation.localModel &&
+      operation.localId
+    ) {
+      await xero.allocateCreditNoteToInvoice(
+        modificationCreditNoteRepair.creditNoteId,
+        modificationCreditNoteRepair.invoiceId,
+        modificationCreditNoteRepair.amountCents,
+        {
+          localModel: operation.localModel,
+          localId: operation.localId,
+          role: modificationCreditNoteRepair.allocationRole,
+          createdByMemberId,
+        }
+      );
+
+      return { message: "Repaired Xero modification credit note allocation." };
+    }
+
+    throw new XeroOperationRetryError(
+      "This partial Xero operation does not have a repair handler yet."
+    );
+  }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "CREATE") {
     await xero.findOrCreateXeroContact(operation.localId!, { createdByMemberId });
