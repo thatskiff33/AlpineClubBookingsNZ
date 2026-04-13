@@ -73,12 +73,24 @@ Completed in this pass:
   - `findOrCreateXeroContact()` now trusts an existing `member.xeroContactId` on steady-state write paths instead of issuing a `getContact()` verification read first
   - explicit repair/relookup mode can now re-search by email and relink a stale member contact when retry/replay flows opt in
   - Xero operation retries now opt into that repair path for booking invoices, refund credit notes, supplementary invoices, modification credit notes, and entrance-fee invoices in `src/lib/xero-operation-retry.ts`
+- Completed the remaining Phase 6 inline repair step in `src/lib/xero.ts`:
+  - added shared stale-contact detection plus one-shot relink/retry when Xero returns a contact not-found / invalid-reference error
+  - first-pass steady-state writes now auto-repair and retry for:
+    - `updateXeroContact()`
+    - `createXeroInvoiceForBooking()`
+    - `createXeroCreditNote()`
+    - `createUnappliedXeroCreditNote()`
+    - `createXeroSupplementaryInvoice()`
+    - `createXeroCreditNoteForModification()`
+    - `createXeroEntranceFeeInvoice()`
+  - when a repair changes the contact ID mid-flight, the running `XeroSyncOperation` request payload is updated before the retry so reconciliation history reflects the repaired write target
 - Added targeted test coverage for the Phase 6 write-overhead reduction:
   - `src/lib/__tests__/xero-contact-sync.test.ts`
   - `src/lib/__tests__/phase3b-member-detail-edit.test.ts`
   - `src/lib/__tests__/phone-address-sync.test.ts`
   - `src/lib/__tests__/xero-find-or-create-contact.test.ts`
   - updated retry expectations in `src/lib/__tests__/xero-operation-retry.test.ts`
+- Added focused helper coverage for the inline repair path in `src/lib/__tests__/xero.test.ts`.
 - Expanded Phase 7 inbound reconciliation beyond contact and invoice events:
   - added `PAYMENT` webhook reconciliation in `src/lib/xero-inbound-reconciliation.ts` to restore payment links, refresh linked invoice metadata, and refresh linked subscriptions
   - added `CREDIT_NOTE` webhook reconciliation in `src/lib/xero-inbound-reconciliation.ts` to restore refund-credit-note links, allocation links, and refund payment links
@@ -93,7 +105,6 @@ Work remaining after this pass:
 - Phase 3: local cache tables for Xero contact groups and memberships so member pages and filters can stay local-only without the temporary "not loaded" fallback.
 - Phase 4: incremental contact sync and group import so default admin syncs stop doing full scans plus per-contact invoice lookups.
 - Phase 6 still remaining:
-  - add inline one-shot repair on Xero invalid-reference / not-found errors so the first failed write can relink automatically rather than waiting for an explicit retry/replay path
   - add a durable local claim/outbox so invoice and credit-note writes do not get re-attempted from multiple booking/payment trigger paths
   - reduce duplicate write attempts across booking creation, confirm-draft, waitlist confirmation, saved-card charging, Stripe webhooks, and pending-confirmation cron
 - Phase 7 still remaining:
@@ -554,8 +565,8 @@ Status:
 
 - Partially implemented.
 - The field-diff portion is now in place for member/profile contact sync, so unchanged or local-only edits stop emitting unnecessary Xero contact updates.
-- Steady-state write paths now trust an existing `member.xeroContactId` without a `getContact()` preflight read, and retry/replay flows can explicitly relink stale contacts before recreating invoices or credit notes.
-- The remaining work in this phase is automatic inline repair on the first invalid-reference failure plus durable claim semantics for invoice and credit-note creation paths.
+- Steady-state write paths now trust an existing `member.xeroContactId` without a `getContact()` preflight read, retry/replay flows can explicitly relink stale contacts before recreating invoices or credit notes, and the initial steady-state write now auto-repairs once when Xero rejects a stale contact reference.
+- The remaining work in this phase is now the durable claim/outbox and duplicate-trigger consolidation for invoice and credit-note creation paths.
 
 Goal:
 
@@ -566,8 +577,7 @@ Implementation steps:
 - `findOrCreateXeroContact()` now trusts an existing `member.xeroContactId` by default on normal write paths.
 - `getContact()` preflight verification has now been removed from the normal write paths that rely on `findOrCreateXeroContact()`.
 - Retry/replay flows can now run an explicit relink pass before recreating invoice and credit-note writes.
-- Remaining repair step:
-  - add inline one-shot relink/retry when Xero returns a not-found / invalid-reference error on the initial write attempt
+- Initial steady-state writes now also run an inline one-shot relink/retry when Xero returns a not-found / invalid-reference contact error.
 - Add field-diff logic before `updateXeroContact()`:
   - only sync when Xero-mapped fields changed
   - skip when only local-only fields changed
@@ -583,6 +593,7 @@ Implementation steps:
 Acceptance criteria:
 
 - A normal booking invoice or refund write does not start with an avoidable `getContact()` read.
+- A stale `member.xeroContactId` self-heals on the first steady-state write attempt instead of waiting for an operator-triggered retry.
 - Editing member-local fields does not produce Xero writes.
 - Booking/payment Xero writes have one primary execution path and durable local claim semantics.
 

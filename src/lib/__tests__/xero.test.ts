@@ -15,6 +15,8 @@ import {
   findSubscriptionInvoice,
   determineSubscriptionStatus,
   buildInvoiceLineItems,
+  isRetryableXeroContactReferenceError,
+  retryXeroWriteWithContactRepair,
   withXeroRetry,
   XeroDailyLimitError,
   resetXeroRateLimitStateForTests,
@@ -605,6 +607,111 @@ describe("callXeroApi", () => {
         errorMessage: "Xero exploded",
       })
     )
+  })
+})
+
+describe("isRetryableXeroContactReferenceError", () => {
+  it("matches Xero invalid-reference contact errors", () => {
+    expect(
+      isRetryableXeroContactReferenceError({
+        response: { statusCode: 400 },
+        body: {
+          Detail: "The Contact with the specified ContactID could not be found",
+        },
+      })
+    ).toBe(true)
+  })
+
+  it("ignores unrelated validation failures", () => {
+    expect(
+      isRetryableXeroContactReferenceError({
+        response: { statusCode: 400 },
+        body: {
+          Detail: "Invoice not of valid status for payment",
+        },
+      })
+    ).toBe(false)
+  })
+})
+
+describe("retryXeroWriteWithContactRepair", () => {
+  it("repairs a stale contact link, persists the updated payload, and retries once", async () => {
+    const staleError = {
+      response: { statusCode: 400 },
+      body: { Detail: "Contact not found" },
+    }
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(staleError)
+      .mockResolvedValueOnce("ok")
+    const repairContactLink = vi.fn().mockResolvedValue("contact_repaired")
+    const persistUpdatedOperation = vi.fn().mockResolvedValue(undefined)
+
+    const result = await retryXeroWriteWithContactRepair({
+      memberId: "mem_1",
+      currentContactId: "contact_stale",
+      workflow: "createXeroInvoiceForBooking",
+      operationId: "op_1",
+      createdByMemberId: "admin_1",
+      buildRequestPayload: (contactId) => ({
+        invoices: [{ contact: { contactID: contactId } }],
+      }),
+      buildOperationKeys: (contactId) => ({
+        idempotencyKey: `idem:${contactId}`,
+        correlationKey: `corr:${contactId}`,
+      }),
+      run,
+      repairContactLink,
+      persistUpdatedOperation,
+    })
+
+    expect(result).toBe("ok")
+    expect(run).toHaveBeenNthCalledWith(1, {
+      contactId: "contact_stale",
+      idempotencyKey: "idem:contact_stale",
+    })
+    expect(repairContactLink).toHaveBeenCalledWith("mem_1", {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+    })
+    expect(persistUpdatedOperation).toHaveBeenCalledWith({
+      operationId: "op_1",
+      requestPayload: {
+        invoices: [{ contact: { contactID: "contact_repaired" } }],
+      },
+      keys: {
+        idempotencyKey: "idem:contact_repaired",
+        correlationKey: "corr:contact_repaired",
+      },
+    })
+    expect(run).toHaveBeenNthCalledWith(2, {
+      contactId: "contact_repaired",
+      idempotencyKey: "idem:contact_repaired",
+    })
+  })
+
+  it("does not attempt a second repair when the caller is already in repair mode", async () => {
+    const staleError = {
+      response: { statusCode: 404 },
+      body: { Detail: "Contact does not exist" },
+    }
+    const run = vi.fn().mockRejectedValue(staleError)
+    const repairContactLink = vi.fn()
+
+    await expect(
+      retryXeroWriteWithContactRepair({
+        memberId: "mem_1",
+        currentContactId: "contact_stale",
+        workflow: "createXeroCreditNote",
+        repairExistingLink: true,
+        buildRequestPayload: () => ({}),
+        run,
+        repairContactLink,
+      })
+    ).rejects.toBe(staleError)
+
+    expect(repairContactLink).not.toHaveBeenCalled()
+    expect(run).toHaveBeenCalledTimes(1)
   })
 })
 

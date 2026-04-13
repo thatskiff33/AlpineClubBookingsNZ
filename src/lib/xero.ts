@@ -22,6 +22,7 @@ import {
   buildXeroPayloadHash,
   completeXeroSyncOperation,
   failXeroSyncOperation,
+  sanitizeForJson,
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
@@ -1001,6 +1002,164 @@ export async function callXeroApi<T>(
       observedRateLimitCategory
     );
     throw err;
+  }
+}
+
+interface XeroContactRepairOperationKeys {
+  idempotencyKey?: string | null;
+  correlationKey?: string | null;
+}
+
+interface RetryXeroWriteWithContactRepairOptions<T> {
+  memberId: string;
+  currentContactId: string;
+  workflow: string;
+  operationId?: string;
+  repairExistingLink?: boolean;
+  createdByMemberId?: string;
+  buildRequestPayload: (contactId: string) => unknown;
+  buildOperationKeys?: (contactId: string) => XeroContactRepairOperationKeys;
+  run: (input: {
+    contactId: string;
+    idempotencyKey?: string | null;
+  }) => Promise<T>;
+  repairContactLink?: (
+    memberId: string,
+    options?: FindOrCreateXeroContactOptions
+  ) => Promise<string>;
+  persistUpdatedOperation?: (input: {
+    operationId: string;
+    requestPayload: unknown;
+    keys?: XeroContactRepairOperationKeys;
+  }) => Promise<void>;
+}
+
+function getXeroErrorSearchText(error: unknown): string {
+  const values = new Set<string>();
+
+  const addValue = (value: unknown) => {
+    if (typeof value === "string" && value.trim()) {
+      values.add(value.toLowerCase());
+    }
+  };
+
+  if (error instanceof Error) {
+    addValue(error.message);
+  }
+
+  if (typeof error === "string") {
+    addValue(error);
+  }
+
+  if (error && typeof error === "object") {
+    const candidate = error as {
+      body?: { Detail?: unknown; Message?: unknown; Title?: unknown };
+      message?: unknown;
+    };
+
+    addValue(candidate.message);
+    addValue(candidate.body?.Detail);
+    addValue(candidate.body?.Message);
+    addValue(candidate.body?.Title);
+
+    try {
+      addValue(JSON.stringify(error));
+    } catch {
+      // Ignore non-serializable values.
+    }
+  }
+
+  return Array.from(values).join("\n");
+}
+
+export function isRetryableXeroContactReferenceError(error: unknown): boolean {
+  const statusCode = getXeroErrorStatusCode(error);
+  if (statusCode !== undefined && statusCode !== 400 && statusCode !== 404) {
+    return false;
+  }
+
+  const text = getXeroErrorSearchText(error);
+  if (!text.includes("contact")) {
+    return false;
+  }
+
+  return [
+    "not found",
+    "does not exist",
+    "invalid reference",
+    "invalid_reference",
+    "invalid contact",
+    "not a valid contact",
+    "could not be found",
+  ].some((fragment) => text.includes(fragment));
+}
+
+async function persistUpdatedXeroOperationRequest(input: {
+  operationId: string;
+  requestPayload: unknown;
+  keys?: XeroContactRepairOperationKeys;
+}) {
+  await prisma.xeroSyncOperation.update({
+    where: { id: input.operationId },
+    data: {
+      requestPayload: sanitizeForJson(input.requestPayload),
+      idempotencyKey: input.keys?.idempotencyKey,
+      correlationKey: input.keys?.correlationKey,
+    },
+  });
+}
+
+export async function retryXeroWriteWithContactRepair<T>(
+  options: RetryXeroWriteWithContactRepairOptions<T>
+): Promise<T> {
+  const initialKeys = options.buildOperationKeys?.(options.currentContactId);
+
+  try {
+    return await options.run({
+      contactId: options.currentContactId,
+      idempotencyKey: initialKeys?.idempotencyKey ?? null,
+    });
+  } catch (error) {
+    if (
+      options.repairExistingLink ||
+      !isRetryableXeroContactReferenceError(error)
+    ) {
+      throw error;
+    }
+
+    const repairContactLink =
+      options.repairContactLink ?? findOrCreateXeroContact;
+    const repairedContactId = await repairContactLink(options.memberId, {
+      createdByMemberId: options.createdByMemberId,
+      repairExistingLink: true,
+    });
+    const repairedPayload = options.buildRequestPayload(repairedContactId);
+    const repairedKeys = options.buildOperationKeys?.(repairedContactId);
+
+    if (options.operationId) {
+      const persistUpdatedOperation =
+        options.persistUpdatedOperation ?? persistUpdatedXeroOperationRequest;
+      await persistUpdatedOperation({
+        operationId: options.operationId,
+        requestPayload: repairedPayload,
+        keys: repairedKeys,
+      });
+    }
+
+    logger.warn(
+      {
+        workflow: options.workflow,
+        memberId: options.memberId,
+        previousContactId: options.currentContactId,
+        repairedContactId,
+      },
+      "Retrying Xero write after repairing a stale contact link"
+    );
+
+    return options.run({
+      contactId: repairedContactId,
+      idempotencyKey: repairedKeys?.idempotencyKey ?? null,
+    });
   }
 }
 
@@ -2080,8 +2239,8 @@ export async function updateXeroContact(
 ): Promise<void> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
-  const contact: Contact = {
-    contactID: xeroContactId,
+  const buildContact = (contactId: string): Contact => ({
+    contactID: contactId,
     name: `${data.firstName} ${data.lastName}`,
     firstName: data.firstName,
     lastName: data.lastName,
@@ -2091,56 +2250,77 @@ export async function updateXeroContact(
       ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneCountryCode: data.phoneCountryCode || "", phoneAreaCode: data.phoneAreaCode || "", phoneNumber: data.phoneNumber }]
       : [],
     addresses: buildXeroAddresses(data),
+  });
+  const buildOperationKeys = (contactId: string) => {
+    const payloadHash = buildXeroPayloadHash(buildContact(contactId));
+    const idempotencyKey = buildXeroIdempotencyKey(
+      "contact",
+      contactId,
+      "update",
+      payloadHash,
+      "v1"
+    );
+
+    return {
+      idempotencyKey,
+      correlationKey: idempotencyKey,
+    };
   };
 
-  const payloadHash = buildXeroPayloadHash(contact);
-  const idempotencyKey = buildXeroIdempotencyKey(
-    "contact",
-    xeroContactId,
-    "update",
-    payloadHash,
-    "v1"
-  );
+  const initialKeys = buildOperationKeys(xeroContactId);
   const operation = await startXeroSyncOperation({
     direction: "OUTBOUND",
     entityType: "CONTACT",
     operationType: "UPDATE",
     localModel: options?.localModel,
     localId: options?.localId,
-    idempotencyKey,
-    correlationKey: buildXeroIdempotencyKey(
-      "contact",
-      xeroContactId,
-      "update",
-      payloadHash,
-      "v1"
-    ),
-    requestPayload: { contacts: [contact] },
+    idempotencyKey: initialKeys.idempotencyKey,
+    correlationKey: initialKeys.correlationKey,
+    requestPayload: { contacts: [buildContact(xeroContactId)] },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
 
   try {
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.updateContact(
-          tenantId,
-          xeroContactId,
-          { contacts: [contact] },
-          idempotencyKey
+    const response = await retryXeroWriteWithContactRepair({
+      memberId:
+        options?.localModel === "Member" && options.localId
+          ? options.localId
+          : "",
+      currentContactId: xeroContactId,
+      workflow: "updateXeroContact",
+      operationId: operation.id,
+      repairExistingLink:
+        options?.localModel !== "Member" || !options.localId,
+      createdByMemberId: options?.createdByMemberId,
+      buildRequestPayload: (contactId) => ({
+        contacts: [buildContact(contactId)],
+      }),
+      buildOperationKeys,
+      run: ({ contactId, idempotencyKey }) =>
+        callXeroApi(
+          () =>
+            xero.accountingApi.updateContact(
+              tenantId,
+              contactId,
+              { contacts: [buildContact(contactId)] },
+              idempotencyKey ?? undefined
+            ),
+          {
+            operation: "updateContact",
+            resourceType: "CONTACT",
+            workflow: "updateXeroContact",
+            context: `updateContact(${contactId})`,
+          }
         ),
-      {
-        operation: "updateContact",
-        resourceType: "CONTACT",
-        workflow: "updateXeroContact",
-        context: `updateContact(${xeroContactId})`,
-      }
-    );
+    });
+    const completedContactId =
+      response.body.contacts?.[0]?.contactID ?? xeroContactId;
 
     await completeXeroSyncOperation(operation.id, {
       responsePayload: response.body,
       xeroObjectType: "CONTACT",
-      xeroObjectId: xeroContactId,
-      xeroObjectUrl: buildXeroContactUrl(xeroContactId),
+      xeroObjectId: completedContactId,
+      xeroObjectUrl: buildXeroContactUrl(completedContactId),
       extraLinks:
         options?.localModel && options.localId
           ? [
@@ -2148,8 +2328,8 @@ export async function updateXeroContact(
                 localModel: options.localModel,
                 localId: options.localId,
                 xeroObjectType: "CONTACT",
-                xeroObjectId: xeroContactId,
-                xeroObjectUrl: buildXeroContactUrl(xeroContactId),
+                xeroObjectId: completedContactId,
+                xeroObjectUrl: buildXeroContactUrl(completedContactId),
                 role: "CONTACT",
               },
             ]
@@ -2901,17 +3081,16 @@ export async function createXeroInvoiceForBooking(
     lineItems.push(discountLineItem);
   }
 
-  // Create the invoice
-  const invoice: Invoice = {
+  const buildInvoice = (resolvedContactId: string): Invoice => ({
     type: Invoice.TypeEnum.ACCREC,
-    contact: { contactID: contactId },
+    contact: { contactID: resolvedContactId },
     lineItems,
     date: formatDate(new Date()),
     dueDate: formatDate(new Date()), // Already paid
     reference: `Booking ${bookingId.slice(0, 8)}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,
-  };
+  });
 
   const invoiceIdempotencyKey = buildXeroIdempotencyKey(
     "booking",
@@ -2927,27 +3106,39 @@ export async function createXeroInvoiceForBooking(
     localId: booking.payment.id,
     idempotencyKey: invoiceIdempotencyKey,
     correlationKey: invoiceIdempotencyKey,
-    requestPayload: { invoices: [invoice] },
+    requestPayload: { invoices: [buildInvoice(contactId)] },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
 
   try {
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.createInvoices(
-          tenantId,
-          { invoices: [invoice] },
-          undefined,
-          undefined,
-          invoiceIdempotencyKey
+    const response = await retryXeroWriteWithContactRepair({
+      memberId: booking.memberId,
+      currentContactId: contactId,
+      workflow: "createXeroInvoiceForBooking",
+      operationId: operation.id,
+      repairExistingLink: options?.repairExistingLink,
+      createdByMemberId: options?.createdByMemberId,
+      buildRequestPayload: (resolvedContactId) => ({
+        invoices: [buildInvoice(resolvedContactId)],
+      }),
+      run: ({ contactId: resolvedContactId }) =>
+        callXeroApi(
+          () =>
+            xero.accountingApi.createInvoices(
+              tenantId,
+              { invoices: [buildInvoice(resolvedContactId)] },
+              undefined,
+              undefined,
+              invoiceIdempotencyKey
+            ),
+          {
+            operation: "createInvoices",
+            resourceType: "INVOICE",
+            workflow: "createXeroInvoiceForBooking",
+            context: `createInvoices(booking ${bookingId})`,
+          }
         ),
-      {
-        operation: "createInvoices",
-        resourceType: "INVOICE",
-        workflow: "createXeroInvoiceForBooking",
-        context: `createInvoices(booking ${bookingId})`,
-      }
-    );
+    });
 
     const createdInvoice = response.body.invoices?.[0];
     if (!createdInvoice?.invoiceID) {
@@ -3122,15 +3313,15 @@ export async function createXeroCreditNote(
     refundLineItem.accountCode = accountCode;
   }
 
-  const creditNote: CreditNote = {
+  const buildCreditNote = (resolvedContactId: string): CreditNote => ({
     type: CreditNote.TypeEnum.ACCRECCREDIT,
-    contact: { contactID: contactId },
+    contact: { contactID: resolvedContactId },
     date: formatDate(new Date()),
     lineAmountTypes: LineAmountTypes.Inclusive,
     lineItems: [refundLineItem],
     reference: `Refund - Booking ${payment.booking.id.slice(0, 8)}`,
     status: CreditNote.StatusEnum.AUTHORISED,
-  };
+  });
 
   const creditNoteIdempotencyKey = buildXeroIdempotencyKey(
     "payment",
@@ -3148,7 +3339,7 @@ export async function createXeroCreditNote(
     idempotencyKey: creditNoteIdempotencyKey,
     correlationKey: creditNoteIdempotencyKey,
     requestPayload: {
-      creditNotes: [creditNote],
+      creditNotes: [buildCreditNote(contactId)],
       allocation: {
         invoiceId: originalInvoiceId,
         amount: refundAmountCents / 100,
@@ -3158,22 +3349,38 @@ export async function createXeroCreditNote(
   });
 
   try {
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.createCreditNotes(
-          tenantId,
-          { creditNotes: [creditNote] },
-          undefined,
-          undefined,
-          creditNoteIdempotencyKey
+    const response = await retryXeroWriteWithContactRepair({
+      memberId: payment.booking.memberId,
+      currentContactId: contactId,
+      workflow: "createXeroCreditNote",
+      operationId: operation.id,
+      repairExistingLink: options?.repairExistingLink,
+      createdByMemberId: options?.createdByMemberId,
+      buildRequestPayload: (resolvedContactId) => ({
+        creditNotes: [buildCreditNote(resolvedContactId)],
+        allocation: {
+          invoiceId: originalInvoiceId,
+          amount: refundAmountCents / 100,
+        },
+      }),
+      run: ({ contactId: resolvedContactId }) =>
+        callXeroApi(
+          () =>
+            xero.accountingApi.createCreditNotes(
+              tenantId,
+              { creditNotes: [buildCreditNote(resolvedContactId)] },
+              undefined,
+              undefined,
+              creditNoteIdempotencyKey
+            ),
+          {
+            operation: "createCreditNotes",
+            resourceType: "CREDIT_NOTE",
+            workflow: "createXeroCreditNote",
+            context: `createCreditNotes(refund ${paymentId})`,
+          }
         ),
-      {
-        operation: "createCreditNotes",
-        resourceType: "CREDIT_NOTE",
-        workflow: "createXeroCreditNote",
-        context: `createCreditNotes(refund ${paymentId})`,
-      }
-    );
+    });
 
     const createdNote = response.body.creditNotes?.[0];
     if (!createdNote?.creditNoteID) {
@@ -3393,15 +3600,15 @@ export async function createUnappliedXeroCreditNote(
     creditLineItem.accountCode = accountCode;
   }
 
-  const creditNote: CreditNote = {
+  const buildCreditNote = (resolvedContactId: string): CreditNote => ({
     type: CreditNote.TypeEnum.ACCRECCREDIT,
-    contact: { contactID: contactId },
+    contact: { contactID: resolvedContactId },
     date: formatDate(new Date()),
     lineAmountTypes: LineAmountTypes.Inclusive,
     lineItems: [creditLineItem],
     reference: `Account Credit - Booking ${payment.booking.id.slice(0, 8)}`,
     status: CreditNote.StatusEnum.AUTHORISED,
-  };
+  });
 
   const idempotencyKey = buildXeroIdempotencyKey(
     "payment",
@@ -3418,27 +3625,39 @@ export async function createUnappliedXeroCreditNote(
     localId: paymentId,
     idempotencyKey,
     correlationKey: idempotencyKey,
-    requestPayload: { creditNotes: [creditNote] },
+    requestPayload: { creditNotes: [buildCreditNote(contactId)] },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
 
   try {
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.createCreditNotes(
-          tenantId,
-          { creditNotes: [creditNote] },
-          undefined,
-          undefined,
-          idempotencyKey
+    const response = await retryXeroWriteWithContactRepair({
+      memberId: payment.booking.memberId,
+      currentContactId: contactId,
+      workflow: "createUnappliedXeroCreditNote",
+      operationId: operation.id,
+      repairExistingLink: options?.repairExistingLink,
+      createdByMemberId: options?.createdByMemberId,
+      buildRequestPayload: (resolvedContactId) => ({
+        creditNotes: [buildCreditNote(resolvedContactId)],
+      }),
+      run: ({ contactId: resolvedContactId }) =>
+        callXeroApi(
+          () =>
+            xero.accountingApi.createCreditNotes(
+              tenantId,
+              { creditNotes: [buildCreditNote(resolvedContactId)] },
+              undefined,
+              undefined,
+              idempotencyKey
+            ),
+          {
+            operation: "createCreditNotes",
+            resourceType: "CREDIT_NOTE",
+            workflow: "createUnappliedXeroCreditNote",
+            context: `createCreditNotes(unapplied ${paymentId})`,
+          }
         ),
-      {
-        operation: "createCreditNotes",
-        resourceType: "CREDIT_NOTE",
-        workflow: "createUnappliedXeroCreditNote",
-        context: `createCreditNotes(unapplied ${paymentId})`,
-      }
-    );
+    });
 
     const createdNote = response.body.creditNotes?.[0];
     if (!createdNote?.creditNoteID) {
@@ -3654,16 +3873,16 @@ export async function createXeroSupplementaryInvoice(params: {
 
   if (lineItems.length === 0) return null;
 
-  const invoice: Invoice = {
+  const buildInvoice = (resolvedContactId: string): Invoice => ({
     type: Invoice.TypeEnum.ACCREC,
-    contact: { contactID: contactId },
+    contact: { contactID: resolvedContactId },
     lineItems,
     date: formatDate(new Date()),
     dueDate: formatDate(new Date()),
     reference: `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,
-  };
+  });
 
   const localModel = bookingModificationId ? "BookingModification" : "Booking";
   const localId = bookingModificationId ?? bookingId;
@@ -3683,27 +3902,39 @@ export async function createXeroSupplementaryInvoice(params: {
     localId,
     idempotencyKey: invoiceIdempotencyKey,
     correlationKey: invoiceIdempotencyKey,
-    requestPayload: { invoices: [invoice] },
+    requestPayload: { invoices: [buildInvoice(contactId)] },
     createdByMemberId: createdByMemberId ?? null,
   });
 
   try {
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.createInvoices(
-          tenantId,
-          { invoices: [invoice] },
-          undefined,
-          undefined,
-          invoiceIdempotencyKey
+    const response = await retryXeroWriteWithContactRepair({
+      memberId: booking.memberId,
+      currentContactId: contactId,
+      workflow: "createXeroSupplementaryInvoice",
+      operationId: operation.id,
+      repairExistingLink,
+      createdByMemberId,
+      buildRequestPayload: (resolvedContactId) => ({
+        invoices: [buildInvoice(resolvedContactId)],
+      }),
+      run: ({ contactId: resolvedContactId }) =>
+        callXeroApi(
+          () =>
+            xero.accountingApi.createInvoices(
+              tenantId,
+              { invoices: [buildInvoice(resolvedContactId)] },
+              undefined,
+              undefined,
+              invoiceIdempotencyKey
+            ),
+          {
+            operation: "createInvoices",
+            resourceType: "INVOICE",
+            workflow: "createXeroSupplementaryInvoice",
+            context: `createInvoices(supplementary ${localId})`,
+          }
         ),
-      {
-        operation: "createInvoices",
-        resourceType: "INVOICE",
-        workflow: "createXeroSupplementaryInvoice",
-        context: `createInvoices(supplementary ${localId})`,
-      }
-    );
+    });
 
     const created = response.body.invoices?.[0];
     if (!created?.invoiceID) {
@@ -3854,15 +4085,15 @@ export async function createXeroCreditNoteForModification(params: {
     modRefundLineItem.accountCode = accountCode;
   }
 
-  const creditNote: CreditNote = {
+  const buildCreditNote = (resolvedContactId: string): CreditNote => ({
     type: CreditNote.TypeEnum.ACCRECCREDIT,
-    contact: { contactID: contactId },
+    contact: { contactID: resolvedContactId },
     date: formatDate(new Date()),
     lineAmountTypes: LineAmountTypes.Inclusive,
     lineItems: [modRefundLineItem],
     reference: `Modification refund - Booking ${bookingId.slice(0, 8)}`,
     status: CreditNote.StatusEnum.AUTHORISED,
-  };
+  });
 
   const localModel = bookingModificationId ? "BookingModification" : "Booking";
   const localId = bookingModificationId ?? bookingId;
@@ -3882,7 +4113,7 @@ export async function createXeroCreditNoteForModification(params: {
     idempotencyKey: creditNoteIdempotencyKey,
     correlationKey: creditNoteIdempotencyKey,
     requestPayload: {
-      creditNotes: [creditNote],
+      creditNotes: [buildCreditNote(contactId)],
       invoiceId: originalInvoiceId,
       refundAmountCents,
     },
@@ -3890,22 +4121,36 @@ export async function createXeroCreditNoteForModification(params: {
   });
 
   try {
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.createCreditNotes(
-          tenantId,
-          { creditNotes: [creditNote] },
-          undefined,
-          undefined,
-          creditNoteIdempotencyKey
+    const response = await retryXeroWriteWithContactRepair({
+      memberId: booking.memberId,
+      currentContactId: contactId,
+      workflow: "createXeroCreditNoteForModification",
+      operationId: operation.id,
+      repairExistingLink,
+      createdByMemberId,
+      buildRequestPayload: (resolvedContactId) => ({
+        creditNotes: [buildCreditNote(resolvedContactId)],
+        invoiceId: originalInvoiceId,
+        refundAmountCents,
+      }),
+      run: ({ contactId: resolvedContactId }) =>
+        callXeroApi(
+          () =>
+            xero.accountingApi.createCreditNotes(
+              tenantId,
+              { creditNotes: [buildCreditNote(resolvedContactId)] },
+              undefined,
+              undefined,
+              creditNoteIdempotencyKey
+            ),
+          {
+            operation: "createCreditNotes",
+            resourceType: "CREDIT_NOTE",
+            workflow: "createXeroCreditNoteForModification",
+            context: `createCreditNotes(modification ${localId})`,
+          }
         ),
-      {
-        operation: "createCreditNotes",
-        resourceType: "CREDIT_NOTE",
-        workflow: "createXeroCreditNoteForModification",
-        context: `createCreditNotes(modification ${localId})`,
-      }
-    );
+    });
 
     const created = response.body.creditNotes?.[0];
     if (!created?.creditNoteID) {
@@ -4065,16 +4310,16 @@ export async function createXeroEntranceFeeInvoice(
     incomeMapping.codeExplicitlyConfigured,
   );
 
-  const invoice: Invoice = {
+  const buildInvoice = (resolvedContactId: string): Invoice => ({
     type: Invoice.TypeEnum.ACCREC,
-    contact: { contactID: contactId },
+    contact: { contactID: resolvedContactId },
     lineItems: [lineItem],
     date: formatDate(new Date()),
     dueDate: formatDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), // Due in 30 days
     reference: `Entrance fee (${categoryLabel}) - ${memberId.slice(0, 8)}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,
-  };
+  });
 
   const idempotencyKey = buildXeroIdempotencyKey(
     "member",
@@ -4092,27 +4337,39 @@ export async function createXeroEntranceFeeInvoice(
     localId: memberId,
     idempotencyKey,
     correlationKey: idempotencyKey,
-    requestPayload: { invoices: [invoice] },
+    requestPayload: { invoices: [buildInvoice(contactId)] },
     createdByMemberId: options?.createdByMemberId ?? null,
   });
 
   try {
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.createInvoices(
-          tenantId,
-          { invoices: [invoice] },
-          undefined,
-          undefined,
-          idempotencyKey
+    const response = await retryXeroWriteWithContactRepair({
+      memberId,
+      currentContactId: contactId,
+      workflow: "createXeroEntranceFeeInvoice",
+      operationId: operation.id,
+      repairExistingLink: options?.repairExistingLink,
+      createdByMemberId: options?.createdByMemberId,
+      buildRequestPayload: (resolvedContactId) => ({
+        invoices: [buildInvoice(resolvedContactId)],
+      }),
+      run: ({ contactId: resolvedContactId }) =>
+        callXeroApi(
+          () =>
+            xero.accountingApi.createInvoices(
+              tenantId,
+              { invoices: [buildInvoice(resolvedContactId)] },
+              undefined,
+              undefined,
+              idempotencyKey
+            ),
+          {
+            operation: "createInvoices",
+            resourceType: "INVOICE",
+            workflow: "createXeroEntranceFeeInvoice",
+            context: `createInvoices(entranceFee ${memberId})`,
+          }
         ),
-      {
-        operation: "createInvoices",
-        resourceType: "INVOICE",
-        workflow: "createXeroEntranceFeeInvoice",
-        context: `createInvoices(entranceFee ${memberId})`,
-      }
-    );
+    });
 
     const created = response.body.invoices?.[0];
     if (!created?.invoiceID) {
