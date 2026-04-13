@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { processRefund } from "./stripe";
-import { isXeroConnected, createXeroCreditNote, createUnappliedXeroCreditNote } from "./xero";
+import { isXeroConnected, createUnappliedXeroCreditNote } from "./xero";
 import {
   calculateRefundAmount,
   daysUntilDate,
@@ -10,6 +10,10 @@ import { sendBookingCancelledEmail } from "./email";
 import { logAudit } from "./audit";
 import { createCancellationCredit, restoreCreditFromBooking } from "./member-credit";
 import { processWaitlistForDates } from "./waitlist";
+import {
+  enqueueXeroRefundCreditNoteOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "./xero-operation-outbox";
 import logger from "@/lib/logger";
 
 export interface CancelBookingResult {
@@ -309,6 +313,7 @@ export async function cancelBooking(
 
   // ── Card path: Stripe refund (existing flow) ──────────────────────
   if (refundAmountCents > 0 && booking.payment.stripePaymentIntentId) {
+    const paymentId = booking.payment.id;
     const refund = await processRefund({
       paymentIntentId: booking.payment.stripePaymentIntentId,
       amountCents: refundAmountCents,
@@ -340,15 +345,29 @@ export async function cancelBooking(
       }),
     ]);
 
-    // Create Xero credit note if connected (allocated against invoice)
+    // Queue the Xero credit note durably (allocated against the original invoice).
     try {
-      if (await isXeroConnected()) {
-        await createXeroCreditNote(booking.payment.id, refundAmountCents, {
+      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
+        paymentId,
+        refundAmountCents,
+        {
           createdByMemberId: sessionUserId,
+        }
+      );
+
+      if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
+        void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) => {
+          logger.error(
+            { err: xeroErr, bookingId, paymentId },
+            "Failed to kick Xero refund credit note outbox worker"
+          );
         });
       }
     } catch (xeroErr) {
-      logger.error({ err: xeroErr, bookingId, paymentId: booking.payment.id }, "Failed to create Xero credit note");
+      logger.error(
+        { err: xeroErr, bookingId, paymentId },
+        "Failed to queue Xero credit note"
+      );
     }
 
     await cleanupPromoRedemption(bookingId);

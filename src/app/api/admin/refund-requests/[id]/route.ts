@@ -5,7 +5,11 @@ import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
 import { processRefund } from "@/lib/stripe";
-import { isXeroConnected, createXeroCreditNote } from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero";
+import {
+  enqueueXeroRefundCreditNoteOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 import { sendEmail } from "@/lib/email";
 import { refundRequestResolvedTemplate } from "@/lib/email-templates";
 import logger from "@/lib/logger";
@@ -164,17 +168,28 @@ export async function PUT(
       throw err;
     }
 
-    // Create Xero credit note
+    // Queue the Xero credit note durably and try to kick the worker.
     try {
-      if (await isXeroConnected()) {
-        await createXeroCreditNote(payment.id, approvedAmountCents, {
+      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
+        payment.id,
+        approvedAmountCents,
+        {
           createdByMemberId: session.user.id,
+        }
+      );
+
+      if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
+        void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) => {
+          logger.error(
+            { err: xeroErr, refundRequestId: id, paymentId: payment.id },
+            "Failed to kick Xero refund credit note outbox worker for refund appeal"
+          );
         });
       }
     } catch (xeroErr) {
       logger.error(
         { err: xeroErr, refundRequestId: id },
-        "Failed to create Xero credit note for refund appeal"
+        "Failed to queue Xero credit note for refund appeal"
       );
     }
 

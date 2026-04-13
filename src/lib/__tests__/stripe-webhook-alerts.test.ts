@@ -13,8 +13,8 @@ const {
   mockRecordWebhookLog,
   mockIsXeroConnected,
   mockEnqueueXeroBookingInvoiceOperation,
+  mockEnqueueXeroRefundCreditNoteOperation,
   mockKickQueuedXeroOutboxOperationsIfConnected,
-  mockCreateXeroCreditNote,
   mockNotifyXeroSyncError,
   mockSendBookingConfirmedEmail,
   mockSendAdminPaymentFailureAlert,
@@ -35,6 +35,10 @@ const {
     queueOperationId: "op_1",
     message: "queued",
   }),
+  mockEnqueueXeroRefundCreditNoteOperation: vi.fn().mockResolvedValue({
+    queueOperationId: "op_credit_note_1",
+    message: "queued",
+  }),
   mockKickQueuedXeroOutboxOperationsIfConnected: vi.fn().mockResolvedValue({
     found: 1,
     processed: 1,
@@ -42,7 +46,6 @@ const {
     failed: 0,
     skipped: 0,
   }),
-  mockCreateXeroCreditNote: vi.fn().mockResolvedValue("cn_1"),
   mockNotifyXeroSyncError: vi.fn().mockResolvedValue(undefined),
   mockSendBookingConfirmedEmail: vi.fn().mockResolvedValue(undefined),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
@@ -78,12 +81,13 @@ vi.mock("@/lib/webhook-log", () => ({
 
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: (...args: unknown[]) => mockIsXeroConnected(...args),
-  createXeroCreditNote: (...args: unknown[]) => mockCreateXeroCreditNote(...args),
 }));
 
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: (...args: unknown[]) =>
     mockEnqueueXeroBookingInvoiceOperation(...args),
+  enqueueXeroRefundCreditNoteOperation: (...args: unknown[]) =>
+    mockEnqueueXeroRefundCreditNoteOperation(...args),
   kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
     mockKickQueuedXeroOutboxOperationsIfConnected(...args),
 }));
@@ -207,7 +211,9 @@ describe("Stripe webhook Xero alerting", () => {
       amountCents: 5000,
     });
     mockIsXeroConnected.mockResolvedValue(true);
-    mockCreateXeroCreditNote.mockRejectedValue(new Error("Xero credit note failed"));
+    mockEnqueueXeroRefundCreditNoteOperation.mockRejectedValue(
+      new Error("Xero credit note failed")
+    );
 
     const response = await POST(makeRequest());
 
@@ -221,7 +227,7 @@ describe("Stripe webhook Xero alerting", () => {
     });
     expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
       errorType: "CREDIT_NOTE_CREATION",
-      operation: "Create refund credit note for payment payment-2",
+      operation: "Queue refund credit note for payment payment-2",
       errorMessage: "Xero credit note failed",
     });
   });

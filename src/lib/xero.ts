@@ -78,6 +78,11 @@ export interface CreateXeroBookingInvoiceOptions
   syncOperationId?: string;
 }
 
+export interface CreateXeroRefundCreditNoteOptions
+  extends FindOrCreateXeroContactOptions {
+  syncOperationId?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -3319,7 +3324,7 @@ export async function createXeroInvoiceForBooking(
 export async function createXeroCreditNote(
   paymentId: string,
   refundAmountCents: number,
-  options?: FindOrCreateXeroContactOptions
+  options?: CreateXeroRefundCreditNoteOptions
 ): Promise<string> {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
@@ -3335,6 +3340,7 @@ export async function createXeroCreditNote(
     throw new Error(`No Xero invoice linked to payment: ${paymentId}`);
   }
   const originalInvoiceId = payment.xeroInvoiceId;
+  const queuedOperationId = options?.syncOperationId ?? null;
 
   // Idempotency guard: skip if credit note already created for this payment
   if (payment.xeroRefundCreditNoteId) {
@@ -3345,6 +3351,24 @@ export async function createXeroCreditNote(
       xeroObjectId: payment.xeroRefundCreditNoteId,
       role: "REFUND_CREDIT_NOTE",
     });
+    if (queuedOperationId) {
+      await completeXeroSyncOperation(queuedOperationId, {
+        responsePayload: {
+          existingCreditNoteId: payment.xeroRefundCreditNoteId,
+        },
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: payment.xeroRefundCreditNoteId,
+        extraLinks: [
+          {
+            localModel: "Payment",
+            localId: paymentId,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: payment.xeroRefundCreditNoteId,
+            role: "REFUND_CREDIT_NOTE",
+          },
+        ],
+      });
+    }
     logger.info({ paymentId, creditNoteId: payment.xeroRefundCreditNoteId }, "Xero credit note already exists, skipping");
     return payment.xeroRefundCreditNoteId;
   }
@@ -3386,30 +3410,43 @@ export async function createXeroCreditNote(
     refundAmountCents,
     "v1"
   );
-  const operation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "CREDIT_NOTE",
-    operationType: "CREATE",
-    localModel: "Payment",
-    localId: paymentId,
-    idempotencyKey: creditNoteIdempotencyKey,
-    correlationKey: creditNoteIdempotencyKey,
-    requestPayload: {
-      creditNotes: [buildCreditNote(contactId)],
-      allocation: {
-        invoiceId: originalInvoiceId,
-        amount: refundAmountCents / 100,
-      },
+  let operationId = queuedOperationId;
+  const requestPayload = {
+    creditNotes: [buildCreditNote(contactId)],
+    allocation: {
+      invoiceId: originalInvoiceId,
+      amount: refundAmountCents / 100,
     },
-    createdByMemberId: options?.createdByMemberId ?? null,
-  });
+  };
+
+  if (operationId) {
+    await prisma.xeroSyncOperation.update({
+      where: { id: operationId },
+      data: {
+        requestPayload: sanitizeForJson(requestPayload),
+      },
+    });
+  } else {
+    const operation = await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: paymentId,
+      idempotencyKey: creditNoteIdempotencyKey,
+      correlationKey: creditNoteIdempotencyKey,
+      requestPayload,
+      createdByMemberId: options?.createdByMemberId ?? null,
+    });
+    operationId = operation.id;
+  }
 
   try {
     const response = await retryXeroWriteWithContactRepair({
       memberId: payment.booking.memberId,
       currentContactId: contactId,
       workflow: "createXeroCreditNote",
-      operationId: operation.id,
+      operationId: operationId!,
       repairExistingLink: options?.repairExistingLink,
       createdByMemberId: options?.createdByMemberId,
       buildRequestPayload: (resolvedContactId) => ({
@@ -3529,7 +3566,7 @@ export async function createXeroCreditNote(
         logger.error({ err: error, paymentId }, "Failed to create Xero refund payment against Stripe bank account");
       }
 
-      await completeXeroSyncOperation(operation.id, {
+      await completeXeroSyncOperation(operationId!, {
         status: refundPaymentErr ? "PARTIAL" : "SUCCEEDED",
         responsePayload: {
           creditNote: response.body,
@@ -3587,7 +3624,7 @@ export async function createXeroCreditNote(
 
       return createdNote.creditNoteID;
     } catch (allocationError) {
-      await completeXeroSyncOperation(operation.id, {
+      await completeXeroSyncOperation(operationId!, {
         status: "PARTIAL",
         responsePayload: {
           creditNote: response.body,
@@ -3610,7 +3647,7 @@ export async function createXeroCreditNote(
       throw allocationError;
     }
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operationId!, error);
     throw error;
   }
 }

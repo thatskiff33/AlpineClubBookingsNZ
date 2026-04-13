@@ -11,10 +11,25 @@ This review focuses on how TACBookings should reconcile booking and membership d
 
 ## Implementation Status (2026-04-14)
 
-The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, webhook-driven inbound reconciliation for linked contact, invoice, payment, and credit-note events, operator-facing admin tooling for inspecting and replaying stored inbound events both centrally and from the record-scoped activity view, a Phase 6 steady-state reduction that now trusts persisted member contact links by default, lets retry/replay flows explicitly relink stale contacts, and auto-repairs stale contact references on the first steady-state write failure, and now durable initial-write outbox paths for entrance-fee invoices plus automatic booking invoices. The remaining work is now mostly around extending that outbox execution to the remaining credit-note / modification write paths, incremental pull support, richer business-state drift detection, optional Xero-side history/attachment enrichment, and any future inbound categories beyond the current safe handlers.
+The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, webhook-driven inbound reconciliation for linked contact, invoice, payment, and credit-note events, operator-facing admin tooling for inspecting and replaying stored inbound events both centrally and from the record-scoped activity view, a Phase 6 steady-state reduction that now trusts persisted member contact links by default, lets retry/replay flows explicitly relink stale contacts, and auto-repairs stale contact references on the first steady-state write failure, and now durable initial-write outbox paths for entrance-fee invoices, automatic booking invoices, and standard allocated refund credit notes. The remaining work is now mostly around extending that outbox execution to the unapplied account-credit / modification / supplementary write paths, incremental pull support, richer business-state drift detection, optional Xero-side history/attachment enrichment, and any future inbound categories beyond the current safe handlers.
 
 ### Completed in this session
 
+- extended the initial-write outbox in `src/lib/xero-operation-outbox.ts` from invoices to the standard refund-credit-note path
+  - added a `REFUND_CREDIT_NOTE` queue payload beside the existing entrance-fee and booking-invoice payloads
+  - the outbox worker now claims and executes queued refund credit notes on the same durable `XeroSyncOperation` row used for queueing
+- updated `createXeroCreditNote()` in `src/lib/xero.ts` so it can execute against an existing pending outbox row instead of always creating a fresh `XeroSyncOperation`
+  - when the refund credit note is already linked by the time a queued worker picks it up, the claimed operation is now completed successfully instead of being left running
+- moved the standard allocated refund-credit-note trigger paths onto the durable outbox flow:
+  - Stripe `charge.refunded` handling in `src/app/api/webhooks/stripe/route.ts`
+  - card-refund booking cancellations in `src/lib/booking-cancel.ts`
+  - approved admin refund appeals in `src/app/api/admin/refund-requests/[id]/route.ts`
+- explicitly left the unapplied account-credit note path synchronous for now:
+  - `createUnappliedXeroCreditNote()` still runs inline from the credit-cancellation flow because `MemberCredit.xeroCreditNoteId` is still populated directly in that request path
+- added focused coverage for the refund-credit-note outbox extension and trigger rewiring:
+  - `src/lib/__tests__/xero-operation-outbox.test.ts`
+  - `src/lib/__tests__/stripe-webhook-alerts.test.ts`
+  - `src/lib/__tests__/admin-refund-request-review-route.test.ts`
 - extended the initial-write outbox in `src/lib/xero-operation-outbox.ts` from entrance-fee invoices to booking invoices
   - added a `BOOKING_INVOICE` queue payload beside the existing entrance-fee payload
   - the outbox worker now claims and executes both queued entrance-fee invoices and queued booking invoices
@@ -190,6 +205,7 @@ The review below started as a design and gap-analysis document. The codebase now
 - `npx vitest run src/lib/__tests__/xero-inbound-reconciliation.test.ts src/lib/__tests__/xero-record-activity.test.ts src/lib/__tests__/xero-inbound-events-routes.test.ts src/lib/__tests__/xero-cron-route.test.ts`
 - `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-find-or-create-contact.test.ts src/lib/__tests__/xero-operation-retry.test.ts`
 - `npx vitest run src/lib/__tests__/xero-operation-outbox.test.ts src/lib/__tests__/charge-saved-method-route.test.ts src/lib/__tests__/cron-confirm-pending.test.ts src/lib/__tests__/stripe-webhook-alerts.test.ts src/lib/__tests__/zero-dollar-booking.test.ts src/lib/__tests__/admin-book-on-behalf.test.ts src/lib/__tests__/issue7-8-draft-subscription.test.ts src/lib/__tests__/phase2-guest-subscription.test.ts`
+- `npx vitest run src/lib/__tests__/xero-operation-outbox.test.ts src/lib/__tests__/stripe-webhook-alerts.test.ts src/lib/__tests__/admin-refund-request-review-route.test.ts`
 - `npx eslint src/lib/xero.ts src/lib/__tests__/xero.test.ts`
 - `npm run build`
 
@@ -215,7 +231,7 @@ For the next agent, the important baseline is:
 - repeated-failure alerting by correlation key: implemented
 - nightly reconciliation reporting: implemented
 - historical canonical-ID backfill into `XeroObjectLink` / `XeroSyncOperation`: implemented
-- primary-write outbox for entrance-fee invoices and automatic booking invoices: implemented
+- primary-write outbox for entrance-fee invoices, automatic booking invoices, and standard allocated refund credit notes: implemented
 - incremental pull / richer drift application beyond the current contact / invoice / payment / credit-note handlers: pending
 
 ## Current State
@@ -254,6 +270,7 @@ Supported failed outbound operations can now be requeued durably from the admin 
 
 - entrance-fee invoice creation
 - automatic booking invoice creation across booking creation, draft confirmation, waitlist confirmation, saved-card charging, Stripe payment webhooks, and pending-confirmation cron
+- standard allocated refund credit note creation across Stripe refund webhooks, card-refund booking cancellations, and approved admin refund appeals
 
 What is still missing is extending the same pattern across the remaining primary outbound writes:
 
@@ -263,10 +280,10 @@ What is still missing is extending the same pattern across the remaining primary
 
 Suggested first candidates:
 
-- refund credit note creation
+- unapplied account-credit note creation on credit cancellations
 - supplementary invoice creation
 - modification credit note creation
-- decide whether `src/app/api/admin/payments/[id]/generate-invoice/route.ts` should remain an explicit synchronous repair path or also enqueue onto the outbox
+- decide whether `src/app/api/admin/payments/[id]/generate-invoice/route.ts` and any future operator-triggered refund repair routes should remain explicit synchronous repair paths or also enqueue onto the outbox
 
 ### 2. Extend inbound reconciliation on top of stored `XeroInboundEvent` rows
 
@@ -564,8 +581,8 @@ Status: partially implemented.
 - repeated-failure alerting by correlation key is implemented
 - nightly reconciliation reports for canonical-link gaps and stale/repeated failures are implemented
 - canonical-field backfill into the reconciliation ledger/link tables is implemented
-- move high-value Xero writes to a background worker/outbox flow is implemented for entrance-fee invoices and automatic booking invoices
-- the remaining inline primary writes are refund credit notes, supplementary invoices, modification credit notes, and the intentionally synchronous admin invoice-generation repair path
+- move high-value Xero writes to a background worker/outbox flow is implemented for entrance-fee invoices, automatic booking invoices, and standard allocated refund credit notes
+- the remaining inline primary writes are unapplied account-credit notes, supplementary invoices, modification credit notes, and the intentionally synchronous admin invoice-generation repair path
 - richer drift reporting and optional Xero-side history/attachments are still pending
 
 ## Best-Practice Notes

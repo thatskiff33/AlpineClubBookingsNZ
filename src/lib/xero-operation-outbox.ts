@@ -8,6 +8,7 @@ import {
 } from "@/lib/xero-sync";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
+  createXeroCreditNote,
   createXeroEntranceFeeInvoice,
   createXeroInvoiceForBooking,
   getEntranceFeeContext,
@@ -17,6 +18,7 @@ import {
 
 const XERO_OUTBOX_ENTRANCE_FEE_TYPE = "ENTRANCE_FEE_INVOICE";
 const XERO_OUTBOX_BOOKING_INVOICE_TYPE = "BOOKING_INVOICE";
+const XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE = "REFUND_CREDIT_NOTE";
 
 interface QueuedEntranceFeeOutboxPayload {
   queueType: typeof XERO_OUTBOX_ENTRANCE_FEE_TYPE;
@@ -30,9 +32,15 @@ interface QueuedBookingInvoiceOutboxPayload {
   bookingId: string;
 }
 
+interface QueuedRefundCreditNoteOutboxPayload {
+  queueType: typeof XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE;
+  refundAmountCents: number;
+}
+
 type QueuedOutboxPayload =
   | QueuedEntranceFeeOutboxPayload
-  | QueuedBookingInvoiceOutboxPayload;
+  | QueuedBookingInvoiceOutboxPayload
+  | QueuedRefundCreditNoteOutboxPayload;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -88,6 +96,18 @@ function readQueuedOutboxPayload(value: unknown): QueuedOutboxPayload | null {
     };
   }
 
+  if (queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE) {
+    const refundAmountCents = readNumber(payload.refundAmountCents);
+    if (refundAmountCents === null) {
+      return null;
+    }
+
+    return {
+      queueType,
+      refundAmountCents,
+    };
+  }
+
   if (queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE) {
     return null;
   }
@@ -123,16 +143,19 @@ function readQueueType(value: unknown): string | null {
 
 async function claimQueuedOutboxOperation(
   operationId: string,
-  localModel: "Member" | "Payment"
+  expectedOperation: {
+    entityType: "INVOICE" | "CREDIT_NOTE";
+    localModel: "Member" | "Payment";
+  }
 ) {
   const result = await prisma.xeroSyncOperation.updateMany({
     where: {
       id: operationId,
       status: "PENDING",
       direction: "OUTBOUND",
-      entityType: "INVOICE",
+      entityType: expectedOperation.entityType,
       operationType: "CREATE",
-      localModel,
+      localModel: expectedOperation.localModel,
     },
     data: {
       status: "RUNNING",
@@ -356,6 +379,102 @@ export async function enqueueXeroBookingInvoiceOperation(
   };
 }
 
+export async function enqueueXeroRefundCreditNoteOperation(
+  paymentId: string,
+  refundAmountCents: number,
+  options?: { createdByMemberId?: string }
+) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      id: true,
+      xeroRefundCreditNoteId: true,
+    },
+  });
+
+  if (!payment) {
+    throw new Error(`Payment not found: ${paymentId}`);
+  }
+
+  if (payment.xeroRefundCreditNoteId) {
+    return {
+      queueOperationId: null,
+      message: "Xero refund credit note already linked for this payment.",
+    };
+  }
+
+  const existingLink = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectType: "CREDIT_NOTE",
+      role: "REFUND_CREDIT_NOTE",
+      active: true,
+    },
+    select: { id: true },
+  });
+
+  if (existingLink) {
+    return {
+      queueOperationId: null,
+      message: "Xero refund credit note already linked for this payment.",
+    };
+  }
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "payment",
+    paymentId,
+    "refund-credit-note",
+    refundAmountCents,
+    "v1"
+  );
+
+  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey,
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: paymentId,
+      status: {
+        in: ["PENDING", "RUNNING"],
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  if (existingQueuedOperation) {
+    return {
+      queueOperationId: existingQueuedOperation.id,
+      message: "Xero refund credit note is already queued for background processing.",
+    };
+  }
+
+  const queuedOperation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: "Payment",
+    localId: paymentId,
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
+      refundAmountCents,
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  return {
+    queueOperationId: queuedOperation.id,
+    message: "Xero refund credit note queued for background processing.",
+  };
+}
+
 export interface ProcessQueuedXeroOutboxOperationsResult {
   found: number;
   processed: number;
@@ -382,7 +501,6 @@ export async function processQueuedXeroOutboxOperations(options?: {
     where: {
       status: "PENDING",
       direction: "OUTBOUND",
-      entityType: "INVOICE",
       operationType: "CREATE",
       OR: [
         {
@@ -395,6 +513,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
           requestPayload: {
             path: ["queueType"],
             equals: XERO_OUTBOX_BOOKING_INVOICE_TYPE,
+          },
+        },
+        {
+          requestPayload: {
+            path: ["queueType"],
+            equals: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
           },
         },
       ],
@@ -416,14 +540,20 @@ export async function processQueuedXeroOutboxOperations(options?: {
   for (const queuedOperation of queuedOperations) {
     const payload = readQueuedOutboxPayload(queuedOperation.requestPayload);
     const queueType = readQueueType(queuedOperation.requestPayload);
-    const expectedLocalModel =
-      queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE
-        ? "Payment"
-        : "Member";
-    const claimed = await claimQueuedOutboxOperation(
-      queuedOperation.id,
-      expectedLocalModel
-    );
+    const expectedOperation =
+      queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE
+        ? {
+            entityType: "CREDIT_NOTE" as const,
+            localModel: "Payment" as const,
+          }
+        : {
+            entityType: "INVOICE" as const,
+            localModel:
+              queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE
+                ? ("Payment" as const)
+                : ("Member" as const),
+          };
+    const claimed = await claimQueuedOutboxOperation(queuedOperation.id, expectedOperation);
     if (!claimed) {
       result.skipped += 1;
       continue;
@@ -451,6 +581,18 @@ export async function processQueuedXeroOutboxOperations(options?: {
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
         });
+      } else if (
+        payload?.queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE &&
+        queuedOperation.localId
+      ) {
+        await createXeroCreditNote(
+          queuedOperation.localId,
+          payload.refundAmountCents,
+          {
+            createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+            syncOperationId: queuedOperation.id,
+          }
+        );
       } else {
         throw new Error("Queued Xero outbox payload is incomplete.");
       }

@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { constructWebhookEvent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
-import { createXeroCreditNote, isXeroConnected } from "@/lib/xero";
+import { isXeroConnected } from "@/lib/xero";
 import {
   enqueueXeroBookingInvoiceOperation,
+  enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { sendBookingConfirmedEmail, sendAdminPaymentFailureAlert, sendSetupIntentFailedEmail } from "@/lib/email";
@@ -529,17 +530,25 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
 
   logger.info({ paymentId: payment.id, refundedAmount, isFullRefund }, "Refund processed for payment");
 
-  // Create Xero credit note if connected (idempotency: createXeroCreditNote checks xeroRefundCreditNoteId)
+  // Queue the Xero refund credit note durably and try to kick the worker.
   try {
-    if (await isXeroConnected()) {
-      const creditNoteId = await createXeroCreditNote(payment.id, refundedAmount);
-      logger.info({ paymentId: payment.id, creditNoteId }, "Xero credit note processed for payment");
+    const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
+      payment.id,
+      refundedAmount
+    );
+
+    if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
+      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+      logger.info(
+        { paymentId: payment.id, queueOperationId: queuedCreditNote.queueOperationId },
+        "Xero refund credit note queued for payment"
+      );
     }
   } catch (xeroErr) {
-    logger.error({ err: xeroErr, paymentId: payment.id }, "Failed to create Xero credit note for payment");
+    logger.error({ err: xeroErr, paymentId: payment.id }, "Failed to queue Xero credit note for payment");
     notifyXeroSyncError({
       errorType: "CREDIT_NOTE_CREATION",
-      operation: `Create refund credit note for payment ${payment.id}`,
+      operation: `Queue refund credit note for payment ${payment.id}`,
       errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
     }).catch(() => {});
   }
