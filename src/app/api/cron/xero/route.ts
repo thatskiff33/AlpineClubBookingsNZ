@@ -7,6 +7,7 @@ import {
   sendXeroReconciliationReport,
 } from "@/lib/xero-hardening";
 import logger from "@/lib/logger";
+import { isXeroDailyMembershipRefreshEnabled } from "@/lib/xero-feature-flags";
 
 /**
  * POST /api/cron/xero
@@ -38,9 +39,15 @@ export async function POST(request: NextRequest) {
   try {
     const membershipRefresh =
       task === "memberships" || task === "all"
-        ? connected
-          ? await refreshAllMembershipStatuses()
-          : { skipped: true, reason: "Xero not connected" }
+        ? !isXeroDailyMembershipRefreshEnabled()
+          ? {
+              skipped: true,
+              reason:
+                "Daily membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH",
+            }
+          : connected
+            ? await refreshAllMembershipStatuses()
+            : { skipped: true, reason: "Xero not connected" }
         : null;
     const queuedRetries =
       task === "retries" || task === "all"

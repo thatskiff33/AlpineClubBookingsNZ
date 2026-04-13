@@ -2,6 +2,36 @@
 
 Date: 2026-04-13
 
+## Progress Update
+
+Last updated: 2026-04-14
+
+Completed in this pass:
+
+- Added Phase 0 feature flags in `src/lib/xero-feature-flags.ts` and documented them in `.env.example`:
+  - `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH`
+  - `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS`
+  - `XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS`
+- Disabled the scheduled 2 AM membership refresh by default in `src/instrumentation.ts`.
+- Gated `/api/cron/xero` membership refresh execution behind `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH`, while leaving explicit manual membership sync tooling untouched.
+- Removed automatic contact-group loading from `src/app/(admin)/admin/members/page.tsx` unless both member-group feature flags are enabled.
+- Stopped live Xero contact-group enrichment and live Xero contact-group filtering in:
+  - `src/app/api/admin/members/route.ts`
+  - `src/app/api/admin/members/[id]/route.ts`
+  when `XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS` is off.
+- Added temporary UI fallback states on the admin members list and member detail pages so linked members show a local-only "groups not loaded" state instead of triggering live Xero reads.
+- Added test coverage for the default-off behavior and the flag-enabled paths:
+  - `src/lib/__tests__/xero-cron-route.test.ts`
+  - `src/lib/__tests__/xero-member-management.test.ts`
+  - `src/lib/__tests__/phase3-admin-members.test.ts`
+
+Work remaining after this pass:
+
+- Phase 1: shared Xero call metering plus a daily budget dashboard.
+- Phase 2: incremental invoice sync to replace full daily membership polling.
+- Phase 3: local cache tables for Xero contact groups and memberships so member pages and filters can stay local-only without the temporary "not loaded" fallback.
+- Phases 4-8 remain unstarted in this pass.
+
 ## Goal
 
 Reduce TACBookings' Xero API usage so normal operation stays comfortably below the 1000-calls-per-day limit, while also making Xero sync more reliable, more incremental, and less dependent on full scans.
@@ -224,6 +254,11 @@ These are not the priority call-budget issues right now:
 ## Phased Build Plan
 
 ### Phase 0: Stop The Bleeding
+
+Status:
+
+- Completed on 2026-04-14 for the default-off gates and UI fallback state.
+- Remaining related structural work is intentionally deferred to Phase 3, where the temporary "not loaded" state will be replaced by durable local cache tables.
 
 Goal:
 

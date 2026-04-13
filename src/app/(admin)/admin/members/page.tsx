@@ -20,6 +20,7 @@ interface Member {
   dateOfBirth: string | null
   role: "MEMBER" | "ADMIN"; ageTier: AgeTier
   active: boolean; xeroContactId: string | null
+  xeroContactGroupsLoaded: boolean
   xeroContactGroups: Array<{ id: string; name: string }>
   subscriptionStatus: "NOT_INVOICED" | "UNPAID" | "PAID" | "OVERDUE" | null
   subscriptionXeroInvoiceId: string | null; createdAt: string; joinedDate: string | null
@@ -54,6 +55,10 @@ interface MemberForm {
 
 
 interface XeroContactGroup { id: string; name: string; contactCount: number }
+interface XeroFeatureFlags {
+  autoLoadContactGroups: boolean
+  liveMemberGroupLookups: boolean
+}
 
 interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string; xeroContactGroup: string }
 interface ImportRow { firstName: string; lastName: string; email: string; phone?: string; dateOfBirth?: string; role?: string }
@@ -145,6 +150,10 @@ export default function MembersPage() {
   const [importLoading, setImportLoading] = useState(false)
   const [importResult, setImportResult] = useState<{ created: number; skipped: number; errors: Array<{ row: number; errors: string[] }> } | null>(null)
   const [xeroConnected, setXeroConnected] = useState<boolean | null>(null)
+  const [xeroFeatures, setXeroFeatures] = useState<XeroFeatureFlags>({
+    autoLoadContactGroups: false,
+    liveMemberGroupLookups: false,
+  })
   const [xeroContactGroupsList, setXeroContactGroupsList] = useState<XeroContactGroup[]>([])
   const [xeroChoice, setXeroChoice] = useState<"" | "link" | "create" | "change">("")
   const [xeroUnlinking, setXeroUnlinking] = useState(false)
@@ -164,7 +173,15 @@ export default function MembersPage() {
       .then((data) => {
         const connected = Boolean(data.connected)
         setXeroConnected(connected)
-        if (connected) {
+        setXeroFeatures({
+          autoLoadContactGroups: Boolean(data.features?.autoLoadContactGroups),
+          liveMemberGroupLookups: Boolean(data.features?.liveMemberGroupLookups),
+        })
+        if (
+          connected &&
+          data.features?.autoLoadContactGroups &&
+          data.features?.liveMemberGroupLookups
+        ) {
           fetch("/api/admin/xero/contact-groups")
             .then(res => res.ok ? res.json() : null)
             .then(data => { if (data?.groups) setXeroContactGroupsList(data.groups) })
@@ -490,6 +507,11 @@ export default function MembersPage() {
       </div>
       {error && <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{error}<button onClick={() => setError("")} className="ml-2 underline">Dismiss</button></div>}
       {success && <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">{success}</div>}
+      {xeroConnected && !xeroFeatures.liveMemberGroupLookups && (
+        <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+          Xero group lookups are disabled by default. Member pages stay local-only until groups are refreshed explicitly from the Xero admin tools.
+        </div>
+      )}
       <div className="flex flex-wrap gap-3 items-end">
         <div className="flex-1 min-w-[200px] max-w-sm"><Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or email..." className="bg-white" /></div>
         <Select value={filters.role || "all"} onValueChange={v => setFilter("role", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Role" /></SelectTrigger><SelectContent><SelectItem value="all">All Roles</SelectItem><SelectItem value="MEMBER">Member</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select>
@@ -497,7 +519,7 @@ export default function MembersPage() {
         <Select value={filters.ageTier || "all"} onValueChange={v => setFilter("ageTier", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Age Tier" /></SelectTrigger><SelectContent><SelectItem value="all">All Tiers</SelectItem><SelectItem value="INFANT">Infant</SelectItem><SelectItem value="CHILD">Child</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="ADULT">Adult</SelectItem></SelectContent></Select>
         <Select value={filters.xeroLinked || "all"} onValueChange={v => setFilter("xeroLinked", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Xero" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero</SelectItem><SelectItem value="true">Linked</SelectItem><SelectItem value="false">Not Linked</SelectItem></SelectContent></Select>
         <Select value={filters.subscription || "all"} onValueChange={v => setFilter("subscription", v === "all" ? "" : v)}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Subscription" /></SelectTrigger><SelectContent><SelectItem value="all">All Subs</SelectItem><SelectItem value="PAID">Paid</SelectItem><SelectItem value="UNPAID">Unpaid</SelectItem><SelectItem value="OVERDUE">Overdue</SelectItem><SelectItem value="NOT_INVOICED">Not Invoiced</SelectItem><SelectItem value="NONE">No Record</SelectItem></SelectContent></Select>
-        {xeroContactGroupsList.length > 0 && <Select value={filters.xeroContactGroup || "all"} onValueChange={v => setFilter("xeroContactGroup", v === "all" ? "" : v)}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Xero Group" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero Groups</SelectItem>{xeroContactGroupsList.map(g => <SelectItem key={g.id} value={g.id}>{g.name} ({g.contactCount})</SelectItem>)}</SelectContent></Select>}
+        {xeroFeatures.liveMemberGroupLookups && xeroContactGroupsList.length > 0 && <Select value={filters.xeroContactGroup || "all"} onValueChange={v => setFilter("xeroContactGroup", v === "all" ? "" : v)}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Xero Group" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero Groups</SelectItem>{xeroContactGroupsList.map(g => <SelectItem key={g.id} value={g.id}>{g.name} ({g.contactCount})</SelectItem>)}</SelectContent></Select>}
         {activeFilterCount > 0 && <Button variant="ghost" size="sm" onClick={clearFilters}><X className="h-4 w-4 mr-1" />Clear ({activeFilterCount})</Button>}
       </div>
       {activeFilterCount > 0 && <div className="flex flex-wrap gap-2">{Object.entries(filters).filter(([,v]) => v).map(([k, v]) => { const displayValue = k === "xeroContactGroup" ? (xeroContactGroupsList.find(g => g.id === v)?.name ?? v) : v; return <Badge key={k} variant="secondary" className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setFilter(k as keyof Filters, "")}>{k}: {displayValue}<X className="h-3 w-3" /></Badge> })}</div>}
@@ -549,6 +571,9 @@ export default function MembersPage() {
                         </Badge>
                       ))}
                     </div>
+                  )}
+                  {member.xeroContactId && !member.xeroContactGroupsLoaded && (
+                    <p className="text-xs text-slate-400">Groups not loaded</p>
                   )}
                 </div>
               </TableCell>
@@ -703,6 +728,11 @@ export default function MembersPage() {
                           <Badge key={group.id} variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">{group.name}</Badge>
                         ))}
                       </div>
+                    )}
+                    {!editingMember.xeroContactGroupsLoaded && (
+                      <p className="text-xs text-slate-500">
+                        Contact groups are not loaded on this page by default.
+                      </p>
                     )}
                     {xeroChoice === "change" && (
                       <div className="space-y-3 rounded-md border border-blue-200 bg-blue-50 p-3">

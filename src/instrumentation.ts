@@ -19,6 +19,7 @@ export async function register() {
     const Sentry = await import("@sentry/nextjs");
     const { default: logger } = await import("./lib/logger");
     const { prisma } = await import("./lib/prisma");
+    const { isXeroDailyMembershipRefreshEnabled } = await import("./lib/xero-feature-flags");
 
     // Verify Prisma client is ready before starting cron jobs
     try {
@@ -106,46 +107,53 @@ export async function register() {
     logger.info({ job: "confirm-pending" }, "Scheduled pending booking confirmation (every 3 hours)");
 
     // OBS-03: Cron job 2 - Xero membership refresh (daily at 2 AM)
-    cron.default.schedule("0 2 * * *", async () => {
-      if (isXeroCronRunning) {
-        logger.info({ job: "xero-membership-refresh" }, "Already running, skipping");
-        return;
-      }
-      isXeroCronRunning = true;
-      const startedAt = new Date();
-      logger.info({ job: "xero-membership-refresh" }, "Refreshing Xero membership statuses");
-
-      const checkInId = Sentry.captureCheckIn(
-        { monitorSlug: "xero-membership-refresh", status: "in_progress" },
-        { schedule: { type: "crontab", value: "0 2 * * *" }, checkinMargin: 10, maxRuntime: 60 }
-      );
-
-      try {
-        const { isXeroConnected, refreshAllMembershipStatuses } = await import(
-          "./lib/xero"
-        );
-        if (!(await isXeroConnected())) {
-          logger.info({ job: "xero-membership-refresh" }, "Xero not connected, skipping");
-          await recordCronRun("xero-membership-refresh", startedAt, "SKIPPED", { reason: "Xero not connected" });
-          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
+    if (isXeroDailyMembershipRefreshEnabled()) {
+      cron.default.schedule("0 2 * * *", async () => {
+        if (isXeroCronRunning) {
+          logger.info({ job: "xero-membership-refresh" }, "Already running, skipping");
           return;
         }
-        const result = await refreshAllMembershipStatuses();
-        logger.info({ job: "xero-membership-refresh", ...result }, "Xero membership refresh complete");
-        await recordCronRun("xero-membership-refresh", startedAt, "SUCCESS", result as Record<string, unknown>);
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "xero-membership-refresh" }, "Error refreshing Xero memberships");
-        Sentry.captureException(err);
-        await recordCronRun("xero-membership-refresh", startedAt, "FAILURE", undefined, message);
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "error" });
-      } finally {
-        isXeroCronRunning = false;
-      }
-    }, { timezone: "Pacific/Auckland" });
+        isXeroCronRunning = true;
+        const startedAt = new Date();
+        logger.info({ job: "xero-membership-refresh" }, "Refreshing Xero membership statuses");
 
-    logger.info({ job: "xero-membership-refresh" }, "Scheduled Xero membership refresh (daily at 2 AM NZST)");
+        const checkInId = Sentry.captureCheckIn(
+          { monitorSlug: "xero-membership-refresh", status: "in_progress" },
+          { schedule: { type: "crontab", value: "0 2 * * *" }, checkinMargin: 10, maxRuntime: 60 }
+        );
+
+        try {
+          const { isXeroConnected, refreshAllMembershipStatuses } = await import(
+            "./lib/xero"
+          );
+          if (!(await isXeroConnected())) {
+            logger.info({ job: "xero-membership-refresh" }, "Xero not connected, skipping");
+            await recordCronRun("xero-membership-refresh", startedAt, "SKIPPED", { reason: "Xero not connected" });
+            Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
+            return;
+          }
+          const result = await refreshAllMembershipStatuses();
+          logger.info({ job: "xero-membership-refresh", ...result }, "Xero membership refresh complete");
+          await recordCronRun("xero-membership-refresh", startedAt, "SUCCESS", result as Record<string, unknown>);
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logger.error({ err, job: "xero-membership-refresh" }, "Error refreshing Xero memberships");
+          Sentry.captureException(err);
+          await recordCronRun("xero-membership-refresh", startedAt, "FAILURE", undefined, message);
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "error" });
+        } finally {
+          isXeroCronRunning = false;
+        }
+      }, { timezone: "Pacific/Auckland" });
+
+      logger.info({ job: "xero-membership-refresh" }, "Scheduled Xero membership refresh (daily at 2 AM NZST)");
+    } else {
+      logger.info(
+        { job: "xero-membership-refresh" },
+        "Xero membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH"
+      );
+    }
 
     // Historical Xero link backfill (daily at 2:20 AM NZST)
     cron.default.schedule("20 2 * * *", async () => {

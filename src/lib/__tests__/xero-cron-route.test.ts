@@ -47,6 +47,7 @@ describe("POST /api/cron/xero", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CRON_SECRET = "cron-secret";
+    delete process.env.XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH;
   });
 
   it("runs the reconciliation report even when Xero is disconnected", async () => {
@@ -81,6 +82,7 @@ describe("POST /api/cron/xero", () => {
   });
 
   it("runs all Xero tasks together", async () => {
+    process.env.XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH = "true";
     mocks.isXeroConnected.mockResolvedValue(true);
     mocks.refreshAllMembershipStatuses.mockResolvedValue({ checked: 4, errors: 0 });
     mocks.processQueuedXeroOperationRetries.mockResolvedValue({
@@ -136,5 +138,19 @@ describe("POST /api/cron/xero", () => {
         },
       },
     });
+  });
+
+  it("skips membership refresh when the daily refresh flag is disabled", async () => {
+    mocks.isXeroConnected.mockResolvedValue(true);
+
+    const response = await POST(makeRequest("memberships"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.membershipRefresh).toEqual({
+      skipped: true,
+      reason: "Daily membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH",
+    });
+    expect(mocks.refreshAllMembershipStatuses).not.toHaveBeenCalled();
   });
 });

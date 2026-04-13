@@ -20,6 +20,7 @@ import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
+import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -206,7 +207,12 @@ export async function GET(req: NextRequest) {
 
   // Filter: Xero contact group — fetch contact IDs from Xero, then filter DB
   const xeroContactGroupFilter = sp.get("xeroContactGroup");
-  if (xeroContactGroupFilter && xeroContactGroupFilter !== "all") {
+  const liveMemberGroupLookupsEnabled = isXeroLiveMemberGroupLookupsEnabled();
+  if (
+    liveMemberGroupLookupsEnabled &&
+    xeroContactGroupFilter &&
+    xeroContactGroupFilter !== "all"
+  ) {
     try {
       if (await isXeroConnected()) {
         const groupContactIds = await getXeroContactIdsForGroup(xeroContactGroupFilter);
@@ -284,11 +290,13 @@ export async function GET(req: NextRequest) {
   const linkedContactIds = members
     .map((member) => member.xeroContactId)
     .filter(Boolean) as string[];
+  let xeroContactGroupsLoaded = linkedContactIds.length === 0;
 
-  if (linkedContactIds.length > 0) {
+  if (liveMemberGroupLookupsEnabled && linkedContactIds.length > 0) {
     try {
       if (await isXeroConnected()) {
         xeroContactGroups = await getXeroContactGroupMemberships(linkedContactIds);
+        xeroContactGroupsLoaded = true;
       }
     } catch (error) {
       const xeroError = getXeroApiErrorInfo(error, "Failed to fetch Xero contact groups for members list");
@@ -308,6 +316,7 @@ export async function GET(req: NextRequest) {
     })),
     subscriptions: undefined,
     familyGroupMemberships: undefined,
+    xeroContactGroupsLoaded,
     xeroContactGroups: m.xeroContactId
       ? xeroContactGroups[m.xeroContactId] ?? []
       : [],

@@ -76,6 +76,7 @@ describe("Xero Member Management", () => {
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
     mockGetXeroContactIdsForGroup.mockResolvedValue([]);
     vi.mocked(prisma.member.count).mockResolvedValue(1);
+    delete process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS;
   });
 
   // ── Xero Unlink ──
@@ -150,6 +151,7 @@ describe("Xero Member Management", () => {
     };
 
     it("filters by Xero contact group when connected", async () => {
+      process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS = "true";
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       mockGetXeroContactIdsForGroup.mockResolvedValue(["xero-1", "xero-2"]);
@@ -174,6 +176,7 @@ describe("Xero Member Management", () => {
     });
 
     it("returns empty when group has no contacts", async () => {
+      process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS = "true";
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       mockGetXeroContactIdsForGroup.mockResolvedValue([]);
@@ -194,6 +197,7 @@ describe("Xero Member Management", () => {
     });
 
     it("skips filter when xeroContactGroup is 'all'", async () => {
+      process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS = "true";
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
@@ -206,6 +210,7 @@ describe("Xero Member Management", () => {
     });
 
     it("falls through gracefully when Xero call fails", async () => {
+      process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS = "true";
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       mockGetXeroContactIdsForGroup.mockRejectedValue(new Error("API error"));
@@ -216,6 +221,19 @@ describe("Xero Member Management", () => {
       const res = await getMembers(req);
       // Should still succeed — filter just not applied
       expect(res.status).toBe(200);
+    });
+
+    it("skips the Xero group filter when live lookups are disabled", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      mockIsXeroConnected.mockResolvedValue(true);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      const req = new NextRequest("http://localhost/api/admin/members?xeroContactGroup=group-1");
+      const res = await getMembers(req);
+
+      expect(res.status).toBe(200);
+      expect(mockGetXeroContactIdsForGroup).not.toHaveBeenCalled();
     });
 
     it("accepts the legacy search query parameter for promo assignment lookups", async () => {

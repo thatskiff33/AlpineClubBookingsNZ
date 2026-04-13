@@ -33,6 +33,7 @@ interface MemberDetail {
   role: "MEMBER" | "ADMIN"; ageTier: string
   active: boolean; forcePasswordChange: boolean; xeroContactId: string | null; joinedDate: string | null; createdAt: string
   canLogin: boolean
+  xeroContactGroupsLoaded: boolean
   xeroContactGroups: Array<{ id: string; name: string }>
   inheritEmailFromId: string | null
   inheritEmailFrom: { id: string; firstName: string; lastName: string; email: string } | null
@@ -534,6 +535,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                   </Badge>
                 ))}
               </div>
+            )}
+            {member.xeroContactId && !member.xeroContactGroupsLoaded && (
+              <p className="text-xs text-slate-500">
+                Contact groups are not loaded on this page by default.
+              </p>
             )}
           </dd>
         </div>

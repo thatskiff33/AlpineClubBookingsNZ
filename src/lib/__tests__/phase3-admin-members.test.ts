@@ -81,6 +81,7 @@ describe("Phase 3: Admin Member Management", () => {
     mockIsXeroConnected.mockResolvedValue(false);
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
     vi.mocked(prisma.member.count).mockResolvedValue(1);
+    delete process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS;
   });
 
   // ── A1: Pagination ──
@@ -128,6 +129,7 @@ describe("Phase 3: Admin Member Management", () => {
     });
 
     it("includes Xero contact groups for linked members when Xero is connected", async () => {
+      process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS = "true";
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       mockGetXeroContactGroupMemberships.mockResolvedValue({
@@ -175,7 +177,56 @@ describe("Phase 3: Admin Member Management", () => {
       expect(body.members[0].xeroContactGroups).toEqual([
         { id: "cg-1", name: "Camp Families" },
       ]);
+      expect(body.members[0].xeroContactGroupsLoaded).toBe(true);
       expect(mockGetXeroContactGroupMemberships).toHaveBeenCalledWith(["xc-1"]);
+    });
+
+    it("returns linked members without live Xero group enrichment by default", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      mockIsXeroConnected.mockResolvedValue(true);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        {
+          id: "m1",
+          firstName: "Alice",
+          lastName: "Smith",
+          email: "alice@test.com",
+          phoneCountryCode: "64",
+          phoneAreaCode: "27",
+          phoneNumber: "1234567",
+          dateOfBirth: null,
+          role: "MEMBER",
+          ageTier: "ADULT",
+          active: true,
+          canLogin: true,
+          xeroContactId: "xc-1",
+          joinedDate: null,
+          createdAt: new Date("2025-01-01"),
+          forcePasswordChange: false,
+          streetAddressLine1: null,
+          streetAddressLine2: null,
+          streetCity: null,
+          streetRegion: null,
+          streetPostalCode: null,
+          streetCountry: null,
+          postalAddressLine1: null,
+          postalAddressLine2: null,
+          postalCity: null,
+          postalRegion: null,
+          postalPostalCode: null,
+          postalCountry: null,
+          familyGroupMemberships: [],
+          subscriptions: [],
+        },
+      ] as any);
+      mockSessionAndMemberListCounts(1);
+
+      const res = await getMembers(new NextRequest("http://localhost/api/admin/members"));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(body.members[0].xeroContactGroups).toEqual([]);
+      expect(body.members[0].xeroContactGroupsLoaded).toBe(false);
+      expect(mockGetXeroContactGroupMemberships).not.toHaveBeenCalled();
     });
   });
 
@@ -610,6 +661,7 @@ describe("Phase 3: Admin Member Management", () => {
     });
 
     it("returns member with booking history, stats, and audit logs", async () => {
+      process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS = "true";
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       mockGetXeroContactGroupMemberships.mockResolvedValue({
@@ -654,6 +706,36 @@ describe("Phase 3: Admin Member Management", () => {
       // Subscriptions
       expect(body.subscriptions).toHaveLength(1);
       expect(body.xeroContactGroups).toEqual([{ id: "cg-1", name: "Camp Families" }]);
+      expect(body.xeroContactGroupsLoaded).toBe(true);
+    });
+
+    it("returns member detail without live Xero group enrichment by default", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      mockIsXeroConnected.mockResolvedValue(true);
+      vi.mocked(prisma.member.findUnique).mockResolvedValue({
+        id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
+        phone: "021-123", dateOfBirth: new Date("1990-01-15"),
+        role: "MEMBER", ageTier: "ADULT", active: true, forcePasswordChange: false,
+        xeroContactId: "xc1", createdAt: new Date("2025-01-01"), canLogin: true,
+        subscriptions: [{ id: "s1", seasonYear: 2026, status: "PAID", xeroInvoiceId: null, paidAt: null }],
+        familyGroupMemberships: [],
+      } as any);
+      vi.mocked(prisma.booking.findMany).mockResolvedValue([] as any);
+      vi.mocked(prisma.auditLog.findMany).mockResolvedValue([] as any);
+      vi.mocked(prisma.booking.aggregate).mockResolvedValue({
+        _sum: { finalPriceCents: null },
+        _count: 0,
+        _max: { checkOut: null },
+      } as any);
+
+      const req = new NextRequest("http://localhost/api/admin/members/m1");
+      const res = await getMemberDetail(req, { params: Promise.resolve({ id: "m1" }) });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(body.xeroContactGroups).toEqual([]);
+      expect(body.xeroContactGroupsLoaded).toBe(false);
+      expect(mockGetXeroContactGroupMemberships).not.toHaveBeenCalled();
     });
   });
 

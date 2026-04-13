@@ -17,6 +17,7 @@ import {
   copyStreetAddressToPostal,
   POSTAL_ADDRESS_FIELDS,
 } from "@/lib/member-address";
+import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -187,13 +188,15 @@ export async function GET(
   }
 
   let xeroContactGroups: Array<{ id: string; name: string }> = [];
-  if (member.xeroContactId) {
+  let xeroContactGroupsLoaded = !member.xeroContactId;
+  if (member.xeroContactId && isXeroLiveMemberGroupLookupsEnabled()) {
     try {
       if (await isXeroConnected()) {
         const memberships = await getXeroContactGroupMemberships([
           member.xeroContactId,
         ]);
         xeroContactGroups = memberships[member.xeroContactId] ?? [];
+        xeroContactGroupsLoaded = true;
       }
     } catch (error) {
       const xeroError = getXeroApiErrorInfo(error, "Failed to fetch Xero contact groups for member detail");
@@ -216,6 +219,7 @@ export async function GET(
     bookings,
     auditLogs,
     xeroContactGroups,
+    xeroContactGroupsLoaded,
     stats: {
       totalBookings: stats._count,
       totalSpendCents: stats._sum.finalPriceCents || 0,
