@@ -133,7 +133,7 @@ export async function startXeroSyncOperation(input: XeroSyncOperationInput) {
       replayable: input.replayable ?? true,
       requestPayload: sanitizeForJson(input.requestPayload),
       createdByMemberId: input.createdByMemberId ?? null,
-      startedAt: new Date(),
+      startedAt: input.status === "PENDING" ? null : new Date(),
     },
   });
 }

@@ -32,6 +32,7 @@ export async function register() {
     // Overlap guards: prevent concurrent execution of the same cron job
     let isPendingCronRunning = false;
     let isXeroCronRunning = false;
+    let isXeroReplayCronRunning = false;
     let isWaitlistCronRunning = false;
 
     // Helper: record a cron job run
@@ -143,6 +144,64 @@ export async function register() {
     }, { timezone: "Pacific/Auckland" });
 
     logger.info({ job: "xero-membership-refresh" }, "Scheduled Xero membership refresh (daily at 2 AM NZST)");
+
+    // Xero replay worker (every 15 minutes)
+    cron.default.schedule("*/15 * * * *", async () => {
+      if (isXeroReplayCronRunning) {
+        logger.info({ job: "xero-operation-replay" }, "Already running, skipping");
+        return;
+      }
+      isXeroReplayCronRunning = true;
+      const startedAt = new Date();
+      logger.info({ job: "xero-operation-replay" }, "Processing queued Xero retries");
+
+      const checkInId = Sentry.captureCheckIn(
+        { monitorSlug: "xero-operation-replay", status: "in_progress" },
+        { schedule: { type: "crontab", value: "*/15 * * * *" }, checkinMargin: 10, maxRuntime: 30 }
+      );
+
+      try {
+        const { isXeroConnected } = await import("./lib/xero");
+        const { processQueuedXeroOperationRetries } = await import(
+          "./lib/xero-operation-queue"
+        );
+
+        if (!(await isXeroConnected())) {
+          logger.info({ job: "xero-operation-replay" }, "Xero not connected, skipping");
+          await recordCronRun("xero-operation-replay", startedAt, "SKIPPED", {
+            reason: "Xero not connected",
+          });
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "ok" });
+          return;
+        }
+
+        const result = await processQueuedXeroOperationRetries();
+        logger.info(
+          { job: "xero-operation-replay", ...result },
+          "Queued Xero retry processing complete"
+        );
+        await recordCronRun(
+          "xero-operation-replay",
+          startedAt,
+          "SUCCESS",
+          { ...result }
+        );
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "ok" });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error({ err, job: "xero-operation-replay" }, "Error processing queued Xero retries");
+        Sentry.captureException(err);
+        await recordCronRun("xero-operation-replay", startedAt, "FAILURE", undefined, message);
+        Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-operation-replay", status: "error" });
+      } finally {
+        isXeroReplayCronRunning = false;
+      }
+    }, { timezone: "Pacific/Auckland" });
+
+    logger.info(
+      { job: "xero-operation-replay" },
+      "Scheduled queued Xero retry processing (every 15 minutes)"
+    );
 
     // OBS-03: Cron job 3 - Database backup (daily at 3 AM)
     let isBackupRunning = false;

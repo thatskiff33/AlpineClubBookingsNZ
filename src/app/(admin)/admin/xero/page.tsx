@@ -306,6 +306,7 @@ export default function XeroPage() {
   const [operationStatusFilter, setOperationStatusFilter] = useState("all")
   const [operationEntityFilter, setOperationEntityFilter] = useState("all")
   const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
+  const [queueingOperationId, setQueueingOperationId] = useState<string | null>(null)
   const [operationMessage, setOperationMessage] = useState("")
 
   // Granular item code mappings state
@@ -431,6 +432,27 @@ export default function XeroPage() {
       setError(err instanceof Error ? err.message : "Failed to retry Xero operation")
     } finally {
       setRetryingOperationId(null)
+    }
+  }
+
+  const handleRequeueOperation = async (operationId: string) => {
+    setQueueingOperationId(operationId)
+    setOperationMessage("")
+    setError("")
+    try {
+      const res = await fetch(`/api/admin/xero/operations/${operationId}/requeue`, {
+        method: "POST",
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to queue Xero operation retry")
+      }
+      setOperationMessage(data.message || "Xero operation queued for background retry.")
+      await fetchOperations(operationStatusFilter, operationEntityFilter)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to queue Xero operation retry")
+    } finally {
+      setQueueingOperationId(null)
     }
   }
 
@@ -674,6 +696,8 @@ export default function XeroPage() {
         return "bg-amber-500"
       case "FAILED":
         return "bg-red-600"
+      case "PENDING":
+        return "bg-slate-600"
       case "RUNNING":
         return "bg-blue-600"
       default:
@@ -1164,6 +1188,7 @@ export default function XeroPage() {
                   <SelectContent>
                     <SelectItem value="all">All statuses</SelectItem>
                     <SelectItem value="FAILED">Failed</SelectItem>
+                    <SelectItem value="PENDING">Pending</SelectItem>
                     <SelectItem value="PARTIAL">Partial</SelectItem>
                     <SelectItem value="RUNNING">Running</SelectItem>
                     <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
@@ -1263,14 +1288,28 @@ export default function XeroPage() {
 
                     <div className="flex flex-wrap items-center gap-2">
                       {operation.supported ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleRetryOperation(operation.id)}
-                          disabled={retryingOperationId === operation.id}
-                        >
-                          {retryingOperationId === operation.id ? "Retrying..." : "Retry"}
-                        </Button>
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleRetryOperation(operation.id)}
+                            disabled={
+                              retryingOperationId === operation.id || queueingOperationId === operation.id
+                            }
+                          >
+                            {retryingOperationId === operation.id ? "Retrying..." : "Retry"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleRequeueOperation(operation.id)}
+                            disabled={
+                              retryingOperationId === operation.id || queueingOperationId === operation.id
+                            }
+                          >
+                            {queueingOperationId === operation.id ? "Queueing..." : "Requeue"}
+                          </Button>
+                        </>
                       ) : operation.reason && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
                         <p className="text-xs text-muted-foreground">{operation.reason}</p>
                       ) : null}

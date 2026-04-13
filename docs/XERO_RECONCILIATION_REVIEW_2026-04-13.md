@@ -11,7 +11,7 @@ This review focuses on how TACBookings should reconcile booking and membership d
 
 ## Implementation Status (2026-04-13)
 
-The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, and a first synchronous retry path for supported failed operations. The remaining work is mostly around background execution, broader replay coverage, inbound reconcile jobs, and reporting/hardening.
+The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, and a first queue-backed background replay path for queued retries. The remaining work is mostly around full outbox execution for initial writes, broader replay coverage, inbound reconcile jobs, and reporting/hardening.
 
 ### Delivered to date
 
@@ -49,18 +49,25 @@ The review below started as a design and gap-analysis document. The codebase now
   - `src/lib/xero-operation-retry.ts`
   - `src/app/api/admin/xero/operations/[id]/retry/route.ts`
   - retry controls in `src/app/(admin)/admin/xero/page.tsx`
+- added queue-backed requeue and worker processing for supported failed operations:
+  - `src/lib/xero-operation-queue.ts`
+  - `src/app/api/admin/xero/operations/[id]/requeue/route.ts`
+  - `PENDING` / `REQUEUE` controls and visibility in `src/app/(admin)/admin/xero/page.tsx`
+  - scheduled replay worker in `src/instrumentation.ts`
+  - manual cron support in `src/app/api/cron/xero/route.ts` via `task=retries` or `task=all`
 
 ### Verified to date
 
 - `npm run build`
 - `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-member-management.test.ts src/lib/__tests__/phase8c-integrations.test.ts src/lib/__tests__/phone-address-sync.test.ts src/lib/__tests__/phase3b-member-detail-edit.test.ts`
 - `npx vitest run src/lib/__tests__/xero-operation-retry.test.ts`
+- `npx vitest run src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts`
 
 ### Not yet implemented
 
 The following recommendations from this review are still open:
 
-- queue-backed requeue / worker retry for failed `XeroSyncOperation` rows
+- full outbox-style `PENDING`-first execution for primary outbound Xero writes
 - repair flows for `PARTIAL` operations
 - record-specific Xero operations surfaces on booking, payment, and member detail screens
 - webhook-driven targeted reconcile jobs that apply inbound changes to business state
@@ -77,7 +84,8 @@ So the current state is:
 - deterministic outbound write tracking: implemented
 - admin inspection of recent operations: implemented
 - synchronous retry for supported failed outbound operations: implemented
-- queue-backed replay, partial repair, and background execution: pending
+- queue-backed replay for supported failed outbound operations: implemented
+- full outbox execution for initial writes and partial-operation repair: pending
 - inbound business-state reconciliation: pending
 - reporting, alerting, and historical backfill: pending
 
@@ -101,14 +109,15 @@ There is also some manual remediation already:
 
 ## Current Remaining Gaps
 
-### 1. No queue-backed replay or outbox execution model yet
+### 1. Queue-backed replay exists, but full outbox execution does not
 
-Outbound writes are now logged durably and supported `FAILED` operations can be retried synchronously from the admin UI. What is still missing is the more robust execution model originally proposed:
+Supported failed outbound operations can now be requeued durably from the admin UI, stored as `PENDING` replay rows, and processed by a worker path that runs both after-response and on a scheduled cron cadence. That closes the immediate gap around background replay for known-safe failed operations.
 
-- create `PENDING` operations first, then execute them from a worker
-- requeue failed operations without requiring an inline admin request
-- recover automatically from crashes or network timeouts after local state is committed
-- treat retry and replay as a first-class background workflow rather than a synchronous button action
+What is still missing from the fuller execution model originally proposed is:
+
+- create the primary outbound operation row in `PENDING`, then execute that same operation from a worker
+- recover automatically from crashes or timeouts that happen after local state commits but before the first Xero write attempt
+- move more high-value initial write flows away from request-bound inline execution
 
 ### 2. `PARTIAL` operations still need dedicated repair workflows
 
@@ -338,7 +347,8 @@ Status: partially implemented.
 
 - admin operations API and UI were added to the Xero admin screen
 - synchronous retry support for supported failed operations is implemented
-- queue-backed requeue and partial-operation repair are still pending
+- queue-backed requeue / worker retry for supported failed operations is implemented
+- partial-operation repair is still pending
 - record-specific surfaces for booking/payment/member detail pages are still pending
 
 ## Phase 4: Inbound reconciliation

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { refreshAllMembershipStatuses, isXeroConnected } from "@/lib/xero";
+import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import logger from "@/lib/logger";
 
 /**
@@ -20,21 +21,49 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 
+  const task = request.nextUrl.searchParams.get("task") ?? "memberships";
+  if (!["memberships", "retries", "all"].includes(task)) {
+    return NextResponse.json(
+      { error: "Invalid task. Expected memberships, retries, or all." },
+      { status: 400 }
+    );
+  }
+
   // Skip if Xero is not connected
   const connected = await isXeroConnected();
   if (!connected) {
-    return NextResponse.json({ message: "Xero not connected, skipping" });
+    return NextResponse.json({
+      message: "Xero not connected, skipping",
+      task,
+      membershipRefresh: null,
+      queuedRetries: null,
+    });
   }
 
   try {
-    const result = await refreshAllMembershipStatuses();
+    const membershipRefresh =
+      task === "memberships" || task === "all"
+        ? await refreshAllMembershipStatuses()
+        : null;
+    const queuedRetries =
+      task === "retries" || task === "all"
+        ? await processQueuedXeroOperationRetries()
+        : null;
+
     return NextResponse.json({
-      message: "Membership status refresh completed",
-      ...result,
+      message:
+        task === "all"
+          ? "Xero cron tasks completed"
+          : task === "retries"
+            ? "Queued Xero retries processed"
+            : "Membership status refresh completed",
+      task,
+      membershipRefresh,
+      queuedRetries,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Cron job failed";
-    logger.error({ err: message }, "Xero cron job error");
+    logger.error({ err: message, task }, "Xero cron job error");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
