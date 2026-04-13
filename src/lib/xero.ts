@@ -295,13 +295,13 @@ export async function getHutFeeItemCodeMap(): Promise<Map<string, string>> {
     where: { category: "HUT_FEE" },
   });
 
-  if (rows.length > 0) {
-    for (const row of rows) {
-      if (row.ageTier && row.seasonType && row.isMember !== null) {
-        map.set(`${row.ageTier}_${row.seasonType}_${row.isMember}`, row.itemCode);
-      }
+  for (const row of rows) {
+    if (row.ageTier && row.seasonType && row.isMember !== null && row.itemCode) {
+      map.set(`${row.ageTier}_${row.seasonType}_${row.isMember}`, row.itemCode);
     }
-  } else {
+  }
+
+  if (map.size === 0) {
     // Fallback: use legacy flat hutFeeItem for all combinations
     const legacyItemCode = await getItemCodeMapping("hutFeeItem");
     if (legacyItemCode) {
@@ -2089,6 +2089,32 @@ export function buildInvoiceLineItems(
   });
 }
 
+export function buildEntranceFeeLineItem(
+  categoryLabel: string,
+  amountCents: number,
+  accountCode: string = "200",
+  itemCode?: string | null,
+  accountCodeExplicitlyConfigured: boolean = false,
+): LineItem {
+  const lineItem: LineItem = {
+    quantity: 1,
+    unitAmount: amountCents / 100,
+    taxType: "OUTPUT2",
+  };
+
+  if (itemCode) {
+    lineItem.itemCode = itemCode;
+  } else {
+    lineItem.description = `Membership entrance fee (${categoryLabel})`;
+  }
+
+  if (!itemCode || accountCode !== "200" || accountCodeExplicitlyConfigured) {
+    lineItem.accountCode = accountCode;
+  }
+
+  return lineItem;
+}
+
 function formatDate(date: Date): string {
   return date.toISOString().split("T")[0];
 }
@@ -2683,18 +2709,13 @@ export async function createXeroEntranceFeeInvoice(memberId: string): Promise<st
 
   const categoryLabel = category === "FAMILY" ? "Family" : category === "YOUTH" ? "Youth" : category === "CHILD" ? "Child" : "Adult";
 
-  const lineItem: LineItem = {
-    description: `Membership entrance fee (${categoryLabel})`,
-    quantity: 1,
-    unitAmount: feeMapping.amountCents / 100,
-    taxType: "OUTPUT2",
-  };
-  if (feeMapping.itemCode) {
-    lineItem.itemCode = feeMapping.itemCode;
-  }
-  if (!feeMapping.itemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
-    lineItem.accountCode = incomeCode;
-  }
+  const lineItem = buildEntranceFeeLineItem(
+    categoryLabel,
+    feeMapping.amountCents,
+    incomeCode,
+    feeMapping.itemCode,
+    incomeMapping.codeExplicitlyConfigured,
+  );
 
   const invoice: Invoice = {
     type: Invoice.TypeEnum.ACCREC,

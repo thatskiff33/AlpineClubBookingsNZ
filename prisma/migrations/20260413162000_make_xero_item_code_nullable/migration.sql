@@ -1,0 +1,2 @@
+ALTER TABLE "XeroItemCodeMapping"
+ALTER COLUMN "itemCode" DROP NOT NULL;

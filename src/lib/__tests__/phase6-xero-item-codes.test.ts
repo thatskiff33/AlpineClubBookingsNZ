@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildInvoiceLineItems } from "../xero";
+import { buildEntranceFeeLineItem, buildInvoiceLineItems } from "../xero";
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -120,6 +120,21 @@ describe("Entrance fee amount parsing", () => {
 
     const negative = parseInt("-100", 10);
     expect(negative <= 0).toBe(true);
+  });
+});
+
+describe("buildEntranceFeeLineItem", () => {
+  it("omits the hard-coded description when itemCode is present", () => {
+    const item = buildEntranceFeeLineItem("Adult", 5000, "200", "ENTFEE-ADULT");
+    expect(item.itemCode).toBe("ENTFEE-ADULT");
+    expect(item.description).toBeUndefined();
+    expect(item.accountCode).toBeUndefined();
+  });
+
+  it("uses the fallback description when no itemCode is configured", () => {
+    const item = buildEntranceFeeLineItem("Adult", 5000, "200", null);
+    expect(item.description).toBe("Membership entrance fee (Adult)");
+    expect(item.accountCode).toBe("200");
   });
 });
 
