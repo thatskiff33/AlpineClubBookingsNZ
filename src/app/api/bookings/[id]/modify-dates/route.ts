@@ -23,9 +23,10 @@ import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { cleanupChoreAssignmentsForDateChange } from "@/lib/chore-cleanup";
 import {
-  createXeroSupplementaryInvoice,
-  createXeroCreditNoteForModification,
-} from "@/lib/xero";
+  enqueueXeroModificationCreditNoteOperation,
+  enqueueXeroSupplementaryInvoiceOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -534,24 +535,44 @@ export async function PUT(
 
     // XER-01: Xero invoice adjustment (fire-and-forget)
     if (result.additionalAmountCents > 0 || result.changeFeeCents > 0) {
-      createXeroSupplementaryInvoice({
-        bookingId,
-        priceDiffCents: Math.max(result.priceDiffCents, 0),
-        changeFeeCents: result.changeFeeCents,
-        bookingModificationId: result.bookingModificationId,
-        createdByMemberId: session.user.id,
-      }).catch((err) =>
-        logger.error({ err, bookingId }, "Failed to create Xero supplementary invoice for modification")
-      );
+      void enqueueXeroSupplementaryInvoiceOperation(
+        {
+          bookingId,
+          priceDiffCents: Math.max(result.priceDiffCents, 0),
+          changeFeeCents: result.changeFeeCents,
+          bookingModificationId: result.bookingModificationId,
+        },
+        {
+          createdByMemberId: session.user.id,
+        }
+      )
+        .then(async (queued) => {
+          if (queued.queueOperationId) {
+            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+          }
+        })
+        .catch((err) =>
+          logger.error({ err, bookingId }, "Failed to queue Xero supplementary invoice for modification")
+        );
     } else if (result.refundAmountCents > 0) {
-      createXeroCreditNoteForModification({
-        bookingId,
-        refundAmountCents: result.refundAmountCents,
-        bookingModificationId: result.bookingModificationId,
-        createdByMemberId: session.user.id,
-      }).catch((err) =>
-        logger.error({ err, bookingId }, "Failed to create Xero credit note for modification")
-      );
+      void enqueueXeroModificationCreditNoteOperation(
+        {
+          bookingId,
+          refundAmountCents: result.refundAmountCents,
+          bookingModificationId: result.bookingModificationId,
+        },
+        {
+          createdByMemberId: session.user.id,
+        }
+      )
+        .then(async (queued) => {
+          if (queued.queueOperationId) {
+            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+          }
+        })
+        .catch((err) =>
+          logger.error({ err, bookingId }, "Failed to queue Xero credit note for modification")
+        );
     }
 
     // Send email notification (fire-and-forget)

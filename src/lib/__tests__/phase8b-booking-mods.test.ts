@@ -11,6 +11,9 @@ const mockDelete = vi.fn();
 const mockDeleteMany = vi.fn();
 const mockFindMany = vi.fn();
 const mockMemberCount = vi.fn();
+const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
+const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
+const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -71,6 +74,11 @@ vi.mock("@/lib/promo", () => ({
 vi.mock("@/lib/stripe", () => ({ processRefund: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendBookingModifiedEmail: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
+  enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
+  kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
+}));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -923,6 +931,18 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       expect.objectContaining({
         data: expect.objectContaining({ modificationType: "GUEST_REMOVE" }),
       })
+    );
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        refundAmountCents: 5000,
+        bookingModificationId: "mod1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
     );
   });
 

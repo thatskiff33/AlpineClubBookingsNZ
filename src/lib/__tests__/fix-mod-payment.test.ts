@@ -32,6 +32,11 @@ const mockProcessedWebhookFindUnique = vi.fn();
 const mockMemberCount = vi.fn();
 const mockMemberFindUnique = vi.fn();
 const mockAuditCreate = vi.fn();
+const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking", message: "queued" });
+const mockEnqueueXeroRefundCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_refund", message: "queued" });
+const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
+const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
+const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -103,6 +108,13 @@ vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
   createXeroInvoiceForBooking: vi.fn().mockResolvedValue(undefined),
   createXeroCreditNote: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceOperation: mockEnqueueXeroBookingInvoiceOperation,
+  enqueueXeroRefundCreditNoteOperation: mockEnqueueXeroRefundCreditNoteOperation,
+  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
+  enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
+  kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
 }));
 vi.mock("@/lib/webhook-log", () => ({ recordWebhookLog: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/logger", () => ({
@@ -273,6 +285,20 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
         }),
       })
     );
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        priceDiffCents: 5000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
+    );
+    expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
   });
 
   it("uses existing stripeCustomerId if present (no findOrCreateCustomer call)", async () => {
@@ -376,6 +402,18 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
 
     // No additional PI created
     expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        refundAmountCents: 3000,
+        bookingModificationId: "mod1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
+    );
   });
 
   it("does not create PI for PENDING bookings (payment not yet taken)", async () => {
@@ -494,6 +532,19 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
           additionalPaymentStatus: "PENDING",
         }),
       })
+    );
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        priceDiffCents: 10000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
     );
   });
 });

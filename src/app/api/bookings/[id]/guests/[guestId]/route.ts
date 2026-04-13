@@ -14,7 +14,10 @@ import {
 import { processRefund } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
-import { createXeroCreditNoteForModification } from "@/lib/xero";
+import {
+  enqueueXeroModificationCreditNoteOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
@@ -356,14 +359,24 @@ export async function DELETE(
 
     // XER-01: Xero credit note for price decrease (fire-and-forget)
     if (result.refundAmountCents > 0) {
-      createXeroCreditNoteForModification({
-        bookingId,
-        refundAmountCents: result.refundAmountCents,
-        bookingModificationId: result.bookingModificationId,
-        createdByMemberId: session.user.id,
-      }).catch((err) =>
-        logger.error({ err, bookingId }, "Failed to create Xero credit note for guest removal")
-      );
+      void enqueueXeroModificationCreditNoteOperation(
+        {
+          bookingId,
+          refundAmountCents: result.refundAmountCents,
+          bookingModificationId: result.bookingModificationId,
+        },
+        {
+          createdByMemberId: session.user.id,
+        }
+      )
+        .then(async (queued) => {
+          if (queued.queueOperationId) {
+            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+          }
+        })
+        .catch((err) =>
+          logger.error({ err, bookingId }, "Failed to queue Xero credit note for guest removal")
+        );
     }
 
     // Send email

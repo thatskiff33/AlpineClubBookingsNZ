@@ -14,7 +14,10 @@ import {
 } from "@/lib/promo";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
-import { createXeroSupplementaryInvoice } from "@/lib/xero";
+import {
+  enqueueXeroSupplementaryInvoiceOperation,
+  kickQueuedXeroOutboxOperationsIfConnected,
+} from "@/lib/xero-operation-outbox";
 import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import logger from "@/lib/logger";
 import { z } from "zod";
@@ -457,15 +460,25 @@ export async function POST(
 
     // XER-01: Xero supplementary invoice for price increase (fire-and-forget)
     if (result.additionalAmountCents > 0) {
-      createXeroSupplementaryInvoice({
-        bookingId,
-        priceDiffCents: result.priceDiffCents,
-        changeFeeCents: 0,
-        bookingModificationId: result.bookingModificationId,
-        createdByMemberId: session.user.id,
-      }).catch((err) =>
-        logger.error({ err, bookingId }, "Failed to create Xero supplementary invoice for guest addition")
-      );
+      void enqueueXeroSupplementaryInvoiceOperation(
+        {
+          bookingId,
+          priceDiffCents: result.priceDiffCents,
+          changeFeeCents: 0,
+          bookingModificationId: result.bookingModificationId,
+        },
+        {
+          createdByMemberId: session.user.id,
+        }
+      )
+        .then(async (queued) => {
+          if (queued.queueOperationId) {
+            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+          }
+        })
+        .catch((err) =>
+          logger.error({ err, bookingId }, "Failed to queue Xero supplementary invoice for guest addition")
+        );
     }
 
     // Send email

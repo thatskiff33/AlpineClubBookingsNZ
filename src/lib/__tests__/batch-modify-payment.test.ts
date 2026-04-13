@@ -10,6 +10,9 @@ const mockFindOrCreateCustomer = vi.fn();
 const mockCheckCapacity = vi.fn();
 const mockCalculateBookingPrice = vi.fn();
 const mockAuth = vi.fn();
+const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
+const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
+const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -79,6 +82,11 @@ vi.mock("@/lib/chore-cleanup", () => ({
 vi.mock("@/lib/xero", () => ({
   createXeroSupplementaryInvoice: vi.fn().mockResolvedValue(undefined),
   createXeroCreditNoteForModification: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
+  enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
+  kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -334,5 +342,19 @@ describe("PUT /api/bookings/[id]/modify", () => {
         stripeCustomerId: "cus_new",
       },
     });
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        priceDiffCents: 10000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod_1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
+    );
+    expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
   });
 });

@@ -8,6 +8,21 @@ Last updated: 2026-04-14
 
 Completed in this pass:
 
+- Extended the primary-write outbox in `src/lib/xero-operation-outbox.ts` from standard refund credit notes to the two booking-modification write types:
+  - added `SUPPLEMENTARY_INVOICE` and `MODIFICATION_CREDIT_NOTE` queue payloads beside the existing entrance-fee, booking-invoice, and refund-credit-note payloads
+  - the worker now claims and executes queued supplementary invoices and queued modification credit notes on the same durable `XeroSyncOperation` row used for queueing
+- Updated `createXeroSupplementaryInvoice()` and `createXeroCreditNoteForModification()` in `src/lib/xero.ts` so they can execute against an existing pending outbox row instead of always creating a fresh ledger entry.
+  - queued no-op cases now complete the claimed operation cleanly when there is no original Xero invoice or no billable/refundable amount, rather than leaving the row stuck in `RUNNING`
+- Moved the booking-modification Xero trigger points onto the durable outbox path:
+  - date-change modifications in `src/app/api/bookings/[id]/modify-dates/route.ts`
+  - batch booking modifications in `src/app/api/bookings/[id]/modify/route.ts`
+  - guest-add modifications in `src/app/api/bookings/[id]/guests/route.ts`
+  - guest-removal modifications in `src/app/api/bookings/[id]/guests/[guestId]/route.ts`
+- Added focused regression coverage for the modification-write outbox extension and trigger rewiring:
+  - `src/lib/__tests__/xero-operation-outbox.test.ts`
+  - `src/lib/__tests__/fix-mod-payment.test.ts`
+  - `src/lib/__tests__/batch-modify-payment.test.ts`
+  - `src/lib/__tests__/phase8b-booking-mods.test.ts`
 - Extended the primary-write outbox in `src/lib/xero-operation-outbox.ts` from invoices to the standard refund-credit-note path:
   - added a `REFUND_CREDIT_NOTE` queue payload alongside the existing entrance-fee and booking-invoice payloads
   - the worker now claims and executes queued refund credit notes on the same durable `XeroSyncOperation` row used for queueing
@@ -159,17 +174,17 @@ Work remaining after this pass:
   - entrance-fee invoice creation
   - automatic booking invoice creation across booking creation, draft confirmation, waitlist confirmation, saved-card charging, Stripe payment webhooks, and pending-confirmation cron
   - standard allocated refund credit note creation across Stripe refund webhooks, card-refund booking cancellations, and approved admin refund appeals
+  - booking-modification supplementary invoice creation across date-change, batch-modify, guest-add, and guest-remove flows
+  - booking-modification credit note creation across date-change, batch-modify, and guest-remove flows
   Remaining high-value initial-write candidates are still inline and should move onto the same durable pattern next:
   - unapplied account-credit note creation on credit cancellations
-  - supplementary invoice creation
-  - modification credit note creation
   - decide whether the manual admin booking-invoice repair route and any future operator-triggered refund repair routes should stay intentionally synchronous or also enqueue onto the outbox
 - Phase 2: incremental invoice sync to replace full daily membership polling.
 - Phase 3: local cache tables for Xero contact groups and memberships so member pages and filters can stay local-only without the temporary "not loaded" fallback.
 - Phase 4: incremental contact sync and group import so default admin syncs stop doing full scans plus per-contact invoice lookups.
 - Phase 6 still remaining:
-  - extend the same shared outbox/deduping pattern from automatic booking invoices and standard refund credit notes to unapplied account-credit notes and modification credit-note flows
-  - reduce duplicate write attempts across the remaining credit-note and supplementary-invoice trigger paths
+  - extend the same shared outbox/deduping pattern from the current automatic booking invoice / refund / modification flows to unapplied account-credit notes
+  - decide whether any remaining operator-triggered repair/generation routes should also converge on the outbox or stay intentionally synchronous
 - Phase 7 still remaining:
   - webhook-driven targeted updates for any remaining local business state that is not yet advanced from inbound events
   - cached contact-group membership refresh driven from inbound changes where applicable
