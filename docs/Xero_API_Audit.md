@@ -53,12 +53,29 @@ Completed in this pass:
 - Added targeted test coverage for the new metering and summary logic:
   - `src/lib/__tests__/xero.test.ts`
   - `src/lib/__tests__/xero-api-usage.test.ts`
+- Added operator-facing stored inbound event inspection and targeted replay:
+  - `GET /api/admin/xero/inbound-events`
+  - `POST /api/admin/xero/inbound-events/[id]/replay`
+  - inbound events panel on `src/app/(admin)/admin/xero/page.tsx`
+- Extended `src/lib/xero-inbound-reconciliation.ts` so a single stored inbound event can be replayed safely by:
+  - clearing the previous dedupe claim in `ProcessedWebhookEvent`
+  - resetting the selected `XeroInboundEvent` row back to `RECEIVED`
+  - reprocessing only the targeted event ID through the existing worker path
+- Added targeted replay and admin-route coverage in:
+  - `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
+  - `src/lib/__tests__/xero-inbound-events-routes.test.ts`
 
 Work remaining after this pass:
 
 - Phase 2: incremental invoice sync to replace full daily membership polling.
 - Phase 3: local cache tables for Xero contact groups and memberships so member pages and filters can stay local-only without the temporary "not loaded" fallback.
-- Phases 4-8 remain unstarted in this pass.
+- Phase 4: incremental contact sync and group import so default admin syncs stop doing full scans plus per-contact invoice lookups.
+- Phase 6: trim write-path verification reads and duplicate trigger attempts on booking/payment flows.
+- Phase 7: the new inspection/replay tooling is only a supporting operator workflow; the main webhook-first reconciliation work still remains:
+  - broader inbound categories such as payment and credit-note events
+  - webhook-driven targeted updates for subscription status and other local business state
+  - reducing daily polling to a safety net rather than the primary reconciliation path
+- Phase 8: durable shared cache for chart-of-accounts and items remains unstarted.
 
 ## Goal
 
@@ -546,6 +563,16 @@ Primary files:
 - booking/payment/webhook routes listed in the hotspot section
 
 ### Phase 7: Turn Xero Webhooks Into The Main Reconciliation Trigger
+
+Status:
+
+- Partially implemented.
+- Current supporting pieces now include:
+  - stored `XeroInboundEvent` persistence
+  - claim / dedupe before handler execution
+  - first webhook-driven linked contact and invoice reconciliation handlers
+  - operator-facing inbound-event inspection and single-event replay from `/admin/xero`
+- This phase is still incomplete because webhook-driven reconciliation is not yet the main source of truth for the remaining affected business state, and daily polling has not yet been reduced to a pure safety net.
 
 Goal:
 
