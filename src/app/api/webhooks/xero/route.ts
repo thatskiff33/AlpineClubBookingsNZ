@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
+import { buildXeroIdempotencyKey, recordXeroInboundEvent } from "@/lib/xero-sync";
 
 /**
  * POST /api/webhooks/xero
@@ -55,8 +56,29 @@ export async function POST(request: NextRequest) {
   for (const event of events) {
     const { eventType, eventCategory, resourceId } = event;
     const eventStart = Date.now();
+    const eventDateUtc =
+      typeof event.eventDateUtc === "string" ? new Date(event.eventDateUtc) : null;
+    const correlationKey = buildXeroIdempotencyKey(
+      "xero",
+      "webhook",
+      eventCategory || "UNKNOWN",
+      eventType || "UNKNOWN",
+      resourceId || "UNKNOWN",
+      typeof event.eventDateUtc === "string" ? event.eventDateUtc : "NO_DATE"
+    );
 
     try {
+      await recordXeroInboundEvent({
+        source: "webhook",
+        eventCategory: eventCategory ?? null,
+        eventType: eventType ?? "UNKNOWN",
+        resourceId: resourceId ?? null,
+        eventCreatedAt: eventDateUtc,
+        correlationKey,
+        payload: event,
+        status: "RECEIVED",
+      });
+
       // Log for now - specific handlers can be added as needed
       logger.info({ eventCategory, eventType, resourceId }, "Xero webhook event received");
 
@@ -80,6 +102,18 @@ export async function POST(request: NextRequest) {
         durationMs: Date.now() - eventStart,
       });
     } catch (err) {
+      await recordXeroInboundEvent({
+        source: "webhook",
+        eventCategory: eventCategory ?? null,
+        eventType: eventType ?? "UNKNOWN",
+        resourceId: resourceId ?? null,
+        eventCreatedAt: eventDateUtc,
+        correlationKey,
+        payload: event,
+        status: "FAILED",
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+
       logger.error({ err, eventCategory, eventType, resourceId }, "Error processing Xero webhook event");
 
       // OBS-08: Record failed webhook processing

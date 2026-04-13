@@ -4,6 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { deactivateXeroObjectLinks } from "@/lib/xero-sync";
 
 /**
  * POST /api/admin/members/[id]/xero-unlink
@@ -43,6 +44,15 @@ export async function POST(
       where: { id },
       data: { xeroContactId: null },
     });
+    try {
+      await deactivateXeroObjectLinks({
+        localModel: "Member",
+        localId: id,
+        role: "CONTACT",
+      });
+    } catch (linkErr) {
+      logger.warn({ err: linkErr, memberId: id }, "Failed to deactivate Xero object links during unlink");
+    }
 
     await logAudit({
       action: "XERO_UNLINK",

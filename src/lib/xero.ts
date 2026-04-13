@@ -15,6 +15,15 @@ import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
 import { getXeroErrorHeader, getXeroErrorStatusCode } from "@/lib/xero-error-shape";
+import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links";
+import {
+  buildXeroIdempotencyKey,
+  buildXeroPayloadHash,
+  completeXeroSyncOperation,
+  failXeroSyncOperation,
+  startXeroSyncOperation,
+  upsertXeroObjectLink,
+} from "@/lib/xero-sync";
 
 // ---------------------------------------------------------------------------
 // Rate limit error
@@ -535,7 +544,10 @@ export async function getAuthenticatedXeroClient(): Promise<{
  * Find or create a Xero Contact for a member.
  * Updates the member's xeroContactId if a new contact is created.
  */
-export async function findOrCreateXeroContact(memberId: string): Promise<string> {
+export async function findOrCreateXeroContact(
+  memberId: string,
+  options?: { createdByMemberId?: string }
+): Promise<string> {
   return prisma.$transaction(async (tx) => {
     // Advisory lock prevents concurrent duplicate creation for same member
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
@@ -550,6 +562,14 @@ export async function findOrCreateXeroContact(memberId: string): Promise<string>
       try {
         const { xero, tenantId } = await getAuthenticatedXeroClient();
         await xero.accountingApi.getContact(tenantId, member.xeroContactId);
+        await upsertXeroObjectLink({
+          localModel: "Member",
+          localId: memberId,
+          xeroObjectType: "CONTACT",
+          xeroObjectId: member.xeroContactId,
+          xeroObjectUrl: buildXeroContactUrl(member.xeroContactId),
+          role: "CONTACT",
+        });
         return member.xeroContactId;
       } catch {
         // Contact not found in Xero, will create a new one
@@ -572,6 +592,17 @@ export async function findOrCreateXeroContact(memberId: string): Promise<string>
           where: { id: memberId },
           data: { xeroContactId: contactId },
         });
+        await upsertXeroObjectLink({
+          localModel: "Member",
+          localId: memberId,
+          xeroObjectType: "CONTACT",
+          xeroObjectId: contactId,
+          xeroObjectUrl: buildXeroContactUrl(contactId),
+          role: "CONTACT",
+          metadata: {
+            linkedVia: "email_match",
+          },
+        });
         return contactId;
       }
     } catch {
@@ -591,18 +622,68 @@ export async function findOrCreateXeroContact(memberId: string): Promise<string>
       addresses: buildXeroAddresses(member),
     };
 
-    const response = await xero.accountingApi.createContacts(tenantId, { contacts: [contact] });
-    const createdContact = response.body.contacts?.[0];
-    if (!createdContact?.contactID) {
-      throw new Error("Failed to create Xero contact");
-    }
-
-    await tx.member.update({
-      where: { id: memberId },
-      data: { xeroContactId: createdContact.contactID },
+    const idempotencyKey = buildXeroIdempotencyKey(
+      "member",
+      memberId,
+      "contact",
+      "find-or-create",
+      "v1"
+    );
+    const operation = await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "CONTACT",
+      operationType: "CREATE",
+      localModel: "Member",
+      localId: memberId,
+      idempotencyKey,
+      correlationKey: idempotencyKey,
+      requestPayload: { contacts: [contact] },
+      createdByMemberId: options?.createdByMemberId ?? null,
     });
 
-    return createdContact.contactID;
+    try {
+      const response = await withXeroRetry(
+        () =>
+          xero.accountingApi.createContacts(
+            tenantId,
+            { contacts: [contact] },
+            undefined,
+            idempotencyKey
+          ),
+        { context: `createContacts(findOrCreate ${memberId})` }
+      );
+      const createdContact = response.body.contacts?.[0];
+      if (!createdContact?.contactID) {
+        throw new Error("Failed to create Xero contact");
+      }
+
+      await tx.member.update({
+        where: { id: memberId },
+        data: { xeroContactId: createdContact.contactID },
+      });
+
+      await completeXeroSyncOperation(operation.id, {
+        responsePayload: response.body,
+        xeroObjectType: "CONTACT",
+        xeroObjectId: createdContact.contactID,
+        xeroObjectUrl: buildXeroContactUrl(createdContact.contactID),
+        extraLinks: [
+          {
+            localModel: "Member",
+            localId: memberId,
+            xeroObjectType: "CONTACT",
+            xeroObjectId: createdContact.contactID,
+            xeroObjectUrl: buildXeroContactUrl(createdContact.contactID),
+            role: "CONTACT",
+          },
+        ],
+      });
+
+      return createdContact.contactID;
+    } catch (error) {
+      await failXeroSyncOperation(operation.id, error);
+      throw error;
+    }
   });
 }
 
@@ -610,7 +691,10 @@ export async function findOrCreateXeroContact(memberId: string): Promise<string>
  * Create a brand-new Xero contact for a member and link it locally.
  * Unlike findOrCreateXeroContact, this does not try to match existing contacts by email.
  */
-export async function createXeroContactForMember(memberId: string): Promise<string> {
+export async function createXeroContactForMember(
+  memberId: string,
+  options?: { createdByMemberId?: string }
+): Promise<string> {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
 
@@ -641,20 +725,68 @@ export async function createXeroContactForMember(memberId: string): Promise<stri
       addresses: buildXeroAddresses(member),
     };
 
-    const response = await xero.accountingApi.createContacts(tenantId, {
-      contacts: [contact],
+    const idempotencyKey = buildXeroIdempotencyKey(
+      "member",
+      memberId,
+      "contact",
+      "create",
+      "v1"
+    );
+    const operation = await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "CONTACT",
+      operationType: "CREATE",
+      localModel: "Member",
+      localId: memberId,
+      idempotencyKey,
+      correlationKey: idempotencyKey,
+      requestPayload: { contacts: [contact] },
+      createdByMemberId: options?.createdByMemberId ?? null,
     });
-    const createdContact = response.body.contacts?.[0];
-    if (!createdContact?.contactID) {
-      throw new Error("Failed to create Xero contact");
+
+    try {
+      const response = await withXeroRetry(
+        () =>
+          xero.accountingApi.createContacts(
+            tenantId,
+            { contacts: [contact] },
+            undefined,
+            idempotencyKey
+          ),
+        { context: `createContacts(member ${memberId})` }
+      );
+      const createdContact = response.body.contacts?.[0];
+      if (!createdContact?.contactID) {
+        throw new Error("Failed to create Xero contact");
+      }
+
+      await tx.member.update({
+        where: { id: memberId },
+        data: { xeroContactId: createdContact.contactID },
+      });
+
+      await completeXeroSyncOperation(operation.id, {
+        responsePayload: response.body,
+        xeroObjectType: "CONTACT",
+        xeroObjectId: createdContact.contactID,
+        xeroObjectUrl: buildXeroContactUrl(createdContact.contactID),
+        extraLinks: [
+          {
+            localModel: "Member",
+            localId: memberId,
+            xeroObjectType: "CONTACT",
+            xeroObjectId: createdContact.contactID,
+            xeroObjectUrl: buildXeroContactUrl(createdContact.contactID),
+            role: "CONTACT",
+          },
+        ],
+      });
+
+      return createdContact.contactID;
+    } catch (error) {
+      await failXeroSyncOperation(operation.id, error);
+      throw error;
     }
-
-    await tx.member.update({
-      where: { id: memberId },
-      data: { xeroContactId: createdContact.contactID },
-    });
-
-    return createdContact.contactID;
   });
 }
 
@@ -1759,6 +1891,11 @@ export interface XeroContactUpdateData {
 export async function updateXeroContact(
   xeroContactId: string,
   data: XeroContactUpdateData,
+  options?: {
+    localModel?: string;
+    localId?: string;
+    createdByMemberId?: string;
+  }
 ): Promise<void> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
@@ -1775,7 +1912,67 @@ export async function updateXeroContact(
     addresses: buildXeroAddresses(data),
   };
 
-  await xero.accountingApi.updateContact(tenantId, xeroContactId, { contacts: [contact] });
+  const payloadHash = buildXeroPayloadHash(contact);
+  const idempotencyKey = buildXeroIdempotencyKey(
+    "contact",
+    xeroContactId,
+    "update",
+    payloadHash,
+    "v1"
+  );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CONTACT",
+    operationType: "UPDATE",
+    localModel: options?.localModel,
+    localId: options?.localId,
+    idempotencyKey,
+    correlationKey: buildXeroIdempotencyKey(
+      "contact",
+      xeroContactId,
+      "update",
+      payloadHash,
+      "v1"
+    ),
+    requestPayload: { contacts: [contact] },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  try {
+    const response = await withXeroRetry(
+      () =>
+        xero.accountingApi.updateContact(
+          tenantId,
+          xeroContactId,
+          { contacts: [contact] },
+          idempotencyKey
+        ),
+      { context: `updateContact(${xeroContactId})` }
+    );
+
+    await completeXeroSyncOperation(operation.id, {
+      responsePayload: response.body,
+      xeroObjectType: "CONTACT",
+      xeroObjectId: xeroContactId,
+      xeroObjectUrl: buildXeroContactUrl(xeroContactId),
+      extraLinks:
+        options?.localModel && options.localId
+          ? [
+              {
+                localModel: options.localModel,
+                localId: options.localId,
+                xeroObjectType: "CONTACT",
+                xeroObjectId: xeroContactId,
+                xeroObjectUrl: buildXeroContactUrl(xeroContactId),
+                role: "CONTACT",
+              },
+            ]
+          : [],
+    });
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1807,79 +2004,161 @@ export async function checkMembershipStatus(
 
   const year = seasonYear ?? getSeasonYear(new Date());
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-
-  // Fetch invoices for this contact, filtered to the season year to avoid pagination issues.
-  // Season year runs April to March, so filter invoices from season start to end.
-  const response = await withXeroRetry(
-    () => xero.accountingApi.getInvoices(
-      tenantId,
-      undefined, // ifModifiedSince
-      `Contact.ContactID=guid("${member.xeroContactId}") AND Date >= DateTime(${year},4,1) AND Date <= DateTime(${year + 1},3,31)`, // where
-      undefined, // order
-      undefined, // iDs
-      undefined, // invoiceNumbers
-      undefined, // contactIDs
-      undefined, // statuses
-      1, // page
-      false // includeArchived
-    ),
-    { context: `checkMembershipStatus(${memberId})` }
-  );
-
-  const invoices = response.body.invoices ?? [];
-
-  // Look for subscription invoices matching the season year
-  const subscriptionAccountCode = await getAccountMapping("subscriptionIncome") ?? "203";
-  const subscriptionInvoice = findSubscriptionInvoice(invoices, year, subscriptionAccountCode);
-
-  if (!subscriptionInvoice) {
-    return { status: "NOT_INVOICED" };
-  }
-
-  const status = determineSubscriptionStatus(subscriptionInvoice);
-
-  // Fetch the online invoice URL if available
-  let onlineInvoiceUrl: string | null = null;
-  if (subscriptionInvoice.invoiceID) {
-    try {
-      const onlineRes = await xero.accountingApi.getOnlineInvoice(tenantId, subscriptionInvoice.invoiceID);
-      const onlineInvoices = onlineRes.body.onlineInvoices;
-      if (onlineInvoices && onlineInvoices.length > 0) {
-        onlineInvoiceUrl = onlineInvoices[0].onlineInvoiceUrl ?? null;
-      }
-    } catch {
-      // Non-critical — continue without online URL
-    }
-  }
-
-  // Update local MemberSubscription record
-  await prisma.memberSubscription.upsert({
+  const existingSubscription = await prisma.memberSubscription.findUnique({
     where: {
       memberId_seasonYear: { memberId, seasonYear: year },
     },
-    update: {
-      status: status.status,
-      xeroInvoiceId: subscriptionInvoice.invoiceID,
-      xeroInvoiceNumber: subscriptionInvoice.invoiceNumber ?? null,
-      xeroOnlineInvoiceUrl: onlineInvoiceUrl,
-      paidAt: status.paidAt,
+    select: {
+      id: true,
+      status: true,
+      xeroInvoiceId: true,
+      paidAt: true,
     },
-    create: {
+  });
+  const correlationKey = buildXeroIdempotencyKey(
+    "member",
+    memberId,
+    "subscription",
+    year,
+    "fetch",
+    "v1"
+  );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "SUBSCRIPTION",
+    operationType: "FETCH",
+    localModel: "Member",
+    localId: memberId,
+    correlationKey,
+    requestPayload: {
       memberId,
       seasonYear: year,
-      status: status.status,
-      xeroInvoiceId: subscriptionInvoice.invoiceID,
-      xeroInvoiceNumber: subscriptionInvoice.invoiceNumber ?? null,
-      xeroOnlineInvoiceUrl: onlineInvoiceUrl,
-      paidAt: status.paidAt,
+      xeroContactId: member.xeroContactId,
     },
   });
 
-  return {
-    status: status.status,
-    xeroInvoiceId: subscriptionInvoice.invoiceID ?? undefined,
-    paidAt: status.paidAt,
-  };
+  try {
+    // Fetch invoices for this contact, filtered to the season year to avoid pagination issues.
+    // Season year runs April to March, so filter invoices from season start to end.
+    const response = await withXeroRetry(
+      () => xero.accountingApi.getInvoices(
+        tenantId,
+        undefined, // ifModifiedSince
+        `Contact.ContactID=guid("${member.xeroContactId}") AND Date >= DateTime(${year},4,1) AND Date <= DateTime(${year + 1},3,31)`, // where
+        undefined, // order
+        undefined, // iDs
+        undefined, // invoiceNumbers
+        undefined, // contactIDs
+        undefined, // statuses
+        1, // page
+        false // includeArchived
+      ),
+      { context: `checkMembershipStatus(${memberId})` }
+    );
+
+    const invoices = response.body.invoices ?? [];
+
+    // Look for subscription invoices matching the season year
+    const subscriptionAccountCode = await getAccountMapping("subscriptionIncome") ?? "203";
+    const subscriptionInvoice = findSubscriptionInvoice(invoices, year, subscriptionAccountCode);
+
+    if (!subscriptionInvoice) {
+      await completeXeroSyncOperation(operation.id, {
+        responsePayload: {
+          fetchedInvoices: invoices.length,
+          previousStatus: existingSubscription?.status ?? null,
+          nextStatus: "NOT_INVOICED",
+          matchedInvoiceId: null,
+        },
+      });
+
+      return { status: "NOT_INVOICED" };
+    }
+
+    const status = determineSubscriptionStatus(subscriptionInvoice);
+
+    // Fetch the online invoice URL if available
+    let onlineInvoiceUrl: string | null = null;
+    if (subscriptionInvoice.invoiceID) {
+      try {
+        const onlineRes = await xero.accountingApi.getOnlineInvoice(tenantId, subscriptionInvoice.invoiceID);
+        const onlineInvoices = onlineRes.body.onlineInvoices;
+        if (onlineInvoices && onlineInvoices.length > 0) {
+          onlineInvoiceUrl = onlineInvoices[0].onlineInvoiceUrl ?? null;
+        }
+      } catch {
+        // Non-critical — continue without online URL
+      }
+    }
+
+    // Update local MemberSubscription record
+    const subscriptionRecord = await prisma.memberSubscription.upsert({
+      where: {
+        memberId_seasonYear: { memberId, seasonYear: year },
+      },
+      update: {
+        status: status.status,
+        xeroInvoiceId: subscriptionInvoice.invoiceID,
+        xeroInvoiceNumber: subscriptionInvoice.invoiceNumber ?? null,
+        xeroOnlineInvoiceUrl: onlineInvoiceUrl,
+        paidAt: status.paidAt,
+      },
+      create: {
+        memberId,
+        seasonYear: year,
+        status: status.status,
+        xeroInvoiceId: subscriptionInvoice.invoiceID,
+        xeroInvoiceNumber: subscriptionInvoice.invoiceNumber ?? null,
+        xeroOnlineInvoiceUrl: onlineInvoiceUrl,
+        paidAt: status.paidAt,
+      },
+    });
+
+    await completeXeroSyncOperation(operation.id, {
+      responsePayload: {
+        fetchedInvoices: invoices.length,
+        matchedInvoiceId: subscriptionInvoice.invoiceID ?? null,
+        matchedInvoiceNumber: subscriptionInvoice.invoiceNumber ?? null,
+        previousStatus: existingSubscription?.status ?? null,
+        nextStatus: status.status,
+        previousPaidAt: existingSubscription?.paidAt ?? null,
+        nextPaidAt: status.paidAt ?? null,
+        onlineInvoiceUrl,
+      },
+      xeroObjectType: subscriptionInvoice.invoiceID ? "SUBSCRIPTION" : null,
+      xeroObjectId: subscriptionInvoice.invoiceID ?? null,
+      xeroObjectNumber: subscriptionInvoice.invoiceNumber ?? null,
+      xeroObjectUrl: subscriptionInvoice.invoiceID
+        ? buildXeroInvoiceUrl(subscriptionInvoice.invoiceID)
+        : null,
+      extraLinks: subscriptionInvoice.invoiceID
+        ? [
+            {
+              localModel: "MemberSubscription",
+              localId: subscriptionRecord.id,
+              xeroObjectType: "SUBSCRIPTION",
+              xeroObjectId: subscriptionInvoice.invoiceID,
+              xeroObjectNumber: subscriptionInvoice.invoiceNumber ?? null,
+              xeroObjectUrl: buildXeroInvoiceUrl(subscriptionInvoice.invoiceID),
+              role: "SUBSCRIPTION_INVOICE",
+              metadata: {
+                seasonYear: year,
+                onlineInvoiceUrl,
+              },
+            },
+          ]
+        : [],
+    });
+
+    return {
+      status: status.status,
+      xeroInvoiceId: subscriptionInvoice.invoiceID ?? undefined,
+      paidAt: status.paidAt,
+    };
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
+  }
 }
 
 /**
@@ -2119,6 +2398,20 @@ function formatDate(date: Date): string {
   return date.toISOString().split("T")[0];
 }
 
+function buildSyntheticAllocationId(
+  creditNoteId: string,
+  invoiceId: string,
+  amountCents: number
+): string {
+  return buildXeroIdempotencyKey(
+    "allocation",
+    creditNoteId,
+    invoiceId,
+    amountCents,
+    "v1"
+  );
+}
+
 /**
  * Create a Xero invoice for a confirmed booking.
  * This is the main function that other phases should call after booking confirmation.
@@ -2126,7 +2419,10 @@ function formatDate(date: Date): string {
  * @param bookingId - The booking to create an invoice for
  * @returns The Xero invoice ID
  */
-export async function createXeroInvoiceForBooking(bookingId: string): Promise<string> {
+export async function createXeroInvoiceForBooking(
+  bookingId: string,
+  options?: { createdByMemberId?: string }
+): Promise<string> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
@@ -2141,13 +2437,22 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
 
   // Skip if invoice already created
   if (booking.payment.xeroInvoiceId) {
+    await upsertXeroObjectLink({
+      localModel: "Payment",
+      localId: booking.payment.id,
+      xeroObjectType: "INVOICE",
+      xeroObjectId: booking.payment.xeroInvoiceId,
+      xeroObjectNumber: booking.payment.xeroInvoiceNumber ?? null,
+      xeroObjectUrl: buildXeroInvoiceUrl(booking.payment.xeroInvoiceId),
+      role: "PRIMARY_INVOICE",
+    });
     return booking.payment.xeroInvoiceId;
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   // Ensure the member has a Xero contact
-  const contactId = await findOrCreateXeroContact(booking.memberId);
+  const contactId = await findOrCreateXeroContact(booking.memberId, options);
 
   // Resolve account codes, item codes, and season type
   const [hutFeeMapping, stripeBankCode, hutFeeItemCodeMap] = await Promise.all([
@@ -2231,42 +2536,139 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
     lineAmountTypes: LineAmountTypes.Inclusive,
   };
 
-  const response = await xero.accountingApi.createInvoices(tenantId, {
-    invoices: [invoice],
+  const invoiceIdempotencyKey = buildXeroIdempotencyKey(
+    "booking",
+    bookingId,
+    "invoice",
+    "v1"
+  );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "INVOICE",
+    operationType: "CREATE",
+    localModel: "Payment",
+    localId: booking.payment.id,
+    idempotencyKey: invoiceIdempotencyKey,
+    correlationKey: invoiceIdempotencyKey,
+    requestPayload: { invoices: [invoice] },
+    createdByMemberId: options?.createdByMemberId ?? null,
   });
 
-  const createdInvoice = response.body.invoices?.[0];
-  if (!createdInvoice?.invoiceID) {
-    throw new Error("Failed to create Xero invoice");
+  try {
+    const response = await withXeroRetry(
+      () =>
+        xero.accountingApi.createInvoices(
+          tenantId,
+          { invoices: [invoice] },
+          undefined,
+          undefined,
+          invoiceIdempotencyKey
+        ),
+      { context: `createInvoices(booking ${bookingId})` }
+    );
+
+    const createdInvoice = response.body.invoices?.[0];
+    if (!createdInvoice?.invoiceID) {
+      throw new Error("Failed to create Xero invoice");
+    }
+
+    // Record payment against the invoice in Xero.
+    // For zero-dollar bookings (100% promo discount), we still record a $0 payment so the
+    // invoice shows as PAID in Xero rather than sitting as an open AUTHORISED invoice.
+    let paymentResponseBody: XeroPayment | null = null;
+    let paymentWriteError: unknown = null;
+
+    if (booking.payment.status === "SUCCEEDED") {
+      const payment: XeroPayment = {
+        invoice: { invoiceID: createdInvoice.invoiceID },
+        account: { code: bankCode },
+        amount: booking.payment.amountCents / 100,
+        date: formatDate(new Date()),
+        reference: booking.payment.amountCents > 0
+          ? `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`
+          : "Zero-dollar booking (100% promo discount)",
+      };
+      const paymentIdempotencyKey = buildXeroIdempotencyKey(
+        "payment",
+        booking.payment.id,
+        "invoice-payment",
+        "v1"
+      );
+
+      try {
+        const paymentResponse = await withXeroRetry(
+          () =>
+            xero.accountingApi.createPayment(
+              tenantId,
+              payment,
+              paymentIdempotencyKey
+            ),
+          { context: `createPayment(booking ${bookingId})` }
+        );
+        paymentResponseBody = paymentResponse.body;
+      } catch (error) {
+        paymentWriteError = error;
+        logger.warn(
+          { err: error, bookingId, invoiceId: createdInvoice.invoiceID },
+          "Created Xero invoice but failed to record the corresponding Xero payment"
+        );
+      }
+    }
+
+    // Store the Xero invoice ID and number on the payment record
+    await prisma.payment.update({
+      where: { id: booking.payment.id },
+      data: {
+        xeroInvoiceId: createdInvoice.invoiceID,
+        xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
+      },
+    });
+
+    await completeXeroSyncOperation(operation.id, {
+      status: paymentWriteError ? "PARTIAL" : "SUCCEEDED",
+      responsePayload: {
+        invoice: response.body,
+        payment: paymentResponseBody,
+        paymentError: paymentWriteError,
+      },
+      xeroObjectType: "INVOICE",
+      xeroObjectId: createdInvoice.invoiceID,
+      xeroObjectNumber: createdInvoice.invoiceNumber ?? null,
+      xeroObjectUrl: buildXeroInvoiceUrl(createdInvoice.invoiceID),
+      extraLinks: [
+        {
+          localModel: "Payment",
+          localId: booking.payment.id,
+          xeroObjectType: "INVOICE",
+          xeroObjectId: createdInvoice.invoiceID,
+          xeroObjectNumber: createdInvoice.invoiceNumber ?? null,
+          xeroObjectUrl: buildXeroInvoiceUrl(createdInvoice.invoiceID),
+          role: "PRIMARY_INVOICE",
+        },
+        ...(paymentResponseBody?.paymentID
+          ? [
+              {
+                localModel: "Payment",
+                localId: booking.payment.id,
+                xeroObjectType: "PAYMENT",
+                xeroObjectId: paymentResponseBody.paymentID,
+                xeroObjectNumber: paymentResponseBody.invoiceNumber ?? null,
+                role: "INVOICE_PAYMENT",
+                metadata: {
+                  invoiceId: createdInvoice.invoiceID,
+                  amount: paymentResponseBody.amount ?? booking.payment.amountCents / 100,
+                },
+              },
+            ]
+          : []),
+      ],
+    });
+
+    return createdInvoice.invoiceID;
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
   }
-
-  // Record payment against the invoice in Xero.
-  // For zero-dollar bookings (100% promo discount), we still record a $0 payment so the
-  // invoice shows as PAID in Xero rather than sitting as an open AUTHORISED invoice.
-  if (booking.payment.status === "SUCCEEDED") {
-    const payment: XeroPayment = {
-      invoice: { invoiceID: createdInvoice.invoiceID },
-      account: { code: bankCode },
-      amount: booking.payment.amountCents / 100,
-      date: formatDate(new Date()),
-      reference: booking.payment.amountCents > 0
-        ? `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`
-        : "Zero-dollar booking (100% promo discount)",
-    };
-
-    await xero.accountingApi.createPayment(tenantId, payment);
-  }
-
-  // Store the Xero invoice ID and number on the payment record
-  await prisma.payment.update({
-    where: { id: booking.payment.id },
-    data: {
-      xeroInvoiceId: createdInvoice.invoiceID,
-      xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
-    },
-  });
-
-  return createdInvoice.invoiceID;
 }
 
 // ---------------------------------------------------------------------------
@@ -2282,7 +2684,8 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
  */
 export async function createXeroCreditNote(
   paymentId: string,
-  refundAmountCents: number
+  refundAmountCents: number,
+  options?: { createdByMemberId?: string }
 ): Promise<string> {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
@@ -2297,9 +2700,17 @@ export async function createXeroCreditNote(
   if (!payment.xeroInvoiceId) {
     throw new Error(`No Xero invoice linked to payment: ${paymentId}`);
   }
+  const originalInvoiceId = payment.xeroInvoiceId;
 
   // Idempotency guard: skip if credit note already created for this payment
   if (payment.xeroRefundCreditNoteId) {
+    await upsertXeroObjectLink({
+      localModel: "Payment",
+      localId: paymentId,
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: payment.xeroRefundCreditNoteId,
+      role: "REFUND_CREDIT_NOTE",
+    });
     logger.info({ paymentId, creditNoteId: payment.xeroRefundCreditNoteId }, "Xero credit note already exists, skipping");
     return payment.xeroRefundCreditNoteId;
   }
@@ -2307,7 +2718,7 @@ export async function createXeroCreditNote(
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
   // Ensure the member has a Xero contact
-  const contactId = await findOrCreateXeroContact(payment.booking.memberId);
+  const contactId = await findOrCreateXeroContact(payment.booking.memberId, options);
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
 
@@ -2334,58 +2745,209 @@ export async function createXeroCreditNote(
     status: CreditNote.StatusEnum.AUTHORISED,
   };
 
-  const response = await xero.accountingApi.createCreditNotes(tenantId, {
-    creditNotes: [creditNote],
-  });
-
-  const createdNote = response.body.creditNotes?.[0];
-  if (!createdNote?.creditNoteID) {
-    throw new Error("Failed to create Xero credit note");
-  }
-
-  // Save credit note ID to prevent duplicate creation
-  await prisma.payment.update({
-    where: { id: paymentId },
-    data: { xeroRefundCreditNoteId: createdNote.creditNoteID },
-  });
-
-  // Allocate credit note against the original invoice
-  await xero.accountingApi.createCreditNoteAllocation(
-    tenantId,
-    createdNote.creditNoteID,
-    {
-      allocations: [
-        {
-          invoice: { invoiceID: payment.xeroInvoiceId },
-          amount: refundAmountCents / 100,
-          date: formatDate(new Date()),
-        },
-      ],
-    }
+  const creditNoteIdempotencyKey = buildXeroIdempotencyKey(
+    "payment",
+    paymentId,
+    "refund-credit-note",
+    refundAmountCents,
+    "v1"
   );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: "Payment",
+    localId: paymentId,
+    idempotencyKey: creditNoteIdempotencyKey,
+    correlationKey: creditNoteIdempotencyKey,
+    requestPayload: {
+      creditNotes: [creditNote],
+      allocation: {
+        invoiceId: originalInvoiceId,
+        amount: refundAmountCents / 100,
+      },
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
 
-  // QF-3: Create refund payment against Stripe bank account for auto-reconciliation
   try {
-    const bankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
-    await xero.accountingApi.createPayments(tenantId, {
-      payments: [
-        {
-          invoice: { invoiceID: payment.xeroInvoiceId },
-          account: { code: bankCode },
-          amount: refundAmountCents / 100,
-          date: formatDate(new Date()),
-          reference: `Stripe Refund - Booking ${payment.booking.id.slice(0, 8)}`,
-          isReconciled: false,
-        },
-      ],
-    });
-    logger.info({ paymentId, creditNoteId: createdNote.creditNoteID }, "Xero refund payment created against Stripe bank account");
-  } catch (refundPaymentErr) {
-    logger.error({ err: refundPaymentErr, paymentId }, "Failed to create Xero refund payment against Stripe bank account");
-    // Don't fail the whole operation — credit note was already created and allocated
-  }
+    const response = await withXeroRetry(
+      () =>
+        xero.accountingApi.createCreditNotes(
+          tenantId,
+          { creditNotes: [creditNote] },
+          undefined,
+          undefined,
+          creditNoteIdempotencyKey
+        ),
+      { context: `createCreditNotes(refund ${paymentId})` }
+    );
 
-  return createdNote.creditNoteID;
+    const createdNote = response.body.creditNotes?.[0];
+    if (!createdNote?.creditNoteID) {
+      throw new Error("Failed to create Xero credit note");
+    }
+
+    const allocationIdempotencyKey = buildXeroIdempotencyKey(
+      "payment",
+      paymentId,
+      "refund-credit-note-allocation",
+      refundAmountCents,
+      "v1"
+    );
+
+    try {
+      const allocationResponse = await withXeroRetry(
+        () =>
+          xero.accountingApi.createCreditNoteAllocation(
+            tenantId,
+            createdNote.creditNoteID!,
+            {
+              allocations: [
+                {
+                  invoice: { invoiceID: originalInvoiceId },
+                  amount: refundAmountCents / 100,
+                  date: formatDate(new Date()),
+                },
+              ],
+            },
+            undefined,
+            allocationIdempotencyKey
+          ),
+        { context: `createCreditNoteAllocation(refund ${paymentId})` }
+      );
+
+      // Save credit note ID to prevent duplicate creation once the core reconciliation steps succeeded
+      await prisma.payment.update({
+        where: { id: paymentId },
+        data: { xeroRefundCreditNoteId: createdNote.creditNoteID },
+      });
+
+      // QF-3: Create refund payment against Stripe bank account for auto-reconciliation
+      let refundPaymentResponseBody: { paymentID?: string; invoiceNumber?: string; amount?: number } | null = null;
+      let refundPaymentErr: unknown = null;
+
+      try {
+        const bankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+        const refundPaymentIdempotencyKey = buildXeroIdempotencyKey(
+          "payment",
+          paymentId,
+          "refund-payment",
+          refundAmountCents,
+          "v1"
+        );
+        const refundPaymentResponse = await withXeroRetry(
+          () =>
+            xero.accountingApi.createPayments(
+              tenantId,
+              {
+                payments: [
+                  {
+                    invoice: { invoiceID: originalInvoiceId },
+                    account: { code: bankCode },
+                    amount: refundAmountCents / 100,
+                    date: formatDate(new Date()),
+                    reference: `Stripe Refund - Booking ${payment.booking.id.slice(0, 8)}`,
+                    isReconciled: false,
+                  },
+                ],
+              },
+              undefined,
+              refundPaymentIdempotencyKey
+            ),
+          { context: `createPayments(refund ${paymentId})` }
+        );
+        refundPaymentResponseBody = refundPaymentResponse.body.payments?.[0] ?? null;
+        logger.info({ paymentId, creditNoteId: createdNote.creditNoteID }, "Xero refund payment created against Stripe bank account");
+      } catch (error) {
+        refundPaymentErr = error;
+        logger.error({ err: error, paymentId }, "Failed to create Xero refund payment against Stripe bank account");
+      }
+
+      await completeXeroSyncOperation(operation.id, {
+        status: refundPaymentErr ? "PARTIAL" : "SUCCEEDED",
+        responsePayload: {
+          creditNote: response.body,
+          allocation: allocationResponse.body,
+          refundPayment: refundPaymentResponseBody,
+          refundPaymentError: refundPaymentErr,
+        },
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: createdNote.creditNoteID,
+        xeroObjectNumber: createdNote.creditNoteNumber ?? null,
+        extraLinks: [
+          {
+            localModel: "Payment",
+            localId: paymentId,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: createdNote.creditNoteID,
+            xeroObjectNumber: createdNote.creditNoteNumber ?? null,
+            role: "REFUND_CREDIT_NOTE",
+          },
+          {
+            localModel: "Payment",
+            localId: paymentId,
+            xeroObjectType: "ALLOCATION",
+            xeroObjectId: buildSyntheticAllocationId(
+              createdNote.creditNoteID,
+              originalInvoiceId,
+              refundAmountCents
+            ),
+            xeroObjectUrl: buildXeroInvoiceUrl(originalInvoiceId),
+            role: "CREDIT_NOTE_ALLOCATION",
+            metadata: {
+              creditNoteId: createdNote.creditNoteID,
+              invoiceId: originalInvoiceId,
+              amountCents: refundAmountCents,
+            },
+          },
+          ...(refundPaymentResponseBody?.paymentID
+            ? [
+                {
+                  localModel: "Payment",
+                  localId: paymentId,
+                  xeroObjectType: "PAYMENT",
+                  xeroObjectId: refundPaymentResponseBody.paymentID,
+                  xeroObjectNumber: refundPaymentResponseBody.invoiceNumber ?? null,
+                  role: "REFUND_PAYMENT",
+                  metadata: {
+                    creditNoteId: createdNote.creditNoteID,
+                    amountCents: refundAmountCents,
+                  },
+                },
+              ]
+            : []),
+        ],
+      });
+
+      return createdNote.creditNoteID;
+    } catch (allocationError) {
+      await completeXeroSyncOperation(operation.id, {
+        status: "PARTIAL",
+        responsePayload: {
+          creditNote: response.body,
+          allocationError,
+        },
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: createdNote.creditNoteID,
+        xeroObjectNumber: createdNote.creditNoteNumber ?? null,
+        extraLinks: [
+          {
+            localModel: "Payment",
+            localId: paymentId,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: createdNote.creditNoteID,
+            xeroObjectNumber: createdNote.creditNoteNumber ?? null,
+            role: "REFUND_CREDIT_NOTE",
+          },
+        ],
+      });
+      throw allocationError;
+    }
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
+  }
 }
 
 /**
@@ -2397,7 +2959,8 @@ export async function createXeroCreditNote(
  */
 export async function createUnappliedXeroCreditNote(
   paymentId: string,
-  refundAmountCents: number
+  refundAmountCents: number,
+  options?: { createdByMemberId?: string }
 ): Promise<string> {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
@@ -2411,7 +2974,7 @@ export async function createUnappliedXeroCreditNote(
   if (!payment) throw new Error(`Payment not found: ${paymentId}`);
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(payment.booking.memberId);
+  const contactId = await findOrCreateXeroContact(payment.booking.memberId, options);
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
 
@@ -2438,21 +3001,70 @@ export async function createUnappliedXeroCreditNote(
     status: CreditNote.StatusEnum.AUTHORISED,
   };
 
-  const response = await xero.accountingApi.createCreditNotes(tenantId, {
-    creditNotes: [creditNote],
+  const idempotencyKey = buildXeroIdempotencyKey(
+    "payment",
+    paymentId,
+    "unapplied-credit-note",
+    refundAmountCents,
+    "v1"
+  );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: "Payment",
+    localId: paymentId,
+    idempotencyKey,
+    correlationKey: idempotencyKey,
+    requestPayload: { creditNotes: [creditNote] },
+    createdByMemberId: options?.createdByMemberId ?? null,
   });
 
-  const createdNote = response.body.creditNotes?.[0];
-  if (!createdNote?.creditNoteID) {
-    throw new Error("Failed to create unapplied Xero credit note");
+  try {
+    const response = await withXeroRetry(
+      () =>
+        xero.accountingApi.createCreditNotes(
+          tenantId,
+          { creditNotes: [creditNote] },
+          undefined,
+          undefined,
+          idempotencyKey
+        ),
+      { context: `createCreditNotes(unapplied ${paymentId})` }
+    );
+
+    const createdNote = response.body.creditNotes?.[0];
+    if (!createdNote?.creditNoteID) {
+      throw new Error("Failed to create unapplied Xero credit note");
+    }
+
+    await completeXeroSyncOperation(operation.id, {
+      responsePayload: response.body,
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: createdNote.creditNoteID,
+      xeroObjectNumber: createdNote.creditNoteNumber ?? null,
+      extraLinks: [
+        {
+          localModel: "Payment",
+          localId: paymentId,
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: createdNote.creditNoteID,
+          xeroObjectNumber: createdNote.creditNoteNumber ?? null,
+          role: "ACCOUNT_CREDIT_NOTE",
+        },
+      ],
+    });
+
+    logger.info(
+      { paymentId, creditNoteId: createdNote.creditNoteID },
+      "Created unapplied Xero credit note for account credit"
+    );
+
+    return createdNote.creditNoteID;
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
   }
-
-  logger.info(
-    { paymentId, creditNoteId: createdNote.creditNoteID },
-    "Created unapplied Xero credit note for account credit"
-  );
-
-  return createdNote.creditNoteID;
 }
 
 /**
@@ -2462,28 +3074,93 @@ export async function createUnappliedXeroCreditNote(
 export async function allocateCreditNoteToInvoice(
   creditNoteId: string,
   invoiceId: string,
-  amountCents: number
+  amountCents: number,
+  options?: {
+    localModel?: string;
+    localId?: string;
+    createdByMemberId?: string;
+  }
 ): Promise<void> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-
-  await xero.accountingApi.createCreditNoteAllocation(
-    tenantId,
+  const idempotencyKey = buildXeroIdempotencyKey(
+    "credit-note",
     creditNoteId,
-    {
-      allocations: [
-        {
-          invoice: { invoiceID: invoiceId },
-          amount: amountCents / 100,
-          date: formatDate(new Date()),
-        },
-      ],
-    }
+    "invoice",
+    invoiceId,
+    "allocation",
+    amountCents,
+    "v1"
   );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "ALLOCATION",
+    operationType: "ALLOCATE",
+    localModel: options?.localModel,
+    localId: options?.localId,
+    idempotencyKey,
+    correlationKey: idempotencyKey,
+    requestPayload: {
+      creditNoteId,
+      invoiceId,
+      amountCents,
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
 
-  logger.info(
-    { creditNoteId, invoiceId, amountCents },
-    "Allocated Xero credit note against invoice"
-  );
+  try {
+    const response = await withXeroRetry(
+      () =>
+        xero.accountingApi.createCreditNoteAllocation(
+          tenantId,
+          creditNoteId,
+          {
+            allocations: [
+              {
+                invoice: { invoiceID: invoiceId },
+                amount: amountCents / 100,
+                date: formatDate(new Date()),
+              },
+            ],
+          },
+          undefined,
+          idempotencyKey
+        ),
+      { context: `createCreditNoteAllocation(${creditNoteId} -> ${invoiceId})` }
+    );
+
+    await completeXeroSyncOperation(operation.id, {
+      responsePayload: response.body,
+      xeroObjectType: "ALLOCATION",
+      xeroObjectId: buildSyntheticAllocationId(creditNoteId, invoiceId, amountCents),
+      xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
+      extraLinks:
+        options?.localModel && options.localId
+          ? [
+              {
+                localModel: options.localModel,
+                localId: options.localId,
+                xeroObjectType: "ALLOCATION",
+                xeroObjectId: buildSyntheticAllocationId(creditNoteId, invoiceId, amountCents),
+                xeroObjectUrl: buildXeroInvoiceUrl(invoiceId),
+                role: "CREDIT_NOTE_ALLOCATION",
+                metadata: {
+                  creditNoteId,
+                  invoiceId,
+                  amountCents,
+                },
+              },
+            ]
+          : [],
+    });
+
+    logger.info(
+      { creditNoteId, invoiceId, amountCents },
+      "Allocated Xero credit note against invoice"
+    );
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2501,8 +3178,16 @@ export async function createXeroSupplementaryInvoice(params: {
   bookingId: string;
   priceDiffCents: number;
   changeFeeCents: number;
+  bookingModificationId?: string;
+  createdByMemberId?: string;
 }): Promise<string | null> {
-  const { bookingId, priceDiffCents, changeFeeCents } = params;
+  const {
+    bookingId,
+    priceDiffCents,
+    changeFeeCents,
+    bookingModificationId,
+    createdByMemberId,
+  } = params;
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -2515,7 +3200,9 @@ export async function createXeroSupplementaryInvoice(params: {
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(booking.memberId);
+  const contactId = await findOrCreateXeroContact(booking.memberId, {
+    createdByMemberId,
+  });
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
   const incomeCode = incomeMapping.code ?? "200";
 
@@ -2562,34 +3249,130 @@ export async function createXeroSupplementaryInvoice(params: {
     lineAmountTypes: LineAmountTypes.Inclusive,
   };
 
-  const response = await xero.accountingApi.createInvoices(tenantId, {
-    invoices: [invoice],
+  const localModel = bookingModificationId ? "BookingModification" : "Booking";
+  const localId = bookingModificationId ?? bookingId;
+  const invoiceIdempotencyKey = buildXeroIdempotencyKey(
+    bookingModificationId ? "booking-mod" : "booking",
+    localId,
+    "supplementary-invoice",
+    priceDiffCents,
+    changeFeeCents,
+    "v1"
+  );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "INVOICE",
+    operationType: "CREATE",
+    localModel,
+    localId,
+    idempotencyKey: invoiceIdempotencyKey,
+    correlationKey: invoiceIdempotencyKey,
+    requestPayload: { invoices: [invoice] },
+    createdByMemberId: createdByMemberId ?? null,
   });
 
-  const created = response.body.invoices?.[0];
-  if (!created?.invoiceID) {
-    throw new Error("Failed to create supplementary Xero invoice");
-  }
-
-  // Record Stripe payment against the supplementary invoice so it doesn't show as unpaid in Xero
   try {
-    const stripeBankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
-    const totalCents = priceDiffCents + changeFeeCents;
-    await xero.accountingApi.createPayments(tenantId, {
-      payments: [{
-        invoice: { invoiceID: created.invoiceID },
-        account: { code: stripeBankCode },
-        amount: totalCents / 100,
-        date: formatDate(new Date()),
-        reference: `Stripe payment for booking modification ${bookingId.slice(0, 8)}`,
-      }],
-    });
-  } catch (payErr) {
-    // Non-fatal: invoice exists, payment recording is for reconciliation convenience
-    logger.warn({ err: payErr, invoiceId: created.invoiceID }, "Failed to record Xero payment for supplementary invoice");
-  }
+    const response = await withXeroRetry(
+      () =>
+        xero.accountingApi.createInvoices(
+          tenantId,
+          { invoices: [invoice] },
+          undefined,
+          undefined,
+          invoiceIdempotencyKey
+        ),
+      { context: `createInvoices(supplementary ${localId})` }
+    );
 
-  return created.invoiceID;
+    const created = response.body.invoices?.[0];
+    if (!created?.invoiceID) {
+      throw new Error("Failed to create supplementary Xero invoice");
+    }
+
+    // Record Stripe payment against the supplementary invoice so it doesn't show as unpaid in Xero
+    let paymentResponseBody: XeroPayment | null = null;
+    let paymentError: unknown = null;
+
+    try {
+      const stripeBankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+      const totalCents = priceDiffCents + changeFeeCents;
+      const paymentIdempotencyKey = buildXeroIdempotencyKey(
+        bookingModificationId ? "booking-mod" : "booking",
+        localId,
+        "supplementary-payment",
+        totalCents,
+        "v1"
+      );
+      const paymentResponse = await withXeroRetry(
+        () =>
+          xero.accountingApi.createPayments(
+            tenantId,
+            {
+              payments: [{
+                invoice: { invoiceID: created.invoiceID },
+                account: { code: stripeBankCode },
+                amount: totalCents / 100,
+                date: formatDate(new Date()),
+                reference: `Stripe payment for booking modification ${bookingId.slice(0, 8)}`,
+              }],
+            },
+            undefined,
+            paymentIdempotencyKey
+          ),
+        { context: `createPayments(supplementary ${localId})` }
+      );
+      paymentResponseBody = paymentResponse.body.payments?.[0] ?? null;
+    } catch (error) {
+      paymentError = error;
+      // Non-fatal: invoice exists, payment recording is for reconciliation convenience
+      logger.warn({ err: error, invoiceId: created.invoiceID }, "Failed to record Xero payment for supplementary invoice");
+    }
+
+    await completeXeroSyncOperation(operation.id, {
+      status: paymentError ? "PARTIAL" : "SUCCEEDED",
+      responsePayload: {
+        invoice: response.body,
+        payment: paymentResponseBody,
+        paymentError,
+      },
+      xeroObjectType: "INVOICE",
+      xeroObjectId: created.invoiceID,
+      xeroObjectNumber: created.invoiceNumber ?? null,
+      xeroObjectUrl: buildXeroInvoiceUrl(created.invoiceID),
+      extraLinks: [
+        {
+          localModel,
+          localId,
+          xeroObjectType: "INVOICE",
+          xeroObjectId: created.invoiceID,
+          xeroObjectNumber: created.invoiceNumber ?? null,
+          xeroObjectUrl: buildXeroInvoiceUrl(created.invoiceID),
+          role: "SUPPLEMENTARY_INVOICE",
+        },
+        ...(paymentResponseBody?.paymentID
+          ? [
+              {
+                localModel,
+                localId,
+                xeroObjectType: "PAYMENT",
+                xeroObjectId: paymentResponseBody.paymentID,
+                xeroObjectNumber: paymentResponseBody.invoiceNumber ?? null,
+                role: "SUPPLEMENTARY_INVOICE_PAYMENT",
+                metadata: {
+                  invoiceId: created.invoiceID,
+                  amountCents: priceDiffCents + changeFeeCents,
+                },
+              },
+            ]
+          : []),
+      ],
+    });
+
+    return created.invoiceID;
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
+  }
 }
 
 /**
@@ -2600,8 +3383,15 @@ export async function createXeroSupplementaryInvoice(params: {
 export async function createXeroCreditNoteForModification(params: {
   bookingId: string;
   refundAmountCents: number;
+  bookingModificationId?: string;
+  createdByMemberId?: string;
 }): Promise<string | null> {
-  const { bookingId, refundAmountCents } = params;
+  const {
+    bookingId,
+    refundAmountCents,
+    bookingModificationId,
+    createdByMemberId,
+  } = params;
 
   if (refundAmountCents <= 0) return null;
 
@@ -2613,9 +3403,12 @@ export async function createXeroCreditNoteForModification(params: {
   if (!booking?.payment?.xeroInvoiceId) {
     return null;
   }
+  const originalInvoiceId = booking.payment.xeroInvoiceId;
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const contactId = await findOrCreateXeroContact(booking.memberId);
+  const contactId = await findOrCreateXeroContact(booking.memberId, {
+    createdByMemberId,
+  });
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
 
@@ -2642,31 +3435,144 @@ export async function createXeroCreditNoteForModification(params: {
     status: CreditNote.StatusEnum.AUTHORISED,
   };
 
-  const response = await xero.accountingApi.createCreditNotes(tenantId, {
-    creditNotes: [creditNote],
+  const localModel = bookingModificationId ? "BookingModification" : "Booking";
+  const localId = bookingModificationId ?? bookingId;
+  const creditNoteIdempotencyKey = buildXeroIdempotencyKey(
+    bookingModificationId ? "booking-mod" : "booking",
+    localId,
+    "mod-credit-note",
+    refundAmountCents,
+    "v1"
+  );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel,
+    localId,
+    idempotencyKey: creditNoteIdempotencyKey,
+    correlationKey: creditNoteIdempotencyKey,
+    requestPayload: {
+      creditNotes: [creditNote],
+      invoiceId: originalInvoiceId,
+      refundAmountCents,
+    },
+    createdByMemberId: createdByMemberId ?? null,
   });
 
-  const created = response.body.creditNotes?.[0];
-  if (!created?.creditNoteID) {
-    throw new Error("Failed to create modification credit note");
-  }
+  try {
+    const response = await withXeroRetry(
+      () =>
+        xero.accountingApi.createCreditNotes(
+          tenantId,
+          { creditNotes: [creditNote] },
+          undefined,
+          undefined,
+          creditNoteIdempotencyKey
+        ),
+      { context: `createCreditNotes(modification ${localId})` }
+    );
 
-  // Allocate against original invoice
-  await xero.accountingApi.createCreditNoteAllocation(
-    tenantId,
-    created.creditNoteID,
-    {
-      allocations: [
-        {
-          invoice: { invoiceID: booking.payment.xeroInvoiceId },
-          amount: refundAmountCents / 100,
-          date: formatDate(new Date()),
-        },
-      ],
+    const created = response.body.creditNotes?.[0];
+    if (!created?.creditNoteID) {
+      throw new Error("Failed to create modification credit note");
     }
-  );
+    const createdCreditNoteId = created.creditNoteID;
 
-  return created.creditNoteID;
+    const allocationIdempotencyKey = buildXeroIdempotencyKey(
+      bookingModificationId ? "booking-mod" : "booking",
+      localId,
+      "mod-credit-note-allocation",
+      refundAmountCents,
+      "v1"
+    );
+
+    try {
+      const allocationResponse = await withXeroRetry(
+        () =>
+          xero.accountingApi.createCreditNoteAllocation(
+            tenantId,
+            createdCreditNoteId,
+            {
+              allocations: [
+                {
+                  invoice: { invoiceID: originalInvoiceId },
+                  amount: refundAmountCents / 100,
+                  date: formatDate(new Date()),
+                },
+              ],
+            },
+            undefined,
+            allocationIdempotencyKey
+          ),
+        { context: `createCreditNoteAllocation(modification ${localId})` }
+      );
+
+      await completeXeroSyncOperation(operation.id, {
+        responsePayload: {
+          creditNote: response.body,
+          allocation: allocationResponse.body,
+        },
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: createdCreditNoteId,
+        xeroObjectNumber: created.creditNoteNumber ?? null,
+        extraLinks: [
+          {
+            localModel,
+            localId,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: createdCreditNoteId,
+            xeroObjectNumber: created.creditNoteNumber ?? null,
+            role: "MODIFICATION_CREDIT_NOTE",
+          },
+          {
+            localModel,
+            localId,
+            xeroObjectType: "ALLOCATION",
+            xeroObjectId: buildSyntheticAllocationId(
+              createdCreditNoteId,
+              originalInvoiceId,
+              refundAmountCents
+            ),
+            xeroObjectUrl: buildXeroInvoiceUrl(originalInvoiceId),
+            role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+            metadata: {
+              creditNoteId: createdCreditNoteId,
+              invoiceId: originalInvoiceId,
+              amountCents: refundAmountCents,
+            },
+          },
+        ],
+      });
+
+      return createdCreditNoteId;
+    } catch (allocationError) {
+      await completeXeroSyncOperation(operation.id, {
+        status: "PARTIAL",
+        responsePayload: {
+          creditNote: response.body,
+          allocationError,
+        },
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: createdCreditNoteId,
+        xeroObjectNumber: created.creditNoteNumber ?? null,
+        extraLinks: [
+          {
+            localModel,
+            localId,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: createdCreditNoteId,
+            xeroObjectNumber: created.creditNoteNumber ?? null,
+            role: "MODIFICATION_CREDIT_NOTE",
+          },
+        ],
+      });
+      throw allocationError;
+    }
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2683,7 +3589,10 @@ export async function createXeroCreditNoteForModification(params: {
  * @param memberId - The member to invoice
  * @returns The Xero invoice ID, or null if entrance fee is not configured or Xero is not connected
  */
-export async function createXeroEntranceFeeInvoice(memberId: string): Promise<string | null> {
+export async function createXeroEntranceFeeInvoice(
+  memberId: string,
+  options?: { createdByMemberId?: string }
+): Promise<string | null> {
   // Determine the entrance fee category for this member
   const category = await determineEntranceFeeCategory(memberId);
   const feeMapping = await getEntranceFeeMapping(category);
@@ -2702,7 +3611,7 @@ export async function createXeroEntranceFeeInvoice(memberId: string): Promise<st
     return null;
   }
 
-  const contactId = await findOrCreateXeroContact(memberId);
+  const contactId = await findOrCreateXeroContact(memberId, options);
 
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
   const incomeCode = incomeMapping.code ?? "200";
@@ -2728,21 +3637,77 @@ export async function createXeroEntranceFeeInvoice(memberId: string): Promise<st
     lineAmountTypes: LineAmountTypes.Inclusive,
   };
 
-  const response = await xero.accountingApi.createInvoices(tenantId, {
-    invoices: [invoice],
+  const idempotencyKey = buildXeroIdempotencyKey(
+    "member",
+    memberId,
+    "entrance-fee-invoice",
+    category,
+    feeMapping.amountCents,
+    "v1"
+  );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "INVOICE",
+    operationType: "CREATE",
+    localModel: "Member",
+    localId: memberId,
+    idempotencyKey,
+    correlationKey: idempotencyKey,
+    requestPayload: { invoices: [invoice] },
+    createdByMemberId: options?.createdByMemberId ?? null,
   });
 
-  const created = response.body.invoices?.[0];
-  if (!created?.invoiceID) {
-    throw new Error("Failed to create Xero entrance fee invoice");
+  try {
+    const response = await withXeroRetry(
+      () =>
+        xero.accountingApi.createInvoices(
+          tenantId,
+          { invoices: [invoice] },
+          undefined,
+          undefined,
+          idempotencyKey
+        ),
+      { context: `createInvoices(entranceFee ${memberId})` }
+    );
+
+    const created = response.body.invoices?.[0];
+    if (!created?.invoiceID) {
+      throw new Error("Failed to create Xero entrance fee invoice");
+    }
+
+    await completeXeroSyncOperation(operation.id, {
+      responsePayload: response.body,
+      xeroObjectType: "INVOICE",
+      xeroObjectId: created.invoiceID,
+      xeroObjectNumber: created.invoiceNumber ?? null,
+      xeroObjectUrl: buildXeroInvoiceUrl(created.invoiceID),
+      extraLinks: [
+        {
+          localModel: "Member",
+          localId: memberId,
+          xeroObjectType: "INVOICE",
+          xeroObjectId: created.invoiceID,
+          xeroObjectNumber: created.invoiceNumber ?? null,
+          xeroObjectUrl: buildXeroInvoiceUrl(created.invoiceID),
+          role: "ENTRANCE_FEE_INVOICE",
+          metadata: {
+            category,
+            feeAmountCents: feeMapping.amountCents,
+          },
+        },
+      ],
+    });
+
+    logger.info(
+      { memberId, category, invoiceId: created.invoiceID, feeAmountCents: feeMapping.amountCents },
+      "Created Xero entrance fee invoice"
+    );
+
+    return created.invoiceID;
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
   }
-
-  logger.info(
-    { memberId, category, invoiceId: created.invoiceID, feeAmountCents: feeMapping.amountCents },
-    "Created Xero entrance fee invoice"
-  );
-
-  return created.invoiceID;
 }
 
 // ---------------------------------------------------------------------------
@@ -2794,10 +3759,7 @@ export async function findDuplicateContacts(): Promise<{
   }
 
   function xeroContactLink(contactID: string): string {
-    if (shortCode) {
-      return `https://go.xero.com/organisationlogin/default.aspx?shortcode=${shortCode}&redirecturl=/Contacts/View/${contactID}`;
-    }
-    return `https://go.xero.com/Contacts/View/${contactID}`;
+    return buildXeroContactUrl(contactID, { shortCode });
   }
 
   // Fetch all contacts, paginated

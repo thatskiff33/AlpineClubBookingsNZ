@@ -404,7 +404,7 @@ export async function PUT(
       });
 
       // Create BookingModification record
-      await tx.bookingModification.create({
+      const bookingModification = await tx.bookingModification.create({
         data: {
           bookingId,
           memberId: session.user.id,
@@ -446,6 +446,7 @@ export async function PUT(
         memberEmail: booking.member.email,
         memberName: `${booking.member.firstName} ${booking.member.lastName}`,
         memberId: booking.memberId,
+        bookingModificationId: bookingModification.id,
       };
     });
 
@@ -537,6 +538,8 @@ export async function PUT(
         bookingId,
         priceDiffCents: Math.max(result.priceDiffCents, 0),
         changeFeeCents: result.changeFeeCents,
+        bookingModificationId: result.bookingModificationId,
+        createdByMemberId: session.user.id,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to create Xero supplementary invoice for modification")
       );
@@ -544,6 +547,8 @@ export async function PUT(
       createXeroCreditNoteForModification({
         bookingId,
         refundAmountCents: result.refundAmountCents,
+        bookingModificationId: result.bookingModificationId,
+        createdByMemberId: session.user.id,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to create Xero credit note for modification")
       );

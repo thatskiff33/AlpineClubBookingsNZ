@@ -179,7 +179,9 @@ export async function POST(request: NextRequest) {
     if (paymentIntent.status === "succeeded") {
       try {
         if (await isXeroConnected()) {
-          await createXeroInvoiceForBooking(booking.id);
+          await createXeroInvoiceForBooking(booking.id, {
+            createdByMemberId: session?.user?.id,
+          });
           logger.info({ bookingId: booking.id }, "Xero invoice created for booking");
         }
       } catch (xeroErr) {

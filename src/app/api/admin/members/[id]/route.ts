@@ -433,6 +433,10 @@ export async function PUT(
             postalRegion: updated.postalRegion,
             postalPostalCode: updated.postalPostalCode,
             postalCountry: updated.postalCountry,
+          }, {
+            localModel: "Member",
+            localId: id,
+            createdByMemberId: session.user.id,
           });
         }
       } catch (xeroErr) {

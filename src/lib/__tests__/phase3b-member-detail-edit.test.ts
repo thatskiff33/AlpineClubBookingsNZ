@@ -227,7 +227,15 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
 
     await updateMember(makePutRequest("m1", { firstName: "Bob" }), { params: Promise.resolve({ id: "m1" }) });
 
-    expect(updateXeroContact).toHaveBeenCalledWith("xc1", expect.objectContaining({ firstName: "Bob" }));
+    expect(updateXeroContact).toHaveBeenCalledWith(
+      "xc1",
+      expect.objectContaining({ firstName: "Bob" }),
+      expect.objectContaining({
+        localModel: "Member",
+        localId: "m1",
+        createdByMemberId: "admin1",
+      })
+    );
   });
 
   it("does not call updateXeroContact when Xero is not connected", async () => {

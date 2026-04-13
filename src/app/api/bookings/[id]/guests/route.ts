@@ -356,7 +356,7 @@ export async function POST(
       });
 
       // Create BookingModification record
-      await tx.bookingModification.create({
+      const bookingModification = await tx.bookingModification.create({
         data: {
           bookingId,
           memberId: session.user.id,
@@ -396,6 +396,7 @@ export async function POST(
         memberName: `${booking.member.firstName} ${booking.member.lastName}`,
         memberId: booking.memberId,
         addedGuestNames: normalizedNewGuests.map((guest) => `${guest.firstName} ${guest.lastName}`),
+        bookingModificationId: bookingModification.id,
       };
     });
 
@@ -460,6 +461,8 @@ export async function POST(
         bookingId,
         priceDiffCents: result.priceDiffCents,
         changeFeeCents: 0,
+        bookingModificationId: result.bookingModificationId,
+        createdByMemberId: session.user.id,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to create Xero supplementary invoice for guest addition")
       );

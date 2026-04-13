@@ -7,6 +7,8 @@ import { logAudit } from "@/lib/audit";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
 import { z } from "zod";
+import { buildXeroContactUrl } from "@/lib/xero-links";
+import { upsertXeroObjectLink } from "@/lib/xero-sync";
 
 const linkSchema = z.object({
   xeroContactId: z.string().min(1),
@@ -79,6 +81,18 @@ export async function POST(
       where: { id },
       data: { xeroContactId: parsed.data.xeroContactId },
     });
+    await upsertXeroObjectLink({
+      localModel: "Member",
+      localId: id,
+      xeroObjectType: "CONTACT",
+      xeroObjectId: parsed.data.xeroContactId,
+      xeroObjectUrl: buildXeroContactUrl(parsed.data.xeroContactId),
+      role: "CONTACT",
+      metadata: {
+        contactName: contact.name ?? null,
+        linkedManually: true,
+      },
+    });
 
     await logAudit({
       action: "XERO_LINK",
@@ -92,6 +106,7 @@ export async function POST(
     return NextResponse.json({
       xeroContactId: parsed.data.xeroContactId,
       contactName: contact.name,
+      xeroLink: buildXeroContactUrl(parsed.data.xeroContactId),
     });
   } catch (err) {
     const xeroError = getXeroApiErrorInfo(err, "Failed to link to Xero contact");

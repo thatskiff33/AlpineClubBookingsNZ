@@ -90,6 +90,34 @@ interface DuplicateResult {
   filteredByFamilyGroup: number
 }
 
+interface XeroOperation {
+  id: string
+  direction: string
+  entityType: string
+  operationType: string
+  localModel: string | null
+  localId: string | null
+  localUrl: string | null
+  status: string
+  idempotencyKey: string | null
+  correlationKey: string | null
+  attemptCount: number
+  replayable: boolean
+  lastErrorCode: string | null
+  lastErrorMessage: string | null
+  requestPayload: unknown
+  responsePayload: unknown
+  xeroObjectType: string | null
+  xeroObjectId: string | null
+  xeroObjectNumber: string | null
+  xeroObjectUrl: string | null
+  createdByMemberId: string | null
+  startedAt: string | null
+  completedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 type MappingValue = {
   code: string | null
   itemCode: string | null
@@ -271,6 +299,10 @@ export default function XeroPage() {
   const [mappingError, setMappingError] = useState("")
   const [mappingSaved, setMappingSaved] = useState(false)
   const [isEditingMappings, setIsEditingMappings] = useState(false)
+  const [operations, setOperations] = useState<XeroOperation[]>([])
+  const [loadingOperations, setLoadingOperations] = useState(false)
+  const [operationStatusFilter, setOperationStatusFilter] = useState("all")
+  const [operationEntityFilter, setOperationEntityFilter] = useState("all")
 
   // Granular item code mappings state
   type HutFeeMap = Record<string, { itemCode: string }>
@@ -329,6 +361,26 @@ export default function XeroPage() {
     }
   }, [])
 
+  const fetchOperations = useCallback(async (statusFilter: string, entityFilter: string) => {
+    setLoadingOperations(true)
+    try {
+      const params = new URLSearchParams({
+        status: statusFilter,
+        entityType: entityFilter,
+        direction: "all",
+        limit: "25",
+      })
+      const res = await fetch(`/api/admin/xero/operations?${params.toString()}`)
+      if (!res.ok) throw new Error("Failed to fetch Xero operations")
+      const data = await res.json()
+      setOperations(data.data ?? [])
+    } catch {
+      setError("Failed to load Xero operation history")
+    } finally {
+      setLoadingOperations(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchStatus()
   }, [fetchStatus])
@@ -350,6 +402,12 @@ export default function XeroPage() {
       fetchAccountMappings()
     }
   }, [status?.connected, fetchAccountMappings])
+
+  useEffect(() => {
+    if (status?.connected) {
+      fetchOperations(operationStatusFilter, operationEntityFilter)
+    }
+  }, [status?.connected, operationStatusFilter, operationEntityFilter, fetchOperations])
 
   const handleConnect = () => {
     window.location.href = "/api/admin/xero/connect"
@@ -582,6 +640,26 @@ export default function XeroPage() {
       setCreatingFamilyGroup(null)
     }
   }
+
+  const operationStatusClass = (status: string) => {
+    switch (status) {
+      case "SUCCEEDED":
+        return "bg-green-600"
+      case "PARTIAL":
+        return "bg-amber-500"
+      case "FAILED":
+        return "bg-red-600"
+      case "RUNNING":
+        return "bg-blue-600"
+      default:
+        return ""
+    }
+  }
+
+  const formatJson = (value: unknown) => JSON.stringify(value ?? null, null, 2)
+
+  const shortId = (value: string | null | undefined) =>
+    value ? (value.length > 12 ? `${value.slice(0, 12)}...` : value) : "-"
 
   if (loading) {
     return (
@@ -1026,6 +1104,150 @@ export default function XeroPage() {
                     </Button>
                   )}
                 </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {status?.connected && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Xero Operations</CardTitle>
+            <CardDescription>
+              Recent outbound sync attempts and webhook-related reconciliation state.
+              Use this to inspect failures, confirm what was sent, and jump to related records.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center">
+              <div className="w-full md:w-48">
+                <Label className="mb-1 block text-xs text-muted-foreground">Status</Label>
+                <Select value={operationStatusFilter} onValueChange={setOperationStatusFilter}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="FAILED">Failed</SelectItem>
+                    <SelectItem value="PARTIAL">Partial</SelectItem>
+                    <SelectItem value="RUNNING">Running</SelectItem>
+                    <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="w-full md:w-48">
+                <Label className="mb-1 block text-xs text-muted-foreground">Entity</Label>
+                <Select value={operationEntityFilter} onValueChange={setOperationEntityFilter}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All entities</SelectItem>
+                    <SelectItem value="CONTACT">Contact</SelectItem>
+                    <SelectItem value="INVOICE">Invoice</SelectItem>
+                    <SelectItem value="PAYMENT">Payment</SelectItem>
+                    <SelectItem value="CREDIT_NOTE">Credit Note</SelectItem>
+                    <SelectItem value="ALLOCATION">Allocation</SelectItem>
+                    <SelectItem value="SUBSCRIPTION">Subscription</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="md:pt-5">
+                <Button
+                  variant="outline"
+                  onClick={() => fetchOperations(operationStatusFilter, operationEntityFilter)}
+                  disabled={loadingOperations}
+                >
+                  {loadingOperations ? "Refreshing..." : "Refresh"}
+                </Button>
+              </div>
+            </div>
+
+            {loadingOperations ? (
+              <p className="text-sm text-muted-foreground">Loading recent operations...</p>
+            ) : operations.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No Xero operations recorded yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {operations.map((operation) => (
+                  <div key={operation.id} className="rounded-md border p-3 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="default" className={operationStatusClass(operation.status)}>
+                        {operation.status}
+                      </Badge>
+                      <span className="text-sm font-medium">
+                        {operation.entityType} {operation.operationType}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(operation.createdAt).toLocaleString("en-NZ")}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                      <span>Direction: {operation.direction}</span>
+                      <span>Attempt: {operation.attemptCount}</span>
+                      {operation.localModel && (
+                        <span>
+                          Local:{" "}
+                          {operation.localUrl ? (
+                            <a href={operation.localUrl} className="text-blue-600 hover:underline">
+                              {operation.localModel} {shortId(operation.localId)}
+                            </a>
+                          ) : (
+                            `${operation.localModel} ${shortId(operation.localId)}`
+                          )}
+                        </span>
+                      )}
+                      {operation.xeroObjectId && (
+                        <span>
+                          Xero:{" "}
+                          {operation.xeroObjectUrl ? (
+                            <a
+                              href={operation.xeroObjectUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:underline"
+                            >
+                              {operation.xeroObjectNumber || shortId(operation.xeroObjectId)}
+                            </a>
+                          ) : (
+                            operation.xeroObjectNumber || shortId(operation.xeroObjectId)
+                          )}
+                        </span>
+                      )}
+                    </div>
+
+                    {operation.lastErrorMessage && (
+                      <p className="text-sm text-red-700">
+                        {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
+                        {operation.lastErrorMessage}
+                      </p>
+                    )}
+
+                    <details className="rounded-md bg-slate-50 p-2">
+                      <summary className="cursor-pointer text-xs font-medium text-slate-700">
+                        View request / response payloads
+                      </summary>
+                      <div className="mt-2 grid gap-3 lg:grid-cols-2">
+                        <div>
+                          <p className="mb-1 text-xs font-medium text-slate-700">Request</p>
+                          <pre className="max-h-64 overflow-auto rounded bg-white p-2 text-[11px] border">
+                            {formatJson(operation.requestPayload)}
+                          </pre>
+                        </div>
+                        <div>
+                          <p className="mb-1 text-xs font-medium text-slate-700">Response</p>
+                          <pre className="max-h-64 overflow-auto rounded bg-white p-2 text-[11px] border">
+                            {formatJson(operation.responsePayload)}
+                          </pre>
+                        </div>
+                      </div>
+                    </details>
+                  </div>
+                ))}
               </div>
             )}
           </CardContent>

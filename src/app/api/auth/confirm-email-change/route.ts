@@ -95,6 +95,10 @@ export async function GET(request: NextRequest) {
               postalRegion: record.member.postalRegion,
               postalPostalCode: record.member.postalPostalCode,
               postalCountry: record.member.postalCountry,
+            }, {
+              localModel: "Member",
+              localId: record.member.id,
+              createdByMemberId: record.member.id,
             });
           }
         })

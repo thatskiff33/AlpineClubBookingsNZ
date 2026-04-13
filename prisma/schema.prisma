@@ -657,6 +657,85 @@ model XeroToken {
 }
 
 // ---------------------------------------------------------------------------
+// Xero Reconciliation Ledger
+// ---------------------------------------------------------------------------
+
+model XeroSyncOperation {
+  id               String   @id @default(cuid())
+  direction        String
+  entityType       String
+  operationType    String
+  localModel       String?
+  localId          String?
+  status           String
+  idempotencyKey   String?
+  correlationKey   String?
+  attemptCount     Int      @default(1)
+  replayable       Boolean  @default(true)
+  lastErrorCode    String?
+  lastErrorMessage String?
+  requestPayload   Json?
+  responsePayload  Json?
+  xeroObjectType   String?
+  xeroObjectId     String?
+  xeroObjectNumber String?
+  xeroObjectUrl    String?
+  createdByMemberId String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([direction, status, createdAt])
+  @@index([entityType, status, createdAt])
+  @@index([localModel, localId, createdAt])
+  @@index([correlationKey])
+  @@index([idempotencyKey])
+  @@index([xeroObjectType, xeroObjectId])
+}
+
+model XeroObjectLink {
+  id               String   @id @default(cuid())
+  localModel       String
+  localId          String
+  xeroObjectType   String
+  xeroObjectId     String
+  xeroObjectNumber String?
+  xeroObjectUrl    String?
+  role             String
+  active           Boolean  @default(true)
+  metadata         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([localModel, localId, xeroObjectType, xeroObjectId, role], map: "XeroObjectLink_local_xero_role_key")
+  @@index([localModel, localId, active])
+  @@index([xeroObjectType, xeroObjectId])
+  @@index([role, active])
+}
+
+model XeroInboundEvent {
+  id            String   @id @default(cuid())
+  source        String   @default("webhook")
+  eventCategory String?
+  eventType     String
+  resourceId    String?
+  eventCreatedAt DateTime?
+  correlationKey String  @unique
+  payload       Json
+  status        String   @default("RECEIVED")
+  errorMessage  String?
+  processedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([eventCategory, eventType, createdAt])
+  @@index([resourceId])
+}
+
+// ---------------------------------------------------------------------------
 // Webhook Idempotency (prevents duplicate event processing)
 // ---------------------------------------------------------------------------
 

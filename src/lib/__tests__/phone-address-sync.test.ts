@@ -280,11 +280,19 @@ describe("Profile API: structured phone and address fields", () => {
 
     await updateProfile(makeProfilePut(validProfileBody));
 
-    expect(updateXeroContact).toHaveBeenCalledWith("xc1", expect.objectContaining({
-      firstName: "Alice",
-      lastName: "Smith",
-      phoneCountryCode: "64",
-    }));
+    expect(updateXeroContact).toHaveBeenCalledWith(
+      "xc1",
+      expect.objectContaining({
+        firstName: "Alice",
+        lastName: "Smith",
+        phoneCountryCode: "64",
+      }),
+      expect.objectContaining({
+        localModel: "Member",
+        localId: "m1",
+        createdByMemberId: "m1",
+      })
+    );
   });
 
   it("does not sync to Xero when not connected", async () => {
@@ -401,6 +409,11 @@ describe("Admin Member Edit: structured phone and address", () => {
       "xc1",
       expect.objectContaining({
         streetAddressLine1: "42 Lodge Rd",
+      }),
+      expect.objectContaining({
+        localModel: "Member",
+        localId: "m1",
+        createdByMemberId: "admin1",
       }),
     );
   });

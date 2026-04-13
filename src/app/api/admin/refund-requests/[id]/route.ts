@@ -167,7 +167,9 @@ export async function PUT(
     // Create Xero credit note
     try {
       if (await isXeroConnected()) {
-        await createXeroCreditNote(payment.id, approvedAmountCents);
+        await createXeroCreditNote(payment.id, approvedAmountCents, {
+          createdByMemberId: session.user.id,
+        });
       }
     } catch (xeroErr) {
       logger.error(

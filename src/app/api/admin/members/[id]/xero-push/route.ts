@@ -8,6 +8,7 @@ import {
 } from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { buildXeroContactUrl } from "@/lib/xero-links";
 
 /**
  * POST /api/admin/members/[id]/xero-push
@@ -41,7 +42,9 @@ export async function POST(
   }
 
   try {
-    const xeroContactId = await createXeroContactForMember(id);
+    const xeroContactId = await createXeroContactForMember(id, {
+      createdByMemberId: session.user.id,
+    });
 
     await logAudit({
       action: "XERO_PUSH",
@@ -54,7 +57,7 @@ export async function POST(
 
     return NextResponse.json({
       xeroContactId,
-      xeroLink: `https://go.xero.com/Contacts/View/${xeroContactId}`,
+      xeroLink: buildXeroContactUrl(xeroContactId),
     });
   } catch (err) {
     if (err instanceof XeroContactValidationError) {

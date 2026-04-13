@@ -764,7 +764,9 @@ export async function POST(request: NextRequest) {
 
           isXeroConnected().then((connected) => {
             if (connected) {
-              createXeroInvoiceForBooking(booking.id).catch((err) =>
+              createXeroInvoiceForBooking(booking.id, {
+                createdByMemberId: session.user.id,
+              }).catch((err) =>
                 logger.error({ err, bookingId: booking.id }, "Failed to create Xero invoice for $0 booking")
               );
             }

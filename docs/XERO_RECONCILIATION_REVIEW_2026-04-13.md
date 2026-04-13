@@ -9,6 +9,66 @@ This review focuses on how TACBookings should reconcile booking and membership d
 - failure visibility
 - safe retry and re-push workflows
 
+## Implementation Status (2026-04-13)
+
+The review below started as a design and gap-analysis document. A substantial first pass has now been implemented in the codebase.
+
+### Delivered in this pass
+
+- added durable reconciliation tables in `prisma/schema.prisma`:
+  - `XeroSyncOperation`
+  - `XeroObjectLink`
+  - `XeroInboundEvent`
+- added migration `prisma/migrations/20260413210000_add_xero_reconciliation_foundation/`
+- added shared helpers:
+  - `src/lib/xero-sync.ts` for operation logging, object-link persistence, inbound-event persistence, and deterministic idempotency helpers
+  - `src/lib/xero-links.ts` for centralized Xero deep-link generation
+- instrumented outbound Xero write paths in `src/lib/xero.ts` to:
+  - generate deterministic idempotency keys
+  - use `withXeroRetry()` on write calls as well as reads
+  - persist request and response payloads
+  - record `SUCCEEDED`, `FAILED`, and `PARTIAL` outcomes
+  - persist reusable `XeroObjectLink` rows for created or linked objects
+- covered these business flows in the ledger:
+  - member contact create and update
+  - booking invoice creation
+  - refund credit note creation
+  - unapplied credit note creation for account credit
+  - credit note allocations
+  - supplementary invoices for booking modifications
+  - modification credit notes for booking reductions
+  - entrance fee invoices
+  - membership subscription refresh / fetch
+- updated modification routes so Xero artifacts can be tied to the specific `BookingModification` row, not only the parent booking
+- updated manual member link / unlink routes to maintain `XeroObjectLink`
+- updated `src/app/api/webhooks/xero/route.ts` to persist inbound webhook payloads into `XeroInboundEvent`
+- added an admin operations endpoint and UI surface:
+  - `src/app/api/admin/xero/operations/route.ts`
+  - operations section on `src/app/(admin)/admin/xero/page.tsx`
+
+### Verified in this pass
+
+- `npm run build`
+- `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-member-management.test.ts src/lib/__tests__/phase8c-integrations.test.ts src/lib/__tests__/phone-address-sync.test.ts src/lib/__tests__/phase3b-member-detail-edit.test.ts`
+
+### Not yet implemented
+
+The following recommendations from this review are still open:
+
+- retry / requeue endpoints for failed `XeroSyncOperation` rows
+- worker / outbox execution model for high-value writes
+- automatic replay tooling from the admin UI
+- webhook-driven targeted reconcile jobs that apply inbound changes to business state
+- nightly reconciliation reports / alerting
+- historical backfill of old canonical Xero IDs into the new ledger/link tables
+
+So the current state is:
+
+- observability foundation: implemented
+- deterministic outbound write tracking: implemented
+- admin inspection of recent operations: implemented
+- safe replay workflows and background execution: still pending
+
 ## Current State
 
 The codebase already has a solid base:
@@ -251,17 +311,27 @@ Persist:
 - start logging all existing create/update calls into the new table
 - add deep links for all already-known Xero IDs
 
+Status: implemented in this pass.
+
 ## Phase 2: Safe outbound writes
 
 - add deterministic idempotency keys to all Xero write calls in `src/lib/xero.ts`
 - persist supplementary invoice and modification credit note links
 - capture response payloads and error payloads
 
+Status: implemented for the main existing Xero write flows in `src/lib/xero.ts`.
+
 ## Phase 3: Replay and manual repair
 
 - add admin Xero operations UI
 - add retry / requeue endpoints
 - make booking/payment/member detail screens show related Xero operations
+
+Status: partially implemented.
+
+- admin operations API and UI were added to the Xero admin screen
+- retry / requeue endpoints are still pending
+- record-specific surfaces for booking/payment/member detail pages are still pending
 
 ## Phase 4: Inbound reconciliation
 
@@ -270,11 +340,18 @@ Persist:
 - use webhooks plus targeted pull/reconcile jobs
 - apply `If-Modified-Since` for incremental pull jobs
 
+Status: partially implemented.
+
+- `XeroInboundEvent` and webhook payload persistence were added
+- targeted reconcile jobs and incremental pull work are still pending
+
 ## Phase 5: Hardening
 
 - move high-value Xero writes to a background worker/outbox flow
 - add alerting for repeated failures on the same correlation key
 - add nightly reconciliation reports for missing local-to-Xero links
+
+Status: not yet implemented.
 
 ## Best-Practice Notes
 
@@ -297,3 +374,7 @@ Persist:
 - `src/lib/audit.ts`
 - `src/lib/webhook-log.ts`
 - `prisma/schema.prisma`
+- `src/lib/xero-sync.ts`
+- `src/lib/xero-links.ts`
+- `src/app/api/admin/xero/operations/route.ts`
+- `src/app/(admin)/admin/xero/page.tsx`

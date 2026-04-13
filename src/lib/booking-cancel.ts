@@ -249,7 +249,8 @@ export async function cancelBooking(
       if (await isXeroConnected()) {
         xeroCreditNoteId = await createUnappliedXeroCreditNote(
           booking.payment.id,
-          refundAmountCents
+          refundAmountCents,
+          { createdByMemberId: sessionUserId }
         );
       }
     } catch (xeroErr) {
@@ -342,7 +343,9 @@ export async function cancelBooking(
     // Create Xero credit note if connected (allocated against invoice)
     try {
       if (await isXeroConnected()) {
-        await createXeroCreditNote(booking.payment.id, refundAmountCents);
+        await createXeroCreditNote(booking.payment.id, refundAmountCents, {
+          createdByMemberId: sessionUserId,
+        });
       }
     } catch (xeroErr) {
       logger.error({ err: xeroErr, bookingId, paymentId: booking.payment.id }, "Failed to create Xero credit note");

@@ -153,7 +153,9 @@ export async function POST(
 
   isXeroConnected().then((connected) => {
     if (connected) {
-      createXeroInvoiceForBooking(id).catch((err) =>
+      createXeroInvoiceForBooking(id, {
+        createdByMemberId: session.user.id,
+      }).catch((err) =>
         logger.error({ err, bookingId: id }, "Failed to create Xero invoice for confirmed draft")
       );
     }

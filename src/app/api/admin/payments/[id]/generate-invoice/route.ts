@@ -48,7 +48,9 @@ export async function POST(
   }
 
   try {
-    const xeroInvoiceId = await createXeroInvoiceForBooking(payment.bookingId);
+    const xeroInvoiceId = await createXeroInvoiceForBooking(payment.bookingId, {
+      createdByMemberId: session.user.id,
+    });
 
     const updated = await prisma.payment.findUnique({
       where: { id },

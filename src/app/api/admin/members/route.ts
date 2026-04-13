@@ -552,7 +552,9 @@ export async function POST(req: NextRequest) {
     // creation latency does not depend on Xero availability.
     scheduleAfterResponse(async () => {
       try {
-        await createXeroEntranceFeeInvoice(member.id);
+        await createXeroEntranceFeeInvoice(member.id, {
+          createdByMemberId: session.user.id,
+        });
       } catch (xeroErr) {
         logger.error({ err: xeroErr, memberId: member.id }, "Failed to create entrance fee invoice");
       }

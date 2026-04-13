@@ -179,6 +179,10 @@ export async function PUT(req: NextRequest) {
             postalRegion: updated.postalRegion,
             postalPostalCode: updated.postalPostalCode,
             postalCountry: updated.postalCountry,
+          }, {
+            localModel: "Member",
+            localId: session.user.id,
+            createdByMemberId: session.user.id,
           });
         }
       } catch (xeroErr) {

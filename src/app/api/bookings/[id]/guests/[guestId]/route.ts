@@ -282,7 +282,7 @@ export async function DELETE(
       });
 
       // Create BookingModification record
-      await tx.bookingModification.create({
+      const bookingModification = await tx.bookingModification.create({
         data: {
           bookingId,
           memberId: session.user.id,
@@ -317,6 +317,7 @@ export async function DELETE(
         promoRemoved,
         choreWarnings,
         oldGuestCount: booking.guests.length,
+        bookingModificationId: bookingModification.id,
       };
     });
 
@@ -358,6 +359,8 @@ export async function DELETE(
       createXeroCreditNoteForModification({
         bookingId,
         refundAmountCents: result.refundAmountCents,
+        bookingModificationId: result.bookingModificationId,
+        createdByMemberId: session.user.id,
       }).catch((err) =>
         logger.error({ err, bookingId }, "Failed to create Xero credit note for guest removal")
       );

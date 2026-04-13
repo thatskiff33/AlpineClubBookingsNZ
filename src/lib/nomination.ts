@@ -843,7 +843,9 @@ export async function approveMemberApplication(
   const warnings = await syncApprovedMembersToXero(approved.createdMemberIds);
 
   try {
-    await createXeroEntranceFeeInvoice(approved.applicantMember.id);
+    await createXeroEntranceFeeInvoice(approved.applicantMember.id, {
+      createdByMemberId: adminMemberId,
+    });
   } catch (err) {
     logger.error({ err, memberId: approved.applicantMember.id }, "Failed to create entrance fee invoice for approved application");
     warnings.push("Entrance fee invoice could not be created automatically");
