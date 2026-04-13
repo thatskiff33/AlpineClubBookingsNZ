@@ -41,6 +41,8 @@ const fullAdminPreferences = {
   adminCapacityWarning: true,
   adminDailyDigest: true,
   adminWaitlistOffer: true,
+  adminFamilyGroupRequest: true,
+  adminRefundRequest: true,
 };
 
 describe("Admin notifications API", () => {

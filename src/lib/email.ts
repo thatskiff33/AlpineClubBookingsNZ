@@ -453,26 +453,19 @@ export async function sendAdminMembershipApplicationPendingEmail(data: {
 }) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const reviewUrl = `${baseUrl}/admin/member-applications`;
-  const emails = await getAdminEmails();
 
-  for (const email of emails) {
-    sendEmail({
-      to: email,
-      subject: `Membership application ready: ${data.applicantName}`,
-      html: adminMembershipApplicationPendingTemplate({
-        applicantName: data.applicantName,
-        applicantEmail: data.applicantEmail,
-        familyMemberCount: data.familyMemberCount,
-        reviewUrl,
-      }),
-      templateName: "admin-membership-application-pending",
-    }).catch((err) =>
-      logger.error(
-        { err, to: email, applicationId: data.applicationId },
-        "Failed to send admin membership application alert"
-      )
-    );
-  }
+  await sendToAdmins({
+    subject: `Membership application ready: ${data.applicantName}`,
+    html: adminMembershipApplicationPendingTemplate({
+      applicantName: data.applicantName,
+      applicantEmail: data.applicantEmail,
+      familyMemberCount: data.familyMemberCount,
+      reviewUrl,
+    }),
+    templateName: "admin-membership-application-pending",
+    // Shared request-alert category: membership applications + family-group requests.
+    preferenceKey: "adminFamilyGroupRequest",
+  });
 }
 
 export async function sendEmailChangeVerification(newEmail: string, token: string) {
@@ -767,7 +760,7 @@ export async function sendChildRequestRejectedEmail(
   });
 }
 
-// P3.4: Admin alert for family group requests
+// Shared request-alert category for family-group requests and membership applications.
 export async function sendAdminFamilyGroupRequestAlert(data: {
   requestType: string;
   requesterName: string;

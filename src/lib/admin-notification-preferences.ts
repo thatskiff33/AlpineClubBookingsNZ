@@ -32,8 +32,9 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
     description: "Alerts when a waitlist spot is offered to a member.",
   },
   adminFamilyGroupRequest: {
-    label: "Family group requests",
-    description: "Alerts when a member requests to join or add to a family group.",
+    label: "Member requests",
+    description:
+      "Alerts when a member request needs admin review, including membership applications and family group requests.",
   },
   adminRefundRequest: {
     label: "Refund requests",

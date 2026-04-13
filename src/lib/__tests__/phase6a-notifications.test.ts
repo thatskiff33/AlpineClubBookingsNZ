@@ -371,6 +371,48 @@ describe("N-02: sendAdminNewBookingAlert", () => {
   });
 });
 
+describe("Admin member request alerts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
+    mockPrisma.emailLog.update.mockResolvedValue({});
+  });
+
+  it("respects the shared member request preference for membership application alerts", async () => {
+    mockPrisma.member.findMany.mockResolvedValue([
+      {
+        email: "enabled@tokoroa.org.nz",
+        notificationPreference: { adminFamilyGroupRequest: true },
+      },
+      {
+        email: "disabled@tokoroa.org.nz",
+        notificationPreference: { adminFamilyGroupRequest: false },
+      },
+      {
+        email: "default@tokoroa.org.nz",
+        notificationPreference: null,
+      },
+    ]);
+
+    const { sendAdminMembershipApplicationPendingEmail } = await import("../email");
+    await sendAdminMembershipApplicationPendingEmail({
+      applicationId: "app-1",
+      applicantName: "Jane Doe",
+      applicantEmail: "jane@example.com",
+      familyMemberCount: 1,
+    });
+
+    const recipients = mockPrisma.emailLog.create.mock.calls.map(
+      (call) => call[0].data.to
+    );
+
+    expect(recipients).toContain("enabled@tokoroa.org.nz");
+    expect(recipients).toContain("default@tokoroa.org.nz");
+    expect(recipients).not.toContain("disabled@tokoroa.org.nz");
+  });
+});
+
 // ============================================================================
 // N-01: Check-in reminders cron
 // ============================================================================
