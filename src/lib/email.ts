@@ -21,8 +21,10 @@ import {
   adminPendingDeadlineTemplate,
   adminBookingBumpedTemplate,
   adminXeroSyncErrorTemplate,
+  adminXeroRepeatedFailureTemplate,
   adminCapacityWarningTemplate,
   adminDailyDigestTemplate,
+  adminXeroReconciliationReportTemplate,
   adminPasswordResetTemplate,
   bookingModifiedTemplate,
   accountDeletionApprovedTemplate,
@@ -603,6 +605,28 @@ export async function sendAdminXeroSyncErrorAlert(data: {
   });
 }
 
+export async function sendAdminXeroRepeatedFailureAlert(data: {
+  subject: string;
+  correlationKey: string;
+  failureCount: number;
+  windowHours: number;
+  entityType: string;
+  operationType: string;
+  localModel: string | null;
+  localId: string | null;
+  localUrl: string | null;
+  xeroObjectUrl: string | null;
+  latestErrorMessage: string | null;
+  timestamp: Date;
+}) {
+  await sendToAdmins({
+    subject: data.subject,
+    html: adminXeroRepeatedFailureTemplate(data),
+    templateName: "admin-xero-repeated-failure",
+    preferenceKey: "adminXeroSyncError",
+  });
+}
+
 // N-03: Admin alert - capacity warning
 export async function sendAdminCapacityWarningAlert(days: Array<{
   date: Date;
@@ -632,6 +656,46 @@ export async function sendAdminDailyDigestAlert(sections: {
     html: adminDailyDigestTemplate(sections),
     templateName: "admin-daily-digest",
     preferenceKey: "adminDailyDigest",
+  });
+}
+
+export async function sendAdminXeroReconciliationReportAlert(report: {
+  generatedAt: Date;
+  lookbackHours: number;
+  stalePendingMinutes: number;
+  summary: {
+    missingMemberContactLinks: number;
+    missingPaymentInvoiceLinks: number;
+    missingPaymentRefundCreditNoteLinks: number;
+    missingSubscriptionInvoiceLinks: number;
+    stalePendingOperations: number;
+    recentFailedOperations: number;
+    recentPartialOperations: number;
+    repeatedFailureCorrelations: number;
+    issueCategoryCount: number;
+    issueTotalCount: number;
+  };
+  repeatedFailures: Array<{
+    correlationKey: string;
+    failureCount: number;
+    entityType: string;
+    operationType: string;
+    localModel: string | null;
+    localId: string | null;
+    localUrl: string | null;
+    latestErrorMessage: string | null;
+  }>;
+}) {
+  const subject =
+    report.summary.issueCategoryCount === 0
+      ? "Xero Reconciliation Report - clean"
+      : `Xero Reconciliation Report - ${report.summary.issueCategoryCount} issue categor${report.summary.issueCategoryCount === 1 ? "y" : "ies"}, ${report.summary.issueTotalCount} item${report.summary.issueTotalCount === 1 ? "" : "s"}`;
+
+  await sendToAdmins({
+    subject,
+    html: adminXeroReconciliationReportTemplate(report),
+    templateName: "admin-xero-reconciliation-report",
+    preferenceKey: "adminXeroSyncError",
   });
 }
 

@@ -590,6 +590,61 @@ export function adminXeroSyncErrorTemplate(data: {
   `);
 }
 
+export function adminXeroRepeatedFailureTemplate(data: {
+  correlationKey: string;
+  failureCount: number;
+  windowHours: number;
+  entityType: string;
+  operationType: string;
+  localModel: string | null;
+  localId: string | null;
+  localUrl: string | null;
+  xeroObjectUrl: string | null;
+  latestErrorMessage: string | null;
+  timestamp: Date;
+}): string {
+  const infoRows = [
+    { label: "Correlation Key", value: escapeHtml(data.correlationKey) },
+    {
+      label: "Failures in Window",
+      value: `${data.failureCount} in the last ${data.windowHours} hour${data.windowHours === 1 ? "" : "s"}`,
+    },
+    { label: "Entity", value: escapeHtml(data.entityType) },
+    { label: "Operation", value: escapeHtml(data.operationType) },
+    {
+      label: "Local Record",
+      value:
+        data.localModel && data.localId
+          ? escapeHtml(`${data.localModel} ${data.localId}`)
+          : "Unavailable",
+    },
+    {
+      label: "Latest Error",
+      value: escapeHtml(data.latestErrorMessage ?? "Unavailable"),
+    },
+    {
+      label: "Timestamp",
+      value: data.timestamp.toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" }),
+    },
+  ];
+
+  const links: string[] = [];
+  if (data.localUrl) {
+    links.push(`<a href="${escapeHtml(BASE_URL + data.localUrl)}" style="color: ${BRAND_COLOR}; text-decoration: underline;">Open local record</a>`);
+  }
+  if (data.xeroObjectUrl) {
+    links.push(`<a href="${escapeHtml(data.xeroObjectUrl)}" style="color: ${BRAND_COLOR}; text-decoration: underline;">Open Xero object</a>`);
+  }
+
+  return layout(`
+    ${heading("Repeated Xero Failures")}
+    ${alertBox("The same Xero sync correlation key has failed repeatedly and now needs operator attention.", "warning")}
+    ${infoTable(infoRows)}
+    ${links.length > 0 ? paragraph(links.join(" &nbsp;|&nbsp; ")) : ""}
+    ${button("Open Xero Admin", BASE_URL + "/admin/xero")}
+  `);
+}
+
 // ---- N-03: Admin Alert — Capacity Warning ----
 
 export function adminCapacityWarningTemplate(days: Array<{
@@ -713,6 +768,93 @@ export function adminDailyDigestTemplate(sections: {
     </table>` : ""}
     ${paragraph("<strong>Total alerts:</strong> " + sections.totalAlerts)}
     ${button("Open Admin Dashboard", BASE_URL + "/admin/dashboard")}
+  `);
+}
+
+export function adminXeroReconciliationReportTemplate(report: {
+  generatedAt: Date;
+  lookbackHours: number;
+  stalePendingMinutes: number;
+  summary: {
+    missingMemberContactLinks: number;
+    missingPaymentInvoiceLinks: number;
+    missingPaymentRefundCreditNoteLinks: number;
+    missingSubscriptionInvoiceLinks: number;
+    stalePendingOperations: number;
+    recentFailedOperations: number;
+    recentPartialOperations: number;
+    repeatedFailureCorrelations: number;
+    issueCategoryCount: number;
+    issueTotalCount: number;
+  };
+  repeatedFailures: Array<{
+    correlationKey: string;
+    failureCount: number;
+    entityType: string;
+    operationType: string;
+    localModel: string | null;
+    localId: string | null;
+    localUrl: string | null;
+    latestErrorMessage: string | null;
+  }>;
+}): string {
+  const summaryRows = [
+    { label: "Generated", value: report.generatedAt.toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" }) },
+    { label: "Lookback Window", value: `${report.lookbackHours} hour${report.lookbackHours === 1 ? "" : "s"}` },
+    { label: "Stale Pending Threshold", value: `${report.stalePendingMinutes} minute${report.stalePendingMinutes === 1 ? "" : "s"}` },
+    { label: "Issue Categories", value: String(report.summary.issueCategoryCount) },
+    { label: "Total Issue Count", value: String(report.summary.issueTotalCount) },
+  ];
+
+  const categoryRows = [
+    { label: "Missing member contact links", value: String(report.summary.missingMemberContactLinks) },
+    { label: "Missing payment invoice links", value: String(report.summary.missingPaymentInvoiceLinks) },
+    { label: "Missing refund credit note links", value: String(report.summary.missingPaymentRefundCreditNoteLinks) },
+    { label: "Missing subscription invoice links", value: String(report.summary.missingSubscriptionInvoiceLinks) },
+    { label: "Stale pending/running operations", value: String(report.summary.stalePendingOperations) },
+    { label: "Recent failed operations", value: String(report.summary.recentFailedOperations) },
+    { label: "Recent partial operations", value: String(report.summary.recentPartialOperations) },
+    { label: "Repeated-failure correlations", value: String(report.summary.repeatedFailureCorrelations) },
+  ];
+
+  const repeatedFailureRows = report.repeatedFailures
+    .map((failure) => `
+      <tr>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(failure.correlationKey)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${failure.failureCount}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(failure.entityType)} ${escapeHtml(failure.operationType)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${
+          failure.localModel && failure.localId
+            ? escapeHtml(`${failure.localModel} ${failure.localId}`)
+            : "Unavailable"
+        }</td>
+      </tr>`)
+    .join("");
+
+  return layout(`
+    ${heading("Xero Reconciliation Report")}
+    ${
+      report.summary.issueCategoryCount === 0
+        ? alertBox("No open reconciliation gaps were detected in this report window.", "success")
+        : alertBox("Reconciliation gaps were detected and should be reviewed.", "warning")
+    }
+    ${infoTable(summaryRows)}
+    ${infoTable(categoryRows)}
+    ${
+      report.repeatedFailures.length > 0
+        ? `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+      <tr>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Correlation Key</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Failures</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Local Record</th>
+      </tr>
+      ${repeatedFailureRows}
+    </table>`
+        : paragraph("No repeated-failure correlations met the alert threshold in this window.")
+    }
+    ${button("Open Xero Admin", BASE_URL + "/admin/xero")}
   `);
 }
 

@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { prisma } from "./prisma";
 import { getXeroErrorStatusCode } from "./xero-error-shape";
 import { buildXeroObjectUrl } from "./xero-links";
+import logger from "@/lib/logger";
 
 export interface XeroSyncOperationInput {
   direction: string;
@@ -212,7 +213,7 @@ export async function completeXeroSyncOperation(
       ? buildXeroObjectUrl(completion.xeroObjectType, completion.xeroObjectId)
       : null);
 
-  return prisma.$transaction(async (tx) => {
+  const operation = await prisma.$transaction(async (tx) => {
     const operation = await tx.xeroSyncOperation.update({
       where: { id: operationId },
       data: {
@@ -232,6 +233,23 @@ export async function completeXeroSyncOperation(
 
     return operation;
   });
+
+  if (operation.status === "PARTIAL") {
+    try {
+      const { maybeNotifyXeroRepeatedFailure } = await import("./xero-hardening");
+      await maybeNotifyXeroRepeatedFailure(operation);
+    } catch (error) {
+      logger.error(
+        {
+          err: error,
+          operationId,
+        },
+        "Failed to process repeated Xero failure alert for partial operation"
+      );
+    }
+  }
+
+  return operation;
 }
 
 export async function failXeroSyncOperation(
@@ -243,7 +261,7 @@ export async function failXeroSyncOperation(
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown Xero sync failure";
 
-  return prisma.xeroSyncOperation.update({
+  const operation = await prisma.xeroSyncOperation.update({
     where: { id: operationId },
     data: {
       status: "FAILED",
@@ -253,6 +271,21 @@ export async function failXeroSyncOperation(
       completedAt: new Date(),
     },
   });
+
+  try {
+    const { maybeNotifyXeroRepeatedFailure } = await import("./xero-hardening");
+    await maybeNotifyXeroRepeatedFailure(operation);
+  } catch (alertError) {
+    logger.error(
+      {
+        err: alertError,
+        operationId,
+      },
+      "Failed to process repeated Xero failure alert for failed operation"
+    );
+  }
+
+  return operation;
 }
 
 export async function recordXeroInboundEvent(input: {

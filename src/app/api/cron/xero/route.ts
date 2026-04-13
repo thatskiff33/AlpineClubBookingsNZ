@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { refreshAllMembershipStatuses, isXeroConnected } from "@/lib/xero";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
+import {
+  backfillHistoricalXeroObjectLinks,
+  sendXeroReconciliationReport,
+} from "@/lib/xero-hardening";
 import logger from "@/lib/logger";
 
 /**
@@ -22,44 +26,54 @@ export async function POST(request: NextRequest) {
   }
 
   const task = request.nextUrl.searchParams.get("task") ?? "memberships";
-  if (!["memberships", "retries", "all"].includes(task)) {
+  if (!["memberships", "retries", "backfill", "report", "all"].includes(task)) {
     return NextResponse.json(
-      { error: "Invalid task. Expected memberships, retries, or all." },
+      { error: "Invalid task. Expected memberships, retries, backfill, report, or all." },
       { status: 400 }
     );
   }
 
-  // Skip if Xero is not connected
   const connected = await isXeroConnected();
-  if (!connected) {
-    return NextResponse.json({
-      message: "Xero not connected, skipping",
-      task,
-      membershipRefresh: null,
-      queuedRetries: null,
-    });
-  }
 
   try {
     const membershipRefresh =
       task === "memberships" || task === "all"
-        ? await refreshAllMembershipStatuses()
+        ? connected
+          ? await refreshAllMembershipStatuses()
+          : { skipped: true, reason: "Xero not connected" }
         : null;
     const queuedRetries =
       task === "retries" || task === "all"
-        ? await processQueuedXeroOperationRetries()
+        ? connected
+          ? await processQueuedXeroOperationRetries()
+          : { skipped: true, reason: "Xero not connected" }
+        : null;
+    const linkBackfill =
+      task === "backfill" || task === "all"
+        ? await backfillHistoricalXeroObjectLinks()
+        : null;
+    const reconciliationReport =
+      task === "report" || task === "all"
+        ? await sendXeroReconciliationReport()
         : null;
 
     return NextResponse.json({
       message:
         task === "all"
           ? "Xero cron tasks completed"
+          : task === "report"
+            ? "Xero reconciliation report completed"
+            : task === "backfill"
+              ? "Historical Xero link backfill completed"
           : task === "retries"
             ? "Queued Xero retries processed"
             : "Membership status refresh completed",
       task,
+      connected,
       membershipRefresh,
       queuedRetries,
+      linkBackfill,
+      reconciliationReport,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Cron job failed";

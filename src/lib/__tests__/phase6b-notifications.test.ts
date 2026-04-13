@@ -325,12 +325,13 @@ describe("N-13: sendAdminDigest", () => {
       { templateName: "admin-new-booking", subject: "New booking: Bob" },
       { templateName: "admin-new-booking", subject: "New booking: Carol" },
       { templateName: "admin-payment-failure", subject: "Payment failed: xyz" },
+      { templateName: "admin-xero-repeated-failure", subject: "Repeated Xero Failure: booking:1" },
     ]);
 
     const { sendAdminDigest } = await import("../cron-admin-digest");
     const result = await sendAdminDigest();
 
-    expect(result.totalAlerts).toBe(4);
+    expect(result.totalAlerts).toBe(5);
     expect(result.sent).toBe(true);
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -416,5 +417,65 @@ describe("Email templates - Phase 6b", () => {
     });
 
     expect(html).toContain("No alerts were triggered");
+  });
+
+  it("adminXeroRepeatedFailureTemplate escapes HTML and renders links", async () => {
+    const { adminXeroRepeatedFailureTemplate } = await import("../email-templates");
+    const html = adminXeroRepeatedFailureTemplate({
+      correlationKey: "booking:<script>",
+      failureCount: 3,
+      windowHours: 24,
+      entityType: "INVOICE",
+      operationType: "CREATE",
+      localModel: "Payment",
+      localId: "pay_123",
+      localUrl: "/admin/xero/records/Payment/pay_123",
+      xeroObjectUrl: "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv-123",
+      latestErrorMessage: "Something <b>bad</b> happened",
+      timestamp: new Date("2026-04-13T10:00:00Z"),
+    });
+
+    expect(html).toContain("Repeated Xero Failures");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("&lt;b&gt;bad&lt;/b&gt;");
+    expect(html).toContain("/admin/xero/records/Payment/pay_123");
+  });
+
+  it("adminXeroReconciliationReportTemplate renders summary counts", async () => {
+    const { adminXeroReconciliationReportTemplate } = await import("../email-templates");
+    const html = adminXeroReconciliationReportTemplate({
+      generatedAt: new Date("2026-04-13T10:00:00Z"),
+      lookbackHours: 24,
+      stalePendingMinutes: 30,
+      summary: {
+        missingMemberContactLinks: 1,
+        missingPaymentInvoiceLinks: 2,
+        missingPaymentRefundCreditNoteLinks: 0,
+        missingSubscriptionInvoiceLinks: 1,
+        stalePendingOperations: 3,
+        recentFailedOperations: 4,
+        recentPartialOperations: 1,
+        repeatedFailureCorrelations: 2,
+        issueCategoryCount: 6,
+        issueTotalCount: 14,
+      },
+      repeatedFailures: [
+        {
+          correlationKey: "payment:pay_1:invoice:v1",
+          failureCount: 3,
+          entityType: "INVOICE",
+          operationType: "CREATE",
+          localModel: "Payment",
+          localId: "pay_1",
+          localUrl: "/admin/xero/records/Payment/pay_1",
+          latestErrorMessage: "Rate limit exceeded",
+        },
+      ],
+    });
+
+    expect(html).toContain("Xero Reconciliation Report");
+    expect(html).toContain("Missing member contact links");
+    expect(html).toContain("14");
+    expect(html).toContain("payment:pay_1:invoice:v1");
   });
 });

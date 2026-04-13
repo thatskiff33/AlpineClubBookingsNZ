@@ -15,6 +15,7 @@ const ADMIN_TEMPLATE_NAMES = [
   "admin-booking-bumped",
   "admin-pending-deadline",
   "admin-xero-sync-error",
+  "admin-xero-repeated-failure",
 ] as const;
 
 type TemplateName = typeof ADMIN_TEMPLATE_NAMES[number];
@@ -26,6 +27,7 @@ const TEMPLATE_TO_SECTION: Record<TemplateName, string> = {
   "admin-booking-bumped": "bookingsBumped",
   "admin-pending-deadline": "pendingDeadlines",
   "admin-xero-sync-error": "xeroErrors",
+  "admin-xero-repeated-failure": "xeroErrors",
 };
 
 export async function sendAdminDigest(): Promise<{ totalAlerts: number; sent: boolean }> {

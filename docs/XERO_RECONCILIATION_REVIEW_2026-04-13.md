@@ -11,7 +11,7 @@ This review focuses on how TACBookings should reconcile booking and membership d
 
 ## Implementation Status (2026-04-13)
 
-The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, and record-scoped Xero activity surfaces for the main admin workflows. The remaining work is now mostly around full outbox execution for initial writes, dedicated `PARTIAL` repair flows, inbound reconcile jobs, and reporting/hardening.
+The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, and an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables. The remaining work is now mostly around full outbox execution for initial writes, dedicated `PARTIAL` repair flows, webhook-driven/incremental inbound reconcile jobs, and optional Xero-side history/attachment enrichment.
 
 ### Delivered to date
 
@@ -54,7 +54,7 @@ The review below started as a design and gap-analysis document. The codebase now
   - `src/app/api/admin/xero/operations/[id]/requeue/route.ts`
   - `PENDING` / `REQUEUE` controls and visibility in `src/app/(admin)/admin/xero/page.tsx`
   - scheduled replay worker in `src/instrumentation.ts`
-  - manual cron support in `src/app/api/cron/xero/route.ts` via `task=retries` or `task=all`
+  - manual cron support in `src/app/api/cron/xero/route.ts` via `task=retries`, `task=report`, `task=backfill`, or `task=all`
 - added record-scoped Xero activity views and shared resolution helpers:
   - `src/lib/xero-record-links.ts`
   - `src/lib/xero-record-types.ts`
@@ -66,14 +66,27 @@ The review below started as a design and gap-analysis document. The codebase now
   - inline member Xero activity card on `src/app/(admin)/admin/members/[id]/page.tsx`
   - booking activity links on `src/app/(admin)/admin/bookings/page.tsx`
   - payment activity links on `src/app/(admin)/admin/payments/page.tsx`
+- added hardening/reporting helpers and operational alerts:
+  - `src/lib/xero-hardening.ts`
+  - repeated-failure admin alerting by correlation key, triggered from `src/lib/xero-sync.ts`
+  - nightly reconciliation report email covering missing canonical links, stale operations, and repeated failures
+  - manual/scheduled cron support for `task=report` and `task=backfill` in `src/app/api/cron/xero/route.ts` and `src/instrumentation.ts`
+- added historical canonical-link backfill into the reconciliation tables:
+  - member contact links from `Member.xeroContactId`
+  - payment invoice links from `Payment.xeroInvoiceId`
+  - payment refund credit-note links from `Payment.xeroRefundCreditNoteId`
+  - subscription invoice links from `MemberSubscription.xeroInvoiceId`
+  - synthetic `BACKFILL_LINK` ledger rows so these historical objects are visible in `XeroSyncOperation`
 
 ### Verified to date
 
-- `npm run build`
 - `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-member-management.test.ts src/lib/__tests__/phase8c-integrations.test.ts src/lib/__tests__/phone-address-sync.test.ts src/lib/__tests__/phase3b-member-detail-edit.test.ts`
 - `npx vitest run src/lib/__tests__/xero-operation-retry.test.ts`
 - `npx vitest run src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts`
 - `npx vitest run src/lib/__tests__/xero-record-activity.test.ts src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts`
+- `npx vitest run src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/xero-cron-route.test.ts src/lib/__tests__/phase6b-notifications.test.ts`
+- `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-member-management.test.ts src/lib/__tests__/phase8c-integrations.test.ts src/lib/__tests__/phone-address-sync.test.ts src/lib/__tests__/phase3b-member-detail-edit.test.ts src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts src/lib/__tests__/xero-record-activity.test.ts src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/xero-cron-route.test.ts src/lib/__tests__/phase6b-notifications.test.ts`
+- `npm run build`
 
 ### Not yet implemented
 
@@ -84,9 +97,6 @@ The following recommendations from this review are still open:
 - webhook-driven targeted reconcile jobs that apply inbound changes to business state
 - Xero-specific event claim/dedupe processing tied to `ProcessedWebhookEvent`
 - incremental pull jobs using `If-Modified-Since`
-- repeated-failure alerting by correlation key
-- nightly reconciliation reports / alerting
-- historical backfill of old canonical Xero IDs into the new ledger/link tables
 - optional Xero history notes / attachments for high-value financial objects
 
 So the current state is:
@@ -96,9 +106,12 @@ So the current state is:
 - admin inspection of recent operations: implemented
 - synchronous retry for supported failed outbound operations: implemented
 - queue-backed replay for supported failed outbound operations: implemented
+- repeated-failure alerting by correlation key: implemented
+- nightly reconciliation reporting: implemented
+- historical canonical-ID backfill into `XeroObjectLink` / `XeroSyncOperation`: implemented
 - full outbox execution for initial writes and partial-operation repair: pending
 - inbound business-state reconciliation: pending
-- reporting, alerting, and historical backfill: pending
+- optional Xero-side history/attachments and deeper drift enrichment: pending
 
 ## Current State
 
@@ -163,30 +176,20 @@ Entry points now exist from member detail, booking list, and payment list screen
 What is still missing operationally is broader remediation from those scoped views:
 
 - `PARTIAL` operations still require dedicated repair flows
-- repeat-failure alerting and nightly reporting are still only design items
 - booking and payment areas still enter the scoped activity view from list screens because those admin areas do not currently have dedicated detail pages
 
-There is now an active implementation plan for this gap. Another Codex session is currently working through the steps below, so this should be treated as in-flight work rather than completed functionality:
+### 5. Hardening is stronger, but deeper automation is still open
 
-- inspect current Xero ledger/link models and admin screens to define record-scoped activity requirements
-- implement a reusable record-scoped Xero activity data resolver and a dedicated admin API/page for booking, payment, member, and related records
-- integrate the new record-scoped surface into member detail and add booking/payment entry points
-- run targeted tests and a build, then update this review with completed and remaining work and publish directly to `main`
+The hardening layer is now materially better than the original review baseline:
 
-At the time of this update:
+- repeated-failure alerting by correlation key is implemented
+- nightly reconciliation reports for missing canonical links and stale/repeated failures are implemented
+- historical backfill of canonical member/payment/subscription Xero IDs into `XeroObjectLink` and synthetic `BACKFILL_LINK` ledger rows is implemented
 
-- the inspection/orientation step is complete
-- the resolver/API/page implementation is planned and in progress in that separate session
-- member-detail integration and booking/payment entry points are planned and pending behind the shared resolver/page work
-- verification, final review-doc refresh, and publish are planned as the final step of that separate session
+What still remains in this area is:
 
-### 5. Reporting, alerting, and historical cleanup are still open
-
-The hardening layer from the original review remains outstanding:
-
-- repeated-failure alerting by correlation key
-- nightly reconciliation reports for missing links or drift
-- historical backfill of pre-ledger Xero IDs into `XeroObjectLink` / `XeroSyncOperation`
+- broadening the nightly report from canonical-link gaps into richer business-state drift detection
+- reconstructing more legacy history than the currently backfilled canonical IDs
 - optional Xero history notes or attachments where they materially improve supportability
 
 ## Recommended Design
@@ -383,11 +386,6 @@ Status: mostly implemented.
 - queue-backed requeue / worker retry for supported failed operations is implemented
 - record-scoped Xero activity surfaces are now available from member, booking, and payment admin workflows
 - partial-operation repair is still pending
-- record-scoped activity work now has an explicit in-flight plan in another Codex session:
-  - inspection of current ledger/link models and admin screens: completed
-  - reusable record-scoped resolver and admin API/page: in progress
-  - member detail integration and booking/payment entry points: planned next
-  - targeted verification, review-doc refresh, and direct publish to `main`: planned final step
 
 ## Phase 4: Inbound reconciliation
 
@@ -407,7 +405,13 @@ Status: partially implemented.
 - add alerting for repeated failures on the same correlation key
 - add nightly reconciliation reports for missing local-to-Xero links
 
-Status: not yet implemented.
+Status: partially implemented.
+
+- repeated-failure alerting by correlation key is implemented
+- nightly reconciliation reports for canonical-link gaps and stale/repeated failures are implemented
+- canonical-field backfill into the reconciliation ledger/link tables is implemented
+- move high-value Xero writes to a background worker/outbox flow is still pending
+- richer drift reporting and optional Xero-side history/attachments are still pending
 
 ## Best-Practice Notes
 
@@ -433,6 +437,7 @@ Status: not yet implemented.
 - `src/lib/xero-sync.ts`
 - `src/lib/xero-operation-retry.ts`
 - `src/lib/xero-links.ts`
+- `src/lib/xero-hardening.ts`
 - `src/lib/xero-record-links.ts`
 - `src/lib/xero-record-types.ts`
 - `src/lib/xero-record-activity.ts`
@@ -444,3 +449,5 @@ Status: not yet implemented.
 - `src/components/admin/xero-record-activity-panel.tsx`
 - `src/lib/__tests__/xero-operation-retry.test.ts`
 - `src/lib/__tests__/xero-record-activity.test.ts`
+- `src/lib/__tests__/xero-hardening.test.ts`
+- `src/lib/__tests__/xero-cron-route.test.ts`
