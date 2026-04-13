@@ -11,7 +11,7 @@ This review focuses on how TACBookings should reconcile booking and membership d
 
 ## Implementation Status (2026-04-13)
 
-The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, and an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables. The remaining work is now mostly around full outbox execution for initial writes, dedicated `PARTIAL` repair flows, webhook-driven/incremental inbound reconcile jobs, and optional Xero-side history/attachment enrichment.
+The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, and dedicated repair flows for the `PARTIAL` outbound states the code currently emits. The remaining work is now mostly around full outbox execution for initial writes, webhook-driven/incremental inbound reconcile jobs, richer drift detection, and optional Xero-side history/attachment enrichment.
 
 ### Delivered to date
 
@@ -55,6 +55,14 @@ The review below started as a design and gap-analysis document. The codebase now
   - `PENDING` / `REQUEUE` controls and visibility in `src/app/(admin)/admin/xero/page.tsx`
   - scheduled replay worker in `src/instrumentation.ts`
   - manual cron support in `src/app/api/cron/xero/route.ts` via `task=retries`, `task=report`, `task=backfill`, or `task=all`
+- added dedicated repair handling for the currently emitted `PARTIAL` outbound flows:
+  - retry metadata and repair dispatch in `src/lib/xero-operation-retry.ts`
+  - helper paths in `src/lib/xero.ts` to record missing invoice payments, record missing refund payments, and replay missing credit-note allocations against already-created Xero objects
+  - admin retry / requeue flows can now repair:
+    - booking invoice payment recording after invoice creation
+    - supplementary invoice payment recording after invoice creation
+    - refund credit note allocation and refund-payment follow-up
+    - modification credit note allocation
 - added record-scoped Xero activity views and shared resolution helpers:
   - `src/lib/xero-record-links.ts`
   - `src/lib/xero-record-types.ts`
@@ -86,6 +94,7 @@ The review below started as a design and gap-analysis document. The codebase now
 - `npx vitest run src/lib/__tests__/xero-record-activity.test.ts src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts`
 - `npx vitest run src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/xero-cron-route.test.ts src/lib/__tests__/phase6b-notifications.test.ts`
 - `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-member-management.test.ts src/lib/__tests__/phase8c-integrations.test.ts src/lib/__tests__/phone-address-sync.test.ts src/lib/__tests__/phase3b-member-detail-edit.test.ts src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts src/lib/__tests__/xero-record-activity.test.ts src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/xero-cron-route.test.ts src/lib/__tests__/phase6b-notifications.test.ts`
+- `npx vitest run src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts src/lib/__tests__/xero-record-activity.test.ts src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/xero-cron-route.test.ts`
 - `npm run build`
 
 ### Not yet implemented
@@ -93,11 +102,11 @@ The review below started as a design and gap-analysis document. The codebase now
 The following recommendations from this review are still open:
 
 - full outbox-style `PENDING`-first execution for primary outbound Xero writes
-- repair flows for `PARTIAL` operations
 - webhook-driven targeted reconcile jobs that apply inbound changes to business state
 - Xero-specific event claim/dedupe processing tied to `ProcessedWebhookEvent`
 - incremental pull jobs using `If-Modified-Since`
 - optional Xero history notes / attachments for high-value financial objects
+- dedicated repair handlers for any future/new `PARTIAL` operation types beyond the invoice / credit-note follow-up cases already covered
 
 So the current state is:
 
@@ -106,12 +115,14 @@ So the current state is:
 - admin inspection of recent operations: implemented
 - synchronous retry for supported failed outbound operations: implemented
 - queue-backed replay for supported failed outbound operations: implemented
+- dedicated repair flows for the currently emitted partial outbound operations: implemented
 - repeated-failure alerting by correlation key: implemented
 - nightly reconciliation reporting: implemented
 - historical canonical-ID backfill into `XeroObjectLink` / `XeroSyncOperation`: implemented
-- full outbox execution for initial writes and partial-operation repair: pending
+- full outbox execution for initial writes: pending
 - inbound business-state reconciliation: pending
 - optional Xero-side history/attachments and deeper drift enrichment: pending
+- future/new partial-operation classes still require explicit handlers: pending
 
 ## Current State
 
@@ -143,15 +154,20 @@ What is still missing from the fuller execution model originally proposed is:
 - recover automatically from crashes or timeouts that happen after local state commits but before the first Xero write attempt
 - move more high-value initial write flows away from request-bound inline execution
 
-### 2. `PARTIAL` operations still need dedicated repair workflows
+### 2. Current `PARTIAL` operations now have repair flows, but the pattern is explicit
 
-The current retry helper intentionally supports only deterministic `FAILED` outbound operations. It does not yet repair partially completed flows such as:
+The retry helper can now repair the partial outbound states currently emitted by `src/lib/xero.ts`:
 
-- invoice created but Xero payment creation failed afterward
-- credit note created but allocation or refund payment creation failed afterward
+- invoice created but Xero payment recording failed afterward
+- refund credit note created but allocation and/or refund payment recording failed afterward
 - modification credit note created but allocation failed afterward
 
-Those need targeted follow-up actions that understand the already-created Xero artifact instead of simply replaying the whole original call.
+That closes the earlier operational gap for today's known partial cases and makes both synchronous retry and queued requeue usable for them from the existing admin surfaces.
+
+What remains true is that the repair model is still explicit per operation type:
+
+- any new `PARTIAL` status introduced later will need its own handler
+- the broader outbox move is still the longer-term way to reduce how many partial follow-up states can occur
 
 ### 3. Inbound Xero activity is persisted but not reconciled into business state
 
@@ -385,7 +401,7 @@ Status: mostly implemented.
 - synchronous retry support for supported failed operations is implemented
 - queue-backed requeue / worker retry for supported failed operations is implemented
 - record-scoped Xero activity surfaces are now available from member, booking, and payment admin workflows
-- partial-operation repair is still pending
+- targeted partial-operation repair is implemented for the currently emitted invoice / credit-note follow-up states
 
 ## Phase 4: Inbound reconciliation
 
