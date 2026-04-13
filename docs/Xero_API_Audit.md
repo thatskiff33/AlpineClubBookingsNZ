@@ -8,6 +8,14 @@ Last updated: 2026-04-14
 
 Completed in this pass:
 
+- Moved the explicit admin booking-invoice repair path onto the durable booking-invoice outbox:
+  - `src/app/api/admin/payments/[id]/generate-invoice/route.ts` now enqueues the same `BOOKING_INVOICE` primary-write operation used by the automatic flows
+  - the route best-effort kicks the worker and returns either the created invoice details or a durable queued result instead of creating the invoice inline
+- Updated the admin payments surface to handle queued invoice-generation results safely:
+  - `src/app/(admin)/admin/payments/page.tsx` now shows a queued state and operator notice when the repair route returns `202 Accepted`
+  - repeated clicks are suppressed locally for queued payments until the invoice link appears
+- Added focused regression coverage for the admin invoice-generation outbox convergence:
+  - `src/lib/__tests__/admin-generate-invoice-route.test.ts`
 - Extended the primary-write outbox in `src/lib/xero-operation-outbox.ts` from standard refund credit notes to unapplied account-credit notes:
   - added an `ACCOUNT_CREDIT_NOTE` queue payload beside the existing entrance-fee, booking-invoice, refund-credit-note, supplementary-invoice, and modification-credit-note payloads
   - the worker now claims and executes queued account-credit notes on the same durable `XeroSyncOperation` row used for queueing
@@ -59,8 +67,9 @@ Completed in this pass:
   - saved-card charging in `src/app/api/payments/charge-saved-method/route.ts`
   - successful Stripe payment webhooks in `src/app/api/webhooks/stripe/route.ts`
   - pending-booking confirmation cron in `src/lib/cron-confirm-pending.ts`
-- Left the explicit admin repair/generation path synchronous for now:
-  - `src/app/api/admin/payments/[id]/generate-invoice/route.ts` still calls `createXeroInvoiceForBooking()` directly so admins get an immediate success/failure response when intentionally regenerating a missing invoice.
+- Moved the explicit admin repair/generation path onto the same durable booking-invoice outbox:
+  - `src/app/api/admin/payments/[id]/generate-invoice/route.ts` now calls `enqueueXeroBookingInvoiceOperation()` and then best-effort kicks the outbox worker
+  - operators still get immediate feedback when the worker completes inline, but the repair request now survives disconnects and request crashes as a durable queued operation
 - Added focused regression coverage for the booking-invoice outbox extension and trigger rewiring:
   - `src/lib/__tests__/xero-operation-outbox.test.ts`
   - `src/lib/__tests__/charge-saved-method-route.test.ts`
@@ -183,18 +192,17 @@ Work remaining after this pass:
 - Primary-write outbox work now covers:
   - entrance-fee invoice creation
   - automatic booking invoice creation across booking creation, draft confirmation, waitlist confirmation, saved-card charging, Stripe payment webhooks, and pending-confirmation cron
+  - operator-triggered admin booking invoice generation in `src/app/api/admin/payments/[id]/generate-invoice/route.ts`
   - standard allocated refund credit note creation across Stripe refund webhooks, card-refund booking cancellations, and approved admin refund appeals
   - unapplied account-credit note creation on credit cancellations
   - booking-modification supplementary invoice creation across date-change, batch-modify, guest-add, and guest-remove flows
   - booking-modification credit note creation across date-change, batch-modify, and guest-remove flows
-  The remaining design decision in this track is whether intentionally operator-triggered repair/generation paths should stay synchronous or also enqueue onto the outbox:
-  - `src/app/api/admin/payments/[id]/generate-invoice/route.ts`
-  - any future operator-triggered refund/account-credit repair routes
+  The remaining design decision in this track is now limited to future operator-triggered refund/account-credit repair routes that do not yet use the primary outbox.
 - Phase 2: incremental invoice sync to replace full daily membership polling.
 - Phase 3: local cache tables for Xero contact groups and memberships so member pages and filters can stay local-only without the temporary "not loaded" fallback.
 - Phase 4: incremental contact sync and group import so default admin syncs stop doing full scans plus per-contact invoice lookups.
 - Phase 6 still remaining:
-  - decide whether any remaining operator-triggered repair/generation routes should also converge on the outbox or stay intentionally synchronous
+  - decide whether future operator-triggered refund/account-credit repair routes should also converge on the outbox or stay intentionally synchronous
 - Phase 7 still remaining:
   - webhook-driven targeted updates for any remaining local business state that is not yet advanced from inbound events
   - cached contact-group membership refresh driven from inbound changes where applicable

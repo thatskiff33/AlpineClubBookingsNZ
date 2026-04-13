@@ -62,6 +62,8 @@ interface PaymentRow {
 export default function PaymentsPage() {
   const [generatingInvoice, setGeneratingInvoice] = useState<string | null>(null);
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
+  const [invoiceNotice, setInvoiceNotice] = useState<string | null>(null);
+  const [queuedInvoicePaymentIds, setQueuedInvoicePaymentIds] = useState<Record<string, true>>({});
   const [status, setStatus] = useState("all");
   const [from, setFrom] = useState(format(subMonths(new Date(), 3), "yyyy-MM-dd"));
   const [to, setTo] = useState(format(new Date(), "yyyy-MM-dd"));
@@ -91,17 +93,35 @@ export default function PaymentsPage() {
   async function handleGenerateInvoice(paymentId: string) {
     setGeneratingInvoice(paymentId);
     setInvoiceError(null);
+    setInvoiceNotice(null);
     try {
       const res = await fetch(`/api/admin/payments/${paymentId}/generate-invoice`, { method: "POST" });
       if (res.ok) {
         const result = await res.json();
-        setData((prev) =>
-          prev.map((p) =>
-            p.id === paymentId
-              ? { ...p, xeroInvoiceId: result.xeroInvoiceId, xeroInvoiceNumber: result.xeroInvoiceNumber }
-              : p
-          )
-        );
+        if (result.xeroInvoiceId) {
+          setData((prev) =>
+            prev.map((p) =>
+              p.id === paymentId
+                ? { ...p, xeroInvoiceId: result.xeroInvoiceId, xeroInvoiceNumber: result.xeroInvoiceNumber }
+                : p
+            )
+          );
+          setQueuedInvoicePaymentIds((prev) => {
+            const next = { ...prev };
+            delete next[paymentId];
+            return next;
+          });
+        } else if (result.queueOperationId) {
+          setQueuedInvoicePaymentIds((prev) => ({
+            ...prev,
+            [paymentId]: true,
+          }));
+          await fetchData();
+        }
+
+        if (result.message) {
+          setInvoiceNotice(result.message);
+        }
       } else {
         const err = await res.json();
         setInvoiceError(err.error || "Failed to generate invoice");
@@ -160,6 +180,13 @@ export default function PaymentsPage() {
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           {invoiceError}
           <button onClick={() => setInvoiceError(null)} className="ml-2 underline">Dismiss</button>
+        </div>
+      )}
+
+      {invoiceNotice && (
+        <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+          {invoiceNotice}
+          <button onClick={() => setInvoiceNotice(null)} className="ml-2 underline">Dismiss</button>
         </div>
       )}
 
@@ -242,6 +269,11 @@ export default function PaymentsPage() {
                               {p.xeroInvoiceNumber || p.xeroInvoiceId.slice(0, 8)}
                               <ExternalLink className="h-3 w-3" />
                             </a>
+                          ) : queuedInvoicePaymentIds[p.id] ? (
+                            <span className="inline-flex items-center gap-1 text-xs text-amber-700">
+                              <FileText className="h-3 w-3" />
+                              Queued
+                            </span>
                           ) : p.status === "SUCCEEDED" ? (
                             <button
                               onClick={() => handleGenerateInvoice(p.id)}

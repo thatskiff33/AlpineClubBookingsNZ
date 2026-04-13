@@ -11,10 +11,17 @@ This review focuses on how TACBookings should reconcile booking and membership d
 
 ## Implementation Status (2026-04-14)
 
-The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, webhook-driven inbound reconciliation for linked contact, invoice, payment, and credit-note events, operator-facing admin tooling for inspecting and replaying stored inbound events both centrally and from the record-scoped activity view, a Phase 6 steady-state reduction that now trusts persisted member contact links by default, lets retry/replay flows explicitly relink stale contacts, and auto-repairs stale contact references on the first steady-state write failure, and now durable initial-write outbox paths for entrance-fee invoices, automatic booking invoices, standard allocated refund credit notes, unapplied account-credit notes, booking-modification supplementary invoices, and booking-modification credit notes. The remaining work is now mostly around incremental pull support, richer business-state drift detection, optional Xero-side history/attachment enrichment, and deciding which intentionally operator-triggered repair routes should also converge on the outbox.
+The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, webhook-driven inbound reconciliation for linked contact, invoice, payment, and credit-note events, operator-facing admin tooling for inspecting and replaying stored inbound events both centrally and from the record-scoped activity view, a Phase 6 steady-state reduction that now trusts persisted member contact links by default, lets retry/replay flows explicitly relink stale contacts, and auto-repairs stale contact references on the first steady-state write failure, and now durable initial-write outbox paths for entrance-fee invoices, automatic booking invoices, the admin booking-invoice repair route, standard allocated refund credit notes, unapplied account-credit notes, booking-modification supplementary invoices, and booking-modification credit notes. The remaining work is now mostly around incremental pull support, richer business-state drift detection, optional Xero-side history/attachment enrichment, and deciding which future operator-triggered refund/account-credit repair routes should also converge on the outbox.
 
 ### Completed in this session
 
+- moved the admin booking-invoice repair path onto the durable booking-invoice outbox:
+  - `src/app/api/admin/payments/[id]/generate-invoice/route.ts` now enqueues the same `BOOKING_INVOICE` primary-write operation used by the automatic booking flows
+  - the route now best-effort kicks the worker and returns either the created invoice details or a queued result instead of creating the invoice inline
+- updated `src/app/(admin)/admin/payments/page.tsx` so the operator-facing payments UI handles queued invoice-generation responses safely
+  - queued payments now show a temporary "Queued" state and an inline notice instead of assuming the invoice already exists
+- added focused coverage for the admin invoice-generation outbox convergence:
+  - `src/lib/__tests__/admin-generate-invoice-route.test.ts`
 - extended the initial-write outbox in `src/lib/xero-operation-outbox.ts` from refund-credit-note coverage to unapplied account-credit notes
   - added an `ACCOUNT_CREDIT_NOTE` queue payload beside the existing entrance-fee, booking-invoice, refund-credit-note, supplementary-invoice, and modification-credit-note payloads
   - the outbox worker now claims and executes queued account-credit notes on the same durable `XeroSyncOperation` row used for queueing
@@ -67,8 +74,9 @@ The review below started as a design and gap-analysis document. The codebase now
   - saved-card charging in `src/app/api/payments/charge-saved-method/route.ts`
   - successful Stripe payment webhooks in `src/app/api/webhooks/stripe/route.ts`
   - pending-booking confirmation cron in `src/lib/cron-confirm-pending.ts`
-- explicitly left the admin repair path synchronous for now:
-  - `src/app/api/admin/payments/[id]/generate-invoice/route.ts` still creates the invoice inline so an operator-triggered repair returns an immediate result rather than just queueing work
+- moved the admin booking-invoice repair path onto the same durable outbox flow:
+  - `src/app/api/admin/payments/[id]/generate-invoice/route.ts` now queues the repair onto the existing `BOOKING_INVOICE` primary-write path and best-effort kicks the worker immediately
+  - operators still get immediate success when the worker completes inline, but the repair request now survives disconnects and request crashes as a durable queued operation
 - added focused coverage for the booking-invoice outbox extension and trigger rewiring:
   - `src/lib/__tests__/xero-operation-outbox.test.ts`
   - `src/lib/__tests__/charge-saved-method-route.test.ts`
@@ -233,16 +241,18 @@ The review below started as a design and gap-analysis document. The codebase now
 - `npx vitest run src/lib/__tests__/xero-operation-outbox.test.ts src/lib/__tests__/stripe-webhook-alerts.test.ts src/lib/__tests__/admin-refund-request-review-route.test.ts`
 - `npx vitest run src/lib/__tests__/xero-operation-outbox.test.ts src/lib/__tests__/fix-mod-payment.test.ts src/lib/__tests__/batch-modify-payment.test.ts src/lib/__tests__/phase8b-booking-mods.test.ts`
 - `npx vitest run src/lib/__tests__/xero-operation-outbox.test.ts src/lib/__tests__/booking-cancel.test.ts src/lib/__tests__/xero-operation-retry.test.ts`
+- `npx vitest run src/lib/__tests__/admin-generate-invoice-route.test.ts`
 - `npx eslint src/lib/xero-operation-outbox.ts src/lib/xero.ts src/app/api/bookings/[id]/modify-dates/route.ts src/app/api/bookings/[id]/modify/route.ts src/app/api/bookings/[id]/guests/route.ts src/app/api/bookings/[id]/guests/[guestId]/route.ts src/lib/__tests__/xero-operation-outbox.test.ts src/lib/__tests__/fix-mod-payment.test.ts src/lib/__tests__/batch-modify-payment.test.ts src/lib/__tests__/phase8b-booking-mods.test.ts`
 - `npx eslint src/lib/xero-operation-outbox.ts src/lib/xero.ts src/lib/booking-cancel.ts src/lib/__tests__/xero-operation-outbox.test.ts src/lib/__tests__/booking-cancel.test.ts`
 - `npx eslint src/lib/xero.ts src/lib/__tests__/xero.test.ts`
+- `npx eslint src/app/api/admin/payments/[id]/generate-invoice/route.ts 'src/app/(admin)/admin/payments/page.tsx' src/lib/__tests__/admin-generate-invoice-route.test.ts`
 - `npm run build`
 
 ### Not yet implemented
 
 The remaining work is now concentrated in two implementation tracks plus two maintenance notes:
 
-1. Decide which intentionally operator-triggered repair/generation paths should also converge on the primary outbound outbox flow.
+1. Decide which future operator-triggered refund/account-credit repair paths should also converge on the primary outbound outbox flow.
 2. Extend inbound reconciliation beyond the current linked contact / invoice / payment / credit-note handlers.
 3. Extend hardening from canonical-link health into richer drift detection and supportability.
 4. Keep future/new `PARTIAL` operation types explicit, with dedicated repair handlers and tests.
@@ -278,7 +288,7 @@ The codebase already has a solid base:
 
 There is also some manual remediation already:
 
-- admins can generate a missing booking invoice through `src/app/api/admin/payments/[id]/generate-invoice/route.ts`
+- admins can trigger a missing booking invoice through `src/app/api/admin/payments/[id]/generate-invoice/route.ts`, which now queues onto the durable booking-invoice outbox and best-effort kicks the worker immediately
 - admins can manually push and link contacts through the member admin UI and Xero routes
 
 ## Current Remaining Gaps
@@ -299,6 +309,7 @@ Supported failed outbound operations can now be requeued durably from the admin 
 
 - entrance-fee invoice creation
 - automatic booking invoice creation across booking creation, draft confirmation, waitlist confirmation, saved-card charging, Stripe payment webhooks, and pending-confirmation cron
+- operator-triggered admin booking invoice generation in `src/app/api/admin/payments/[id]/generate-invoice/route.ts`
 - standard allocated refund credit note creation across Stripe refund webhooks, card-refund booking cancellations, and approved admin refund appeals
 - unapplied account-credit note creation on credit cancellations
 - booking-modification supplementary invoice creation across date-change, batch-modify, guest-add, and guest-remove flows
@@ -308,11 +319,11 @@ The remaining work in this track is now mostly about where to draw the line betw
 
 - keep creating the primary outbound operation row in `PENDING` and executing that same operation from a worker for any new automatic write path
 - preserve the crash-recovery guarantees now in place whenever a new automatic write path is introduced
-- decide which intentionally operator-triggered repair/generation paths should stay request-bound and which should also enqueue
+- decide whether future operator-triggered refund/account-credit repair paths should stay request-bound or also enqueue
 
 Suggested next decisions:
 
-- decide whether `src/app/api/admin/payments/[id]/generate-invoice/route.ts` and any future operator-triggered refund/account-credit repair routes should remain explicit synchronous repair paths or also enqueue onto the outbox
+- decide whether future operator-triggered refund/account-credit repair routes should remain explicit synchronous repair paths or also enqueue onto the outbox
 
 ### 2. Extend inbound reconciliation on top of stored `XeroInboundEvent` rows
 
@@ -610,8 +621,8 @@ Status: partially implemented.
 - repeated-failure alerting by correlation key is implemented
 - nightly reconciliation reports for canonical-link gaps and stale/repeated failures are implemented
 - canonical-field backfill into the reconciliation ledger/link tables is implemented
-- move high-value Xero writes to a background worker/outbox flow is implemented for entrance-fee invoices, automatic booking invoices, standard allocated refund credit notes, unapplied account-credit notes, booking-modification supplementary invoices, and booking-modification credit notes
-- the remaining inline primary writes are now the intentionally synchronous admin invoice-generation repair path and any future operator-triggered repair routes that we decide should stay request-bound
+- move high-value Xero writes to a background worker/outbox flow is implemented for entrance-fee invoices, automatic booking invoices, the admin booking-invoice repair route, standard allocated refund credit notes, unapplied account-credit notes, booking-modification supplementary invoices, and booking-modification credit notes
+- the remaining request-bound primary-write question is now limited to future operator-triggered refund/account-credit repair routes that we decide should stay synchronous
 - richer drift reporting and optional Xero-side history/attachments are still pending
 
 ## Best-Practice Notes
