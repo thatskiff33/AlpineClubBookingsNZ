@@ -53,6 +53,11 @@ export class XeroContactValidationError extends Error {
   }
 }
 
+interface FindOrCreateXeroContactOptions {
+  createdByMemberId?: string;
+  repairExistingLink?: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -547,7 +552,7 @@ export async function getAuthenticatedXeroClient(): Promise<{
  */
 export async function findOrCreateXeroContact(
   memberId: string,
-  options?: { createdByMemberId?: string }
+  options?: FindOrCreateXeroContactOptions
 ): Promise<string> {
   return prisma.$transaction(async (tx) => {
     // Advisory lock prevents concurrent duplicate creation for same member
@@ -558,34 +563,22 @@ export async function findOrCreateXeroContact(
     });
     if (!member) throw new Error(`Member not found: ${memberId}`);
 
-    // If member already has a Xero contact linked, verify it exists
-    if (member.xeroContactId) {
-      try {
-        const { xero, tenantId } = await getAuthenticatedXeroClient();
-        await callXeroApi(
-          () => xero.accountingApi.getContact(tenantId, member.xeroContactId!),
-          {
-            operation: "getContact",
-            resourceType: "CONTACT",
-            workflow: "findOrCreateXeroContact",
-            context: `findOrCreateXeroContact verifyContact(${memberId})`,
-          }
-        );
-        await upsertXeroObjectLink({
-          localModel: "Member",
-          localId: memberId,
-          xeroObjectType: "CONTACT",
-          xeroObjectId: member.xeroContactId,
-          xeroObjectUrl: buildXeroContactUrl(member.xeroContactId),
-          role: "CONTACT",
-        });
-        return member.xeroContactId;
-      } catch {
-        // Contact not found in Xero, will create a new one
-      }
+    // Trust the persisted contact link on steady-state write paths and avoid
+    // a read-before-write. Retry/repair paths can opt in to relinking.
+    if (member.xeroContactId && !options?.repairExistingLink) {
+      await upsertXeroObjectLink({
+        localModel: "Member",
+        localId: memberId,
+        xeroObjectType: "CONTACT",
+        xeroObjectId: member.xeroContactId,
+        xeroObjectUrl: buildXeroContactUrl(member.xeroContactId),
+        role: "CONTACT",
+      });
+      return member.xeroContactId;
     }
 
     const { xero, tenantId } = await getAuthenticatedXeroClient();
+    const previousXeroContactId = member.xeroContactId;
 
     // Search by email first
     try {
@@ -618,7 +611,11 @@ export async function findOrCreateXeroContact(
           xeroObjectUrl: buildXeroContactUrl(contactId),
           role: "CONTACT",
           metadata: {
-            linkedVia: "email_match",
+            linkedVia: options?.repairExistingLink ? "email_match_repair" : "email_match",
+            repairedFromXeroContactId:
+              options?.repairExistingLink && previousXeroContactId !== contactId
+                ? previousXeroContactId
+                : undefined,
           },
         });
         return contactId;
@@ -2801,7 +2798,7 @@ export async function createXeroRefundPaymentForInvoice(
  */
 export async function createXeroInvoiceForBooking(
   bookingId: string,
-  options?: { createdByMemberId?: string }
+  options?: FindOrCreateXeroContactOptions
 ): Promise<string> {
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -3075,7 +3072,7 @@ export async function createXeroInvoiceForBooking(
 export async function createXeroCreditNote(
   paymentId: string,
   refundAmountCents: number,
-  options?: { createdByMemberId?: string }
+  options?: FindOrCreateXeroContactOptions
 ): Promise<string> {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
@@ -3365,7 +3362,7 @@ export async function createXeroCreditNote(
 export async function createUnappliedXeroCreditNote(
   paymentId: string,
   refundAmountCents: number,
-  options?: { createdByMemberId?: string }
+  options?: FindOrCreateXeroContactOptions
 ): Promise<string> {
   const payment = await prisma.payment.findUnique({
     where: { id: paymentId },
@@ -3596,6 +3593,7 @@ export async function createXeroSupplementaryInvoice(params: {
   changeFeeCents: number;
   bookingModificationId?: string;
   createdByMemberId?: string;
+  repairExistingLink?: boolean;
 }): Promise<string | null> {
   const {
     bookingId,
@@ -3603,6 +3601,7 @@ export async function createXeroSupplementaryInvoice(params: {
     changeFeeCents,
     bookingModificationId,
     createdByMemberId,
+    repairExistingLink,
   } = params;
 
   const booking = await prisma.booking.findUnique({
@@ -3618,6 +3617,7 @@ export async function createXeroSupplementaryInvoice(params: {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = await findOrCreateXeroContact(booking.memberId, {
     createdByMemberId,
+    repairExistingLink,
   });
   const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
   const incomeCode = incomeMapping.code ?? "200";
@@ -3811,12 +3811,14 @@ export async function createXeroCreditNoteForModification(params: {
   refundAmountCents: number;
   bookingModificationId?: string;
   createdByMemberId?: string;
+  repairExistingLink?: boolean;
 }): Promise<string | null> {
   const {
     bookingId,
     refundAmountCents,
     bookingModificationId,
     createdByMemberId,
+    repairExistingLink,
   } = params;
 
   if (refundAmountCents <= 0) return null;
@@ -3834,6 +3836,7 @@ export async function createXeroCreditNoteForModification(params: {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const contactId = await findOrCreateXeroContact(booking.memberId, {
     createdByMemberId,
+    repairExistingLink,
   });
   const refundMapping = await getResolvedAccountMapping("hutFeeRefunds");
   const accountCode = refundMapping.code ?? "200";
@@ -4027,7 +4030,7 @@ export async function createXeroCreditNoteForModification(params: {
  */
 export async function createXeroEntranceFeeInvoice(
   memberId: string,
-  options?: { createdByMemberId?: string }
+  options?: FindOrCreateXeroContactOptions
 ): Promise<string | null> {
   // Determine the entrance fee category for this member
   const category = await determineEntranceFeeCategory(memberId);

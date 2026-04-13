@@ -11,10 +11,23 @@ This review focuses on how TACBookings should reconcile booking and membership d
 
 ## Implementation Status (2026-04-14)
 
-The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, webhook-driven inbound reconciliation for linked contact, invoice, payment, and credit-note events, and operator-facing admin tooling for inspecting and replaying stored inbound events both centrally and from the record-scoped activity view. The remaining work is now mostly around full outbox execution for initial writes, incremental pull support, richer business-state drift detection, optional Xero-side history/attachment enrichment, and any future inbound categories beyond the current safe handlers.
+The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, webhook-driven inbound reconciliation for linked contact, invoice, payment, and credit-note events, operator-facing admin tooling for inspecting and replaying stored inbound events both centrally and from the record-scoped activity view, and a Phase 6 steady-state reduction that now trusts persisted member contact links by default while letting retry/replay flows explicitly relink stale contacts. The remaining work is now mostly around full outbox execution for initial writes, incremental pull support, richer business-state drift detection, optional Xero-side history/attachment enrichment, and any future inbound categories beyond the current safe handlers.
 
 ### Completed in this session
 
+- removed the steady-state `getContact()` verification read from `findOrCreateXeroContact()` in `src/lib/xero.ts`
+  - normal invoice / credit-note / entrance-fee write paths now trust `member.xeroContactId` directly and avoid the extra Xero read when the local canonical link already exists
+  - `findOrCreateXeroContact()` now also supports an explicit repair/relookup mode that re-searches by email and relinks stale contacts when a retry/replay path opts in
+- wired retry/replay flows in `src/lib/xero-operation-retry.ts` to opt into that explicit relink mode before recreating:
+  - booking invoices
+  - refund credit notes
+  - account-credit notes
+  - supplementary invoices
+  - modification credit notes
+  - entrance-fee invoices
+- added focused coverage for the new contact-link trust and retry-repair behavior in:
+  - `src/lib/__tests__/xero-find-or-create-contact.test.ts`
+  - `src/lib/__tests__/xero-operation-retry.test.ts`
 - extended stored inbound reconciliation in `src/lib/xero-inbound-reconciliation.ts` to handle Xero-side `PAYMENT` and `CREDIT_NOTE` events
   - payment events now restore payment object links from linked invoice / credit-note context, refresh local `Payment.xeroInvoiceId` / `xeroInvoiceNumber` metadata where safe, and trigger linked membership subscription refresh for subscription invoices
   - credit-note events now restore canonical refund credit-note links, rebuild allocation links from Xero allocations, restore refund-payment links from Xero payment data, and backfill `Payment.xeroRefundCreditNoteId` where safe
@@ -74,6 +87,7 @@ The review below started as a design and gap-analysis document. The codebase now
   - `src/lib/xero-operation-retry.ts`
   - `src/app/api/admin/xero/operations/[id]/retry/route.ts`
   - retry controls in `src/app/(admin)/admin/xero/page.tsx`
+- hardened those retry paths so contact-dependent outbound replays can explicitly relink a stale `member.xeroContactId` before retrying the write, rather than repeating the stale reference indefinitely
 - added queue-backed requeue and worker processing for supported failed operations:
   - `src/lib/xero-operation-queue.ts`
   - `src/app/api/admin/xero/operations/[id]/requeue/route.ts`
@@ -127,6 +141,7 @@ The review below started as a design and gap-analysis document. The codebase now
 - `npx vitest run src/lib/__tests__/xero-inbound-reconciliation.test.ts src/lib/__tests__/xero-inbound-events-routes.test.ts src/lib/__tests__/xero-cron-route.test.ts`
 - `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-api-usage.test.ts src/lib/__tests__/xero-member-management.test.ts src/lib/__tests__/member-subscription-status.test.ts src/lib/__tests__/xero-operation-retry.test.ts src/lib/__tests__/xero-operation-queue.test.ts src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/xero-cron-route.test.ts src/lib/__tests__/xero-sync.test.ts src/lib/__tests__/xero-inbound-reconciliation.test.ts`
 - `npx vitest run src/lib/__tests__/xero-inbound-reconciliation.test.ts src/lib/__tests__/xero-record-activity.test.ts src/lib/__tests__/xero-inbound-events-routes.test.ts src/lib/__tests__/xero-cron-route.test.ts`
+- `npx vitest run src/lib/__tests__/xero.test.ts src/lib/__tests__/xero-find-or-create-contact.test.ts src/lib/__tests__/xero-operation-retry.test.ts`
 - `npm run build`
 
 ### Not yet implemented
@@ -172,6 +187,15 @@ There is also some manual remediation already:
 - admins can manually push and link contacts through the member admin UI and Xero routes
 
 ## Current Remaining Gaps
+
+Before the larger tracks below, the Phase 6 contact-link trust baseline is now in place:
+
+- steady-state write paths no longer spend a separate `getContact()` read just to verify an existing `member.xeroContactId`
+- retry/replay paths can now explicitly relink stale contacts before reissuing contact-dependent writes
+
+The remaining contact-link hardening is narrower:
+
+- add inline automatic relink/retry when the initial outbound write fails with a Xero invalid-reference / not-found contact error, so operators do not need to wait for an explicit retry/replay action in that case
 
 ### 1. Move primary outbound writes to a true outbox flow
 

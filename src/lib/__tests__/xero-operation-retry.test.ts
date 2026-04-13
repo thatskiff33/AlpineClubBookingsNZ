@@ -141,6 +141,27 @@ describe("retryXeroSyncOperation", () => {
 
     expect(mocks.createXeroInvoiceForBooking).toHaveBeenCalledWith("book_123", {
       createdByMemberId: "admin_1",
+      repairExistingLink: true,
+    });
+  });
+
+  it("replays entrance-fee invoice creation with contact relink enabled", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        localModel: "Member",
+        localId: "mem_123",
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Retried Xero entrance fee invoice creation.",
+    });
+
+    expect(mocks.createXeroEntranceFeeInvoice).toHaveBeenCalledWith("mem_123", {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
     });
   });
 
@@ -233,6 +254,36 @@ describe("retryXeroSyncOperation", () => {
 
     expect(mocks.createXeroCreditNote).toHaveBeenCalledWith("pay_123", 1234, {
       createdByMemberId: "admin_1",
+      repairExistingLink: true,
+    });
+  });
+
+  it("replays unapplied account-credit creation with contact relink enabled", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "pay_123",
+        requestPayload: {
+          creditNotes: [
+            {
+              lineItems: [{ unitAmount: 23.45 }],
+            },
+          ],
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Retried Xero account-credit note creation.",
+    });
+
+    expect(mocks.createUnappliedXeroCreditNote).toHaveBeenCalledWith("pay_123", 2345, {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
     });
   });
 
@@ -259,6 +310,37 @@ describe("retryXeroSyncOperation", () => {
       changeFeeCents: 500,
       bookingModificationId: "mod_123",
       createdByMemberId: "admin_1",
+      repairExistingLink: true,
+    });
+  });
+
+  it("replays modification credit note creation with contact relink enabled", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_123",
+      })
+    );
+    mocks.findUniqueBookingModification.mockResolvedValue({
+      bookingId: "book_123",
+      priceDiffCents: -2500,
+      changeFeeCents: 0,
+    });
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Retried Xero modification credit note creation.",
+    });
+
+    expect(mocks.createXeroCreditNoteForModification).toHaveBeenCalledWith({
+      bookingId: "book_123",
+      refundAmountCents: 2500,
+      bookingModificationId: "mod_123",
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
     });
   });
 

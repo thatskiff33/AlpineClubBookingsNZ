@@ -614,12 +614,18 @@ export async function retryXeroSyncOperation(
   if (operation.entityType === "INVOICE" && operation.operationType === "CREATE") {
     if (operation.localModel === "Payment") {
       const bookingId = await getPaymentBookingId(operation.localId!);
-      await xero.createXeroInvoiceForBooking(bookingId, { createdByMemberId });
+      await xero.createXeroInvoiceForBooking(bookingId, {
+        createdByMemberId,
+        repairExistingLink: true,
+      });
       return { message: "Retried Xero booking invoice creation." };
     }
 
     if (operation.localModel === "Member") {
-      await xero.createXeroEntranceFeeInvoice(operation.localId!, { createdByMemberId });
+      await xero.createXeroEntranceFeeInvoice(operation.localId!, {
+        createdByMemberId,
+        repairExistingLink: true,
+      });
       return { message: "Retried Xero entrance fee invoice creation." };
     }
 
@@ -631,6 +637,7 @@ export async function retryXeroSyncOperation(
         changeFeeCents: modification.changeFeeCents,
         bookingModificationId: operation.localId!,
         createdByMemberId,
+        repairExistingLink: true,
       });
       return { message: "Retried Xero supplementary invoice creation." };
     }
@@ -644,12 +651,16 @@ export async function retryXeroSyncOperation(
       }
 
       if (retryInput.kind === "refund") {
-        await xero.createXeroCreditNote(operation.localId!, retryInput.amountCents, { createdByMemberId });
+        await xero.createXeroCreditNote(operation.localId!, retryInput.amountCents, {
+          createdByMemberId,
+          repairExistingLink: true,
+        });
         return { message: "Retried Xero refund credit note creation." };
       }
 
       await xero.createUnappliedXeroCreditNote(operation.localId!, retryInput.amountCents, {
         createdByMemberId,
+        repairExistingLink: true,
       });
       return { message: "Retried Xero account-credit note creation." };
     }
@@ -666,6 +677,7 @@ export async function retryXeroSyncOperation(
         refundAmountCents,
         bookingModificationId: operation.localId!,
         createdByMemberId,
+        repairExistingLink: true,
       });
       return { message: "Retried Xero modification credit note creation." };
     }
