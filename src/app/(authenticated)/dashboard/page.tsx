@@ -11,10 +11,23 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CalendarDays, BedDouble, PlusCircle, Mountain, Home, Shield } from "lucide-react";
+import {
+  CalendarDays,
+  BedDouble,
+  PlusCircle,
+  Mountain,
+  Home,
+  Shield,
+  Wallet,
+  CreditCard,
+  TicketPercent,
+} from "lucide-react";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass } from "@/lib/status-colors";
 import { isHutLeader } from "@/lib/hut-leader";
+import { getMemberCreditBalance } from "@/lib/member-credit";
+import { summarizeMemberPaymentOwed } from "@/lib/member-dashboard";
+import { getAvailablePromoCodesForMember } from "@/lib/promo";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -47,7 +60,14 @@ export default async function DashboardPage() {
       })
     : false;
 
-  const [upcomingBookings, recentBookings, draftBookings] = await Promise.all([
+  const [
+    upcomingBookings,
+    recentBookings,
+    draftBookings,
+    paymentOwedBookings,
+    creditBalanceCents,
+    availablePromoCodes,
+  ] = await Promise.all([
     prisma.booking.findMany({
       where: {
         memberId,
@@ -95,14 +115,38 @@ export default async function DashboardPage() {
         _count: { select: { guests: true } },
       },
     }),
+    prisma.booking.findMany({
+      where: {
+        memberId,
+        status: { in: ["CONFIRMED", "PAID", "PENDING", "COMPLETED"] },
+        OR: [
+          { status: "CONFIRMED" },
+          { payment: { is: { additionalAmountCents: { gt: 0 } } } },
+        ],
+      },
+      select: {
+        status: true,
+        finalPriceCents: true,
+        payment: {
+          select: {
+            status: true,
+            additionalAmountCents: true,
+            additionalPaymentStatus: true,
+          },
+        },
+      },
+    }),
+    getMemberCreditBalance(memberId),
+    getAvailablePromoCodesForMember(memberId),
   ]);
 
   const nextStay = upcomingBookings[0] ?? null;
+  const paymentOwed = summarizeMemberPaymentOwed(paymentOwedBookings);
 
   return (
     <div className="space-y-8">
       {/* Welcome header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
             Welcome back, {firstName}
@@ -111,12 +155,17 @@ export default async function DashboardPage() {
             Tokoroa Alpine Club — Member Portal
           </p>
         </div>
-        <Button asChild>
-          <Link href="/book">
-            <PlusCircle className="mr-2 h-4 w-4" />
-            New Booking
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link href="/profile">Edit Profile</Link>
+          </Button>
+          <Button asChild>
+            <Link href="/book">
+              <PlusCircle className="mr-2 h-4 w-4" />
+              New Booking
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {/* Lodge access cards */}
@@ -196,7 +245,52 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card className="sm:col-span-2 lg:col-span-1">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Credit Owed</CardTitle>
+            <Wallet className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{formatCents(creditBalanceCents)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {creditBalanceCents > 0
+                ? "Available account credit for future bookings"
+                : "No account credit available"}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Payment Owed</CardTitle>
+            <CreditCard className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{formatCents(paymentOwed.totalCents)}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {paymentOwed.totalCents > 0
+                ? `${paymentOwed.bookingCount} booking${paymentOwed.bookingCount !== 1 ? "s" : ""} need payment`
+                : "No payment due"}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Promo Codes Available</CardTitle>
+            <TicketPercent className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{availablePromoCodes.length}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {availablePromoCodes.length > 0
+                ? "Assigned to your member account"
+                : "No assigned promo codes available"}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Quick Book</CardTitle>
             <Mountain className="h-4 w-4 text-muted-foreground" />
