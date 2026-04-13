@@ -17,6 +17,11 @@ import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { canModifyBookingStatus } from "@/lib/booking-modify-permissions";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
+import { paymentStatusClass } from "@/lib/status-colors";
+import {
+  getCancellationSettlementBreakdown,
+  getPaymentDisplayStatus,
+} from "@/lib/payment-status-display";
 
 export default async function BookingDetailPage({
   params,
@@ -37,8 +42,25 @@ export default async function BookingDetailPage({
           promoCode: { select: { code: true, type: true, description: true } },
         },
       },
+      creditsFromCancellation: {
+        select: {
+          amountCents: true,
+          description: true,
+        },
+      },
       modifications: {
         orderBy: { createdAt: "desc" },
+      },
+      refundRequests: {
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          status: true,
+          requestedAmountCents: true,
+          approvedAmountCents: true,
+          createdAt: true,
+          reviewedAt: true,
+        },
       },
       createdBy: {
         select: { firstName: true, lastName: true },
@@ -63,6 +85,33 @@ export default async function BookingDetailPage({
   const isFutureCheckIn = new Date(booking.checkIn) > new Date();
   const canModify =
     canModifyBookingStatus(booking.status, session.user.role) && isFutureCheckIn;
+  const cancellationSettlement = booking.payment
+    ? getCancellationSettlementBreakdown(
+        booking.payment.refundedAmountCents,
+        booking.creditsFromCancellation
+      )
+    : null;
+  const paymentDisplay = booking.payment
+    ? getPaymentDisplayStatus({
+        bookingStatus: booking.status,
+        paymentStatus: booking.payment.status,
+        refundedAmountCents: booking.payment.refundedAmountCents,
+        credits: booking.creditsFromCancellation,
+      })
+    : null;
+  const originalPaymentCaptured = Boolean(
+    booking.payment &&
+      ["SUCCEEDED", "REFUNDED", "PARTIALLY_REFUNDED"].includes(
+        booking.payment.status
+      )
+  );
+  const retainedAfterCancellationCents = booking.payment
+    ? Math.max(
+        booking.payment.amountCents - booking.payment.refundedAmountCents,
+        0
+      )
+    : 0;
+  const latestRefundAppeal = booking.refundRequests[0] ?? null;
 
   const editorData: BookingEditorData = {
     id: booking.id,
@@ -252,6 +301,113 @@ export default async function BookingDetailPage({
             }
           />
         )}
+
+      {booking.status === "CANCELLED" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Cancellation Outcome</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Badge
+                className={
+                  paymentDisplay
+                    ? paymentStatusClass(paymentDisplay.toneStatus)
+                    : "bg-slate-100 text-slate-700"
+                }
+              >
+                {paymentDisplay?.label ?? "Cancelled Before Payment"}
+              </Badge>
+              <p className="text-sm text-slate-600">
+                {paymentDisplay?.detail ??
+                  "No original payment was captured for this booking, so nothing needed to be returned."}
+              </p>
+            </div>
+
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <div>
+                <span className="text-slate-500">Original payment:</span>{" "}
+                {originalPaymentCaptured && booking.payment
+                  ? formatCents(booking.payment.amountCents)
+                  : "No original payment captured"}
+              </div>
+
+              {originalPaymentCaptured && cancellationSettlement && (
+                <>
+                  <div>
+                    <span className="text-slate-500">
+                      Returned to original payment method:
+                    </span>{" "}
+                    {formatCents(
+                      cancellationSettlement.refundToOriginalMethodCents
+                    )}
+                  </div>
+
+                  <div>
+                    <span className="text-slate-500">Held as account credit:</span>{" "}
+                    {formatCents(cancellationSettlement.accountCreditCents)}
+                  </div>
+
+                  <div>
+                    <span className="text-slate-500">
+                      Non-refundable amount retained:
+                    </span>{" "}
+                    {formatCents(retainedAfterCancellationCents)}
+                  </div>
+
+                  {cancellationSettlement.restoredAppliedCreditCents > 0 && (
+                    <div>
+                      <span className="text-slate-500">
+                        Previously applied credit restored:
+                      </span>{" "}
+                      {formatCents(
+                        cancellationSettlement.restoredAppliedCreditCents
+                      )}
+                    </div>
+                  )}
+
+                  {booking.payment.changeFeeCents > 0 && (
+                    <div>
+                      <span className="text-slate-500">
+                        Included non-refundable change fees:
+                      </span>{" "}
+                      {formatCents(booking.payment.changeFeeCents)}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {latestRefundAppeal && (
+                <div>
+                  <span className="text-slate-500">Latest refund appeal:</span>{" "}
+                  <Badge
+                    variant={
+                      latestRefundAppeal.status === "PENDING"
+                        ? "outline"
+                        : latestRefundAppeal.status === "APPROVED"
+                          ? "default"
+                          : "destructive"
+                    }
+                    className="align-middle"
+                  >
+                    {latestRefundAppeal.status}
+                  </Badge>
+                  {latestRefundAppeal.requestedAmountCents ? (
+                    <span className="ml-2 text-slate-600">
+                      Requested {formatCents(latestRefundAppeal.requestedAmountCents)}
+                    </span>
+                  ) : null}
+                  {latestRefundAppeal.approvedAmountCents ? (
+                    <span className="ml-2 text-slate-600">
+                      Approved {formatCents(latestRefundAppeal.approvedAmountCents)}
+                    </span>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

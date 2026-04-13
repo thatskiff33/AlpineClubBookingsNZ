@@ -68,8 +68,15 @@ export async function GET(request: NextRequest) {
           booking: {
             select: {
               id: true,
+              status: true,
               checkIn: true,
               checkOut: true,
+              creditsFromCancellation: {
+                select: {
+                  amountCents: true,
+                  description: true,
+                },
+              },
               member: {
                 select: { firstName: true, lastName: true, email: true },
               },

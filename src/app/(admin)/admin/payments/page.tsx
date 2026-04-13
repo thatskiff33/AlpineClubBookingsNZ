@@ -24,6 +24,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { DollarSign, CreditCard, TrendingUp, BarChart2, ExternalLink, FileText } from "lucide-react";
 import { paymentStatusClass } from "@/lib/status-colors";
+import {
+  getCancellationSettlementBreakdown,
+  getPaymentDisplayStatus,
+} from "@/lib/payment-status-display";
 import Link from "next/link";
 
 function formatCents(cents: number): string {
@@ -42,8 +46,13 @@ interface PaymentRow {
   createdAt: string;
   booking: {
     id: string;
+    status: string;
     checkIn: string;
     checkOut: string;
+    creditsFromCancellation: Array<{
+      amountCents: number;
+      description: string | null;
+    }>;
     member: { firstName: string; lastName: string; email: string };
   };
 }
@@ -122,11 +131,11 @@ export default function PaymentsPage() {
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
               <SelectItem value="PENDING">Pending</SelectItem>
-              <SelectItem value="PROCESSING">Processing</SelectItem>
+              <SelectItem value="PROCESSING">Processing (awaiting Stripe)</SelectItem>
               <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
               <SelectItem value="FAILED">Failed</SelectItem>
-              <SelectItem value="REFUNDED">Refunded</SelectItem>
-              <SelectItem value="PARTIALLY_REFUNDED">Partially Refunded</SelectItem>
+              <SelectItem value="REFUNDED">Refunded / Credited</SelectItem>
+              <SelectItem value="PARTIALLY_REFUNDED">Partially Refunded / Credited</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -149,7 +158,7 @@ export default function PaymentsPage() {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Total Revenue</CardTitle><DollarSign className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold">{formatCents(summary.totalRevenueCents)}</div></CardContent></Card>
-        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Refunded</CardTitle><CreditCard className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold text-red-600">{formatCents(summary.refundedCents)}</div></CardContent></Card>
+        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Refunded / Credited</CardTitle><CreditCard className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold text-red-600">{formatCents(summary.refundedCents)}</div></CardContent></Card>
         <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Payments</CardTitle><BarChart2 className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold">{summary.count}</div></CardContent></Card>
         <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Success Rate</CardTitle><TrendingUp className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold">{successRate}%</div></CardContent></Card>
       </div>
@@ -158,7 +167,7 @@ export default function PaymentsPage() {
         <CardContent className="p-0">
           <Table>
             <TableHeader><TableRow>
-              <TableHead>Date</TableHead><TableHead>Member</TableHead><TableHead>Booking</TableHead><TableHead>Amount</TableHead><TableHead>Status</TableHead><TableHead>Stripe</TableHead><TableHead>Xero Invoice</TableHead><TableHead>Refund</TableHead>
+              <TableHead>Date</TableHead><TableHead>Member</TableHead><TableHead>Booking</TableHead><TableHead>Amount</TableHead><TableHead>Status</TableHead><TableHead>Stripe</TableHead><TableHead>Xero Invoice</TableHead><TableHead>Settlement</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               {loading ? (
@@ -166,56 +175,94 @@ export default function PaymentsPage() {
               ) : data.length === 0 ? (
                 <TableRow><TableCell colSpan={8} className="text-center py-8 text-slate-500">No payments found</TableCell></TableRow>
               ) : (
-                data.map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell>{format(new Date(p.booking.checkIn), "d MMM yyyy")}</TableCell>
-                    <TableCell className="font-medium">{p.booking.member.lastName}, {p.booking.member.firstName}</TableCell>
-                    <TableCell>
-                      <Link href={`/bookings/${p.booking.id}`} className="text-xs text-blue-600 hover:underline">
-                        View
-                      </Link>
-                    </TableCell>
-                    <TableCell>{formatCents(p.amountCents)}</TableCell>
-                    <TableCell><Badge className={paymentStatusClass(p.status)}>{p.status.replace("_", " ")}</Badge></TableCell>
-                    <TableCell>
-                      {p.stripePaymentIntentId ? (
-                        <a
-                          href={`https://dashboard.stripe.com/${p.stripePaymentIntentId.startsWith("pi_test_") ? "test/" : ""}payments/${p.stripePaymentIntentId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
-                          title={p.stripePaymentIntentId}
-                        >
-                          {p.stripePaymentIntentId.slice(0, 12)}...
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      ) : "—"}
-                    </TableCell>
-                    <TableCell>
-                      {p.xeroInvoiceId ? (
-                        <a
-                          href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${p.xeroInvoiceId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
-                        >
-                          {p.xeroInvoiceNumber || p.xeroInvoiceId.slice(0, 8)}
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      ) : p.status === "SUCCEEDED" ? (
-                        <button
-                          onClick={() => handleGenerateInvoice(p.id)}
-                          disabled={generatingInvoice === p.id}
-                          className="text-xs text-orange-600 hover:text-orange-800 hover:underline inline-flex items-center gap-1 disabled:opacity-50"
-                        >
-                          <FileText className="h-3 w-3" />
-                          {generatingInvoice === p.id ? "Creating..." : "Generate Invoice"}
-                        </button>
-                      ) : "—"}
-                    </TableCell>
-                    <TableCell>{p.refundedAmountCents > 0 ? formatCents(p.refundedAmountCents) : "—"}</TableCell>
-                  </TableRow>
-                ))
+                data.map((p) => {
+                  const displayStatus = getPaymentDisplayStatus({
+                    bookingStatus: p.booking.status,
+                    paymentStatus: p.status,
+                    refundedAmountCents: p.refundedAmountCents,
+                    credits: p.booking.creditsFromCancellation,
+                  });
+                  const settlement = getCancellationSettlementBreakdown(
+                    p.refundedAmountCents,
+                    p.booking.creditsFromCancellation
+                  );
+
+                  return (
+                    <TableRow key={p.id}>
+                      <TableCell>{format(new Date(p.booking.checkIn), "d MMM yyyy")}</TableCell>
+                      <TableCell className="font-medium">{p.booking.member.lastName}, {p.booking.member.firstName}</TableCell>
+                      <TableCell>
+                        <Link href={`/bookings/${p.booking.id}`} className="text-xs text-blue-600 hover:underline">
+                          View
+                        </Link>
+                      </TableCell>
+                      <TableCell>{formatCents(p.amountCents)}</TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          <Badge className={paymentStatusClass(displayStatus.toneStatus)}>
+                            {displayStatus.label}
+                          </Badge>
+                          {displayStatus.detail && (
+                            <p className="max-w-56 text-xs text-slate-500">
+                              {displayStatus.detail}
+                            </p>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {p.stripePaymentIntentId ? (
+                          <a
+                            href={`https://dashboard.stripe.com/${p.stripePaymentIntentId.startsWith("pi_test_") ? "test/" : ""}payments/${p.stripePaymentIntentId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
+                            title={p.stripePaymentIntentId}
+                          >
+                            {p.stripePaymentIntentId.slice(0, 12)}...
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {p.xeroInvoiceId ? (
+                          <a
+                            href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${p.xeroInvoiceId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
+                          >
+                            {p.xeroInvoiceNumber || p.xeroInvoiceId.slice(0, 8)}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        ) : p.status === "SUCCEEDED" ? (
+                          <button
+                            onClick={() => handleGenerateInvoice(p.id)}
+                            disabled={generatingInvoice === p.id}
+                            className="text-xs text-orange-600 hover:text-orange-800 hover:underline inline-flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <FileText className="h-3 w-3" />
+                            {generatingInvoice === p.id ? "Creating..." : "Generate Invoice"}
+                          </button>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {p.refundedAmountCents > 0 ? (
+                          <div className="space-y-1 text-xs text-slate-600">
+                            {settlement.refundToOriginalMethodCents > 0 && (
+                              <p>Card refund: {formatCents(settlement.refundToOriginalMethodCents)}</p>
+                            )}
+                            {settlement.accountCreditCents > 0 && (
+                              <p>Account credit: {formatCents(settlement.accountCreditCents)}</p>
+                            )}
+                            {settlement.restoredAppliedCreditCents > 0 && (
+                              <p>Restored credit: {formatCents(settlement.restoredAppliedCreditCents)}</p>
+                            )}
+                          </div>
+                        ) : "—"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>

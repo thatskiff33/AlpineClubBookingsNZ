@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display"
 
 interface RefundRequestData {
   id: string
@@ -24,6 +25,10 @@ interface RefundRequestData {
     checkOut: string
     finalPriceCents: number
     status: string
+    creditsFromCancellation: Array<{
+      amountCents: number
+      description: string | null
+    }>
     payment: {
       amountCents: number
       refundedAmountCents: number
@@ -167,6 +172,12 @@ export default function RefundRequestsPage() {
         <div className="space-y-4">
           {requests.map((req) => {
             const payment = req.booking.payment
+            const settlement = payment
+              ? getCancellationSettlementBreakdown(
+                  payment.refundedAmountCents,
+                  req.booking.creditsFromCancellation
+                )
+              : null
             const maxRefundable = payment
               ? payment.amountCents - payment.refundedAmountCents
               : 0
@@ -209,15 +220,27 @@ export default function RefundRequestsPage() {
                           {formatCents(payment.amountCents)}
                         </div>
                         <div>
-                          <span className="text-muted-foreground">Refunded:</span>{" "}
-                          {formatCents(payment.refundedAmountCents)}
-                          <span className="ml-1 text-muted-foreground">
-                            (remaining: {formatCents(maxRefundable)})
-                          </span>
+                          <span className="text-muted-foreground">Remaining:</span>{" "}
+                          {formatCents(maxRefundable)}
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">To card:</span>{" "}
+                          {formatCents(settlement?.refundToOriginalMethodCents ?? 0)}
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">As credit:</span>{" "}
+                          {formatCents(settlement?.accountCreditCents ?? 0)}
                         </div>
                       </>
                     )}
                   </div>
+
+                  {settlement && settlement.restoredAppliedCreditCents > 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      Restored prior credit:{" "}
+                      {formatCents(settlement.restoredAppliedCreditCents)}
+                    </p>
+                  )}
 
                   {req.requestedAmountCents && (
                     <p className="text-sm">

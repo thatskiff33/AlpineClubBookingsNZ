@@ -145,10 +145,34 @@ function usePendingApplications(): number {
   return count;
 }
 
+function usePendingRefundAppeals(): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/admin/refund-requests?status=PENDING")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data)) {
+          setCount(data.length);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return count;
+}
+
 function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const pendingFamilyRequests = usePendingFamilyRequests();
   const pendingApplications = usePendingApplications();
+  const pendingRefundAppeals = usePendingRefundAppeals();
 
   // Map href -> badge count
   const badges: Record<string, number> = {};
@@ -157,6 +181,9 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
   }
   if (pendingFamilyRequests > 0) {
     badges["/admin/family-groups"] = pendingFamilyRequests;
+  }
+  if (pendingRefundAppeals > 0) {
+    badges["/admin/refund-requests"] = pendingRefundAppeals;
   }
 
   return (
@@ -183,6 +210,10 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
                 ? pathname === "/admin/dashboard"
                 : pathname.startsWith(href);
             const badgeCount = badges[href];
+            const badgeClasses =
+              href === "/admin/refund-requests"
+                ? "bg-red-600 text-white"
+                : "bg-orange-500 text-white";
 
             return (
               <Link
@@ -204,7 +235,7 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
                 />
                 <span className="flex-1">{label}</span>
                 {badgeCount != null && badgeCount > 0 && (
-                  <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-orange-500 px-1.5 text-[11px] font-semibold text-white">
+                  <span className={cn("ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-semibold", badgeClasses)}>
                     {badgeCount > 99 ? "99+" : badgeCount}
                   </span>
                 )}
