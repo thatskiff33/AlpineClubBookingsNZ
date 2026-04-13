@@ -21,6 +21,7 @@ import {
 } from "@/lib/member-address";
 
 type FamilyMemberForm = {
+  id: string;
   firstName: string;
   lastName: string;
   dateOfBirth: string;
@@ -70,8 +71,11 @@ const steps = [
   },
 ];
 
+let nextFamilyMemberId = 1;
+
 function emptyFamilyMember(): FamilyMemberForm {
   return {
+    id: `fm-${nextFamilyMemberId++}`,
     firstName: "",
     lastName: "",
     dateOfBirth: "",
@@ -250,7 +254,7 @@ export default function JoinApplyPage() {
           postalPostalCode: form.postalPostalCode || null,
           postalCountry: form.postalCountry || null,
           postalSameAsPhysical: sameAsPhysical,
-          familyMembers: form.familyMembers,
+          familyMembers: form.familyMembers.map(({ firstName, lastName, dateOfBirth }) => ({ firstName, lastName, dateOfBirth })),
           nominator1Email: form.nominator1Email,
           nominator2Email: form.nominator2Email,
         }),
@@ -509,7 +513,7 @@ export default function JoinApplyPage() {
                     <div className="space-y-4">
                       {form.familyMembers.map((familyMember, index) => (
                         <div
-                          key={`${index}-${familyMember.firstName}-${familyMember.lastName}`}
+                          key={familyMember.id}
                           className="space-y-4 rounded-lg border border-brand-ridge/20 bg-white p-4"
                         >
                           <div className="flex items-center justify-between gap-4">
