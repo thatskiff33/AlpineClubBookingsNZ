@@ -147,6 +147,20 @@ The admin Xero screen now shows recent operations and supports retry for some fa
 - member detail screens do not show recent contact/subscription sync operations
 - there is no record-scoped drill-down view that groups operations, links, and errors for a single TACBookings record
 
+There is now an active implementation plan for this gap. Another Codex session is currently working through the steps below, so this should be treated as in-flight work rather than completed functionality:
+
+- inspect current Xero ledger/link models and admin screens to define record-scoped activity requirements
+- implement a reusable record-scoped Xero activity data resolver and a dedicated admin API/page for booking, payment, member, and related records
+- integrate the new record-scoped surface into member detail and add booking/payment entry points
+- run targeted tests and a build, then update this review with completed and remaining work and publish directly to `main`
+
+At the time of this update:
+
+- the inspection/orientation step is complete
+- the resolver/API/page implementation is planned and in progress in that separate session
+- member-detail integration and booking/payment entry points are planned and pending behind the shared resolver/page work
+- verification, final review-doc refresh, and publish are planned as the final step of that separate session
+
 ### 5. Reporting, alerting, and historical cleanup are still open
 
 The hardening layer from the original review remains outstanding:
@@ -350,6 +364,11 @@ Status: partially implemented.
 - queue-backed requeue / worker retry for supported failed operations is implemented
 - partial-operation repair is still pending
 - record-specific surfaces for booking/payment/member detail pages are still pending
+- record-scoped activity work now has an explicit in-flight plan in another Codex session:
+  - inspection of current ledger/link models and admin screens: completed
+  - reusable record-scoped resolver and admin API/page: in progress
+  - member detail integration and booking/payment entry points: planned next
+  - targeted verification, review-doc refresh, and direct publish to `main`: planned final step
 
 ## Phase 4: Inbound reconciliation
 
