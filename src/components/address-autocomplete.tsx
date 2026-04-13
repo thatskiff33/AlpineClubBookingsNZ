@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Input, type InputProps } from "@/components/ui/input";
 
 declare global {
@@ -144,6 +144,23 @@ export function AddressAutocomplete({
   const addressfinderKey = process.env.NEXT_PUBLIC_ADDRESSFINDER_KEY;
   const addressParamsKey = JSON.stringify(addressParams ?? {});
 
+  // Keep callback refs current so the widget event handler always calls the
+  // latest version without needing to destroy / recreate the widget on every
+  // parent re-render (the callbacks are typically inline arrows).
+  const onAddressSelectedRef = useRef(onAddressSelected);
+  onAddressSelectedRef.current = onAddressSelected;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  const handleSelect = useCallback(
+    (_selectedAddress: string, metadata: AddressMetadata) => {
+      const selection = mapMetadataToSelection(metadata);
+      onChangeRef.current(selection.addressLine1);
+      onAddressSelectedRef.current(selection);
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!addressfinderKey) {
       if (!hasWarnedAboutMissingKey) {
@@ -186,11 +203,7 @@ export function AddressAutocomplete({
           },
         );
 
-        widget.on("address:select", (_selectedAddress, metadata) => {
-          const selection = mapMetadataToSelection(metadata);
-          onChange(selection.addressLine1);
-          onAddressSelected(selection);
-        });
+        widget.on("address:select", handleSelect);
 
         widgetRef.current = widget;
 
@@ -214,14 +227,7 @@ export function AddressAutocomplete({
       widgetRef.current?.disable?.();
       widgetRef.current = null;
     };
-  }, [
-    addressParamsKey,
-    addressfinderKey,
-    countryCode,
-    disabled,
-    onAddressSelected,
-    onChange,
-  ]);
+  }, [addressParamsKey, addressfinderKey, countryCode, handleSelect]);
 
   useEffect(() => {
     if (!widgetRef.current) {
