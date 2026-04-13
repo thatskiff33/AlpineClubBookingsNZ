@@ -24,6 +24,12 @@ export async function GET(req: NextRequest) {
           checkOut: true,
           finalPriceCents: true,
           status: true,
+          creditsFromCancellation: {
+            select: {
+              amountCents: true,
+              description: true,
+            },
+          },
           payment: {
             select: {
               amountCents: true,
