@@ -939,7 +939,7 @@ model XeroItemCodeMapping {
   seasonType          SeasonType?          // HUT_FEE only
   isMember            Boolean?             // HUT_FEE only
   entranceFeeCategory EntranceFeeCategory? // ENTRANCE_FEE only
-  itemCode            String               // Xero Item Code
+  itemCode            String?              // Optional Xero Item Code
   amountCents         Int?                 // ENTRANCE_FEE only (per-category pricing)
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt

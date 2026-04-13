@@ -29,15 +29,21 @@ export async function GET() {
     // Build hut fee matrix: key = "ADULT_WINTER_true" → { itemCode }
     const hutFees: Record<string, { itemCode: string }> = {};
     // Build entrance fee map: key = "ADULT" → { itemCode, amountCents }
-    const entranceFees: Record<string, { itemCode: string; amountCents: number | null }> = {};
+    const entranceFees: Record<string, { itemCode: string | null; amountCents: number | null }> = {};
 
     for (const row of rows) {
-      if (row.category === "HUT_FEE" && row.ageTier && row.seasonType && row.isMember !== null) {
+      if (
+        row.category === "HUT_FEE" &&
+        row.ageTier &&
+        row.seasonType &&
+        row.isMember !== null &&
+        row.itemCode
+      ) {
         const key = `${row.ageTier}_${row.seasonType}_${row.isMember}`;
         hutFees[key] = { itemCode: row.itemCode };
       } else if (row.category === "ENTRANCE_FEE" && row.entranceFeeCategory) {
         entranceFees[row.entranceFeeCategory] = {
-          itemCode: row.itemCode,
+          itemCode: row.itemCode ?? null,
           amountCents: row.amountCents,
         };
       }
@@ -57,13 +63,16 @@ const HutFeeEntrySchema = z.object({
 });
 
 const EntranceFeeEntrySchema = z.object({
-  itemCode: z.string().min(1, "Item code is required"),
+  itemCode: z.string().min(1, "Item code is required").nullable(),
   amountCents: z.number().int().min(0).nullable(),
 });
 
 const UpdateItemCodeMappingsSchema = z.object({
   hutFees: z.record(z.string(), HutFeeEntrySchema.nullable()).optional(),
-  entranceFees: z.record(z.enum(ENTRANCE_FEE_CATEGORIES), EntranceFeeEntrySchema.nullable()).optional(),
+  entranceFees: z.partialRecord(
+    z.enum(ENTRANCE_FEE_CATEGORIES),
+    EntranceFeeEntrySchema.nullable()
+  ).optional(),
 });
 
 /**
@@ -73,10 +82,11 @@ const UpdateItemCodeMappingsSchema = z.object({
  * Body shape:
  * {
  *   hutFees: { "ADULT_WINTER_true": { itemCode: "HUTFEE-001" }, ... },
- *   entranceFees: { "ADULT": { itemCode: "ENTFEE-001", amountCents: 5000 }, ... }
+ *   entranceFees: { "ADULT": { itemCode: "ENTFEE-001" | null, amountCents: 5000 }, ... }
  * }
  *
- * Sending null for a key deletes that mapping.
+ * Sending null for a key deletes that mapping. For entrance fees, sending both
+ * `itemCode` and `amountCents` as null also clears the row.
  */
 export async function PUT(request: NextRequest) {
   const session = await auth();
@@ -158,7 +168,7 @@ export async function PUT(request: NextRequest) {
         const entranceFeeCategory = category as typeof ENTRANCE_FEE_CATEGORIES[number];
         if (!ENTRANCE_FEE_CATEGORIES.includes(entranceFeeCategory)) continue;
 
-        if (value === null) {
+        if (value === null || (value.itemCode === null && value.amountCents === null)) {
           ops.push(
             prisma.xeroItemCodeMapping.deleteMany({
               where: { category: "ENTRANCE_FEE", entranceFeeCategory },
@@ -200,13 +210,19 @@ export async function PUT(request: NextRequest) {
     // Return the full updated set (reuse GET logic)
     const rows = await prisma.xeroItemCodeMapping.findMany();
     const resultHutFees: Record<string, { itemCode: string }> = {};
-    const resultEntranceFees: Record<string, { itemCode: string; amountCents: number | null }> = {};
+    const resultEntranceFees: Record<string, { itemCode: string | null; amountCents: number | null }> = {};
     for (const row of rows) {
-      if (row.category === "HUT_FEE" && row.ageTier && row.seasonType && row.isMember !== null) {
+      if (
+        row.category === "HUT_FEE" &&
+        row.ageTier &&
+        row.seasonType &&
+        row.isMember !== null &&
+        row.itemCode
+      ) {
         resultHutFees[`${row.ageTier}_${row.seasonType}_${row.isMember}`] = { itemCode: row.itemCode };
       } else if (row.category === "ENTRANCE_FEE" && row.entranceFeeCategory) {
         resultEntranceFees[row.entranceFeeCategory] = {
-          itemCode: row.itemCode,
+          itemCode: row.itemCode ?? null,
           amountCents: row.amountCents,
         };
       }

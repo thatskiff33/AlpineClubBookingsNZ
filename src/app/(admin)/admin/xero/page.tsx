@@ -274,7 +274,7 @@ export default function XeroPage() {
 
   // Granular item code mappings state
   type HutFeeMap = Record<string, { itemCode: string }>
-  type EntranceFeeMap = Record<string, { itemCode: string; amountCents: number | null }>
+  type EntranceFeeMap = Record<string, { itemCode: string | null; amountCents: number | null }>
   const [hutFeeItemCodes, setHutFeeItemCodes] = useState<HutFeeMap>({})
   const [savedHutFeeItemCodes, setSavedHutFeeItemCodes] = useState<HutFeeMap>({})
   const [entranceFeeItemCodes, setEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
@@ -901,18 +901,17 @@ export default function XeroPage() {
                     <thead>
                       <tr>
                         <th className="text-left p-2 border-b font-medium text-slate-600">Category</th>
-                        <th className="text-left p-2 border-b font-medium text-slate-600">Description</th>
                         <th className="text-left p-2 border-b font-medium text-slate-600">Xero Item</th>
                         <th className="text-left p-2 border-b font-medium text-slate-600 w-32">Amount (incl. GST)</th>
                       </tr>
                     </thead>
                     <tbody>
                       {([
-                        { key: "ADULT", label: "Adult", desc: "Standalone adult member" },
-                        { key: "YOUTH", label: "Youth", desc: "Youth member (with an adult)" },
-                        { key: "CHILD", label: "Child", desc: "Child/infant (with adult linked)" },
-                        { key: "FAMILY", label: "Family", desc: "2 adults + youth/children in household" },
-                      ] as const).map(({ key, label, desc }) => {
+                        { key: "ADULT", label: "Adult" },
+                        { key: "YOUTH", label: "Youth" },
+                        { key: "CHILD", label: "Child" },
+                        { key: "FAMILY", label: "Family" },
+                      ] as const).map(({ key, label }) => {
                         const entry = entranceFeeItemCodes[key]
                         const currentCode = entry?.itemCode ?? null
                         const currentAmountCents = entry?.amountCents ?? null
@@ -920,7 +919,6 @@ export default function XeroPage() {
                         return (
                           <tr key={key} className="border-b last:border-0">
                             <td className="p-2 font-medium text-slate-700">{label}</td>
-                            <td className="p-2 text-xs text-muted-foreground">{desc}</td>
                             <td className="p-2">
                               {isEditingMappings ? (
                                 <Select
@@ -930,7 +928,7 @@ export default function XeroPage() {
                                       const next = { ...prev }
                                       if (val === "__none__") {
                                         if (next[key]) {
-                                          next[key] = { ...next[key], itemCode: "" }
+                                          next[key] = { ...next[key], itemCode: null }
                                         }
                                       } else {
                                         next[key] = { itemCode: val, amountCents: next[key]?.amountCents ?? null }
@@ -977,7 +975,7 @@ export default function XeroPage() {
                                       setEntranceFeeItemCodes((prev) => ({
                                         ...prev,
                                         [key]: {
-                                          itemCode: prev[key]?.itemCode ?? "",
+                                          itemCode: prev[key]?.itemCode ?? null,
                                           amountCents: cents,
                                         },
                                       }))
