@@ -10,7 +10,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { prisma } from "./prisma";
 import { sendPasswordResetEmail } from "./email";
-import { AgeTier, SeasonType, EntranceFeeCategory } from "@prisma/client";
+import { AgeTier, EntranceFeeCategory } from "@prisma/client";
 import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";

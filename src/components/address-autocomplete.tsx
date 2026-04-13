@@ -171,12 +171,17 @@ export function AddressAutocomplete({
           return;
         }
 
+        const widgetAddressParams =
+          addressParamsKey === "{}"
+            ? undefined
+            : (JSON.parse(addressParamsKey) as Record<string, string>);
+
         const widget = new window.AddressFinder.Widget(
           inputRef.current,
           addressfinderKey,
           countryCode,
           {
-            address_params: addressParams,
+            address_params: widgetAddressParams,
             container: inputRef.current.parentElement ?? document.body,
           },
         );

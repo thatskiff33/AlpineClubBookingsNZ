@@ -6,7 +6,6 @@ import {
   computeAgeTierWithSettings,
   AGE_TIER_DEFAULTS,
   getSeasonStartDate,
-  computeAge,
   type AgeTierSettingData,
 } from "../age-tier";
 import { ageTierEnum } from "../age-tier-schema";

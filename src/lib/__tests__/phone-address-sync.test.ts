@@ -51,7 +51,7 @@ vi.mock("bcryptjs", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { isXeroConnected, updateXeroContact, findOrCreateXeroContact } from "@/lib/xero";
+import { isXeroConnected, updateXeroContact } from "@/lib/xero";
 import { PUT as updateProfile } from "@/app/api/profile/route";
 import { PUT as updateMember } from "@/app/api/admin/members/[id]/route";
 import { POST as register } from "@/app/api/auth/register/route";
