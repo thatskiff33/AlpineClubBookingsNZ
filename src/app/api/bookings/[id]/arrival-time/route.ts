@@ -33,7 +33,7 @@ export async function PUT(
 
   const booking = await prisma.booking.findUnique({
     where: { id },
-    select: { memberId: true, checkIn: true },
+    select: { memberId: true, checkIn: true, status: true },
   });
 
   if (!booking) {
@@ -43,6 +43,13 @@ export async function PUT(
   // Only booking owner or admin can update
   if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (booking.status === "CANCELLED" || booking.status === "COMPLETED") {
+    return NextResponse.json(
+      { error: "Cannot update arrival time for cancelled or completed bookings" },
+      { status: 400 }
+    );
   }
 
   // Cannot update after check-in date has passed
@@ -101,7 +108,7 @@ export async function DELETE(
 
   const booking = await prisma.booking.findUnique({
     where: { id },
-    select: { memberId: true, checkIn: true },
+    select: { memberId: true, checkIn: true, status: true },
   });
 
   if (!booking) {
@@ -110,6 +117,13 @@ export async function DELETE(
 
   if (booking.memberId !== session.user.id && session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (booking.status === "CANCELLED" || booking.status === "COMPLETED") {
+    return NextResponse.json(
+      { error: "Cannot update arrival time for cancelled or completed bookings" },
+      { status: 400 }
+    );
   }
 
   const today = new Date();

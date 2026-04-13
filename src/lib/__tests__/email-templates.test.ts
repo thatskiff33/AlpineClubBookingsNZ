@@ -25,6 +25,8 @@ describe("email-templates", () => {
     it("includes TAC branding", () => {
       const html = welcomeTemplate("Test");
       expect(html).toContain("Tokoroa Alpine Club");
+      expect(html).toContain("/images/tac-logo.png");
+      expect(html).toContain("#ffcb05");
     });
 
     it("produces valid HTML structure", () => {

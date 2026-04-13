@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import { Input, type InputProps } from "@/components/ui/input";
 
 declare global {
@@ -144,21 +144,25 @@ export function AddressAutocomplete({
   const addressfinderKey = process.env.NEXT_PUBLIC_ADDRESSFINDER_KEY;
   const addressParamsKey = JSON.stringify(addressParams ?? {});
 
-  // Keep callback refs current so the widget event handler always calls the
-  // latest version without needing to destroy / recreate the widget on every
-  // parent re-render (the callbacks are typically inline arrows).
-  const onAddressSelectedRef = useRef(onAddressSelected);
-  onAddressSelectedRef.current = onAddressSelected;
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  const applyDisabledState = useEffectEvent((widget: AddressFinderWidget | null) => {
+    if (!widget) {
+      return;
+    }
 
-  const handleSelect = useCallback(
+    if (disabled) {
+      widget.disable?.();
+      return;
+    }
+
+    widget.enable?.();
+  });
+
+  const handleSelect = useEffectEvent(
     (_selectedAddress: string, metadata: AddressMetadata) => {
       const selection = mapMetadataToSelection(metadata);
-      onChangeRef.current(selection.addressLine1);
-      onAddressSelectedRef.current(selection);
+      onChange(selection.addressLine1);
+      onAddressSelected(selection);
     },
-    [],
   );
 
   useEffect(() => {
@@ -206,10 +210,7 @@ export function AddressAutocomplete({
         widget.on("address:select", handleSelect);
 
         widgetRef.current = widget;
-
-        if (disabled) {
-          widget.disable?.();
-        }
+        applyDisabledState(widget);
       })
       .catch((error) => {
         if (!hasWarnedAboutLoadFailure) {
@@ -227,19 +228,10 @@ export function AddressAutocomplete({
       widgetRef.current?.disable?.();
       widgetRef.current = null;
     };
-  }, [addressParamsKey, addressfinderKey, countryCode, handleSelect]);
+  }, [addressParamsKey, addressfinderKey, countryCode]);
 
   useEffect(() => {
-    if (!widgetRef.current) {
-      return;
-    }
-
-    if (disabled) {
-      widgetRef.current.disable?.();
-      return;
-    }
-
-    widgetRef.current.enable?.();
+    applyDisabledState(widgetRef.current);
   }, [disabled]);
 
   return (

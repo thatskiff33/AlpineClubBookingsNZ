@@ -408,7 +408,7 @@ export default function BookPage() {
                       href={target.invoiceUrl}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-block rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                      className="app-button-brand"
                     >
                       {target.name === "Your subscription"
                         ? "Pay Your Subscription"
@@ -469,15 +469,15 @@ export default function BookPage() {
 
       {/* Step indicator */}
       <div className="flex items-center gap-2 text-sm">
-        <span className={step === "dates" ? "font-bold text-blue-600" : "text-gray-400"}>
+        <span className={step === "dates" ? "app-step-active" : "text-gray-400"}>
           1. Select Dates
         </span>
         <span className="text-gray-300">&rarr;</span>
-        <span className={step === "guests" ? "font-bold text-blue-600" : "text-gray-400"}>
+        <span className={step === "guests" ? "app-step-active" : "text-gray-400"}>
           2. Add Guests
         </span>
         <span className="text-gray-300">&rarr;</span>
-        <span className={step === "review" ? "font-bold text-blue-600" : "text-gray-400"}>
+        <span className={step === "review" ? "app-step-active" : "text-gray-400"}>
           3. Review & Confirm
         </span>
       </div>
@@ -709,8 +709,8 @@ export default function BookPage() {
                 />
               </div>
               {availablePromoCodes.length > 0 && !appliedPromo && (
-                <div className="rounded-md bg-blue-50 border border-blue-200 p-4">
-                  <p className="text-sm font-medium text-blue-800 mb-2">
+                <div className="app-callout-brand p-4">
+                  <p className="mb-2 text-sm font-medium text-brand-charcoal">
                     You have promo codes available:
                   </p>
                   <div className="flex flex-wrap gap-2">
@@ -719,11 +719,11 @@ export default function BookPage() {
                         key={pc.code}
                         type="button"
                         onClick={() => setPrefillPromoCode(pc.code)}
-                        className="inline-flex items-center gap-1.5 rounded-md bg-blue-100 px-3 py-1.5 text-sm font-mono font-medium text-blue-700 hover:bg-blue-200 transition-colors"
+                        className="app-chip-brand font-mono"
                       >
                         {pc.code}
                         {pc.description && (
-                          <span className="font-sans font-normal text-blue-600">
+                          <span className="font-sans font-normal text-brand-charcoal/75">
                             — {pc.description}
                           </span>
                         )}

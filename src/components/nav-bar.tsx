@@ -72,7 +72,9 @@ export function NavBar({ user }: NavBarProps) {
           href={getAuthenticatedBrandHref()}
           className="flex items-center gap-2 font-bold text-slate-900 hover:opacity-80 transition-opacity"
         >
-          <Mountain className="h-6 w-6 text-blue-600" />
+          <span className="app-brand-mark h-9 w-9">
+            <Mountain className="h-5 w-5" />
+          </span>
           <span className="hidden sm:block">TAC Bookings</span>
           <span className="sm:hidden">TAC</span>
         </Link>
@@ -86,7 +88,7 @@ export function NavBar({ user }: NavBarProps) {
               className={cn(
                 "rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 isActive(link.href)
-                  ? "bg-blue-50 text-blue-700"
+                  ? "app-nav-link-active"
                   : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
               )}
             >
@@ -148,7 +150,9 @@ export function NavBar({ user }: NavBarProps) {
           <SheetContent side="right" className="w-72">
             <SheetHeader>
               <SheetTitle className="flex items-center gap-2 text-left">
-                <Mountain className="h-5 w-5 text-blue-600" />
+                <span className="app-brand-mark h-8 w-8">
+                  <Mountain className="h-4 w-4" />
+                </span>
                 TAC Bookings
               </SheetTitle>
             </SheetHeader>
@@ -162,7 +166,7 @@ export function NavBar({ user }: NavBarProps) {
                   className={cn(
                     "rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
                     isActive(link.href)
-                      ? "bg-blue-50 text-blue-700"
+                      ? "app-nav-link-active"
                       : "text-slate-700 hover:bg-slate-100"
                   )}
                 >

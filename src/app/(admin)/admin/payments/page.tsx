@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import { format, subMonths } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -29,6 +28,8 @@ import {
   getPaymentDisplayStatus,
 } from "@/lib/payment-status-display";
 import Link from "next/link";
+import { DateRangeControls } from "@/components/admin/date-range-controls";
+import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
 
 function formatCents(cents: number): string {
   return "$" + (cents / 100).toFixed(2);
@@ -139,14 +140,19 @@ export default function PaymentsPage() {
             </SelectContent>
           </Select>
         </div>
-        <div>
-          <Label className="text-xs">From</Label>
-          <Input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }} className="w-40" />
-        </div>
-        <div>
-          <Label className="text-xs">To</Label>
-          <Input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} className="w-40" />
-        </div>
+        <DateRangeControls
+          presets={auditAndPaymentsDateRangePresets}
+          from={from}
+          to={to}
+          onFromChange={(value) => {
+            setFrom(value);
+            setPage(1);
+          }}
+          onToChange={(value) => {
+            setTo(value);
+            setPage(1);
+          }}
+        />
       </div>
 
       {invoiceError && (

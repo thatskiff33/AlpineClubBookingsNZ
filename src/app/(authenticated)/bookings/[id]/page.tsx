@@ -122,6 +122,7 @@ export default async function BookingDetailPage({
   const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
   const canCancel = ["CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
   const isFutureCheckIn = new Date(booking.checkIn) > new Date();
+  const showArrivalTime = !["CANCELLED", "COMPLETED"].includes(booking.status);
   const canModify =
     canModifyBookingStatus(booking.status, session.user.role) && isFutureCheckIn;
   const cancellationSettlement = booking.payment
@@ -220,19 +221,20 @@ export default async function BookingDetailPage({
         </div>
       )}
 
-      {/* Expected Arrival Time */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Expected Arrival Time</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ArrivalTimeEditor
-            bookingId={booking.id}
-            initialTime={booking.expectedArrivalTime}
-            canEdit={isFutureCheckIn}
-          />
-        </CardContent>
-      </Card>
+      {showArrivalTime && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Expected Arrival Time</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ArrivalTimeEditor
+              bookingId={booking.id}
+              initialTime={booking.expectedArrivalTime}
+              canEdit={isFutureCheckIn}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Draft booking: $0 confirm or payment to complete */}
       {isDraft && booking.finalPriceCents === 0 && (

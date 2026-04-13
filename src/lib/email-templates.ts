@@ -17,13 +17,18 @@ export function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
-const BRAND_COLOR = "#1e40af"; // Blue-800
-const BRAND_LIGHT = "#dbeafe"; // Blue-100
-const TEXT_COLOR = "#1f2937"; // Gray-800
-const TEXT_MUTED = "#6b7280"; // Gray-500
-const BG_COLOR = "#f9fafb"; // Gray-50
+const BRAND_COLOR = "#ffcb05"; // Tokoroa Yellow
+const BRAND_CHARCOAL = "#4d4d46";
+const BRAND_DEEP = "#2f2f2b";
+const BRAND_MIST = "#d9d5c2";
+const BRAND_SNOW = "#f7f5ed";
+const BRAND_LOGO_URL = `${BASE_URL}/images/tac-logo.png`;
+const BRAND_LIGHT = BRAND_MIST;
+const TEXT_COLOR = BRAND_DEEP;
+const TEXT_MUTED = "#6a6a63";
+const BG_COLOR = BRAND_SNOW;
 const WHITE = "#ffffff";
-const BORDER_COLOR = "#e5e7eb"; // Gray-200
+const BORDER_COLOR = BRAND_MIST;
 
 function layout(content: string): string {
   return `
@@ -41,11 +46,14 @@ function layout(content: string): string {
         <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width: 600px; width: 100%;">
           <!-- Header -->
           <tr>
-            <td style="background-color: ${BRAND_COLOR}; padding: 24px 32px; border-radius: 8px 8px 0 0; text-align: center;">
-              <h1 style="margin: 0; color: ${WHITE}; font-size: 20px; font-weight: 700; letter-spacing: 0.5px;">
-                &#9968; Tokoroa Alpine Club
-              </h1>
-              <p style="margin: 4px 0 0 0; color: ${BRAND_LIGHT}; font-size: 13px;">
+            <td style="background-color: ${BRAND_CHARCOAL}; padding: 28px 32px 24px; border-top: 4px solid ${BRAND_COLOR}; border-radius: 8px 8px 0 0; text-align: center;">
+              <img
+                src="${BRAND_LOGO_URL}"
+                alt="Tokoroa Alpine Club"
+                width="176"
+                style="display: block; margin: 0 auto 14px; width: 176px; max-width: 100%; height: auto;"
+              />
+              <p style="margin: 0; color: ${WHITE}; font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;">
                 Lodge Booking System
               </p>
             </td>
@@ -61,7 +69,7 @@ function layout(content: string): string {
             <td style="background-color: ${WHITE}; padding: 20px 32px; border-top: 1px solid ${BORDER_COLOR}; border-radius: 0 0 8px 8px; border-left: 1px solid ${BORDER_COLOR}; border-right: 1px solid ${BORDER_COLOR}; border-bottom: 1px solid ${BORDER_COLOR};">
               <p style="margin: 0; color: ${TEXT_MUTED}; font-size: 12px; text-align: center;">
                 Tokoroa Alpine Club &bull; Lodge Bookings<br>
-                <a href="${BASE_URL}" style="color: ${BRAND_COLOR}; text-decoration: none;">${BASE_URL.replace(/^https?:\/\//, "")}</a>
+                <a href="${BASE_URL}" style="color: ${BRAND_CHARCOAL}; font-weight: 600; text-decoration: none;">${BASE_URL.replace(/^https?:\/\//, "")}</a>
               </p>
             </td>
           </tr>
@@ -78,7 +86,7 @@ function button(text: string, url: string): string {
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px 0;">
   <tr>
     <td style="background-color: ${BRAND_COLOR}; border-radius: 6px;">
-      <a href="${url}" target="_blank" style="display: inline-block; padding: 12px 28px; color: ${WHITE}; text-decoration: none; font-weight: 600; font-size: 14px;">
+      <a href="${url}" target="_blank" style="display: inline-block; padding: 12px 28px; color: ${BRAND_CHARCOAL}; text-decoration: none; font-weight: 700; font-size: 14px;">
         ${text}
       </a>
     </td>
@@ -117,7 +125,7 @@ function muted(text: string): string {
 
 function alertBox(text: string, type: "info" | "warning" | "success" = "info"): string {
   const colors = {
-    info: { bg: "#dbeafe", border: "#93c5fd", text: "#1e40af" },
+    info: { bg: "#fff7d6", border: BRAND_COLOR, text: BRAND_DEEP },
     warning: { bg: "#fef3c7", border: "#fcd34d", text: "#92400e" },
     success: { bg: "#dcfce7", border: "#86efac", text: "#166534" },
   };

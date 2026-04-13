@@ -223,14 +223,14 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
                 className={cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   active
-                    ? "bg-blue-50 text-blue-700"
+                    ? "app-nav-link-active"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 )}
               >
                 <Icon
                   className={cn(
                     "h-4 w-4 shrink-0",
-                    active ? "text-blue-600" : "text-slate-400"
+                    active ? "text-brand-charcoal" : "text-slate-400"
                   )}
                 />
                 <span className="flex-1">{label}</span>
@@ -256,7 +256,9 @@ export function AdminSidebar() {
       {/* Desktop sidebar */}
       <aside className="hidden w-60 shrink-0 flex-col border-r bg-white print:hidden md:flex">
         <div className="flex h-16 items-center gap-2 border-b px-4 font-bold text-slate-900">
-          <Mountain className="h-5 w-5 text-blue-600" />
+          <span className="app-brand-mark h-9 w-9">
+            <Mountain className="h-5 w-5" />
+          </span>
           <span>Admin Panel</span>
         </div>
         <div className="flex-1 overflow-y-auto p-3">
@@ -274,7 +276,9 @@ export function AdminSidebar() {
           </SheetTrigger>
           <SheetContent side="left" className="w-64 p-0">
             <SheetHeader className="flex h-16 flex-row items-center gap-2 border-b px-4">
-              <Mountain className="h-5 w-5 text-blue-600" />
+              <span className="app-brand-mark h-9 w-9">
+                <Mountain className="h-5 w-5" />
+              </span>
               <SheetTitle>Admin Panel</SheetTitle>
             </SheetHeader>
             <div className="p-3">

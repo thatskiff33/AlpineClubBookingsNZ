@@ -94,11 +94,11 @@ export default function PrintRosterPage() {
         <div className="no-print mb-6 flex items-center justify-between">
           <button
             onClick={() => window.print()}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            className="app-button-brand"
           >
             Print Roster
           </button>
-          <a href="/admin/roster" className="text-blue-600 hover:underline">
+          <a href="/admin/roster" className="font-medium text-brand-charcoal hover:underline">
             Back to Roster
           </a>
         </div>

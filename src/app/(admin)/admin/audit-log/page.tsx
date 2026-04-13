@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, Fragment } from "react";
 import { format } from "date-fns";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -23,6 +22,8 @@ import {
 } from "@/components/ui/table";
 import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import Link from "next/link";
+import { DateRangeControls } from "@/components/admin/date-range-controls";
+import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
 
 interface AuditEntry {
   id: string;
@@ -109,14 +110,19 @@ export default function AuditLogPage() {
             </SelectContent>
           </Select>
         </div>
-        <div>
-          <Label className="text-xs">From</Label>
-          <Input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }} className="w-40" />
-        </div>
-        <div>
-          <Label className="text-xs">To</Label>
-          <Input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }} className="w-40" />
-        </div>
+        <DateRangeControls
+          presets={auditAndPaymentsDateRangePresets}
+          from={from}
+          to={to}
+          onFromChange={(value) => {
+            setFrom(value);
+            setPage(1);
+          }}
+          onToChange={(value) => {
+            setTo(value);
+            setPage(1);
+          }}
+        />
       </div>
 
       <Card>

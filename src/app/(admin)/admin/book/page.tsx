@@ -293,15 +293,15 @@ export default function AdminBookPage() {
       {/* Step indicator — only show after member selected */}
       {selectedMember && (
         <div className="flex items-center gap-2 text-sm">
-          <span className={step === "dates" ? "font-bold text-blue-600" : "text-gray-400"}>
+          <span className={step === "dates" ? "app-step-active" : "text-gray-400"}>
             1. Select Dates
           </span>
           <span className="text-gray-300">&rarr;</span>
-          <span className={step === "guests" ? "font-bold text-blue-600" : "text-gray-400"}>
+          <span className={step === "guests" ? "app-step-active" : "text-gray-400"}>
             2. Add Guests
           </span>
           <span className="text-gray-300">&rarr;</span>
-          <span className={step === "review" ? "font-bold text-blue-600" : "text-gray-400"}>
+          <span className={step === "review" ? "app-step-active" : "text-gray-400"}>
             3. Review & Confirm
           </span>
         </div>

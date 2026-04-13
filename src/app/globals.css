@@ -202,6 +202,30 @@
 }
 
 @layer components {
+  .app-brand-mark {
+    @apply inline-flex items-center justify-center rounded-full bg-brand-gold/20 text-brand-charcoal;
+  }
+
+  .app-nav-link-active {
+    @apply bg-brand-gold/20 text-brand-charcoal;
+  }
+
+  .app-step-active {
+    @apply rounded-full bg-brand-gold/20 px-2 py-0.5 font-semibold text-brand-charcoal;
+  }
+
+  .app-button-brand {
+    @apply inline-flex items-center justify-center rounded-md bg-brand-gold px-4 py-2 text-sm font-medium text-brand-charcoal shadow-sm transition-colors hover:bg-brand-gold/90;
+  }
+
+  .app-callout-brand {
+    @apply rounded-md border border-brand-gold/35 bg-brand-gold/10;
+  }
+
+  .app-chip-brand {
+    @apply inline-flex items-center gap-1.5 rounded-md bg-brand-gold/15 px-3 py-1.5 text-sm font-medium text-brand-charcoal transition-colors hover:bg-brand-gold/25;
+  }
+
   .website-eyebrow {
     @apply inline-flex items-center rounded-full bg-brand-gold px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-brand-charcoal shadow-sm;
   }

@@ -325,6 +325,7 @@ describe("#31: Expected Arrival Time", () => {
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
         checkIn: new Date("2026-04-15"),
+        status: "CONFIRMED",
       });
       mockPrisma.booking.update.mockResolvedValue({
         id: "booking-1",
@@ -353,6 +354,7 @@ describe("#31: Expected Arrival Time", () => {
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
         checkIn: new Date("2026-04-15"),
+        status: "CONFIRMED",
       });
 
       const { NextRequest } = await import("next/server");
@@ -375,6 +377,7 @@ describe("#31: Expected Arrival Time", () => {
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
         checkIn: new Date("2026-04-15"),
+        status: "CONFIRMED",
       });
 
       const { NextRequest } = await import("next/server");
@@ -397,6 +400,7 @@ describe("#31: Expected Arrival Time", () => {
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
         checkIn: new Date("2026-04-15"),
+        status: "CONFIRMED",
       });
       mockPrisma.booking.update.mockResolvedValue({
         id: "booking-1",
@@ -423,6 +427,7 @@ describe("#31: Expected Arrival Time", () => {
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
         checkIn: new Date("2026-04-01"), // past date
+        status: "CONFIRMED",
       });
 
       const { NextRequest } = await import("next/server");
@@ -457,6 +462,29 @@ describe("#31: Expected Arrival Time", () => {
       expect(res.status).toBe(404);
     });
 
+    it("rejects cancelled bookings", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "member-1", role: "MEMBER" },
+      });
+      mockPrisma.booking.findUnique.mockResolvedValue({
+        memberId: "member-1",
+        checkIn: new Date("2026-04-15"),
+        status: "CANCELLED",
+      });
+
+      const { NextRequest } = await import("next/server");
+      const { PUT } = await import(
+        "@/app/api/bookings/[id]/arrival-time/route"
+      );
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expectedArrivalTime: "14:00" }),
+      });
+      const res = await PUT(req, { params: Promise.resolve({ id: "booking-1" }) });
+      expect(res.status).toBe(400);
+    });
+
     it("rejects deactivated members before mutating the booking", async () => {
       mockAuth.mockResolvedValue({
         user: { id: "member-1", role: "MEMBER" },
@@ -486,6 +514,7 @@ describe("#31: Expected Arrival Time", () => {
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
         checkIn: new Date("2026-04-15"),
+        status: "CONFIRMED",
       });
       mockPrisma.booking.update.mockResolvedValue({
         id: "booking-1",
@@ -512,6 +541,28 @@ describe("#31: Expected Arrival Time", () => {
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
         checkIn: new Date("2026-04-01"),
+        status: "CONFIRMED",
+      });
+
+      const { NextRequest } = await import("next/server");
+      const { DELETE } = await import(
+        "@/app/api/bookings/[id]/arrival-time/route"
+      );
+      const req = new NextRequest("http://localhost/api/bookings/booking-1/arrival-time", {
+        method: "DELETE",
+      });
+      const res = await DELETE(req, { params: Promise.resolve({ id: "booking-1" }) });
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects completed bookings", async () => {
+      mockAuth.mockResolvedValue({
+        user: { id: "member-1", role: "MEMBER" },
+      });
+      mockPrisma.booking.findUnique.mockResolvedValue({
+        memberId: "member-1",
+        checkIn: new Date("2026-04-15"),
+        status: "COMPLETED",
       });
 
       const { NextRequest } = await import("next/server");
@@ -537,6 +588,7 @@ describe("#31: Expected Arrival Time", () => {
         mockPrisma.booking.findUnique.mockResolvedValue({
           memberId: "member-1",
           checkIn: new Date("2026-04-15"),
+          status: "CONFIRMED",
         });
         mockPrisma.booking.update.mockResolvedValue({
           id: "booking-1",
@@ -567,6 +619,7 @@ describe("#31: Expected Arrival Time", () => {
         mockPrisma.booking.findUnique.mockResolvedValue({
           memberId: "member-1",
           checkIn: new Date("2026-04-15"),
+          status: "CONFIRMED",
         });
 
         const { NextRequest } = await import("next/server");

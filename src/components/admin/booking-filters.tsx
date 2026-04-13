@@ -4,6 +4,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
+import { DateRangeControls } from "@/components/admin/date-range-controls";
+import { bookingFilterDateRangePresets } from "@/lib/date-range-presets";
 
 export function BookingFilters() {
   const router = useRouter();
@@ -82,14 +84,13 @@ export function BookingFilters() {
           ))}
         </select>
       </div>
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">From</label>
-        <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-      </div>
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">To</label>
-        <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-      </div>
+      <DateRangeControls
+        presets={bookingFilterDateRangePresets}
+        from={from}
+        to={to}
+        onFromChange={setFrom}
+        onToChange={setTo}
+      />
       <div className="space-y-1">
         <label className="text-xs font-medium text-gray-500">Search member</label>
         <Input

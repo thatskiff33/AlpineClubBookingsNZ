@@ -95,7 +95,7 @@ export default async function AdminBookingsPage({
         <h1 className="text-3xl font-bold">All Bookings</h1>
         <Link
           href="/admin/book"
-          className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          className="app-button-brand"
         >
           + Create Booking
         </Link>

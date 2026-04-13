@@ -127,7 +127,7 @@ export default function AdminLodgePage() {
           href="/lodge/kiosk"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+          className="app-button-brand gap-2"
         >
           Preview Kiosk
         </a>

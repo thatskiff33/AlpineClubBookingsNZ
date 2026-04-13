@@ -21,8 +21,6 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   CalendarRange,
   DollarSign,
@@ -38,6 +36,8 @@ import {
 import type { RevenueGranularity } from "@/lib/admin-reports";
 import { getRevenueGranularityLabel } from "@/lib/admin-reports";
 import { formatCents } from "@/lib/utils";
+import { DateRangeControls } from "@/components/admin/date-range-controls";
+import { reportsDateRangePresets } from "@/lib/date-range-presets";
 
 interface ReportData {
   summary: {
@@ -290,30 +290,13 @@ export default function ReportsPage() {
           </p>
         </div>
         <div className="ml-auto flex items-end gap-3">
-          <div>
-            <Label htmlFor="from" className="text-xs">
-              From
-            </Label>
-            <Input
-              id="from"
-              type="date"
-              value={from}
-              onChange={(event) => setFrom(event.target.value)}
-              className="w-40"
-            />
-          </div>
-          <div>
-            <Label htmlFor="to" className="text-xs">
-              To
-            </Label>
-            <Input
-              id="to"
-              type="date"
-              value={to}
-              onChange={(event) => setTo(event.target.value)}
-              className="w-40"
-            />
-          </div>
+          <DateRangeControls
+            presets={reportsDateRangePresets}
+            from={from}
+            to={to}
+            onFromChange={setFrom}
+            onToChange={setTo}
+          />
           <Button onClick={fetchReports} disabled={loading}>
             {loading ? "Loading..." : "Update"}
           </Button>
