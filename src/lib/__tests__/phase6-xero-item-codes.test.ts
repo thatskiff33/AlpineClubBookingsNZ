@@ -123,6 +123,90 @@ describe("Entrance fee amount parsing", () => {
   });
 });
 
+// ─── Per-guest item codes via itemCodeMap ─────────────────────────────────
+
+describe("buildInvoiceLineItems with per-guest itemCodeMap", () => {
+  const mixedGuests = [
+    { firstName: "John", lastName: "Smith", ageTier: "ADULT", isMember: true, priceCents: 9000 },
+    { firstName: "Jane", lastName: "Smith", ageTier: "ADULT", isMember: false, priceCents: 13000 },
+    { firstName: "Tom", lastName: "Smith", ageTier: "CHILD", isMember: true, priceCents: 4000 },
+  ];
+
+  const itemCodeMap = new Map([
+    ["ADULT_WINTER_true", "HUTFEE-ADULT-WIN-MEM"],
+    ["ADULT_WINTER_false", "HUTFEE-ADULT-WIN-NON"],
+    ["CHILD_WINTER_true", "HUTFEE-CHILD-WIN-MEM"],
+  ]);
+
+  it("assigns different item codes per guest based on ageTier, season, and membership", () => {
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, itemCodeMap, "WINTER"
+    );
+    expect(items[0].itemCode).toBe("HUTFEE-ADULT-WIN-MEM");
+    expect(items[1].itemCode).toBe("HUTFEE-ADULT-WIN-NON");
+    expect(items[2].itemCode).toBe("HUTFEE-CHILD-WIN-MEM");
+  });
+
+  it("omits itemCode when no mapping exists for that combination", () => {
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, itemCodeMap, "SUMMER"
+    );
+    // No SUMMER mappings exist in the map
+    for (const item of items) {
+      expect(item.itemCode).toBeUndefined();
+      expect(item.accountCode).toBe("200");
+    }
+  });
+
+  it("falls back to legacy itemCode when itemCodeMap is undefined", () => {
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "200", "LEGACY-HUT", false, undefined, "WINTER"
+    );
+    for (const item of items) {
+      expect(item.itemCode).toBe("LEGACY-HUT");
+    }
+  });
+
+  it("falls back to legacy itemCode when seasonType is null", () => {
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "200", "LEGACY-HUT", false, itemCodeMap, null
+    );
+    for (const item of items) {
+      expect(item.itemCode).toBe("LEGACY-HUT");
+    }
+  });
+
+  it("omits accountCode when per-guest itemCode is set and accountCode is default", () => {
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, itemCodeMap, "WINTER"
+    );
+    // Items with item codes should omit default account code
+    expect(items[0].accountCode).toBeUndefined();
+    expect(items[1].accountCode).toBeUndefined();
+    expect(items[2].accountCode).toBeUndefined();
+  });
+
+  it("includes accountCode when per-guest itemCode is set but accountCode is non-default", () => {
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "400", null, false, itemCodeMap, "WINTER"
+    );
+    for (const item of items) {
+      expect(item.accountCode).toBe("400");
+    }
+  });
+
+  it("works with an empty itemCodeMap (same as no map)", () => {
+    const emptyMap = new Map<string, string>();
+    const items = buildInvoiceLineItems(
+      mixedGuests, checkIn, checkOut, 2, "200", null, false, emptyMap, "WINTER"
+    );
+    for (const item of items) {
+      expect(item.itemCode).toBeUndefined();
+      expect(item.accountCode).toBe("200");
+    }
+  });
+});
+
 // ─── Account mapping API response shape ────────────────────────────────────
 
 describe("Account mapping response shape", () => {
@@ -137,5 +221,90 @@ describe("Account mapping response shape", () => {
     const defaultMapping = { code: null, itemCode: null };
     expect(defaultMapping.code).toBeNull();
     expect(defaultMapping.itemCode).toBeNull();
+  });
+});
+
+// ─── Entrance fee category determination (unit logic) ─────────────────────
+
+describe("Entrance fee category logic", () => {
+  it("ADULT tier maps to ADULT category", () => {
+    // Testing the pure logic used in determineEntranceFeeCategory
+    const ageTier = "ADULT";
+    expect(ageTier === "YOUTH" ? "YOUTH" : ageTier === "CHILD" || ageTier === "INFANT" ? "CHILD" : "ADULT").toBe("ADULT");
+  });
+
+  it("YOUTH tier maps to YOUTH category", () => {
+    const ageTier = "YOUTH";
+    expect(ageTier === "YOUTH" ? "YOUTH" : ageTier === "CHILD" || ageTier === "INFANT" ? "CHILD" : "ADULT").toBe("YOUTH");
+  });
+
+  it("CHILD tier maps to CHILD category", () => {
+    const ageTier = "CHILD";
+    expect(ageTier === "YOUTH" ? "YOUTH" : ageTier === "CHILD" || ageTier === "INFANT" ? "CHILD" : "ADULT").toBe("CHILD");
+  });
+
+  it("INFANT tier maps to CHILD category", () => {
+    const ageTier = "INFANT";
+    expect(ageTier === "YOUTH" ? "YOUTH" : ageTier === "CHILD" || ageTier === "INFANT" ? "CHILD" : "ADULT").toBe("CHILD");
+  });
+
+  it("FAMILY requires 2+ adults and 1+ dependents in group", () => {
+    const groupMembers = [
+      { ageTier: "ADULT" },
+      { ageTier: "ADULT" },
+      { ageTier: "CHILD" },
+    ];
+    const adults = groupMembers.filter((m) => m.ageTier === "ADULT");
+    const dependents = groupMembers.filter((m) => ["CHILD", "YOUTH", "INFANT"].includes(m.ageTier));
+    const isFamily = adults.length >= 2 && dependents.length >= 1;
+    expect(isFamily).toBe(true);
+  });
+
+  it("does not qualify as FAMILY with only 1 adult", () => {
+    const groupMembers = [
+      { ageTier: "ADULT" },
+      { ageTier: "CHILD" },
+    ];
+    const adults = groupMembers.filter((m) => m.ageTier === "ADULT");
+    const dependents = groupMembers.filter((m) => ["CHILD", "YOUTH", "INFANT"].includes(m.ageTier));
+    const isFamily = adults.length >= 2 && dependents.length >= 1;
+    expect(isFamily).toBe(false);
+  });
+
+  it("does not qualify as FAMILY with only adults (no dependents)", () => {
+    const groupMembers = [
+      { ageTier: "ADULT" },
+      { ageTier: "ADULT" },
+    ];
+    const adults = groupMembers.filter((m) => m.ageTier === "ADULT");
+    const dependents = groupMembers.filter((m) => ["CHILD", "YOUTH", "INFANT"].includes(m.ageTier));
+    const isFamily = adults.length >= 2 && dependents.length >= 1;
+    expect(isFamily).toBe(false);
+  });
+});
+
+// ─── Item code mapping API response shape ─────────────────────────────────
+
+describe("Item code mapping response shape", () => {
+  it("hut fee entry has itemCode field", () => {
+    const entry = { itemCode: "HUTFEE-ADULT-WIN-MEM" };
+    expect(entry).toHaveProperty("itemCode");
+    expect(entry.itemCode).toBe("HUTFEE-ADULT-WIN-MEM");
+  });
+
+  it("entrance fee entry has itemCode and amountCents", () => {
+    const entry = { itemCode: "ENTFEE-ADULT", amountCents: 5000 };
+    expect(entry).toHaveProperty("itemCode");
+    expect(entry).toHaveProperty("amountCents");
+    expect(entry.amountCents).toBe(5000);
+  });
+
+  it("composite key format is correct", () => {
+    const key = `ADULT_WINTER_true`;
+    const parts = key.split("_");
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toBe("ADULT");
+    expect(parts[1]).toBe("WINTER");
+    expect(parts[2]).toBe("true");
   });
 });

@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
       statusFilter.status = validStatuses.length === 1 ? validStatuses[0] : { in: validStatuses };
     }
   } else {
-    statusFilter.status = { notIn: ["DRAFT", "CANCELLED"] };
+    statusFilter.status = { not: "DRAFT" };
   }
 
   try {

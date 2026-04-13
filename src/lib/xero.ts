@@ -10,7 +10,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { prisma } from "./prisma";
 import { sendPasswordResetEmail } from "./email";
-import { AgeTier } from "@prisma/client";
+import { AgeTier, SeasonType, EntranceFeeCategory } from "@prisma/client";
 import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
@@ -278,6 +278,124 @@ export async function getAccountMapping(key: string): Promise<string | null> {
 export async function getItemCodeMapping(key: string): Promise<string | null> {
   const mapping = await getResolvedAccountMapping(key);
   return mapping.itemCode;
+}
+
+// ---------------------------------------------------------------------------
+// Granular Item Code Mappings (per age tier / season / member status)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a lookup map for hut fee item codes keyed by "${ageTier}_${seasonType}_${isMember}".
+ * Falls back to the legacy flat `hutFeeItem` from XeroAccountMapping if the new table is empty.
+ */
+export async function getHutFeeItemCodeMap(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+
+  const rows = await prisma.xeroItemCodeMapping.findMany({
+    where: { category: "HUT_FEE" },
+  });
+
+  if (rows.length > 0) {
+    for (const row of rows) {
+      if (row.ageTier && row.seasonType && row.isMember !== null) {
+        map.set(`${row.ageTier}_${row.seasonType}_${row.isMember}`, row.itemCode);
+      }
+    }
+  } else {
+    // Fallback: use legacy flat hutFeeItem for all combinations
+    const legacyItemCode = await getItemCodeMapping("hutFeeItem");
+    if (legacyItemCode) {
+      for (const tier of ["INFANT", "CHILD", "YOUTH", "ADULT"]) {
+        for (const season of ["WINTER", "SUMMER"]) {
+          for (const member of [true, false]) {
+            map.set(`${tier}_${season}_${member}`, legacyItemCode);
+          }
+        }
+      }
+    }
+  }
+
+  return map;
+}
+
+/**
+ * Get the entrance fee item code and amount for a specific category.
+ * Falls back to the legacy flat entranceFeeItem/entranceFeeAmountCents if the new table is empty.
+ */
+export async function getEntranceFeeMapping(
+  category: EntranceFeeCategory
+): Promise<{ itemCode: string | null; amountCents: number | null }> {
+  const row = await prisma.xeroItemCodeMapping.findFirst({
+    where: { category: "ENTRANCE_FEE", entranceFeeCategory: category },
+  });
+
+  if (row) {
+    return { itemCode: row.itemCode, amountCents: row.amountCents };
+  }
+
+  // Fallback to legacy flat mappings
+  const [legacyItemCode, legacyAmount] = await Promise.all([
+    getItemCodeMapping("entranceFeeItem"),
+    prisma.xeroAccountMapping.findUnique({
+      where: { key: "entranceFeeAmountCents" },
+      select: { code: true },
+    }),
+  ]);
+
+  const amountCents = legacyAmount?.code ? parseInt(legacyAmount.code, 10) : null;
+  return {
+    itemCode: legacyItemCode,
+    amountCents: isNaN(amountCents as number) ? null : amountCents,
+  };
+}
+
+/**
+ * Determine the entrance fee category for a member based on their age tier
+ * and family group membership.
+ *
+ * - FAMILY: adult in a family group that has ≥2 adults AND ≥1 child/youth/infant
+ * - ADULT: adult member (standalone or no qualifying family group)
+ * - YOUTH: youth-tier member
+ * - CHILD: child or infant-tier member
+ */
+export async function determineEntranceFeeCategory(
+  memberId: string
+): Promise<EntranceFeeCategory> {
+  const member = await prisma.member.findUnique({
+    where: { id: memberId },
+    select: { ageTier: true },
+  });
+
+  if (!member) return "ADULT";
+
+  if (member.ageTier === "YOUTH") return "YOUTH";
+  if (member.ageTier === "CHILD" || member.ageTier === "INFANT") return "CHILD";
+
+  // ADULT tier — check if they qualify for FAMILY rate
+  const familyMemberships = await prisma.familyGroupMember.findMany({
+    where: { memberId },
+    select: { familyGroupId: true },
+  });
+
+  for (const fm of familyMemberships) {
+    const groupMembers = await prisma.familyGroupMember.findMany({
+      where: { familyGroupId: fm.familyGroupId },
+      include: { member: { select: { ageTier: true } } },
+    });
+
+    const adults = groupMembers.filter((gm) =>
+      gm.member.ageTier === "ADULT"
+    );
+    const dependents = groupMembers.filter((gm) =>
+      gm.member.ageTier === "CHILD" || gm.member.ageTier === "YOUTH" || gm.member.ageTier === "INFANT"
+    );
+
+    if (adults.length >= 2 && dependents.length >= 1) {
+      return "FAMILY";
+    }
+  }
+
+  return "ADULT";
 }
 
 /**
@@ -1911,6 +2029,11 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
 /**
  * Build Xero invoice line items from a booking's guests and stay nights.
  * Exported for testing.
+ *
+ * @param itemCodeMap - Per-guest item code lookup keyed by "${ageTier}_${seasonType}_${isMember}".
+ *   When provided with a seasonType, each guest gets their own item code based on their
+ *   age tier, membership status, and the booking's season type.
+ * @param itemCode - Legacy single item code applied to all guests (used when itemCodeMap is empty).
  */
 export function buildInvoiceLineItems(
   guests: Array<{
@@ -1925,7 +2048,9 @@ export function buildInvoiceLineItems(
   nights: number,
   accountCode: string = "200",
   itemCode?: string | null,
-  accountCodeExplicitlyConfigured: boolean = false
+  accountCodeExplicitlyConfigured: boolean = false,
+  itemCodeMap?: Map<string, string>,
+  seasonType?: string | null,
 ): LineItem[] {
   return guests.map((guest) => {
     const perNightCents = nights > 0 ? Math.round(guest.priceCents / nights) : guest.priceCents;
@@ -1943,15 +2068,20 @@ export function buildInvoiceLineItems(
       taxType: "OUTPUT2", // GST on Income (NZ)
     };
 
+    // Resolve item code: prefer per-guest granular mapping, fall back to legacy flat code
+    const guestItemCode = (itemCodeMap && seasonType)
+      ? (itemCodeMap.get(`${guest.ageTier}_${seasonType}_${guest.isMember}`) ?? null)
+      : (itemCode ?? null);
+
     // If itemCode is set, Xero auto-fills the account from the Item's config.
     // If accountCode is also explicitly configured, it overrides the Item's default.
-    if (itemCode) {
-      lineItem.itemCode = itemCode;
+    if (guestItemCode) {
+      lineItem.itemCode = guestItemCode;
     }
     // Include the account code when there is no item code, when a non-default account
     // is supplied, or when the admin explicitly configured the default account code to
     // override the selected Xero Item's own default.
-    if (!itemCode || accountCode !== "200" || accountCodeExplicitlyConfigured) {
+    if (!guestItemCode || accountCode !== "200" || accountCodeExplicitlyConfigured) {
       lineItem.accountCode = accountCode;
     }
 
@@ -1993,10 +2123,11 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
   // Ensure the member has a Xero contact
   const contactId = await findOrCreateXeroContact(booking.memberId);
 
-  // Resolve account codes and item codes from DB (with fallback to defaults)
-  const [hutFeeMapping, stripeBankCode] = await Promise.all([
+  // Resolve account codes, item codes, and season type
+  const [hutFeeMapping, stripeBankCode, hutFeeItemCodeMap] = await Promise.all([
     getResolvedAccountMapping("hutFeesIncome"),
     getAccountMapping("stripeBankAccount"),
+    getHutFeeItemCodeMap(),
   ]);
   const incomeCode = hutFeeMapping.code ?? "200";
   const bankCode = stripeBankCode ?? "606";
@@ -2006,7 +2137,21 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
   const checkOut = new Date(booking.checkOut);
   const nights = getStayNights(checkIn, checkOut).length;
 
-  // Build line items
+  // Determine season type from check-in date for item code mapping
+  let bookingSeasonType: string | null = null;
+  const season = await prisma.season.findFirst({
+    where: {
+      startDate: { lte: checkIn },
+      endDate: { gte: checkIn },
+      active: true,
+    },
+    select: { type: true },
+  });
+  if (season) {
+    bookingSeasonType = season.type;
+  }
+
+  // Build line items with per-guest item codes
   const lineItems = buildInvoiceLineItems(
     booking.guests.map((g) => ({
       firstName: g.firstName,
@@ -2020,21 +2165,29 @@ export async function createXeroInvoiceForBooking(bookingId: string): Promise<st
     nights,
     incomeCode,
     hutFeeMapping.itemCode,
-    hutFeeMapping.codeExplicitlyConfigured
+    hutFeeMapping.codeExplicitlyConfigured,
+    hutFeeItemCodeMap.size > 0 ? hutFeeItemCodeMap : undefined,
+    bookingSeasonType,
   );
 
   // Add discount line if applicable
   if (booking.discountCents > 0) {
+    // Use the first guest's item code for the discount, or fall back to legacy
+    const firstGuest = booking.guests[0];
+    const discountItemCode = (hutFeeItemCodeMap.size > 0 && bookingSeasonType && firstGuest)
+      ? (hutFeeItemCodeMap.get(`${firstGuest.ageTier}_${bookingSeasonType}_${firstGuest.isMember}`) ?? hutFeeMapping.itemCode)
+      : hutFeeMapping.itemCode;
+
     const discountLineItem: LineItem = {
       description: "Discount",
       quantity: 1,
       unitAmount: -(booking.discountCents / 100),
       taxType: "OUTPUT2",
     };
-    if (hutFeeMapping.itemCode) {
-      discountLineItem.itemCode = hutFeeMapping.itemCode;
+    if (discountItemCode) {
+      discountLineItem.itemCode = discountItemCode;
     }
-    if (!hutFeeMapping.itemCode || hutFeeMapping.codeExplicitlyConfigured || incomeCode !== "200") {
+    if (!discountItemCode || hutFeeMapping.codeExplicitlyConfigured || incomeCode !== "200") {
       discountLineItem.accountCode = incomeCode;
     }
     lineItems.push(discountLineItem);
@@ -2498,23 +2651,19 @@ export async function createXeroCreditNoteForModification(params: {
  * Create a Xero invoice for a membership entrance fee.
  * Called when an admin creates a new member (if Xero is connected and entrance fee is configured).
  *
+ * Uses the granular per-category entrance fee mappings (XeroItemCodeMapping) when available,
+ * falling back to the legacy flat entranceFeeAmountCents/entranceFeeItem from XeroAccountMapping.
+ *
  * @param memberId - The member to invoice
  * @returns The Xero invoice ID, or null if entrance fee is not configured or Xero is not connected
  */
 export async function createXeroEntranceFeeInvoice(memberId: string): Promise<string | null> {
-  // Check if entrance fee is configured
-  const feeMapping = await prisma.xeroAccountMapping.findUnique({
-    where: { key: "entranceFeeAmountCents" },
-    select: { code: true },
-  });
+  // Determine the entrance fee category for this member
+  const category = await determineEntranceFeeCategory(memberId);
+  const feeMapping = await getEntranceFeeMapping(category);
 
-  if (!feeMapping?.code) {
-    // Entrance fee not configured — skip
-    return null;
-  }
-
-  const feeAmountCents = parseInt(feeMapping.code, 10);
-  if (isNaN(feeAmountCents) || feeAmountCents <= 0) {
+  if (!feeMapping.amountCents || feeMapping.amountCents <= 0) {
+    // Entrance fee not configured for this category — skip
     return null;
   }
 
@@ -2529,23 +2678,21 @@ export async function createXeroEntranceFeeInvoice(memberId: string): Promise<st
 
   const contactId = await findOrCreateXeroContact(memberId);
 
-  // Look up entrance fee item code
-  const [entranceFeeItemCode, incomeMapping] = await Promise.all([
-    getItemCodeMapping("entranceFeeItem"),
-    getResolvedAccountMapping("hutFeesIncome"),
-  ]);
+  const incomeMapping = await getResolvedAccountMapping("hutFeesIncome");
   const incomeCode = incomeMapping.code ?? "200";
 
+  const categoryLabel = category === "FAMILY" ? "Family" : category === "YOUTH" ? "Youth" : category === "CHILD" ? "Child" : "Adult";
+
   const lineItem: LineItem = {
-    description: "Membership entrance fee",
+    description: `Membership entrance fee (${categoryLabel})`,
     quantity: 1,
-    unitAmount: feeAmountCents / 100,
+    unitAmount: feeMapping.amountCents / 100,
     taxType: "OUTPUT2",
   };
-  if (entranceFeeItemCode) {
-    lineItem.itemCode = entranceFeeItemCode;
+  if (feeMapping.itemCode) {
+    lineItem.itemCode = feeMapping.itemCode;
   }
-  if (!entranceFeeItemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
+  if (!feeMapping.itemCode || incomeCode !== "200" || incomeMapping.codeExplicitlyConfigured) {
     lineItem.accountCode = incomeCode;
   }
 
@@ -2555,7 +2702,7 @@ export async function createXeroEntranceFeeInvoice(memberId: string): Promise<st
     lineItems: [lineItem],
     date: formatDate(new Date()),
     dueDate: formatDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)), // Due in 30 days
-    reference: `Entrance fee - ${memberId.slice(0, 8)}`,
+    reference: `Entrance fee (${categoryLabel}) - ${memberId.slice(0, 8)}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,
   };
@@ -2570,7 +2717,7 @@ export async function createXeroEntranceFeeInvoice(memberId: string): Promise<st
   }
 
   logger.info(
-    { memberId, invoiceId: created.invoiceID, feeAmountCents },
+    { memberId, category, invoiceId: created.invoiceID, feeAmountCents: feeMapping.amountCents },
     "Created Xero entrance fee invoice"
   );
 
