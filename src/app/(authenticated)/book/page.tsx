@@ -18,6 +18,7 @@ import {
   type BookingErrorPaymentTarget,
 } from "@/lib/booking-error-payment-targets";
 import Link from "next/link";
+import { shouldShowInviteFamilyGroupMembersLink } from "@/lib/family-booking";
 
 interface FamilyMember {
   id: string;
@@ -352,6 +353,8 @@ export default function BookPage() {
   const subscriptionUnpaid =
     subscriptionStatus &&
     (subscriptionStatus.status === "UNPAID" || subscriptionStatus.status === "OVERDUE");
+  const showInviteFamilyGroupMembersLink =
+    shouldShowInviteFamilyGroupMembersLink(familyMembers);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -539,6 +542,20 @@ export default function BookPage() {
                     );
                   })}
                 </div>
+              </div>
+            )}
+            {showInviteFamilyGroupMembersLink && (
+              <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50/50 p-4">
+                <p className="text-sm text-slate-600">
+                  No other family group members are available to quick add yet.{" "}
+                  <Link
+                    href="/profile#family-group"
+                    className="font-medium text-indigo-700 underline underline-offset-4 hover:text-indigo-800"
+                  >
+                    Invite family group members
+                  </Link>
+                  .
+                </p>
               </div>
             )}
             <GuestForm

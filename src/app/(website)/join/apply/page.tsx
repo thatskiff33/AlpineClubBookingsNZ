@@ -53,7 +53,7 @@ const steps = [
   {
     title: "Enter details",
     description:
-      "Tell us about yourself, your dependents, and the two current TAC members who are nominating you.",
+      "Tell us about yourself, your household members, and the two current TAC members who are nominating you.",
     icon: UserPlus,
   },
   {
@@ -198,15 +198,15 @@ export default function JoinApplyPage() {
     form.familyMembers.forEach((familyMember, index) => {
       if (!familyMember.firstName.trim()) {
         nextErrors[`familyMembers.${index}.firstName`] =
-          "Dependent first name is required";
+          "Household member first name is required";
       }
       if (!familyMember.lastName.trim()) {
         nextErrors[`familyMembers.${index}.lastName`] =
-          "Dependent last name is required";
+          "Household member last name is required";
       }
       if (!familyMember.dateOfBirth) {
         nextErrors[`familyMembers.${index}.dateOfBirth`] =
-          "Dependent date of birth is required";
+          "Household member date of birth is required";
       }
     });
 
@@ -490,20 +490,20 @@ export default function JoinApplyPage() {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <h2 className="font-heading text-xl font-semibold text-brand-charcoal">
-                        Dependents
+                        Household Members
                       </h2>
                       <p className="text-sm text-brand-deep/70">
-                        Add any dependent children included in this application.
+                        Add any household members included in this application.
                       </p>
                     </div>
                     <Button type="button" variant="outline" onClick={addFamilyMember}>
-                      Add dependent
+                      Add Household Member
                     </Button>
                   </div>
 
                   {form.familyMembers.length === 0 ? (
                     <p className="text-sm text-brand-deep/70">
-                      No dependents added yet.
+                      No household members added yet.
                     </p>
                   ) : (
                     <div className="space-y-4">
@@ -514,7 +514,7 @@ export default function JoinApplyPage() {
                         >
                           <div className="flex items-center justify-between gap-4">
                             <h3 className="font-medium text-brand-charcoal">
-                              Dependent {index + 1}
+                              Household Member {index + 1}
                             </h3>
                             <Button
                               type="button"
