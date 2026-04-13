@@ -922,6 +922,34 @@ model XeroAccountMapping {
 }
 
 // ---------------------------------------------------------------------------
+// Xero Item Code Mappings — granular per age tier / season / member status
+// ---------------------------------------------------------------------------
+
+enum EntranceFeeCategory {
+  ADULT
+  YOUTH
+  CHILD
+  FAMILY
+}
+
+model XeroItemCodeMapping {
+  id                  String               @id @default(cuid())
+  category            String               // "HUT_FEE" | "ENTRANCE_FEE"
+  ageTier             AgeTier?             // HUT_FEE only
+  seasonType          SeasonType?          // HUT_FEE only
+  isMember            Boolean?             // HUT_FEE only
+  entranceFeeCategory EntranceFeeCategory? // ENTRANCE_FEE only
+  itemCode            String               // Xero Item Code
+  amountCents         Int?                 // ENTRANCE_FEE only (per-category pricing)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@unique([category, ageTier, seasonType, isMember])
+  @@unique([category, entranceFeeCategory])
+  @@index([category])
+}
+
+// ---------------------------------------------------------------------------
 // Age Tier Settings (Issue 14 — configurable age group boundaries)
 // ---------------------------------------------------------------------------
 

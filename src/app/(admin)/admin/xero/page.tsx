@@ -287,6 +287,14 @@ export default function XeroPage() {
   const [mappingSaved, setMappingSaved] = useState(false)
   const [isEditingMappings, setIsEditingMappings] = useState(false)
 
+  // Granular item code mappings state
+  type HutFeeMap = Record<string, { itemCode: string }>
+  type EntranceFeeMap = Record<string, { itemCode: string; amountCents: number | null }>
+  const [hutFeeItemCodes, setHutFeeItemCodes] = useState<HutFeeMap>({})
+  const [savedHutFeeItemCodes, setSavedHutFeeItemCodes] = useState<HutFeeMap>({})
+  const [entranceFeeItemCodes, setEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
+  const [savedEntranceFeeItemCodes, setSavedEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
+
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/xero/status")
@@ -303,10 +311,11 @@ export default function XeroPage() {
   const fetchAccountMappings = useCallback(async () => {
     setLoadingMappings(true)
     try {
-      const [mappingsRes, accountsRes, itemsRes] = await Promise.all([
+      const [mappingsRes, accountsRes, itemsRes, itemCodeRes] = await Promise.all([
         fetch("/api/admin/xero/account-mappings"),
         fetch("/api/admin/xero/chart-of-accounts"),
         fetch("/api/admin/xero/items"),
+        fetch("/api/admin/xero/item-code-mappings"),
       ])
       if (mappingsRes.ok) {
         const data = await mappingsRes.json()
@@ -320,6 +329,13 @@ export default function XeroPage() {
       if (itemsRes.ok) {
         const data = await itemsRes.json()
         setXeroItems(data.items ?? [])
+      }
+      if (itemCodeRes.ok) {
+        const data = await itemCodeRes.json()
+        setHutFeeItemCodes(data.hutFees ?? {})
+        setSavedHutFeeItemCodes(data.hutFees ?? {})
+        setEntranceFeeItemCodes(data.entranceFees ?? {})
+        setSavedEntranceFeeItemCodes(data.entranceFees ?? {})
       }
     } catch {
       setMappingError("Failed to load account mappings")
@@ -489,6 +505,7 @@ export default function XeroPage() {
     setMappingError("")
     setMappingSaved(false)
     try {
+      // Save legacy account mappings
       const res = await fetch("/api/admin/xero/account-mappings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -501,6 +518,23 @@ export default function XeroPage() {
       const data = await res.json()
       setAccountMappings(data)
       setSavedMappings(data)
+
+      // Save granular item code mappings
+      const itemCodeRes = await fetch("/api/admin/xero/item-code-mappings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hutFees: hutFeeItemCodes, entranceFees: entranceFeeItemCodes }),
+      })
+      if (!itemCodeRes.ok) {
+        const itemData = await itemCodeRes.json()
+        throw new Error(itemData.error || "Failed to save item code mappings")
+      }
+      const itemData = await itemCodeRes.json()
+      setHutFeeItemCodes(itemData.hutFees ?? {})
+      setSavedHutFeeItemCodes(itemData.hutFees ?? {})
+      setEntranceFeeItemCodes(itemData.entranceFees ?? {})
+      setSavedEntranceFeeItemCodes(itemData.entranceFees ?? {})
+
       setIsEditingMappings(false)
       setMappingSaved(true)
       setTimeout(() => setMappingSaved(false), 3000)
@@ -715,21 +749,21 @@ export default function XeroPage() {
                   )
                 })}
 
-                {/* Item Code Mappings */}
+                {/* Refund Item Code */}
                 <Separator />
-                <h4 className="text-sm font-semibold text-slate-700">Item Code Mappings</h4>
+                <h4 className="text-sm font-semibold text-slate-700">Refund Item Code</h4>
                 <p className="text-xs text-muted-foreground">
-                  Map transactions to Xero Items (products/services). When an Item Code is set, Xero auto-fills the
-                  account code from the Item&apos;s configuration. If both are set, the Account Code overrides the Item&apos;s default.
+                  Xero Item for refund credit note line items. When set, Xero auto-fills the account code from the Item&apos;s configuration.
                 </p>
-                {accountMappings && ITEM_MAPPING_KEYS.map((key) => {
+                {accountMappings && (() => {
+                  const key = "hutFeeRefundItem" as const
                   const currentItemCode = accountMappings[key]?.itemCode
                   const matchedItem = xeroItems.find((i) => i.code === currentItemCode)
                   return (
-                    <div key={key} className="grid grid-cols-3 gap-4 items-start">
+                    <div className="grid grid-cols-3 gap-4 items-start">
                       <div>
-                        <p className="text-sm font-medium">{ITEM_MAPPING_LABELS[key]}</p>
-                        <p className="text-xs text-muted-foreground">{ITEM_MAPPING_DESCRIPTIONS[key]}</p>
+                        <p className="text-sm font-medium">Hut Fee Refund Item</p>
+                        <p className="text-xs text-muted-foreground">Xero Item for refund credit note line items</p>
                       </div>
                       <div className="col-span-2">
                         {isEditingMappings ? (
@@ -753,11 +787,6 @@ export default function XeroPage() {
                                   {item.code} — {item.name}
                                 </SelectItem>
                               ))}
-                              {xeroItems.length === 0 && (
-                                <SelectItem value="__empty__" disabled>
-                                  No items found in Xero
-                                </SelectItem>
-                              )}
                             </SelectContent>
                           </Select>
                         ) : (
@@ -772,52 +801,219 @@ export default function XeroPage() {
                       </div>
                     </div>
                   )
-                })}
+                })()}
 
-                {/* Entrance Fee */}
+                {/* Hut Fee Item Code Matrix */}
                 <Separator />
-                <h4 className="text-sm font-semibold text-slate-700">Entrance Fee</h4>
+                <h4 className="text-sm font-semibold text-slate-700">Hut Fee Item Codes</h4>
                 <p className="text-xs text-muted-foreground">
-                  When configured, a Xero invoice for this amount is automatically created when an admin adds a new member.
+                  Map each combination of age tier, season, and membership status to a Xero Item.
+                  Each booking invoice line item will use the item code matching the guest&apos;s profile.
                 </p>
-                {accountMappings && (
-                  <div className="grid grid-cols-3 gap-4 items-start">
-                    <div>
-                      <p className="text-sm font-medium">Entrance Fee Amount</p>
-                      <p className="text-xs text-muted-foreground">Amount in dollars (incl. GST). Leave empty to disable.</p>
-                    </div>
-                    <div className="col-span-2">
-                      {isEditingMappings ? (
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">$</span>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="0.00"
-                            value={accountMappings.entranceFeeAmountCents?.code
-                              ? (parseInt(accountMappings.entranceFeeAmountCents.code, 10) / 100).toFixed(2)
-                              : ""}
-                            onChange={(e) => {
-                              const dollars = parseFloat(e.target.value)
-                              const cents = isNaN(dollars) || dollars <= 0 ? null : Math.round(dollars * 100).toString()
-                              setAccountMappings((prev) =>
-                                prev ? { ...prev, entranceFeeAmountCents: { ...prev.entranceFeeAmountCents, code: cents } } : prev
-                              )
-                            }}
-                            className="w-32"
-                          />
-                        </div>
-                      ) : (
-                        <p className="text-sm py-2 px-3 bg-slate-50 rounded-md border border-slate-200">
-                          {accountMappings.entranceFeeAmountCents?.code
-                            ? `$${(parseInt(accountMappings.entranceFeeAmountCents.code, 10) / 100).toFixed(2)}`
-                            : <span className="text-muted-foreground">Not configured (disabled)</span>}
-                        </p>
-                      )}
-                    </div>
+                {isEditingMappings && (
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (xeroItems.length === 0) return
+                        const firstItem = xeroItems[0].code
+                        const filled: HutFeeMap = {}
+                        for (const tier of ["INFANT", "CHILD", "YOUTH", "ADULT"]) {
+                          for (const season of ["WINTER", "SUMMER"]) {
+                            for (const member of [true, false]) {
+                              filled[`${tier}_${season}_${member}`] = { itemCode: firstItem }
+                            }
+                          }
+                        }
+                        setHutFeeItemCodes(filled)
+                      }}
+                    >
+                      Copy first item to all
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setHutFeeItemCodes({})}
+                    >
+                      Clear all
+                    </Button>
                   </div>
                 )}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="text-left p-2 border-b font-medium text-slate-600">Age Tier</th>
+                        <th className="text-left p-2 border-b font-medium text-slate-600">Winter / Member</th>
+                        <th className="text-left p-2 border-b font-medium text-slate-600">Winter / Non-Member</th>
+                        <th className="text-left p-2 border-b font-medium text-slate-600">Summer / Member</th>
+                        <th className="text-left p-2 border-b font-medium text-slate-600">Summer / Non-Member</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(["ADULT", "YOUTH", "CHILD", "INFANT"] as const).map((tier) => (
+                        <tr key={tier} className="border-b last:border-0">
+                          <td className="p-2 font-medium text-slate-700">{tier}</td>
+                          {(["WINTER_true", "WINTER_false", "SUMMER_true", "SUMMER_false"] as const).map((combo) => {
+                            const mapKey = `${tier}_${combo}`
+                            const currentCode = hutFeeItemCodes[mapKey]?.itemCode ?? null
+                            const matchedItem = xeroItems.find((i) => i.code === currentCode)
+                            return (
+                              <td key={combo} className="p-2">
+                                {isEditingMappings ? (
+                                  <Select
+                                    value={currentCode ?? "__none__"}
+                                    onValueChange={(val) =>
+                                      setHutFeeItemCodes((prev) => {
+                                        const next = { ...prev }
+                                        if (val === "__none__") {
+                                          delete next[mapKey]
+                                        } else {
+                                          next[mapKey] = { itemCode: val }
+                                        }
+                                        return next
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger className="w-full min-w-[140px]">
+                                      <SelectValue placeholder="Not set" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">
+                                        <span className="text-muted-foreground">Not set</span>
+                                      </SelectItem>
+                                      {xeroItems.map((item) => (
+                                        <SelectItem key={item.code} value={item.code}>
+                                          {item.code}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                ) : (
+                                  <span className={currentCode ? "text-slate-700" : "text-muted-foreground"}>
+                                    {matchedItem ? `${matchedItem.code}` : currentCode ?? "Not set"}
+                                  </span>
+                                )}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Entrance Fee Categories */}
+                <Separator />
+                <h4 className="text-sm font-semibold text-slate-700">Entrance Fee Categories</h4>
+                <p className="text-xs text-muted-foreground">
+                  Configure entrance fee amounts and Xero Item codes per membership category.
+                  When a new member is added, the system automatically determines their category and creates a Xero invoice.
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="text-left p-2 border-b font-medium text-slate-600">Category</th>
+                        <th className="text-left p-2 border-b font-medium text-slate-600">Description</th>
+                        <th className="text-left p-2 border-b font-medium text-slate-600">Xero Item</th>
+                        <th className="text-left p-2 border-b font-medium text-slate-600 w-32">Amount (incl. GST)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {([
+                        { key: "ADULT", label: "Adult", desc: "Standalone adult member" },
+                        { key: "YOUTH", label: "Youth", desc: "Youth member (with an adult)" },
+                        { key: "CHILD", label: "Child", desc: "Child/infant (with adult linked)" },
+                        { key: "FAMILY", label: "Family", desc: "2 adults + youth/children in household" },
+                      ] as const).map(({ key, label, desc }) => {
+                        const entry = entranceFeeItemCodes[key]
+                        const currentCode = entry?.itemCode ?? null
+                        const currentAmountCents = entry?.amountCents ?? null
+                        const matchedItem = xeroItems.find((i) => i.code === currentCode)
+                        return (
+                          <tr key={key} className="border-b last:border-0">
+                            <td className="p-2 font-medium text-slate-700">{label}</td>
+                            <td className="p-2 text-xs text-muted-foreground">{desc}</td>
+                            <td className="p-2">
+                              {isEditingMappings ? (
+                                <Select
+                                  value={currentCode ?? "__none__"}
+                                  onValueChange={(val) =>
+                                    setEntranceFeeItemCodes((prev) => {
+                                      const next = { ...prev }
+                                      if (val === "__none__") {
+                                        if (next[key]) {
+                                          next[key] = { ...next[key], itemCode: "" }
+                                        }
+                                      } else {
+                                        next[key] = { itemCode: val, amountCents: next[key]?.amountCents ?? null }
+                                      }
+                                      return next
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger className="w-full min-w-[140px]">
+                                    <SelectValue placeholder="Not set" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">
+                                      <span className="text-muted-foreground">Not set</span>
+                                    </SelectItem>
+                                    {xeroItems.map((item) => (
+                                      <SelectItem key={item.code} value={item.code}>
+                                        {item.code} — {item.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <span className={currentCode ? "text-slate-700" : "text-muted-foreground"}>
+                                  {matchedItem ? `${matchedItem.code}` : currentCode || "Not set"}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2">
+                              {isEditingMappings ? (
+                                <div className="flex items-center gap-1">
+                                  <span className="text-sm">$</span>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    placeholder="0.00"
+                                    value={currentAmountCents != null && currentAmountCents > 0
+                                      ? (currentAmountCents / 100).toFixed(2)
+                                      : ""}
+                                    onChange={(e) => {
+                                      const dollars = parseFloat(e.target.value)
+                                      const cents = isNaN(dollars) || dollars <= 0 ? null : Math.round(dollars * 100)
+                                      setEntranceFeeItemCodes((prev) => ({
+                                        ...prev,
+                                        [key]: {
+                                          itemCode: prev[key]?.itemCode ?? "",
+                                          amountCents: cents,
+                                        },
+                                      }))
+                                    }}
+                                    className="w-24"
+                                  />
+                                </div>
+                              ) : (
+                                <span className={currentAmountCents ? "text-slate-700" : "text-muted-foreground"}>
+                                  {currentAmountCents
+                                    ? `$${(currentAmountCents / 100).toFixed(2)}`
+                                    : "Not set"}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
                 <div className="pt-2 flex gap-2">
                   {isEditingMappings ? (
                     <>
@@ -831,6 +1027,8 @@ export default function XeroPage() {
                         variant="outline"
                         onClick={() => {
                           setAccountMappings(savedMappings)
+                          setHutFeeItemCodes(savedHutFeeItemCodes)
+                          setEntranceFeeItemCodes(savedEntranceFeeItemCodes)
                           setIsEditingMappings(false)
                           setMappingError("")
                         }}

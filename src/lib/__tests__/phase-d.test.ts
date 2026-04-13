@@ -120,7 +120,7 @@ describe("#33: Admin Bookings Calendar API", () => {
     expect(res.status).toBe(200);
 
     const call = mockPrisma.booking.findMany.mock.calls[0][0];
-    expect(call.where.status).toEqual({ notIn: ["DRAFT", "CANCELLED"] });
+    expect(call.where.status).toEqual({ not: "DRAFT" });
   });
 
   it("queries bookings overlapping month boundaries", async () => {
