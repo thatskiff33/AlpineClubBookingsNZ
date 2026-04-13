@@ -45,13 +45,14 @@ vi.mock("@/lib/bumping", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   redeemPromoCode: vi.fn().mockResolvedValue(undefined),
+  getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/pricing", () => ({
   calculateBookingPrice: vi.fn().mockReturnValue({
     totalPriceCents: 5000,
     guests: [{ priceCents: 5000, perNightCents: [5000] }],
   }),
-  calculatePromoDiscount: vi.fn().mockReturnValue(0),
+  calculatePromoDiscount: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0 }),
 }));
 vi.mock("@/lib/member-credit", () => ({
   getMemberCreditBalance: vi.fn().mockResolvedValue(0),

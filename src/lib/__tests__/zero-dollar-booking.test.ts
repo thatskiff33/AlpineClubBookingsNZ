@@ -93,7 +93,7 @@ vi.mock("@/lib/cancellation", () => ({
 
 vi.mock("@/lib/pricing", () => ({
   calculateBookingPrice: vi.fn(),
-  calculatePromoDiscount: vi.fn(),
+  calculatePromoDiscount: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0 }),
 }));
 vi.mock("@/lib/booking-policies", () => ({
   validateMinimumStay: vi.fn().mockResolvedValue({ valid: true, violations: [] }),
@@ -114,6 +114,7 @@ vi.mock("@/lib/bumping", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn(),
   redeemPromoCode: vi.fn().mockResolvedValue(undefined),
+  getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock("@/lib/email", () => ({

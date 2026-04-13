@@ -9,6 +9,7 @@ import {
 } from "@/lib/pricing";
 import {
   calculatePromoDiscountForGuestRates,
+  getMemberFreeNightsUsed,
   validatePromoCodeRules,
 } from "@/lib/promo";
 import { logAudit } from "@/lib/audit";
@@ -251,6 +252,9 @@ export async function POST(
 
       if (booking.promoRedemption?.promoCode) {
         const promo = booking.promoRedemption.promoCode;
+        const memberFreeNightsUsed = promo.type === "FREE_NIGHTS" && promo.freeNights
+          ? await getMemberFreeNightsUsed(promo.id, booking.memberId, bookingId)
+          : 0;
         const validationError = validatePromoCodeRules(
           promo,
           { memberId: booking.memberId },
@@ -258,7 +262,8 @@ export async function POST(
           0,
           promo.assignments.length > 0
             ? promo.assignments.map((assignment) => assignment.memberId)
-            : null
+            : null,
+          memberFreeNightsUsed
         );
 
         if (validationError) {
@@ -271,7 +276,10 @@ export async function POST(
             data: { currentRedemptions: { decrement: 1 } },
           });
         } else {
-          newDiscountCents = calculatePromoDiscountForGuestRates(
+          const remainingFreeNights = promo.type === "FREE_NIGHTS" && promo.freeNights
+            ? promo.freeNights - memberFreeNightsUsed
+            : undefined;
+          const promoResult = calculatePromoDiscountForGuestRates(
             {
               type: promo.type,
               valueCents: promo.valueCents,
@@ -283,12 +291,18 @@ export async function POST(
             guestNightRates,
             promo.assignments.length > 0
               ? promo.assignments.map((assignment) => assignment.memberId)
-              : null
+              : null,
+            undefined,
+            remainingFreeNights
           );
+          newDiscountCents = promoResult.discountCents;
 
           await tx.promoRedemption.update({
             where: { id: booking.promoRedemption.id },
-            data: { discountCents: newDiscountCents },
+            data: {
+              discountCents: newDiscountCents,
+              freeNightsUsed: promoResult.freeNightsUsed || null,
+            },
           });
         }
       }

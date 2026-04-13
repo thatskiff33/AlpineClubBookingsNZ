@@ -497,12 +497,13 @@ model PromoCode {
 }
 
 model PromoRedemption {
-  id            String   @id @default(cuid())
-  promoCodeId   String
-  bookingId     String   @unique
-  memberId      String
-  discountCents Int
-  createdAt     DateTime @default(now())
+  id              String   @id @default(cuid())
+  promoCodeId     String
+  bookingId       String   @unique
+  memberId        String
+  discountCents   Int
+  freeNightsUsed  Int?     // Number of free nights actually consumed (for FREE_NIGHTS promos)
+  createdAt       DateTime @default(now())
 
   // Relations
   promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)

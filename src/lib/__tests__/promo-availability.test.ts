@@ -49,7 +49,7 @@ describe("getAvailablePromoCodesForMember", () => {
           maxRedemptions: null,
           currentRedemptions: 1,
           singleUse: true,
-          redemptions: [{ id: "redemption-1" }],
+          redemptions: [{ id: "redemption-1", freeNightsUsed: 1 }],
         },
       },
       {
@@ -113,8 +113,7 @@ describe("getAvailablePromoCodesForMember", () => {
           include: {
             redemptions: {
               where: { memberId: "member-1" },
-              select: { id: true },
-              take: 1,
+              select: { id: true, freeNightsUsed: true },
             },
           },
         },
