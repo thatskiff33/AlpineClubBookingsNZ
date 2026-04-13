@@ -237,4 +237,25 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     clearLodgePinFailures("10.0.0.3");
     expect(getLodgePinLockout("10.0.0.3").locked).toBe(false);
   });
+
+  it("shows hut leader PIN access on the lodge tier instead of the staying-guest tier", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const kioskPath = path.resolve(
+      process.cwd(),
+      "src",
+      "app",
+      "(lodge)",
+      "lodge",
+      "kiosk",
+      "page.tsx"
+    );
+    const content = fs.readFileSync(kioskPath, "utf-8");
+
+    expect(content).toContain('{effectiveTier === "lodge" && (');
+    expect(content).not.toContain(
+      '{(effectiveTier === "none" || effectiveTier === "staying-guest") && ('
+    );
+    expect(content).toContain("unlock hut leader controls on");
+  });
 });

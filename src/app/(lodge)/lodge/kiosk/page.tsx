@@ -372,7 +372,7 @@ export default function KioskPage() {
         </div>
       )}
 
-      {(effectiveTier === "none" || effectiveTier === "staying-guest") && (
+      {effectiveTier === "lodge" && (
         <section className="bg-slate-800 rounded-2xl p-4 mb-4 border border-slate-700">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -380,8 +380,8 @@ export default function KioskPage() {
                 Hut leader controls
               </h2>
               <p className="text-sm text-slate-300 mt-1">
-                Enter the 6-digit hut leader PIN to unlock arrivals, departures,
-                and roster management on this kiosk.
+                Enter the 6-digit hut leader PIN to unlock hut leader controls on
+                this kiosk, including roster management.
               </p>
             </div>
             {!showPinForm && (
