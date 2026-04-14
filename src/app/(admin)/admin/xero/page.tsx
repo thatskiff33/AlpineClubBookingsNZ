@@ -691,7 +691,7 @@ export default function XeroPage() {
     setLoadingGroups(true)
     setError("")
     try {
-      const res = await fetch("/api/admin/xero/contact-groups")
+      const res = await fetch("/api/admin/xero/contact-groups?refresh=1")
       if (!res.ok) {
         const data = await res.json()
         throw new Error(data.error || "Failed to fetch groups")
@@ -1863,7 +1863,7 @@ export default function XeroPage() {
                   onClick={handleFetchGroups}
                   disabled={loadingGroups}
                 >
-                  {loadingGroups ? "Loading Groups..." : "Load Contact Groups from Xero"}
+                  {loadingGroups ? "Refreshing Groups..." : "Refresh Contact Groups from Xero"}
                 </Button>
               ) : (
                 <>

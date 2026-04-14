@@ -34,75 +34,64 @@ Treat the following as already implemented unless there is a specific reason to 
   - `CREDIT_NOTE`
 - steady-state contact-link trust plus inline stale-contact repair for contact-dependent writes
 - durable shared cache for admin chart-of-accounts and items reference data
+- durable incremental membership invoice sync cursor with `If-Modified-Since` and retry carry-forward
+- local-only member subscription status reads
+- durable local cache tables for Xero contact groups and group memberships, plus operator-triggered refresh
 
 ## Recommended Execution Order
 
 Build in this order:
 
-1. Phase 2: incremental membership invoice sync
-2. Phase 3: local cache tables for contact groups and memberships
-3. Phase 4: incremental contact sync and group import
-4. Phase 7 remaining reconciliation work
-5. Phase 6 remaining outbox / repair decisions
-6. Hardening, drift detection, and any new `PARTIAL` support
-7. Phase 8 cleanup audit
+1. Phase 4: incremental contact sync and group import
+2. Phase 7 remaining reconciliation work
+3. Phase 6 remaining outbox / repair decisions
+4. Hardening, drift detection, and any new `PARTIAL` support
+5. Phase 8 cleanup audit
 
-## Remaining Work
+## Completed In This Pass
 
-### 1. Phase 2: Replace full membership polling with incremental invoice sync
+### Phase 2: Replace full membership polling with incremental invoice sync
 
-This is still the highest-value remaining Xero API reduction item.
+Implemented:
 
-Required outcome:
+- added durable `XeroSyncCursor` state for the membership invoice sync window
+- replaced full linked-member scans in `refreshAllMembershipStatuses()` with an incremental `getInvoices(..., If-Modified-Since=...)` pass scoped to the subscription season window
+- mapped changed invoices back to local members through `Member.xeroContactId`
+- carried failed/unfinished member refreshes forward on the cursor metadata instead of falling back to future full scans
+- kept `checkMembershipStatus(...)` as the targeted repair/reconciliation path, but stopped unconditional `getOnlineInvoice(...)` fetches
+- only refreshed online invoice URLs when first discovering a subscription invoice, when the matched subscription invoice changed, or when an explicit repair asks for it
+- removed the member-facing `/api/member/subscription-status` fallback that read through to Xero on page load
 
-- the daily membership job must stop doing one-or-more Xero reads per linked member
-- a no-change day should cost only a small bounded number of Xero calls
-- member-facing subscription status reads should stay local-only during normal page loads
-
-Implementation direction:
-
-- add a durable sync cursor model, for example `XeroSyncCursor`, keyed by resource and scope
-- replace `refreshAllMembershipStatuses()` with incremental invoice sync using `If-Modified-Since`
-- scope invoice sync to the subscription date window instead of scanning all members
-- map changed invoices back to local members through `ContactID -> Member.xeroContactId`
-- only fetch `getOnlineInvoice(...)` when first discovering a subscription invoice, when the invoice changed, or when an explicit repair asks for it
-
-Primary files:
+Primary files updated:
 
 - `src/lib/xero.ts`
-- `src/instrumentation.ts`
-- `src/app/api/cron/xero/route.ts`
 - `src/app/api/member/subscription-status/route.ts`
 - `prisma/schema.prisma`
 
-### 2. Phase 3: Move contact groups and group memberships to local cache tables
+### Phase 3: Move contact groups and group memberships to local cache tables
 
-Current admin member workflows still rely on a temporary fallback instead of durable local Xero group data.
+Implemented:
 
-Required outcome:
+- added durable cache tables for Xero contact groups and group memberships
+- made `/api/admin/xero/contact-groups` serve cache by default, with `?refresh=1` as the explicit operator-triggered refresh-from-Xero action
+- moved `/api/admin/members` group filtering and list enrichment to local cache reads
+- moved `/api/admin/members/[id]` group detail enrichment to local cache reads
+- kept the existing feature-flag gate for member-page display, but the enabled path is now local-only instead of live Xero
 
-- `/admin/members` and `/admin/members/[id]` stay local-only for Xero group display
-- `/api/admin/xero/contact-groups` serves cached data by default
-- group counts and filters no longer require live Xero N+1 reads
-
-Implementation direction:
-
-- add local cache tables for Xero contact groups and group membership by contact ID
-- make `/api/admin/xero/contact-groups` read local cache by default
-- add an explicit operator-triggered refresh-from-Xero action
-- move member list/detail group display and member filtering to local cache reads
-
-Primary files:
+Primary files updated:
 
 - `src/lib/xero.ts`
 - `src/app/api/admin/xero/contact-groups/route.ts`
 - `src/app/api/admin/members/route.ts`
 - `src/app/api/admin/members/[id]/route.ts`
-- `src/app/(admin)/admin/members/page.tsx`
 - `src/app/(admin)/admin/xero/page.tsx`
+- `src/app/(admin)/admin/members/page.tsx`
+- `src/app/(admin)/admin/members/[id]/page.tsx`
 - `prisma/schema.prisma`
 
-### 3. Phase 4: Make contact sync and group import incremental
+## Remaining Work
+
+### 1. Phase 4: Make contact sync and group import incremental
 
 The current bulk contact/group workflows are still more expensive than they should be.
 
@@ -128,7 +117,7 @@ Primary files:
 - `src/app/(admin)/admin/xero/page.tsx`
 - `prisma/schema.prisma`
 
-### 4. Phase 7 remaining: make webhook and incremental reconcile the main source of truth
+### 2. Phase 7 remaining: make webhook and incremental reconcile the main source of truth
 
 Inbound reconciliation is partly implemented, but it is not yet the main driver of all affected local business state.
 
@@ -151,7 +140,7 @@ Primary files:
 - `src/app/api/cron/xero/route.ts`
 - `src/instrumentation.ts`
 
-### 5. Phase 6 remaining: finish the outbox boundary decisions
+### 3. Phase 6 remaining: finish the outbox boundary decisions
 
 Most Phase 6 write-path reduction is done. The open work is narrower now.
 
@@ -171,7 +160,7 @@ Primary files:
 - `src/lib/xero-operation-outbox.ts`
 - `src/lib/xero-operation-retry.ts`
 
-### 6. Hardening and supportability
+### 4. Hardening and supportability
 
 Core reconciliation hardening exists, but richer drift detection is still open.
 
@@ -190,7 +179,7 @@ Implementation direction:
   - add any required helper path in `src/lib/xero.ts`
   - add explicit replay-safety tests
 
-### 7. Phase 8 cleanup
+### 5. Phase 8 cleanup
 
 The chart/item cache work is done. Only the audit/cleanup portion remains.
 
@@ -217,5 +206,5 @@ Typical commands:
 ## Notes For The Next Agent
 
 - Do not reopen already-completed Phase 6/7/8 work unless the remaining phases force a design change.
-- The biggest remaining budget win is still Phase 2.
+- The next biggest budget win is now Phase 4 contact sync and group import incrementalisation.
 - Phase 3 should follow immediately after Phase 2 because the current member-group fallback is intentionally temporary.

@@ -10,7 +10,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { prisma } from "./prisma";
 import { sendPasswordResetEmail } from "./email";
-import { AgeTier, CreditType, EntranceFeeCategory } from "@prisma/client";
+import { AgeTier, CreditType, EntranceFeeCategory, Prisma } from "@prisma/client";
 import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
@@ -115,12 +115,46 @@ const XERO_SCOPES = [
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
+const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
+const CONTACT_GROUP_CACHE_CURSOR_RESOURCE = "CONTACT_GROUP_CACHE";
+const DEFAULT_XERO_SYNC_SCOPE = "default";
+const MEMBERSHIP_CURSOR_OVERLAP_MS = 2 * 60 * 1000;
+const MEMBERSHIP_SYNC_THROTTLE_MS = 1200;
+const XERO_PAGE_SIZE = 100;
 
 // Xero tokens expire after 30 minutes; refresh 10 minutes early
 const TOKEN_REFRESH_BUFFER_MS = 10 * 60 * 1000; // 10 minutes — buffer for long-running bulk ops (contact sync, membership refresh)
 
 // Cache the daily-limit cooldown in-process so we stop hammering Xero until Retry-After expires.
 let xeroDailyLimitUntilMs = 0;
+
+interface XeroSyncCursorMetadata {
+  retryMemberIds?: string[];
+  changedInvoiceCount?: number;
+  affectedMemberCount?: number;
+  groupCount?: number;
+  membershipCount?: number;
+  windowStart?: string;
+  windowEnd?: string;
+}
+
+interface CheckMembershipStatusOptions {
+  changedInvoiceIds?: Set<string>;
+  forceRefreshOnlineInvoiceUrl?: boolean;
+}
+
+interface RefreshedXeroContactGroup {
+  id: string;
+  name: string;
+  contactCount: number;
+  contacts: Array<{ id: string; name: string | null }>;
+}
+
+function toPrismaJson(
+  value: XeroSyncCursorMetadata | undefined
+): Prisma.InputJsonValue | undefined {
+  return value as Prisma.InputJsonValue | undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Encryption helpers (for token storage at rest)
@@ -1529,8 +1563,90 @@ export async function syncContactsFromXero(): Promise<SyncReport> {
 /**
  * Fetch all contact groups from Xero for the admin UI to display.
  */
-export async function getXeroContactGroups(): Promise<
-  Array<{ id: string; name: string; contactCount: number }>
+async function getXeroSyncCursor(resourceType: string, scope: string) {
+  return prisma.xeroSyncCursor.findUnique({
+    where: {
+      resourceType_scope: {
+        resourceType,
+        scope,
+      },
+    },
+    select: {
+      cursorDateTime: true,
+      lastSuccessfulSyncAt: true,
+      metadata: true,
+    },
+  });
+}
+
+async function upsertXeroSyncCursor(input: {
+  resourceType: string;
+  scope: string;
+  cursorDateTime?: Date | null;
+  lastSuccessfulSyncAt?: Date | null;
+  metadata?: XeroSyncCursorMetadata;
+}) {
+  await prisma.xeroSyncCursor.upsert({
+    where: {
+      resourceType_scope: {
+        resourceType: input.resourceType,
+        scope: input.scope,
+      },
+    },
+    create: {
+      resourceType: input.resourceType,
+      scope: input.scope,
+      cursorDateTime: input.cursorDateTime ?? null,
+      lastSuccessfulSyncAt: input.lastSuccessfulSyncAt ?? null,
+      metadata: toPrismaJson(input.metadata),
+    },
+    update: {
+      cursorDateTime: input.cursorDateTime ?? null,
+      lastSuccessfulSyncAt: input.lastSuccessfulSyncAt ?? null,
+      metadata: toPrismaJson(input.metadata),
+    },
+  });
+}
+
+function getXeroSyncCursorMetadata(
+  metadata: unknown
+): XeroSyncCursorMetadata {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return {};
+  }
+
+  const value = metadata as Record<string, unknown>;
+  return {
+    retryMemberIds: Array.isArray(value.retryMemberIds)
+      ? value.retryMemberIds.filter(
+          (memberId): memberId is string => typeof memberId === "string"
+        )
+      : [],
+    changedInvoiceCount:
+      typeof value.changedInvoiceCount === "number"
+        ? value.changedInvoiceCount
+        : undefined,
+    affectedMemberCount:
+      typeof value.affectedMemberCount === "number"
+        ? value.affectedMemberCount
+        : undefined,
+    groupCount:
+      typeof value.groupCount === "number"
+        ? value.groupCount
+        : undefined,
+    membershipCount:
+      typeof value.membershipCount === "number"
+        ? value.membershipCount
+        : undefined,
+    windowStart:
+      typeof value.windowStart === "string" ? value.windowStart : undefined,
+    windowEnd:
+      typeof value.windowEnd === "string" ? value.windowEnd : undefined,
+  };
+}
+
+async function fetchXeroContactGroupsFromXero(): Promise<
+  RefreshedXeroContactGroup[]
 > {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const response = await callXeroApi(
@@ -1538,97 +1654,215 @@ export async function getXeroContactGroups(): Promise<
     {
       operation: "getContactGroups",
       resourceType: "CONTACT_GROUP",
-      workflow: "getXeroContactGroups",
-      context: "getXeroContactGroups",
+      workflow: "refreshXeroContactGroupCache",
+      context: "refreshXeroContactGroupCache getContactGroups",
     }
   );
   const groups = (response.body.contactGroups ?? []).filter(
-    (g) => g.contactGroupID && g.name && g.status === ContactGroup.StatusEnum.ACTIVE
+    (group) =>
+      group.contactGroupID &&
+      group.name &&
+      group.status === ContactGroup.StatusEnum.ACTIVE
   );
 
-  // The list endpoint doesn't populate contacts, so fetch each group
-  // individually to get the real contact count.
-  const results: Array<{ id: string; name: string; contactCount: number }> = [];
-  for (const g of groups) {
-    try {
-      const detail = await callXeroApi(
-        () => xero.accountingApi.getContactGroup(tenantId, g.contactGroupID!),
-        {
-          operation: "getContactGroup",
-          resourceType: "CONTACT_GROUP",
-          workflow: "getXeroContactGroups",
-          context: `getContactGroup(${g.name})`,
-        }
-      );
-      const contacts = detail.body.contactGroups?.[0]?.contacts ?? [];
-      results.push({
-        id: g.contactGroupID!,
-        name: g.name!,
-        contactCount: contacts.length,
-      });
-    } catch (err) {
-      // Let daily limit errors propagate
-      if (err instanceof XeroDailyLimitError) throw err;
-      // If fetching detail fails, still include the group with 0
-      results.push({
-        id: g.contactGroupID!,
-        name: g.name!,
-        contactCount: 0,
-      });
-    }
+  const refreshedGroups: RefreshedXeroContactGroup[] = [];
+  for (const group of groups) {
+    const detail = await callXeroApi(
+      () => xero.accountingApi.getContactGroup(tenantId, group.contactGroupID!),
+      {
+        operation: "getContactGroup",
+        resourceType: "CONTACT_GROUP",
+        workflow: "refreshXeroContactGroupCache",
+        context: `refreshXeroContactGroupCache getContactGroup(${group.name})`,
+      }
+    );
+
+    const contacts = (detail.body.contactGroups?.[0]?.contacts ?? [])
+      .filter((contact) => contact.contactID)
+      .map((contact) => ({
+        id: contact.contactID!,
+        name:
+          contact.name ??
+          [contact.firstName, contact.lastName].filter(Boolean).join(" ") ??
+          null,
+      }));
+
+    refreshedGroups.push({
+      id: group.contactGroupID!,
+      name: group.name!,
+      contactCount: contacts.length,
+      contacts,
+    });
   }
 
-  return results;
+  refreshedGroups.sort((left, right) => left.name.localeCompare(right.name));
+  return refreshedGroups;
+}
+
+export async function refreshXeroContactGroupCache(): Promise<
+  Array<{ id: string; name: string; contactCount: number }>
+> {
+  const refreshStartedAt = new Date();
+  const refreshedGroups = await fetchXeroContactGroupsFromXero();
+  const refreshedAt = new Date();
+  const membershipCount = refreshedGroups.reduce(
+    (total, group) => total + group.contacts.length,
+    0
+  );
+
+  await prisma.$transaction(async (tx) => {
+    const refreshedGroupIds = refreshedGroups.map((group) => group.id);
+
+    if (refreshedGroupIds.length > 0) {
+      await tx.xeroContactGroupMembershipCache.deleteMany({
+        where: { contactGroupId: { notIn: refreshedGroupIds } },
+      });
+      await tx.xeroContactGroupCache.deleteMany({
+        where: { contactGroupId: { notIn: refreshedGroupIds } },
+      });
+    } else {
+      await tx.xeroContactGroupMembershipCache.deleteMany({});
+      await tx.xeroContactGroupCache.deleteMany({});
+    }
+
+    for (const group of refreshedGroups) {
+      await tx.xeroContactGroupCache.upsert({
+        where: { contactGroupId: group.id },
+        create: {
+          contactGroupId: group.id,
+          name: group.name,
+          status: "ACTIVE",
+          contactCount: group.contactCount,
+          fetchedAt: refreshedAt,
+        },
+        update: {
+          name: group.name,
+          status: "ACTIVE",
+          contactCount: group.contactCount,
+          fetchedAt: refreshedAt,
+        },
+      });
+
+      await tx.xeroContactGroupMembershipCache.deleteMany({
+        where: { contactGroupId: group.id },
+      });
+
+      if (group.contacts.length > 0) {
+        await tx.xeroContactGroupMembershipCache.createMany({
+          data: group.contacts.map((contact) => ({
+            contactGroupId: group.id,
+            contactId: contact.id,
+            contactName: contact.name,
+            fetchedAt: refreshedAt,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    await tx.xeroSyncCursor.upsert({
+      where: {
+        resourceType_scope: {
+          resourceType: CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
+          scope: DEFAULT_XERO_SYNC_SCOPE,
+        },
+      },
+        create: {
+          resourceType: CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
+          scope: DEFAULT_XERO_SYNC_SCOPE,
+          cursorDateTime: refreshStartedAt,
+          lastSuccessfulSyncAt: refreshedAt,
+          metadata: toPrismaJson({
+            groupCount: refreshedGroups.length,
+            membershipCount,
+          }),
+        },
+        update: {
+          cursorDateTime: refreshStartedAt,
+          lastSuccessfulSyncAt: refreshedAt,
+          metadata: toPrismaJson({
+            groupCount: refreshedGroups.length,
+            membershipCount,
+          }),
+        },
+      });
+  });
+
+  return refreshedGroups.map((group) => ({
+    id: group.id,
+    name: group.name,
+    contactCount: group.contactCount,
+  }));
+}
+
+export async function getXeroContactGroups(options?: {
+  refreshFromXero?: boolean;
+}): Promise<Array<{ id: string; name: string; contactCount: number }>> {
+  if (options?.refreshFromXero) {
+    return refreshXeroContactGroupCache();
+  }
+
+  const groups = await prisma.xeroContactGroupCache.findMany({
+    where: { status: "ACTIVE" },
+    orderBy: [{ name: "asc" }],
+    select: {
+      contactGroupId: true,
+      name: true,
+      contactCount: true,
+    },
+  });
+
+  return groups.map((group) => ({
+    id: group.contactGroupId,
+    name: group.name,
+    contactCount: group.contactCount,
+  }));
 }
 
 export async function getXeroContactGroupMemberships(
   contactIds: string[]
 ): Promise<Record<string, Array<{ id: string; name: string }>>> {
-  if (contactIds.length === 0) {
+  const uniqueContactIds = Array.from(new Set(contactIds));
+  if (uniqueContactIds.length === 0) {
     return {};
   }
 
-  const memberships: Record<string, Array<{ id: string; name: string }>> = {};
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const uniqueContactIds = Array.from(new Set(contactIds));
-  const batchSize = 50;
+  const cursor = await getXeroSyncCursor(
+    CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
+    DEFAULT_XERO_SYNC_SCOPE
+  );
+  if (!cursor?.lastSuccessfulSyncAt) {
+    return {};
+  }
 
-  for (let i = 0; i < uniqueContactIds.length; i += batchSize) {
-    const batch = uniqueContactIds.slice(i, i + batchSize);
-    const response = await callXeroApi(
-      () =>
-        xero.accountingApi.getContacts(
-          tenantId,
-          undefined, // ifModifiedSince
-          undefined, // where
-          undefined, // order
-          batch
-        ),
-      {
-        operation: "getContacts",
-        resourceType: "CONTACT",
-        workflow: "getXeroContactGroupMemberships",
-        context: `getXeroContactGroupMemberships(batch ${Math.floor(i / batchSize) + 1})`,
-      }
-    );
+  const memberships: Record<string, Array<{ id: string; name: string }>> =
+    Object.fromEntries(uniqueContactIds.map((contactId) => [contactId, []]));
 
-    for (const contact of response.body.contacts ?? []) {
-      if (!contact.contactID) {
-        continue;
-      }
+  const rows = await prisma.xeroContactGroupMembershipCache.findMany({
+    where: {
+      contactId: { in: uniqueContactIds },
+      group: { is: { status: "ACTIVE" } },
+    },
+    select: {
+      contactId: true,
+      group: {
+        select: {
+          contactGroupId: true,
+          name: true,
+        },
+      },
+    },
+  });
 
-      memberships[contact.contactID] = (contact.contactGroups ?? [])
-        .filter(
-          (group) =>
-            group.contactGroupID &&
-            group.name &&
-            group.status === ContactGroup.StatusEnum.ACTIVE
-        )
-        .map((group) => ({
-          id: group.contactGroupID!,
-          name: group.name!,
-        }));
-    }
+  for (const row of rows) {
+    memberships[row.contactId].push({
+      id: row.group.contactGroupId,
+      name: row.group.name,
+    });
+  }
+
+  for (const groups of Object.values(memberships)) {
+    groups.sort((left, right) => left.name.localeCompare(right.name));
   }
 
   return memberships;
@@ -1640,20 +1874,20 @@ export async function getXeroContactGroupMemberships(
 export async function getXeroContactIdsForGroup(
   groupId: string
 ): Promise<string[]> {
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const detail = await callXeroApi(
-    () => xero.accountingApi.getContactGroup(tenantId, groupId),
-    {
-      operation: "getContactGroup",
-      resourceType: "CONTACT_GROUP",
-      workflow: "getXeroContactIdsForGroup",
-      context: `getXeroContactIdsForGroup(${groupId})`,
-    }
+  const cursor = await getXeroSyncCursor(
+    CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
+    DEFAULT_XERO_SYNC_SCOPE
   );
-  const contacts = detail.body.contactGroups?.[0]?.contacts ?? [];
-  return contacts
-    .map((c) => c.contactID)
-    .filter((id): id is string => Boolean(id));
+  if (!cursor?.lastSuccessfulSyncAt) {
+    return [];
+  }
+
+  const memberships = await prisma.xeroContactGroupMembershipCache.findMany({
+    where: { contactGroupId: groupId },
+    select: { contactId: true },
+  });
+
+  return memberships.map((membership) => membership.contactId);
 }
 
 /**
@@ -2415,13 +2649,119 @@ export async function updateXeroContact(
  * Looks for invoices containing "subscription" or "membership" in the
  * description for the matching season year, checks if they're paid.
  */
+function getMembershipSyncCursorScope(seasonYear: number): string {
+  return `season:${seasonYear}`;
+}
+
+function getMembershipSeasonWindow(seasonYear: number): {
+  start: Date;
+  end: Date;
+} {
+  return {
+    start: new Date(Date.UTC(seasonYear, 3, 1, 0, 0, 0, 0)),
+    end: new Date(Date.UTC(seasonYear + 1, 2, 31, 23, 59, 59, 999)),
+  };
+}
+
+function buildMembershipInvoiceWhereClause(
+  seasonYear: number,
+  xeroContactId?: string
+): string {
+  const conditions = [
+    `Date >= DateTime(${seasonYear},4,1)`,
+    `Date <= DateTime(${seasonYear + 1},3,31)`,
+    `Type=="ACCREC"`,
+  ];
+
+  if (xeroContactId) {
+    conditions.unshift(`Contact.ContactID=guid("${xeroContactId}")`);
+  }
+
+  return conditions.join(" AND ");
+}
+
+function didMembershipStatusChange(
+  previous:
+    | {
+        status: string;
+        xeroInvoiceId: string | null;
+        paidAt: Date | null;
+        xeroOnlineInvoiceUrl?: string | null;
+      }
+    | null,
+  next: {
+    status: string;
+    xeroInvoiceId?: string;
+    paidAt?: Date;
+    xeroOnlineInvoiceUrl?: string | null;
+  }
+): boolean {
+  return (
+    !previous ||
+    previous.status !== next.status ||
+    previous.xeroInvoiceId !== (next.xeroInvoiceId ?? null) ||
+    (previous.paidAt?.getTime() ?? null) !== (next.paidAt?.getTime() ?? null) ||
+    (previous.xeroOnlineInvoiceUrl ?? null) !==
+      (next.xeroOnlineInvoiceUrl ?? null)
+  );
+}
+
+async function listChangedMembershipInvoices(input: {
+  xero: XeroClient;
+  tenantId: string;
+  seasonYear: number;
+  ifModifiedSince?: Date;
+}): Promise<Invoice[]> {
+  const invoices: Invoice[] = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore) {
+    const response = await callXeroApi(
+      () =>
+        input.xero.accountingApi.getInvoices(
+          input.tenantId,
+          input.ifModifiedSince,
+          buildMembershipInvoiceWhereClause(input.seasonYear),
+          "UpdatedDateUTC ASC",
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          page,
+          false,
+          false,
+          undefined,
+          false,
+          XERO_PAGE_SIZE
+        ),
+      {
+        operation: "getInvoices",
+        resourceType: "INVOICE",
+        workflow: "refreshAllMembershipStatuses",
+        context: `refreshAllMembershipStatuses incremental page ${page}`,
+      }
+    );
+
+    const pageInvoices = response.body.invoices ?? [];
+    invoices.push(...pageInvoices);
+
+    page += 1;
+    hasMore = pageInvoices.length === XERO_PAGE_SIZE;
+  }
+
+  return invoices;
+}
+
 export async function checkMembershipStatus(
   memberId: string,
-  seasonYear?: number
+  seasonYear?: number,
+  options?: CheckMembershipStatusOptions
 ): Promise<{
   status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED";
   xeroInvoiceId?: string;
   paidAt?: Date;
+  xeroOnlineInvoiceUrl?: string | null;
 }> {
   const member = await prisma.member.findUnique({
     where: { id: memberId },
@@ -2441,6 +2781,8 @@ export async function checkMembershipStatus(
       id: true,
       status: true,
       xeroInvoiceId: true,
+      xeroInvoiceNumber: true,
+      xeroOnlineInvoiceUrl: true,
       paidAt: true,
     },
   });
@@ -2463,6 +2805,9 @@ export async function checkMembershipStatus(
       memberId,
       seasonYear: year,
       xeroContactId: member.xeroContactId,
+      changedInvoiceIds: options?.changedInvoiceIds
+        ? Array.from(options.changedInvoiceIds)
+        : [],
     },
   });
 
@@ -2473,7 +2818,7 @@ export async function checkMembershipStatus(
       () => xero.accountingApi.getInvoices(
         tenantId,
         undefined, // ifModifiedSince
-        `Contact.ContactID=guid("${member.xeroContactId}") AND Date >= DateTime(${year},4,1) AND Date <= DateTime(${year + 1},3,31)`, // where
+        buildMembershipInvoiceWhereClause(year, member.xeroContactId ?? undefined), // where
         undefined, // order
         undefined, // iDs
         undefined, // invoiceNumbers
@@ -2497,6 +2842,28 @@ export async function checkMembershipStatus(
     const subscriptionInvoice = findSubscriptionInvoice(invoices, year, subscriptionAccountCode);
 
     if (!subscriptionInvoice) {
+      await prisma.memberSubscription.upsert({
+        where: {
+          memberId_seasonYear: { memberId, seasonYear: year },
+        },
+        update: {
+          status: "NOT_INVOICED",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          xeroOnlineInvoiceUrl: null,
+          paidAt: null,
+        },
+        create: {
+          memberId,
+          seasonYear: year,
+          status: "NOT_INVOICED",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          xeroOnlineInvoiceUrl: null,
+          paidAt: null,
+        },
+      });
+
       await completeXeroSyncOperation(operation.id, {
         responsePayload: {
           fetchedInvoices: invoices.length,
@@ -2510,18 +2877,40 @@ export async function checkMembershipStatus(
     }
 
     const status = determineSubscriptionStatus(subscriptionInvoice);
+    const matchedInvoiceId = subscriptionInvoice.invoiceID ?? null;
+    const matchedInvoiceNumber = subscriptionInvoice.invoiceNumber ?? null;
+    const matchedInvoiceChanged = Boolean(
+      matchedInvoiceId &&
+        options?.changedInvoiceIds?.has(matchedInvoiceId)
+    );
 
-    // Fetch the online invoice URL if available
-    let onlineInvoiceUrl: string | null = null;
-    if (subscriptionInvoice.invoiceID) {
+    let onlineInvoiceUrl =
+      existingSubscription?.xeroInvoiceId === matchedInvoiceId
+        ? existingSubscription.xeroOnlineInvoiceUrl ?? null
+        : null;
+    const shouldRefreshOnlineInvoiceUrl = Boolean(
+      matchedInvoiceId &&
+        (
+          options?.forceRefreshOnlineInvoiceUrl ||
+          !existingSubscription ||
+          existingSubscription.xeroInvoiceId !== matchedInvoiceId ||
+          existingSubscription.xeroInvoiceNumber !== matchedInvoiceNumber ||
+          existingSubscription.status !== status.status ||
+          (existingSubscription.paidAt?.getTime() ?? null) !==
+            (status.paidAt?.getTime() ?? null) ||
+          (matchedInvoiceChanged && !existingSubscription.xeroOnlineInvoiceUrl)
+        )
+    );
+
+    if (matchedInvoiceId && shouldRefreshOnlineInvoiceUrl) {
       try {
         const onlineRes = await callXeroApi(
-          () => xero.accountingApi.getOnlineInvoice(tenantId, subscriptionInvoice.invoiceID!),
+          () => xero.accountingApi.getOnlineInvoice(tenantId, matchedInvoiceId),
           {
             operation: "getOnlineInvoice",
             resourceType: "ONLINE_INVOICE",
             workflow: "checkMembershipStatus",
-            context: `getOnlineInvoice(${subscriptionInvoice.invoiceID})`,
+            context: `getOnlineInvoice(${matchedInvoiceId})`,
           }
         );
         const onlineInvoices = onlineRes.body.onlineInvoices;
@@ -2540,8 +2929,8 @@ export async function checkMembershipStatus(
       },
       update: {
         status: status.status,
-        xeroInvoiceId: subscriptionInvoice.invoiceID,
-        xeroInvoiceNumber: subscriptionInvoice.invoiceNumber ?? null,
+        xeroInvoiceId: matchedInvoiceId,
+        xeroInvoiceNumber: matchedInvoiceNumber,
         xeroOnlineInvoiceUrl: onlineInvoiceUrl,
         paidAt: status.paidAt,
       },
@@ -2549,8 +2938,8 @@ export async function checkMembershipStatus(
         memberId,
         seasonYear: year,
         status: status.status,
-        xeroInvoiceId: subscriptionInvoice.invoiceID,
-        xeroInvoiceNumber: subscriptionInvoice.invoiceNumber ?? null,
+        xeroInvoiceId: matchedInvoiceId,
+        xeroInvoiceNumber: matchedInvoiceNumber,
         xeroOnlineInvoiceUrl: onlineInvoiceUrl,
         paidAt: status.paidAt,
       },
@@ -2559,29 +2948,30 @@ export async function checkMembershipStatus(
     await completeXeroSyncOperation(operation.id, {
       responsePayload: {
         fetchedInvoices: invoices.length,
-        matchedInvoiceId: subscriptionInvoice.invoiceID ?? null,
-        matchedInvoiceNumber: subscriptionInvoice.invoiceNumber ?? null,
+        matchedInvoiceId,
+        matchedInvoiceNumber,
         previousStatus: existingSubscription?.status ?? null,
         nextStatus: status.status,
         previousPaidAt: existingSubscription?.paidAt ?? null,
         nextPaidAt: status.paidAt ?? null,
         onlineInvoiceUrl,
+        onlineInvoiceFetched: shouldRefreshOnlineInvoiceUrl,
       },
-      xeroObjectType: subscriptionInvoice.invoiceID ? "SUBSCRIPTION" : null,
-      xeroObjectId: subscriptionInvoice.invoiceID ?? null,
-      xeroObjectNumber: subscriptionInvoice.invoiceNumber ?? null,
-      xeroObjectUrl: subscriptionInvoice.invoiceID
-        ? buildXeroInvoiceUrl(subscriptionInvoice.invoiceID)
+      xeroObjectType: matchedInvoiceId ? "SUBSCRIPTION" : null,
+      xeroObjectId: matchedInvoiceId,
+      xeroObjectNumber: matchedInvoiceNumber,
+      xeroObjectUrl: matchedInvoiceId
+        ? buildXeroInvoiceUrl(matchedInvoiceId)
         : null,
-      extraLinks: subscriptionInvoice.invoiceID
+      extraLinks: matchedInvoiceId
         ? [
             {
               localModel: "MemberSubscription",
               localId: subscriptionRecord.id,
               xeroObjectType: "SUBSCRIPTION",
-              xeroObjectId: subscriptionInvoice.invoiceID,
-              xeroObjectNumber: subscriptionInvoice.invoiceNumber ?? null,
-              xeroObjectUrl: buildXeroInvoiceUrl(subscriptionInvoice.invoiceID),
+              xeroObjectId: matchedInvoiceId,
+              xeroObjectNumber: matchedInvoiceNumber,
+              xeroObjectUrl: buildXeroInvoiceUrl(matchedInvoiceId),
               role: "SUBSCRIPTION_INVOICE",
               metadata: {
                 seasonYear: year,
@@ -2594,8 +2984,9 @@ export async function checkMembershipStatus(
 
     return {
       status: status.status,
-      xeroInvoiceId: subscriptionInvoice.invoiceID ?? undefined,
+      xeroInvoiceId: matchedInvoiceId ?? undefined,
       paidAt: status.paidAt,
+      xeroOnlineInvoiceUrl: onlineInvoiceUrl,
     };
   } catch (error) {
     await failXeroSyncOperation(operation.id, error);
@@ -2681,66 +3072,175 @@ export function determineSubscriptionStatus(invoice: Invoice): {
  * Called by the daily cron job.
  */
 export async function refreshAllMembershipStatuses(seasonYear?: number): Promise<{
+  seasonYear: number;
+  cursorFrom: string | null;
+  cursorTo: string | null;
+  changedInvoices: number;
+  affectedMembers: number;
   checked: number;
   updated: number;
   errors: number;
   errorDetails: Array<{ member: string; error: string }>;
 }> {
-  const members = await prisma.member.findMany({
-    where: { active: true, xeroContactId: { not: null } },
-    select: { id: true, email: true, firstName: true, lastName: true },
-  });
+  const year = seasonYear ?? getSeasonYear(new Date());
+  const syncStartedAt = new Date();
+  const cursor = await getXeroSyncCursor(
+    MEMBERSHIP_SYNC_CURSOR_RESOURCE,
+    getMembershipSyncCursorScope(year)
+  );
+  const cursorMetadata = getXeroSyncCursorMetadata(cursor?.metadata);
+  const ifModifiedSince = cursor?.cursorDateTime
+    ? new Date(cursor.cursorDateTime.getTime() - MEMBERSHIP_CURSOR_OVERLAP_MS)
+    : undefined;
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const { start: windowStart, end: windowEnd } = getMembershipSeasonWindow(year);
 
-  // Log how many members will be refreshed vs skipped
-  const totalMembers = await prisma.member.count({ where: { active: true } });
+  const changedInvoices = await listChangedMembershipInvoices({
+    xero,
+    tenantId,
+    seasonYear: year,
+    ifModifiedSince,
+  });
+  const changedContactIds = Array.from(
+    new Set(
+      changedInvoices
+        .map((invoice) => invoice.contact?.contactID)
+        .filter((contactId): contactId is string => Boolean(contactId))
+    )
+  );
+  const retryMemberIds = Array.from(new Set(cursorMetadata.retryMemberIds ?? []));
+  const memberWhereClauses: Array<Record<string, unknown>> = [];
+  if (changedContactIds.length > 0) {
+    memberWhereClauses.push({ xeroContactId: { in: changedContactIds } });
+  }
+  if (retryMemberIds.length > 0) {
+    memberWhereClauses.push({ id: { in: retryMemberIds } });
+  }
+
+  const affectedMembers =
+    memberWhereClauses.length === 0
+      ? []
+      : await prisma.member.findMany({
+          where: {
+            active: true,
+            OR: memberWhereClauses,
+          },
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            xeroContactId: true,
+          },
+        });
+
   logger.info(
     {
       job: "xero-membership-refresh",
-      withXeroContact: members.length,
-      withoutXeroContact: totalMembers - members.length,
+      seasonYear: year,
+      cursorFrom: cursor?.cursorDateTime?.toISOString() ?? null,
+      changedInvoices: changedInvoices.length,
+      changedContacts: changedContactIds.length,
+      retryMembers: retryMemberIds.length,
+      affectedMembers: affectedMembers.length,
     },
-    "Membership refresh: members with Xero contact will be checked, others skipped"
+    "Refreshing membership subscriptions from the incremental Xero invoice cursor"
   );
+
+  const changedInvoiceIdsByContact = new Map<string, Set<string>>();
+  for (const invoice of changedInvoices) {
+    const contactId = invoice.contact?.contactID;
+    const invoiceId = invoice.invoiceID;
+    if (!contactId || !invoiceId) {
+      continue;
+    }
+
+    const existingIds = changedInvoiceIdsByContact.get(contactId) ?? new Set<string>();
+    existingIds.add(invoiceId);
+    changedInvoiceIdsByContact.set(contactId, existingIds);
+  }
 
   let checked = 0;
   let updated = 0;
   let errors = 0;
   const errorDetails: Array<{ member: string; error: string }> = [];
+  const nextRetryMemberIds: string[] = [];
 
-  // Throttle to ~50 requests/minute to stay under Xero's 60/min limit
-  const THROTTLE_MS = 1200;
-
-  for (const member of members) {
+  for (let index = 0; index < affectedMembers.length; index += 1) {
+    const member = affectedMembers[index];
     try {
-      const year = seasonYear ?? getSeasonYear(new Date());
       const before = await prisma.memberSubscription.findFirst({
         where: { memberId: member.id, seasonYear: year },
+        select: {
+          status: true,
+          xeroInvoiceId: true,
+          paidAt: true,
+          xeroOnlineInvoiceUrl: true,
+        },
       });
-      const result = await checkMembershipStatus(member.id, year);
+      const result = await checkMembershipStatus(member.id, year, {
+        changedInvoiceIds: member.xeroContactId
+          ? changedInvoiceIdsByContact.get(member.xeroContactId)
+          : undefined,
+      });
       checked++;
-      if (!before || before.status !== result.status) {
+
+      if (didMembershipStatusChange(before, result)) {
         updated++;
       }
     } catch (err) {
-      // Abort immediately on daily limit — continuing would just burn through retries
       if (err instanceof XeroDailyLimitError) {
+        nextRetryMemberIds.push(
+          member.id,
+          ...affectedMembers.slice(index + 1).map((remaining) => remaining.id)
+        );
         logger.warn(
-          { job: "xero-membership-refresh", checked, errors },
+          { job: "xero-membership-refresh", checked, errors, seasonYear: year },
           "Aborting membership refresh: Xero daily API limit reached"
         );
-        errorDetails.push({ member: "SYSTEM", error: "Xero daily API limit reached — aborting remaining members" });
+        errorDetails.push({
+          member: "SYSTEM",
+          error: "Xero daily API limit reached — deferring remaining affected members",
+        });
         errors++;
         break;
       }
+
+      nextRetryMemberIds.push(member.id);
       errors++;
       const memberLabel = `${member.firstName} ${member.lastName} (${member.email})`;
       errorDetails.push({ member: memberLabel, error: parseXeroError(err) });
     }
-    // Throttle between requests to avoid Xero rate limits
-    await new Promise((r) => setTimeout(r, THROTTLE_MS));
+
+    await throttle(MEMBERSHIP_SYNC_THROTTLE_MS);
   }
 
-  return { checked, updated, errors, errorDetails };
+  const completedAt = new Date();
+  await upsertXeroSyncCursor({
+    resourceType: MEMBERSHIP_SYNC_CURSOR_RESOURCE,
+    scope: getMembershipSyncCursorScope(year),
+    cursorDateTime: syncStartedAt,
+    lastSuccessfulSyncAt: completedAt,
+    metadata: {
+      retryMemberIds: Array.from(new Set(nextRetryMemberIds)),
+      changedInvoiceCount: changedInvoices.length,
+      affectedMemberCount: affectedMembers.length,
+      windowStart: windowStart.toISOString(),
+      windowEnd: windowEnd.toISOString(),
+    },
+  });
+
+  return {
+    seasonYear: year,
+    cursorFrom: cursor?.cursorDateTime?.toISOString() ?? null,
+    cursorTo: syncStartedAt.toISOString(),
+    changedInvoices: changedInvoices.length,
+    affectedMembers: affectedMembers.length,
+    checked,
+    updated,
+    errors,
+    errorDetails,
+  };
 }
 
 // ---------------------------------------------------------------------------

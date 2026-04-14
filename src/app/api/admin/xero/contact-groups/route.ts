@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { getXeroContactGroups } from "@/lib/xero";
@@ -7,9 +7,10 @@ import logger from "@/lib/logger";
 
 /**
  * GET /api/admin/xero/contact-groups
- * Returns available Xero contact groups for the import UI.
+ * Returns cached Xero contact groups by default.
+ * Use `?refresh=1` for an operator-triggered refresh from Xero.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -20,8 +21,9 @@ export async function GET() {
   }
 
   try {
-    const groups = await getXeroContactGroups();
-    return NextResponse.json({ groups });
+    const refreshFromXero = request.nextUrl.searchParams.get("refresh") === "1";
+    const groups = await getXeroContactGroups({ refreshFromXero });
+    return NextResponse.json({ groups, refreshed: refreshFromXero });
   } catch (error) {
     const xeroError = getXeroApiErrorInfo(error, "Failed to fetch contact groups");
     if (!xeroError.handled) {

@@ -11,20 +11,12 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-vi.mock("@/lib/xero", () => ({
-  checkMembershipStatus: vi.fn(),
-  isXeroConnected: vi.fn(),
-}));
-
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { checkMembershipStatus, isXeroConnected } from "@/lib/xero";
 import { GET } from "@/app/api/member/subscription-status/route";
 
 const mockAuth = auth as ReturnType<typeof vi.fn>;
 const mockFindFirst = prisma.memberSubscription.findFirst as ReturnType<typeof vi.fn>;
-const mockCheckMembershipStatus = checkMembershipStatus as ReturnType<typeof vi.fn>;
-const mockIsXeroConnected = isXeroConnected as ReturnType<typeof vi.fn>;
 
 describe("GET /api/member/subscription-status", () => {
   beforeEach(() => {
@@ -69,34 +61,20 @@ describe("GET /api/member/subscription-status", () => {
     );
   });
 
-  it("refreshes from Xero when the stored invoice URL is missing", async () => {
+  it("keeps member subscription reads local even when the invoice URL is missing", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1" } });
-    mockIsXeroConnected.mockResolvedValue(true);
-    mockCheckMembershipStatus.mockResolvedValue({
+    mockFindFirst.mockResolvedValue({
       status: "UNPAID",
       xeroInvoiceId: "inv-1",
+      xeroInvoiceNumber: "INV-0042",
+      xeroOnlineInvoiceUrl: null,
     });
-    mockFindFirst
-      .mockResolvedValueOnce({
-        status: "UNPAID",
-        xeroInvoiceId: "inv-1",
-        xeroInvoiceNumber: "INV-0042",
-        xeroOnlineInvoiceUrl: null,
-      })
-      .mockResolvedValueOnce({
-        status: "UNPAID",
-        xeroInvoiceId: "inv-1",
-        xeroInvoiceNumber: "INV-0042",
-        xeroOnlineInvoiceUrl: "https://pay.xero.com/invoice/inv-1",
-      });
 
     const res = await GET();
     const body = await res.json();
 
-    expect(mockIsXeroConnected).toHaveBeenCalledTimes(1);
-    expect(mockCheckMembershipStatus).toHaveBeenCalledWith("member-1", 2026);
-    expect(mockFindFirst).toHaveBeenCalledTimes(2);
-    expect(body.invoiceUrl).toBe("https://pay.xero.com/invoice/inv-1");
+    expect(mockFindFirst).toHaveBeenCalledTimes(1);
+    expect(body.invoiceUrl).toBeNull();
   });
 
   it("returns 401 when unauthenticated", async () => {

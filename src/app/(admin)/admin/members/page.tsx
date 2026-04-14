@@ -573,7 +573,7 @@ export default function MembersPage() {
                     </div>
                   )}
                   {member.xeroContactId && !member.xeroContactGroupsLoaded && (
-                    <p className="text-xs text-slate-400">Groups not loaded</p>
+                    <p className="text-xs text-slate-400">Cached groups not refreshed yet</p>
                   )}
                 </div>
               </TableCell>
@@ -731,7 +731,7 @@ export default function MembersPage() {
                     )}
                     {!editingMember.xeroContactGroupsLoaded && (
                       <p className="text-xs text-slate-500">
-                        Contact groups are not loaded on this page by default.
+                        Cached contact groups have not been refreshed yet.
                       </p>
                     )}
                     {xeroChoice === "change" && (

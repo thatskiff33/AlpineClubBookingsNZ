@@ -785,6 +785,53 @@ model XeroAdminCache {
   @@index([expiresAt])
 }
 
+model XeroSyncCursor {
+  id                   String   @id @default(cuid())
+  resourceType         String
+  scope                String
+  cursorDateTime       DateTime?
+  lastSuccessfulSyncAt DateTime?
+  metadata             Json?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([resourceType, scope], map: "XeroSyncCursor_resourceType_scope_key")
+  @@index([resourceType, lastSuccessfulSyncAt])
+}
+
+model XeroContactGroupCache {
+  id              String   @id @default(cuid())
+  contactGroupId  String   @unique
+  name            String
+  status          String   @default("ACTIVE")
+  contactCount    Int      @default(0)
+  fetchedAt       DateTime @default(now())
+  sourceUpdatedAt DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  memberships XeroContactGroupMembershipCache[]
+
+  @@index([name])
+  @@index([fetchedAt])
+}
+
+model XeroContactGroupMembershipCache {
+  id             String   @id @default(cuid())
+  contactGroupId String
+  contactId      String
+  contactName    String?
+  fetchedAt      DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  group XeroContactGroupCache @relation(fields: [contactGroupId], references: [contactGroupId], onDelete: Cascade)
+
+  @@unique([contactGroupId, contactId], map: "XeroContactGroupMembershipCache_group_contact_key")
+  @@index([contactGroupId])
+  @@index([contactId])
+}
+
 // ---------------------------------------------------------------------------
 // Webhook Idempotency (prevents duplicate event processing)
 // ---------------------------------------------------------------------------

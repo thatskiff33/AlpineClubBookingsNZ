@@ -195,13 +195,14 @@ export async function GET(
   let xeroContactGroupsLoaded = !member.xeroContactId;
   if (member.xeroContactId && isXeroLiveMemberGroupLookupsEnabled()) {
     try {
-      if (await isXeroConnected()) {
-        const memberships = await getXeroContactGroupMemberships([
-          member.xeroContactId,
-        ]);
-        xeroContactGroups = memberships[member.xeroContactId] ?? [];
-        xeroContactGroupsLoaded = true;
-      }
+      const memberships = await getXeroContactGroupMemberships([
+        member.xeroContactId,
+      ]);
+      xeroContactGroups = memberships[member.xeroContactId] ?? [];
+      xeroContactGroupsLoaded = Object.prototype.hasOwnProperty.call(
+        memberships,
+        member.xeroContactId
+      );
     } catch (error) {
       const xeroError = getXeroApiErrorInfo(error, "Failed to fetch Xero contact groups for member detail");
       if (!xeroError.handled) {

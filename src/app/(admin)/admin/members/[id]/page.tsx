@@ -538,7 +538,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             )}
             {member.xeroContactId && !member.xeroContactGroupsLoaded && (
               <p className="text-xs text-slate-500">
-                Contact groups are not loaded on this page by default.
+                Cached contact groups have not been refreshed yet.
               </p>
             )}
           </dd>

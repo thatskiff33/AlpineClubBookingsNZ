@@ -217,14 +217,12 @@ export async function GET(req: NextRequest) {
     xeroContactGroupFilter !== "all"
   ) {
     try {
-      if (await isXeroConnected()) {
-        const groupContactIds = await getXeroContactIdsForGroup(xeroContactGroupFilter);
-        if (groupContactIds.length > 0) {
-          andConditions.push({ xeroContactId: { in: groupContactIds } });
-        } else {
-          // Group has no contacts — force empty result
-          andConditions.push({ xeroContactId: { in: [] } });
-        }
+      const groupContactIds = await getXeroContactIdsForGroup(xeroContactGroupFilter);
+      if (groupContactIds.length > 0) {
+        andConditions.push({ xeroContactId: { in: groupContactIds } });
+      } else {
+        // Group has no contacts — force empty result
+        andConditions.push({ xeroContactId: { in: [] } });
       }
     } catch (error) {
       logger.error({ err: error, groupId: xeroContactGroupFilter }, "Failed to fetch Xero contact group members for filter");
@@ -297,10 +295,10 @@ export async function GET(req: NextRequest) {
 
   if (liveMemberGroupLookupsEnabled && linkedContactIds.length > 0) {
     try {
-      if (await isXeroConnected()) {
-        xeroContactGroups = await getXeroContactGroupMemberships(linkedContactIds);
-        xeroContactGroupsLoaded = true;
-      }
+      xeroContactGroups = await getXeroContactGroupMemberships(linkedContactIds);
+      xeroContactGroupsLoaded = linkedContactIds.every((contactId) =>
+        Object.prototype.hasOwnProperty.call(xeroContactGroups, contactId)
+      );
     } catch (error) {
       const xeroError = getXeroApiErrorInfo(error, "Failed to fetch Xero contact groups for members list");
       if (!xeroError.handled) {
