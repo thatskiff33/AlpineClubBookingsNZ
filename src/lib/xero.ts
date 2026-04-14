@@ -152,7 +152,7 @@ interface ImportMembersFromXeroGroupsOptions {
   allowLiveXeroFetch?: boolean;
 }
 
-interface CachedXeroContact {
+export interface CachedXeroContact {
   contactId: string;
   name: string | null;
   firstName: string | null;
@@ -175,6 +175,21 @@ interface CachedXeroContact {
   postalRegion: string | null;
   postalPostalCode: string | null;
   postalCountry: string | null;
+}
+
+export interface RefreshXeroContactGroupMembershipCacheForContactResult {
+  contactId: string | null;
+  observed: boolean;
+  contactGroupsSeen: number;
+  membershipsAdded: number;
+  membershipsRemoved: number;
+  groupsTouched: number;
+  reason?: string;
+}
+
+export interface RefreshXeroContactCachesFromContactResult {
+  cachedContact: CachedXeroContact | null;
+  groupMemberships: RefreshXeroContactGroupMembershipCacheForContactResult;
 }
 
 interface CheckMembershipStatusOptions {
@@ -1453,7 +1468,10 @@ export async function syncContactsFromXero(
     }
 
     try {
-      const cachedContact = await upsertXeroContactCacheEntry(contact, fetchedAt);
+      const { cachedContact } = await refreshXeroContactCachesFromContact(
+        contact,
+        fetchedAt
+      );
       if (!cachedContact) {
         report.skippedOther.push({
           name: contactName,
@@ -2229,6 +2247,237 @@ function buildCachedXeroContact(contact: Contact): CachedXeroContact | null {
   };
 }
 
+function extractActiveXeroContactGroups(contact: Contact) {
+  if (!Array.isArray(contact.contactGroups)) {
+    return null;
+  }
+
+  const groupsById = new Map<string, { id: string; name: string | null }>();
+
+  for (const group of contact.contactGroups) {
+    const groupId =
+      typeof group.contactGroupID === "string" ? group.contactGroupID.trim() : "";
+    if (!groupId || group.status === ContactGroup.StatusEnum.DELETED) {
+      continue;
+    }
+
+    const groupName =
+      typeof group.name === "string" && group.name.trim().length > 0
+        ? group.name.trim()
+        : null;
+
+    groupsById.set(groupId, {
+      id: groupId,
+      name: groupName,
+    });
+  }
+
+  return Array.from(groupsById.values());
+}
+
+export async function refreshXeroContactGroupMembershipCacheForContact(
+  contact: Contact,
+  fetchedAt: Date = new Date()
+): Promise<RefreshXeroContactGroupMembershipCacheForContactResult> {
+  if (!contact.contactID) {
+    return {
+      contactId: null,
+      observed: false,
+      contactGroupsSeen: 0,
+      membershipsAdded: 0,
+      membershipsRemoved: 0,
+      groupsTouched: 0,
+      reason: "Xero contact payload did not include a contactID.",
+    };
+  }
+
+  const activeGroups = extractActiveXeroContactGroups(contact);
+  if (!activeGroups) {
+    return {
+      contactId: contact.contactID,
+      observed: false,
+      contactGroupsSeen: 0,
+      membershipsAdded: 0,
+      membershipsRemoved: 0,
+      groupsTouched: 0,
+      reason: "Xero contact payload did not include contactGroups.",
+    };
+  }
+
+  const contactId = contact.contactID;
+  const sourceUpdatedAt = getXeroContactSourceUpdatedAt(contact) ?? fetchedAt;
+  const contactName = getXeroContactDisplayName(contact) || null;
+
+  return prisma.$transaction(async (tx) => {
+    const previousMemberships = await tx.xeroContactGroupMembershipCache.findMany({
+      where: {
+        contactId,
+      },
+      select: {
+        contactGroupId: true,
+      },
+    });
+    const desiredGroupIds = activeGroups.map((group) => group.id);
+    const previousGroupIds = previousMemberships.map(
+      (membership) => membership.contactGroupId
+    );
+    const previousGroupIdSet = new Set(previousGroupIds);
+    const desiredGroupIdSet = new Set(desiredGroupIds);
+    const addedGroupIds = desiredGroupIds.filter(
+      (groupId) => !previousGroupIdSet.has(groupId)
+    );
+    const removedGroupIds = previousGroupIds.filter(
+      (groupId) => !desiredGroupIdSet.has(groupId)
+    );
+    const retainedGroupIds = desiredGroupIds.filter((groupId) =>
+      previousGroupIdSet.has(groupId)
+    );
+
+    const existingGroups =
+      desiredGroupIds.length > 0
+        ? await tx.xeroContactGroupCache.findMany({
+            where: {
+              contactGroupId: {
+                in: desiredGroupIds,
+              },
+            },
+            select: {
+              contactGroupId: true,
+              name: true,
+            },
+          })
+        : [];
+    const existingGroupNames = new Map(
+      existingGroups.map((group) => [group.contactGroupId, group.name])
+    );
+
+    for (const group of activeGroups) {
+      await tx.xeroContactGroupCache.upsert({
+        where: {
+          contactGroupId: group.id,
+        },
+        create: {
+          contactGroupId: group.id,
+          name: group.name ?? existingGroupNames.get(group.id) ?? group.id,
+          status: "ACTIVE",
+          contactCount: 0,
+          fetchedAt,
+          sourceUpdatedAt,
+        },
+        update: {
+          name: group.name ?? existingGroupNames.get(group.id) ?? group.id,
+          status: "ACTIVE",
+          fetchedAt,
+          sourceUpdatedAt,
+        },
+      });
+    }
+
+    if (removedGroupIds.length > 0) {
+      await tx.xeroContactGroupMembershipCache.deleteMany({
+        where: {
+          contactId,
+          contactGroupId: {
+            in: removedGroupIds,
+          },
+        },
+      });
+
+      for (const groupId of removedGroupIds) {
+        await tx.xeroContactGroupCache.updateMany({
+          where: {
+            contactGroupId: groupId,
+            contactCount: {
+              gt: 0,
+            },
+          },
+          data: {
+            contactCount: {
+              decrement: 1,
+            },
+            fetchedAt,
+            sourceUpdatedAt,
+          },
+        });
+      }
+    }
+
+    if (retainedGroupIds.length > 0) {
+      await tx.xeroContactGroupMembershipCache.updateMany({
+        where: {
+          contactId,
+          contactGroupId: {
+            in: retainedGroupIds,
+          },
+        },
+        data: {
+          contactName,
+          fetchedAt,
+        },
+      });
+    }
+
+    if (addedGroupIds.length > 0) {
+      await tx.xeroContactGroupMembershipCache.createMany({
+        data: activeGroups
+          .filter((group) => addedGroupIds.includes(group.id))
+          .map((group) => ({
+            contactGroupId: group.id,
+            contactId,
+            contactName,
+            fetchedAt,
+          })),
+        skipDuplicates: true,
+      });
+
+      for (const groupId of addedGroupIds) {
+        await tx.xeroContactGroupCache.updateMany({
+          where: {
+            contactGroupId: groupId,
+          },
+          data: {
+            contactCount: {
+              increment: 1,
+            },
+            fetchedAt,
+            sourceUpdatedAt,
+          },
+        });
+      }
+    }
+
+    await tx.xeroSyncCursor.upsert({
+      where: {
+        resourceType_scope: {
+          resourceType: CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
+          scope: DEFAULT_XERO_SYNC_SCOPE,
+        },
+      },
+      create: {
+        resourceType: CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
+        scope: DEFAULT_XERO_SYNC_SCOPE,
+        cursorDateTime: sourceUpdatedAt,
+        lastSuccessfulSyncAt: fetchedAt,
+      },
+      update: {
+        cursorDateTime: sourceUpdatedAt,
+        lastSuccessfulSyncAt: fetchedAt,
+      },
+    });
+
+    return {
+      contactId,
+      observed: true,
+      contactGroupsSeen: activeGroups.length,
+      membershipsAdded: addedGroupIds.length,
+      membershipsRemoved: removedGroupIds.length,
+      groupsTouched: Array.from(
+        new Set([...desiredGroupIds, ...removedGroupIds])
+      ).length,
+    } satisfies RefreshXeroContactGroupMembershipCacheForContactResult;
+  });
+}
+
 async function upsertXeroContactCacheEntry(
   contact: Contact,
   fetchedAt: Date
@@ -2253,6 +2502,21 @@ async function upsertXeroContactCacheEntry(
   });
 
   return cachedContact;
+}
+
+export async function refreshXeroContactCachesFromContact(
+  contact: Contact,
+  fetchedAt: Date = new Date()
+): Promise<RefreshXeroContactCachesFromContactResult> {
+  const [cachedContact, groupMemberships] = await Promise.all([
+    upsertXeroContactCacheEntry(contact, fetchedAt),
+    refreshXeroContactGroupMembershipCacheForContact(contact, fetchedAt),
+  ]);
+
+  return {
+    cachedContact,
+    groupMemberships,
+  };
 }
 
 async function fetchXeroContactsByIdsFromXero(input: {

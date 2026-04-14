@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   inboundUpdateMany: vi.fn(),
   inboundUpdate: vi.fn(),
   xeroContactCacheUpsert: vi.fn(),
+  refreshXeroContactCachesFromContact: vi.fn(),
   processedCreate: vi.fn(),
   processedDeleteMany: vi.fn(),
   transaction: vi.fn(),
@@ -102,6 +103,7 @@ vi.mock("@/lib/xero", async (importOriginal) => {
     checkMembershipStatus: mocks.checkMembershipStatus,
     getAccountMapping: mocks.getAccountMapping,
     getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
+    refreshXeroContactCachesFromContact: mocks.refreshXeroContactCachesFromContact,
     refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
     withXeroRetry: mocks.withXeroRetry,
     findSubscriptionInvoice: (
@@ -126,8 +128,41 @@ describe("processStoredXeroInboundEvents", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
-    mocks.xeroContactCacheUpsert.mockResolvedValue({});
     mocks.xeroSyncCursorFindUnique.mockResolvedValue(null);
+    mocks.refreshXeroContactCachesFromContact.mockResolvedValue({
+      cachedContact: {
+        contactId: "contact_1",
+        name: "Contact One",
+        firstName: "Contact",
+        lastName: "One",
+        emailAddress: "contact@example.com",
+        companyNumber: null,
+        contactStatus: "ACTIVE",
+        phoneCountryCode: "64",
+        phoneAreaCode: "27",
+        phoneNumber: "1234567",
+        streetAddressLine1: "1 Alpine Way",
+        streetAddressLine2: null,
+        streetCity: "Wanaka",
+        streetRegion: "Otago",
+        streetPostalCode: "9305",
+        streetCountry: "NZ",
+        postalAddressLine1: "PO Box 1",
+        postalAddressLine2: null,
+        postalCity: "Wanaka",
+        postalRegion: "Otago",
+        postalPostalCode: "9343",
+        postalCountry: "NZ",
+      },
+      groupMemberships: {
+        contactId: "contact_1",
+        observed: true,
+        contactGroupsSeen: 1,
+        membershipsAdded: 1,
+        membershipsRemoved: 0,
+        groupsTouched: 1,
+      },
+    });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         processedWebhookEvent: {
@@ -282,18 +317,11 @@ describe("processStoredXeroInboundEvents", () => {
         joinedDate: new Date("2024-04-10"),
       }),
     });
-    expect(mocks.xeroContactCacheUpsert).toHaveBeenCalledWith(
+    expect(mocks.refreshXeroContactCachesFromContact).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { contactId: "contact_1" },
-        create: expect.objectContaining({
-          contactId: "contact_1",
-          phoneCountryCode: "64",
-          phoneAreaCode: "27",
-          phoneNumber: "1234567",
-          streetAddressLine1: "1 Alpine Way",
-          postalAddressLine1: "PO Box 1",
-        }),
-      })
+        contactID: "contact_1",
+      }),
+      expect.any(Date)
     );
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -306,6 +334,11 @@ describe("processStoredXeroInboundEvents", () => {
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "op_1",
       expect.objectContaining({
+        responsePayload: expect.objectContaining({
+          contactGroupsSeen: 1,
+          groupMembershipsAdded: 1,
+          groupMembershipsRemoved: 0,
+        }),
         xeroObjectType: "CONTACT",
         xeroObjectId: "contact_1",
       })

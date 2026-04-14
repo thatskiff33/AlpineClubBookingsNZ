@@ -17,6 +17,7 @@ import {
   getAccountMapping,
   getAuthenticatedXeroClient,
   refreshAllMembershipStatuses,
+  refreshXeroContactCachesFromContact,
   XeroDailyLimitError,
 } from "@/lib/xero";
 import {
@@ -276,15 +277,6 @@ function extractContactAddresses(contact: Contact) {
   };
 }
 
-function extractContactUpdatedAt(contact: Contact): Date | null {
-  if (!contact.updatedDateUTC) {
-    return null;
-  }
-
-  const updatedAt = new Date(contact.updatedDateUTC.toString());
-  return Number.isNaN(updatedAt.getTime()) ? null : updatedAt;
-}
-
 function getMembershipSyncCursorScope(seasonYear: number): string {
   return `${DEFAULT_XERO_SYNC_SCOPE_PREFIX}${seasonYear}`;
 }
@@ -537,64 +529,10 @@ async function reconcileXeroContact(contactId: string) {
   }
 
   const fetchedAt = new Date();
+  const { cachedContact, groupMemberships } =
+    await refreshXeroContactCachesFromContact(contact, fetchedAt);
   const phone = extractContactPhone(contact);
   const addresses = extractContactAddresses(contact);
-  await prisma.xeroContactCache.upsert({
-    where: {
-      contactId: contact.contactID,
-    },
-    create: {
-      contactId: contact.contactID,
-      name: contact.name ?? null,
-      firstName: contact.firstName ?? null,
-      lastName: contact.lastName ?? null,
-      emailAddress: contact.emailAddress ?? null,
-      companyNumber: contact.companyNumber ?? null,
-      contactStatus: contact.contactStatus?.toString() || "ACTIVE",
-      phoneCountryCode: phone?.phoneCountryCode ?? null,
-      phoneAreaCode: phone?.phoneAreaCode ?? null,
-      phoneNumber: phone?.phoneNumber ?? null,
-      streetAddressLine1: addresses.street?.streetAddressLine1 ?? null,
-      streetAddressLine2: addresses.street?.streetAddressLine2 ?? null,
-      streetCity: addresses.street?.streetCity ?? null,
-      streetRegion: addresses.street?.streetRegion ?? null,
-      streetPostalCode: addresses.street?.streetPostalCode ?? null,
-      streetCountry: addresses.street?.streetCountry ?? null,
-      postalAddressLine1: addresses.postal?.postalAddressLine1 ?? null,
-      postalAddressLine2: addresses.postal?.postalAddressLine2 ?? null,
-      postalCity: addresses.postal?.postalCity ?? null,
-      postalRegion: addresses.postal?.postalRegion ?? null,
-      postalPostalCode: addresses.postal?.postalPostalCode ?? null,
-      postalCountry: addresses.postal?.postalCountry ?? null,
-      sourceUpdatedAt: extractContactUpdatedAt(contact),
-      fetchedAt,
-    },
-    update: {
-      name: contact.name ?? null,
-      firstName: contact.firstName ?? null,
-      lastName: contact.lastName ?? null,
-      emailAddress: contact.emailAddress ?? null,
-      companyNumber: contact.companyNumber ?? null,
-      contactStatus: contact.contactStatus?.toString() || "ACTIVE",
-      phoneCountryCode: phone?.phoneCountryCode ?? null,
-      phoneAreaCode: phone?.phoneAreaCode ?? null,
-      phoneNumber: phone?.phoneNumber ?? null,
-      streetAddressLine1: addresses.street?.streetAddressLine1 ?? null,
-      streetAddressLine2: addresses.street?.streetAddressLine2 ?? null,
-      streetCity: addresses.street?.streetCity ?? null,
-      streetRegion: addresses.street?.streetRegion ?? null,
-      streetPostalCode: addresses.street?.streetPostalCode ?? null,
-      streetCountry: addresses.street?.streetCountry ?? null,
-      postalAddressLine1: addresses.postal?.postalAddressLine1 ?? null,
-      postalAddressLine2: addresses.postal?.postalAddressLine2 ?? null,
-      postalCity: addresses.postal?.postalCity ?? null,
-      postalRegion: addresses.postal?.postalRegion ?? null,
-      postalPostalCode: addresses.postal?.postalPostalCode ?? null,
-      postalCountry: addresses.postal?.postalCountry ?? null,
-      sourceUpdatedAt: extractContactUpdatedAt(contact),
-      fetchedAt,
-    },
-  });
 
   const memberIds = await resolveMemberIdsForContact(contactId);
   if (memberIds.length === 0) {
@@ -606,7 +544,10 @@ async function reconcileXeroContact(contactId: string) {
       updatedMembers: 0,
       linkedMembers: 0,
       backfilledFields: 0,
-      cacheUpdated: true,
+      cacheUpdated: cachedContact !== null,
+      contactGroupsSeen: groupMemberships.contactGroupsSeen,
+      groupMembershipsAdded: groupMemberships.membershipsAdded,
+      groupMembershipsRemoved: groupMemberships.membershipsRemoved,
     };
   }
 
@@ -697,7 +638,10 @@ async function reconcileXeroContact(contactId: string) {
     updatedMembers,
     linkedMembers,
     backfilledFields,
-    cacheUpdated: true,
+    cacheUpdated: cachedContact !== null,
+    contactGroupsSeen: groupMemberships.contactGroupsSeen,
+    groupMembershipsAdded: groupMemberships.membershipsAdded,
+    groupMembershipsRemoved: groupMemberships.membershipsRemoved,
   };
 }
 

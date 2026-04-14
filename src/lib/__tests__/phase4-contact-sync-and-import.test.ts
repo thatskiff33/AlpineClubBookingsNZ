@@ -34,8 +34,16 @@ const mocks = vi.hoisted(() => {
         upsert: vi.fn(),
         findMany: vi.fn(),
       },
+      xeroContactGroupCache: {
+        findMany: vi.fn(),
+        upsert: vi.fn(),
+        updateMany: vi.fn(),
+      },
       xeroContactGroupMembershipCache: {
         findMany: vi.fn(),
+        deleteMany: vi.fn(),
+        createMany: vi.fn(),
+        updateMany: vi.fn(),
       },
       member: {
         findFirst: vi.fn(),
@@ -152,7 +160,13 @@ describe("Phase 4 contact sync and cached import", () => {
     mocks.prisma.xeroSyncCursor.upsert.mockResolvedValue({});
     mocks.prisma.xeroContactCache.upsert.mockResolvedValue({});
     mocks.prisma.xeroContactCache.findMany.mockResolvedValue([]);
+    mocks.prisma.xeroContactGroupCache.findMany.mockResolvedValue([]);
+    mocks.prisma.xeroContactGroupCache.upsert.mockResolvedValue({});
+    mocks.prisma.xeroContactGroupCache.updateMany.mockResolvedValue({ count: 1 });
     mocks.prisma.xeroContactGroupMembershipCache.findMany.mockResolvedValue([]);
+    mocks.prisma.xeroContactGroupMembershipCache.deleteMany.mockResolvedValue({ count: 0 });
+    mocks.prisma.xeroContactGroupMembershipCache.createMany.mockResolvedValue({ count: 0 });
+    mocks.prisma.xeroContactGroupMembershipCache.updateMany.mockResolvedValue({ count: 0 });
     mocks.prisma.member.update.mockResolvedValue({});
     mocks.prisma.member.create.mockResolvedValue({
       id: "member_new",
@@ -162,6 +176,10 @@ describe("Phase 4 contact sync and cached import", () => {
     mocks.prisma.familyGroupMember.create.mockResolvedValue({});
     mocks.prisma.familyGroupMember.createMany.mockResolvedValue({});
     mocks.prisma.familyGroup.create.mockResolvedValue({ id: "family_1" });
+    mocks.prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mocks.prisma) => Promise<unknown>) =>
+        callback(mocks.prisma)
+    );
     mocks.recordXeroApiUsage.mockResolvedValue(undefined);
   });
 
@@ -266,6 +284,98 @@ describe("Phase 4 contact sync and cached import", () => {
             changedContactCount: 1,
             retryContactIds: [],
           }),
+        }),
+      })
+    );
+  });
+
+  it("selectively refreshes cached contact-group memberships from changed contacts", async () => {
+    mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue({
+      cursorDateTime: new Date("2026-04-14T10:00:00.000Z"),
+      lastSuccessfulSyncAt: new Date("2026-04-14T10:05:00.000Z"),
+      metadata: {},
+    });
+    mocks.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact_1",
+            name: "Group Refresh Contact",
+            emailAddress: "groups@example.com",
+            contactGroups: [
+              {
+                contactGroupID: "group_existing",
+                name: "Existing Group",
+                status: "ACTIVE",
+              },
+              {
+                contactGroupID: "group_new",
+                name: "New Group",
+                status: "ACTIVE",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mocks.prisma.xeroContactGroupMembershipCache.findMany.mockResolvedValue([
+      { contactGroupId: "group_old" },
+      { contactGroupId: "group_existing" },
+    ]);
+    mocks.prisma.xeroContactGroupCache.findMany.mockResolvedValue([
+      {
+        contactGroupId: "group_existing",
+        name: "Existing Group",
+      },
+    ]);
+    mocks.prisma.member.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+
+    await syncContactsFromXero();
+
+    expect(mocks.prisma.xeroContactGroupMembershipCache.deleteMany).toHaveBeenCalledWith({
+      where: {
+        contactId: "contact_1",
+        contactGroupId: { in: ["group_old"] },
+      },
+    });
+    expect(mocks.prisma.xeroContactGroupMembershipCache.updateMany).toHaveBeenCalledWith({
+      where: {
+        contactId: "contact_1",
+        contactGroupId: { in: ["group_existing"] },
+      },
+      data: expect.objectContaining({
+        contactName: "Group Refresh Contact",
+      }),
+    });
+    expect(mocks.prisma.xeroContactGroupMembershipCache.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          contactGroupId: "group_new",
+          contactId: "contact_1",
+          contactName: "Group Refresh Contact",
+        }),
+      ],
+      skipDuplicates: true,
+    });
+    expect(mocks.prisma.xeroContactGroupCache.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { contactGroupId: "group_existing" },
+        update: expect.objectContaining({
+          name: "Existing Group",
+          status: "ACTIVE",
+        }),
+      })
+    );
+    expect(mocks.prisma.xeroSyncCursor.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          resourceType: "CONTACT_GROUP_CACHE",
+          scope: "default",
+        }),
+        update: expect.objectContaining({
+          lastSuccessfulSyncAt: expect.any(Date),
         }),
       })
     );

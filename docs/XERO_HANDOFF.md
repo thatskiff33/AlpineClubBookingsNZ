@@ -134,22 +134,35 @@ Primary files updated:
 - `src/app/api/cron/xero/route.ts`
 - `src/instrumentation.ts`
 
+### Phase 7: Contact-driven cache refresh now extends into cached group memberships
+
+Implemented:
+
+- added a shared contact-cache refresh helper that updates `XeroContactCache` and selectively refreshes cached Xero contact-group memberships from a changed contact snapshot when Xero includes `contactGroups`
+- switched `CONTACT` inbound reconciliation to use that shared helper, so webhook/replay processing now refreshes touched contact-group membership cache rows and group counts without requiring an operator-triggered full group rescan
+- switched incremental `syncContactsFromXero()` to use the same helper, so any contact-sync pass can keep touched group membership cache state warm alongside `XeroContactCache`
+- kept `GET /api/admin/xero/contact-groups?refresh=1` as the deliberate full-rescan safety net for untouched groups, missed webhook drift, or cache seeding
+
+Primary files updated:
+
+- `src/lib/xero.ts`
+- `src/lib/xero-inbound-reconciliation.ts`
+
 ## Remaining Work
 
 ### 1. Phase 7 remaining: make webhook and incremental reconcile the main source of truth
 
-Inbound reconciliation now drives the primary membership-state catch-up path, but some local business state is still not advanced directly from inbound/incremental changes.
+Inbound reconciliation now drives the primary membership-state catch-up path and can selectively keep touched cached contact-group memberships current, but some local business state is still not advanced directly from inbound/incremental changes.
 
 Required outcome:
 
 - webhook-triggered reconciliation advances the remaining business state that still depends on polling beyond membership subscriptions
-- cached contact-group membership refreshes from inbound changes where applicable
 - any remaining operator/daily polling stays a safety net, not the primary reconciliation path
 
 Implementation direction:
 
-- extend business-state application beyond the current metadata/link/cache backfills plus the new membership cursor catch-up path
-- decide whether any contact-group cache refresh should be selective/incremental from inbound contact changes or remain a deliberate operator-triggered full refresh
+- extend business-state application beyond the current metadata/link/cache backfills, membership cursor catch-up path, and selective contact-group cache refresh
+- decide whether any additional safety-net incremental pull is needed for contact/group drift beyond the current webhook-driven selective refresh plus deliberate full group refresh
 - add any remaining incremental pull jobs where webhooks alone are insufficient
 - consider whether bulk replay/filtering improvements are needed on the admin Xero screen after the main reconciliation paths land
 
@@ -225,10 +238,11 @@ Typical commands:
 
 ## Notes For The Next Agent
 
-- Phase 4 is now complete. The default operator path is: refresh cached contact groups only when needed, run incremental contact sync to keep `XeroContactCache` warm, then run cached member import.
+- Phase 4 is now complete. The default operator path is: refresh cached contact groups only when needed, run incremental contact sync to keep `XeroContactCache` warm and refresh any touched group memberships, then run cached member import.
 - Explicit repair tools now live on the same admin endpoints:
   - `POST /api/admin/xero/sync-contacts` with JSON flags for `fullResync` / `backfillJoinedDates`
   - `POST /api/admin/xero/import-members` with `repairMissingContactCache`
   - `GET /api/admin/xero/contact-groups?refresh=1` for a deliberate full group rescan
 - Do not reopen already-completed Phase 6/7/8 work unless the remaining phases force a design change.
-- The next biggest budget win is now Phase 7: make stored inbound events and incremental reconcile the primary driver of local business state.
+- Stored inbound `CONTACT` reconciliation and incremental contact sync now selectively maintain touched cached contact-group memberships. Full group refresh remains the safety net for untouched groups and drift.
+- The next biggest budget win is still Phase 7: make stored inbound events and incremental reconcile the primary driver of the remaining local business state beyond memberships and touched group-cache state.
