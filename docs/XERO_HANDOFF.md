@@ -1,6 +1,6 @@
 # Xero Handoff
 
-Last updated: 2026-04-14
+Last updated: 2026-04-15
 
 This document replaces the previous Xero audit and reconciliation review docs. It is intended to be the single handoff for the next agent.
 
@@ -186,11 +186,24 @@ Primary files updated:
 - `src/lib/xero-inbound-reconciliation.ts`
 - `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
 
+### Phase 7: Credit-note allocations now repair local account-credit application state
+
+Implemented:
+
+- extended inbound `CREDIT_NOTE` reconciliation so account-credit note allocations now repair local `MemberCredit` `BOOKING_APPLIED` rows for the allocated booking invoice, creating missing applied-credit rows or backfilling the Xero credit-note link when the local ledger lags behind Xero
+- recomputed `Payment.creditAppliedCents` from the repaired applied-credit ledger during the same inbound pass, so local cancellation restore logic and account-credit balance reads catch up directly from webhook/replay processing
+- exposed applied-credit repair counts in the stored reconciliation result payload, so admin/support can distinguish allocation-driven business-state repairs from ordinary allocation-link refreshes
+
+Primary files updated:
+
+- `src/lib/xero-inbound-reconciliation.ts`
+- `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
+
 ## Remaining Work
 
 ### 1. Phase 7 remaining: make webhook and incremental reconcile the main source of truth
 
-Inbound reconciliation now drives the primary membership-state catch-up path, can selectively keep touched cached contact-group memberships current, includes a throttled incremental contact-sync safety net, and now refreshes linked state for changed membership invoices, but some local business state is still not advanced directly from inbound/incremental changes.
+Inbound reconciliation now drives the primary membership-state catch-up path, can selectively keep touched cached contact-group memberships current, includes a throttled incremental contact-sync safety net, refreshes linked state for changed membership invoices, and now repairs both account-credit issuance and application ledger state from credit-note changes, but some local business state is still not advanced directly from inbound/incremental changes.
 
 Required outcome:
 

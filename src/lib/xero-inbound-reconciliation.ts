@@ -1,5 +1,6 @@
 import {
   Address,
+  type CreditNote as XeroCreditNote,
   Phone,
   type Contact,
   type Invoice,
@@ -64,6 +65,19 @@ interface CreditNoteAmounts {
   total?: number | null;
   appliedAmount?: number | null;
   remainingCredit?: number | null;
+}
+
+interface AccountCreditAllocationTarget {
+  invoiceId: string;
+  amountCents: number;
+}
+
+interface AccountCreditAllocationRepairResult {
+  matchedPayments: number;
+  createdAppliedCredits: number;
+  updatedAppliedCredits: number;
+  updatedAppliedPayments: number;
+  skippedAllocations: number;
 }
 
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
@@ -213,6 +227,37 @@ function getCreditNoteAmountCents(
 
 function buildXeroPaymentDisplayNumber(payment: XeroPayment): string | null {
   return payment.invoiceNumber ?? payment.creditNoteNumber ?? null;
+}
+
+function buildBookingAppliedCreditDescription(bookingId: string) {
+  return `Applied to booking ${bookingId.slice(0, 8)}`;
+}
+
+function buildCreditNoteAllocationTargets(
+  creditNote: Pick<XeroCreditNote, "allocations">
+): AccountCreditAllocationTarget[] {
+  const allocationTotals = new Map<string, number>();
+
+  for (const allocation of creditNote.allocations ?? []) {
+    const invoiceId = allocation.invoice?.invoiceID ?? null;
+    const amount = allocation.amount;
+
+    if (!invoiceId || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+      continue;
+    }
+
+    allocationTotals.set(
+      invoiceId,
+      (allocationTotals.get(invoiceId) ?? 0) + Math.round(amount * 100)
+    );
+  }
+
+  return Array.from(allocationTotals.entries())
+    .map(([invoiceId, amountCents]) => ({
+      invoiceId,
+      amountCents,
+    }))
+    .filter((target) => target.amountCents > 0);
 }
 
 function dedupeXeroObjectLinks(links: XeroObjectLinkInput[]): XeroObjectLinkInput[] {
@@ -941,6 +986,223 @@ async function runIncrementalInvoiceReconciliation(options: {
   };
 }
 
+async function repairAccountCreditAllocationBusinessState(
+  creditNoteId: string,
+  allocationTargets: AccountCreditAllocationTarget[]
+): Promise<AccountCreditAllocationRepairResult> {
+  if (allocationTargets.length === 0) {
+    return {
+      matchedPayments: 0,
+      createdAppliedCredits: 0,
+      updatedAppliedCredits: 0,
+      updatedAppliedPayments: 0,
+      skippedAllocations: 0,
+    };
+  }
+
+  let matchedPayments = 0;
+  let createdAppliedCredits = 0;
+  let updatedAppliedCredits = 0;
+  let updatedAppliedPayments = 0;
+  let skippedAllocations = 0;
+
+  for (const target of allocationTargets) {
+    const linkedPaymentIds = (
+      await findActiveXeroObjectLinks("INVOICE", target.invoiceId)
+    )
+      .filter((link) => link.localModel === "Payment")
+      .map((link) => link.localId);
+    const paymentWhere = [
+      {
+        xeroInvoiceId: target.invoiceId,
+      },
+      ...(linkedPaymentIds.length > 0
+        ? [
+            {
+              id: {
+                in: linkedPaymentIds,
+              },
+            },
+          ]
+        : []),
+    ];
+    const paymentCandidates = await prisma.payment.findMany({
+      where: {
+        OR: paymentWhere,
+      },
+      select: {
+        id: true,
+        bookingId: true,
+        creditAppliedCents: true,
+        booking: {
+          select: {
+            memberId: true,
+          },
+        },
+      },
+    });
+
+    if (paymentCandidates.length !== 1) {
+      skippedAllocations += 1;
+      logger.warn(
+        {
+          creditNoteId,
+          invoiceId: target.invoiceId,
+          matchedPayments: paymentCandidates.length,
+        },
+        "Skipping account-credit allocation repair because the allocated invoice did not resolve to exactly one local payment"
+      );
+      continue;
+    }
+
+    matchedPayments += 1;
+    const payment = paymentCandidates[0];
+    const expectedAmountCents = -target.amountCents;
+    const expectedDescription = buildBookingAppliedCreditDescription(
+      payment.bookingId
+    );
+    const existingAppliedCredits = await prisma.memberCredit.findMany({
+      where: {
+        memberId: payment.booking.memberId,
+        appliedToBookingId: payment.bookingId,
+        type: CreditType.BOOKING_APPLIED,
+        OR: [
+          {
+            xeroCreditNoteId: creditNoteId,
+          },
+          {
+            xeroCreditNoteId: null,
+            amountCents: expectedAmountCents,
+          },
+        ],
+      },
+      select: {
+        id: true,
+        amountCents: true,
+        description: true,
+        xeroCreditNoteId: true,
+      },
+    });
+
+    const linkedAppliedCredits = existingAppliedCredits.filter(
+      (credit) => credit.xeroCreditNoteId === creditNoteId
+    );
+
+    if (linkedAppliedCredits.length === 1) {
+      const appliedCredit = linkedAppliedCredits[0];
+      const updates: {
+        amountCents?: number;
+        description?: string;
+      } = {};
+
+      if (appliedCredit.amountCents !== expectedAmountCents) {
+        updates.amountCents = expectedAmountCents;
+      }
+      if (appliedCredit.description !== expectedDescription) {
+        updates.description = expectedDescription;
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await prisma.memberCredit.update({
+          where: {
+            id: appliedCredit.id,
+          },
+          data: updates,
+        });
+        updatedAppliedCredits += 1;
+      }
+    } else if (linkedAppliedCredits.length > 1) {
+      skippedAllocations += 1;
+      logger.warn(
+        {
+          creditNoteId,
+          invoiceId: target.invoiceId,
+          bookingId: payment.bookingId,
+          appliedCredits: linkedAppliedCredits.length,
+        },
+        "Skipping account-credit allocation repair because multiple local applied-credit rows already point at this Xero credit note"
+      );
+    } else {
+      const unlinkedExactCredits = existingAppliedCredits.filter(
+        (credit) =>
+          credit.xeroCreditNoteId === null &&
+          credit.amountCents === expectedAmountCents
+      );
+
+      if (unlinkedExactCredits.length === 1) {
+        await prisma.memberCredit.update({
+          where: {
+            id: unlinkedExactCredits[0].id,
+          },
+          data: {
+            xeroCreditNoteId: creditNoteId,
+            description: expectedDescription,
+          },
+        });
+        updatedAppliedCredits += 1;
+      } else if (unlinkedExactCredits.length > 1) {
+        skippedAllocations += 1;
+        logger.warn(
+          {
+            creditNoteId,
+            invoiceId: target.invoiceId,
+            bookingId: payment.bookingId,
+            appliedCredits: unlinkedExactCredits.length,
+          },
+          "Skipping account-credit allocation repair because multiple matching unlinked applied-credit rows exist locally"
+        );
+      } else {
+        await prisma.memberCredit.create({
+          data: {
+            memberId: payment.booking.memberId,
+            amountCents: expectedAmountCents,
+            type: CreditType.BOOKING_APPLIED,
+            description: expectedDescription,
+            appliedToBookingId: payment.bookingId,
+            xeroCreditNoteId: creditNoteId,
+          },
+        });
+        createdAppliedCredits += 1;
+      }
+    }
+
+    const aggregate = await prisma.memberCredit.aggregate({
+      where: {
+        memberId: payment.booking.memberId,
+        appliedToBookingId: payment.bookingId,
+        type: CreditType.BOOKING_APPLIED,
+      },
+      _sum: {
+        amountCents: true,
+      },
+    });
+    const appliedCreditTotalCents = Math.max(
+      -(aggregate._sum.amountCents ?? 0),
+      0
+    );
+
+    if (payment.creditAppliedCents !== appliedCreditTotalCents) {
+      await prisma.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          creditAppliedCents: appliedCreditTotalCents,
+        },
+      });
+      updatedAppliedPayments += 1;
+    }
+  }
+
+  return {
+    matchedPayments,
+    createdAppliedCredits,
+    updatedAppliedCredits,
+    updatedAppliedPayments,
+    skippedAllocations,
+  };
+}
+
 async function reconcileXeroPayment(paymentId: string) {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const response = await callXeroApi(
@@ -1204,6 +1466,20 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
     });
     updatedCredits += backfilledCredits.count;
   }
+  const allocationTargets = buildCreditNoteAllocationTargets(creditNote);
+  const accountCreditAllocationRepair =
+    accountCreditPayments.length > 0
+      ? await repairAccountCreditAllocationBusinessState(
+          creditNote.creditNoteID,
+          allocationTargets
+        )
+      : {
+          matchedPayments: 0,
+          createdAppliedCredits: 0,
+          updatedAppliedCredits: 0,
+          updatedAppliedPayments: 0,
+          skippedAllocations: 0,
+        };
 
   const resolvedCreditNoteLinks = dedupeXeroObjectLinks([
     ...creditNoteLinks,
@@ -1241,16 +1517,7 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
   }
 
   const allocationLinks = dedupeXeroObjectLinks(
-    (creditNote.allocations ?? []).flatMap((allocation) => {
-      const invoiceId = allocation.invoice?.invoiceID ?? null;
-      const amount = allocation.amount;
-
-      if (!invoiceId || typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
-        return [];
-      }
-
-      const amountCents = Math.round(amount * 100);
-
+    allocationTargets.flatMap(({ invoiceId, amountCents }) => {
       return resolvedCreditNoteLinks.map(
         (link) =>
           ({
@@ -1320,6 +1587,11 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
     matchedAccountCreditPayments: accountCreditPayments.length,
     updatedPayments,
     updatedCredits,
+    matchedAllocatedPayments: accountCreditAllocationRepair.matchedPayments,
+    createdAppliedCredits: accountCreditAllocationRepair.createdAppliedCredits,
+    updatedAppliedCredits: accountCreditAllocationRepair.updatedAppliedCredits,
+    updatedAppliedPayments: accountCreditAllocationRepair.updatedAppliedPayments,
+    skippedAppliedCreditAllocations: accountCreditAllocationRepair.skippedAllocations,
     relatedLinksUpdated: resolvedCreditNoteLinks.length,
     allocationsUpdated: allocationLinks.length,
     refundPaymentsUpdated: refundPaymentLinks.length,
