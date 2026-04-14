@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   xeroSyncCursorFindUnique: vi.fn(),
   memberFindMany: vi.fn(),
   memberUpdate: vi.fn(),
+  memberCreditUpdateMany: vi.fn(),
   linkFindMany: vi.fn(),
   paymentFindMany: vi.fn(),
   paymentUpdate: vi.fn(),
@@ -50,6 +51,9 @@ vi.mock("@/lib/prisma", () => ({
     member: {
       findMany: mocks.memberFindMany,
       update: mocks.memberUpdate,
+    },
+    memberCredit: {
+      updateMany: mocks.memberCreditUpdateMany,
     },
     xeroObjectLink: {
       findMany: mocks.linkFindMany,
@@ -190,6 +194,7 @@ describe("processStoredXeroInboundEvents", () => {
     });
     mocks.withXeroRetry.mockImplementation(async (fn: () => Promise<unknown>) => fn());
     mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_1" });
+    mocks.memberCreditUpdateMany.mockResolvedValue({ count: 0 });
   });
 
   it("marks duplicate inbound events as processed without re-running reconciliation", async () => {
@@ -300,7 +305,8 @@ describe("processStoredXeroInboundEvents", () => {
       tenantId: "tenant_1",
     });
 
-    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+    const result = await processStoredXeroInboundEvents();
+    expect(result).toEqual({
       found: 1,
       processed: 1,
       succeeded: 1,
@@ -404,7 +410,8 @@ describe("processStoredXeroInboundEvents", () => {
       tenantId: "tenant_1",
     });
 
-    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+    const result = await processStoredXeroInboundEvents();
+    expect(result).toEqual({
       found: 1,
       processed: 1,
       succeeded: 1,
@@ -500,7 +507,8 @@ describe("processStoredXeroInboundEvents", () => {
       tenantId: "tenant_1",
     });
 
-    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+    const result = await processStoredXeroInboundEvents();
+    expect(result).toEqual({
       found: 1,
       processed: 1,
       succeeded: 1,
@@ -607,9 +615,101 @@ describe("processStoredXeroInboundEvents", () => {
       "op_1",
       expect.objectContaining({
         responsePayload: expect.objectContaining({
+          matchedAccountCreditPayments: 0,
           allocationsUpdated: 1,
           refundPaymentsUpdated: 1,
           relatedLinksUpdated: 1,
+          updatedCredits: 0,
+        }),
+      })
+    );
+  });
+
+  it("reconciles account-credit note events into member credit Xero links", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_5",
+        source: "webhook",
+        eventCategory: "CREDIT_NOTE",
+        eventType: "UPDATE",
+        resourceId: "cn_credit_1",
+        correlationKey: "corr_5",
+        payload: { resourceId: "cn_credit_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_5" });
+    mocks.linkFindMany.mockResolvedValue([
+      {
+        localModel: "Payment",
+        localId: "pay_credit_1",
+        xeroObjectType: "CREDIT_NOTE",
+        role: "ACCOUNT_CREDIT_NOTE",
+      },
+    ]);
+    mocks.paymentFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_credit_1",
+          bookingId: "bk123456789",
+          booking: {
+            memberId: "mem_credit_1",
+          },
+        },
+      ]);
+    mocks.memberCreditUpdateMany.mockResolvedValue({ count: 1 });
+    const accountingApi = {
+      getCreditNote: vi.fn().mockResolvedValue({
+        body: {
+          creditNotes: [
+            {
+              creditNoteID: "cn_credit_1",
+              creditNoteNumber: "CN-AC-001",
+              total: 97,
+              appliedAmount: 25,
+              remainingCredit: 72,
+              allocations: [],
+              payments: [],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    const result = await processStoredXeroInboundEvents();
+    expect(result).toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.memberCreditUpdateMany).toHaveBeenCalledWith({
+      where: {
+        memberId: "mem_credit_1",
+        sourceBookingId: "bk123456789",
+        amountCents: 9700,
+        type: "CANCELLATION_REFUND",
+        description: "Cancellation refund for booking bk123456",
+        xeroCreditNoteId: null,
+      },
+      data: {
+        xeroCreditNoteId: "cn_credit_1",
+      },
+    });
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_1",
+      expect.objectContaining({
+        responsePayload: expect.objectContaining({
+          matchedAccountCreditPayments: 1,
+          updatedCredits: 1,
+          refundPaymentsUpdated: 0,
         }),
       })
     );

@@ -173,6 +173,19 @@ Primary files updated:
 - `src/lib/xero.ts`
 - `src/lib/xero-inbound-reconciliation.ts`
 
+### Phase 7: Credit-note reconciliation now repairs local account-credit ledger links
+
+Implemented:
+
+- extended inbound `CREDIT_NOTE` reconciliation so `ACCOUNT_CREDIT_NOTE` payment links now backfill missing `MemberCredit.xeroCreditNoteId` values for matching cancellation-credit rows
+- exposed account-credit repair counts in the stored reconciliation result payload, so admin/support can see when webhook replay repaired local credit-note linkage instead of only refreshing object links
+- kept refund credit-note handling unchanged; this pass only closes the remaining local account-credit linkage gap
+
+Primary files updated:
+
+- `src/lib/xero-inbound-reconciliation.ts`
+- `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
+
 ## Remaining Work
 
 ### 1. Phase 7 remaining: make webhook and incremental reconcile the main source of truth

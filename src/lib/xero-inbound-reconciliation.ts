@@ -6,6 +6,7 @@ import {
   type Payment as XeroPayment,
   type XeroClient,
 } from "xero-node";
+import { CreditType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
@@ -57,6 +58,12 @@ interface ResolvedXeroObjectLink {
   localId: string;
   xeroObjectType: string;
   role: string;
+}
+
+interface CreditNoteAmounts {
+  total?: number | null;
+  appliedAmount?: number | null;
+  remainingCredit?: number | null;
 }
 
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
@@ -181,6 +188,27 @@ function buildSyntheticAllocationLinkId(
     amountCents,
     "v1"
   );
+}
+
+function getPositiveCurrencyAmountCents(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  return Math.round(value * 100);
+}
+
+function getCreditNoteAmountCents(
+  creditNote: CreditNoteAmounts
+): number | null {
+  const totalAmountCents = getPositiveCurrencyAmountCents(creditNote.total);
+  if (totalAmountCents !== null) {
+    return totalAmountCents;
+  }
+
+  const appliedAmount = creditNote.appliedAmount ?? 0;
+  const remainingAmount = creditNote.remainingCredit ?? 0;
+  return getPositiveCurrencyAmountCents(appliedAmount + remainingAmount);
 }
 
 function buildXeroPaymentDisplayNumber(payment: XeroPayment): string | null {
@@ -1092,6 +1120,9 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
   const linkedRefundPaymentIds = creditNoteLinks
     .filter((link) => link.localModel === "Payment" && link.role === "REFUND_CREDIT_NOTE")
     .map((link) => link.localId);
+  const linkedAccountCreditPaymentIds = creditNoteLinks
+    .filter((link) => link.localModel === "Payment" && link.role === "ACCOUNT_CREDIT_NOTE")
+    .map((link) => link.localId);
   const paymentCandidates = await prisma.payment.findMany({
     where: {
       OR: [
@@ -1114,6 +1145,25 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
       xeroRefundCreditNoteId: true,
     },
   });
+  const accountCreditPayments =
+    linkedAccountCreditPaymentIds.length > 0
+      ? await prisma.payment.findMany({
+          where: {
+            id: {
+              in: linkedAccountCreditPaymentIds,
+            },
+          },
+          select: {
+            id: true,
+            bookingId: true,
+            booking: {
+              select: {
+                memberId: true,
+              },
+            },
+          },
+        })
+      : [];
 
   const canApplyCanonicalRefundLink = paymentCandidates.length === 1;
   let updatedPayments = 0;
@@ -1129,6 +1179,30 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
       });
       updatedPayments += 1;
     }
+  }
+
+  const creditNoteAmountCents = getCreditNoteAmountCents(creditNote);
+  let updatedCredits = 0;
+  for (const payment of accountCreditPayments) {
+    if (creditNoteAmountCents === null) {
+      continue;
+    }
+
+    const bookingLabel = payment.bookingId.slice(0, 8);
+    const backfilledCredits = await prisma.memberCredit.updateMany({
+      where: {
+        memberId: payment.booking.memberId,
+        sourceBookingId: payment.bookingId,
+        amountCents: creditNoteAmountCents,
+        type: CreditType.CANCELLATION_REFUND,
+        description: `Cancellation refund for booking ${bookingLabel}`,
+        xeroCreditNoteId: null,
+      },
+      data: {
+        xeroCreditNoteId: creditNote.creditNoteID,
+      },
+    });
+    updatedCredits += backfilledCredits.count;
   }
 
   const resolvedCreditNoteLinks = dedupeXeroObjectLinks([
@@ -1243,7 +1317,9 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
     resourceId: creditNote.creditNoteID,
     creditNoteNumber: creditNote.creditNoteNumber ?? null,
     matchedPayments: paymentCandidates.length,
+    matchedAccountCreditPayments: accountCreditPayments.length,
     updatedPayments,
+    updatedCredits,
     relatedLinksUpdated: resolvedCreditNoteLinks.length,
     allocationsUpdated: allocationLinks.length,
     refundPaymentsUpdated: refundPaymentLinks.length,
