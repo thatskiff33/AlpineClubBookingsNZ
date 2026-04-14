@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   inboundFindUnique: vi.fn(),
   inboundUpdateMany: vi.fn(),
   inboundUpdate: vi.fn(),
+  xeroContactCacheUpsert: vi.fn(),
   processedCreate: vi.fn(),
   processedDeleteMany: vi.fn(),
   transaction: vi.fn(),
@@ -31,6 +32,9 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.inboundFindUnique,
       updateMany: mocks.inboundUpdateMany,
       update: mocks.inboundUpdate,
+    },
+    xeroContactCache: {
+      upsert: mocks.xeroContactCacheUpsert,
     },
     processedWebhookEvent: {
       create: mocks.processedCreate,
@@ -115,6 +119,7 @@ describe("processStoredXeroInboundEvents", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.xeroContactCacheUpsert.mockResolvedValue({});
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         processedWebhookEvent: {
@@ -258,6 +263,19 @@ describe("processStoredXeroInboundEvents", () => {
         joinedDate: new Date("2024-04-10"),
       }),
     });
+    expect(mocks.xeroContactCacheUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { contactId: "contact_1" },
+        create: expect.objectContaining({
+          contactId: "contact_1",
+          phoneCountryCode: "64",
+          phoneAreaCode: "27",
+          phoneNumber: "1234567",
+          streetAddressLine1: "1 Alpine Way",
+          postalAddressLine1: "PO Box 1",
+        }),
+      })
+    );
     expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
       expect.objectContaining({
         localModel: "Member",

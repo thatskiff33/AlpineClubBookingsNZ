@@ -116,11 +116,14 @@ const XERO_SCOPES = [
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
+const CONTACT_SYNC_CURSOR_RESOURCE = "CONTACT_SYNC";
 const CONTACT_GROUP_CACHE_CURSOR_RESOURCE = "CONTACT_GROUP_CACHE";
 const DEFAULT_XERO_SYNC_SCOPE = "default";
+const CONTACT_SYNC_CURSOR_OVERLAP_MS = 2 * 60 * 1000;
 const MEMBERSHIP_CURSOR_OVERLAP_MS = 2 * 60 * 1000;
 const MEMBERSHIP_SYNC_THROTTLE_MS = 1200;
 const XERO_PAGE_SIZE = 100;
+const XERO_CONTACT_ID_BATCH_SIZE = 50;
 
 // Xero tokens expire after 30 minutes; refresh 10 minutes early
 const TOKEN_REFRESH_BUFFER_MS = 10 * 60 * 1000; // 10 minutes — buffer for long-running bulk ops (contact sync, membership refresh)
@@ -130,12 +133,48 @@ let xeroDailyLimitUntilMs = 0;
 
 interface XeroSyncCursorMetadata {
   retryMemberIds?: string[];
+  retryContactIds?: string[];
   changedInvoiceCount?: number;
+  changedContactCount?: number;
   affectedMemberCount?: number;
   groupCount?: number;
   membershipCount?: number;
   windowStart?: string;
   windowEnd?: string;
+}
+
+interface SyncContactsFromXeroOptions {
+  fullResync?: boolean;
+  backfillJoinedDates?: boolean;
+}
+
+interface ImportMembersFromXeroGroupsOptions {
+  allowLiveXeroFetch?: boolean;
+}
+
+interface CachedXeroContact {
+  contactId: string;
+  name: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  emailAddress: string | null;
+  companyNumber: string | null;
+  contactStatus: string;
+  phoneCountryCode: string | null;
+  phoneAreaCode: string | null;
+  phoneNumber: string | null;
+  streetAddressLine1: string | null;
+  streetAddressLine2: string | null;
+  streetCity: string | null;
+  streetRegion: string | null;
+  streetPostalCode: string | null;
+  streetCountry: string | null;
+  postalAddressLine1: string | null;
+  postalAddressLine2: string | null;
+  postalCity: string | null;
+  postalRegion: string | null;
+  postalPostalCode: string | null;
+  postalCountry: string | null;
 }
 
 interface CheckMembershipStatusOptions {
@@ -1338,9 +1377,24 @@ export interface SyncReport {
   total: number;
 }
 
-export async function syncContactsFromXero(): Promise<SyncReport> {
+export async function syncContactsFromXero(
+  options: SyncContactsFromXeroOptions = {}
+): Promise<SyncReport> {
+  const syncStartedAt = new Date();
+  const cursor = options.fullResync
+    ? null
+    : await getXeroSyncCursor(
+        CONTACT_SYNC_CURSOR_RESOURCE,
+        DEFAULT_XERO_SYNC_SCOPE
+      );
+  const cursorMetadata = getXeroSyncCursorMetadata(cursor?.metadata);
+  const ifModifiedSince =
+    !options.fullResync && cursor?.cursorDateTime
+      ? new Date(
+          cursor.cursorDateTime.getTime() - CONTACT_SYNC_CURSOR_OVERLAP_MS
+        )
+      : undefined;
   const { xero, tenantId } = await getAuthenticatedXeroClient();
-
   const report: SyncReport = {
     created: [],
     updated: [],
@@ -1351,207 +1405,260 @@ export async function syncContactsFromXero(): Promise<SyncReport> {
     total: 0,
   };
 
-  let page = 1;
-  let hasMore = true;
+  const changedContacts = await fetchChangedXeroContactsFromXero({
+    xero,
+    tenantId,
+    ifModifiedSince,
+  });
+  const retryContactIds = options.fullResync
+    ? []
+    : Array.from(new Set(cursorMetadata.retryContactIds ?? []));
+  const contactsById = new Map<string, Contact>();
 
-  while (hasMore) {
-    const response = await callXeroApi(
-      () => xero.accountingApi.getContacts(
-        tenantId,
-        undefined, // ifModifiedSince
-        undefined, // where
-        undefined, // order
-        undefined, // iDs
-        page,
-        false // includeArchived
-      ),
-      {
-        operation: "getContacts",
-        resourceType: "CONTACT",
-        workflow: "syncContactsFromXero",
-        context: `syncContacts getContacts(page ${page})`,
+  for (const contact of changedContacts) {
+    if (contact.contactID) {
+      contactsById.set(contact.contactID, contact);
+    }
+  }
+
+  if (retryContactIds.length > 0) {
+    const retryContacts = await fetchXeroContactsByIdsFromXero({
+      xero,
+      tenantId,
+      contactIds: retryContactIds,
+      workflow: "syncContactsFromXero",
+      contextPrefix: "syncContacts retry",
+    });
+
+    for (const contact of retryContacts) {
+      if (contact.contactID) {
+        contactsById.set(contact.contactID, contact);
       }
-    );
+    }
+  }
 
-    const contacts = response.body.contacts ?? [];
-    if (contacts.length === 0) {
-      hasMore = false;
-      break;
+  report.total = contactsById.size;
+  const fetchedAt = new Date();
+  const nextRetryContactIds: string[] = [];
+
+  for (const contact of contactsById.values()) {
+    const contactName = getXeroContactDisplayName(contact);
+
+    if (!contact.contactID) {
+      report.skippedOther.push({
+        name: contactName,
+        reason: "No Xero contact ID",
+      });
+      continue;
     }
 
-    report.total += contacts.length;
-
-    for (const contact of contacts) {
-      const contactName = contact.name || [contact.firstName, contact.lastName].filter(Boolean).join(" ") || "Unknown";
-
-      if (!contact.contactID) {
-        report.skippedOther.push({ name: contactName, reason: "No Xero contact ID" });
+    try {
+      const cachedContact = await upsertXeroContactCacheEntry(contact, fetchedAt);
+      if (!cachedContact) {
+        report.skippedOther.push({
+          name: contactName,
+          reason: "Failed to cache Xero contact snapshot",
+        });
         continue;
       }
 
-      try {
-        // First check if already linked by xeroContactId
-        const alreadyLinked = await prisma.member.findFirst({
-          where: { xeroContactId: contact.contactID },
-        });
-        if (alreadyLinked) {
-          const changes: string[] = [];
-          const updateData: Record<string, unknown> = {};
+      const alreadyLinked = await prisma.member.findFirst({
+        where: { xeroContactId: contact.contactID },
+      });
+      if (alreadyLinked) {
+        const changes: string[] = [];
+        const updateData: Record<string, unknown> = {};
 
-          // Backfill joinedDate if missing
-          if (!alreadyLinked.joinedDate) {
-            const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
-            if (invoiceDate) {
-              updateData.joinedDate = invoiceDate;
-              changes.push(`Joined date set to ${invoiceDate.toISOString().split("T")[0]}`);
-            }
-            await throttle(1500);
+        if (!alreadyLinked.joinedDate && options.backfillJoinedDates) {
+          const invoiceDate = await getContactFirstInvoiceDate(
+            xero,
+            tenantId,
+            contact.contactID
+          );
+          if (invoiceDate) {
+            updateData.joinedDate = invoiceDate;
+            changes.push(
+              `Joined date set to ${invoiceDate.toISOString().split("T")[0]}`
+            );
           }
-
-          // Backfill phone if missing
-          if (!alreadyLinked.phoneNumber) {
-            const phone = getXeroContactPhoneStructured(contact.phones);
-            if (phone) {
-              updateData.phoneCountryCode = phone.phoneCountryCode;
-              updateData.phoneAreaCode = phone.phoneAreaCode;
-              updateData.phoneNumber = phone.phoneNumber;
-              changes.push(`Phone set to ${formatXeroPhone(phone) ?? phone.phoneNumber}`);
-            }
-          }
-
-          // Backfill addresses if missing
-          const addrs = getXeroContactAddresses(contact.addresses);
-          if (!alreadyLinked.streetAddressLine1 && addrs.street) {
-            updateData.streetAddressLine1 = addrs.street.addressLine1;
-            updateData.streetAddressLine2 = addrs.street.addressLine2;
-            updateData.streetCity = addrs.street.city;
-            updateData.streetRegion = addrs.street.region;
-            updateData.streetPostalCode = addrs.street.postalCode;
-            updateData.streetCountry = addrs.street.country;
-            changes.push("Street address set from Xero");
-          }
-          if (!alreadyLinked.postalAddressLine1 && addrs.postal) {
-            updateData.postalAddressLine1 = addrs.postal.addressLine1;
-            updateData.postalAddressLine2 = addrs.postal.addressLine2;
-            updateData.postalCity = addrs.postal.city;
-            updateData.postalRegion = addrs.postal.region;
-            updateData.postalPostalCode = addrs.postal.postalCode;
-            updateData.postalCountry = addrs.postal.country;
-            changes.push("Postal address set from Xero");
-          }
-
-          if (Object.keys(updateData).length > 0) {
-            await prisma.member.update({
-              where: { id: alreadyLinked.id },
-              data: updateData,
-            });
-            report.updated.push({
-              name: `${alreadyLinked.firstName} ${alreadyLinked.lastName}`,
-              memberId: alreadyLinked.id,
-              xeroContactId: contact.contactID,
-              changes,
-            });
-          } else {
-            report.skippedNoChanges++;
-          }
-          continue;
+          await throttle(1500);
         }
 
-        // Fall back to email matching (primary members only)
-        if (!contact.emailAddress) {
-          report.skippedNoEmail.push({ name: contactName, xeroContactId: contact.contactID });
-          continue;
+        if (!alreadyLinked.phoneNumber && cachedContact.phoneNumber) {
+          updateData.phoneCountryCode = cachedContact.phoneCountryCode;
+          updateData.phoneAreaCode = cachedContact.phoneAreaCode;
+          updateData.phoneNumber = cachedContact.phoneNumber;
+          changes.push(
+            `Phone set to ${
+              formatXeroPhone({
+                phoneCountryCode: cachedContact.phoneCountryCode,
+                phoneAreaCode: cachedContact.phoneAreaCode,
+                phoneNumber: cachedContact.phoneNumber,
+              }) ?? cachedContact.phoneNumber
+            }`
+          );
         }
 
-        const member = await prisma.member.findFirst({
-          where: { email: contact.emailAddress.toLowerCase(), canLogin: true },
-        });
+        if (
+          !alreadyLinked.streetAddressLine1 &&
+          cachedContact.streetAddressLine1
+        ) {
+          updateData.streetAddressLine1 = cachedContact.streetAddressLine1;
+          updateData.streetAddressLine2 = cachedContact.streetAddressLine2;
+          updateData.streetCity = cachedContact.streetCity;
+          updateData.streetRegion = cachedContact.streetRegion;
+          updateData.streetPostalCode = cachedContact.streetPostalCode;
+          updateData.streetCountry = cachedContact.streetCountry;
+          changes.push("Street address set from Xero");
+        }
+        if (
+          !alreadyLinked.postalAddressLine1 &&
+          cachedContact.postalAddressLine1
+        ) {
+          updateData.postalAddressLine1 = cachedContact.postalAddressLine1;
+          updateData.postalAddressLine2 = cachedContact.postalAddressLine2;
+          updateData.postalCity = cachedContact.postalCity;
+          updateData.postalRegion = cachedContact.postalRegion;
+          updateData.postalPostalCode = cachedContact.postalPostalCode;
+          updateData.postalCountry = cachedContact.postalCountry;
+          changes.push("Postal address set from Xero");
+        }
 
-        if (member) {
-          const changes: string[] = [];
-          const updateData: Record<string, unknown> = {};
-
-          if (member.xeroContactId !== contact.contactID) {
-            updateData.xeroContactId = contact.contactID;
-            changes.push("Linked to Xero contact");
-          }
-          // Populate joinedDate from first invoice
-          if (!member.joinedDate) {
-            const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
-            if (invoiceDate) {
-              updateData.joinedDate = invoiceDate;
-              changes.push(`Joined date set to ${invoiceDate.toISOString().split("T")[0]}`);
-            }
-            await throttle(1500);
-          }
-          // Backfill phone if missing
-          if (!member.phoneNumber) {
-            const phone = getXeroContactPhoneStructured(contact.phones);
-            if (phone) {
-              updateData.phoneCountryCode = phone.phoneCountryCode;
-              updateData.phoneAreaCode = phone.phoneAreaCode;
-              updateData.phoneNumber = phone.phoneNumber;
-              changes.push(`Phone set to ${formatXeroPhone(phone) ?? phone.phoneNumber}`);
-            }
-          }
-
-          // Backfill addresses if missing
-          const memberAddrs = getXeroContactAddresses(contact.addresses);
-          if (!member.streetAddressLine1 && memberAddrs.street) {
-            updateData.streetAddressLine1 = memberAddrs.street.addressLine1;
-            updateData.streetAddressLine2 = memberAddrs.street.addressLine2;
-            updateData.streetCity = memberAddrs.street.city;
-            updateData.streetRegion = memberAddrs.street.region;
-            updateData.streetPostalCode = memberAddrs.street.postalCode;
-            updateData.streetCountry = memberAddrs.street.country;
-            changes.push("Street address set from Xero");
-          }
-          if (!member.postalAddressLine1 && memberAddrs.postal) {
-            updateData.postalAddressLine1 = memberAddrs.postal.addressLine1;
-            updateData.postalAddressLine2 = memberAddrs.postal.addressLine2;
-            updateData.postalCity = memberAddrs.postal.city;
-            updateData.postalRegion = memberAddrs.postal.region;
-            updateData.postalPostalCode = memberAddrs.postal.postalCode;
-            updateData.postalCountry = memberAddrs.postal.country;
-            changes.push("Postal address set from Xero");
-          }
-
-          if (Object.keys(updateData).length > 0) {
-            await prisma.member.update({
-              where: { id: member.id },
-              data: updateData,
-            });
-            report.updated.push({
-              name: `${member.firstName} ${member.lastName}`,
-              memberId: member.id,
-              xeroContactId: contact.contactID,
-              changes,
-            });
-          } else {
-            report.skippedNoChanges++;
-          }
-        } else {
-          report.skippedOther.push({
-            name: contactName,
-            xeroContactId: contact.contactID,
-            reason: "No matching member by email",
+        if (Object.keys(updateData).length > 0) {
+          await prisma.member.update({
+            where: { id: alreadyLinked.id },
+            data: updateData,
           });
+          report.updated.push({
+            name: `${alreadyLinked.firstName} ${alreadyLinked.lastName}`,
+            memberId: alreadyLinked.id,
+            xeroContactId: contact.contactID,
+            changes,
+          });
+        } else {
+          report.skippedNoChanges += 1;
         }
-      } catch (err) {
-        report.errors.push({
+        continue;
+      }
+
+      if (!cachedContact.emailAddress) {
+        report.skippedNoEmail.push({
           name: contactName,
           xeroContactId: contact.contactID,
-          error: err instanceof Error ? err.message : String(err),
         });
+        continue;
       }
-    }
 
-    page++;
-    // Xero returns up to 100 per page
-    if (contacts.length < 100) {
-      hasMore = false;
+      const member = await prisma.member.findFirst({
+        where: {
+          email: cachedContact.emailAddress.toLowerCase(),
+          canLogin: true,
+        },
+      });
+
+      if (!member) {
+        report.skippedOther.push({
+          name: contactName,
+          xeroContactId: contact.contactID,
+          reason: "No matching member by email",
+        });
+        continue;
+      }
+
+      const changes: string[] = [];
+      const updateData: Record<string, unknown> = {};
+
+      if (member.xeroContactId !== contact.contactID) {
+        updateData.xeroContactId = contact.contactID;
+        changes.push("Linked to Xero contact");
+      }
+
+      if (!member.joinedDate && options.backfillJoinedDates) {
+        const invoiceDate = await getContactFirstInvoiceDate(
+          xero,
+          tenantId,
+          contact.contactID
+        );
+        if (invoiceDate) {
+          updateData.joinedDate = invoiceDate;
+          changes.push(
+            `Joined date set to ${invoiceDate.toISOString().split("T")[0]}`
+          );
+        }
+        await throttle(1500);
+      }
+
+      if (!member.phoneNumber && cachedContact.phoneNumber) {
+        updateData.phoneCountryCode = cachedContact.phoneCountryCode;
+        updateData.phoneAreaCode = cachedContact.phoneAreaCode;
+        updateData.phoneNumber = cachedContact.phoneNumber;
+        changes.push(
+          `Phone set to ${
+            formatXeroPhone({
+              phoneCountryCode: cachedContact.phoneCountryCode,
+              phoneAreaCode: cachedContact.phoneAreaCode,
+              phoneNumber: cachedContact.phoneNumber,
+            }) ?? cachedContact.phoneNumber
+          }`
+        );
+      }
+
+      if (!member.streetAddressLine1 && cachedContact.streetAddressLine1) {
+        updateData.streetAddressLine1 = cachedContact.streetAddressLine1;
+        updateData.streetAddressLine2 = cachedContact.streetAddressLine2;
+        updateData.streetCity = cachedContact.streetCity;
+        updateData.streetRegion = cachedContact.streetRegion;
+        updateData.streetPostalCode = cachedContact.streetPostalCode;
+        updateData.streetCountry = cachedContact.streetCountry;
+        changes.push("Street address set from Xero");
+      }
+      if (!member.postalAddressLine1 && cachedContact.postalAddressLine1) {
+        updateData.postalAddressLine1 = cachedContact.postalAddressLine1;
+        updateData.postalAddressLine2 = cachedContact.postalAddressLine2;
+        updateData.postalCity = cachedContact.postalCity;
+        updateData.postalRegion = cachedContact.postalRegion;
+        updateData.postalPostalCode = cachedContact.postalPostalCode;
+        updateData.postalCountry = cachedContact.postalCountry;
+        changes.push("Postal address set from Xero");
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await prisma.member.update({
+          where: { id: member.id },
+          data: updateData,
+        });
+        report.updated.push({
+          name: `${member.firstName} ${member.lastName}`,
+          memberId: member.id,
+          xeroContactId: contact.contactID,
+          changes,
+        });
+      } else {
+        report.skippedNoChanges += 1;
+      }
+    } catch (err) {
+      nextRetryContactIds.push(contact.contactID);
+      report.errors.push({
+        name: contactName,
+        xeroContactId: contact.contactID,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
+
+  const completedAt = new Date();
+  await upsertXeroSyncCursor({
+    resourceType: CONTACT_SYNC_CURSOR_RESOURCE,
+    scope: DEFAULT_XERO_SYNC_SCOPE,
+    cursorDateTime: syncStartedAt,
+    lastSuccessfulSyncAt: completedAt,
+    metadata: {
+      retryContactIds: Array.from(new Set(nextRetryContactIds)),
+      changedContactCount: changedContacts.length,
+      windowStart: ifModifiedSince?.toISOString(),
+      windowEnd: syncStartedAt.toISOString(),
+    },
+  });
 
   return report;
 }
@@ -1622,9 +1729,18 @@ function getXeroSyncCursorMetadata(
           (memberId): memberId is string => typeof memberId === "string"
         )
       : [],
+    retryContactIds: Array.isArray(value.retryContactIds)
+      ? value.retryContactIds.filter(
+          (contactId): contactId is string => typeof contactId === "string"
+        )
+      : [],
     changedInvoiceCount:
       typeof value.changedInvoiceCount === "number"
         ? value.changedInvoiceCount
+        : undefined,
+    changedContactCount:
+      typeof value.changedContactCount === "number"
+        ? value.changedContactCount
         : undefined,
     affectedMemberCount:
       typeof value.affectedMemberCount === "number"
@@ -2041,46 +2157,181 @@ function getMissingFieldsForXeroContactCreate(member: {
   return missingFields;
 }
 
-/**
- * Convenience: extract structured phone fields from Xero phones array for Prisma create/update spread.
- */
-function spreadPhoneFromXero(phones?: Array<{ phoneType?: Phone.PhoneTypeEnum; phoneCountryCode?: string; phoneAreaCode?: string; phoneNumber?: string }>): Record<string, string | null> {
-  const phone = getXeroContactPhoneStructured(phones);
-  if (!phone) return {};
+function getXeroContactDisplayName(contact: {
+  name?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}): string {
+  return (
+    contact.name ||
+    [contact.firstName, contact.lastName].filter(Boolean).join(" ") ||
+    "Unknown"
+  );
+}
+
+function parseXeroCompanyNumberDate(
+  companyNumber?: string | null
+): Date | null {
+  if (!companyNumber) {
+    return null;
+  }
+
+  const match = companyNumber.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, dd, mm, yyyy] = match;
+  const parsed = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getXeroContactSourceUpdatedAt(contact: Contact): Date | null {
+  if (!contact.updatedDateUTC) {
+    return null;
+  }
+
+  const updatedAt = new Date(contact.updatedDateUTC.toString());
+  return Number.isNaN(updatedAt.getTime()) ? null : updatedAt;
+}
+
+function buildCachedXeroContact(contact: Contact): CachedXeroContact | null {
+  if (!contact.contactID) {
+    return null;
+  }
+
+  const phone = getXeroContactPhoneStructured(contact.phones);
+  const addresses = getXeroContactAddresses(contact.addresses);
+
   return {
-    phoneCountryCode: phone.phoneCountryCode,
-    phoneAreaCode: phone.phoneAreaCode,
-    phoneNumber: phone.phoneNumber,
+    contactId: contact.contactID,
+    name: contact.name ?? null,
+    firstName: contact.firstName ?? null,
+    lastName: contact.lastName ?? null,
+    emailAddress: contact.emailAddress ?? null,
+    companyNumber: contact.companyNumber ?? null,
+    contactStatus: contact.contactStatus?.toString() || "ACTIVE",
+    phoneCountryCode: phone?.phoneCountryCode ?? null,
+    phoneAreaCode: phone?.phoneAreaCode ?? null,
+    phoneNumber: phone?.phoneNumber ?? null,
+    streetAddressLine1: addresses.street?.addressLine1 ?? null,
+    streetAddressLine2: addresses.street?.addressLine2 ?? null,
+    streetCity: addresses.street?.city ?? null,
+    streetRegion: addresses.street?.region ?? null,
+    streetPostalCode: addresses.street?.postalCode ?? null,
+    streetCountry: addresses.street?.country ?? null,
+    postalAddressLine1: addresses.postal?.addressLine1 ?? null,
+    postalAddressLine2: addresses.postal?.addressLine2 ?? null,
+    postalCity: addresses.postal?.city ?? null,
+    postalRegion: addresses.postal?.region ?? null,
+    postalPostalCode: addresses.postal?.postalCode ?? null,
+    postalCountry: addresses.postal?.country ?? null,
   };
 }
 
-/**
- * Convenience: extract structured address fields from Xero addresses array for Prisma create/update spread.
- */
-function spreadAddressesFromXero(addresses?: Array<{
-  addressType?: Address.AddressTypeEnum;
-  addressLine1?: string; addressLine2?: string;
-  city?: string; region?: string; postalCode?: string; country?: string;
-}>): Record<string, string | null> {
-  const addrs = getXeroContactAddresses(addresses);
-  const result: Record<string, string | null> = {};
-  if (addrs.street) {
-    result.streetAddressLine1 = addrs.street.addressLine1;
-    result.streetAddressLine2 = addrs.street.addressLine2;
-    result.streetCity = addrs.street.city;
-    result.streetRegion = addrs.street.region;
-    result.streetPostalCode = addrs.street.postalCode;
-    result.streetCountry = addrs.street.country;
+async function upsertXeroContactCacheEntry(
+  contact: Contact,
+  fetchedAt: Date
+): Promise<CachedXeroContact | null> {
+  const cachedContact = buildCachedXeroContact(contact);
+  if (!cachedContact) {
+    return null;
   }
-  if (addrs.postal) {
-    result.postalAddressLine1 = addrs.postal.addressLine1;
-    result.postalAddressLine2 = addrs.postal.addressLine2;
-    result.postalCity = addrs.postal.city;
-    result.postalRegion = addrs.postal.region;
-    result.postalPostalCode = addrs.postal.postalCode;
-    result.postalCountry = addrs.postal.country;
+
+  await prisma.xeroContactCache.upsert({
+    where: { contactId: cachedContact.contactId },
+    create: {
+      ...cachedContact,
+      sourceUpdatedAt: getXeroContactSourceUpdatedAt(contact),
+      fetchedAt,
+    },
+    update: {
+      ...cachedContact,
+      sourceUpdatedAt: getXeroContactSourceUpdatedAt(contact),
+      fetchedAt,
+    },
+  });
+
+  return cachedContact;
+}
+
+async function fetchXeroContactsByIdsFromXero(input: {
+  xero: XeroClient;
+  tenantId: string;
+  contactIds: string[];
+  workflow: string;
+  contextPrefix: string;
+}): Promise<Contact[]> {
+  const contacts: Contact[] = [];
+
+  for (let index = 0; index < input.contactIds.length; index += XERO_CONTACT_ID_BATCH_SIZE) {
+    const batch = input.contactIds.slice(index, index + XERO_CONTACT_ID_BATCH_SIZE);
+    const response = await callXeroApi(
+      () =>
+        input.xero.accountingApi.getContacts(
+          input.tenantId,
+          undefined,
+          undefined,
+          undefined,
+          batch
+        ),
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: input.workflow,
+        context: `${input.contextPrefix} getContacts(batch ${Math.floor(index / XERO_CONTACT_ID_BATCH_SIZE) + 1})`,
+      }
+    );
+
+    contacts.push(...(response.body.contacts ?? []));
   }
-  return result;
+
+  return contacts;
+}
+
+async function fetchChangedXeroContactsFromXero(input: {
+  xero: XeroClient;
+  tenantId: string;
+  ifModifiedSince?: Date;
+}): Promise<Contact[]> {
+  const contacts: Contact[] = [];
+  let page = 1;
+
+  while (true) {
+    const response = await callXeroApi(
+      () =>
+        input.xero.accountingApi.getContacts(
+          input.tenantId,
+          input.ifModifiedSince,
+          undefined,
+          "UpdatedDateUTC ASC",
+          undefined,
+          page,
+          false
+        ),
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "syncContactsFromXero",
+        context: `syncContacts getContacts(page ${page})`,
+      }
+    );
+
+    const pageContacts = response.body.contacts ?? [];
+    if (pageContacts.length === 0) {
+      break;
+    }
+
+    contacts.push(...pageContacts);
+
+    if (pageContacts.length < XERO_PAGE_SIZE) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  return contacts;
 }
 
 /**
@@ -2119,7 +2370,8 @@ function parseXeroError(err: unknown): string {
  */
 export async function importMembersFromXeroGroups(
   groupMappings: Array<{ groupId: string; groupName: string; ageTier: AgeTier }>,
-  sendInvites: boolean
+  sendInvites: boolean,
+  options: ImportMembersFromXeroGroupsOptions = {}
 ): Promise<{
   created: number;
   createdAsDependent: number;
@@ -2131,8 +2383,6 @@ export async function importMembersFromXeroGroups(
   errorDetails: Array<{ member: string; error: string }>;
   groupsProcessed: string[];
 }> {
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
-
   let created = 0;
   let createdAsDependent = 0;
   let skippedExisting = 0;
@@ -2145,341 +2395,422 @@ export async function importMembersFromXeroGroups(
 
   // Hash a random UUID — unguessable placeholder password
   const placeholderHash = await hash(randomBytes(32).toString("hex"), 13);
+  const groupCacheCursor = await getXeroSyncCursor(
+    CONTACT_GROUP_CACHE_CURSOR_RESOURCE,
+    DEFAULT_XERO_SYNC_SCOPE
+  );
+  if (!groupCacheCursor?.lastSuccessfulSyncAt) {
+    throw new Error(
+      "Xero contact group cache is empty. Refresh cached contact groups before importing members."
+    );
+  }
+
+  const uniqueGroupIds = Array.from(
+    new Set(groupMappings.map((mapping) => mapping.groupId))
+  );
+  const membershipRows = await prisma.xeroContactGroupMembershipCache.findMany({
+    where: {
+      contactGroupId: {
+        in: uniqueGroupIds,
+      },
+    },
+    select: {
+      contactGroupId: true,
+      contactId: true,
+    },
+  });
+  const contactIdsByGroup = new Map<string, string[]>();
+  for (const row of membershipRows) {
+    const existing = contactIdsByGroup.get(row.contactGroupId) ?? [];
+    existing.push(row.contactId);
+    contactIdsByGroup.set(row.contactGroupId, existing);
+  }
+
+  const uniqueContactIds = Array.from(
+    new Set(membershipRows.map((row) => row.contactId))
+  );
+  const contactSyncCursor = await getXeroSyncCursor(
+    CONTACT_SYNC_CURSOR_RESOURCE,
+    DEFAULT_XERO_SYNC_SCOPE
+  );
+  const cachedContacts = uniqueContactIds.length
+    ? await prisma.xeroContactCache.findMany({
+        where: {
+          contactId: {
+            in: uniqueContactIds,
+          },
+        },
+        select: {
+          contactId: true,
+          name: true,
+          firstName: true,
+          lastName: true,
+          emailAddress: true,
+          companyNumber: true,
+          contactStatus: true,
+          phoneCountryCode: true,
+          phoneAreaCode: true,
+          phoneNumber: true,
+          streetAddressLine1: true,
+          streetAddressLine2: true,
+          streetCity: true,
+          streetRegion: true,
+          streetPostalCode: true,
+          streetCountry: true,
+          postalAddressLine1: true,
+          postalAddressLine2: true,
+          postalCity: true,
+          postalRegion: true,
+          postalPostalCode: true,
+          postalCountry: true,
+        },
+      })
+    : [];
+  const cachedContactsById = new Map(
+    cachedContacts.map((contact) => [contact.contactId, contact])
+  );
+  const missingContactIds = uniqueContactIds.filter(
+    (contactId) => !cachedContactsById.has(contactId)
+  );
+
+  if (missingContactIds.length > 0) {
+    if (!contactSyncCursor?.lastSuccessfulSyncAt && !options.allowLiveXeroFetch) {
+      throw new Error(
+        "Xero contact cache is empty. Run contact sync before importing members."
+      );
+    }
+
+    if (!options.allowLiveXeroFetch) {
+      throw new Error(
+        `Xero contact cache is missing ${missingContactIds.length} contact snapshot(s). Run contact sync first, or retry the import in repair mode.`
+      );
+    }
+
+    const { xero, tenantId } = await getAuthenticatedXeroClient();
+    const repairedContacts = await fetchXeroContactsByIdsFromXero({
+      xero,
+      tenantId,
+      contactIds: missingContactIds,
+      workflow: "importMembersFromXeroGroups",
+      contextPrefix: "importMembersFromXeroGroups repair",
+    });
+    const repairedAt = new Date();
+
+    for (const contact of repairedContacts) {
+      const cachedContact = await upsertXeroContactCacheEntry(contact, repairedAt);
+      if (cachedContact) {
+        cachedContactsById.set(cachedContact.contactId, cachedContact);
+      }
+    }
+  }
 
   for (const mapping of groupMappings) {
-    try {
-      // Get contact IDs from the group
-      const response = await callXeroApi(
-        () => xero.accountingApi.getContactGroup(tenantId, mapping.groupId),
-        {
-          operation: "getContactGroup",
-          resourceType: "CONTACT_GROUP",
-          workflow: "importMembersFromXeroGroups",
-          context: `getContactGroup(${mapping.groupName})`,
-        }
-      );
-      const groupContacts = response.body.contactGroups?.[0]?.contacts ?? [];
-      groupsProcessed.push(mapping.groupName);
+    const contactIds = contactIdsByGroup.get(mapping.groupId) ?? [];
+    groupsProcessed.push(mapping.groupName);
+    logger.info(
+      {
+        groupName: mapping.groupName,
+        groupContactCount: contactIds.length,
+        cachedContactCount: contactIds.filter((contactId) =>
+          cachedContactsById.has(contactId)
+        ).length,
+      },
+      "Loaded cached group contacts for import"
+    );
 
-      // The group endpoint only returns summary data (IDs/names, no emails).
-      // Fetch full contact details in batches using the IDs filter.
-      const contactIds = groupContacts
-        .map((c) => c.contactID)
-        .filter(Boolean) as string[];
-
-      const contacts: Contact[] = [];
-      // Xero supports filtering by up to ~50 IDs at a time via the IDs param
-      const batchSize = 50;
-      for (let i = 0; i < contactIds.length; i += batchSize) {
-        const batch = contactIds.slice(i, i + batchSize);
-        const fullResponse = await callXeroApi(
-          () => xero.accountingApi.getContacts(
-            tenantId,
-            undefined, // ifModifiedSince
-            undefined, // where
-            undefined, // order
-            batch       // iDs
-          ),
-          {
-            operation: "getContacts",
-            resourceType: "CONTACT",
-            workflow: "importMembersFromXeroGroups",
-            context: `getContacts(batch ${Math.floor(i / batchSize) + 1})`,
-          }
-        );
-        contacts.push(...(fullResponse.body.contacts ?? []));
+    for (const contactId of contactIds) {
+      const contact = cachedContactsById.get(contactId);
+      if (!contact) {
+        errors++;
+        errorDetails.push({
+          member: `${mapping.groupName}:${contactId}`,
+          error:
+            "Missing cached Xero contact snapshot. Run contact sync first, or retry the import in repair mode.",
+        });
+        continue;
       }
 
-      logger.info({ groupName: mapping.groupName, groupContactCount: groupContacts.length, fetchedCount: contacts.length }, "Fetched group contacts for import");
-
-      for (const contact of contacts) {
-        try {
-          if (!contact.emailAddress) {
-            skippedNoEmail++;
-            const cName = [contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.name || "Unknown";
-            if (contact.contactID) {
-              skippedNoEmailDetails.push({ name: cName, xeroContactId: contact.contactID });
-            }
-            continue;
-          }
-
-          const email = contact.emailAddress.toLowerCase().trim();
-
-          // Check if this Xero contact is already linked to any member
-          if (contact.contactID) {
-            const alreadyLinked = await prisma.member.findFirst({
-              where: { xeroContactId: contact.contactID },
-            });
-            if (alreadyLinked) {
-              skippedExisting++;
-              continue;
-            }
-          }
-
-          // Find the primary account holder with this email
-          const existingPrimary = await prisma.member.findFirst({
-            where: { email, canLogin: true },
+      try {
+        const contactName = getXeroContactDisplayName(contact);
+        if (!contact.emailAddress) {
+          skippedNoEmail++;
+          skippedNoEmailDetails.push({
+            name: contactName,
+            xeroContactId: contact.contactId,
           });
+          continue;
+        }
 
-          if (existingPrimary) {
-            // Check if this is the same person (name match) or a family dependent
-            const contactFirstName = (contact.firstName || "").toLowerCase().trim();
-            const contactLastName = (contact.lastName || "").toLowerCase().trim();
-            const primaryFirstName = existingPrimary.firstName.toLowerCase().trim();
-            const primaryLastName = existingPrimary.lastName.toLowerCase().trim();
+        const email = contact.emailAddress.toLowerCase().trim();
 
-            const isSamePerson =
-              (contactFirstName === primaryFirstName && contactLastName === primaryLastName) ||
-              (!contactFirstName && !contactLastName); // No name data — assume same person
+        const alreadyLinked = await prisma.member.findFirst({
+          where: { xeroContactId: contact.contactId },
+        });
+        if (alreadyLinked) {
+          skippedExisting++;
+          continue;
+        }
 
-            if (isSamePerson) {
-              skippedExisting++;
-              // Link xeroContactId and backfill DOB/phone/joinedDate if missing
-              const updates: Record<string, unknown> = {};
-              if (!existingPrimary.xeroContactId && contact.contactID) {
-                updates.xeroContactId = contact.contactID;
+        const existingPrimary = await prisma.member.findFirst({
+          where: { email, canLogin: true },
+        });
+
+        if (existingPrimary) {
+          const contactFirstName = (contact.firstName || "").toLowerCase().trim();
+          const contactLastName = (contact.lastName || "").toLowerCase().trim();
+          const primaryFirstName = existingPrimary.firstName.toLowerCase().trim();
+          const primaryLastName = existingPrimary.lastName.toLowerCase().trim();
+
+          const isSamePerson =
+            (contactFirstName === primaryFirstName &&
+              contactLastName === primaryLastName) ||
+            (!contactFirstName && !contactLastName);
+
+          if (isSamePerson) {
+            skippedExisting++;
+            const updates: Record<string, unknown> = {};
+
+            if (!existingPrimary.xeroContactId) {
+              updates.xeroContactId = contact.contactId;
+            }
+            if (!existingPrimary.dateOfBirth) {
+              const parsedDateOfBirth = parseXeroCompanyNumberDate(
+                contact.companyNumber
+              );
+              if (parsedDateOfBirth) {
+                updates.dateOfBirth = parsedDateOfBirth;
               }
-              if (!existingPrimary.dateOfBirth && contact.companyNumber) {
-                const dobMatch = contact.companyNumber.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-                if (dobMatch) {
-                  const parsed = new Date(`${dobMatch[3]}-${dobMatch[2]}-${dobMatch[1]}T00:00:00`);
-                  if (!isNaN(parsed.getTime())) {
-                    updates.dateOfBirth = parsed;
-                  }
-                }
-              }
-              if (!existingPrimary.phoneNumber) {
-                const phone = getXeroContactPhoneStructured(contact.phones);
-                if (phone) {
-                  updates.phoneCountryCode = phone.phoneCountryCode;
-                  updates.phoneAreaCode = phone.phoneAreaCode;
-                  updates.phoneNumber = phone.phoneNumber;
-                }
-              }
-              // Backfill addresses if missing
-              const existAddrs = getXeroContactAddresses(contact.addresses);
-              if (!existingPrimary.streetAddressLine1 && existAddrs.street) {
-                updates.streetAddressLine1 = existAddrs.street.addressLine1;
-                updates.streetAddressLine2 = existAddrs.street.addressLine2;
-                updates.streetCity = existAddrs.street.city;
-                updates.streetRegion = existAddrs.street.region;
-                updates.streetPostalCode = existAddrs.street.postalCode;
-                updates.streetCountry = existAddrs.street.country;
-              }
-              if (!existingPrimary.postalAddressLine1 && existAddrs.postal) {
-                updates.postalAddressLine1 = existAddrs.postal.addressLine1;
-                updates.postalAddressLine2 = existAddrs.postal.addressLine2;
-                updates.postalCity = existAddrs.postal.city;
-                updates.postalRegion = existAddrs.postal.region;
-                updates.postalPostalCode = existAddrs.postal.postalCode;
-                updates.postalCountry = existAddrs.postal.country;
-              }
-              // Backfill joinedDate from first invoice
-              if (!existingPrimary.joinedDate && contact.contactID) {
-                const invoiceDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
-                if (invoiceDate) updates.joinedDate = invoiceDate;
-                await throttle(1500);
-              }
-              if (Object.keys(updates).length > 0) {
-                await prisma.member.update({
-                  where: { id: existingPrimary.id },
-                  data: updates,
-                });
-                if (updates.xeroContactId) linkedExisting++;
-              }
-              continue;
+            }
+            if (!existingPrimary.phoneNumber && contact.phoneNumber) {
+              updates.phoneCountryCode = contact.phoneCountryCode;
+              updates.phoneAreaCode = contact.phoneAreaCode;
+              updates.phoneNumber = contact.phoneNumber;
+            }
+            if (
+              !existingPrimary.streetAddressLine1 &&
+              contact.streetAddressLine1
+            ) {
+              updates.streetAddressLine1 = contact.streetAddressLine1;
+              updates.streetAddressLine2 = contact.streetAddressLine2;
+              updates.streetCity = contact.streetCity;
+              updates.streetRegion = contact.streetRegion;
+              updates.streetPostalCode = contact.streetPostalCode;
+              updates.streetCountry = contact.streetCountry;
+            }
+            if (
+              !existingPrimary.postalAddressLine1 &&
+              contact.postalAddressLine1
+            ) {
+              updates.postalAddressLine1 = contact.postalAddressLine1;
+              updates.postalAddressLine2 = contact.postalAddressLine2;
+              updates.postalCity = contact.postalCity;
+              updates.postalRegion = contact.postalRegion;
+              updates.postalPostalCode = contact.postalPostalCode;
+              updates.postalCountry = contact.postalCountry;
             }
 
-            // Also check if this contact already exists as a non-login family member
-            const existingFamilyMember = await prisma.member.findFirst({
-              where: {
-                email,
-                canLogin: false,
-                firstName: { equals: contact.firstName || "Unknown", mode: "insensitive" },
-                lastName: { equals: contact.lastName || "Unknown", mode: "insensitive" },
-              },
-            });
-            if (existingFamilyMember) {
-              skippedExisting++;
-              // Link xeroContactId if missing
-              if (!existingFamilyMember.xeroContactId && contact.contactID) {
-                await prisma.member.update({
-                  where: { id: existingFamilyMember.id },
-                  data: { xeroContactId: contact.contactID },
-                });
+            if (Object.keys(updates).length > 0) {
+              await prisma.member.update({
+                where: { id: existingPrimary.id },
+                data: updates,
+              });
+              if (updates.xeroContactId) {
                 linkedExisting++;
               }
-              continue;
             }
-
-            // Different name — create as non-login family member and add to same family group
-            let depFirstName = contact.firstName || "";
-            let depLastName = contact.lastName || "";
-            if (!depFirstName && !depLastName && contact.name) {
-              const parts = contact.name.trim().split(/\s+/);
-              depFirstName = parts[0] || "Unknown";
-              depLastName = parts.slice(1).join(" ") || "Unknown";
-            }
-            if (!depFirstName) depFirstName = "Unknown";
-            if (!depLastName) depLastName = "Unknown";
-
-            let depDob: Date | null = null;
-            if (contact.companyNumber) {
-              const match = contact.companyNumber.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-              if (match) {
-                const [, dd, mm, yyyy] = match;
-                const parsed = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
-                if (!isNaN(parsed.getTime())) {
-                  depDob = parsed;
-                }
-              }
-            }
-
-            const newFamilyMember = await prisma.member.create({
-              data: {
-                email,
-                firstName: depFirstName,
-                lastName: depLastName,
-                passwordHash: placeholderHash,
-                ageTier: mapping.ageTier,
-                dateOfBirth: depDob,
-                xeroContactId: contact.contactID || null,
-                ...spreadPhoneFromXero(contact.phones),
-                ...spreadAddressesFromXero(contact.addresses),
-                active: true,
-                emailVerified: true,
-                canLogin: false,
-                inheritEmailFromId: existingPrimary.id,
-              },
-            });
-
-            // Add both members to a shared family group (create if needed)
-            const existingGroup = await prisma.familyGroupMember.findFirst({
-              where: { memberId: existingPrimary.id },
-              select: { familyGroupId: true },
-            });
-
-            if (existingGroup) {
-              // Add new member to existing group
-              await prisma.familyGroupMember.create({
-                data: {
-                  familyGroupId: existingGroup.familyGroupId,
-                  memberId: newFamilyMember.id,
-                  role: "MEMBER",
-                },
-              }).catch(() => {}); // Ignore duplicate
-            } else {
-              // Create new family group with both members
-              const group = await prisma.familyGroup.create({
-                data: { name: `${existingPrimary.lastName} Family` },
-              });
-              await prisma.familyGroupMember.createMany({
-                data: [
-                  { familyGroupId: group.id, memberId: existingPrimary.id, role: "ADMIN" },
-                  { familyGroupId: group.id, memberId: newFamilyMember.id, role: "MEMBER" },
-                ],
-                skipDuplicates: true,
-              });
-            }
-
-            createdAsDependent++;
             continue;
           }
 
-          // Parse name — Xero may have firstName/lastName or just name
-          let firstName = contact.firstName || "";
-          let lastName = contact.lastName || "";
-          if (!firstName && !lastName && contact.name) {
-            const parts = contact.name.trim().split(/\s+/);
-            firstName = parts[0] || "Unknown";
-            lastName = parts.slice(1).join(" ") || "Unknown";
-          }
-          if (!firstName) firstName = "Unknown";
-          if (!lastName) lastName = "Unknown";
-
-          // Parse DOB from Xero's companyNumber (NZBN) field — format dd/mm/yyyy
-          let dateOfBirth: Date | null = null;
-          if (contact.companyNumber) {
-            const match = contact.companyNumber.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-            if (match) {
-              const [, dd, mm, yyyy] = match;
-              const parsed = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
-              if (!isNaN(parsed.getTime())) {
-                dateOfBirth = parsed;
-              }
+          const existingFamilyMember = await prisma.member.findFirst({
+            where: {
+              email,
+              canLogin: false,
+              firstName: {
+                equals: contact.firstName || "Unknown",
+                mode: "insensitive",
+              },
+              lastName: {
+                equals: contact.lastName || "Unknown",
+                mode: "insensitive",
+              },
+            },
+          });
+          if (existingFamilyMember) {
+            skippedExisting++;
+            if (!existingFamilyMember.xeroContactId) {
+              await prisma.member.update({
+                where: { id: existingFamilyMember.id },
+                data: { xeroContactId: contact.contactId },
+              });
+              linkedExisting++;
             }
+            continue;
           }
 
-          // Fetch joined date from first invoice before creating
-          let memberJoinedDate: Date | null = null;
-          if (contact.contactID) {
-            memberJoinedDate = await getContactFirstInvoiceDate(xero, tenantId, contact.contactID);
-            await throttle(1500);
+          let depFirstName = contact.firstName || "";
+          let depLastName = contact.lastName || "";
+          if (!depFirstName && !depLastName && contact.name) {
+            const parts = contact.name.trim().split(/\s+/);
+            depFirstName = parts[0] || "Unknown";
+            depLastName = parts.slice(1).join(" ") || "Unknown";
           }
+          if (!depFirstName) depFirstName = "Unknown";
+          if (!depLastName) depLastName = "Unknown";
 
-          // Create member
-          const member = await prisma.member.create({
+          const depDob = parseXeroCompanyNumberDate(contact.companyNumber);
+
+          const newFamilyMember = await prisma.member.create({
             data: {
               email,
-              firstName,
-              lastName,
+              firstName: depFirstName,
+              lastName: depLastName,
               passwordHash: placeholderHash,
               ageTier: mapping.ageTier,
-              dateOfBirth,
-              xeroContactId: contact.contactID || null,
-              ...spreadPhoneFromXero(contact.phones),
-              ...spreadAddressesFromXero(contact.addresses),
+              dateOfBirth: depDob,
+              xeroContactId: contact.contactId,
+              phoneCountryCode: contact.phoneCountryCode,
+              phoneAreaCode: contact.phoneAreaCode,
+              phoneNumber: contact.phoneNumber,
+              streetAddressLine1: contact.streetAddressLine1,
+              streetAddressLine2: contact.streetAddressLine2,
+              streetCity: contact.streetCity,
+              streetRegion: contact.streetRegion,
+              streetPostalCode: contact.streetPostalCode,
+              streetCountry: contact.streetCountry,
+              postalAddressLine1: contact.postalAddressLine1,
+              postalAddressLine2: contact.postalAddressLine2,
+              postalCity: contact.postalCity,
+              postalRegion: contact.postalRegion,
+              postalPostalCode: contact.postalPostalCode,
+              postalCountry: contact.postalCountry,
               active: true,
-              emailVerified: true, // Xero-synced members don't need email verification
-              joinedDate: memberJoinedDate,
+              emailVerified: true,
+              canLogin: false,
+              inheritEmailFromId: existingPrimary.id,
             },
           });
 
-          created++;
+          const existingGroup = await prisma.familyGroupMember.findFirst({
+            where: { memberId: existingPrimary.id },
+            select: { familyGroupId: true },
+          });
 
-          // Optionally send invite email
-          if (sendInvites) {
-            try {
-              const token = randomBytes(32).toString("hex");
-              const expiresAt = new Date(
-                Date.now() + 7 * 24 * 60 * 60 * 1000
-              ); // 7 days
-
-              await prisma.passwordResetToken.create({
-                data: {
-                  token,
-                  memberId: member.id,
-                  expiresAt,
+          if (existingGroup) {
+            await prisma.familyGroupMember.create({
+              data: {
+                familyGroupId: existingGroup.familyGroupId,
+                memberId: newFamilyMember.id,
+                role: "MEMBER",
+              },
+            }).catch(() => {});
+          } else {
+            const group = await prisma.familyGroup.create({
+              data: { name: `${existingPrimary.lastName} Family` },
+            });
+            await prisma.familyGroupMember.createMany({
+              data: [
+                {
+                  familyGroupId: group.id,
+                  memberId: existingPrimary.id,
+                  role: "ADMIN",
                 },
-              });
-
-              // Fire-and-forget
-              sendPasswordResetEmail(member.email, token).catch((err) => {
-                logger.error({ err, email: member.email }, "Failed to send invite email during member import");
-              });
-            } catch (emailErr) {
-              logger.error({ err: emailErr, email: member.email }, "Failed to create invite token during member import");
-            }
+                {
+                  familyGroupId: group.id,
+                  memberId: newFamilyMember.id,
+                  role: "MEMBER",
+                },
+              ],
+              skipDuplicates: true,
+            });
           }
-        } catch (contactErr) {
-          // Abort entire import on daily limit — no point continuing
-          if (contactErr instanceof XeroDailyLimitError) throw contactErr;
-          logger.error({ err: contactErr, contactEmail: contact.emailAddress }, "Error processing contact during member import");
-          errors++;
-          const contactLabel = contact.name ||
-            [contact.firstName, contact.lastName].filter(Boolean).join(" ") ||
-            contact.emailAddress ||
-            contact.contactID ||
-            "Unknown contact";
-          errorDetails.push({ member: contactLabel, error: parseXeroError(contactErr) });
+
+          createdAsDependent++;
+          continue;
         }
+
+        let firstName = contact.firstName || "";
+        let lastName = contact.lastName || "";
+        if (!firstName && !lastName && contact.name) {
+          const parts = contact.name.trim().split(/\s+/);
+          firstName = parts[0] || "Unknown";
+          lastName = parts.slice(1).join(" ") || "Unknown";
+        }
+        if (!firstName) firstName = "Unknown";
+        if (!lastName) lastName = "Unknown";
+
+        const dateOfBirth = parseXeroCompanyNumberDate(contact.companyNumber);
+
+        const member = await prisma.member.create({
+          data: {
+            email,
+            firstName,
+            lastName,
+            passwordHash: placeholderHash,
+            ageTier: mapping.ageTier,
+            dateOfBirth,
+            xeroContactId: contact.contactId,
+            phoneCountryCode: contact.phoneCountryCode,
+            phoneAreaCode: contact.phoneAreaCode,
+            phoneNumber: contact.phoneNumber,
+            streetAddressLine1: contact.streetAddressLine1,
+            streetAddressLine2: contact.streetAddressLine2,
+            streetCity: contact.streetCity,
+            streetRegion: contact.streetRegion,
+            streetPostalCode: contact.streetPostalCode,
+            streetCountry: contact.streetCountry,
+            postalAddressLine1: contact.postalAddressLine1,
+            postalAddressLine2: contact.postalAddressLine2,
+            postalCity: contact.postalCity,
+            postalRegion: contact.postalRegion,
+            postalPostalCode: contact.postalPostalCode,
+            postalCountry: contact.postalCountry,
+            active: true,
+            emailVerified: true,
+          },
+        });
+
+        created++;
+
+        if (sendInvites) {
+          try {
+            const token = randomBytes(32).toString("hex");
+            const expiresAt = new Date(
+              Date.now() + 7 * 24 * 60 * 60 * 1000
+            );
+
+            await prisma.passwordResetToken.create({
+              data: {
+                token,
+                memberId: member.id,
+                expiresAt,
+              },
+            });
+
+            sendPasswordResetEmail(member.email, token).catch((err) => {
+              logger.error(
+                { err, email: member.email },
+                "Failed to send invite email during member import"
+              );
+            });
+          } catch (emailErr) {
+            logger.error(
+              { err: emailErr, email: member.email },
+              "Failed to create invite token during member import"
+            );
+          }
+        }
+      } catch (contactErr) {
+        if (contactErr instanceof XeroDailyLimitError) throw contactErr;
+        logger.error(
+          { err: contactErr, contactEmail: contact.emailAddress },
+          "Error processing cached contact during member import"
+        );
+        errors++;
+        errorDetails.push({
+          member: contact.name || contact.emailAddress || contact.contactId,
+          error: parseXeroError(contactErr),
+        });
       }
-    } catch (groupErr) {
-      // Abort entire import on daily limit — no point continuing
-      if (groupErr instanceof XeroDailyLimitError) throw groupErr;
-      logger.error({ err: groupErr, groupName: mapping.groupName }, "Error fetching group during member import");
-      errors++;
-      errorDetails.push({ member: `Group: ${mapping.groupName}`, error: parseXeroError(groupErr) });
     }
   }
 

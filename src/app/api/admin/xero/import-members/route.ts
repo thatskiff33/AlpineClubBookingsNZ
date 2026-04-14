@@ -15,11 +15,13 @@ const importSchema = z.object({
     })
   ).min(1, "At least one group mapping is required"),
   sendInvites: z.boolean().default(false),
+  repairMissingContactCache: z.boolean().default(false),
 });
 
 /**
  * POST /api/admin/xero/import-members
- * Import members from Xero contact groups into TACBookings.
+ * Import members from cached Xero contact groups into TACBookings.
+ * Repair mode can fetch only missing cached contact snapshots from Xero.
  */
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -50,7 +52,8 @@ export async function POST(req: NextRequest) {
     logger.info({ groupCount: parsed.data.groupMappings.length, groups: parsed.data.groupMappings.map(g => `${g.groupName} (${g.ageTier})`).join(", ") }, "Starting member import from Xero");
     const result = await importMembersFromXeroGroups(
       parsed.data.groupMappings,
-      parsed.data.sendInvites
+      parsed.data.sendInvites,
+      { allowLiveXeroFetch: parsed.data.repairMissingContactCache }
     );
     logger.info({ result }, "Member import from Xero completed");
     return NextResponse.json(result);

@@ -816,6 +816,41 @@ model XeroContactGroupCache {
   @@index([fetchedAt])
 }
 
+model XeroContactCache {
+  id                 String   @id @default(cuid())
+  contactId          String   @unique
+  name               String?
+  firstName          String?
+  lastName           String?
+  emailAddress       String?
+  companyNumber      String?
+  contactStatus      String   @default("ACTIVE")
+  phoneCountryCode   String?
+  phoneAreaCode      String?
+  phoneNumber        String?
+  streetAddressLine1 String?
+  streetAddressLine2 String?
+  streetCity         String?
+  streetRegion       String?
+  streetPostalCode   String?
+  streetCountry      String?
+  postalAddressLine1 String?
+  postalAddressLine2 String?
+  postalCity         String?
+  postalRegion       String?
+  postalPostalCode   String?
+  postalCountry      String?
+  sourceUpdatedAt    DateTime?
+  fetchedAt          DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([emailAddress])
+  @@index([contactStatus])
+  @@index([sourceUpdatedAt])
+  @@index([fetchedAt])
+}
+
 model XeroContactGroupMembershipCache {
   id             String   @id @default(cuid())
   contactGroupId String
