@@ -148,11 +148,23 @@ Primary files updated:
 - `src/lib/xero.ts`
 - `src/lib/xero-inbound-reconciliation.ts`
 
+### Phase 7: Inbound reconciliation now includes incremental contact-sync safety net
+
+Implemented:
+
+- extended the shared inbound reconciliation cycle to run the existing incremental `CONTACT_SYNC` cursor as a throttled safety-net step after stored inbound events and before membership reconciliation
+- kept that contact-sync pass summarized/throttled so webhook bursts do not repeatedly re-run it, while the 15-minute inbound cron can still catch missed or non-webhook contact/group drift
+- kept operator-triggered `sync-contacts` and full contact-group refresh as repair/safety-net tools, but they are no longer the only way to advance missed contact-cache or touched group-membership state
+
+Primary files updated:
+
+- `src/lib/xero-inbound-reconciliation.ts`
+
 ## Remaining Work
 
 ### 1. Phase 7 remaining: make webhook and incremental reconcile the main source of truth
 
-Inbound reconciliation now drives the primary membership-state catch-up path and can selectively keep touched cached contact-group memberships current, but some local business state is still not advanced directly from inbound/incremental changes.
+Inbound reconciliation now drives the primary membership-state catch-up path, can selectively keep touched cached contact-group memberships current, and now includes a throttled incremental contact-sync safety net, but some local business state is still not advanced directly from inbound/incremental changes.
 
 Required outcome:
 
@@ -161,8 +173,7 @@ Required outcome:
 
 Implementation direction:
 
-- extend business-state application beyond the current metadata/link/cache backfills, membership cursor catch-up path, and selective contact-group cache refresh
-- decide whether any additional safety-net incremental pull is needed for contact/group drift beyond the current webhook-driven selective refresh plus deliberate full group refresh
+- extend business-state application beyond the current metadata/link/cache backfills, incremental contact/group maintenance, and membership cursor catch-up path
 - add any remaining incremental pull jobs where webhooks alone are insufficient
 - consider whether bulk replay/filtering improvements are needed on the admin Xero screen after the main reconciliation paths land
 
@@ -244,5 +255,5 @@ Typical commands:
   - `POST /api/admin/xero/import-members` with `repairMissingContactCache`
   - `GET /api/admin/xero/contact-groups?refresh=1` for a deliberate full group rescan
 - Do not reopen already-completed Phase 6/7/8 work unless the remaining phases force a design change.
-- Stored inbound `CONTACT` reconciliation and incremental contact sync now selectively maintain touched cached contact-group memberships. Full group refresh remains the safety net for untouched groups and drift.
-- The next biggest budget win is still Phase 7: make stored inbound events and incremental reconcile the primary driver of the remaining local business state beyond memberships and touched group-cache state.
+- Stored inbound `CONTACT` reconciliation and the shared inbound reconciliation cycle now maintain contact snapshots, touched cached group memberships, and throttled incremental contact drift catch-up. Full group refresh remains the deliberate full-rescan safety net.
+- The next biggest budget win is still Phase 7: make stored inbound events and incremental reconcile the primary driver of the remaining local business state beyond memberships and contact/group cache state.

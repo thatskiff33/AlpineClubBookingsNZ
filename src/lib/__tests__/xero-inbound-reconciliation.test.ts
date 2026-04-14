@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   paymentFindMany: vi.fn(),
   paymentUpdate: vi.fn(),
   subscriptionFindMany: vi.fn(),
+  syncContactsFromXero: vi.fn(),
   refreshAllMembershipStatuses: vi.fn(),
   startXeroSyncOperation: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
@@ -104,6 +105,7 @@ vi.mock("@/lib/xero", async (importOriginal) => {
     getAccountMapping: mocks.getAccountMapping,
     getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
     refreshXeroContactCachesFromContact: mocks.refreshXeroContactCachesFromContact,
+    syncContactsFromXero: mocks.syncContactsFromXero,
     refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
     withXeroRetry: mocks.withXeroRetry,
     findSubscriptionInvoice: (
@@ -618,7 +620,15 @@ describe("runXeroInboundReconciliationCycle", () => {
     vi.resetAllMocks();
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
     mocks.processedCreate.mockRejectedValue({ code: "P2002" });
-    mocks.xeroSyncCursorFindUnique.mockResolvedValue(null);
+    mocks.syncContactsFromXero.mockResolvedValue({
+      created: [],
+      updated: [{ memberId: "mem_1" }],
+      skippedNoChanges: 1,
+      skippedNoEmail: [],
+      skippedOther: [],
+      errors: [],
+      total: 2,
+    });
     mocks.refreshAllMembershipStatuses.mockResolvedValue({
       seasonYear: 2026,
       cursorFrom: "2026-04-14T00:00:00.000Z",
@@ -646,6 +656,12 @@ describe("runXeroInboundReconciliationCycle", () => {
         },
       ])
       .mockResolvedValueOnce([]);
+    mocks.xeroSyncCursorFindUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        cursorDateTime: new Date("2026-04-14T00:04:00.000Z"),
+      })
+      .mockResolvedValueOnce(null);
 
     await expect(
       runXeroInboundReconciliationCycle({
@@ -661,6 +677,17 @@ describe("runXeroInboundReconciliationCycle", () => {
         failed: 0,
         skipped: 1,
       },
+      contactReconciliation: {
+        cursorFrom: null,
+        cursorTo: "2026-04-14T00:04:00.000Z",
+        total: 2,
+        created: 0,
+        updated: 1,
+        skippedNoChanges: 1,
+        skippedNoEmail: 0,
+        skippedOther: 0,
+        errors: 0,
+      },
       membershipReconciliation: {
         seasonYear: 2026,
         cursorFrom: "2026-04-14T00:00:00.000Z",
@@ -674,15 +701,21 @@ describe("runXeroInboundReconciliationCycle", () => {
       },
     });
 
+    expect(mocks.syncContactsFromXero).toHaveBeenCalledTimes(1);
     expect(mocks.refreshAllMembershipStatuses).toHaveBeenCalledWith(2026);
   });
 
-  it("skips duplicate membership cursor refreshes when the cursor is still fresh", async () => {
+  it("skips duplicate contact and membership cursor refreshes when the cursors are still fresh", async () => {
     mocks.inboundFindMany.mockResolvedValue([]);
-    mocks.xeroSyncCursorFindUnique.mockResolvedValue({
-      cursorDateTime: new Date("2026-04-14T00:00:00.000Z"),
-      lastSuccessfulSyncAt: new Date(),
-    });
+    mocks.xeroSyncCursorFindUnique
+      .mockResolvedValueOnce({
+        cursorDateTime: new Date("2026-04-14T00:10:00.000Z"),
+        lastSuccessfulSyncAt: new Date(),
+      })
+      .mockResolvedValueOnce({
+        cursorDateTime: new Date("2026-04-14T00:00:00.000Z"),
+        lastSuccessfulSyncAt: new Date(),
+      });
 
     await expect(
       runXeroInboundReconciliationCycle({
@@ -696,6 +729,20 @@ describe("runXeroInboundReconciliationCycle", () => {
         succeeded: 0,
         failed: 0,
         skipped: 0,
+      },
+      contactReconciliation: {
+        cursorFrom: "2026-04-14T00:10:00.000Z",
+        cursorTo: null,
+        total: 0,
+        created: 0,
+        updated: 0,
+        skippedNoChanges: 0,
+        skippedNoEmail: 0,
+        skippedOther: 0,
+        errors: 0,
+        skipped: true,
+        reason:
+          "Contact cursor was refreshed recently; skipping duplicate incremental reconcile.",
       },
       membershipReconciliation: {
         seasonYear: 2026,
@@ -713,6 +760,7 @@ describe("runXeroInboundReconciliationCycle", () => {
       },
     });
 
+    expect(mocks.syncContactsFromXero).not.toHaveBeenCalled();
     expect(mocks.refreshAllMembershipStatuses).not.toHaveBeenCalled();
   });
 });

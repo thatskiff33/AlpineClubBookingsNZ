@@ -18,6 +18,7 @@ import {
   getAuthenticatedXeroClient,
   refreshAllMembershipStatuses,
   refreshXeroContactCachesFromContact,
+  syncContactsFromXero,
   XeroDailyLimitError,
 } from "@/lib/xero";
 import {
@@ -59,9 +60,12 @@ interface ResolvedXeroObjectLink {
 }
 
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
+const CONTACT_SYNC_CURSOR_RESOURCE = "CONTACT_SYNC";
+const DEFAULT_XERO_SYNC_SCOPE = "default";
 const DEFAULT_XERO_SYNC_SCOPE_PREFIX = "season:";
 const DEFAULT_XERO_INBOUND_BATCH_SIZE = 10;
 const DEFAULT_XERO_INBOUND_MAX_BATCHES = 5;
+const DEFAULT_CONTACT_RECONCILE_MIN_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_MEMBERSHIP_RECONCILE_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
 export interface ProcessStoredXeroInboundEventsResult {
@@ -86,10 +90,25 @@ export interface IncrementalMembershipReconciliationResult {
   reason?: string;
 }
 
+export interface IncrementalContactReconciliationResult {
+  cursorFrom: string | null;
+  cursorTo: string | null;
+  total: number;
+  created: number;
+  updated: number;
+  skippedNoChanges: number;
+  skippedNoEmail: number;
+  skippedOther: number;
+  errors: number;
+  skipped?: boolean;
+  reason?: string;
+}
+
 export interface RunXeroInboundReconciliationCycleResult {
   inbound: ProcessStoredXeroInboundEventsResult & {
     batches: number;
   };
+  contactReconciliation: IncrementalContactReconciliationResult | null;
   membershipReconciliation: IncrementalMembershipReconciliationResult | null;
 }
 
@@ -298,6 +317,80 @@ function buildSkippedMembershipReconciliation(
     errorDetails: [],
     skipped: true,
     reason,
+  };
+}
+
+function buildSkippedContactReconciliation(
+  cursorFrom: string | null,
+  reason: string
+): IncrementalContactReconciliationResult {
+  return {
+    cursorFrom,
+    cursorTo: null,
+    total: 0,
+    created: 0,
+    updated: 0,
+    skippedNoChanges: 0,
+    skippedNoEmail: 0,
+    skippedOther: 0,
+    errors: 0,
+    skipped: true,
+    reason,
+  };
+}
+
+async function runIncrementalContactReconciliation(options?: {
+  minimumIntervalMs?: number;
+}): Promise<IncrementalContactReconciliationResult> {
+  const minimumIntervalMs =
+    options?.minimumIntervalMs ?? DEFAULT_CONTACT_RECONCILE_MIN_INTERVAL_MS;
+  const cursor = await prisma.xeroSyncCursor.findUnique({
+    where: {
+      resourceType_scope: {
+        resourceType: CONTACT_SYNC_CURSOR_RESOURCE,
+        scope: DEFAULT_XERO_SYNC_SCOPE,
+      },
+    },
+    select: {
+      cursorDateTime: true,
+      lastSuccessfulSyncAt: true,
+    },
+  });
+
+  if (
+    minimumIntervalMs > 0 &&
+    cursor?.lastSuccessfulSyncAt &&
+    Date.now() - cursor.lastSuccessfulSyncAt.getTime() < minimumIntervalMs
+  ) {
+    return buildSkippedContactReconciliation(
+      cursor.cursorDateTime?.toISOString() ?? null,
+      "Contact cursor was refreshed recently; skipping duplicate incremental reconcile."
+    );
+  }
+
+  const report = await syncContactsFromXero();
+  const updatedCursor = await prisma.xeroSyncCursor.findUnique({
+    where: {
+      resourceType_scope: {
+        resourceType: CONTACT_SYNC_CURSOR_RESOURCE,
+        scope: DEFAULT_XERO_SYNC_SCOPE,
+      },
+    },
+    select: {
+      cursorDateTime: true,
+    },
+  });
+
+  return {
+    cursorFrom: cursor?.cursorDateTime?.toISOString() ?? null,
+    cursorTo: updatedCursor?.cursorDateTime?.toISOString() ?? null,
+    total: report.total,
+    created: report.created.length,
+    updated: report.updated.length,
+    skippedNoChanges: report.skippedNoChanges,
+    skippedNoEmail: report.skippedNoEmail.length,
+    skippedOther: report.skippedOther.length,
+    errors: report.errors.length,
   };
 }
 
@@ -1288,7 +1381,9 @@ export async function runXeroInboundReconciliationCycle(options?: {
   batchSize?: number;
   maxBatches?: number;
   seasonYear?: number;
+  contactMinimumIntervalMs?: number;
   membershipMinimumIntervalMs?: number;
+  includeContactReconciliation?: boolean;
   includeMembershipReconciliation?: boolean;
 }): Promise<RunXeroInboundReconciliationCycleResult> {
   const batchSize = Math.min(
@@ -1319,6 +1414,12 @@ export async function runXeroInboundReconciliationCycle(options?: {
     }
   }
 
+  const contactReconciliation =
+    options?.includeContactReconciliation === false
+      ? null
+      : await runIncrementalContactReconciliation({
+          minimumIntervalMs: options?.contactMinimumIntervalMs,
+        });
   const membershipReconciliation =
     options?.includeMembershipReconciliation === false
       ? null
@@ -1329,6 +1430,7 @@ export async function runXeroInboundReconciliationCycle(options?: {
 
   return {
     inbound: totals,
+    contactReconciliation,
     membershipReconciliation,
   };
 }
