@@ -181,6 +181,7 @@ describe("processStoredXeroInboundEvents", () => {
       cursorFrom: null,
       cursorTo: "2026-04-14T00:05:00.000Z",
       changedInvoices: 0,
+      changedInvoiceIds: [],
       affectedMembers: 0,
       checked: 0,
       updated: 0,
@@ -634,6 +635,7 @@ describe("runXeroInboundReconciliationCycle", () => {
       cursorFrom: "2026-04-14T00:00:00.000Z",
       cursorTo: "2026-04-14T00:05:00.000Z",
       changedInvoices: 1,
+      changedInvoiceIds: [],
       affectedMembers: 1,
       checked: 1,
       updated: 1,
@@ -693,11 +695,21 @@ describe("runXeroInboundReconciliationCycle", () => {
         cursorFrom: "2026-04-14T00:00:00.000Z",
         cursorTo: "2026-04-14T00:05:00.000Z",
         changedInvoices: 1,
+        changedInvoiceIds: [],
         affectedMembers: 1,
         checked: 1,
         updated: 1,
         errors: 0,
         errorDetails: [],
+      },
+      invoiceReconciliation: {
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        errorDetails: [],
+        skipped: true,
+        reason:
+          "No changed membership invoices required invoice-linked reconciliation.",
       },
     });
 
@@ -749,6 +761,7 @@ describe("runXeroInboundReconciliationCycle", () => {
         cursorFrom: "2026-04-14T00:00:00.000Z",
         cursorTo: null,
         changedInvoices: 0,
+        changedInvoiceIds: [],
         affectedMembers: 0,
         checked: 0,
         updated: 0,
@@ -758,10 +771,131 @@ describe("runXeroInboundReconciliationCycle", () => {
         reason:
           "Membership cursor was refreshed recently; skipping duplicate incremental reconcile.",
       },
+      invoiceReconciliation: {
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        errorDetails: [],
+        skipped: true,
+        reason:
+          "No changed membership invoices required invoice-linked reconciliation.",
+      },
     });
 
     expect(mocks.syncContactsFromXero).not.toHaveBeenCalled();
     expect(mocks.refreshAllMembershipStatuses).not.toHaveBeenCalled();
+  });
+
+  it("reconciles changed membership invoices into linked invoice metadata", async () => {
+    mocks.inboundFindMany.mockResolvedValue([]);
+    mocks.xeroSyncCursorFindUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        cursorDateTime: new Date("2026-04-14T00:04:00.000Z"),
+      })
+      .mockResolvedValueOnce(null);
+    mocks.refreshAllMembershipStatuses.mockResolvedValue({
+      seasonYear: 2026,
+      cursorFrom: "2026-04-14T00:00:00.000Z",
+      cursorTo: "2026-04-14T00:05:00.000Z",
+      changedInvoices: 1,
+      changedInvoiceIds: ["inv_1"],
+      affectedMembers: 1,
+      checked: 1,
+      updated: 1,
+      errors: 0,
+      errorDetails: [],
+    });
+    mocks.linkFindMany
+      .mockResolvedValueOnce([
+        {
+          localModel: "Payment",
+          localId: "pay_1",
+          xeroObjectType: "INVOICE",
+          role: "PRIMARY_INVOICE",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    mocks.paymentFindMany.mockResolvedValue([
+      {
+        id: "pay_1",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+      },
+    ]);
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_1",
+              invoiceNumber: "INV-001",
+              date: "2026-04-10",
+              contact: { contactID: "contact_1" },
+              lineItems: [{ accountCode: "203" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(
+      runXeroInboundReconciliationCycle({
+        batchSize: 1,
+        maxBatches: 1,
+      })
+    ).resolves.toEqual({
+      inbound: {
+        batches: 1,
+        found: 0,
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        skipped: 0,
+      },
+      contactReconciliation: {
+        cursorFrom: null,
+        cursorTo: "2026-04-14T00:04:00.000Z",
+        total: 2,
+        created: 0,
+        updated: 1,
+        skippedNoChanges: 1,
+        skippedNoEmail: 0,
+        skippedOther: 0,
+        errors: 0,
+      },
+      membershipReconciliation: {
+        seasonYear: 2026,
+        cursorFrom: "2026-04-14T00:00:00.000Z",
+        cursorTo: "2026-04-14T00:05:00.000Z",
+        changedInvoices: 1,
+        changedInvoiceIds: ["inv_1"],
+        affectedMembers: 1,
+        checked: 1,
+        updated: 1,
+        errors: 0,
+        errorDetails: [],
+      },
+      invoiceReconciliation: {
+        processed: 1,
+        succeeded: 1,
+        failed: 0,
+        errorDetails: [],
+      },
+    });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay_1" },
+      data: {
+        xeroInvoiceId: "inv_1",
+        xeroInvoiceNumber: "INV-001",
+      },
+    });
+    expect(mocks.checkMembershipStatus).not.toHaveBeenCalled();
   });
 });
 

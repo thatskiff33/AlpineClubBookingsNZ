@@ -3671,6 +3671,7 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
   cursorFrom: string | null;
   cursorTo: string | null;
   changedInvoices: number;
+  changedInvoiceIds: string[];
   affectedMembers: number;
   checked: number;
   updated: number;
@@ -3830,6 +3831,13 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
     cursorFrom: cursor?.cursorDateTime?.toISOString() ?? null,
     cursorTo: syncStartedAt.toISOString(),
     changedInvoices: changedInvoices.length,
+    changedInvoiceIds: Array.from(
+      new Set(
+        changedInvoices
+          .map((invoice) => invoice.invoiceID)
+          .filter((invoiceId): invoiceId is string => Boolean(invoiceId))
+      )
+    ),
     affectedMembers: affectedMembers.length,
     checked,
     updated,

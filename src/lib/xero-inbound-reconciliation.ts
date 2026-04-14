@@ -81,6 +81,7 @@ export interface IncrementalMembershipReconciliationResult {
   cursorFrom: string | null;
   cursorTo: string | null;
   changedInvoices: number;
+  changedInvoiceIds: string[];
   affectedMembers: number;
   checked: number;
   updated: number;
@@ -104,12 +105,22 @@ export interface IncrementalContactReconciliationResult {
   reason?: string;
 }
 
+export interface IncrementalInvoiceReconciliationResult {
+  processed: number;
+  succeeded: number;
+  failed: number;
+  errorDetails: Array<{ invoiceId: string; error: string }>;
+  skipped?: boolean;
+  reason?: string;
+}
+
 export interface RunXeroInboundReconciliationCycleResult {
   inbound: ProcessStoredXeroInboundEventsResult & {
     batches: number;
   };
   contactReconciliation: IncrementalContactReconciliationResult | null;
   membershipReconciliation: IncrementalMembershipReconciliationResult | null;
+  invoiceReconciliation: IncrementalInvoiceReconciliationResult | null;
 }
 
 export class XeroInboundReplayError extends Error {
@@ -310,6 +321,7 @@ function buildSkippedMembershipReconciliation(
     cursorFrom,
     cursorTo: null,
     changedInvoices: 0,
+    changedInvoiceIds: [],
     affectedMembers: 0,
     checked: 0,
     updated: 0,
@@ -427,6 +439,19 @@ async function runIncrementalMembershipReconciliation(options?: {
   }
 
   return refreshAllMembershipStatuses(seasonYear);
+}
+
+function buildSkippedInvoiceReconciliation(
+  reason: string
+): IncrementalInvoiceReconciliationResult {
+  return {
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    errorDetails: [],
+    skipped: true,
+    reason,
+  };
 }
 
 async function getContactFirstInvoiceDate(
@@ -743,7 +768,10 @@ function buildSeasonYearFromInvoice(invoice: Invoice): number {
   return Number.isNaN(invoiceDate.getTime()) ? getSeasonYear(new Date()) : getSeasonYear(invoiceDate);
 }
 
-async function reconcileXeroInvoice(invoiceId: string) {
+async function reconcileXeroInvoice(
+  invoiceId: string,
+  options?: { skipSubscriptionRefresh?: boolean }
+) {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const response = await callXeroApi(
     () => xero.accountingApi.getInvoice(tenantId, invoiceId),
@@ -806,17 +834,23 @@ async function reconcileXeroInvoice(invoiceId: string) {
         link.role === "SUBSCRIPTION_INVOICE"
     )
     .map((link) => link.localId);
-  const { refreshedSubscriptions } = await refreshLinkedSubscriptionsForInvoice(
-    invoice.invoiceID,
-    linkedSubscriptionIds
-  );
+  const { refreshedSubscriptions } = options?.skipSubscriptionRefresh
+    ? { refreshedSubscriptions: new Set<string>() }
+    : await refreshLinkedSubscriptionsForInvoice(
+        invoice.invoiceID,
+        linkedSubscriptionIds
+      );
 
   const seasonYear = buildSeasonYearFromInvoice(invoice);
   const subscriptionIncomeCode = (await getAccountMapping("subscriptionIncome")) ?? "203";
   const looksLikeSubscriptionInvoice =
     findSubscriptionInvoice([invoice], seasonYear, subscriptionIncomeCode) !== null;
 
-  if (looksLikeSubscriptionInvoice && refreshedSubscriptions.size === 0) {
+  if (
+    !options?.skipSubscriptionRefresh &&
+    looksLikeSubscriptionInvoice &&
+    refreshedSubscriptions.size === 0
+  ) {
     const contactId = invoice.contact?.contactID ?? null;
     if (contactId) {
       const memberIds = await resolveMemberIdsForContact(contactId);
@@ -837,6 +871,45 @@ async function reconcileXeroInvoice(invoiceId: string) {
     refreshedSubscriptions: refreshedSubscriptions.size,
     relatedLinksUpdated: relatedLinks.length,
     looksLikeSubscriptionInvoice,
+  };
+}
+
+async function runIncrementalInvoiceReconciliation(options: {
+  membershipReconciliation: IncrementalMembershipReconciliationResult | null;
+}): Promise<IncrementalInvoiceReconciliationResult> {
+  const changedInvoiceIds =
+    options.membershipReconciliation?.changedInvoiceIds ?? [];
+  if (changedInvoiceIds.length === 0) {
+    return buildSkippedInvoiceReconciliation(
+      "No changed membership invoices required invoice-linked reconciliation."
+    );
+  }
+
+  let processed = 0;
+  let succeeded = 0;
+  let failed = 0;
+  const errorDetails: Array<{ invoiceId: string; error: string }> = [];
+
+  for (const invoiceId of changedInvoiceIds) {
+    processed += 1;
+
+    try {
+      await reconcileXeroInvoice(invoiceId, { skipSubscriptionRefresh: true });
+      succeeded += 1;
+    } catch (error) {
+      failed += 1;
+      errorDetails.push({
+        invoiceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return {
+    processed,
+    succeeded,
+    failed,
+    errorDetails,
   };
 }
 
@@ -1385,6 +1458,7 @@ export async function runXeroInboundReconciliationCycle(options?: {
   membershipMinimumIntervalMs?: number;
   includeContactReconciliation?: boolean;
   includeMembershipReconciliation?: boolean;
+  includeInvoiceReconciliation?: boolean;
 }): Promise<RunXeroInboundReconciliationCycleResult> {
   const batchSize = Math.min(
     Math.max(options?.batchSize ?? DEFAULT_XERO_INBOUND_BATCH_SIZE, 1),
@@ -1427,11 +1501,18 @@ export async function runXeroInboundReconciliationCycle(options?: {
           seasonYear: options?.seasonYear,
           minimumIntervalMs: options?.membershipMinimumIntervalMs,
         });
+  const invoiceReconciliation =
+    options?.includeInvoiceReconciliation === false
+      ? null
+      : await runIncrementalInvoiceReconciliation({
+          membershipReconciliation,
+        });
 
   return {
     inbound: totals,
     contactReconciliation,
     membershipReconciliation,
+    invoiceReconciliation,
   };
 }
 

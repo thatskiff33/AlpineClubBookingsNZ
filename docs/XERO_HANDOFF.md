@@ -160,11 +160,24 @@ Primary files updated:
 
 - `src/lib/xero-inbound-reconciliation.ts`
 
+### Phase 7: Membership invoice cursor now refreshes linked invoice/payment state
+
+Implemented:
+
+- extended the shared inbound reconciliation cycle so changed invoices discovered by the existing incremental membership cursor also run invoice-linked reconciliation, instead of stopping at `MemberSubscription` catch-up
+- reused the existing membership invoice cursor output to refresh linked invoice/payment metadata and object-link state for those changed invoices, without introducing a separate invoice polling job
+- skipped the redundant subscription refresh inside that invoice-linked pass because the membership cursor has already advanced `MemberSubscription` state for the same invoice set
+
+Primary files updated:
+
+- `src/lib/xero.ts`
+- `src/lib/xero-inbound-reconciliation.ts`
+
 ## Remaining Work
 
 ### 1. Phase 7 remaining: make webhook and incremental reconcile the main source of truth
 
-Inbound reconciliation now drives the primary membership-state catch-up path, can selectively keep touched cached contact-group memberships current, and now includes a throttled incremental contact-sync safety net, but some local business state is still not advanced directly from inbound/incremental changes.
+Inbound reconciliation now drives the primary membership-state catch-up path, can selectively keep touched cached contact-group memberships current, includes a throttled incremental contact-sync safety net, and now refreshes linked state for changed membership invoices, but some local business state is still not advanced directly from inbound/incremental changes.
 
 Required outcome:
 
@@ -173,7 +186,7 @@ Required outcome:
 
 Implementation direction:
 
-- extend business-state application beyond the current metadata/link/cache backfills, incremental contact/group maintenance, and membership cursor catch-up path
+- extend business-state application beyond the current metadata/link/cache backfills, incremental contact/group maintenance, and membership-invoice-linked reconciliation path
 - add any remaining incremental pull jobs where webhooks alone are insufficient
 - consider whether bulk replay/filtering improvements are needed on the admin Xero screen after the main reconciliation paths land
 
@@ -255,5 +268,5 @@ Typical commands:
   - `POST /api/admin/xero/import-members` with `repairMissingContactCache`
   - `GET /api/admin/xero/contact-groups?refresh=1` for a deliberate full group rescan
 - Do not reopen already-completed Phase 6/7/8 work unless the remaining phases force a design change.
-- Stored inbound `CONTACT` reconciliation and the shared inbound reconciliation cycle now maintain contact snapshots, touched cached group memberships, and throttled incremental contact drift catch-up. Full group refresh remains the deliberate full-rescan safety net.
-- The next biggest budget win is still Phase 7: make stored inbound events and incremental reconcile the primary driver of the remaining local business state beyond memberships and contact/group cache state.
+- Stored inbound `CONTACT` reconciliation and the shared inbound reconciliation cycle now maintain contact snapshots, touched cached group memberships, throttled incremental contact drift catch-up, and linked state for changed membership invoices. Full group refresh remains the deliberate full-rescan safety net.
+- The next biggest budget win is still Phase 7: make stored inbound events and incremental reconcile the primary driver of the remaining local business state beyond memberships, contact/group cache state, and membership-invoice-linked metadata.

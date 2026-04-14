@@ -135,10 +135,17 @@ describe("POST /api/cron/xero", () => {
         cursorFrom: "2026-04-14T00:00:00.000Z",
         cursorTo: "2026-04-14T00:05:00.000Z",
         changedInvoices: 1,
+        changedInvoiceIds: ["inv_1"],
         affectedMembers: 1,
         checked: 1,
         updated: 1,
         errors: 0,
+        errorDetails: [],
+      },
+      invoiceReconciliation: {
+        processed: 1,
+        succeeded: 1,
+        failed: 0,
         errorDetails: [],
       },
     });
@@ -204,10 +211,17 @@ describe("POST /api/cron/xero", () => {
         cursorFrom: "2026-04-14T00:00:00.000Z",
         cursorTo: "2026-04-14T00:05:00.000Z",
         changedInvoices: 1,
+        changedInvoiceIds: ["inv_1"],
         affectedMembers: 1,
         checked: 1,
         updated: 1,
         errors: 0,
+        errorDetails: [],
+      },
+      invoiceReconciliation: {
+        processed: 1,
+        succeeded: 1,
+        failed: 0,
         errorDetails: [],
       },
     });
@@ -272,6 +286,7 @@ describe("POST /api/cron/xero", () => {
         cursorFrom: "2026-04-14T00:00:00.000Z",
         cursorTo: null,
         changedInvoices: 0,
+        changedInvoiceIds: [],
         affectedMembers: 0,
         checked: 0,
         updated: 0,
@@ -279,6 +294,14 @@ describe("POST /api/cron/xero", () => {
         errorDetails: [],
         skipped: true,
         reason: "Membership cursor was refreshed recently; skipping duplicate incremental reconcile.",
+      },
+      invoiceReconciliation: {
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        errorDetails: [],
+        skipped: true,
+        reason: "No changed membership invoices required invoice-linked reconciliation.",
       },
     });
 
@@ -314,6 +337,7 @@ describe("POST /api/cron/xero", () => {
         cursorFrom: "2026-04-14T00:00:00.000Z",
         cursorTo: null,
         changedInvoices: 0,
+        changedInvoiceIds: [],
         affectedMembers: 0,
         checked: 0,
         updated: 0,
@@ -321,6 +345,14 @@ describe("POST /api/cron/xero", () => {
         errorDetails: [],
         skipped: true,
         reason: "Membership cursor was refreshed recently; skipping duplicate incremental reconcile.",
+      },
+      invoiceReconciliation: {
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        errorDetails: [],
+        skipped: true,
+        reason: "No changed membership invoices required invoice-linked reconciliation.",
       },
     });
     expect(mocks.runXeroInboundReconciliationCycle).toHaveBeenCalled();
