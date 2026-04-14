@@ -16,6 +16,7 @@ import {
   findSubscriptionInvoice,
   getAccountMapping,
   getAuthenticatedXeroClient,
+  refreshAllMembershipStatuses,
   XeroDailyLimitError,
 } from "@/lib/xero";
 import {
@@ -56,12 +57,39 @@ interface ResolvedXeroObjectLink {
   role: string;
 }
 
+const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
+const DEFAULT_XERO_SYNC_SCOPE_PREFIX = "season:";
+const DEFAULT_XERO_INBOUND_BATCH_SIZE = 10;
+const DEFAULT_XERO_INBOUND_MAX_BATCHES = 5;
+const DEFAULT_MEMBERSHIP_RECONCILE_MIN_INTERVAL_MS = 5 * 60 * 1000;
+
 export interface ProcessStoredXeroInboundEventsResult {
   found: number;
   processed: number;
   succeeded: number;
   failed: number;
   skipped: number;
+}
+
+export interface IncrementalMembershipReconciliationResult {
+  seasonYear: number;
+  cursorFrom: string | null;
+  cursorTo: string | null;
+  changedInvoices: number;
+  affectedMembers: number;
+  checked: number;
+  updated: number;
+  errors: number;
+  errorDetails: Array<{ member: string; error: string }>;
+  skipped?: boolean;
+  reason?: string;
+}
+
+export interface RunXeroInboundReconciliationCycleResult {
+  inbound: ProcessStoredXeroInboundEventsResult & {
+    batches: number;
+  };
+  membershipReconciliation: IncrementalMembershipReconciliationResult | null;
 }
 
 export class XeroInboundReplayError extends Error {
@@ -255,6 +283,65 @@ function extractContactUpdatedAt(contact: Contact): Date | null {
 
   const updatedAt = new Date(contact.updatedDateUTC.toString());
   return Number.isNaN(updatedAt.getTime()) ? null : updatedAt;
+}
+
+function getMembershipSyncCursorScope(seasonYear: number): string {
+  return `${DEFAULT_XERO_SYNC_SCOPE_PREFIX}${seasonYear}`;
+}
+
+function buildSkippedMembershipReconciliation(
+  seasonYear: number,
+  cursorFrom: string | null,
+  reason: string
+): IncrementalMembershipReconciliationResult {
+  return {
+    seasonYear,
+    cursorFrom,
+    cursorTo: null,
+    changedInvoices: 0,
+    affectedMembers: 0,
+    checked: 0,
+    updated: 0,
+    errors: 0,
+    errorDetails: [],
+    skipped: true,
+    reason,
+  };
+}
+
+async function runIncrementalMembershipReconciliation(options?: {
+  seasonYear?: number;
+  minimumIntervalMs?: number;
+}): Promise<IncrementalMembershipReconciliationResult> {
+  const seasonYear = options?.seasonYear ?? getSeasonYear(new Date());
+  const minimumIntervalMs =
+    options?.minimumIntervalMs ?? DEFAULT_MEMBERSHIP_RECONCILE_MIN_INTERVAL_MS;
+  const cursor = await prisma.xeroSyncCursor.findUnique({
+    where: {
+      resourceType_scope: {
+        resourceType: MEMBERSHIP_SYNC_CURSOR_RESOURCE,
+        scope: getMembershipSyncCursorScope(seasonYear),
+      },
+    },
+    select: {
+      cursorDateTime: true,
+      lastSuccessfulSyncAt: true,
+    },
+  });
+
+  if (
+    minimumIntervalMs > 0 &&
+    cursor?.lastSuccessfulSyncAt &&
+    Date.now() - cursor.lastSuccessfulSyncAt.getTime() < minimumIntervalMs
+  ) {
+    return buildSkippedMembershipReconciliation(
+      seasonYear,
+      cursor.cursorDateTime?.toISOString() ?? null,
+      "Membership cursor was refreshed recently; skipping duplicate incremental reconcile."
+    );
+  }
+
+  return refreshAllMembershipStatuses(seasonYear);
 }
 
 async function getContactFirstInvoiceDate(
@@ -1251,6 +1338,55 @@ export async function processStoredXeroInboundEvents(options?: {
   }
 
   return result;
+}
+
+export async function runXeroInboundReconciliationCycle(options?: {
+  batchSize?: number;
+  maxBatches?: number;
+  seasonYear?: number;
+  membershipMinimumIntervalMs?: number;
+  includeMembershipReconciliation?: boolean;
+}): Promise<RunXeroInboundReconciliationCycleResult> {
+  const batchSize = Math.min(
+    Math.max(options?.batchSize ?? DEFAULT_XERO_INBOUND_BATCH_SIZE, 1),
+    50
+  );
+  const maxBatches = Math.max(options?.maxBatches ?? DEFAULT_XERO_INBOUND_MAX_BATCHES, 1);
+  const totals: RunXeroInboundReconciliationCycleResult["inbound"] = {
+    batches: 0,
+    found: 0,
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+  };
+
+  for (let batch = 0; batch < maxBatches; batch += 1) {
+    const result = await processStoredXeroInboundEvents({ limit: batchSize });
+    totals.batches += 1;
+    totals.found += result.found;
+    totals.processed += result.processed;
+    totals.succeeded += result.succeeded;
+    totals.failed += result.failed;
+    totals.skipped += result.skipped;
+
+    if (result.found < batchSize || result.processed === 0) {
+      break;
+    }
+  }
+
+  const membershipReconciliation =
+    options?.includeMembershipReconciliation === false
+      ? null
+      : await runIncrementalMembershipReconciliation({
+          seasonYear: options?.seasonYear,
+          minimumIntervalMs: options?.membershipMinimumIntervalMs,
+        });
+
+  return {
+    inbound: totals,
+    membershipReconciliation,
+  };
 }
 
 export async function replayStoredXeroInboundEvent(eventId: string) {

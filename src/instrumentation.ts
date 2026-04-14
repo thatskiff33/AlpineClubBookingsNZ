@@ -107,7 +107,7 @@ export async function register() {
 
     logger.info({ job: "confirm-pending" }, "Scheduled pending booking confirmation (every 3 hours)");
 
-    // OBS-03: Cron job 2 - Xero membership refresh (daily at 2 AM)
+    // OBS-03: Cron job 2 - Xero membership refresh safety net (daily at 2 AM)
     if (isXeroDailyMembershipRefreshEnabled()) {
       cron.default.schedule("0 2 * * *", async () => {
         if (isXeroCronRunning) {
@@ -116,7 +116,10 @@ export async function register() {
         }
         isXeroCronRunning = true;
         const startedAt = new Date();
-        logger.info({ job: "xero-membership-refresh" }, "Refreshing Xero membership statuses");
+        logger.info(
+          { job: "xero-membership-refresh" },
+          "Running daily Xero membership safety-net refresh"
+        );
 
         const checkInId = Sentry.captureCheckIn(
           { monitorSlug: "xero-membership-refresh", status: "in_progress" },
@@ -134,12 +137,18 @@ export async function register() {
             return;
           }
           const result = await refreshAllMembershipStatuses();
-          logger.info({ job: "xero-membership-refresh", ...result }, "Xero membership refresh complete");
+          logger.info(
+            { job: "xero-membership-refresh", ...result },
+            "Xero membership safety-net refresh complete"
+          );
           await recordCronRun("xero-membership-refresh", startedAt, "SUCCESS", result as Record<string, unknown>);
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "ok" });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          logger.error({ err, job: "xero-membership-refresh" }, "Error refreshing Xero memberships");
+          logger.error(
+            { err, job: "xero-membership-refresh" },
+            "Error running Xero membership safety-net refresh"
+          );
           Sentry.captureException(err);
           await recordCronRun("xero-membership-refresh", startedAt, "FAILURE", undefined, message);
           Sentry.captureCheckIn({ checkInId, monitorSlug: "xero-membership-refresh", status: "error" });
@@ -148,7 +157,10 @@ export async function register() {
         }
       }, { timezone: "Pacific/Auckland" });
 
-      logger.info({ job: "xero-membership-refresh" }, "Scheduled Xero membership refresh (daily at 2 AM NZST)");
+      logger.info(
+        { job: "xero-membership-refresh" },
+        "Scheduled Xero membership safety-net refresh (daily at 2 AM NZST)"
+      );
     } else {
       logger.info(
         { job: "xero-membership-refresh" },
@@ -327,7 +339,10 @@ export async function register() {
       }
       isXeroInboundCronRunning = true;
       const startedAt = new Date();
-      logger.info({ job: "xero-inbound-reconcile" }, "Processing stored Xero inbound events");
+      logger.info(
+        { job: "xero-inbound-reconcile" },
+        "Running Xero inbound reconciliation cycle"
+      );
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "xero-inbound-reconcile", status: "in_progress" },
@@ -336,7 +351,7 @@ export async function register() {
 
       try {
         const { isXeroConnected } = await import("./lib/xero");
-        const { processStoredXeroInboundEvents } = await import(
+        const { runXeroInboundReconciliationCycle } = await import(
           "./lib/xero-inbound-reconciliation"
         );
 
@@ -349,10 +364,10 @@ export async function register() {
           return;
         }
 
-        const result = await processStoredXeroInboundEvents();
+        const result = await runXeroInboundReconciliationCycle();
         logger.info(
           { job: "xero-inbound-reconcile", ...result },
-          "Stored Xero inbound reconciliation complete"
+          "Xero inbound reconciliation cycle complete"
         );
         await recordCronRun(
           "xero-inbound-reconcile",

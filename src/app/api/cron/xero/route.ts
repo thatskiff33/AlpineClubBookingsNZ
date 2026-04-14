@@ -3,7 +3,7 @@ import { timingSafeEqual } from "crypto";
 import { refreshAllMembershipStatuses, isXeroConnected } from "@/lib/xero";
 import { processQueuedXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
-import { processStoredXeroInboundEvents } from "@/lib/xero-inbound-reconciliation";
+import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
 import {
   backfillHistoricalXeroObjectLinks,
   sendXeroReconciliationReport,
@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
     const inboundReconciliation =
       task === "inbound" || task === "all"
         ? connected
-          ? await processStoredXeroInboundEvents()
+          ? await runXeroInboundReconciliationCycle()
           : { skipped: true, reason: "Xero not connected" }
         : null;
     const linkBackfill =
@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
             : task === "backfill"
               ? "Historical Xero link backfill completed"
               : task === "inbound"
-                ? "Xero inbound reconciliation processed"
+                ? "Xero inbound reconciliation cycle completed"
                 : task === "outbox"
                   ? "Queued Xero outbox operations processed"
                   : task === "retries"

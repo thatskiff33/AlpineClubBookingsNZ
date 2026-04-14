@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   isXeroConnected: vi.fn(),
   processQueuedXeroOutboxOperations: vi.fn(),
   processQueuedXeroOperationRetries: vi.fn(),
-  processStoredXeroInboundEvents: vi.fn(),
+  runXeroInboundReconciliationCycle: vi.fn(),
   backfillHistoricalXeroObjectLinks: vi.fn(),
   sendXeroReconciliationReport: vi.fn(),
 }));
@@ -25,7 +25,7 @@ vi.mock("@/lib/xero-operation-queue", () => ({
 }));
 
 vi.mock("@/lib/xero-inbound-reconciliation", () => ({
-  processStoredXeroInboundEvents: mocks.processStoredXeroInboundEvents,
+  runXeroInboundReconciliationCycle: mocks.runXeroInboundReconciliationCycle,
 }));
 
 vi.mock("@/lib/xero-hardening", () => ({
@@ -110,12 +110,26 @@ describe("POST /api/cron/xero", () => {
       failed: 0,
       skipped: 0,
     });
-    mocks.processStoredXeroInboundEvents.mockResolvedValue({
-      found: 2,
-      processed: 2,
-      succeeded: 2,
-      failed: 0,
-      skipped: 0,
+    mocks.runXeroInboundReconciliationCycle.mockResolvedValue({
+      inbound: {
+        batches: 1,
+        found: 2,
+        processed: 2,
+        succeeded: 2,
+        failed: 0,
+        skipped: 0,
+      },
+      membershipReconciliation: {
+        seasonYear: 2026,
+        cursorFrom: "2026-04-14T00:00:00.000Z",
+        cursorTo: "2026-04-14T00:05:00.000Z",
+        changedInvoices: 1,
+        affectedMembers: 1,
+        checked: 1,
+        updated: 1,
+        errors: 0,
+        errorDetails: [],
+      },
     });
     mocks.backfillHistoricalXeroObjectLinks.mockResolvedValue({
       totals: {
@@ -155,11 +169,25 @@ describe("POST /api/cron/xero", () => {
       skipped: 0,
     });
     expect(body.inboundReconciliation).toEqual({
-      found: 2,
-      processed: 2,
-      succeeded: 2,
-      failed: 0,
-      skipped: 0,
+      inbound: {
+        batches: 1,
+        found: 2,
+        processed: 2,
+        succeeded: 2,
+        failed: 0,
+        skipped: 0,
+      },
+      membershipReconciliation: {
+        seasonYear: 2026,
+        cursorFrom: "2026-04-14T00:00:00.000Z",
+        cursorTo: "2026-04-14T00:05:00.000Z",
+        changedInvoices: 1,
+        affectedMembers: 1,
+        checked: 1,
+        updated: 1,
+        errors: 0,
+        errorDetails: [],
+      },
     });
     expect(body.linkBackfill).toEqual({
       totals: {
@@ -195,26 +223,58 @@ describe("POST /api/cron/xero", () => {
 
   it("runs inbound reconciliation on demand", async () => {
     mocks.isXeroConnected.mockResolvedValue(true);
-    mocks.processStoredXeroInboundEvents.mockResolvedValue({
-      found: 3,
-      processed: 3,
-      succeeded: 2,
-      failed: 1,
-      skipped: 0,
+    mocks.runXeroInboundReconciliationCycle.mockResolvedValue({
+      inbound: {
+        batches: 1,
+        found: 3,
+        processed: 3,
+        succeeded: 2,
+        failed: 1,
+        skipped: 0,
+      },
+      membershipReconciliation: {
+        seasonYear: 2026,
+        cursorFrom: "2026-04-14T00:00:00.000Z",
+        cursorTo: null,
+        changedInvoices: 0,
+        affectedMembers: 0,
+        checked: 0,
+        updated: 0,
+        errors: 0,
+        errorDetails: [],
+        skipped: true,
+        reason: "Membership cursor was refreshed recently; skipping duplicate incremental reconcile.",
+      },
     });
 
     const response = await POST(makeRequest("inbound"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.message).toBe("Xero inbound reconciliation processed");
+    expect(body.message).toBe("Xero inbound reconciliation cycle completed");
     expect(body.inboundReconciliation).toEqual({
-      found: 3,
-      processed: 3,
-      succeeded: 2,
-      failed: 1,
-      skipped: 0,
+      inbound: {
+        batches: 1,
+        found: 3,
+        processed: 3,
+        succeeded: 2,
+        failed: 1,
+        skipped: 0,
+      },
+      membershipReconciliation: {
+        seasonYear: 2026,
+        cursorFrom: "2026-04-14T00:00:00.000Z",
+        cursorTo: null,
+        changedInvoices: 0,
+        affectedMembers: 0,
+        checked: 0,
+        updated: 0,
+        errors: 0,
+        errorDetails: [],
+        skipped: true,
+        reason: "Membership cursor was refreshed recently; skipping duplicate incremental reconcile.",
+      },
     });
-    expect(mocks.processStoredXeroInboundEvents).toHaveBeenCalled();
+    expect(mocks.runXeroInboundReconciliationCycle).toHaveBeenCalled();
   });
 });

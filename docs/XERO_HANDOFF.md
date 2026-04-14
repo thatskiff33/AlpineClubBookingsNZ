@@ -117,23 +117,40 @@ Primary files updated:
 
 - `src/lib/xero-inbound-reconciliation.ts`
 
+### Phase 7: Inbound reconciliation now drives membership-state catch-up
+
+Implemented:
+
+- added a shared inbound reconciliation cycle that drains stored Xero inbound events in batches instead of treating webhook follow-up as a single small batch
+- made that reconciliation cycle run the existing durable incremental membership invoice cursor immediately after stored inbound events, so webhook/incremental reconcile is now the main driver for `MemberSubscription` state catch-up
+- switched the webhook after-response worker to trigger the full inbound reconciliation cycle instead of only replaying one stored-events batch
+- switched the 15-minute inbound cron/instrumentation path to run the same stored-event + incremental-membership cycle
+- left the daily/manual membership refresh entrypoints in place as safety-net wrappers around the same incremental invoice cursor, instead of as the primary driver
+
+Primary files updated:
+
+- `src/lib/xero-inbound-reconciliation.ts`
+- `src/app/api/webhooks/xero/route.ts`
+- `src/app/api/cron/xero/route.ts`
+- `src/instrumentation.ts`
+
 ## Remaining Work
 
 ### 1. Phase 7 remaining: make webhook and incremental reconcile the main source of truth
 
-Inbound reconciliation is partly implemented, but it is not yet the main driver of all affected local business state.
+Inbound reconciliation now drives the primary membership-state catch-up path, but some local business state is still not advanced directly from inbound/incremental changes.
 
 Required outcome:
 
-- webhook-triggered reconciliation advances the remaining business state that still depends on polling
+- webhook-triggered reconciliation advances the remaining business state that still depends on polling beyond membership subscriptions
 - cached contact-group membership refreshes from inbound changes where applicable
-- daily polling becomes a safety net, not the primary reconciliation path
+- any remaining operator/daily polling stays a safety net, not the primary reconciliation path
 
 Implementation direction:
 
-- extend business-state application beyond current safe metadata/link backfills
-- extend webhook/inbound application beyond the new contact-cache refresh so remaining local business state is driven from inbound/incremental paths instead of operator polling
-- add incremental pull jobs where webhooks alone are insufficient
+- extend business-state application beyond the current metadata/link/cache backfills plus the new membership cursor catch-up path
+- decide whether any contact-group cache refresh should be selective/incremental from inbound contact changes or remain a deliberate operator-triggered full refresh
+- add any remaining incremental pull jobs where webhooks alone are insufficient
 - consider whether bulk replay/filtering improvements are needed on the admin Xero screen after the main reconciliation paths land
 
 Primary files:

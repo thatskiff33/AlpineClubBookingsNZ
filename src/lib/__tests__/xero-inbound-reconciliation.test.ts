@@ -9,12 +9,14 @@ const mocks = vi.hoisted(() => ({
   processedCreate: vi.fn(),
   processedDeleteMany: vi.fn(),
   transaction: vi.fn(),
+  xeroSyncCursorFindUnique: vi.fn(),
   memberFindMany: vi.fn(),
   memberUpdate: vi.fn(),
   linkFindMany: vi.fn(),
   paymentFindMany: vi.fn(),
   paymentUpdate: vi.fn(),
   subscriptionFindMany: vi.fn(),
+  refreshAllMembershipStatuses: vi.fn(),
   startXeroSyncOperation: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
   failXeroSyncOperation: vi.fn(),
@@ -39,6 +41,9 @@ vi.mock("@/lib/prisma", () => ({
     processedWebhookEvent: {
       create: mocks.processedCreate,
       deleteMany: mocks.processedDeleteMany,
+    },
+    xeroSyncCursor: {
+      findUnique: mocks.xeroSyncCursorFindUnique,
     },
     member: {
       findMany: mocks.memberFindMany,
@@ -97,6 +102,7 @@ vi.mock("@/lib/xero", async (importOriginal) => {
     checkMembershipStatus: mocks.checkMembershipStatus,
     getAccountMapping: mocks.getAccountMapping,
     getAuthenticatedXeroClient: mocks.getAuthenticatedXeroClient,
+    refreshAllMembershipStatuses: mocks.refreshAllMembershipStatuses,
     withXeroRetry: mocks.withXeroRetry,
     findSubscriptionInvoice: (
       invoices: Array<{ lineItems?: Array<{ accountCode?: string }>; reference?: string }>
@@ -111,6 +117,7 @@ vi.mock("@/lib/xero", async (importOriginal) => {
 
 import {
   processStoredXeroInboundEvents,
+  runXeroInboundReconciliationCycle,
   replayStoredXeroInboundEvent,
   XeroInboundReplayError,
 } from "@/lib/xero-inbound-reconciliation";
@@ -120,6 +127,7 @@ describe("processStoredXeroInboundEvents", () => {
     vi.resetAllMocks();
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
     mocks.xeroContactCacheUpsert.mockResolvedValue({});
+    mocks.xeroSyncCursorFindUnique.mockResolvedValue(null);
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         processedWebhookEvent: {
@@ -131,6 +139,17 @@ describe("processStoredXeroInboundEvents", () => {
       })
     );
     mocks.getAccountMapping.mockResolvedValue("203");
+    mocks.refreshAllMembershipStatuses.mockResolvedValue({
+      seasonYear: 2026,
+      cursorFrom: null,
+      cursorTo: "2026-04-14T00:05:00.000Z",
+      changedInvoices: 0,
+      affectedMembers: 0,
+      checked: 0,
+      updated: 0,
+      errors: 0,
+      errorDetails: [],
+    });
     mocks.withXeroRetry.mockImplementation(async (fn: () => Promise<unknown>) => fn());
     mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_1" });
   });
@@ -558,6 +577,110 @@ describe("processStoredXeroInboundEvents", () => {
         }),
       })
     );
+  });
+});
+
+describe("runXeroInboundReconciliationCycle", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.processedCreate.mockRejectedValue({ code: "P2002" });
+    mocks.xeroSyncCursorFindUnique.mockResolvedValue(null);
+    mocks.refreshAllMembershipStatuses.mockResolvedValue({
+      seasonYear: 2026,
+      cursorFrom: "2026-04-14T00:00:00.000Z",
+      cursorTo: "2026-04-14T00:05:00.000Z",
+      changedInvoices: 1,
+      affectedMembers: 1,
+      checked: 1,
+      updated: 1,
+      errors: 0,
+      errorDetails: [],
+    });
+  });
+
+  it("drains multiple inbound batches and runs the membership cursor reconcile", async () => {
+    mocks.inboundFindMany
+      .mockResolvedValueOnce([
+        {
+          id: "evt_1",
+          source: "webhook",
+          eventCategory: "CONTACT",
+          eventType: "UPDATE",
+          resourceId: "contact_1",
+          correlationKey: "corr_1",
+          payload: {},
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    await expect(
+      runXeroInboundReconciliationCycle({
+        batchSize: 1,
+        maxBatches: 3,
+      })
+    ).resolves.toEqual({
+      inbound: {
+        batches: 2,
+        found: 1,
+        processed: 1,
+        succeeded: 0,
+        failed: 0,
+        skipped: 1,
+      },
+      membershipReconciliation: {
+        seasonYear: 2026,
+        cursorFrom: "2026-04-14T00:00:00.000Z",
+        cursorTo: "2026-04-14T00:05:00.000Z",
+        changedInvoices: 1,
+        affectedMembers: 1,
+        checked: 1,
+        updated: 1,
+        errors: 0,
+        errorDetails: [],
+      },
+    });
+
+    expect(mocks.refreshAllMembershipStatuses).toHaveBeenCalledWith(2026);
+  });
+
+  it("skips duplicate membership cursor refreshes when the cursor is still fresh", async () => {
+    mocks.inboundFindMany.mockResolvedValue([]);
+    mocks.xeroSyncCursorFindUnique.mockResolvedValue({
+      cursorDateTime: new Date("2026-04-14T00:00:00.000Z"),
+      lastSuccessfulSyncAt: new Date(),
+    });
+
+    await expect(
+      runXeroInboundReconciliationCycle({
+        seasonYear: 2026,
+      })
+    ).resolves.toEqual({
+      inbound: {
+        batches: 1,
+        found: 0,
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        skipped: 0,
+      },
+      membershipReconciliation: {
+        seasonYear: 2026,
+        cursorFrom: "2026-04-14T00:00:00.000Z",
+        cursorTo: null,
+        changedInvoices: 0,
+        affectedMembers: 0,
+        checked: 0,
+        updated: 0,
+        errors: 0,
+        errorDetails: [],
+        skipped: true,
+        reason:
+          "Membership cursor was refreshed recently; skipping duplicate incremental reconcile.",
+      },
+    });
+
+    expect(mocks.refreshAllMembershipStatuses).not.toHaveBeenCalled();
   });
 });
 

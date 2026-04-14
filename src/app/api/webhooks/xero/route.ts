@@ -3,7 +3,7 @@ import { createHmac, timingSafeEqual } from "crypto";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
 import { buildXeroIdempotencyKey, recordXeroInboundEvent } from "@/lib/xero-sync";
-import { processStoredXeroInboundEvents } from "@/lib/xero-inbound-reconciliation";
+import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
 import { isXeroConnected } from "@/lib/xero";
 
 function scheduleAfterResponse(task: () => Promise<void>) {
@@ -147,8 +147,9 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        await processStoredXeroInboundEvents({
-          limit: Math.min(Math.max(events.length, 1), 10),
+        await runXeroInboundReconciliationCycle({
+          batchSize: Math.min(Math.max(events.length, 1), 10),
+          maxBatches: 3,
         });
       } catch (error) {
         logger.error({ err: error }, "Failed to kick Xero inbound reconciliation worker");
