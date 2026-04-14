@@ -18,6 +18,12 @@ interface XeroStatus {
   tokenExpiresAt: string | null
 }
 
+interface XeroReferenceCacheMeta {
+  source: "memory" | "database" | "xero"
+  lastRefreshedAt: string
+  expiresAt: string
+}
+
 interface SyncResult {
   total?: number
   matched?: number
@@ -136,6 +142,21 @@ interface XeroInboundEvent {
   updatedAt: string
   xeroObjectUrl: string | null
   canReplay: boolean
+}
+
+function formatReferenceCacheLabel(label: string, cache: XeroReferenceCacheMeta | null) {
+  if (!cache) {
+    return `${label}: no cache metadata yet`
+  }
+
+  const sourceLabel =
+    cache.source === "database"
+      ? "shared cache"
+      : cache.source === "memory"
+        ? "memory cache"
+        : "live Xero"
+
+  return `${label}: ${sourceLabel}, refreshed ${new Date(cache.lastRefreshedAt).toLocaleString()}, expires ${new Date(cache.expiresAt).toLocaleString()}`
 }
 
 interface XeroUsageBucket {
@@ -358,7 +379,10 @@ export default function XeroPage() {
   const [savedMappings, setSavedMappings] = useState<AccountMappings | null>(null)
   const [chartOfAccounts, setChartOfAccounts] = useState<XeroAccount[]>([])
   const [xeroItems, setXeroItems] = useState<XeroItem[]>([])
+  const [accountCacheMeta, setAccountCacheMeta] = useState<XeroReferenceCacheMeta | null>(null)
+  const [itemCacheMeta, setItemCacheMeta] = useState<XeroReferenceCacheMeta | null>(null)
   const [loadingMappings, setLoadingMappings] = useState(false)
+  const [refreshingReferenceData, setRefreshingReferenceData] = useState(false)
   const [savingMappings, setSavingMappings] = useState(false)
   const [mappingError, setMappingError] = useState("")
   const [mappingSaved, setMappingSaved] = useState(false)
@@ -399,13 +423,14 @@ export default function XeroPage() {
     }
   }, [])
 
-  const fetchAccountMappings = useCallback(async () => {
+  const fetchAccountMappings = useCallback(async (options?: { forceRefresh?: boolean }) => {
     setLoadingMappings(true)
     try {
+      const refreshSuffix = options?.forceRefresh ? "?refresh=1" : ""
       const [mappingsRes, accountsRes, itemsRes, itemCodeRes] = await Promise.all([
         fetch("/api/admin/xero/account-mappings"),
-        fetch("/api/admin/xero/chart-of-accounts"),
-        fetch("/api/admin/xero/items"),
+        fetch(`/api/admin/xero/chart-of-accounts${refreshSuffix}`),
+        fetch(`/api/admin/xero/items${refreshSuffix}`),
         fetch("/api/admin/xero/item-code-mappings"),
       ])
       if (mappingsRes.ok) {
@@ -416,10 +441,12 @@ export default function XeroPage() {
       if (accountsRes.ok) {
         const data = await accountsRes.json()
         setChartOfAccounts(data.accounts ?? [])
+        setAccountCacheMeta(data.cache ?? null)
       }
       if (itemsRes.ok) {
         const data = await itemsRes.json()
         setXeroItems(data.items ?? [])
+        setItemCacheMeta(data.cache ?? null)
       }
       if (itemCodeRes.ok) {
         const data = await itemCodeRes.json()
@@ -434,6 +461,15 @@ export default function XeroPage() {
       setLoadingMappings(false)
     }
   }, [])
+
+  const refreshReferenceData = useCallback(async () => {
+    setRefreshingReferenceData(true)
+    try {
+      await fetchAccountMappings({ forceRefresh: true })
+    } finally {
+      setRefreshingReferenceData(false)
+    }
+  }, [fetchAccountMappings])
 
   const fetchOperations = useCallback(async (statusFilter: string, entityFilter: string) => {
     setLoadingOperations(true)
@@ -1265,6 +1301,21 @@ export default function XeroPage() {
                 {mappingSaved && (
                   <p className="text-sm text-green-700">Account mappings saved.</p>
                 )}
+                <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 md:flex-row md:items-center md:justify-between">
+                  <div className="space-y-1">
+                    <p>{formatReferenceCacheLabel("Accounts", accountCacheMeta)}</p>
+                    <p>{formatReferenceCacheLabel("Items", itemCacheMeta)}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={refreshReferenceData}
+                    disabled={loadingMappings || refreshingReferenceData}
+                  >
+                    {refreshingReferenceData ? "Refreshing..." : "Refresh Xero reference data"}
+                  </Button>
+                </div>
                 {/* Account Code Mappings */}
                 <h4 className="text-sm font-semibold text-slate-700">Account Code Mappings</h4>
                 {accountMappings && ACCOUNT_MAPPING_KEYS.map((key) => {

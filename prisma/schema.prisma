@@ -771,6 +771,20 @@ model XeroApiUsageEvent {
   @@index([rateLimitCategory, createdAt])
 }
 
+model XeroAdminCache {
+  id        String   @id @default(cuid())
+  cacheKey  String
+  tenantId  String
+  payload   Json
+  fetchedAt DateTime @default(now())
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cacheKey, tenantId], map: "XeroAdminCache_cacheKey_tenantId_key")
+  @@index([expiresAt])
+}
+
 // ---------------------------------------------------------------------------
 // Webhook Idempotency (prevents duplicate event processing)
 // ---------------------------------------------------------------------------

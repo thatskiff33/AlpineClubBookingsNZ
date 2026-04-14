@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
@@ -13,7 +13,7 @@ import {
  * Fetches items (products/services) from the Xero API, cached for 1 hour.
  * Returns { items: XeroItem[] }
  */
-export async function GET() {
+export async function GET(request?: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -23,10 +23,16 @@ export async function GET() {
     return inactiveResponse;
   }
 
-  // Return from cache if fresh
-  const cachedItems = getCachedItems();
-  if (cachedItems) {
-    return NextResponse.json({ items: cachedItems });
+  const forceRefresh = request?.nextUrl.searchParams.get("refresh") === "1";
+
+  if (!forceRefresh) {
+    const cachedItems = await getCachedItems();
+    if (cachedItems) {
+      return NextResponse.json({
+        items: cachedItems.values,
+        cache: cachedItems.metadata,
+      });
+    }
   }
 
   try {
@@ -52,9 +58,9 @@ export async function GET() {
       }))
       .sort((a, b) => a.code.localeCompare(b.code));
 
-    setCachedItems(items);
+    const cache = await setCachedItems(tenantId, items);
 
-    return NextResponse.json({ items });
+    return NextResponse.json({ items, cache });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch Xero items";
     return NextResponse.json({ error: message }, { status: 500 });

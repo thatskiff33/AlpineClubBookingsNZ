@@ -14,9 +14,16 @@ import { NextRequest } from "next/server";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { count: vi.fn() },
+    xeroToken: {
+      findFirst: vi.fn(),
+    },
     xeroAccountMapping: {
       findUnique: vi.fn(),
       findMany: vi.fn(),
+      upsert: vi.fn(),
+    },
+    xeroAdminCache: {
+      findUnique: vi.fn(),
       upsert: vi.fn(),
     },
   },
@@ -32,6 +39,7 @@ vi.mock("@/lib/xero", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/xero")>();
   return {
     ...actual,
+    callXeroApi: vi.fn(async (operation: () => Promise<unknown>) => operation()),
     getAuthenticatedXeroClient: vi.fn(),
   };
 });
@@ -50,9 +58,16 @@ import { GET as getChartOfAccounts } from "@/app/api/admin/xero/chart-of-account
 import { GET as getXeroItems } from "@/app/api/admin/xero/items/route";
 
 const mockPrisma = prisma as unknown as {
+  xeroToken: {
+    findFirst: ReturnType<typeof vi.fn>;
+  };
   xeroAccountMapping: {
     findUnique: ReturnType<typeof vi.fn>;
     findMany: ReturnType<typeof vi.fn>;
+    upsert: ReturnType<typeof vi.fn>;
+  };
+  xeroAdminCache: {
+    findUnique: ReturnType<typeof vi.fn>;
     upsert: ReturnType<typeof vi.fn>;
   };
 };
@@ -70,6 +85,18 @@ function makePutRequest(body: unknown): NextRequest {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+function makeGetRequest(url: string): NextRequest {
+  return new NextRequest(url, { method: "GET" });
+}
+
+function makeCacheRecord(payload: unknown) {
+  return {
+    payload,
+    fetchedAt: new Date("2026-04-14T10:00:00.000Z"),
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+  };
 }
 
 // ─── XAM-04: GET /api/admin/xero/account-mappings ────────────────────────────
@@ -205,6 +232,9 @@ describe("GET /api/admin/xero/chart-of-accounts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue(adminSession());
+    mockPrisma.xeroToken.findFirst.mockResolvedValue({ tenantId: "tenant-1" });
+    mockPrisma.xeroAdminCache.findUnique.mockResolvedValue(null);
+    mockPrisma.xeroAdminCache.upsert.mockResolvedValue({});
     clearChartOfAccountsCache();
   });
 
@@ -285,12 +315,61 @@ describe("GET /api/admin/xero/chart-of-accounts", () => {
     // Xero API should only be called once due to caching
     expect(getAccountsFn).toHaveBeenCalledTimes(1);
   });
+
+  it("falls back to the durable cache after in-memory cache is cleared", async () => {
+    const cachedAccounts = [
+      { code: "200", name: "Sales", type: "REVENUE", class: "INCOME" },
+    ];
+
+    mockPrisma.xeroAdminCache.findUnique.mockResolvedValue(makeCacheRecord(cachedAccounts));
+
+    const res = await getChartOfAccounts();
+    expect(res.status).toBe(200);
+
+    const data = await res.json();
+    expect(data.accounts).toEqual(cachedAccounts);
+    expect(data.cache).toMatchObject({ source: "database" });
+    expect(mockGetXeroClient).not.toHaveBeenCalled();
+  });
+
+  it("bypasses cache when refresh=1 is requested", async () => {
+    const getAccountsFn = vi.fn().mockResolvedValue({
+      body: {
+        accounts: [
+          { code: "606", name: "Stripe Clearing", type: "BANK", class: "ASSET", status: "ACTIVE" },
+        ],
+      },
+    });
+
+    mockPrisma.xeroAdminCache.findUnique.mockResolvedValue(
+      makeCacheRecord([{ code: "200", name: "Sales", type: "REVENUE", class: "INCOME" }])
+    );
+    mockGetXeroClient.mockResolvedValue({
+      xero: { accountingApi: { getAccounts: getAccountsFn } },
+      tenantId: "tenant-1",
+    });
+
+    const res = await getChartOfAccounts(
+      makeGetRequest("http://localhost/api/admin/xero/chart-of-accounts?refresh=1")
+    );
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.accounts).toEqual([
+      { code: "606", name: "Stripe Clearing", type: "BANK", class: "" },
+    ]);
+    expect(data.cache).toMatchObject({ source: "xero" });
+    expect(getAccountsFn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("GET /api/admin/xero/items", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuth.mockResolvedValue(adminSession());
+    mockPrisma.xeroToken.findFirst.mockResolvedValue({ tenantId: "tenant-1" });
+    mockPrisma.xeroAdminCache.findUnique.mockResolvedValue(null);
+    mockPrisma.xeroAdminCache.upsert.mockResolvedValue({});
     clearItemsCache();
   });
 
@@ -329,6 +408,21 @@ describe("GET /api/admin/xero/items", () => {
       { itemID: "1", code: "HUT-FEE", name: "Hut Fee", description: "Night stay" },
       { itemID: "2", code: "Z-LAST", name: "Archived-ish", description: "" },
     ]);
+  });
+
+  it("returns items from the durable cache without calling Xero", async () => {
+    const cachedItems = [
+      { itemID: "1", code: "HUT-FEE", name: "Hut Fee", description: "Night stay" },
+    ];
+    mockPrisma.xeroAdminCache.findUnique.mockResolvedValue(makeCacheRecord(cachedItems));
+
+    const res = await getXeroItems();
+    expect(res.status).toBe(200);
+
+    const data = await res.json();
+    expect(data.items).toEqual(cachedItems);
+    expect(data.cache).toMatchObject({ source: "database" });
+    expect(mockGetXeroClient).not.toHaveBeenCalled();
   });
 });
 

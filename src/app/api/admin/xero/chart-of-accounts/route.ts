@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { Account } from "xero-node";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -14,7 +14,7 @@ import {
  * Fetches accounts from the Xero chart of accounts, cached for 1 hour.
  * Returns { accounts: XeroAccount[] }
  */
-export async function GET() {
+export async function GET(request?: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -24,10 +24,16 @@ export async function GET() {
     return inactiveResponse;
   }
 
-  // Return from cache if fresh
-  const cachedAccounts = getCachedChartOfAccounts();
-  if (cachedAccounts) {
-    return NextResponse.json({ accounts: cachedAccounts });
+  const forceRefresh = request?.nextUrl.searchParams.get("refresh") === "1";
+
+  if (!forceRefresh) {
+    const cachedAccounts = await getCachedChartOfAccounts();
+    if (cachedAccounts) {
+      return NextResponse.json({
+        accounts: cachedAccounts.values,
+        cache: cachedAccounts.metadata,
+      });
+    }
   }
 
   try {
@@ -53,9 +59,9 @@ export async function GET() {
       }))
       .sort((a, b) => a.code.localeCompare(b.code));
 
-    setCachedChartOfAccounts(accounts);
+    const cache = await setCachedChartOfAccounts(tenantId, accounts);
 
-    return NextResponse.json({ accounts });
+    return NextResponse.json({ accounts, cache });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch chart of accounts";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -11,10 +11,20 @@ This review focuses on how TACBookings should reconcile booking and membership d
 
 ## Implementation Status (2026-04-14)
 
-The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, webhook-driven inbound reconciliation for linked contact, invoice, payment, and credit-note events, operator-facing admin tooling for inspecting and replaying stored inbound events both centrally and from the record-scoped activity view, a Phase 6 steady-state reduction that now trusts persisted member contact links by default, lets retry/replay flows explicitly relink stale contacts, and auto-repairs stale contact references on the first steady-state write failure, and now durable initial-write outbox paths for entrance-fee invoices, automatic booking invoices, the admin booking-invoice repair route, standard allocated refund credit notes, unapplied account-credit notes, booking-modification supplementary invoices, and booking-modification credit notes. The remaining work is now mostly around incremental pull support, richer business-state drift detection, optional Xero-side history/attachment enrichment, and deciding which future operator-triggered refund/account-credit repair routes should also converge on the outbox.
+The review below started as a design and gap-analysis document. The codebase now has the reconciliation foundation, outbound operation ledgering, admin inspection, synchronous retry for supported failed operations, a queue-backed background replay path for queued retries, record-scoped Xero activity surfaces for the main admin workflows, repeated-failure alerting by correlation key, a nightly reconciliation report, an idempotent historical backfill for canonical Xero IDs into the new reconciliation tables, dedicated repair flows for the `PARTIAL` outbound states the code currently emits, webhook-driven inbound reconciliation for linked contact, invoice, payment, and credit-note events, operator-facing admin tooling for inspecting and replaying stored inbound events both centrally and from the record-scoped activity view, a Phase 6 steady-state reduction that now trusts persisted member contact links by default, lets retry/replay flows explicitly relink stale contacts, and auto-repairs stale contact references on the first steady-state write failure, durable initial-write outbox paths for entrance-fee invoices, automatic booking invoices, the admin booking-invoice repair route, standard allocated refund credit notes, unapplied account-credit notes, booking-modification supplementary invoices, and booking-modification credit notes, and now a durable shared cache plus operator-triggered refresh controls for the low-priority chart-of-accounts and items admin read paths. The remaining work is now mostly around incremental pull support, richer business-state drift detection, optional Xero-side history/attachment enrichment, and deciding which future operator-triggered refund/account-credit repair routes should also converge on the outbox.
 
 ### Completed in this session
 
+- started the Phase 8 low-priority admin read-path hardening for chart-of-accounts and items:
+  - added `XeroAdminCache` to `prisma/schema.prisma` plus migration `prisma/migrations/20260414173000_add_xero_admin_cache/`
+  - rewrote `src/lib/xero-admin-cache.ts` into a tenant-aware durable shared cache backed by Prisma, while preserving the in-process fast path for repeat reads on the same node
+- updated the low-priority admin reference-data routes:
+  - `src/app/api/admin/xero/chart-of-accounts/route.ts`
+  - `src/app/api/admin/xero/items/route.ts`
+  - both routes now return cache metadata and support `?refresh=1` for an explicit live refresh
+- updated `src/app/(admin)/admin/xero/page.tsx` so operators can see chart/item cache source, last refresh time, expiry, and trigger a manual "Refresh Xero reference data" action
+- added focused coverage for the durable-cache and force-refresh path:
+  - `src/lib/__tests__/phase11.test.ts`
 - moved the admin booking-invoice repair path onto the durable booking-invoice outbox:
   - `src/app/api/admin/payments/[id]/generate-invoice/route.ts` now enqueues the same `BOOKING_INVOICE` primary-write operation used by the automatic booking flows
   - the route now best-effort kicks the worker and returns either the created invoice details or a queued result instead of creating the invoice inline
@@ -246,6 +256,9 @@ The review below started as a design and gap-analysis document. The codebase now
 - `npx eslint src/lib/xero-operation-outbox.ts src/lib/xero.ts src/lib/booking-cancel.ts src/lib/__tests__/xero-operation-outbox.test.ts src/lib/__tests__/booking-cancel.test.ts`
 - `npx eslint src/lib/xero.ts src/lib/__tests__/xero.test.ts`
 - `npx eslint src/app/api/admin/payments/[id]/generate-invoice/route.ts 'src/app/(admin)/admin/payments/page.tsx' src/lib/__tests__/admin-generate-invoice-route.test.ts`
+- `npx prisma generate`
+- `npx eslint src/lib/xero-admin-cache.ts src/app/api/admin/xero/chart-of-accounts/route.ts src/app/api/admin/xero/items/route.ts src/app/(admin)/admin/xero/page.tsx src/lib/__tests__/phase11.test.ts`
+- `npx vitest run src/lib/__tests__/phase11.test.ts`
 - `npm run build`
 
 ### Not yet implemented
@@ -271,6 +284,7 @@ For the next agent, the important baseline is:
 - nightly reconciliation reporting: implemented
 - historical canonical-ID backfill into `XeroObjectLink` / `XeroSyncOperation`: implemented
 - primary-write outbox for entrance-fee invoices, automatic booking invoices, standard allocated refund credit notes, unapplied account-credit notes, booking-modification supplementary invoices, and booking-modification credit notes: implemented
+- low-priority admin reference-data cache for chart-of-accounts and items: implemented
 - incremental pull / richer drift application beyond the current contact / invoice / payment / credit-note handlers: pending
 
 ## Current State
@@ -281,6 +295,7 @@ The codebase already has a solid base:
 - Xero rate-limit handling for many read paths in `src/lib/xero.ts` via `withXeroRetry()`
 - generic local audit logging in `prisma/schema.prisma` (`AuditLog`) and `src/lib/audit.ts`
 - webhook delivery monitoring in `prisma/schema.prisma` (`WebhookLog`) and `src/lib/webhook-log.ts`
+- durable shared cache storage for low-priority admin chart/item reference data in `prisma/schema.prisma` (`XeroAdminCache`) and `src/lib/xero-admin-cache.ts`
 - canonical Xero links stored for some objects:
   - member contact link via `Member.xeroContactId`
   - booking invoice link via `Payment.xeroInvoiceId` and `xeroInvoiceNumber`

@@ -8,6 +8,24 @@ Last updated: 2026-04-14
 
 Completed in this pass:
 
+- Started Phase 8 low-priority read-path hardening for Xero admin reference data:
+  - added durable shared cache storage in `prisma/schema.prisma` via new `XeroAdminCache` plus migration `prisma/migrations/20260414173000_add_xero_admin_cache/`
+  - rewrote `src/lib/xero-admin-cache.ts` from process-memory-only storage to a tenant-aware read-through/write-through cache backed by Prisma, while keeping the fast in-memory layer for hot repeats on the same node
+- Updated the chart-of-accounts and items admin endpoints to use the durable cache cleanly:
+  - `src/app/api/admin/xero/chart-of-accounts/route.ts`
+  - `src/app/api/admin/xero/items/route.ts`
+  - both routes now return cache metadata and support `?refresh=1` to bypass cache for an operator-triggered live refresh
+- Updated `/admin/xero` account-mapping tooling in `src/app/(admin)/admin/xero/page.tsx`:
+  - shows cache source, last-refreshed time, and expiry for chart-of-accounts and items
+  - adds a manual "Refresh Xero reference data" action for operators
+- Added focused regression coverage for the durable-cache path and force-refresh behavior:
+  - `src/lib/__tests__/phase11.test.ts`
+- Verified the Phase 8 cache pass with:
+  - `npx prisma generate`
+  - `npx eslint src/lib/xero-admin-cache.ts src/app/api/admin/xero/chart-of-accounts/route.ts src/app/api/admin/xero/items/route.ts src/app/(admin)/admin/xero/page.tsx src/lib/__tests__/phase11.test.ts`
+  - `npx vitest run src/lib/__tests__/phase11.test.ts`
+  - `npm run build`
+
 - Moved the explicit admin booking-invoice repair path onto the durable booking-invoice outbox:
   - `src/app/api/admin/payments/[id]/generate-invoice/route.ts` now enqueues the same `BOOKING_INVOICE` primary-write operation used by the automatic flows
   - the route best-effort kicks the worker and returns either the created invoice details or a durable queued result instead of creating the invoice inline
@@ -207,7 +225,9 @@ Work remaining after this pass:
   - webhook-driven targeted updates for any remaining local business state that is not yet advanced from inbound events
   - cached contact-group membership refresh driven from inbound changes where applicable
   - reducing daily polling to a safety net rather than the primary reconciliation path
-- Phase 8: durable shared cache for chart-of-accounts and items remains unstarted.
+- Phase 8 still remaining:
+  - review any remaining direct Xero SDK calls that are still outside the shared metered wrapper and cursor/cache strategy
+  - decide whether any other low-priority admin reference data should get the same durable cache treatment now, or remain intentionally deferred to Phases 3 and 4
 
 ## Goal
 
@@ -391,7 +411,7 @@ Why this is expensive:
 
 - Duplicate trigger paths are not the biggest current problem, but they are a real source of avoidable call volume and retry noise.
 
-### 8. Account/item caches are only in-memory
+### 8. Account/item caches were only in-memory
 
 Files:
 
@@ -403,11 +423,13 @@ Files:
 Current behavior:
 
 - `/admin/xero` auto-fetches chart of accounts and items when connected.
-- Those endpoints use a one-hour in-memory cache only.
+- Those endpoints now use a one-hour in-memory cache plus a durable shared cache persisted in `XeroAdminCache`.
+- `/admin/xero` now surfaces cache source, last refresh time, expiry, and a manual force-refresh action.
 
 Why this matters:
 
-- This is lower priority than the other hotspots.
+- This is still lower priority than the other hotspots.
+- The main remaining work is now auditing any residual direct SDK read paths outside the shared wrapper, not the chart/item endpoints themselves.
 - It still causes repeated Xero reads on restarts, multiple processes, or multiple app instances.
 
 ## What Is Not the Main Problem
@@ -746,6 +768,13 @@ Primary files:
 - `prisma/schema.prisma`
 
 ### Phase 8: Finish The Remaining Low-Priority Read Paths
+
+Status:
+
+- Partially implemented on 2026-04-14.
+- Chart-of-accounts and items now use a durable shared cache backed by `XeroAdminCache`, while preserving an in-memory fast path for repeat reads on the same node.
+- `/admin/xero` now exposes cache metadata and a manual refresh control for those reference datasets.
+- Remaining work is now the residual SDK-call audit and any decision about whether other low-priority reference reads deserve the same treatment.
 
 Goal:
 
