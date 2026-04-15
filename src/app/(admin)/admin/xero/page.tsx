@@ -392,7 +392,6 @@ export default function XeroPage() {
   const [operationStatusFilter, setOperationStatusFilter] = useState("all")
   const [operationEntityFilter, setOperationEntityFilter] = useState("all")
   const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
-  const [queueingOperationId, setQueueingOperationId] = useState<string | null>(null)
   const [inboundEvents, setInboundEvents] = useState<XeroInboundEvent[]>([])
   const [loadingInboundEvents, setLoadingInboundEvents] = useState(false)
   const [inboundEventStatusFilter, setInboundEventStatusFilter] = useState("all")
@@ -577,33 +576,12 @@ export default function XeroPage() {
       if (!res.ok) {
         throw new Error(data.error || "Failed to retry Xero operation")
       }
-      setOperationMessage(data.message || "Xero operation retried.")
+      setOperationMessage(data.message || "Xero operation queued for background retry.")
       await fetchOperations(operationStatusFilter, operationEntityFilter)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to retry Xero operation")
     } finally {
       setRetryingOperationId(null)
-    }
-  }
-
-  const handleRequeueOperation = async (operationId: string) => {
-    setQueueingOperationId(operationId)
-    setOperationMessage("")
-    setError("")
-    try {
-      const res = await fetch(`/api/admin/xero/operations/${operationId}/requeue`, {
-        method: "POST",
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to queue Xero operation retry")
-      }
-      setOperationMessage(data.message || "Xero operation queued for background retry.")
-      await fetchOperations(operationStatusFilter, operationEntityFilter)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to queue Xero operation retry")
-    } finally {
-      setQueueingOperationId(null)
     }
   }
 
@@ -1790,28 +1768,14 @@ export default function XeroPage() {
 
                     <div className="flex flex-wrap items-center gap-2">
                       {operation.supported ? (
-                        <>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleRetryOperation(operation.id)}
-                            disabled={
-                              retryingOperationId === operation.id || queueingOperationId === operation.id
-                            }
-                          >
-                            {retryingOperationId === operation.id ? "Retrying..." : "Retry"}
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleRequeueOperation(operation.id)}
-                            disabled={
-                              retryingOperationId === operation.id || queueingOperationId === operation.id
-                            }
-                          >
-                            {queueingOperationId === operation.id ? "Queueing..." : "Requeue"}
-                          </Button>
-                        </>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRetryOperation(operation.id)}
+                          disabled={retryingOperationId === operation.id}
+                        >
+                          {retryingOperationId === operation.id ? "Queueing..." : "Retry in background"}
+                        </Button>
                       ) : operation.reason && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
                         <p className="text-xs text-muted-foreground">{operation.reason}</p>
                       ) : null}

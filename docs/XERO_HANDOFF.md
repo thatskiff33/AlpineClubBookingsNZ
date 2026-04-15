@@ -29,22 +29,22 @@ Treat these as already landed unless the next task forces a design change:
 
 ## Landed In This Pass
 
-Phase 7 booking-scoped recovery is now closed.
+Phase 6 operator-triggered repair boundaries are now closed.
 
 Implemented:
 
-- inbound `INVOICE` reconciliation now recovers missing booking-scoped `SUPPLEMENTARY_INVOICE` links from `XeroSyncOperation` when the original extra-link write was lost
-- inbound `INVOICE` reconciliation now also rebuilds booking-scoped `SUPPLEMENTARY_INVOICE_PAYMENT` links from `invoice.payments` once the supplementary invoice link is recovered, so recovery no longer depends on a later `PAYMENT` webhook arriving after the invoice link exists
-- inbound `CREDIT_NOTE` reconciliation now recovers missing booking-scoped `MODIFICATION_CREDIT_NOTE` links from `XeroSyncOperation`
-- once the modification credit-note link is recovered, the existing inbound path rebuilds `MODIFICATION_CREDIT_NOTE_ALLOCATION` links and re-runs refunded-payment repair without needing any new pull job
-- confirmed the existing `PARTIAL` retry path remains the fallback when the supplementary Xero payment write itself failed
-- added focused regression coverage for the recovered supplementary payment-link path, the recovered modification credit-note path, and the partial supplementary payment retry path
+- operator-triggered outbound Xero retries no longer execute live writes inline from the admin request path
+- `/api/admin/xero/operations/[id]/retry` now queues the retry into `xero-operation-queue`, returns `202`, and kicks the queue worker after the response, matching the durable execution model that `/requeue` already used
+- the dedicated `/requeue` route remains as a compatibility alias over the same queued retry flow
+- the admin Xero operations UI and record activity panel now expose a single `Retry in background` action instead of separate `Retry` and `Requeue` buttons, so operators no longer have to choose between inconsistent execution models
+- added route-level regression coverage for both admin retry endpoints so the queued behavior stays locked down
 
 Primary files updated:
 
-- `src/lib/xero-inbound-reconciliation.ts`
-- `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
-- `src/lib/__tests__/xero-operation-retry.test.ts`
+- `src/app/api/admin/xero/operations/[id]/retry/route.ts`
+- `src/app/(admin)/admin/xero/page.tsx`
+- `src/components/admin/xero-record-activity-panel.tsx`
+- `src/lib/__tests__/xero-operation-routes.test.ts`
 
 ## Remaining Work
 
@@ -57,15 +57,15 @@ Decisions now landed:
 1. `SUPPLEMENTARY_INVOICE_PAYMENT` does not need a separate ledger-only backfill step. Recovering `SUPPLEMENTARY_INVOICE` during inbound invoice reconciliation now also reconstructs the payment link from `invoice.payments`, and the existing outbound `PARTIAL` retry path is still the repair path when the Xero payment write itself failed.
 2. No new webhook-free incremental pull was added for booking-scoped supplementary invoices or modification credit notes. Current stance is to rely on stored inbound webhook replay plus the recovered-link reconciliation paths above instead of adding another scheduled pull loop.
 
-### 2. Phase 6 remaining
+### 2. Phase 6 status
 
-Finish the outbox-boundary decisions for operator-triggered repair paths.
+Closed in this pass.
 
-Required outcome:
+Decisions now landed:
 
-- future contact-dependent writes stay on the shared stale-contact repair helper
-- refund/account-credit repair entrypoints have one consistent execution model
-- any new automatic outbound flow preserves crash-recovery guarantees
+1. Operator-triggered outbound retries now use the same queued execution boundary as other durable Xero repair flows instead of issuing live writes inline from the admin request path.
+2. Refund/account-credit repair entrypoints therefore follow the same background retry model as the rest of the Xero operation queue.
+3. This keeps crash recovery tied to stored `XeroSyncOperation` rows instead of whichever button an operator happened to click.
 
 ### 3. Hardening and cleanup
 
@@ -81,9 +81,9 @@ Run the most relevant targeted suites plus a full build before updating this fil
 
 Executed in this pass:
 
-- `npx vitest run src/lib/__tests__/xero-inbound-reconciliation.test.ts`
-- `npx vitest run src/lib/__tests__/xero-operation-retry.test.ts`
-- `npx eslint src/lib/xero-inbound-reconciliation.ts src/lib/__tests__/xero-inbound-reconciliation.test.ts src/lib/__tests__/xero-operation-retry.test.ts`
+- `npx vitest run src/lib/__tests__/xero-operation-routes.test.ts`
+- `npx vitest run src/lib/__tests__/xero-operation-queue.test.ts`
+- `npx eslint 'src/app/api/admin/xero/operations/[id]/retry/route.ts' 'src/app/(admin)/admin/xero/page.tsx' src/components/admin/xero-record-activity-panel.tsx src/lib/__tests__/xero-operation-routes.test.ts`
 - `npm run build`
 
 Re-run as appropriate if further code changes land after this handoff:
@@ -96,5 +96,6 @@ Re-run as appropriate if further code changes land after this handoff:
 
 1. Read this file first.
 2. Treat booking-scoped Phase 7 work as closed unless new production evidence proves another gap.
-3. Keep the remaining scope on Phase 6 operator-triggered repair boundaries and on hardening/cleanup items only.
-4. Compare any further change in `src/lib/xero.ts` against inbound recovery first, and prefer durable local state before adding more polling.
+3. Treat Phase 6 operator-triggered retry boundary work as closed unless a new repair path is added that bypasses the queue boundary.
+4. Keep the remaining scope on hardening/cleanup items only.
+5. Compare any further change in `src/lib/xero.ts` against inbound recovery first, and prefer durable local state before adding more polling.

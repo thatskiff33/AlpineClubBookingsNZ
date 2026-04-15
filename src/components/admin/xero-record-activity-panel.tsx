@@ -68,16 +68,12 @@ function OperationItem({
   operation,
   compact,
   onRetry,
-  onRequeue,
   retrying,
-  queueing,
 }: {
   operation: XeroRecordActivityOperation
   compact: boolean
   onRetry: (operationId: string) => Promise<void>
-  onRequeue: (operationId: string) => Promise<void>
   retrying: boolean
-  queueing: boolean
 }) {
   return (
     <div className={cn("rounded-md border p-3", compact ? "space-y-2" : "space-y-3")}>
@@ -137,24 +133,14 @@ function OperationItem({
         <>
           <div className="flex flex-wrap items-center gap-2">
             {operation.supported ? (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void onRetry(operation.id)}
-                  disabled={retrying || queueing}
-                >
-                  {retrying ? "Retrying..." : "Retry"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void onRequeue(operation.id)}
-                  disabled={retrying || queueing}
-                >
-                  {queueing ? "Queueing..." : "Requeue"}
-                </Button>
-              </>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void onRetry(operation.id)}
+                disabled={retrying}
+              >
+                {retrying ? "Queueing..." : "Retry in background"}
+              </Button>
             ) : operation.reason && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
               <p className="text-xs text-muted-foreground">{operation.reason}</p>
             ) : null}
@@ -198,7 +184,6 @@ export function XeroRecordActivityPanel({
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
-  const [queueingOperationId, setQueueingOperationId] = useState<string | null>(null)
   const [replayingInboundEventId, setReplayingInboundEventId] = useState<string | null>(null)
 
   const loadActivity = useCallback(async (showLoading: boolean) => {
@@ -251,35 +236,12 @@ export function XeroRecordActivityPanel({
         throw new Error(payload.error || "Failed to retry Xero operation")
       }
 
-      setMessage(payload.message || "Xero operation retried.")
+      setMessage(payload.message || "Xero operation queued for background retry.")
       await loadActivity(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to retry Xero operation")
     } finally {
       setRetryingOperationId(null)
-    }
-  }
-
-  async function handleRequeue(operationId: string) {
-    setQueueingOperationId(operationId)
-    setMessage(null)
-    setError(null)
-
-    try {
-      const res = await fetch(`/api/admin/xero/operations/${operationId}/requeue`, {
-        method: "POST",
-      })
-      const payload = await res.json()
-      if (!res.ok) {
-        throw new Error(payload.error || "Failed to queue Xero operation retry")
-      }
-
-      setMessage(payload.message || "Xero operation queued for background retry.")
-      await loadActivity(false)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to queue Xero operation retry")
-    } finally {
-      setQueueingOperationId(null)
     }
   }
 
@@ -396,9 +358,7 @@ export function XeroRecordActivityPanel({
                         operation={operation}
                         compact
                         onRetry={handleRetry}
-                        onRequeue={handleRequeue}
                         retrying={retryingOperationId === operation.id}
-                        queueing={queueingOperationId === operation.id}
                       />
                     ))}
                   </div>
@@ -582,17 +542,15 @@ export function XeroRecordActivityPanel({
           ) : (
             <div className="space-y-3">
               {data.operations.map((operation) => (
-                <OperationItem
-                  key={operation.id}
-                  operation={operation}
-                  compact={false}
-                  onRetry={handleRetry}
-                  onRequeue={handleRequeue}
-                  retrying={retryingOperationId === operation.id}
-                  queueing={queueingOperationId === operation.id}
-                />
-              ))}
-            </div>
+                  <OperationItem
+                    key={operation.id}
+                    operation={operation}
+                    compact={false}
+                    onRetry={handleRetry}
+                    retrying={retryingOperationId === operation.id}
+                  />
+                ))}
+              </div>
           )}
         </CardContent>
       </Card>
