@@ -175,3 +175,22 @@ Validation rerun after the fixes:
 Release note:
 
 - The exact published commit hash and live deployment outcome are reported in the session handoff rather than embedded here, because recording the hash inside the same commit would make the value immediately stale.
+
+### 2026-04-15 (continued)
+
+Stage 0 and Stage 1 were continued from the current `main` state to re-check the remaining deployment item and scan for newly introduced auth, webhook, cron, deployment, and test regressions.
+
+Findings surfaced during the continuation:
+
+- Verified fixed outside the repo: the previously open deployment-script false failure for intentionally disabled Xero daily membership refresh is no longer present on the current host entrypoint. `/home/ubuntu/clean-build-docker-tacbookings.sh` now accepts either `Scheduled Xero membership refresh` or `Xero membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH` during startup verification.
+- Fixed: `docs/CODEBASE_AUDIT.md` had been deleted from `main`, even though the audit handoff and prior progress log still treated it as the active unresolved-issues ledger. The file has been restored and reduced to the current open items only.
+- Fixed: `.github/workflows/ci.yml` was still pinned to `actions/checkout@v4` and `actions/setup-node@v4`, which GitHub now flags as Node 20-based action runtimes scheduled for forced Node 24 migration. The workflow now uses the Node 24-capable `v5` releases.
+- Deferred / residual risk: the deployment entrypoint remains an external host-level script rather than a repo-tracked artifact. That means deployment behavior can still drift from `main` even when the current host copy is healthy.
+
+Additional validation rerun for this continuation:
+
+- `bash -n /home/ubuntu/clean-build-docker-tacbookings.sh`
+- `npx vitest run src/lib/__tests__/xero-cron-route.test.ts`
+- `npm run lint`
+- `npm test`
+- `npm run build`
