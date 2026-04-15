@@ -5,15 +5,20 @@ import {
   parseApplicationFamilyMembers,
 } from "@/lib/nomination";
 import { prisma } from "@/lib/prisma";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 
 export async function GET(req: NextRequest) {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   if (session.user.role !== "ADMIN") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
   }
 
   const status = req.nextUrl.searchParams.get("status");

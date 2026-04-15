@@ -181,8 +181,8 @@ src/app/api/
 | | `XERO_WEBHOOK_KEY` | Webhook HMAC verification key |
 | **Email** | `SMTP_HOST` | SES SMTP endpoint |
 | | `SMTP_PORT` | SMTP port (587) |
-| | `SMTP_USER` | SES SMTP username |
-| | `SMTP_PASS` | SES SMTP password |
+| | `AWS_SES_ACCESS_KEY_ID` | SES SMTP username |
+| | `AWS_SES_SECRET_ACCESS_KEY` | SES SMTP password |
 | | `EMAIL_FROM` | Sender address |
 | | `CONTACT_EMAIL` | Admin contact email |
 | **Deployment** | `DOMAIN` | Domain for Caddy HTTPS |

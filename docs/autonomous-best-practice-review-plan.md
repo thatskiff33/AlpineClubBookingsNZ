@@ -145,3 +145,30 @@ Use the staged approach above rather than a single sweep. It is the safest fit f
 - Coverage: `Full Repo + Ops`
 - Execution style: `Stage-Gated`
 - Default behavior: proceed without asking unless blocked by a true product ambiguity or destructive uncertainty
+
+## Review Progress
+
+### 2026-04-15
+
+Stage 0 and Stage 1 completed with explicit review of the current dirty worktree, `package.json`/`package-lock.json`, deployment/build scripts, health endpoints, auth/session guards, webhook handlers, and the required Next.js 16 docs under `node_modules/next/dist/docs/`.
+
+Findings surfaced during the review:
+
+- Fixed: `src/app/api/admin/member-applications/route.ts` allowed a deactivated admin session to read the membership-application queue because it checked role but skipped `requireActiveSessionUser`. The route now applies the same active-session guard used across the rest of the admin API.
+- Fixed: audit documentation drift in `docs/CODEBASE_AUDIT.md` and `docs/audit/01_STACK_AND_STRUCTURE.md`. Those docs listed `SMTP_USER` / `SMTP_PASS`, but the runtime, `.env.example`, and deployment path use `AWS_SES_ACCESS_KEY_ID` / `AWS_SES_SECRET_ACCESS_KEY`.
+- Deferred / residual risk: the repo currently has no `.github/workflows/` directory, so there is no GitHub-hosted CI gate for lint/test/build on pushes or pull requests.
+
+In-scope existing worktree change carried forward and validated:
+
+- `@sentry/nextjs` patch upgrade in `package.json` / `package-lock.json` from `10.47.0` to `10.48.0`.
+
+Validation rerun after the fixes:
+
+- `npm run lint`
+- `npx vitest run src/lib/__tests__/admin-member-applications-route.test.ts`
+- `npm test` -> `127` test files passed, `1758` tests passed
+- `npm run build` -> production build passed
+
+Release note:
+
+- The exact published commit hash and live deployment outcome are reported in the session handoff rather than embedded here, because recording the hash inside the same commit would make the value immediately stale.
