@@ -131,14 +131,21 @@ export async function findOrCreateCustomer({
   name: string;
   memberId: string;
 }): Promise<Stripe.Customer> {
-  // Search for existing customer by metadata
   const existing = await stripe.customers.list({
     email,
-    limit: 1,
+    limit: 100,
   });
 
-  if (existing.data.length > 0) {
-    return existing.data[0];
+  const matchingCustomer = existing.data.find((customer) => {
+    if ("deleted" in customer && customer.deleted) {
+      return false;
+    }
+
+    return customer.metadata?.memberId === memberId;
+  });
+
+  if (matchingCustomer) {
+    return matchingCustomer;
   }
 
   return stripe.customers.create({

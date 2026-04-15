@@ -275,6 +275,29 @@ export async function PUT(
 
   const data = parsed.data;
 
+  if (id === session.user.id) {
+    if (data.role === "MEMBER") {
+      return NextResponse.json(
+        { error: "You cannot demote your own admin account" },
+        { status: 400 }
+      );
+    }
+
+    if (data.active === false) {
+      return NextResponse.json(
+        { error: "You cannot deactivate your own account" },
+        { status: 400 }
+      );
+    }
+
+    if (data.canLogin === false) {
+      return NextResponse.json(
+        { error: "You cannot disable login for your own admin account" },
+        { status: 400 }
+      );
+    }
+  }
+
   // Check email uniqueness if changing email for a canLogin member
   const effectiveCanLogin = data.canLogin !== undefined ? data.canLogin : existing.canLogin;
   if (data.email && data.email.toLowerCase() !== existing.email && effectiveCanLogin) {

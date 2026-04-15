@@ -161,9 +161,18 @@ describe("Stripe library", () => {
   });
 
   describe("findOrCreateCustomer", () => {
-    it("returns existing customer if found", async () => {
-      const existingCustomer = { id: "cus_existing", email: "test@example.com" };
-      mockCustomersList.mockResolvedValue({ data: [existingCustomer] });
+    it("returns the existing customer for the same member", async () => {
+      const existingCustomer = {
+        id: "cus_existing",
+        email: "test@example.com",
+        metadata: { memberId: "member_1" },
+      };
+      const otherCustomer = {
+        id: "cus_other",
+        email: "test@example.com",
+        metadata: { memberId: "member_other" },
+      };
+      mockCustomersList.mockResolvedValue({ data: [otherCustomer, existingCustomer] });
 
       const result = await findOrCreateCustomer({
         email: "test@example.com",
@@ -173,26 +182,34 @@ describe("Stripe library", () => {
 
       expect(mockCustomersList).toHaveBeenCalledWith({
         email: "test@example.com",
-        limit: 1,
+        limit: 100,
       });
       expect(result.id).toBe("cus_existing");
       expect(mockCustomersCreate).not.toHaveBeenCalled();
     });
 
-    it("creates a new customer if none exists", async () => {
-      mockCustomersList.mockResolvedValue({ data: [] });
-      const newCustomer = { id: "cus_new", email: "new@example.com" };
+    it("creates a new customer when the email belongs to a different member", async () => {
+      mockCustomersList.mockResolvedValue({
+        data: [
+          {
+            id: "cus_other",
+            email: "shared@example.com",
+            metadata: { memberId: "member_1" },
+          },
+        ],
+      });
+      const newCustomer = { id: "cus_new", email: "shared@example.com" };
       mockCustomersCreate.mockResolvedValue(newCustomer);
 
       const result = await findOrCreateCustomer({
-        email: "new@example.com",
-        name: "New User",
+        email: "shared@example.com",
+        name: "Second User",
         memberId: "member_2",
       });
 
       expect(mockCustomersCreate).toHaveBeenCalledWith({
-        email: "new@example.com",
-        name: "New User",
+        email: "shared@example.com",
+        name: "Second User",
         metadata: { memberId: "member_2" },
       });
       expect(result.id).toBe("cus_new");
