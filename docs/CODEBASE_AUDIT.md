@@ -6,15 +6,7 @@ This file now tracks only unresolved issues from the latest autonomous repo revi
 
 ## Remaining Issues
 
-### 1. No GitHub-hosted CI gate
-
-- **Severity:** Medium
-- **Status:** Open
-- **Evidence:** The repo has no `.github/workflows/` directory.
-- **Why it matters:** Pull requests and direct pushes have no GitHub-side lint, test, or production-build verification. A broken change can merge without any remote automation catching it.
-- **Recommended fix:** Add at least one workflow that runs `npm run lint`, `npm test`, and `npm run build` on pushes and pull requests targeting `main`.
-
-### 2. Deployment script reports false failure when optional Xero daily refresh is disabled
+### 1. Deployment script reports false failure when optional Xero daily refresh is disabled
 
 - **Severity:** Medium
 - **Status:** Open
