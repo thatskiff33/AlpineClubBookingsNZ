@@ -312,6 +312,9 @@ describe("#24: LODGE JWT 30-day expiry", () => {
 // ---------------------------------------------------------------------------
 
 describe("#31: Expected Arrival Time", () => {
+  const futureCheckIn = new Date("2099-04-15");
+  const pastCheckIn = new Date("2000-04-01");
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.count.mockResolvedValue(1);
@@ -324,7 +327,7 @@ describe("#31: Expected Arrival Time", () => {
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
-        checkIn: new Date("2026-04-15"),
+        checkIn: futureCheckIn,
         status: "CONFIRMED",
       });
       mockPrisma.booking.update.mockResolvedValue({
@@ -353,7 +356,7 @@ describe("#31: Expected Arrival Time", () => {
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
-        checkIn: new Date("2026-04-15"),
+        checkIn: futureCheckIn,
         status: "CONFIRMED",
       });
 
@@ -376,7 +379,7 @@ describe("#31: Expected Arrival Time", () => {
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
-        checkIn: new Date("2026-04-15"),
+        checkIn: futureCheckIn,
         status: "CONFIRMED",
       });
 
@@ -399,7 +402,7 @@ describe("#31: Expected Arrival Time", () => {
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
-        checkIn: new Date("2026-04-15"),
+        checkIn: futureCheckIn,
         status: "CONFIRMED",
       });
       mockPrisma.booking.update.mockResolvedValue({
@@ -426,7 +429,7 @@ describe("#31: Expected Arrival Time", () => {
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
-        checkIn: new Date("2026-04-01"), // past date
+        checkIn: pastCheckIn,
         status: "CONFIRMED",
       });
 
@@ -468,7 +471,7 @@ describe("#31: Expected Arrival Time", () => {
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
-        checkIn: new Date("2026-04-15"),
+        checkIn: futureCheckIn,
         status: "CANCELLED",
       });
 
@@ -513,7 +516,7 @@ describe("#31: Expected Arrival Time", () => {
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
-        checkIn: new Date("2026-04-15"),
+        checkIn: futureCheckIn,
         status: "CONFIRMED",
       });
       mockPrisma.booking.update.mockResolvedValue({
@@ -540,7 +543,7 @@ describe("#31: Expected Arrival Time", () => {
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
-        checkIn: new Date("2026-04-01"),
+        checkIn: pastCheckIn,
         status: "CONFIRMED",
       });
 
@@ -561,7 +564,7 @@ describe("#31: Expected Arrival Time", () => {
       });
       mockPrisma.booking.findUnique.mockResolvedValue({
         memberId: "member-1",
-        checkIn: new Date("2026-04-15"),
+        checkIn: futureCheckIn,
         status: "COMPLETED",
       });
 
@@ -587,7 +590,7 @@ describe("#31: Expected Arrival Time", () => {
       for (const time of validTimes) {
         mockPrisma.booking.findUnique.mockResolvedValue({
           memberId: "member-1",
-          checkIn: new Date("2026-04-15"),
+          checkIn: futureCheckIn,
           status: "CONFIRMED",
         });
         mockPrisma.booking.update.mockResolvedValue({
@@ -618,7 +621,7 @@ describe("#31: Expected Arrival Time", () => {
       for (const time of invalidTimes) {
         mockPrisma.booking.findUnique.mockResolvedValue({
           memberId: "member-1",
-          checkIn: new Date("2026-04-15"),
+          checkIn: futureCheckIn,
           status: "CONFIRMED",
         });
 

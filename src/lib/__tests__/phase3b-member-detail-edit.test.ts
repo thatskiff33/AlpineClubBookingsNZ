@@ -268,19 +268,40 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     expect(updateXeroContact).not.toHaveBeenCalled();
   });
 
-  // ── Self-demotion guard (client-side in UI) ──
-  // The API does not currently block self-demotion via PUT — this is enforced in the UI
-  // by disabling the role selector when isSelf is true.
-  // The following test documents current API behaviour: an admin CAN call PUT to change
-  // their own role. The UI prevents this before the request is made.
-  it("API allows an admin to change their own role (UI prevents this)", async () => {
+  it("blocks self-demotion via the API", async () => {
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, id: "admin1", role: "ADMIN" } as any);
-    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, id: "admin1", role: "MEMBER", xeroContactId: null } as any);
 
     const res = await updateMember(makePutRequest("admin1", { role: "MEMBER" }), { params: Promise.resolve({ id: "admin1" }) });
-    // API does not block this — the UI disables the field for self
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/demote your own admin account/i),
+    });
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks self-deactivation via the API", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, id: "admin1", role: "ADMIN" } as any);
+
+    const res = await updateMember(makePutRequest("admin1", { active: false }), { params: Promise.resolve({ id: "admin1" }) });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/deactivate your own account/i),
+    });
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("blocks disabling login for the current admin", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, id: "admin1", role: "ADMIN", canLogin: true } as any);
+
+    const res = await updateMember(makePutRequest("admin1", { canLogin: false }), { params: Promise.resolve({ id: "admin1" }) });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/disable login/i),
+    });
+    expect(prisma.member.update).not.toHaveBeenCalled();
   });
 
   // ── GET endpoint ──
