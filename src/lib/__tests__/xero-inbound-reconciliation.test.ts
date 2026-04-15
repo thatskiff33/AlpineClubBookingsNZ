@@ -458,7 +458,7 @@ describe("processStoredXeroInboundEvents", () => {
     );
   });
 
-  it("recovers missing supplementary invoice links from the outbound operation ledger", async () => {
+  it("recovers missing supplementary invoice and payment links from the outbound operation ledger", async () => {
     mocks.inboundFindMany.mockResolvedValue([
       {
         id: "evt_2b",
@@ -489,6 +489,14 @@ describe("processStoredXeroInboundEvents", () => {
               invoiceNumber: "INV-SUP-001",
               date: "2026-04-10",
               contact: { contactID: "contact_1" },
+              payments: [
+                {
+                  paymentID: "xpay_sup_1",
+                  amount: 30,
+                  invoiceNumber: "INV-SUP-001",
+                  status: "PAID",
+                },
+              ],
               lineItems: [{ accountCode: "200" }],
             },
           ],
@@ -515,6 +523,20 @@ describe("processStoredXeroInboundEvents", () => {
         xeroObjectType: "INVOICE",
         xeroObjectId: "inv_sup_1",
         role: "SUPPLEMENTARY_INVOICE",
+      })
+    );
+    expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localModel: "BookingModification",
+        localId: "mod_1",
+        xeroObjectType: "PAYMENT",
+        xeroObjectId: "xpay_sup_1",
+        role: "SUPPLEMENTARY_INVOICE_PAYMENT",
+        metadata: expect.objectContaining({
+          invoiceId: "inv_sup_1",
+          amount: 30,
+          status: "PAID",
+        }),
       })
     );
   });

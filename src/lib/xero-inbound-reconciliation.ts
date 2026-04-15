@@ -1433,6 +1433,43 @@ async function reconcileXeroInvoice(
     });
   }
 
+  const paymentLinks = dedupeXeroObjectLinks(
+    (invoice.payments ?? []).flatMap((payment) => {
+      if (!payment.paymentID) {
+        return [];
+      }
+
+      return relatedLinks.flatMap((link) => {
+        const role = getDerivedInboundPaymentRole(link);
+        if (!role) {
+          return [];
+        }
+
+        return [
+          {
+            localModel: link.localModel,
+            localId: link.localId,
+            xeroObjectType: "PAYMENT",
+            xeroObjectId: payment.paymentID!,
+            xeroObjectNumber: buildXeroPaymentDisplayNumber(payment),
+            role,
+            metadata: {
+              invoiceId: invoice.invoiceID,
+              amount: payment.amount ?? null,
+              date: payment.date ?? null,
+              paymentType: payment.paymentType ?? null,
+              status: payment.status ?? null,
+            },
+          },
+        ] satisfies XeroObjectLinkInput[];
+      });
+    })
+  );
+
+  for (const link of paymentLinks) {
+    await upsertXeroObjectLink(link);
+  }
+
   const linkedPaymentIds = relatedLinks
     .filter((link) => link.localModel === "Payment" && link.role === "PRIMARY_INVOICE")
     .map((link) => link.localId);
@@ -1483,6 +1520,7 @@ async function reconcileXeroInvoice(
     resourceId: invoice.invoiceID,
     invoiceNumber: invoice.invoiceNumber ?? null,
     matchedPayments,
+    paymentLinksUpdated: paymentLinks.length,
     updatedPayments,
     refreshedSubscriptions: refreshedSubscriptions.size,
     relatedLinksUpdated: relatedLinks.length,

@@ -29,37 +29,33 @@ Treat these as already landed unless the next task forces a design change:
 
 ## Landed In This Pass
 
-Phase 7 link recovery is narrower now.
+Phase 7 booking-scoped recovery is now closed.
 
 Implemented:
 
 - inbound `INVOICE` reconciliation now recovers missing booking-scoped `SUPPLEMENTARY_INVOICE` links from `XeroSyncOperation` when the original extra-link write was lost
+- inbound `INVOICE` reconciliation now also rebuilds booking-scoped `SUPPLEMENTARY_INVOICE_PAYMENT` links from `invoice.payments` once the supplementary invoice link is recovered, so recovery no longer depends on a later `PAYMENT` webhook arriving after the invoice link exists
 - inbound `CREDIT_NOTE` reconciliation now recovers missing booking-scoped `MODIFICATION_CREDIT_NOTE` links from `XeroSyncOperation`
 - once the modification credit-note link is recovered, the existing inbound path rebuilds `MODIFICATION_CREDIT_NOTE_ALLOCATION` links and re-runs refunded-payment repair without needing any new pull job
-- added focused regression coverage for both recovered-link paths
+- confirmed the existing `PARTIAL` retry path remains the fallback when the supplementary Xero payment write itself failed
+- added focused regression coverage for the recovered supplementary payment-link path, the recovered modification credit-note path, and the partial supplementary payment retry path
 
 Primary files updated:
 
 - `src/lib/xero-inbound-reconciliation.ts`
 - `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
+- `src/lib/__tests__/xero-operation-retry.test.ts`
 
 ## Remaining Work
 
-### 1. Phase 7 remaining
+### 1. Phase 7 status
 
-Do not reopen the membership/contact/account-credit work above. The remaining Phase 7 scope is only the last booking-scoped gaps.
+No booking-scoped Phase 7 items remain open.
 
-Open questions:
+Decisions now landed:
 
-1. Decide whether `SUPPLEMENTARY_INVOICE_PAYMENT` needs an explicit ledger-based backfill, or whether recovering `SUPPLEMENTARY_INVOICE` plus the existing inbound `PAYMENT` handler is sufficient.
-2. Decide whether any webhook-free pull is still needed for booking-scoped supplementary invoices or modification credit notes after observing the recovered-link path. This pass did not add a new incremental pull step.
-
-Relevant files:
-
-- `src/lib/xero.ts`
-- `src/lib/xero-inbound-reconciliation.ts`
-- `src/lib/xero-operation-outbox.ts`
-- `src/lib/xero-operation-retry.ts`
+1. `SUPPLEMENTARY_INVOICE_PAYMENT` does not need a separate ledger-only backfill step. Recovering `SUPPLEMENTARY_INVOICE` during inbound invoice reconciliation now also reconstructs the payment link from `invoice.payments`, and the existing outbound `PARTIAL` retry path is still the repair path when the Xero payment write itself failed.
+2. No new webhook-free incremental pull was added for booking-scoped supplementary invoices or modification credit notes. Current stance is to rely on stored inbound webhook replay plus the recovered-link reconciliation paths above instead of adding another scheduled pull loop.
 
 ### 2. Phase 6 remaining
 
@@ -86,8 +82,11 @@ Run the most relevant targeted suites plus a full build before updating this fil
 Executed in this pass:
 
 - `npx vitest run src/lib/__tests__/xero-inbound-reconciliation.test.ts`
+- `npx vitest run src/lib/__tests__/xero-operation-retry.test.ts`
+- `npx eslint src/lib/xero-inbound-reconciliation.ts src/lib/__tests__/xero-inbound-reconciliation.test.ts src/lib/__tests__/xero-operation-retry.test.ts`
+- `npm run build`
 
-Still required whenever code changes:
+Re-run as appropriate if further code changes land after this handoff:
 
 - targeted `npx eslint ...`
 - targeted `npx vitest run ...`
@@ -96,5 +95,6 @@ Still required whenever code changes:
 ## Next Agent Checklist
 
 1. Read this file first.
-2. Keep the scope on the remaining booking-scoped Phase 7 gap; do not reopen the landed membership/contact/account-credit reconciliation work.
-3. Compare any further change in `src/lib/xero.ts` against inbound recovery first, and prefer durable local state before adding more polling.
+2. Treat booking-scoped Phase 7 work as closed unless new production evidence proves another gap.
+3. Keep the remaining scope on Phase 6 operator-triggered repair boundaries and on hardening/cleanup items only.
+4. Compare any further change in `src/lib/xero.ts` against inbound recovery first, and prefer durable local state before adding more polling.

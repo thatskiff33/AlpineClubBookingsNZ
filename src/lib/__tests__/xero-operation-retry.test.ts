@@ -379,6 +379,43 @@ describe("retryXeroSyncOperation", () => {
     });
   });
 
+  it("repairs partial supplementary invoice payment recording", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        localModel: "BookingModification",
+        localId: "mod_123",
+        xeroObjectId: "inv_sup_123",
+        responsePayload: {
+          invoice: {
+            invoices: [{ total: 30 }],
+          },
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Repaired Xero supplementary invoice payment recording.",
+    });
+
+    expect(mocks.createXeroPaymentForInvoice).toHaveBeenCalledWith({
+      localModel: "BookingModification",
+      localId: "mod_123",
+      invoiceId: "inv_sup_123",
+      amountCents: 3000,
+      idempotencyKey: "booking-mod:mod_123:supplementary-payment:3000:v1",
+      reference: "TACBookings supplementary payment mod_123",
+      role: "SUPPLEMENTARY_INVOICE_PAYMENT",
+      createdByMemberId: "admin_1",
+      metadata: {
+        invoiceId: "inv_sup_123",
+        amountCents: 3000,
+      },
+    });
+  });
+
   it("repairs partial refund credit note follow-up actions", async () => {
     mocks.findUniqueOperation.mockResolvedValue(
       makeOperation({
