@@ -21,6 +21,7 @@ import {
   copyStreetAddressToPostal,
   POSTAL_ADDRESS_FIELDS,
 } from "@/lib/member-address";
+import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
 import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
@@ -289,25 +290,18 @@ export async function PUT(
   }
 
   if (data.inheritEmailFromId !== undefined && data.inheritEmailFromId !== "") {
-    const inheritEmailFrom = data.inheritEmailFromId
-      ? await prisma.member.findUnique({
-          where: { id: data.inheritEmailFromId },
-          select: { id: true, ageTier: true },
-        })
-      : null;
-
-    if (data.inheritEmailFromId && !inheritEmailFrom) {
-      return NextResponse.json(
-        { error: "Email inheritance member not found" },
-        { status: 404 }
-      );
-    }
-
-    if (inheritEmailFrom && inheritEmailFrom.ageTier !== "ADULT") {
-      return NextResponse.json(
-        { error: "Email inheritance must point to an adult member" },
-        { status: 422 }
-      );
+    const inheritEmailFromId = data.inheritEmailFromId?.trim();
+    if (inheritEmailFromId) {
+      const validation = await validateInheritEmailSource({
+        memberId: id,
+        inheritEmailFromId,
+      });
+      if (!validation.ok) {
+        return NextResponse.json(
+          { error: validation.error },
+          { status: validation.status }
+        );
+      }
     }
   }
 

@@ -81,7 +81,7 @@ export async function findBumpCandidates(
       status: BookingStatus.PENDING,
     },
     include: { guests: true, member: true },
-    orderBy: { createdAt: "desc" }, // FIFO: most recent first
+    orderBy: { createdAt: "desc" }, // Most recent pending bookings are bumped first
   });
 }
 
@@ -122,7 +122,7 @@ function removeBumpedBookingFromOccupancy(
 }
 
 /**
- * FIFO bumping algorithm.
+ * Most-recent-first bumping algorithm.
  *
  * When a MEMBER creates a booking that would push any night past 29 beds:
  * 1. Find all PENDING bookings overlapping those nights
