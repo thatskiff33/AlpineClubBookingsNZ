@@ -165,7 +165,8 @@ model Member {
   secondaryParent     Member?  @relation("SecondaryFamily", fields: [secondaryParentId], references: [id], onDelete: SetNull)
   secondaryDependents Member[] @relation("SecondaryFamily")
 
-  // Flexible email inheritance: use any adult's email for communications.
+  // Flexible email inheritance: dependents can reuse a primary adult's email for communications.
+  // The source must be an adult primary member who is not inheriting from someone else.
   // Takes precedence over the inheritParentEmail + parentMemberId mechanism.
   inheritEmailFromId  String?
   inheritEmailFrom    Member?  @relation("EmailInheritance", fields: [inheritEmailFromId], references: [id], onDelete: SetNull)

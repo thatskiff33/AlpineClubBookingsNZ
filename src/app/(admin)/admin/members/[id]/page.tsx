@@ -527,6 +527,13 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 "Not linked"
               )}
             </div>
+            {!member.xeroContactId && (
+              <p className="text-xs text-amber-700">
+                Membership refresh skips unlinked members. Link or create a Xero
+                contact before expecting subscription status to update
+                automatically.
+              </p>
+            )}
             {member.xeroContactGroups.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {member.xeroContactGroups.map((group) => (

@@ -315,11 +315,18 @@ describe("Admin: Create dependent member", () => {
   it("defaults dependent email inheritance to the parent's existing email source", async () => {
     vi.mocked(auth).mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue({
-      id: "parent1",
-      ageTier: "ADULT",
-      inheritEmailFromId: "lead-adult",
-    } as any);
+    vi.mocked(prisma.member.findUnique)
+      .mockResolvedValueOnce({
+        id: "parent1",
+        ageTier: "ADULT",
+        inheritEmailFromId: "lead-adult",
+      } as any)
+      .mockResolvedValueOnce({
+        id: "lead-adult",
+        ageTier: "ADULT",
+        parentMemberId: null,
+        inheritEmailFromId: null,
+      } as any);
 
     const txMemberCreate = vi.fn().mockResolvedValue({
       id: "dep2",
@@ -407,6 +414,27 @@ describe("Admin: Create dependent member", () => {
     const body = await res.json();
     expect(body.error).toContain("adult");
   });
+
+  it("rejects inheritEmailFromId pointing to a dependent adult", async () => {
+    vi.mocked(auth).mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "adult-dependent",
+      ageTier: "ADULT",
+      parentMemberId: "primary-adult",
+      inheritEmailFromId: null,
+    } as any);
+
+    const res = await createMember(makePostRequest({
+      email: "kid@test.com",
+      firstName: "Kid",
+      lastName: "Smith",
+      inheritEmailFromId: "adult-dependent",
+    }));
+
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toContain("primary adult");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -480,7 +508,12 @@ describe("Admin: Member update with postalSameAsPhysical", () => {
     vi.mocked(auth).mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique)
       .mockResolvedValueOnce(baseMember as any)  // existing member
-      .mockResolvedValueOnce({ id: "parent1", ageTier: "ADULT" } as any);  // inherit target
+      .mockResolvedValueOnce({
+        id: "parent1",
+        ageTier: "ADULT",
+        parentMemberId: null,
+        inheritEmailFromId: null,
+      } as any);  // inherit target
     vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, inheritEmailFromId: "parent1" } as any);
 
     const res = await updateMember(
@@ -493,5 +526,55 @@ describe("Admin: Member update with postalSameAsPhysical", () => {
         inheritEmailFromId: "parent1",
       }),
     }));
+  });
+
+  it("rejects inheritEmailFromId pointing to the same member", async () => {
+    vi.mocked(auth).mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique)
+      .mockResolvedValueOnce({ ...baseMember, ageTier: "ADULT" } as any)
+      .mockResolvedValueOnce({
+        id: "m1",
+        ageTier: "ADULT",
+        parentMemberId: null,
+        inheritEmailFromId: null,
+      } as any);
+
+    const res = await updateMember(
+      makePutRequest("m1", { inheritEmailFromId: "m1" }),
+      { params: Promise.resolve({ id: "m1" }) },
+    );
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringContaining("same member"),
+      }),
+    );
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects inheritEmailFromId pointing to a chained source", async () => {
+    vi.mocked(auth).mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique)
+      .mockResolvedValueOnce(baseMember as any)
+      .mockResolvedValueOnce({
+        id: "parent1",
+        ageTier: "ADULT",
+        parentMemberId: null,
+        inheritEmailFromId: "lead-adult",
+      } as any);
+
+    const res = await updateMember(
+      makePutRequest("m1", { inheritEmailFromId: "parent1" }),
+      { params: Promise.resolve({ id: "m1" }) },
+    );
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: expect.stringContaining("cannot chain"),
+      }),
+    );
+    expect(prisma.member.update).not.toHaveBeenCalled();
   });
 });

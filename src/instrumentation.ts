@@ -465,7 +465,7 @@ export async function register() {
           where: { expiresAt: { lt: new Date() } },
         });
         await prisma.passwordResetToken.deleteMany({
-          where: { expiresAt: { lt: new Date() }, used: true },
+          where: { expiresAt: { lt: new Date() } },
         });
         logger.info({ job: "data-pruning" }, "Data pruning complete");
         await recordCronRun("data-pruning", startedAt, "SUCCESS");

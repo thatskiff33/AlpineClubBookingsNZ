@@ -49,7 +49,7 @@ age-tier-settings, audit-log, booking-policies, bookings, chores, committee, com
 | `pricing.ts` | Rate calculation engine |
 | `capacity.ts` | Bed availability calculation |
 | `cancellation.ts` / `cancellation-rules.ts` | Refund calculation |
-| `bumping.ts` | Non-member FIFO bumping |
+| `bumping.ts` | Non-member last-booked-first bumping |
 | `waitlist.ts` / `cron-waitlist.ts` | Waitlist FIFO + offer expiry |
 | `promo.ts` | Promo code validation & redemption |
 | `chore-allocator.ts` | Auto-suggest chore roster |
@@ -83,14 +83,14 @@ role: MEMBER | ADMIN
 ageTier: INFANT | CHILD | YOUTH | ADULT  (computed at season start Apr 1)
 xeroContactId, active, parentMemberId (nullable self-FK for dependents)
 address fields (street, city, postcode, region, country)
-inheritEmailFromId (for dependents — see email inheritance)
+inheritEmailFromId (for dependents — must point to a primary adult using their own email)
 familyGroupId (legacy nullable FK, preserved for backwards compatibility)
 ```
 
 **MemberSubscription** — Annual season subscription from Xero
 ```
 id, memberId, seasonYear (e.g. 2025 = Apr 2025–Mar 2026)
-status: UNPAID | PAID | OVERDUE, xeroInvoiceId, paidAt
+status: NOT_INVOICED | UNPAID | PAID | OVERDUE, xeroInvoiceId, paidAt
 ```
 
 **MemberCredit** — Ledger entries for account credit (positive = added, negative = spent)
@@ -212,12 +212,17 @@ id, bookingId, description, category, resolvedAt
 8. **If any guest is non-member AND checkIn > 7 days away**: status = PENDING, collect card via SetupIntent (no charge yet), set `nonMemberHoldUntil = checkIn - 7 days`
 9. **If capacity exceeded on any night**: return 409 with `canWaitlist: true`; member can re-submit with `waitlist: true` (status = WAITLISTED, no payment)
 
-### 2. Non-Member Priority Bumping (FIFO — last booked = first bumped)
+### 2. Non-Member Priority Bumping (Last Booked = First Bumped)
 When a member booking would fill the lodge past 29 beds on any night:
 1. Find all PENDING bookings overlapping those nights
 2. Sort by `createdAt DESC` (most recent first)
 3. Bump one at a time until capacity restored
 4. Each bumped booking: status = BUMPED, promo redemption cleaned up, notification sent
+
+Concurrency guardrail:
+- Capacity-sensitive booking, waitlist, force-confirm, and payment-intent writes share the same `pg_advisory_xact_lock(1)` inside the transaction.
+- This intentionally serializes overlapping lodge-capacity decisions at current scale so overlapping date ranges cannot both consume the same beds.
+- External payment and Xero calls are kept outside the lock-scoped transaction where possible to avoid holding the lock during network I/O.
 
 ### 3. Pending Booking Confirmation (Cron — every 3 hours)
 1. Find PENDING bookings where `nonMemberHoldUntil <= now()`
@@ -258,7 +263,7 @@ When a member booking would fill the lodge past 29 beds on any night:
 
 ### 9. Xero Integration (Bidirectional)
 - **OAuth2:** Admin connects via admin panel; tokens encrypted with AES-256-GCM
-- **Membership Verification:** Daily cron queries Xero invoices for subscription keywords
+- **Membership Verification:** Daily cron queries Xero invoices for subscription keywords, but only for members already linked to a `xeroContactId`; unlinked members remain `NOT_INVOICED` until linked
 - **Booking Invoices:** On CONFIRMED + payment: find/create Contact, create Invoice with per-guest line items (item codes from XeroItemCodeMapping), record payment
 - **Refund Sync:** Stripe refund → Xero credit note against original invoice
 - **Inbound Reconciliation:** Xero webhook events stored as XeroInboundEvent, processed by 15-min cron safety net
@@ -284,7 +289,7 @@ When a member booking would fill the lodge past 29 beds on any night:
 | complete-bookings | Daily 1 AM | Mark past bookings COMPLETED |
 | xero-membership | Daily 2 AM | Sync Xero membership invoices |
 | xero-link-backfill | Daily 2:20 AM | Backfill Xero object links |
-| data-pruning | Daily 3:30 AM | Prune old processed webhook events |
+| data-pruning | Daily 3:30 AM | Prune expired auth/guest tokens plus old cron and webhook records |
 | draft-cleanup | Daily 4 AM | Delete expired DRAFT bookings (72h TTL) |
 | credit-reconciliation | Daily 5 AM | Reconcile member credit balances |
 | hut-leader-auto-assign | Daily 6 AM | Auto-suggest hut leaders |

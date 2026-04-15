@@ -2052,6 +2052,7 @@ export default function XeroPage() {
                 Check Xero invoices for all active members and update their subscription status
                 for the current season year. This runs automatically as a daily cron job.
                 Only checks members that have been linked to a Xero contact.
+                Unlinked members remain Not Invoiced until linked.
               </CardDescription>
             </CardHeader>
             <CardContent>

@@ -129,6 +129,10 @@ export default function SubscriptionsPage() {
           {syncing ? "Syncing..." : "Sync from Xero"}
         </Button>
       </div>
+      <p className="text-xs text-amber-700">
+        Only linked members are checked in Xero. Unlinked members stay Not
+        Invoiced until a Xero contact is linked or created.
+      </p>
 
       {syncMessage && (
         <div className={`rounded-md p-3 text-sm ${syncMessage.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>

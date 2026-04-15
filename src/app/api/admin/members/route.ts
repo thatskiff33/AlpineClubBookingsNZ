@@ -19,6 +19,7 @@ import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
+import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
 import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 import {
   enqueueXeroEntranceFeeInvoiceOperation,
@@ -404,32 +405,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (requestedInheritEmailFromId) {
-    const inheritEmailFrom = await prisma.member.findUnique({
-      where: { id: requestedInheritEmailFromId },
-      select: { id: true, ageTier: true },
-    });
-
-    if (!inheritEmailFrom) {
-      return NextResponse.json(
-        { error: "Email inheritance member not found" },
-        { status: 404 }
-      );
-    }
-
-    if (inheritEmailFrom.ageTier !== "ADULT") {
-      return NextResponse.json(
-        { error: "Email inheritance must point to an adult member" },
-        { status: 422 }
-      );
-    }
-  }
-
   const resolvedInheritEmailFromId =
     requestedInheritEmailFromId ||
     (data.inheritParentEmail && parentMember
       ? parentMember.inheritEmailFromId || parentMember.id
       : null);
+
+  if (resolvedInheritEmailFromId) {
+    const validation = await validateInheritEmailSource({
+      inheritEmailFromId: resolvedInheritEmailFromId,
+    });
+    if (!validation.ok) {
+      return NextResponse.json(
+        { error: validation.error },
+        { status: validation.status }
+      );
+    }
+  }
+
   // Determine age tier from DOB if provided, otherwise use explicit value or default
   let ageTier = data.ageTier || "ADULT";
   let dateOfBirth: Date | null = null;
