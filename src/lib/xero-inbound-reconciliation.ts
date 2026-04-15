@@ -7,7 +7,7 @@ import {
   type Payment as XeroPayment,
   type XeroClient,
 } from "xero-node";
-import { CreditType } from "@prisma/client";
+import { CreditType, PaymentStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
@@ -78,6 +78,11 @@ interface AccountCreditAllocationRepairResult {
   updatedAppliedCredits: number;
   updatedAppliedPayments: number;
   skippedAllocations: number;
+}
+
+interface RefundedPaymentBusinessStateRepairResult {
+  matchedPayments: number;
+  updatedPayments: number;
 }
 
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
@@ -223,6 +228,76 @@ function getCreditNoteAmountCents(
   const appliedAmount = creditNote.appliedAmount ?? 0;
   const remainingAmount = creditNote.remainingCredit ?? 0;
   return getPositiveCurrencyAmountCents(appliedAmount + remainingAmount);
+}
+
+function getJsonRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function isIncludedRefundCreditNoteStatus(status: unknown) {
+  if (typeof status !== "string") {
+    return true;
+  }
+
+  const normalized = status.trim().toUpperCase();
+  return normalized !== "VOIDED" && normalized !== "DELETED";
+}
+
+function getCreditNoteIdFromAllocationMetadata(metadata: unknown): string | null {
+  const record = getJsonRecord(metadata);
+  const creditNoteId = record?.creditNoteId;
+  return typeof creditNoteId === "string" && creditNoteId.trim().length > 0
+    ? creditNoteId
+    : null;
+}
+
+function getAmountCentsFromAllocationMetadata(metadata: unknown): number | null {
+  const record = getJsonRecord(metadata);
+  const amountCents = record?.amountCents;
+
+  if (typeof amountCents !== "number" || !Number.isFinite(amountCents) || amountCents <= 0) {
+    return null;
+  }
+
+  return Math.round(amountCents);
+}
+
+function getRefundContributionCentsFromCreditNoteMetadata(
+  metadata: unknown
+): number | null {
+  const record = getJsonRecord(metadata);
+  if (!record || !isIncludedRefundCreditNoteStatus(record.status)) {
+    return null;
+  }
+
+  return getCreditNoteAmountCents({
+    total: typeof record.total === "number" ? record.total : null,
+    appliedAmount:
+      typeof record.appliedAmount === "number" ? record.appliedAmount : null,
+    remainingCredit:
+      typeof record.remainingCredit === "number" ? record.remainingCredit : null,
+  });
+}
+
+function getNextRefundedPaymentStatus(
+  currentStatus: string,
+  amountCents: number,
+  refundedAmountCents: number
+): PaymentStatus | null {
+  if (refundedAmountCents <= 0) {
+    return currentStatus === PaymentStatus.REFUNDED ||
+      currentStatus === PaymentStatus.PARTIALLY_REFUNDED
+      ? PaymentStatus.SUCCEEDED
+      : null;
+  }
+
+  return refundedAmountCents >= amountCents
+    ? PaymentStatus.REFUNDED
+    : PaymentStatus.PARTIALLY_REFUNDED;
 }
 
 function buildXeroPaymentDisplayNumber(payment: XeroPayment): string | null {
@@ -699,6 +774,351 @@ async function refreshLinkedSubscriptionsForInvoice(
   return {
     subscriptions,
     refreshedSubscriptions,
+  };
+}
+
+async function resolvePaymentIdsByInvoiceTargets(
+  creditNoteId: string,
+  allocationTargets: AccountCreditAllocationTarget[]
+) {
+  const uniqueInvoiceIds = Array.from(
+    new Set(
+      allocationTargets
+        .map((target) => target.invoiceId)
+        .filter((invoiceId): invoiceId is string => Boolean(invoiceId))
+    )
+  );
+  if (uniqueInvoiceIds.length === 0) {
+    return new Map<string, string>();
+  }
+
+  const paymentIdsByInvoiceId = new Map<string, Set<string>>();
+  const directMatches = await prisma.payment.findMany({
+    where: {
+      xeroInvoiceId: {
+        in: uniqueInvoiceIds,
+      },
+    },
+    select: {
+      id: true,
+      xeroInvoiceId: true,
+    },
+  });
+
+  for (const payment of directMatches) {
+    if (!payment.xeroInvoiceId) {
+      continue;
+    }
+
+    const ids = paymentIdsByInvoiceId.get(payment.xeroInvoiceId) ?? new Set<string>();
+    ids.add(payment.id);
+    paymentIdsByInvoiceId.set(payment.xeroInvoiceId, ids);
+  }
+
+  const unresolvedInvoiceIds = uniqueInvoiceIds.filter(
+    (invoiceId) => (paymentIdsByInvoiceId.get(invoiceId)?.size ?? 0) !== 1
+  );
+  if (unresolvedInvoiceIds.length > 0) {
+    const linkedMatches = await prisma.xeroObjectLink.findMany({
+      where: {
+        localModel: "Payment",
+        xeroObjectType: "INVOICE",
+        xeroObjectId: {
+          in: unresolvedInvoiceIds,
+        },
+        active: true,
+      },
+      select: {
+        localId: true,
+        xeroObjectId: true,
+      },
+    });
+
+    for (const link of linkedMatches) {
+      const ids = paymentIdsByInvoiceId.get(link.xeroObjectId) ?? new Set<string>();
+      ids.add(link.localId);
+      paymentIdsByInvoiceId.set(link.xeroObjectId, ids);
+    }
+  }
+
+  const resolvedPaymentIds = new Map<string, string>();
+  for (const invoiceId of uniqueInvoiceIds) {
+    const paymentIds = paymentIdsByInvoiceId.get(invoiceId);
+    if (paymentIds?.size === 1) {
+      resolvedPaymentIds.set(invoiceId, Array.from(paymentIds)[0]);
+      continue;
+    }
+
+    if ((paymentIds?.size ?? 0) > 1) {
+      logger.warn(
+        {
+          creditNoteId,
+          invoiceId,
+          matchedPayments: paymentIds?.size ?? 0,
+        },
+        "Skipping refunded-payment repair because the allocated invoice resolved to multiple local payments"
+      );
+    }
+  }
+
+  return resolvedPaymentIds;
+}
+
+async function repairRefundedPaymentBusinessState(input: {
+  creditNoteId: string;
+  creditNote: Pick<XeroCreditNote, "status" | "total" | "appliedAmount" | "remainingCredit">;
+  directPaymentIds: string[];
+  modificationRefundAmountsByPaymentId: Map<string, number>;
+}): Promise<RefundedPaymentBusinessStateRepairResult> {
+  const directPaymentIds = Array.from(
+    new Set(
+      input.directPaymentIds.filter(
+        (paymentId): paymentId is string => typeof paymentId === "string" && paymentId.trim().length > 0
+      )
+    )
+  );
+  const paymentIds = Array.from(
+    new Set([
+      ...directPaymentIds,
+      ...Array.from(input.modificationRefundAmountsByPaymentId.keys()),
+    ])
+  );
+  if (paymentIds.length === 0) {
+    return {
+      matchedPayments: 0,
+      updatedPayments: 0,
+    };
+  }
+
+  const payments = await prisma.payment.findMany({
+    where: {
+      id: {
+        in: paymentIds,
+      },
+    },
+    select: {
+      id: true,
+      amountCents: true,
+      refundedAmountCents: true,
+      status: true,
+    },
+  });
+  if (payments.length === 0) {
+    return {
+      matchedPayments: 0,
+      updatedPayments: 0,
+    };
+  }
+
+  const [directRefundLinks, modificationAllocationLinks] = await Promise.all([
+    prisma.xeroObjectLink.findMany({
+      where: {
+        localModel: "Payment",
+        localId: {
+          in: paymentIds,
+        },
+        xeroObjectType: "CREDIT_NOTE",
+        role: {
+          in: ["REFUND_CREDIT_NOTE", "ACCOUNT_CREDIT_NOTE"],
+        },
+        active: true,
+      },
+      select: {
+        localId: true,
+        xeroObjectId: true,
+        metadata: true,
+      },
+    }),
+    prisma.xeroObjectLink.findMany({
+      where: {
+        localModel: "Payment",
+        localId: {
+          in: paymentIds,
+        },
+        xeroObjectType: "ALLOCATION",
+        role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+        active: true,
+      },
+      select: {
+        localId: true,
+        xeroObjectId: true,
+        metadata: true,
+      },
+    }),
+  ]);
+
+  const existingModificationCreditNoteIds = Array.from(
+    new Set(
+      modificationAllocationLinks
+        .map((link) => getCreditNoteIdFromAllocationMetadata(link.metadata))
+        .filter(
+          (creditNoteId): creditNoteId is string =>
+            Boolean(creditNoteId) && creditNoteId !== input.creditNoteId
+        )
+    )
+  );
+  const validModificationCreditNoteIds = new Set<string>();
+
+  if (existingModificationCreditNoteIds.length > 0) {
+    const modificationCreditNotes = await prisma.xeroObjectLink.findMany({
+      where: {
+        xeroObjectType: "CREDIT_NOTE",
+        role: "MODIFICATION_CREDIT_NOTE",
+        xeroObjectId: {
+          in: existingModificationCreditNoteIds,
+        },
+        active: true,
+      },
+      select: {
+        xeroObjectId: true,
+        metadata: true,
+      },
+    });
+
+    for (const link of modificationCreditNotes) {
+      if (isIncludedRefundCreditNoteStatus(getJsonRecord(link.metadata)?.status)) {
+        validModificationCreditNoteIds.add(link.xeroObjectId);
+      }
+    }
+  }
+
+  const directRefundCentsByPaymentId = new Map<string, Map<string, number>>();
+  for (const link of directRefundLinks) {
+    if (link.xeroObjectId === input.creditNoteId) {
+      continue;
+    }
+
+    const contributionCents = getRefundContributionCentsFromCreditNoteMetadata(
+      link.metadata
+    );
+    if (contributionCents === null) {
+      continue;
+    }
+
+    const paymentRefunds =
+      directRefundCentsByPaymentId.get(link.localId) ?? new Map<string, number>();
+    paymentRefunds.set(link.xeroObjectId, contributionCents);
+    directRefundCentsByPaymentId.set(link.localId, paymentRefunds);
+  }
+
+  const modificationRefundCentsByPaymentId = new Map<string, Map<string, number>>();
+  for (const link of modificationAllocationLinks) {
+    const creditNoteId = getCreditNoteIdFromAllocationMetadata(link.metadata);
+    if (!creditNoteId || creditNoteId === input.creditNoteId) {
+      continue;
+    }
+    if (!validModificationCreditNoteIds.has(creditNoteId)) {
+      continue;
+    }
+
+    const contributionCents = getAmountCentsFromAllocationMetadata(link.metadata);
+    if (contributionCents === null) {
+      continue;
+    }
+
+    const paymentRefunds =
+      modificationRefundCentsByPaymentId.get(link.localId) ??
+      new Map<string, number>();
+    paymentRefunds.set(link.xeroObjectId, contributionCents);
+    modificationRefundCentsByPaymentId.set(link.localId, paymentRefunds);
+  }
+
+  const includesCurrentCreditNoteContribution = isIncludedRefundCreditNoteStatus(
+    input.creditNote.status
+  );
+  const currentCreditNoteAmountCents = includesCurrentCreditNoteContribution
+    ? getCreditNoteAmountCents(input.creditNote)
+    : null;
+  const currentDirectRefundPaymentId =
+    currentCreditNoteAmountCents !== null && directPaymentIds.length === 1
+      ? directPaymentIds[0]
+      : null;
+
+  if (currentCreditNoteAmountCents !== null && directPaymentIds.length > 1) {
+    logger.warn(
+      {
+        creditNoteId: input.creditNoteId,
+        matchedPayments: directPaymentIds.length,
+      },
+      "Skipping direct refunded-payment repair contribution because the Xero credit note resolved to multiple local payments"
+    );
+  }
+
+  let updatedPayments = 0;
+
+  for (const payment of payments) {
+    const directRefundTotalCents = Array.from(
+      directRefundCentsByPaymentId.get(payment.id)?.values() ?? []
+    ).reduce((sum, amountCents) => sum + amountCents, 0);
+    const modificationRefundTotalCents = Array.from(
+      modificationRefundCentsByPaymentId.get(payment.id)?.values() ?? []
+    ).reduce((sum, amountCents) => sum + amountCents, 0);
+
+    const currentDirectRefundContributionCents =
+      currentCreditNoteAmountCents !== null &&
+      currentDirectRefundPaymentId === payment.id
+        ? currentCreditNoteAmountCents
+        : 0;
+    const currentModificationRefundContributionCents =
+      includesCurrentCreditNoteContribution
+        ? input.modificationRefundAmountsByPaymentId.get(payment.id) ?? 0
+        : 0;
+
+    const rawRefundedTotalCents =
+      directRefundTotalCents +
+      modificationRefundTotalCents +
+      currentDirectRefundContributionCents +
+      currentModificationRefundContributionCents;
+    const nextRefundedTotalCents = Math.min(
+      Math.max(rawRefundedTotalCents, 0),
+      payment.amountCents
+    );
+
+    if (rawRefundedTotalCents > payment.amountCents) {
+      logger.warn(
+        {
+          creditNoteId: input.creditNoteId,
+          paymentId: payment.id,
+          paymentAmountCents: payment.amountCents,
+          rawRefundedTotalCents,
+        },
+        "Clamping refunded payment state because the derived Xero refund total exceeded the local payment amount"
+      );
+    }
+
+    const nextStatus = getNextRefundedPaymentStatus(
+      payment.status,
+      payment.amountCents,
+      nextRefundedTotalCents
+    );
+    const updates: {
+      refundedAmountCents?: number;
+      status?: PaymentStatus;
+    } = {};
+
+    if (payment.refundedAmountCents !== nextRefundedTotalCents) {
+      updates.refundedAmountCents = nextRefundedTotalCents;
+    }
+    if (nextStatus && payment.status !== nextStatus) {
+      updates.status = nextStatus;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      continue;
+    }
+
+    await prisma.payment.update({
+      where: {
+        id: payment.id,
+      },
+      data: updates,
+    });
+    updatedPayments += 1;
+  }
+
+  return {
+    matchedPayments: payments.length,
+    updatedPayments,
   };
 }
 
@@ -1467,20 +1887,6 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
     updatedCredits += backfilledCredits.count;
   }
   const allocationTargets = buildCreditNoteAllocationTargets(creditNote);
-  const accountCreditAllocationRepair =
-    accountCreditPayments.length > 0
-      ? await repairAccountCreditAllocationBusinessState(
-          creditNote.creditNoteID,
-          allocationTargets
-        )
-      : {
-          matchedPayments: 0,
-          createdAppliedCredits: 0,
-          updatedAppliedCredits: 0,
-          updatedAppliedPayments: 0,
-          skippedAllocations: 0,
-        };
-
   const resolvedCreditNoteLinks = dedupeXeroObjectLinks([
     ...creditNoteLinks,
     ...paymentCandidates
@@ -1545,6 +1951,60 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
     await upsertXeroObjectLink(link);
   }
 
+  const modificationRefundPaymentIdsByInvoiceId = resolvedCreditNoteLinks.some(
+    (link) => link.role === "MODIFICATION_CREDIT_NOTE"
+  )
+    ? await resolvePaymentIdsByInvoiceTargets(
+        creditNote.creditNoteID,
+        allocationTargets
+      )
+    : new Map<string, string>();
+  const modificationRefundAmountsByPaymentId = new Map<string, number>();
+
+  for (const target of allocationTargets) {
+    const paymentId = modificationRefundPaymentIdsByInvoiceId.get(
+      target.invoiceId
+    );
+    if (!paymentId) {
+      continue;
+    }
+
+    modificationRefundAmountsByPaymentId.set(
+      paymentId,
+      (modificationRefundAmountsByPaymentId.get(paymentId) ?? 0) +
+        target.amountCents
+    );
+  }
+
+  const refundedPaymentRepair = await repairRefundedPaymentBusinessState({
+    creditNoteId: creditNote.creditNoteID,
+    creditNote: {
+      status: creditNote.status ?? undefined,
+      total: creditNote.total ?? undefined,
+      appliedAmount: creditNote.appliedAmount ?? undefined,
+      remainingCredit: creditNote.remainingCredit ?? undefined,
+    },
+    directPaymentIds: [
+      ...paymentCandidates.map((payment) => payment.id),
+      ...accountCreditPayments.map((payment) => payment.id),
+    ],
+    modificationRefundAmountsByPaymentId,
+  });
+
+  const accountCreditAllocationRepair =
+    accountCreditPayments.length > 0
+      ? await repairAccountCreditAllocationBusinessState(
+          creditNote.creditNoteID,
+          allocationTargets
+        )
+      : {
+          matchedPayments: 0,
+          createdAppliedCredits: 0,
+          updatedAppliedCredits: 0,
+          updatedAppliedPayments: 0,
+          skippedAllocations: 0,
+        };
+
   const refundPaymentLinks = dedupeXeroObjectLinks(
     (creditNote.payments ?? []).flatMap((payment) => {
       if (!payment.paymentID) {
@@ -1587,6 +2047,8 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
     matchedAccountCreditPayments: accountCreditPayments.length,
     updatedPayments,
     updatedCredits,
+    matchedRefundedPayments: refundedPaymentRepair.matchedPayments,
+    updatedRefundedPayments: refundedPaymentRepair.updatedPayments,
     matchedAllocatedPayments: accountCreditAllocationRepair.matchedPayments,
     createdAppliedCredits: accountCreditAllocationRepair.createdAppliedCredits,
     updatedAppliedCredits: accountCreditAllocationRepair.updatedAppliedCredits,

@@ -199,11 +199,25 @@ Primary files updated:
 - `src/lib/xero-inbound-reconciliation.ts`
 - `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
 
+### Phase 7: Credit-note reconciliation now repairs local refund settlement state
+
+Implemented:
+
+- extended inbound `CREDIT_NOTE` reconciliation so linked refund credit notes, account-credit notes, and modification credit-note allocations now recompute local `Payment.refundedAmountCents` from current Xero credit-note state instead of leaving booking/payment reads dependent on earlier local write timing
+- updated local `Payment.status` to `PARTIALLY_REFUNDED` / `REFUNDED` during the same inbound pass, and reset previously-refunded payments back to `SUCCEEDED` when the current Xero credit-note state no longer indicates a refund
+- kept the repair idempotent by replacing the current credit note's contribution in the derived local refund total instead of blindly incrementing local refund fields on every replay/webhook delivery
+- excluded voided/deleted modification credit-note allocations from that derived refund total, so replay of reversal events now clears stale local refunded state instead of preserving it
+
+Primary files updated:
+
+- `src/lib/xero-inbound-reconciliation.ts`
+- `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
+
 ## Remaining Work
 
 ### 1. Phase 7 remaining: make webhook and incremental reconcile the main source of truth
 
-Inbound reconciliation now drives the primary membership-state catch-up path, can selectively keep touched cached contact-group memberships current, includes a throttled incremental contact-sync safety net, refreshes linked state for changed membership invoices, and now repairs both account-credit issuance and application ledger state from credit-note changes, but some local business state is still not advanced directly from inbound/incremental changes.
+Inbound reconciliation now drives the primary membership-state catch-up path, can selectively keep touched cached contact-group memberships current, includes a throttled incremental contact-sync safety net, refreshes linked state for changed membership invoices, and now repairs both credit-note-driven account-credit ledger state and local refund settlement state, but some local business state is still not advanced directly from inbound/incremental changes.
 
 Required outcome:
 
@@ -295,4 +309,4 @@ Typical commands:
   - `GET /api/admin/xero/contact-groups?refresh=1` for a deliberate full group rescan
 - Do not reopen already-completed Phase 6/7/8 work unless the remaining phases force a design change.
 - Stored inbound `CONTACT` reconciliation and the shared inbound reconciliation cycle now maintain contact snapshots, touched cached group memberships, throttled incremental contact drift catch-up, and linked state for changed membership invoices. Full group refresh remains the deliberate full-rescan safety net.
-- The next biggest budget win is still Phase 7: make stored inbound events and incremental reconcile the primary driver of the remaining local business state beyond memberships, contact/group cache state, and membership-invoice-linked metadata.
+- The next biggest budget win is still Phase 7: make stored inbound events and incremental reconcile the primary driver of the remaining local business state beyond memberships, contact/group cache state, membership-invoice-linked metadata, and the credit-note-driven refund/account-credit repairs now handled automatically.
