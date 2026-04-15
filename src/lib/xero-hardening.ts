@@ -7,6 +7,7 @@ import {
 } from "@/lib/email";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { buildLocalAdminUrl } from "@/lib/xero-record-links";
+import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
 
 const XERO_REQUEUE_OPERATION_TYPE = "REQUEUE";
 const XERO_BACKFILL_OPERATION_TYPE = "BACKFILL_LINK";
@@ -33,13 +34,18 @@ type FailureAlertOperation = Pick<
 type FailureSummaryOperation = Pick<
   XeroSyncOperation,
   | "id"
+  | "direction"
   | "correlationKey"
   | "entityType"
   | "operationType"
   | "localModel"
   | "localId"
   | "lastErrorMessage"
+  | "replayable"
+  | "requestPayload"
+  | "responsePayload"
   | "status"
+  | "xeroObjectId"
   | "createdAt"
 >;
 
@@ -55,6 +61,19 @@ interface CanonicalLinkTarget {
   sourceField: string;
 }
 
+interface CanonicalLinkExpectation {
+  localModel: string;
+  localId: string;
+  role: string;
+  xeroObjectType: string;
+  xeroObjectId: string;
+}
+
+type CanonicalLinkRecord = Pick<
+  CanonicalLinkExpectation,
+  "localModel" | "localId" | "role" | "xeroObjectType" | "xeroObjectId"
+>;
+
 export interface XeroRepeatedFailureSummary {
   correlationKey: string;
   failureCount: number;
@@ -67,6 +86,17 @@ export interface XeroRepeatedFailureSummary {
   latestOperationId: string;
 }
 
+export interface XeroUnsupportedPartialSummary {
+  operationId: string;
+  entityType: string;
+  operationType: string;
+  localModel: string | null;
+  localId: string | null;
+  localUrl: string | null;
+  reason: string;
+  createdAt: Date;
+}
+
 export interface XeroReconciliationReport {
   generatedAt: Date;
   lookbackHours: number;
@@ -76,14 +106,19 @@ export interface XeroReconciliationReport {
     missingPaymentInvoiceLinks: number;
     missingPaymentRefundCreditNoteLinks: number;
     missingSubscriptionInvoiceLinks: number;
+    mismatchedCanonicalLinks: number;
+    staleCanonicalLinks: number;
+    duplicateActiveCanonicalLinks: number;
     stalePendingOperations: number;
     recentFailedOperations: number;
     recentPartialOperations: number;
+    unsupportedPartialOperations: number;
     repeatedFailureCorrelations: number;
     issueCategoryCount: number;
     issueTotalCount: number;
   };
   repeatedFailures: XeroRepeatedFailureSummary[];
+  unsupportedPartials: XeroUnsupportedPartialSummary[];
 }
 
 export interface XeroLinkBackfillCategoryResult {
@@ -143,6 +178,24 @@ function buildLinkKey(target: {
     target.xeroObjectType,
     target.xeroObjectId,
     target.role,
+  ].join(":");
+}
+
+function buildCanonicalScopeKey(target: {
+  localModel: string;
+  localId: string;
+  role: string;
+}) {
+  return [target.localModel, target.localId, target.role].join(":");
+}
+
+function buildCanonicalMatchKey(target: CanonicalLinkRecord) {
+  return [
+    target.localModel,
+    target.localId,
+    target.role,
+    target.xeroObjectType,
+    target.xeroObjectId,
   ].join(":");
 }
 
@@ -494,6 +547,7 @@ export async function buildXeroReconciliationReport(options?: {
       select: {
         localModel: true,
         localId: true,
+        xeroObjectType: true,
         xeroObjectId: true,
         role: true,
       },
@@ -515,13 +569,18 @@ export async function buildXeroReconciliationReport(options?: {
       },
       select: {
         id: true,
+        direction: true,
         correlationKey: true,
         entityType: true,
         operationType: true,
         localModel: true,
         localId: true,
         lastErrorMessage: true,
+        replayable: true,
+        requestPayload: true,
+        responsePayload: true,
         status: true,
+        xeroObjectId: true,
         createdAt: true,
       },
     }),
@@ -546,72 +605,162 @@ export async function buildXeroReconciliationReport(options?: {
     }),
   ]);
 
-  const linkKeys = new Set(
+  const canonicalExpectations: CanonicalLinkExpectation[] = [
+    ...members.flatMap((member) =>
+      member.xeroContactId
+        ? [
+            {
+              localModel: "Member",
+              localId: member.id,
+              role: "CONTACT",
+              xeroObjectType: "CONTACT",
+              xeroObjectId: member.xeroContactId,
+            },
+          ]
+        : []
+    ),
+    ...payments.flatMap((payment) =>
+      [
+        payment.xeroInvoiceId
+          ? {
+              localModel: "Payment",
+              localId: payment.id,
+              role: "PRIMARY_INVOICE",
+              xeroObjectType: "INVOICE",
+              xeroObjectId: payment.xeroInvoiceId,
+            }
+          : null,
+        payment.xeroRefundCreditNoteId
+          ? {
+              localModel: "Payment",
+              localId: payment.id,
+              role: "REFUND_CREDIT_NOTE",
+              xeroObjectType: "CREDIT_NOTE",
+              xeroObjectId: payment.xeroRefundCreditNoteId,
+            }
+          : null,
+      ].filter((value): value is CanonicalLinkExpectation => value !== null)
+    ),
+    ...subscriptions.flatMap((subscription) =>
+      subscription.xeroInvoiceId
+        ? [
+            {
+              localModel: "MemberSubscription",
+              localId: subscription.id,
+              role: "SUBSCRIPTION_INVOICE",
+              xeroObjectType: "SUBSCRIPTION",
+              xeroObjectId: subscription.xeroInvoiceId,
+            },
+          ]
+        : []
+    ),
+  ];
+
+  const exactCanonicalLinkKeys = new Set(
     links.map((link) =>
-      buildLinkKey({
+      buildCanonicalMatchKey({
         localModel: link.localModel,
         localId: link.localId,
-        xeroObjectType: "ignored",
-        xeroObjectId: link.xeroObjectId,
         role: link.role,
+        xeroObjectType: link.xeroObjectType,
+        xeroObjectId: link.xeroObjectId,
       })
     )
   );
+  const canonicalExpectationByScope = new Map(
+    canonicalExpectations.map((expectation) => [
+      buildCanonicalScopeKey(expectation),
+      expectation,
+    ])
+  );
+  const activeLinksByScope = new Map<string, CanonicalLinkRecord[]>();
+
+  for (const link of links) {
+    const scopeKey = buildCanonicalScopeKey(link);
+    const scopedLinks = activeLinksByScope.get(scopeKey) ?? [];
+    scopedLinks.push(link);
+    activeLinksByScope.set(scopeKey, scopedLinks);
+  }
 
   const missingMemberContactLinks = members.filter(
     (member) =>
       member.xeroContactId &&
-      !linkKeys.has(
-        [
-          "Member",
-          member.id,
-          "ignored",
-          member.xeroContactId,
-          "CONTACT",
-        ].join(":")
+      !exactCanonicalLinkKeys.has(
+        buildCanonicalMatchKey({
+          localModel: "Member",
+          localId: member.id,
+          role: "CONTACT",
+          xeroObjectType: "CONTACT",
+          xeroObjectId: member.xeroContactId,
+        })
       )
   ).length;
 
   const missingPaymentInvoiceLinks = payments.filter(
     (payment) =>
       payment.xeroInvoiceId &&
-      !linkKeys.has(
-        [
-          "Payment",
-          payment.id,
-          "ignored",
-          payment.xeroInvoiceId,
-          "PRIMARY_INVOICE",
-        ].join(":")
+      !exactCanonicalLinkKeys.has(
+        buildCanonicalMatchKey({
+          localModel: "Payment",
+          localId: payment.id,
+          role: "PRIMARY_INVOICE",
+          xeroObjectType: "INVOICE",
+          xeroObjectId: payment.xeroInvoiceId,
+        })
       )
   ).length;
 
   const missingPaymentRefundCreditNoteLinks = payments.filter(
     (payment) =>
       payment.xeroRefundCreditNoteId &&
-      !linkKeys.has(
-        [
-          "Payment",
-          payment.id,
-          "ignored",
-          payment.xeroRefundCreditNoteId,
-          "REFUND_CREDIT_NOTE",
-        ].join(":")
+      !exactCanonicalLinkKeys.has(
+        buildCanonicalMatchKey({
+          localModel: "Payment",
+          localId: payment.id,
+          role: "REFUND_CREDIT_NOTE",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: payment.xeroRefundCreditNoteId,
+        })
       )
   ).length;
 
   const missingSubscriptionInvoiceLinks = subscriptions.filter(
     (subscription) =>
       subscription.xeroInvoiceId &&
-      !linkKeys.has(
-        [
-          "MemberSubscription",
-          subscription.id,
-          "ignored",
-          subscription.xeroInvoiceId,
-          "SUBSCRIPTION_INVOICE",
-        ].join(":")
+      !exactCanonicalLinkKeys.has(
+        buildCanonicalMatchKey({
+          localModel: "MemberSubscription",
+          localId: subscription.id,
+          role: "SUBSCRIPTION_INVOICE",
+          xeroObjectType: "SUBSCRIPTION",
+          xeroObjectId: subscription.xeroInvoiceId,
+        })
       )
+  ).length;
+
+  const mismatchedCanonicalLinks = canonicalExpectations.filter((expectation) => {
+    const scopeKey = buildCanonicalScopeKey(expectation);
+    const scopedLinks = activeLinksByScope.get(scopeKey) ?? [];
+    return (
+      scopedLinks.length > 0 &&
+      !exactCanonicalLinkKeys.has(buildCanonicalMatchKey(expectation))
+    );
+  }).length;
+
+  const staleCanonicalLinks = links.filter((link) => {
+    const expectation = canonicalExpectationByScope.get(buildCanonicalScopeKey(link));
+    if (!expectation) {
+      return true;
+    }
+
+    return (
+      expectation.xeroObjectType !== link.xeroObjectType ||
+      expectation.xeroObjectId !== link.xeroObjectId
+    );
+  }).length;
+
+  const duplicateActiveCanonicalLinks = Array.from(activeLinksByScope.values()).filter(
+    (scopedLinks) => scopedLinks.length > 1
   ).length;
 
   const repeatedFailures = groupRepeatedFailures(recentFailureOperations)
@@ -621,18 +770,46 @@ export async function buildXeroReconciliationReport(options?: {
   const recentFailedOperations = recentFailureOperations.filter(
     (operation) => operation.status === "FAILED"
   ).length;
-  const recentPartialOperations = recentFailureOperations.filter(
+  const recentPartialOperationsList = recentFailureOperations.filter(
     (operation) => operation.status === "PARTIAL"
-  ).length;
+  );
+  const recentPartialOperations = recentPartialOperationsList.length;
+  const unsupportedPartialOperationsList = recentPartialOperationsList
+    .flatMap((operation) => {
+      const retryMeta = getXeroOperationRetryMeta(operation);
+      if (retryMeta.supported) {
+        return [];
+      }
+
+      return [
+        {
+          operationId: operation.id,
+          entityType: operation.entityType,
+          operationType: operation.operationType,
+          localModel: operation.localModel ?? null,
+          localId: operation.localId ?? null,
+          localUrl: buildLocalAdminUrl(operation.localModel, operation.localId),
+          reason:
+            retryMeta.reason ?? "This partial Xero operation does not have a repair handler yet.",
+          createdAt: operation.createdAt,
+        },
+      ];
+    });
+  const unsupportedPartialOperations = unsupportedPartialOperationsList.length;
+  const unsupportedPartials = unsupportedPartialOperationsList.slice(0, topLimit);
 
   const issueCounts = [
     missingMemberContactLinks,
     missingPaymentInvoiceLinks,
     missingPaymentRefundCreditNoteLinks,
     missingSubscriptionInvoiceLinks,
+    mismatchedCanonicalLinks,
+    staleCanonicalLinks,
+    duplicateActiveCanonicalLinks,
     stalePendingOperations,
     recentFailedOperations,
     recentPartialOperations,
+    unsupportedPartialOperations,
     repeatedFailures.length,
   ];
 
@@ -645,14 +822,19 @@ export async function buildXeroReconciliationReport(options?: {
       missingPaymentInvoiceLinks,
       missingPaymentRefundCreditNoteLinks,
       missingSubscriptionInvoiceLinks,
+      mismatchedCanonicalLinks,
+      staleCanonicalLinks,
+      duplicateActiveCanonicalLinks,
       stalePendingOperations,
       recentFailedOperations,
       recentPartialOperations,
+      unsupportedPartialOperations,
       repeatedFailureCorrelations: repeatedFailures.length,
       issueCategoryCount: issueCounts.filter((count) => count > 0).length,
       issueTotalCount: issueCounts.reduce((sum, count) => sum + count, 0),
     },
     repeatedFailures,
+    unsupportedPartials,
   };
 }
 

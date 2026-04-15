@@ -29,22 +29,24 @@ Treat these as already landed unless the next task forces a design change:
 
 ## Landed In This Pass
 
-Phase 6 operator-triggered repair boundaries are now closed.
+The remaining Xero hardening/cleanup scope is now closed.
 
 Implemented:
 
-- operator-triggered outbound Xero retries no longer execute live writes inline from the admin request path
-- `/api/admin/xero/operations/[id]/retry` now queues the retry into `xero-operation-queue`, returns `202`, and kicks the queue worker after the response, matching the durable execution model that `/requeue` already used
-- the dedicated `/requeue` route remains as a compatibility alias over the same queued retry flow
-- the admin Xero operations UI and record activity panel now expose a single `Retry in background` action instead of separate `Retry` and `Requeue` buttons, so operators no longer have to choose between inconsistent execution models
-- added route-level regression coverage for both admin retry endpoints so the queued behavior stays locked down
+- the nightly Xero reconciliation report now distinguishes missing canonical links from richer drift states:
+  mismatched canonical links, stale canonical links, and duplicate active canonical links
+- the reconciliation report now flags unsupported `PARTIAL` operations separately and includes the local record plus repair-gap reason, so any future partial flow shows up explicitly instead of disappearing into the generic partial count
+- added a source-audit regression test that fails if a new `xero.accountingApi.*` call is introduced outside `callXeroApi`, closing the remaining shared-wrapper audit item
+- refreshed the reconciliation email template and hardening tests to cover the new drift/repair-gap categories
 
 Primary files updated:
 
-- `src/app/api/admin/xero/operations/[id]/retry/route.ts`
-- `src/app/(admin)/admin/xero/page.tsx`
-- `src/components/admin/xero-record-activity-panel.tsx`
-- `src/lib/__tests__/xero-operation-routes.test.ts`
+- `src/lib/xero-hardening.ts`
+- `src/lib/email.ts`
+- `src/lib/email-templates.ts`
+- `src/lib/__tests__/xero-hardening.test.ts`
+- `src/lib/__tests__/phase6b-notifications.test.ts`
+- `src/lib/__tests__/xero-wrapper-audit.test.ts`
 
 ## Remaining Work
 
@@ -69,11 +71,15 @@ Decisions now landed:
 
 ### 3. Hardening and cleanup
 
-Still open:
+Closed in this pass.
 
-- richer drift reporting beyond canonical-link gaps
-- explicit repair handling for any future `PARTIAL` state
-- final audit of direct Xero SDK calls that still bypass the shared metered wrapper
+Decisions now landed:
+
+1. Reconciliation reporting now treats canonical-link drift as more than simple absence. Missing links, mismatched links, stale links, and duplicate active links are all surfaced separately.
+2. Future unsupported `PARTIAL` operation shapes are now reported explicitly with the repair-gap reason and local record context until a dedicated retry handler is added.
+3. Direct `accountingApi` usage is now guarded by test so new code has to stay behind `callXeroApi`.
+
+No open Xero handoff items remain at the moment. Re-open this only if production evidence exposes a new reconciliation gap or a new outbound repair path.
 
 ## Verification Expectations
 
@@ -81,9 +87,10 @@ Run the most relevant targeted suites plus a full build before updating this fil
 
 Executed in this pass:
 
-- `npx vitest run src/lib/__tests__/xero-operation-routes.test.ts`
-- `npx vitest run src/lib/__tests__/xero-operation-queue.test.ts`
-- `npx eslint 'src/app/api/admin/xero/operations/[id]/retry/route.ts' 'src/app/(admin)/admin/xero/page.tsx' src/components/admin/xero-record-activity-panel.tsx src/lib/__tests__/xero-operation-routes.test.ts`
+- `npx vitest run src/lib/__tests__/xero-hardening.test.ts`
+- `npx vitest run src/lib/__tests__/phase6b-notifications.test.ts`
+- `npx vitest run src/lib/__tests__/xero-wrapper-audit.test.ts src/lib/__tests__/phase-c1.test.ts src/lib/__tests__/phase-c2.test.ts src/lib/__tests__/stripe.test.ts`
+- `npx eslint src/lib/xero-hardening.ts src/lib/email.ts src/lib/email-templates.ts src/lib/__tests__/xero-hardening.test.ts src/lib/__tests__/phase6b-notifications.test.ts src/lib/__tests__/xero-wrapper-audit.test.ts src/lib/__tests__/phase-c1.test.ts src/lib/__tests__/phase-c2.test.ts src/lib/__tests__/stripe.test.ts`
 - `npm run build`
 
 Re-run as appropriate if further code changes land after this handoff:
@@ -97,5 +104,7 @@ Re-run as appropriate if further code changes land after this handoff:
 1. Read this file first.
 2. Treat booking-scoped Phase 7 work as closed unless new production evidence proves another gap.
 3. Treat Phase 6 operator-triggered retry boundary work as closed unless a new repair path is added that bypasses the queue boundary.
-4. Keep the remaining scope on hardening/cleanup items only.
-5. Compare any further change in `src/lib/xero.ts` against inbound recovery first, and prefer durable local state before adding more polling.
+4. Treat the hardening/cleanup scope as closed unless production evidence reopens it.
+5. If a new `PARTIAL` flow is introduced, either add a repair handler in `src/lib/xero-operation-retry.ts` or expect the reconciliation report to surface it as an unsupported repair gap.
+6. Keep any new `accountingApi` usage behind `callXeroApi`; `src/lib/__tests__/xero-wrapper-audit.test.ts` should stay green.
+7. Compare any further change in `src/lib/xero.ts` against inbound recovery first, and prefer durable local state before adding more polling.

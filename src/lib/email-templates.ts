@@ -780,9 +780,13 @@ export function adminXeroReconciliationReportTemplate(report: {
     missingPaymentInvoiceLinks: number;
     missingPaymentRefundCreditNoteLinks: number;
     missingSubscriptionInvoiceLinks: number;
+    mismatchedCanonicalLinks: number;
+    staleCanonicalLinks: number;
+    duplicateActiveCanonicalLinks: number;
     stalePendingOperations: number;
     recentFailedOperations: number;
     recentPartialOperations: number;
+    unsupportedPartialOperations: number;
     repeatedFailureCorrelations: number;
     issueCategoryCount: number;
     issueTotalCount: number;
@@ -796,6 +800,16 @@ export function adminXeroReconciliationReportTemplate(report: {
     localId: string | null;
     localUrl: string | null;
     latestErrorMessage: string | null;
+  }>;
+  unsupportedPartials: Array<{
+    operationId: string;
+    entityType: string;
+    operationType: string;
+    localModel: string | null;
+    localId: string | null;
+    localUrl: string | null;
+    reason: string;
+    createdAt: Date;
   }>;
 }): string {
   const summaryRows = [
@@ -811,9 +825,13 @@ export function adminXeroReconciliationReportTemplate(report: {
     { label: "Missing payment invoice links", value: String(report.summary.missingPaymentInvoiceLinks) },
     { label: "Missing refund credit note links", value: String(report.summary.missingPaymentRefundCreditNoteLinks) },
     { label: "Missing subscription invoice links", value: String(report.summary.missingSubscriptionInvoiceLinks) },
+    { label: "Mismatched canonical links", value: String(report.summary.mismatchedCanonicalLinks) },
+    { label: "Stale canonical links", value: String(report.summary.staleCanonicalLinks) },
+    { label: "Duplicate active canonical links", value: String(report.summary.duplicateActiveCanonicalLinks) },
     { label: "Stale pending/running operations", value: String(report.summary.stalePendingOperations) },
     { label: "Recent failed operations", value: String(report.summary.recentFailedOperations) },
     { label: "Recent partial operations", value: String(report.summary.recentPartialOperations) },
+    { label: "Unsupported partial operations", value: String(report.summary.unsupportedPartialOperations) },
     { label: "Repeated-failure correlations", value: String(report.summary.repeatedFailureCorrelations) },
   ];
 
@@ -828,6 +846,20 @@ export function adminXeroReconciliationReportTemplate(report: {
             ? escapeHtml(`${failure.localModel} ${failure.localId}`)
             : "Unavailable"
         }</td>
+      </tr>`)
+    .join("");
+
+  const unsupportedPartialRows = report.unsupportedPartials
+    .map((partial) => `
+      <tr>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(partial.operationId)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(partial.entityType)} ${escapeHtml(partial.operationType)}</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${
+          partial.localModel && partial.localId
+            ? escapeHtml(`${partial.localModel} ${partial.localId}`)
+            : "Unavailable"
+        }</td>
+        <td style="padding: 8px 12px; font-size: 13px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(partial.reason)}</td>
       </tr>`)
     .join("");
 
@@ -853,6 +885,20 @@ export function adminXeroReconciliationReportTemplate(report: {
       ${repeatedFailureRows}
     </table>`
         : paragraph("No repeated-failure correlations met the alert threshold in this window.")
+    }
+    ${
+      report.unsupportedPartials.length > 0
+        ? `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
+      <tr>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation ID</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Local Record</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Repair Gap</th>
+      </tr>
+      ${unsupportedPartialRows}
+    </table>`
+        : paragraph("No unsupported partial-operation repair gaps were detected in this window.")
     }
     ${button("Open Xero Admin", BASE_URL + "/admin/xero")}
   `);

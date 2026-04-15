@@ -125,7 +125,7 @@ describe("buildXeroReconciliationReport", () => {
     vi.clearAllMocks();
   });
 
-  it("summarises missing canonical links and repeated failures", async () => {
+  it("summarises canonical drift, repeated failures, and unsupported partials", async () => {
     mocks.memberFindMany.mockResolvedValue([
       { id: "mem_1", xeroContactId: "contact_1" },
     ]);
@@ -139,48 +139,106 @@ describe("buildXeroReconciliationReport", () => {
       {
         localModel: "Member",
         localId: "mem_1",
+        xeroObjectType: "CONTACT",
         xeroObjectId: "contact_1",
         role: "CONTACT",
       },
       {
         localModel: "Payment",
         localId: "pay_1",
+        xeroObjectType: "INVOICE",
+        xeroObjectId: "inv_old",
+        role: "PRIMARY_INVOICE",
+      },
+      {
+        localModel: "Payment",
+        localId: "pay_1",
         xeroObjectId: "cn_1",
+        xeroObjectType: "CREDIT_NOTE",
         role: "REFUND_CREDIT_NOTE",
+      },
+      {
+        localModel: "MemberSubscription",
+        localId: "sub_1",
+        xeroObjectType: "SUBSCRIPTION",
+        xeroObjectId: "subinv_1",
+        role: "SUBSCRIPTION_INVOICE",
+      },
+      {
+        localModel: "MemberSubscription",
+        localId: "sub_1",
+        xeroObjectType: "SUBSCRIPTION",
+        xeroObjectId: "subinv_old",
+        role: "SUBSCRIPTION_INVOICE",
       },
     ]);
     mocks.operationFindMany.mockResolvedValue([
       {
+        id: "op_4",
+        direction: "OUTBOUND",
+        correlationKey: "contact:mem_1:repair-gap:v1",
+        entityType: "CONTACT",
+        operationType: "CREATE",
+        localModel: "Member",
+        localId: "mem_1",
+        lastErrorMessage: "Manual repair needed",
+        replayable: true,
+        requestPayload: null,
+        responsePayload: null,
+        status: "PARTIAL",
+        xeroObjectId: "contact_1",
+        createdAt: new Date("2026-04-13T10:15:00Z"),
+      },
+      {
         id: "op_3",
+        direction: "OUTBOUND",
         correlationKey: "payment:pay_1:invoice:v1",
         entityType: "INVOICE",
         operationType: "CREATE",
         localModel: "Payment",
         localId: "pay_1",
         lastErrorMessage: "Timeout",
+        replayable: true,
+        requestPayload: null,
+        responsePayload: null,
         status: "FAILED",
+        xeroObjectId: "inv_1",
         createdAt: new Date("2026-04-13T10:10:00Z"),
       },
       {
         id: "op_2",
+        direction: "OUTBOUND",
         correlationKey: "payment:pay_1:invoice:v1",
         entityType: "INVOICE",
         operationType: "CREATE",
         localModel: "Payment",
         localId: "pay_1",
         lastErrorMessage: "Timeout",
+        replayable: true,
+        requestPayload: null,
+        responsePayload: {
+          invoice: {
+            invoices: [{ total: 45.67 }],
+          },
+        },
         status: "PARTIAL",
+        xeroObjectId: "inv_1",
         createdAt: new Date("2026-04-13T10:00:00Z"),
       },
       {
         id: "op_1",
+        direction: "OUTBOUND",
         correlationKey: "payment:pay_1:invoice:v1",
         entityType: "INVOICE",
         operationType: "CREATE",
         localModel: "Payment",
         localId: "pay_1",
         lastErrorMessage: "Timeout",
+        replayable: true,
+        requestPayload: null,
+        responsePayload: null,
         status: "FAILED",
+        xeroObjectId: "inv_1",
         createdAt: new Date("2026-04-13T09:55:00Z"),
       },
     ]);
@@ -194,19 +252,30 @@ describe("buildXeroReconciliationReport", () => {
       missingMemberContactLinks: 0,
       missingPaymentInvoiceLinks: 1,
       missingPaymentRefundCreditNoteLinks: 0,
-      missingSubscriptionInvoiceLinks: 1,
+      missingSubscriptionInvoiceLinks: 0,
+      mismatchedCanonicalLinks: 1,
+      staleCanonicalLinks: 2,
+      duplicateActiveCanonicalLinks: 1,
       stalePendingOperations: 2,
       recentFailedOperations: 2,
-      recentPartialOperations: 1,
+      recentPartialOperations: 2,
+      unsupportedPartialOperations: 1,
       repeatedFailureCorrelations: 1,
-      issueCategoryCount: 6,
-      issueTotalCount: 8,
+      issueCategoryCount: 9,
+      issueTotalCount: 13,
     });
     expect(report.repeatedFailures).toEqual([
       expect.objectContaining({
         correlationKey: "payment:pay_1:invoice:v1",
         failureCount: 3,
         localUrl: "/admin/xero/records/Payment/pay_1",
+      }),
+    ]);
+    expect(report.unsupportedPartials).toEqual([
+      expect.objectContaining({
+        operationId: "op_4",
+        localUrl: "/admin/members/mem_1",
+        reason: "This partial Xero operation does not have a repair handler yet.",
       }),
     ]);
   });

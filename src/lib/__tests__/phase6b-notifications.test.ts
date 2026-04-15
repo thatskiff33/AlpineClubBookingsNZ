@@ -452,12 +452,16 @@ describe("Email templates - Phase 6b", () => {
         missingPaymentInvoiceLinks: 2,
         missingPaymentRefundCreditNoteLinks: 0,
         missingSubscriptionInvoiceLinks: 1,
+        mismatchedCanonicalLinks: 1,
+        staleCanonicalLinks: 2,
+        duplicateActiveCanonicalLinks: 1,
         stalePendingOperations: 3,
         recentFailedOperations: 4,
         recentPartialOperations: 1,
+        unsupportedPartialOperations: 1,
         repeatedFailureCorrelations: 2,
-        issueCategoryCount: 6,
-        issueTotalCount: 14,
+        issueCategoryCount: 11,
+        issueTotalCount: 19,
       },
       repeatedFailures: [
         {
@@ -471,11 +475,26 @@ describe("Email templates - Phase 6b", () => {
           latestErrorMessage: "Rate limit exceeded",
         },
       ],
+      unsupportedPartials: [
+        {
+          operationId: "op_partial_gap",
+          entityType: "CONTACT",
+          operationType: "CREATE",
+          localModel: "Member",
+          localId: "mem_1",
+          localUrl: "/admin/xero/records/Member/mem_1",
+          reason: "This partial Xero operation does not have a repair handler yet.",
+          createdAt: new Date("2026-04-13T10:05:00Z"),
+        },
+      ],
     });
 
     expect(html).toContain("Xero Reconciliation Report");
     expect(html).toContain("Missing member contact links");
-    expect(html).toContain("14");
+    expect(html).toContain("Mismatched canonical links");
+    expect(html).toContain("Unsupported partial operations");
+    expect(html).toContain("19");
     expect(html).toContain("payment:pay_1:invoice:v1");
+    expect(html).toContain("op_partial_gap");
   });
 });

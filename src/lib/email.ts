@@ -668,9 +668,13 @@ export async function sendAdminXeroReconciliationReportAlert(report: {
     missingPaymentInvoiceLinks: number;
     missingPaymentRefundCreditNoteLinks: number;
     missingSubscriptionInvoiceLinks: number;
+    mismatchedCanonicalLinks: number;
+    staleCanonicalLinks: number;
+    duplicateActiveCanonicalLinks: number;
     stalePendingOperations: number;
     recentFailedOperations: number;
     recentPartialOperations: number;
+    unsupportedPartialOperations: number;
     repeatedFailureCorrelations: number;
     issueCategoryCount: number;
     issueTotalCount: number;
@@ -684,6 +688,16 @@ export async function sendAdminXeroReconciliationReportAlert(report: {
     localId: string | null;
     localUrl: string | null;
     latestErrorMessage: string | null;
+  }>;
+  unsupportedPartials: Array<{
+    operationId: string;
+    entityType: string;
+    operationType: string;
+    localModel: string | null;
+    localId: string | null;
+    localUrl: string | null;
+    reason: string;
+    createdAt: Date;
   }>;
 }) {
   const subject =
