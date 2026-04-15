@@ -120,11 +120,14 @@ describe("Stripe library", () => {
         metadata: { bookingId: "booking_1" },
       });
 
-      expect(mockSetupIntentsCreate).toHaveBeenCalledWith({
-        customer: "cus_test",
-        metadata: { bookingId: "booking_1" },
-        automatic_payment_methods: { enabled: true },
-      });
+      expect(mockSetupIntentsCreate).toHaveBeenCalledWith(
+        {
+          customer: "cus_test",
+          metadata: { bookingId: "booking_1" },
+          automatic_payment_methods: { enabled: true },
+        },
+        undefined,
+      );
       expect(result.id).toBe("seti_test_123");
     });
   });

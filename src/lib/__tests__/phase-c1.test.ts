@@ -272,7 +272,8 @@ describe("#32: Booking wizard shows subscription payment link", () => {
       "utf-8"
     );
     expect(content).toContain("subscriptionInvoiceUrl");
-    expect(content).toContain("SUBSCRIPTION_REQUIRED");
+    // SUBSCRIPTION_REQUIRED is handled via getBookingErrorPaymentTargets (imported helper)
+    expect(content).toContain("getBookingErrorPaymentTargets");
     expect(content).toContain("Pay Your Subscription");
   });
 });
@@ -306,8 +307,8 @@ describe("#32: Xero subscription sync stores invoice number and online URL", () 
       path.resolve("src/lib/xero.ts"),
       "utf-8"
     );
-    // Should save xeroInvoiceNumber in subscription upsert
-    expect(content).toContain("xeroInvoiceNumber: subscriptionInvoice.invoiceNumber");
+    // Should save xeroInvoiceNumber in subscription upsert (via matchedInvoiceNumber intermediate var)
+    expect(content).toContain("matchedInvoiceNumber = subscriptionInvoice.invoiceNumber");
     // Should fetch online invoice URL
     expect(content).toContain("getOnlineInvoice");
     expect(content).toContain("xeroOnlineInvoiceUrl");

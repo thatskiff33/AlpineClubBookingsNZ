@@ -35,6 +35,7 @@ vi.mock("@/lib/auth", () => ({
 
 const mockGetAuthenticatedXeroClient = vi.fn();
 const mockWithXeroRetry = vi.fn();
+const mockCallXeroApi = vi.fn();
 const mockCreateXeroContactForMember = vi.fn();
 const mockSyncContactsFromXero = vi.fn();
 const mockFindDuplicateContacts = vi.fn();
@@ -50,10 +51,20 @@ class MockXeroContactValidationError extends Error {
 vi.mock("@/lib/xero", () => ({
   getAuthenticatedXeroClient: () => mockGetAuthenticatedXeroClient(),
   withXeroRetry: (fn: () => unknown) => mockWithXeroRetry(fn),
+  callXeroApi: (fn: () => unknown, _opts: unknown) => mockCallXeroApi(fn, _opts),
   createXeroContactForMember: (id: string) => mockCreateXeroContactForMember(id),
   XeroContactValidationError: MockXeroContactValidationError,
   syncContactsFromXero: () => mockSyncContactsFromXero(),
   findDuplicateContacts: () => mockFindDuplicateContacts(),
+}));
+
+// ---------------------------------------------------------------------------
+// Mock xero-sync (upsertXeroObjectLink wraps prisma.$transaction internally)
+// ---------------------------------------------------------------------------
+
+const mockUpsertXeroObjectLink = vi.fn();
+vi.mock("@/lib/xero-sync", () => ({
+  upsertXeroObjectLink: (args: unknown) => mockUpsertXeroObjectLink(args),
 }));
 
 // ---------------------------------------------------------------------------
@@ -108,7 +119,7 @@ describe("#28: Xero Search Contacts API", () => {
       },
       tenantId: "tenant-1",
     });
-    mockWithXeroRetry.mockResolvedValue({
+    mockCallXeroApi.mockResolvedValue({
       body: {
         contacts: [
           { contactID: "xc-1", name: "John Smith", emailAddress: "john@test.com" },
@@ -186,7 +197,7 @@ describe("#28: Xero Link API", () => {
       xero: { accountingApi: { getContact: vi.fn() } },
       tenantId: "t1",
     });
-    mockWithXeroRetry.mockResolvedValue({
+    mockCallXeroApi.mockResolvedValue({
       body: { contacts: [{ contactID: "xc-1", name: "John Smith" }] },
     });
     mockPrisma.member.findFirst.mockResolvedValue({ firstName: "Jane", lastName: "Doe" });
@@ -210,11 +221,12 @@ describe("#28: Xero Link API", () => {
       xero: { accountingApi: { getContact: vi.fn() } },
       tenantId: "t1",
     });
-    mockWithXeroRetry.mockResolvedValue({
+    mockCallXeroApi.mockResolvedValue({
       body: { contacts: [{ contactID: "xc-1", name: "John Smith" }] },
     });
     mockPrisma.member.findFirst.mockResolvedValue(null); // no existing link
     mockPrisma.member.update.mockResolvedValue({});
+    mockUpsertXeroObjectLink.mockResolvedValue(undefined);
     mockLogAudit.mockResolvedValue(undefined);
 
     const { POST } = await import("@/app/api/admin/members/[id]/xero-link/route");
@@ -251,7 +263,7 @@ describe("#28: Xero Link API", () => {
       xero: { accountingApi: { getContact: vi.fn() } },
       tenantId: "t1",
     });
-    mockWithXeroRetry.mockRejectedValue({
+    mockCallXeroApi.mockRejectedValue({
       response: {
         statusCode: 429,
         headers: {
