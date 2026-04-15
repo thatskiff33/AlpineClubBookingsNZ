@@ -1,5 +1,8 @@
 # Autonomous Best-Practice Review Plan For TACBookings
 
+> Superseded as the canonical runbook by `docs/audit/00_EXECUTION_MODEL.md`.
+> Keep this file as source context only.
+
 ## Summary
 
 This plan authorizes a full autonomous review for this repo.
