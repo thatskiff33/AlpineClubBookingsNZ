@@ -85,6 +85,8 @@ interface RefundedPaymentBusinessStateRepairResult {
   updatedPayments: number;
 }
 
+const BOOKING_SCOPED_OUTBOUND_MODELS = ["Booking", "BookingModification"] as const;
+
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 const CONTACT_SYNC_CURSOR_RESOURCE = "CONTACT_SYNC";
 const DEFAULT_XERO_SYNC_SCOPE = "default";
@@ -354,6 +356,26 @@ function dedupeXeroObjectLinks(links: XeroObjectLinkInput[]): XeroObjectLinkInpu
   return Array.from(seen.values());
 }
 
+function dedupeResolvedXeroObjectLinks(
+  links: ResolvedXeroObjectLink[]
+): ResolvedXeroObjectLink[] {
+  const seen = new Map<string, ResolvedXeroObjectLink>();
+
+  for (const link of links) {
+    seen.set(
+      [
+        link.localModel,
+        link.localId,
+        link.xeroObjectType,
+        link.role,
+      ].join(":"),
+      link
+    );
+  }
+
+  return Array.from(seen.values());
+}
+
 function getDerivedInboundPaymentRole(link: Pick<ResolvedXeroObjectLink, "xeroObjectType" | "role">) {
   if (link.xeroObjectType === "PAYMENT") {
     return link.role;
@@ -379,6 +401,14 @@ function getDerivedInboundAllocationRole(creditNoteRole: string) {
     : "CREDIT_NOTE_ALLOCATION";
 }
 
+function getRecoveredBookingScopedRole(
+  xeroObjectType: "INVOICE" | "CREDIT_NOTE"
+) {
+  return xeroObjectType === "INVOICE"
+    ? "SUPPLEMENTARY_INVOICE"
+    : "MODIFICATION_CREDIT_NOTE";
+}
+
 async function findActiveXeroObjectLinks(
   xeroObjectType: string | string[],
   xeroObjectId: string
@@ -400,6 +430,53 @@ async function findActiveXeroObjectLinks(
       role: true,
     },
   });
+}
+
+async function recoverBookingScopedLinksFromOutboundOperations(
+  xeroObjectType: "INVOICE" | "CREDIT_NOTE",
+  xeroObjectId: string
+): Promise<ResolvedXeroObjectLink[]> {
+  const operations = await prisma.xeroSyncOperation.findMany({
+    where: {
+      direction: "OUTBOUND",
+      entityType: xeroObjectType,
+      operationType: "CREATE",
+      xeroObjectId,
+      localModel: {
+        in: [...BOOKING_SCOPED_OUTBOUND_MODELS],
+      },
+      localId: {
+        not: null,
+      },
+      status: {
+        in: ["SUCCEEDED", "PARTIAL"],
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    select: {
+      localModel: true,
+      localId: true,
+    },
+  });
+
+  const role = getRecoveredBookingScopedRole(xeroObjectType);
+
+  return dedupeResolvedXeroObjectLinks(
+    operations.flatMap((operation) =>
+      operation.localModel && operation.localId
+        ? [
+            {
+              localModel: operation.localModel,
+              localId: operation.localId,
+              xeroObjectType,
+              role,
+            },
+          ]
+        : []
+    )
+  );
 }
 
 function extractContactPhone(contact: Contact) {
@@ -1321,21 +1398,28 @@ async function reconcileXeroInvoice(
   }
 
   const invoiceUrl = buildXeroInvoiceUrl(invoice.invoiceID);
-  const relatedLinks = await prisma.xeroObjectLink.findMany({
-    where: {
-      xeroObjectId: invoice.invoiceID,
-      xeroObjectType: {
-        in: ["INVOICE", "SUBSCRIPTION"],
+  const [existingLinks, recoveredBookingScopedLinks] = await Promise.all([
+    prisma.xeroObjectLink.findMany({
+      where: {
+        xeroObjectId: invoice.invoiceID,
+        xeroObjectType: {
+          in: ["INVOICE", "SUBSCRIPTION"],
+        },
+        active: true,
       },
-      active: true,
-    },
-    select: {
-      localModel: true,
-      localId: true,
-      xeroObjectType: true,
-      role: true,
-    },
-  });
+      select: {
+        localModel: true,
+        localId: true,
+        xeroObjectType: true,
+        role: true,
+      },
+    }),
+    recoverBookingScopedLinksFromOutboundOperations("INVOICE", invoice.invoiceID),
+  ]);
+  const relatedLinks = dedupeResolvedXeroObjectLinks([
+    ...existingLinks,
+    ...recoveredBookingScopedLinks,
+  ]);
 
   for (const link of relatedLinks) {
     await upsertXeroObjectLink({
@@ -1777,9 +1861,14 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
     throw new Error(`Xero credit note ${creditNoteId} was not found`);
   }
 
-  const [relatedLinks, canonicalPaymentLinks, canonicalAccountCreditPayments] =
-    await Promise.all([
+  const [
+    existingCreditNoteLinks,
+    recoveredBookingScopedLinks,
+    canonicalPaymentLinks,
+    canonicalAccountCreditPayments,
+  ] = await Promise.all([
     findActiveXeroObjectLinks("CREDIT_NOTE", creditNote.creditNoteID),
+    recoverBookingScopedLinksFromOutboundOperations("CREDIT_NOTE", creditNote.creditNoteID),
     prisma.payment.findMany({
       where: {
         xeroRefundCreditNoteId: creditNote.creditNoteID,
@@ -1789,6 +1878,10 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
       },
     }),
     resolveAccountCreditPaymentsFromMemberCredits(creditNote.creditNoteID),
+  ]);
+  const relatedLinks = dedupeResolvedXeroObjectLinks([
+    ...existingCreditNoteLinks,
+    ...recoveredBookingScopedLinks,
   ]);
 
   const existingRefundPaymentIds = new Set(
