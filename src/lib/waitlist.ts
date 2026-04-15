@@ -237,7 +237,8 @@ export async function confirmWaitlistOffer(
         return { success: false, error: "Capacity is no longer available. You've been returned to the waitlist." };
       }
 
-      // Determine new status using the same logic as booking creation
+      // Determine new status using the same logic as booking creation.
+      // Math.ceil mirrors bookings/route.ts: fractional days over threshold → PENDING.
       const hasNonMembers = booking.guests.some((g) => !g.isMember);
       const holdDays = hasNonMembers ? await getNonMemberHoldDays(booking.checkIn) : 7;
       const daysUntilCheckIn = Math.ceil(

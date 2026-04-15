@@ -732,14 +732,17 @@ export async function findOrCreateXeroContact(
     const { xero, tenantId } = await getAuthenticatedXeroClient();
     const previousXeroContactId = member.xeroContactId;
 
-    // Search by email first
+    // Search by email first.
+    // Email quotes are stripped to keep the OData filter syntactically valid;
+    // z.string().email() at the API boundary ensures only RFC-valid emails
+    // reach this point, so no further escaping is needed.
     try {
       const contactsResponse = await callXeroApi(
         () =>
           xero.accountingApi.getContacts(
             tenantId,
             undefined, // ifModifiedSince
-            `EmailAddress="${member.email.replace(/"/g, "")}"` // where (strip quotes for OData safety)
+            `EmailAddress="${member.email.replace(/"/g, "")}"` // where clause
           ),
         {
           operation: "getContacts",
@@ -772,8 +775,17 @@ export async function findOrCreateXeroContact(
         });
         return contactId;
       }
-    } catch {
-      // Search failed, will create new contact
+    } catch (searchErr) {
+      // Rate-limit errors must propagate — swallowing them would cause a new
+      // contact to be created and waste the daily quota further.
+      if (searchErr instanceof XeroDailyLimitError) throw searchErr;
+      // Any other error (network timeout, transient 5xx) is logged and we
+      // fall through to contact creation. This is intentional: a failed
+      // search is recoverable, whereas failing to create the invoice is not.
+      logger.warn(
+        { err: searchErr, memberId, email: member.email },
+        "Xero email search failed; falling through to contact creation"
+      );
     }
 
     // Create new contact

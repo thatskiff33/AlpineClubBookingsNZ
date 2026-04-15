@@ -398,6 +398,58 @@ describe("expireStaleOffers", () => {
     expect(result.expiredCount).toBe(0);
     expect(result.reofferedCount).toBe(0);
   });
+
+  it("reverts expired offer to WAITLISTED and keeps reofferedCount=0 when no capacity for next candidate", async () => {
+    const { expireStaleOffers } = await import("@/lib/waitlist");
+    const { checkCapacity } = await import("@/lib/capacity");
+
+    // One stale WAITLIST_OFFERED booking
+    mockBookingFindMany.mockResolvedValueOnce([
+      {
+        id: "expired-offer-1",
+        checkIn: new Date("2026-08-01"),
+        checkOut: new Date("2026-08-03"),
+        member: { email: "alice@test.com", firstName: "Alice" },
+      },
+    ]);
+
+    // Revert update succeeds
+    mockBookingUpdate.mockResolvedValue({});
+
+    // getWaitlistPosition internals
+    mockBookingFindUnique.mockResolvedValue({
+      checkIn: new Date("2026-08-01"),
+      checkOut: new Date("2026-08-03"),
+      createdAt: new Date("2026-05-01"),
+      status: "WAITLISTED",
+    });
+    mockBookingCount.mockResolvedValue(0);
+
+    // processWaitlistForDates finds a candidate but lodge is full → no offer
+    mockTx.booking.findMany.mockResolvedValue([
+      {
+        id: "next-candidate",
+        checkIn: new Date("2026-08-01"),
+        checkOut: new Date("2026-08-03"),
+        guests: [{ id: "g1" }, { id: "g2" }],
+        member: { id: "m2", email: "bob@test.com", firstName: "Bob", lastName: "Jones" },
+      },
+    ]);
+    vi.mocked(checkCapacity).mockResolvedValue({ available: false, availableBeds: 0 });
+
+    const result = await expireStaleOffers();
+
+    expect(result.expiredCount).toBe(1);
+    expect(result.reofferedCount).toBe(0); // no capacity → no new offer
+
+    // The expired booking was correctly reverted to WAITLISTED
+    expect(mockBookingUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "expired-offer-1" },
+        data: expect.objectContaining({ status: "WAITLISTED" }),
+      })
+    );
+  });
 });
 
 // ─── Status Colors Tests ───

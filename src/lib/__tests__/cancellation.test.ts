@@ -292,4 +292,27 @@ describe("daysUntilDate", () => {
     const checkIn = new Date("2025-07-08T06:00:00Z");
     expect(daysUntilDate(checkIn, now)).toBe(6);
   });
+
+  it("partial day over a tier boundary resolves to the lower tier (Math.floor semantics)", () => {
+    // 7 days and 30 minutes away → Math.floor gives 7, applies 7-day tier (50%)
+    const now = new Date("2025-07-01T11:00:00Z");
+    const checkIn = new Date("2025-07-08T11:30:00Z"); // 7.02 days away
+    const days = daysUntilDate(checkIn, now);
+    expect(days).toBe(7);
+    // Should get the 7-day tier, not below it
+    expect(getRefundTier(days, standardPolicy)).toEqual(
+      expect.objectContaining({ refundPercentage: 50, daysBeforeStay: 7 })
+    );
+  });
+
+  it("partial day under a tier boundary resolves to the lower tier", () => {
+    // 6 days and 23 hours away → Math.floor gives 6, falls to 0% tier
+    const now = new Date("2025-07-01T12:00:00Z");
+    const checkIn = new Date("2025-07-08T11:00:00Z"); // 6.96 days away
+    const days = daysUntilDate(checkIn, now);
+    expect(days).toBe(6);
+    expect(getRefundTier(days, standardPolicy)).toEqual(
+      expect.objectContaining({ refundPercentage: 0, daysBeforeStay: 0 })
+    );
+  });
 });

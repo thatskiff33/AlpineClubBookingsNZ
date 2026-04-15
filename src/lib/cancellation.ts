@@ -141,6 +141,12 @@ export function calculateDualRefundAmounts(
 
 /**
  * Calculate days between now and check-in date.
+ *
+ * Uses Math.floor deliberately: partial days do NOT count toward a higher
+ * refund tier. A cancellation 6.9 days before check-in gets the 6-day rule,
+ * not the 7-day rule. This is distinct from the booking-creation hold-day
+ * check which uses Math.ceil (any fraction over the threshold keeps the
+ * booking pending to protect capacity).
  */
 export function daysUntilDate(checkIn: Date, now: Date = new Date()): number {
   const diffMs = checkIn.getTime() - now.getTime();

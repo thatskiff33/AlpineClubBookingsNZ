@@ -413,6 +413,9 @@ export async function POST(request: NextRequest) {
   const hasNonMembers = guests.some((g) => !g.isMember);
   const allMembers = !hasNonMembers;
   const holdDays = hasNonMembers ? await getNonMemberHoldDays(checkIn) : 7;
+  // Math.ceil: any fractional day over the threshold keeps the booking PENDING
+  // so the hold window is never accidentally short. Contrast with daysUntilDate()
+  // in cancellation.ts which uses Math.floor for refund tier lookups.
   const daysUntilCheckIn = Math.ceil(
     (checkIn.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
   );
@@ -424,8 +427,12 @@ export async function POST(request: NextRequest) {
 
   try {
     const booking = await prisma.$transaction(async (tx) => {
-      // Advisory lock to serialize all booking creation and prevent double-booking.
-      // Uses a fixed key so overlapping date ranges are protected.
+      // Global advisory lock (key=1) serializes ALL booking creation within
+      // the transaction. A per-date or per-room lock would not prevent
+      // double-booking because the capacity constraint spans multiple nights
+      // simultaneously — two bookings for different-but-overlapping ranges
+      // must not both "see" the same free beds. The lock is released
+      // automatically when the transaction commits or rolls back.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
       // Check capacity
