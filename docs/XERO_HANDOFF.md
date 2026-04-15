@@ -213,29 +213,44 @@ Primary files updated:
 - `src/lib/xero-inbound-reconciliation.ts`
 - `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
 
+### Phase 7: Account-credit credit-note reconciliation now recovers missing payment links from local ledger state
+
+Implemented:
+
+- extended inbound `CREDIT_NOTE` reconciliation so `ACCOUNT_CREDIT_NOTE` payment links can be recovered from local `MemberCredit.xeroCreditNoteId` plus `sourceBookingId`, even when the original outbound extra-link write was lost
+- kept the recovered link on the same payment-scoped role used by later account-credit allocation and refund-state repairs, so replay/webhook processing can still advance local business state without depending on the original write path finishing all local link persistence
+
+Primary files updated:
+
+- `src/lib/xero-inbound-reconciliation.ts`
+- `src/lib/__tests__/xero-inbound-reconciliation.test.ts`
+
 ## Remaining Work
 
-### 1. Phase 7 remaining: make webhook and incremental reconcile the main source of truth
+### 1. Phase 7 remaining: finish the last non-membership reconciliation gaps
 
-Inbound reconciliation now drives the primary membership-state catch-up path, can selectively keep touched cached contact-group memberships current, includes a throttled incremental contact-sync safety net, refreshes linked state for changed membership invoices, and now repairs both credit-note-driven account-credit ledger state and local refund settlement state, but some local business state is still not advanced directly from inbound/incremental changes.
+Inbound reconciliation is now the primary driver for:
 
-Required outcome:
+- membership subscription catch-up
+- contact cache and touched group-membership drift
+- membership-invoice-linked payment metadata
+- credit-note-driven refund settlement and account-credit ledger repairs
+- recovery of missing `ACCOUNT_CREDIT_NOTE` payment links from local `MemberCredit` state
 
-- webhook-triggered reconciliation advances the remaining business state that still depends on polling beyond membership subscriptions
-- any remaining operator/daily polling stays a safety net, not the primary reconciliation path
+The next remaining gap is narrower: booking and booking-modification outbound paths still rely on outbound extra-link persistence more than inbound replay should.
 
-Implementation direction:
+Next steps:
 
-- extend business-state application beyond the current metadata/link/cache backfills, incremental contact/group maintenance, and membership-invoice-linked reconciliation path
-- add any remaining incremental pull jobs where webhooks alone are insufficient
-- consider whether bulk replay/filtering improvements are needed on the admin Xero screen after the main reconciliation paths land
+1. Compare `createXeroSupplementaryInvoice()` and `createXeroCreditNoteForModification()` in `src/lib/xero.ts` against inbound `INVOICE` / `CREDIT_NOTE` reconciliation and identify which `Booking` / `BookingModification` links still cannot be recovered when the original extra-link write is lost.
+2. Add deterministic recovery for those remaining links using durable local state that already exists, or the outbound operation ledger if no canonical local field exists.
+3. Only add a new incremental pull step if a webhook-free gap remains after that link-recovery work.
 
 Primary files:
 
+- `src/lib/xero.ts`
 - `src/lib/xero-inbound-reconciliation.ts`
-- `src/app/api/webhooks/xero/route.ts`
-- `src/app/api/cron/xero/route.ts`
-- `src/instrumentation.ts`
+- `src/lib/xero-operation-outbox.ts`
+- `src/lib/xero-operation-retry.ts`
 
 ### 2. Phase 6 remaining: finish the outbox boundary decisions
 
@@ -300,13 +315,8 @@ Typical commands:
 - targeted `npx vitest run ...`
 - `npm run build`
 
-## Notes For The Next Agent
+## Next Agent Checklist
 
-- Phase 4 is now complete. The default operator path is: refresh cached contact groups only when needed, run incremental contact sync to keep `XeroContactCache` warm and refresh any touched group memberships, then run cached member import.
-- Explicit repair tools now live on the same admin endpoints:
-  - `POST /api/admin/xero/sync-contacts` with JSON flags for `fullResync` / `backfillJoinedDates`
-  - `POST /api/admin/xero/import-members` with `repairMissingContactCache`
-  - `GET /api/admin/xero/contact-groups?refresh=1` for a deliberate full group rescan
-- Do not reopen already-completed Phase 6/7/8 work unless the remaining phases force a design change.
-- Stored inbound `CONTACT` reconciliation and the shared inbound reconciliation cycle now maintain contact snapshots, touched cached group memberships, throttled incremental contact drift catch-up, and linked state for changed membership invoices. Full group refresh remains the deliberate full-rescan safety net.
-- The next biggest budget win is still Phase 7: make stored inbound events and incremental reconcile the primary driver of the remaining local business state beyond memberships, contact/group cache state, membership-invoice-linked metadata, and the credit-note-driven refund/account-credit repairs now handled automatically.
+- Read this file first, then compare the remaining `Booking` / `BookingModification` Xero write paths in `src/lib/xero.ts` against the inbound recovery logic in `src/lib/xero-inbound-reconciliation.ts`.
+- Do not reopen completed work around membership reconciliation, contact/group cache sync, membership-invoice-linked metadata refresh, or the landed credit-note refund/account-credit repairs unless the remaining link-recovery work forces a design change.
+- Keep operator-triggered admin routes as repair/safety-net tools, not the primary reconciliation path.

@@ -789,6 +789,113 @@ describe("processStoredXeroInboundEvents", () => {
     );
   });
 
+  it("recovers missing account-credit payment links from member credits during credit note reconciliation", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_5a",
+        source: "webhook",
+        eventCategory: "CREDIT_NOTE",
+        eventType: "UPDATE",
+        resourceId: "cn_credit_recover_1",
+        correlationKey: "corr_5a",
+        payload: { resourceId: "cn_credit_recover_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_5a" });
+    mocks.linkFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mocks.memberCreditFindMany.mockResolvedValue([
+      {
+        sourceBookingId: "book_credit_recover_1",
+      },
+    ]);
+    mocks.paymentFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_credit_recover_1",
+          bookingId: "book_credit_recover_1",
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_credit_recover_1",
+          bookingId: "book_credit_recover_1",
+          booking: {
+            memberId: "mem_credit_recover_1",
+          },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_credit_recover_1",
+          amountCents: 12000,
+          refundedAmountCents: 0,
+          status: "SUCCEEDED",
+        },
+      ]);
+    mocks.memberCreditUpdateMany.mockResolvedValue({ count: 0 });
+    const accountingApi = {
+      getCreditNote: vi.fn().mockResolvedValue({
+        body: {
+          creditNotes: [
+            {
+              creditNoteID: "cn_credit_recover_1",
+              creditNoteNumber: "CN-CREDIT-RECOVER-001",
+              total: 97,
+              appliedAmount: 0,
+              remainingCredit: 97,
+              allocations: [],
+              payments: [],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localModel: "Payment",
+        localId: "pay_credit_recover_1",
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: "cn_credit_recover_1",
+        role: "ACCOUNT_CREDIT_NOTE",
+      })
+    );
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay_credit_recover_1" },
+      data: {
+        refundedAmountCents: 9700,
+        status: "PARTIALLY_REFUNDED",
+      },
+    });
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_1",
+      expect.objectContaining({
+        responsePayload: expect.objectContaining({
+          matchedAccountCreditPayments: 1,
+          matchedRefundedPayments: 1,
+          updatedRefundedPayments: 1,
+        }),
+      })
+    );
+  });
+
   it("reconciles modification credit note allocations into local refunded payment state", async () => {
     mocks.inboundFindMany.mockResolvedValue([
       {

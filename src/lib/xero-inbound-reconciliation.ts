@@ -1122,6 +1122,45 @@ async function repairRefundedPaymentBusinessState(input: {
   };
 }
 
+async function resolveAccountCreditPaymentsFromMemberCredits(creditNoteId: string) {
+  const credits = await prisma.memberCredit.findMany({
+    where: {
+      xeroCreditNoteId: creditNoteId,
+      type: CreditType.CANCELLATION_REFUND,
+      sourceBookingId: {
+        not: null,
+      },
+    },
+    select: {
+      sourceBookingId: true,
+    },
+  });
+
+  const bookingIds = Array.from(
+    new Set(
+      credits
+        .map((credit) => credit.sourceBookingId)
+        .filter((bookingId): bookingId is string => Boolean(bookingId))
+    )
+  );
+
+  if (bookingIds.length === 0) {
+    return [];
+  }
+
+  return prisma.payment.findMany({
+    where: {
+      bookingId: {
+        in: bookingIds,
+      },
+    },
+    select: {
+      id: true,
+      bookingId: true,
+    },
+  });
+}
+
 async function reconcileXeroContact(contactId: string) {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const response = await callXeroApi(
@@ -1738,7 +1777,8 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
     throw new Error(`Xero credit note ${creditNoteId} was not found`);
   }
 
-  const [relatedLinks, canonicalPaymentLinks] = await Promise.all([
+  const [relatedLinks, canonicalPaymentLinks, canonicalAccountCreditPayments] =
+    await Promise.all([
     findActiveXeroObjectLinks("CREDIT_NOTE", creditNote.creditNoteID),
     prisma.payment.findMany({
       where: {
@@ -1748,11 +1788,19 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
         id: true,
       },
     }),
+    resolveAccountCreditPaymentsFromMemberCredits(creditNote.creditNoteID),
   ]);
 
   const existingRefundPaymentIds = new Set(
     relatedLinks
       .filter((link) => link.localModel === "Payment" && link.role === "REFUND_CREDIT_NOTE")
+      .map((link) => link.localId)
+  );
+  const existingAccountCreditPaymentIds = new Set(
+    relatedLinks
+      .filter(
+        (link) => link.localModel === "Payment" && link.role === "ACCOUNT_CREDIT_NOTE"
+      )
       .map((link) => link.localId)
   );
 
@@ -1785,6 +1833,25 @@ async function reconcileXeroCreditNote(creditNoteId: string) {
             xeroObjectId: creditNote.creditNoteID!,
             xeroObjectNumber: creditNote.creditNoteNumber ?? null,
             role: "REFUND_CREDIT_NOTE",
+            metadata: {
+              status: creditNote.status ?? null,
+              total: creditNote.total ?? null,
+              appliedAmount: creditNote.appliedAmount ?? null,
+              remainingCredit: creditNote.remainingCredit ?? null,
+            },
+          }) satisfies XeroObjectLinkInput
+      ),
+    ...canonicalAccountCreditPayments
+      .filter((payment) => !existingAccountCreditPaymentIds.has(payment.id))
+      .map(
+        (payment) =>
+          ({
+            localModel: "Payment",
+            localId: payment.id,
+            xeroObjectType: "CREDIT_NOTE",
+            xeroObjectId: creditNote.creditNoteID!,
+            xeroObjectNumber: creditNote.creditNoteNumber ?? null,
+            role: "ACCOUNT_CREDIT_NOTE",
             metadata: {
               status: creditNote.status ?? null,
               total: creditNote.total ?? null,
