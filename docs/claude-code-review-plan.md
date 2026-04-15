@@ -1,5 +1,8 @@
 # Comprehensive Best-Practice Review Plan — TACBookings
 
+> Superseded as the canonical runbook by `docs/audit/00_EXECUTION_MODEL.md`.
+> Keep this file as source context only.
+
 ## Context
 
 TACBookings is a production Next.js 16 booking system for Tokoroa Alpine Club (29-bed lodge, ~410 members). It integrates Stripe, Xero, AWS SES, and runs on Docker/Lightsail. A prior code review (2026-04-07) identified 46 issues; many have been fixed in subsequent commits but the status of each is unverified. The system has 1381 passing tests and a successful build. This plan covers a **full 12-area best-practice audit** producing a **report-only output** (no code changes). All severity levels will be catalogued.
