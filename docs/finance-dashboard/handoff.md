@@ -15,6 +15,7 @@ Last updated: 2026-04-16
 - Phase issues created: `#93` through `#100`
 - First execution task created: `#101`
 - Current active task is `#101` with PR `#102`
+- Merge review run for `#101` and PR `#102`
 
 ## Decisions Already Locked
 
@@ -26,26 +27,26 @@ Last updated: 2026-04-16
 ## Immediate Next Step
 
 Done:
-- Added the agent runbook and GitHub status-label workflow
-- Marked `#101` as the current in-progress task
+- Ran the merge-review stage for task `#101` and PR `#102`
 
 Validation:
-- Repo docs updated
-- GitHub labels created
+- GitHub `verify` check passed on PR `#102`
+- PR `#102` merge state is clean with no review blockers
+- Branch `finance/issue-101-access-scaffold` is up to date with `main`
 
 Next:
-- Review and merge PR `#102` if checks and diff remain clean
-- After merge, create the next narrow `status: ready` task under the earliest incomplete phase
+- Narrow PR `#102` so it contains only task `#101` work, or split the planning scaffold into a separate task and PR
+- Re-run the merge-review stage after the diff is scoped cleanly to `#101`
 
 Blockers:
-- None
+- PR `#102` still includes finance planning scaffold and workflow-doc changes beyond task `#101` acceptance criteria, so the one-task/one-PR merge gate fails
 
 ## Next Prompt
 
 ```text
 Use the GitHub workflow for TACBookings finance epic #92.
 
-Run the merge-review stage for task #101 and PR #102 only.
+Work on exactly one task issue only.
 
 1. Read only these sources first:
 - docs/finance-dashboard/README.md
@@ -54,28 +55,20 @@ Run the merge-review stage for task #101 and PR #102 only.
 - task issue #101
 - PR #102
 
-2. Verify all merge gates:
-- task acceptance criteria for #101 are complete
-- local validation in PR #102 is still valid for the current diff
-- PR checks are green
-- no unresolved blocker comments or requested changes remain
-- branch is up to date with main
-- diff is scoped to #101
+2. Narrow the scope of PR #102 so it matches task #101 only:
+- keep the dedicated finance access field on `Member`
+- keep the finance auth helpers
+- keep the `/finance` route scaffold
+- keep only the minimal handoff/doc updates needed for the implemented guard strategy
+- remove or split the broader finance planning scaffold, issue templates, PR template, and workflow-runbook changes from PR #102
 
-3. If any gate fails:
-- do not merge
-- leave the PR open
-- update handoff with blockers and write the next exact Next Prompt block
+3. If the broader planning scaffold must ship, create a separate finance task issue for that work and move it to a separate branch/PR instead of merging it through #101.
 
-4. If all gates pass:
-- squash merge PR #102 to main
-- delete the remote branch
-- sync local main
-- close #101 with a short completion comment
-- add a short progress comment to #93
-- create or identify the next narrow finance task under the earliest incomplete phase
-- mark that next task as status: ready
-- update handoff with the next exact Next Prompt block
+4. Re-run the smallest sufficient validation for the resulting #101 diff. If schema, auth, routing, or Prisma-sensitive files remain, run full build again.
+
+5. Update PR #102 so it reflects only the #101 scope, then rerun the merge-review stage if all merge gates pass.
+
+6. Update handoff with the next exact Next Prompt block before ending the session.
 ```
 
 ## Open Questions
