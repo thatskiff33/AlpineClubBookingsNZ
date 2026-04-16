@@ -4,83 +4,74 @@ Last updated: 2026-04-16
 
 ## Current State
 
-- Planning scaffold created
-- ADR baseline created
-- Phase plan documented
-- Agent runbook documented
-- GitHub issue and PR templates added
-- GitHub milestone created: `Finance Dashboard Integration`
-- GitHub status labels added: `status: ready`, `status: in-progress`, `status: blocked`
-- Epic created: `#92`
-- Phase issues created: `#93` through `#100`
-- First execution task created: `#101`
-- Current active task is `#101` with PR `#102`
-- Merge review run for `#101` and PR `#102`
+- Phase 1 task `#101` implements the finance access boundary inside TACBookings
+- Active PR: `#102`
+- Parent phase: `#93`
 
-## Decisions Already Locked
+## Implemented Guard Strategy
 
-- Native TACBookings implementation, not embedded Streamlit
-- Separate finance Xero OAuth boundary
-- Dedicated finance access model instead of broadening `ADMIN`
-- Postgres-backed finance snapshots instead of CSV files
+- `Member.financeAccessLevel` is the dedicated finance gate, separate from `role`
+- finance access is checked server-side from the live `Member` row, not the JWT alone
+- `/finance` lives outside the admin-only layout
+- unauthenticated users are redirected to `/login` with a `/finance` callback
+- users without finance access are redirected to `/dashboard`
+- finance viewer and manager checks are separated in `src/lib/finance-auth.ts`
 
 ## Immediate Next Step
 
 Done:
-- Ran the merge-review stage for task `#101` and PR `#102`
+- Added the dedicated finance access field on `Member`
+- Added finance authorization helpers for viewer and manager access
+- Added the `/finance` route scaffold outside the admin-only layout
+- Added handoff notes for the implemented guard strategy
 
 Validation:
-- GitHub `verify` check passed on PR `#102`
-- PR `#102` merge state is clean with no review blockers
-- Branch `finance/issue-101-access-scaffold` is up to date with `main`
+- `npx prisma format`
+- `npx prisma generate`
+- `npx vitest run src/lib/__tests__/finance-auth.test.ts`
+- `npx eslint src/lib/finance-auth.ts 'src/app/(authenticated)/layout.tsx' 'src/app/(finance)/finance/layout.tsx' 'src/app/(finance)/finance/page.tsx' src/components/nav-bar.tsx src/lib/__tests__/finance-auth.test.ts`
+- `npm run build`
 
 Next:
-- Narrow PR `#102` so it contains only task `#101` work, or split the planning scaffold into a separate task and PR
-- Re-run the merge-review stage after the diff is scoped cleanly to `#101`
+- Merge PR `#102` if the diff remains scoped to task `#101`
+- After merge, create a separate task for the broader finance planning scaffold and repo workflow docs
 
 Blockers:
-- PR `#102` still includes finance planning scaffold and workflow-doc changes beyond task `#101` acceptance criteria, so the one-task/one-PR merge gate fails
+- None
 
 ## Next Prompt
 
 ```text
 Use the GitHub workflow for TACBookings finance epic #92.
 
-Work on exactly one task issue only.
+Run the merge-review stage for task #101 and PR #102 only.
 
 1. Read only these sources first:
-- docs/finance-dashboard/README.md
 - docs/finance-dashboard/handoff.md
 - phase issue #93
 - task issue #101
 - PR #102
 
-2. Narrow the scope of PR #102 so it matches task #101 only:
-- keep the dedicated finance access field on `Member`
-- keep the finance auth helpers
-- keep the `/finance` route scaffold
-- keep only the minimal handoff/doc updates needed for the implemented guard strategy
-- remove or split the broader finance planning scaffold, issue templates, PR template, and workflow-runbook changes from PR #102
+2. Verify all merge gates:
+- task acceptance criteria for #101 are complete
+- local validation in PR #102 is still valid for the current diff
+- PR checks are green
+- no unresolved blocker comments or requested changes remain
+- branch is up to date with main
+- diff is scoped to #101
 
-3. If the broader planning scaffold must ship, create a separate finance task issue for that work and move it to a separate branch/PR instead of merging it through #101.
+3. If any gate fails:
+- do not merge
+- leave the PR open
+- update handoff with blockers and write the next exact Next Prompt block
 
-4. Re-run the smallest sufficient validation for the resulting #101 diff. If schema, auth, routing, or Prisma-sensitive files remain, run full build again.
-
-5. Update PR #102 so it reflects only the #101 scope, then rerun the merge-review stage if all merge gates pass.
-
-6. Update handoff with the next exact Next Prompt block before ending the session.
+4. If all gates pass:
+- squash merge PR #102 to main
+- delete the remote branch
+- sync local main
+- close #101 with a short completion comment
+- add a short progress comment to #93
+- create a separate narrow finance task for the planning scaffold and repo workflow docs
+- mark that next task as status: ready
+- update handoff with the next exact Next Prompt block
 ```
-
-## Open Questions
-
-- exact member/admin list for initial finance viewer rollout
-- exact member/admin list for initial finance manager rollout
-- whether finance reporting needs a new explicit booking type model
-- whether any legacy dashboard outputs should remain exportable during transition
-
-## Session Start Checklist
-
-1. Read `README.md`, `agent-runbook.md`, and this file.
-2. Read the linked GitHub issue and current PR, if any.
-3. Execute the `Next Prompt` block if it exists.
-4. Update this file before ending the session if state changed.
