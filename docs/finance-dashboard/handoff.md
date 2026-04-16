@@ -7,6 +7,7 @@ Last updated: 2026-04-16
 - Phase 1 task `#101` implements the finance access boundary inside TACBookings
 - Active PR: `#102`
 - Parent phase: `#93`
+- Follow-up planning scaffold task created: `#103`
 
 ## Implemented Guard Strategy
 
@@ -33,8 +34,8 @@ Validation:
 - `npm run build`
 
 Next:
-- Merge PR `#102` if the diff remains scoped to task `#101`
-- After merge, create a separate task for the broader finance planning scaffold and repo workflow docs
+- Merge PR `#102`
+- Start task `#103` next to restore the repo-side planning scaffold and agent workflow docs in a separate PR
 
 Blockers:
 - None
@@ -71,7 +72,6 @@ Run the merge-review stage for task #101 and PR #102 only.
 - sync local main
 - close #101 with a short completion comment
 - add a short progress comment to #93
-- create a separate narrow finance task for the planning scaffold and repo workflow docs
-- mark that next task as status: ready
-- update handoff with the next exact Next Prompt block
+- leave #103 as the single `status: ready` finance task
+- update handoff so the next prompt starts #103
 ```
