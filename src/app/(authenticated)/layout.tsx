@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { NavBar } from "@/components/nav-bar";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
+import { hasFinanceViewerAccess } from "@/lib/finance-auth";
 
 export default async function AuthenticatedLayout({
   children,
@@ -24,7 +25,11 @@ export default async function AuthenticatedLayout({
   // Check DB directly for force password change and active status (JWT may be stale)
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: { forcePasswordChange: true, active: true },
+    select: {
+      forcePasswordChange: true,
+      active: true,
+      financeAccessLevel: true,
+    },
   });
 
   // Redirect deleted/deactivated accounts even if JWT is still valid
@@ -65,6 +70,7 @@ export default async function AuthenticatedLayout({
     name: session.user.name ?? "Member",
     email: session.user.email ?? "",
     role: (session.user as { role?: string }).role ?? "MEMBER",
+    canAccessFinance: hasFinanceViewerAccess(member.financeAccessLevel),
     isHutLeader: isHutLeaderActive,
     isStayingGuest,
   };

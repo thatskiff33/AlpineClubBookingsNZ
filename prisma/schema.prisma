@@ -20,6 +20,12 @@ enum Role {
   LODGE
 }
 
+enum FinanceAccessLevel {
+  NONE
+  VIEWER
+  MANAGER
+}
+
 enum AgeTier {
   INFANT
   CHILD
@@ -145,14 +151,15 @@ model Member {
   postalPostalCode   String?
   postalCountry      String?
 
-  role          Role      @default(MEMBER)
-  ageTier       AgeTier   @default(ADULT)
-  xeroContactId String?   @unique
-  active        Boolean   @default(true)
-  canLogin      Boolean   @default(false) // true for members allowed to authenticate; the DB enforces one canLogin member per email
-  joinedDate    DateTime? // Membership start date, sourced from Xero first invoice
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  role               Role               @default(MEMBER)
+  financeAccessLevel FinanceAccessLevel @default(NONE)
+  ageTier            AgeTier            @default(ADULT)
+  xeroContactId      String?            @unique
+  active             Boolean            @default(true)
+  canLogin           Boolean            @default(false) // true for members allowed to authenticate; the DB enforces one canLogin member per email
+  joinedDate         DateTime? // Membership start date, sourced from Xero first invoice
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   // Family/dependent support: dependents can share parent's email or have their own
   parentMemberId     String?
@@ -498,13 +505,13 @@ model PromoCode {
 }
 
 model PromoRedemption {
-  id              String   @id @default(cuid())
-  promoCodeId     String
-  bookingId       String   @unique
-  memberId        String
-  discountCents   Int
-  freeNightsUsed  Int?     // Number of free nights actually consumed (for FREE_NIGHTS promos)
-  createdAt       DateTime @default(now())
+  id             String   @id @default(cuid())
+  promoCodeId    String
+  bookingId      String   @unique
+  memberId       String
+  discountCents  Int
+  freeNightsUsed Int? // Number of free nights actually consumed (for FREE_NIGHTS promos)
+  createdAt      DateTime @default(now())
 
   // Relations
   promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
@@ -662,30 +669,30 @@ model XeroToken {
 // ---------------------------------------------------------------------------
 
 model XeroSyncOperation {
-  id               String   @id @default(cuid())
-  direction        String
-  entityType       String
-  operationType    String
-  localModel       String?
-  localId          String?
-  status           String
-  idempotencyKey   String?
-  correlationKey   String?
-  attemptCount     Int      @default(1)
-  replayable       Boolean  @default(true)
-  lastErrorCode    String?
-  lastErrorMessage String?
-  requestPayload   Json?
-  responsePayload  Json?
-  xeroObjectType   String?
-  xeroObjectId     String?
-  xeroObjectNumber String?
-  xeroObjectUrl    String?
+  id                String    @id @default(cuid())
+  direction         String
+  entityType        String
+  operationType     String
+  localModel        String?
+  localId           String?
+  status            String
+  idempotencyKey    String?
+  correlationKey    String?
+  attemptCount      Int       @default(1)
+  replayable        Boolean   @default(true)
+  lastErrorCode     String?
+  lastErrorMessage  String?
+  requestPayload    Json?
+  responsePayload   Json?
+  xeroObjectType    String?
+  xeroObjectId      String?
+  xeroObjectNumber  String?
+  xeroObjectUrl     String?
   createdByMemberId String?
-  startedAt        DateTime?
-  completedAt      DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   @@index([status, createdAt])
   @@index([direction, status, createdAt])
@@ -717,19 +724,19 @@ model XeroObjectLink {
 }
 
 model XeroInboundEvent {
-  id            String   @id @default(cuid())
-  source        String   @default("webhook")
-  eventCategory String?
-  eventType     String
-  resourceId    String?
+  id             String    @id @default(cuid())
+  source         String    @default("webhook")
+  eventCategory  String?
+  eventType      String
+  resourceId     String?
   eventCreatedAt DateTime?
-  correlationKey String  @unique
-  payload       Json
-  status        String   @default("RECEIVED")
-  errorMessage  String?
-  processedAt   DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  correlationKey String    @unique
+  payload        Json
+  status         String    @default("RECEIVED")
+  errorMessage   String?
+  processedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@index([status, createdAt])
   @@index([eventCategory, eventType, createdAt])
@@ -737,17 +744,17 @@ model XeroInboundEvent {
 }
 
 model XeroApiUsageDaily {
-  id                    String   @id @default(cuid())
-  usageDate             DateTime @unique @db.Date
-  totalCalls            Int      @default(0)
-  successfulCalls       Int      @default(0)
-  failedCalls           Int      @default(0)
-  dayRateLimitHits      Int      @default(0)
-  minuteRateLimitHits   Int      @default(0)
+  id                    String    @id @default(cuid())
+  usageDate             DateTime  @unique @db.Date
+  totalCalls            Int       @default(0)
+  successfulCalls       Int       @default(0)
+  failedCalls           Int       @default(0)
+  dayRateLimitHits      Int       @default(0)
+  minuteRateLimitHits   Int       @default(0)
   lastRateLimitCategory String?
   lastRateLimitAt       DateTime?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   @@index([usageDate])
 }
@@ -787,29 +794,29 @@ model XeroAdminCache {
 }
 
 model XeroSyncCursor {
-  id                   String   @id @default(cuid())
+  id                   String    @id @default(cuid())
   resourceType         String
   scope                String
   cursorDateTime       DateTime?
   lastSuccessfulSyncAt DateTime?
   metadata             Json?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   @@unique([resourceType, scope], map: "XeroSyncCursor_resourceType_scope_key")
   @@index([resourceType, lastSuccessfulSyncAt])
 }
 
 model XeroContactGroupCache {
-  id              String   @id @default(cuid())
-  contactGroupId  String   @unique
+  id              String    @id @default(cuid())
+  contactGroupId  String    @unique
   name            String
-  status          String   @default("ACTIVE")
-  contactCount    Int      @default(0)
-  fetchedAt       DateTime @default(now())
+  status          String    @default("ACTIVE")
+  contactCount    Int       @default(0)
+  fetchedAt       DateTime  @default(now())
   sourceUpdatedAt DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   memberships XeroContactGroupMembershipCache[]
 
@@ -818,14 +825,14 @@ model XeroContactGroupCache {
 }
 
 model XeroContactCache {
-  id                 String   @id @default(cuid())
-  contactId          String   @unique
+  id                 String    @id @default(cuid())
+  contactId          String    @unique
   name               String?
   firstName          String?
   lastName           String?
   emailAddress       String?
   companyNumber      String?
-  contactStatus      String   @default("ACTIVE")
+  contactStatus      String    @default("ACTIVE")
   phoneCountryCode   String?
   phoneAreaCode      String?
   phoneNumber        String?
@@ -842,9 +849,9 @@ model XeroContactCache {
   postalPostalCode   String?
   postalCountry      String?
   sourceUpdatedAt    DateTime?
-  fetchedAt          DateTime @default(now())
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  fetchedAt          DateTime  @default(now())
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   @@index([emailAddress])
   @@index([contactStatus])
@@ -1167,13 +1174,13 @@ enum EntranceFeeCategory {
 
 model XeroItemCodeMapping {
   id                  String               @id @default(cuid())
-  category            String               // "HUT_FEE" | "ENTRANCE_FEE"
-  ageTier             AgeTier?             // HUT_FEE only
-  seasonType          SeasonType?          // HUT_FEE only
-  isMember            Boolean?             // HUT_FEE only
+  category            String // "HUT_FEE" | "ENTRANCE_FEE"
+  ageTier             AgeTier? // HUT_FEE only
+  seasonType          SeasonType? // HUT_FEE only
+  isMember            Boolean? // HUT_FEE only
   entranceFeeCategory EntranceFeeCategory? // ENTRANCE_FEE only
-  itemCode            String?              // Optional Xero Item Code
-  amountCents         Int?                 // ENTRANCE_FEE only (per-category pricing)
+  itemCode            String? // Optional Xero Item Code
+  amountCents         Int? // ENTRANCE_FEE only (per-category pricing)
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
