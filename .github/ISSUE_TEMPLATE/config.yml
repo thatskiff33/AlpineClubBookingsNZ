@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Finance Dashboard Plan
+    url: https://github.com/thatskiff33/TACBookings/tree/main/docs/finance-dashboard
+    about: Read the finance dashboard planning docs before opening or updating initiative issues.

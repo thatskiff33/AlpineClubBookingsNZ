@@ -28,6 +28,7 @@ interface NavBarProps {
     name: string;
     email: string;
     role: string;
+    canAccessFinance?: boolean;
     isHutLeader?: boolean;
     isStayingGuest?: boolean;
   };
@@ -40,6 +41,7 @@ const memberLinks = [
   { href: "/bookings", label: "My Bookings" },
 ];
 
+const financeLink = { href: "/finance", label: "Finance" };
 const adminLink = { href: "/admin/dashboard", label: "Admin" };
 const hutLeaderLink = { href: "/lodge/kiosk", label: "Hut Leader" };
 const viewLodgeLink = { href: "/lodge/kiosk", label: "View Lodge" };
@@ -54,6 +56,7 @@ export function NavBar({ user }: NavBarProps) {
 
   const links = [
     ...memberLinks,
+    ...(user.canAccessFinance ? [financeLink] : []),
     ...(user.isHutLeader ? [hutLeaderLink] : user.isStayingGuest ? [viewLodgeLink] : []),
     ...(user.role === "ADMIN" ? [adminLink] : []),
   ];

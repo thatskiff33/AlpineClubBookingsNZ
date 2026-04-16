@@ -1,0 +1,56 @@
+name: Finance Task
+description: Small execution issue under a finance phase.
+title: "[Finance Task] "
+labels:
+  - type: task
+  - area: finance
+body:
+  - type: input
+    id: parent
+    attributes:
+      label: Parent Phase
+      description: Link the parent phase issue.
+      placeholder: "#124"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete gap are we closing?
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Planned Approach
+      description: How should this be implemented?
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Likely Files or Modules
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Test Requirements
+    validations:
+      required: true
+  - type: textarea
+    id: handoff
+    attributes:
+      label: Handoff Notes
+    validations:
+      required: true
