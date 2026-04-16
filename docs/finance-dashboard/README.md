@@ -52,6 +52,7 @@ Deliver a native finance dashboard inside `TACBookings` that:
 - [phases.md](/home/ubuntu/TACBookings/docs/finance-dashboard/phases.md)
 - [data-contracts.md](/home/ubuntu/TACBookings/docs/finance-dashboard/data-contracts.md)
 - [test-plan.md](/home/ubuntu/TACBookings/docs/finance-dashboard/test-plan.md)
+- [agent-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/agent-runbook.md)
 - [handoff.md](/home/ubuntu/TACBookings/docs/finance-dashboard/handoff.md)
 
 ### ADRs
@@ -68,6 +69,7 @@ Deliver a native finance dashboard inside `TACBookings` that:
 - Do not reuse operational Xero token storage for finance sync.
 - Do not add finance access by broadening `ADMIN` unless an ADR explicitly changes that decision.
 - Update `handoff.md` whenever a phase meaningfully changes state.
+- Future agents should follow `agent-runbook.md` and avoid reading unrelated project context.
 
 ## Planned Execution Shape
 
@@ -80,8 +82,8 @@ Deliver a native finance dashboard inside `TACBookings` that:
 Read:
 
 - `docs/finance-dashboard/README.md`
-- `docs/finance-dashboard/phases.md`
+- `docs/finance-dashboard/agent-runbook.md`
 - `docs/finance-dashboard/handoff.md`
 - the linked GitHub issue and current PR, if any
 
-Then continue only the scoped issue. Update docs if the issue changes architecture, contracts, or rollout state.
+Then execute the `Next Prompt` block from `handoff.md` if it exists. Only fall back to the runbook control loop when that block is missing or stale.
