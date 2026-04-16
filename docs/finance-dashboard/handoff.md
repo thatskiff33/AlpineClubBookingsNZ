@@ -4,8 +4,8 @@ Last updated: 2026-04-16
 
 ## Current State
 
-- Phase 1 task `#101` implements the finance access boundary inside TACBookings
-- Active PR: `#102`
+- Phase 1 finance access boundary is ready to land via task `#101`
+- Merged implementation target: PR `#102`
 - Parent phase: `#93`
 - Follow-up planning scaffold task created: `#103`
 
@@ -34,7 +34,6 @@ Validation:
 - `npm run build`
 
 Next:
-- Merge PR `#102`
 - Start task `#103` next to restore the repo-side planning scaffold and agent workflow docs in a separate PR
 
 Blockers:
@@ -45,33 +44,20 @@ Blockers:
 ```text
 Use the GitHub workflow for TACBookings finance epic #92.
 
-Run the merge-review stage for task #101 and PR #102 only.
+Work on exactly one task issue only.
 
 1. Read only these sources first:
 - docs/finance-dashboard/handoff.md
 - phase issue #93
-- task issue #101
-- PR #102
+- task issue #103
+- the current PR for #103, if one exists
 
-2. Verify all merge gates:
-- task acceptance criteria for #101 are complete
-- local validation in PR #102 is still valid for the current diff
-- PR checks are green
-- no unresolved blocker comments or requested changes remain
-- branch is up to date with main
-- diff is scoped to #101
+2. Start task #103 as the single `status: ready` finance task:
+- restore the repo-side finance planning scaffold in a dedicated PR
+- add the minimal agent workflow docs and prompt pattern there
+- keep that work separate from the Phase 1 access-boundary implementation
 
-3. If any gate fails:
-- do not merge
-- leave the PR open
-- update handoff with blockers and write the next exact Next Prompt block
+3. Open or update the dedicated PR for #103 and keep the diff scoped to docs/templates only.
 
-4. If all gates pass:
-- squash merge PR #102 to main
-- delete the remote branch
-- sync local main
-- close #101 with a short completion comment
-- add a short progress comment to #93
-- leave #103 as the single `status: ready` finance task
-- update handoff so the next prompt starts #103
+4. Update handoff with the next exact Next Prompt block before ending the session.
 ```
