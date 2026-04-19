@@ -16,6 +16,8 @@ It currently owns:
 - writing snapshot payloads only through `upsertFinanceSnapshot`
 - marking runs `SUCCEEDED`, `PARTIAL`, or `FAILED`
 
+The daily scheduled layer now lives separately in `src/lib/finance-sync-cron.ts`; that cron runner calls this service and keeps overlap protection plus generic cron observability outside the service boundary.
+
 ## Dataset Contract
 
 Each dataset handler must provide:

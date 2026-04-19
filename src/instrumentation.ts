@@ -392,6 +392,12 @@ export async function register() {
       "Scheduled stored Xero inbound reconciliation (every 15 minutes)"
     );
 
+    const { registerDailyFinanceSyncCron } = await import(
+      "./lib/finance-sync-cron"
+    );
+
+    registerDailyFinanceSyncCron(cron.default, { logger });
+
     // OBS-03: Cron job 3 - Database backup (daily at 3 AM)
     let isBackupRunning = false;
     const backupSchedule = process.env.BACKUP_CRON_SCHEDULE || "0 3 * * *";
