@@ -227,10 +227,11 @@ run_codex_cycle() {
   build_prompt_file "$prompt_file" "$prompt_text"
 
   info "Starting Codex session $cycle"
-  if ! "$CODEX_BIN" exec \
+  if ! "$CODEX_BIN" \
+      -a never \
+      exec \
       -C "$PROJECT_DIR" \
       -s danger-full-access \
-      -a never \
       --color never \
       -o "$last_message_file" \
       - <"$prompt_file" 2>&1 | tee "$log_file"; then
