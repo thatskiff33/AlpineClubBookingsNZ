@@ -31,16 +31,19 @@ vi.mock("@/lib/xero", () => ({
 }));
 
 import {
+  FINANCE_SYNC_XERO_ACCOUNTS_RECEIVABLE_INVOICES_DATASET_KEY,
   FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY,
   FINANCE_SYNC_XERO_AGED_RECEIVABLES_DATASET_KEY,
   FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY,
   FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY,
   FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY,
   FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY,
+  buildFinanceAccountsReceivableInvoicesSnapshot,
   buildFinanceAccountsPayableInvoicesSnapshot,
   buildFinanceAgedReceivablesSnapshot,
   buildFinanceAgedPayablesSnapshot,
   buildFinanceReportSnapshot,
+  syncFinanceAccountsReceivableInvoicesSnapshot,
   syncFinanceAccountsPayableInvoicesSnapshot,
   syncFinanceAgedReceivablesSnapshot,
   syncFinanceAgedPayablesSnapshot,
@@ -116,12 +119,13 @@ describe("finance-sync-datasets", () => {
     mockCallXeroApi.mockImplementation(async (fn: () => unknown) => fn());
   });
 
-  it("registers the finance Xero datasets including the accounts payable invoice detail snapshot", () => {
+  it("registers the finance Xero datasets including the invoice detail snapshots", () => {
     expect(getFinanceSyncDatasets().map((dataset) => dataset.key)).toEqual([
       FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY,
       FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY,
       FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY,
       FINANCE_SYNC_XERO_AGED_RECEIVABLES_DATASET_KEY,
+      FINANCE_SYNC_XERO_ACCOUNTS_RECEIVABLE_INVOICES_DATASET_KEY,
       FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY,
       FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY,
     ]);
@@ -499,6 +503,148 @@ describe("finance-sync-datasets", () => {
     });
   });
 
+  it("maps open receivable invoices into an organisation-level accounts receivable invoice snapshot", () => {
+    const snapshot = buildFinanceAccountsReceivableInvoicesSnapshot({
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      invoices: [
+        {
+          type: "ACCREC",
+          invoiceID: "inv-1",
+          invoiceNumber: "INV-001",
+          reference: "School booking April",
+          dueDate: "2026-04-12",
+          expectedPaymentDate: "2026-04-24",
+          date: "2026-04-01",
+          amountDue: 180,
+          amountPaid: 20,
+          amountCredited: 0,
+          subTotal: 180,
+          totalTax: 20,
+          total: 200,
+          status: "AUTHORISED",
+          currencyCode: "NZD",
+          contact: {
+            contactID: "customer-1",
+            name: "Tokoroa High School",
+            contactStatus: "ACTIVE",
+          },
+          updatedDateUTC: new Date("2026-04-20T00:08:00.000Z"),
+        },
+        {
+          type: "ACCREC",
+          invoiceID: "inv-2",
+          invoiceNumber: "INV-002",
+          dueDate: "2026-02-15",
+          date: "2026-02-01",
+          amountDue: 60,
+          status: "SUBMITTED",
+          currencyCode: "NZD",
+          contact: {
+            contactID: "customer-1",
+            name: "Tokoroa High School",
+            contactStatus: "ACTIVE",
+          },
+          updatedDateUTC: new Date("2026-04-20T00:09:00.000Z"),
+        },
+        {
+          type: "ACCREC",
+          invoiceID: "inv-3",
+          invoiceNumber: "INV-003",
+          dueDate: "2026-04-30",
+          date: "2026-04-18",
+          amountDue: 90,
+          status: "AUTHORISED",
+          currencyCode: "AUD",
+          contact: {
+            contactID: "customer-2",
+            name: "Alpine College",
+            contactStatus: "ACTIVE",
+          },
+          updatedDateUTC: new Date("2026-04-20T00:10:00.000Z"),
+        },
+        {
+          type: "ACCPAY",
+          invoiceID: "ignored-type",
+          amountDue: 999,
+        },
+        {
+          type: "ACCREC",
+          invoiceID: "ignored-zero",
+          amountDue: 0,
+        },
+      ],
+    });
+
+    expect(snapshot).toMatchObject({
+      snapshotType: FinanceSnapshotType.ACCOUNTS_RECEIVABLE_INVOICES,
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+      rowCount: 3,
+      scope: "organisation",
+      currency: null,
+      sourceUpdatedAt: new Date("2026-04-20T00:10:00.000Z"),
+      payload: {
+        asOfDate: "2026-04-20",
+        invoiceCount: 3,
+        contactCount: 2,
+        currencies: ["AUD", "NZD"],
+        totalsByCurrency: [
+          {
+            currency: "AUD",
+            invoiceCount: 1,
+            contactCount: 1,
+            totalAmountDue: 90,
+          },
+          {
+            currency: "NZD",
+            invoiceCount: 2,
+            contactCount: 1,
+            totalAmountDue: 240,
+          },
+        ],
+        contacts: [
+          {
+            contactId: "customer-1",
+            contactName: "Tokoroa High School",
+            currency: "NZD",
+            invoiceCount: 2,
+            totalAmountDue: 240,
+            oldestDueDate: "2026-02-15",
+            latestDueDate: "2026-04-12",
+            invoices: [
+              {
+                invoiceId: "inv-2",
+                invoiceNumber: "INV-002",
+                amountDue: 60,
+              },
+              {
+                invoiceId: "inv-1",
+                invoiceNumber: "INV-001",
+                reference: "School booking April",
+                expectedPaymentDate: "2026-04-24",
+                amountDue: 180,
+                amountPaid: 20,
+                amountCredited: 0,
+                subTotal: 180,
+                totalTax: 20,
+                total: 200,
+              },
+            ],
+          },
+          {
+            contactId: "customer-2",
+            contactName: "Alpine College",
+            currency: "AUD",
+            invoiceCount: 1,
+            totalAmountDue: 90,
+            oldestDueDate: "2026-04-30",
+            latestDueDate: "2026-04-30",
+          },
+        ],
+      },
+    });
+  });
+
   it("maps open payable invoices into an organisation-level accounts payable invoice snapshot", () => {
     const snapshot = buildFinanceAccountsPayableInvoicesSnapshot({
       asOfDate: new Date("2026-04-20T00:00:00.000Z"),
@@ -641,7 +787,7 @@ describe("finance-sync-datasets", () => {
     });
   });
 
-  it("builds report, aged receivables, aged payables, and accounts payable invoice snapshots from the finance sync window", async () => {
+  it("builds report, aged receivables, aged payables, and invoice detail snapshots from the finance sync window", async () => {
     const context = createFinanceSyncContext();
     const profitAndLossReport = createReport({
       reportID: "pnl-1",
@@ -723,6 +869,7 @@ describe("finance-sync-datasets", () => {
       balanceSheet,
       bankBalances,
       agedReceivables,
+      accountsReceivableInvoices,
       agedPayables,
       accountsPayableInvoices,
     ] = await Promise.all([
@@ -730,6 +877,7 @@ describe("finance-sync-datasets", () => {
       syncFinanceBalanceSheetSnapshot(context as never),
       syncFinanceBankBalancesSnapshot(context as never),
       syncFinanceAgedReceivablesSnapshot(context as never),
+      syncFinanceAccountsReceivableInvoicesSnapshot(context as never),
       syncFinanceAgedPayablesSnapshot(context as never),
       syncFinanceAccountsPayableInvoicesSnapshot(context as never),
     ]);
@@ -815,6 +963,17 @@ describe("finance-sync-datasets", () => {
     });
     expect(agedReceivables).toMatchObject({
       snapshotType: FinanceSnapshotType.AGED_RECEIVABLES,
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+      rowCount: 1,
+      currency: "NZD",
+      payload: {
+        invoiceCount: 1,
+        contactCount: 1,
+      },
+    });
+    expect(accountsReceivableInvoices).toMatchObject({
+      snapshotType: FinanceSnapshotType.ACCOUNTS_RECEIVABLE_INVOICES,
       asOfDate: new Date("2026-04-20T00:00:00.000Z"),
       periodEnd: new Date("2026-04-20T00:00:00.000Z"),
       rowCount: 1,

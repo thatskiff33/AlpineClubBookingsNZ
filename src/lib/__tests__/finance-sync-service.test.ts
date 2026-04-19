@@ -366,7 +366,7 @@ describe("finance-sync-service", () => {
       datasets: getFinanceSyncDatasets(),
     });
 
-    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(6);
+    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(7);
     expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -410,7 +410,7 @@ describe("finance-sync-service", () => {
     expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
       5,
       expect.objectContaining({
-        snapshotType: FinanceSnapshotType.AGED_PAYABLES,
+        snapshotType: FinanceSnapshotType.ACCOUNTS_RECEIVABLE_INVOICES,
         asOfDate: new Date("2026-04-20T00:00:00.000Z"),
         periodEnd: new Date("2026-04-20T00:00:00.000Z"),
         currency: "NZD",
@@ -419,6 +419,16 @@ describe("finance-sync-service", () => {
     );
     expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
       6,
+      expect.objectContaining({
+        snapshotType: FinanceSnapshotType.AGED_PAYABLES,
+        asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+        periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+        currency: "NZD",
+        syncRunId: "run-1",
+      })
+    );
+    expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
+      7,
       expect.objectContaining({
         snapshotType: FinanceSnapshotType.ACCOUNTS_PAYABLE_INVOICES,
         asOfDate: new Date("2026-04-20T00:00:00.000Z"),
@@ -430,12 +440,12 @@ describe("finance-sync-service", () => {
     expect(mockCompleteFinanceSyncRun).toHaveBeenCalledWith({
       runId: "run-1",
       completedAt: expect.any(Date),
-      snapshotCount: 6,
-      totalRowCount: 6,
+      snapshotCount: 7,
+      totalRowCount: 7,
       resultSummary: {
-        datasetCount: 6,
+        datasetCount: 7,
         failedDatasetCount: 0,
-        successfulDatasetCount: 6,
+        successfulDatasetCount: 7,
         datasets: [
           {
             datasetKey: "xero-profit-and-loss-monthly",
@@ -460,6 +470,12 @@ describe("finance-sync-service", () => {
             snapshotCount: 1,
             totalRowCount: 1,
             snapshotTypes: [FinanceSnapshotType.AGED_RECEIVABLES],
+          },
+          {
+            datasetKey: "xero-accounts-receivable-invoices",
+            snapshotCount: 1,
+            totalRowCount: 1,
+            snapshotTypes: [FinanceSnapshotType.ACCOUNTS_RECEIVABLE_INVOICES],
           },
           {
             datasetKey: "xero-aged-payables",
