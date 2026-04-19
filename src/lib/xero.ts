@@ -16,6 +16,10 @@ import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
 import { recordXeroApiUsage, type XeroRateLimitCategory } from "@/lib/xero-api-usage";
 import { getXeroErrorHeader, getXeroErrorStatusCode } from "@/lib/xero-error-shape";
+import {
+  getOperationalXeroConfig,
+  getOperationalXeroEncryptionKey,
+} from "@/lib/xero-config";
 import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
   buildXeroIdempotencyKey,
@@ -101,17 +105,6 @@ export interface CreateXeroUnappliedCreditNoteOptions
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-const XERO_SCOPES = [
-  "openid",
-  "profile",
-  "email",
-  "accounting.contacts",
-  "accounting.invoices",
-  "accounting.payments",
-  "accounting.settings.read",
-  "offline_access",
-];
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
@@ -215,7 +208,7 @@ function toPrismaJson(
 // ---------------------------------------------------------------------------
 
 function getEncryptionKey(): Buffer {
-  const key = process.env.XERO_ENCRYPTION_KEY;
+  const key = getOperationalXeroEncryptionKey();
   if (!key) {
     throw new Error("XERO_ENCRYPTION_KEY environment variable is required (32-byte hex string)");
   }
@@ -257,18 +250,9 @@ export function decryptToken(encrypted: string): string {
 // Xero Client setup
 // ---------------------------------------------------------------------------
 
-function getXeroConfig() {
-  return {
-    clientId: process.env.XERO_CLIENT_ID || "",
-    clientSecret: process.env.XERO_CLIENT_SECRET || "",
-    redirectUris: [process.env.XERO_REDIRECT_URI || "http://localhost:3000/api/admin/xero/callback"],
-    scopes: XERO_SCOPES,
-  };
-}
-
 export function createXeroClient(state?: string): XeroClient {
   return new XeroClient({
-    ...getXeroConfig(),
+    ...getOperationalXeroConfig(),
     ...(state ? { state } : {}),
   });
 }

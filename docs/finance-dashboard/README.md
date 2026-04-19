@@ -57,6 +57,7 @@ Deliver a native finance dashboard inside `TACBookings` that:
 
 - [phases.md](/home/ubuntu/TACBookings/docs/finance-dashboard/phases.md)
 - [data-contracts.md](/home/ubuntu/TACBookings/docs/finance-dashboard/data-contracts.md)
+- [finance-xero-config-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-xero-config-contract.md)
 - [test-plan.md](/home/ubuntu/TACBookings/docs/finance-dashboard/test-plan.md)
 - [agent-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/agent-runbook.md)
 - [handoff.md](/home/ubuntu/TACBookings/docs/finance-dashboard/handoff.md)
