@@ -10,13 +10,13 @@ Last updated: 2026-04-19
 - Phase `#93` is closed
 - Phase `#94` is closed
 - Active phase: `#95`
-- Most recent landed task: `#112`
-- Merged implementation PR for `#112`: `#114`
+- Most recent landed task: `#113`
+- Merged implementation PR for `#113`: `#116`
 - No finance task is currently in flight
-- Single `status: ready` finance task: `#113`
+- Single `status: ready` finance task: `#115`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
-## What Landed Through Task #112
+## What Landed Through Task #113
 
 - Added finance-only Xero env names to `.env.example`:
   - `FINANCE_XERO_CLIENT_ID`
@@ -77,6 +77,14 @@ Done:
 - Closed task `#112` as completed
 - Created follow-up task `#113` under Phase `#95` for finance snapshot sync service scaffolding
 - Marked `#113` as the single finance task with `status: ready`
+- Added `src/lib/finance-sync-service.ts` as the finance-only sync service boundary on top of `FinanceSyncRun` and `FinanceSnapshot`
+- Added `src/lib/__tests__/finance-sync-service.test.ts` for targeted service orchestration, partial-failure, and finance-Xero connection coverage
+- Added `docs/finance-dashboard/finance-sync-service-contract.md` and indexed it from `docs/finance-dashboard/README.md`
+- Updated `docs/finance-dashboard/finance-snapshot-storage-contract.md` to point future orchestration work at the landed finance sync service layer
+- Merged task `#113` to `main` via PR `#116`
+- Closed task `#113` as completed
+- Created follow-up task `#115` under Phase `#95` for daily finance cron registration and overlap-safe runner wiring
+- Marked `#115` as the single finance task with `status: ready`
 - Kept finance sync jobs and `docs/XERO_HANDOFF.md` out of scope
 
 Validation:
@@ -92,13 +100,17 @@ Validation:
 - Verified `npx eslint src/lib/finance-sync-storage.ts src/lib/__tests__/finance-sync-storage.test.ts`
 - Verified PR `#114` is merged
 - Verified issue `#112` is closed as completed
-- Verified issue `#113` is open with labels `area: finance`, `type: task`, and `status: ready`
+- Verified `npx vitest run src/lib/__tests__/finance-sync-service.test.ts`
+- Verified `npx eslint src/lib/finance-sync-service.ts src/lib/__tests__/finance-sync-service.test.ts`
+- Verified PR `#116` is merged
+- Verified issue `#113` is closed as completed
+- Verified issue `#115` is open with labels `area: finance`, `type: task`, and `status: ready`
 - Verified no other open finance task is marked `status: ready`
 - `git diff --check`
 
 What remains:
-- Implement task `#113` for finance snapshot sync service scaffolding
-- Keep the next implementation slice on finance-only sync orchestration that reads the separate finance Xero boundary and writes through `FinanceSyncRun` / `FinanceSnapshot`
+- Implement task `#115` for daily finance cron registration and overlap-safe runner wiring
+- Keep the next implementation slice on scheduled execution that calls the landed finance sync service and records cron outcomes without adding diagnostics UI yet
 - Leave daily sync execution, cron registration, diagnostics UI, and operational Xero behavior for later work unless new evidence proves a gap
 
 Blockers:
@@ -114,25 +126,26 @@ Work on exactly one task issue only.
 1. Read only these sources first:
 - docs/finance-dashboard/handoff.md
 - phase issue #95
-- ready task issue #113
-- merged PR #114
+- ready task issue #115
+- merged PR #116
 
-2. Implement task #113 and keep it tightly scoped:
-- add finance snapshot sync service scaffolding on top of the completed finance storage boundary from PR #114
-- keep the work on finance-only sync orchestration, dataset fetch/mapping contracts, and service-adjacent helpers/docs/tests only
-- add targeted validation for touched service helpers, docs, and tests
+2. Implement task #115 and keep it tightly scoped:
+- register a daily finance sync cron entry on top of the completed finance sync service boundary from PR #116
+- add an overlap-safe finance sync runner and keep cron outcome recording on the existing cron observability boundary plus `FinanceSyncRun`
+- keep the work on cron/runner wiring, scheduling helpers, and service-adjacent docs/tests only
+- add targeted validation for touched cron helpers, docs, and tests
 - keep docs/XERO_HANDOFF.md unchanged unless current evidence proves a new operational Xero gap
 
 3. Scope the next task tightly:
-- do not combine the task with cron registration, overlap guards, or diagnostics UI
+- do not combine the task with diagnostics UI, manual sync route handlers, or reporting-page work
 - do not broaden the task into reporting pages or booking-adapter work
 - do not reopen operational Xero work unless current evidence proves a new gap
 
 4. Before finishing:
 - run only the targeted validation needed for touched files; run full build only if the changed files require it
 - update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, and the next exact Next Prompt block
-- close task #113 if it lands and create exactly one new finance task issue under phase #95 for the next smallest remaining gap
-- make that new issue the single `status: ready` finance task only after `#113` is fully landed
+- close task #115 if it lands and create exactly one new finance task issue under phase #95 for the next smallest remaining gap
+- make that new issue the single `status: ready` finance task only after `#115` is fully landed
 - ensure only one finance task carries `status: ready`
 - leave docs/XERO_HANDOFF.md unchanged unless new evidence forces it open
 
