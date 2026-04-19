@@ -10,6 +10,7 @@ Last updated: 2026-04-19
 - Phase `#93` is closed
 - Active phase: `#94`
 - Current in-flight task: `#105`
+- Dedicated PR for task `#105`: `#107`
 - No other finance task should start until `#105` is merged or explicitly redirected
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
@@ -49,7 +50,7 @@ Validation:
 - `npx eslint src/lib/xero-config.ts src/lib/xero.ts src/lib/__tests__/xero-config.test.ts`
 
 Next:
-- Review and merge the dedicated PR for task `#105`
+- Review and merge the dedicated PR for task `#105` (`#107`)
 - Keep any follow-up on `#105` limited to env/config helpers, related docs, and narrow tests only
 - Leave finance token storage, finance connect/status/disconnect routes, finance sync jobs, and operational Xero behavior for later work
 
