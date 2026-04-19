@@ -40,14 +40,16 @@ Done:
 Validation:
 - `git diff --check`
 - Manual review of the restored markdown and template files for readability and scope
+- GitHub Actions `verify` workflow on PR `#104` failed in `npm test`
 
 Next:
-- Open or review the dedicated PR for task `#103`
-- Merge it only if the diff stays docs/templates-only and all required checks are satisfied
+- Keep PR `#104` open until the failing `verify` run is understood and green
+- Re-run merge review for task `#103` after CI is green
 - After `#103` merges, create the next narrow finance task under phase `#94`
 
 Blockers:
-- None
+- PR `#104` is blocked by a failing `verify` workflow run on commit `627994e`
+- Failure detail: `src/lib/__tests__/membership-nomination.test.ts` -> `MembershipApplicationError: This nomination link has expired`
 
 ## Next Prompt
 
@@ -66,7 +68,7 @@ Work on exactly one task issue only.
 2. Run the merge-review stage for task #103 only:
 - verify the diff is limited to finance docs/templates
 - verify the handoff and prompt pattern are updated
-- run only the minimal validation needed for docs/templates changes
+- inspect the failing `verify` workflow status on the current PR head
 - merge only if the PR is clean and all required checks are satisfied
 
 3. If the PR is not merge-ready:
