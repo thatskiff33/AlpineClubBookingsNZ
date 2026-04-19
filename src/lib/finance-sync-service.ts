@@ -137,6 +137,29 @@ function buildRunErrorSummary(failedDatasetCount: number): string {
   return `Finance sync failed for ${failedDatasetCount} dataset(s)`;
 }
 
+function buildRunResultSummary(input: {
+  datasetCount: number;
+  failedDatasetCount: number;
+  datasetResults: FinanceSyncDatasetResult[];
+}): Prisma.InputJsonObject {
+  const datasets: Prisma.InputJsonArray = input.datasetResults.map(
+    (dataset): Prisma.InputJsonObject => ({
+      datasetKey: dataset.datasetKey,
+      snapshotCount: dataset.snapshotCount,
+      totalRowCount: dataset.totalRowCount,
+      snapshotTypes: dataset.snapshotTypes.map((snapshotType) => snapshotType),
+      ...(dataset.errorMessage ? { errorMessage: dataset.errorMessage } : {}),
+    })
+  );
+
+  return {
+    datasetCount: input.datasetCount,
+    failedDatasetCount: input.failedDatasetCount,
+    successfulDatasetCount: input.datasetCount - input.failedDatasetCount,
+    datasets,
+  };
+}
+
 function assertDatasets(datasets: FinanceSyncDatasetDefinition[]): void {
   if (datasets.length === 0) {
     throw new Error("At least one finance sync dataset is required");
@@ -262,12 +285,11 @@ export async function runFinanceSync(
   }
 
   const completedAt = new Date();
-  const resultSummary = {
+  const resultSummary = buildRunResultSummary({
     datasetCount: input.datasets.length,
     failedDatasetCount: failedDatasets.length,
-    successfulDatasetCount: input.datasets.length - failedDatasets.length,
-    datasets: datasetResults,
-  } satisfies Prisma.InputJsonValue;
+    datasetResults,
+  });
 
   if (failedDatasets.length === 0) {
     await completeFinanceSyncRun({

@@ -1,4 +1,4 @@
-import { FinanceSnapshotType } from "@prisma/client";
+import { FinanceSnapshotType, Prisma } from "@prisma/client";
 import type { ReportCell, ReportFields, ReportWithRow } from "xero-node";
 import { parseDateOnly } from "@/lib/date-only";
 import {
@@ -252,7 +252,7 @@ export function buildFinanceReportSnapshot(input: {
   periodEnd?: Date | null;
 }): FinanceSyncSnapshotInput {
   const rows = mapReportRows(input.report.rows ?? []);
-  const payload: FinanceSnapshotReportPayload = {
+  const payload = {
     reportId: input.report.reportID ?? null,
     reportName: input.report.reportName ?? null,
     reportType: input.report.reportType ?? null,
@@ -262,7 +262,7 @@ export function buildFinanceReportSnapshot(input: {
     updatedDateUTC: toOptionalDate(input.report.updatedDateUTC)?.toISOString() ?? null,
     fields: (input.report.fields ?? []).map((field) => mapReportField(field)),
     rows,
-  };
+  } as Prisma.InputJsonObject & FinanceSnapshotReportPayload;
 
   return {
     snapshotType: input.snapshotType,
