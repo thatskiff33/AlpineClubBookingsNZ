@@ -112,6 +112,15 @@ Done:
 - Closed task `#118` as completed
 - Created follow-up task `#120` under Phase `#95` for a single aged receivables dataset handler
 - Marked `#120` as the single finance task with `status: ready`
+- Investigated task `#120` against the current repo Xero client surface and kept diagnostics UI, manual sync APIs, reporting pages, booking-adapter work, and `docs/XERO_HANDOFF.md` out of scope
+- Confirmed the generated Xero Accounting API client in this repo only exposes `getReportAgedReceivablesByContact(xeroTenantId, contactId, date?, fromDate?, toDate?)`
+- Confirmed the generated client marks `contactId` as required, so the current task cannot fetch an organisation-wide aged receivables snapshot without either:
+  - broadening into contact enumeration or invoice-detail precursor work, or
+  - relying on unverified raw API behavior outside the generated client contract
+- Verified the official Xero Node accounting docs still document `contactId` as required for `/Reports/AgedReceivablesByContact`
+- Re-scoped issue `#120` so the next implementation session is expected to self-resolve the current Xero API mismatch instead of stopping at the first SDK-level blocker
+- Restored `status: ready` to issue `#120` after tightening the task around autonomous, production-ready delivery
+- Updated the finance epic/phase/task wording plus this handoff prompt so overnight runs are expected to keep working until the feature is mergeable unless a true external blocker remains after exhausting repo and official API evidence
 
 Validation:
 - Verified issue `#105` is closed as completed
@@ -144,15 +153,19 @@ Validation:
 - Verified issue `#118` is closed as completed
 - Verified issue `#120` is open with labels `area: finance`, `type: task`, and `status: ready`
 - Verified no other open finance task is marked `status: ready`
+- Verified `node_modules/xero-node/dist/gen/api/accountingApi.d.ts` exposes only `getReportAgedReceivablesByContact(xeroTenantId, contactId, date?, fromDate?, toDate?)` for aged receivables reporting
+- Verified `node_modules/xero-node/dist/gen/api/accountingApi.js` enforces `contactId` as a required parameter before issuing the request
+- Verified official Xero Node accounting docs at `https://xeroapi.github.io/xero-node/accounting/index.html#getReportAgedReceivablesByContact` list `contactId` as required for `/Reports/AgedReceivablesByContact`
 - `git diff --check`
 
 What remains:
-- Implement task `#120` for a single aged receivables finance snapshot dataset handler
-- Keep the next slice on finance-only dataset registration, Xero-to-snapshot mapping helpers, and service-adjacent docs/tests
+- Land task `#120` end-to-end in production-ready form using the smallest finance-only implementation that can produce an organisation-level aged receivables snapshot with the current Xero surface
+- If current Xero support still requires per-contact aged receivables calls, solve that inside the task with the smallest necessary finance-only contact lookup/fan-out/aggregation rather than treating it as a stop condition
+- Close task `#120` and create the next smallest finance task only after the implementation is merged or otherwise fully landed
 - Leave diagnostics UI, manual sync APIs, reporting pages, booking-adapter work, and operational Xero behavior for later work unless new evidence proves a gap
 
 Blockers:
-- None
+- No wording blocker remains. Known implementation constraint: installed `xero-node@15.0.0`, the generated repo client, and the official Xero Node accounting docs all only expose `/Reports/AgedReceivablesByContact` with a required `contactId`, so task `#120` must solve organisation-level aged receivables with the smallest verified finance-only fetch/aggregation path that works against that surface
 
 ## Next Prompt
 
@@ -163,28 +176,31 @@ Work on exactly one task issue only.
 
 1. Read only these sources first:
 - docs/finance-dashboard/handoff.md
+- epic issue #92
 - phase issue #95
 - ready task issue #120
 - merged PR #119
 
-2. Implement task #120 and keep it tightly scoped:
-- extend the finance dataset registry with a single aged receivables Xero snapshot handler
-- add only the Xero-to-snapshot mapping helpers needed for the aged receivables payload
-- keep the work on finance-only dataset registration, Xero-to-snapshot mapping helpers, and service-adjacent docs/tests only
-- ensure scheduled runs continue through the landed finance sync cron, service, and storage boundaries without bypassing `FinanceSyncRun` or `FinanceSnapshot`
-- run only the targeted validation needed for touched finance sync helpers, docs, and tests unless new changes require more
+2. Land task `#120` end-to-end in this session:
+- treat the goal as shipping a production-ready organisation-level aged receivables finance snapshot, not merely documenting local SDK limitations
+- use the smallest finance-only implementation that works against the current verified Xero surface
+- if `AgedReceivablesByContact` still requires `contactId`, keep working and solve that inside the task with the minimum necessary finance-only contact lookup/fan-out/aggregation rather than stopping at the mismatch
+- if the task wording proves too narrow once implementation starts, update the GitHub task issue to the smallest safe production-ready scope and continue in the same session
+- only stop without landing code if a true external blocker remains after exhausting repo code, merged PR context, and official Xero API/client documentation
 - keep docs/XERO_HANDOFF.md unchanged unless current evidence proves a new operational Xero gap
 
 3. Scope the next task tightly:
 - do not combine the task with diagnostics UI, diagnostics route handlers, manual sync route handlers, or reporting-page work
-- do not broaden the task into aged payables, bank transactions, contacts, booking-adapter work, or finance shell pages
+- do not broaden the task beyond the minimum needed to ship aged receivables safely; aged payables, unrelated bank transaction work, booking-adapter work, and finance shell pages remain out of scope
 - do not reopen operational Xero work unless current evidence proves a new gap
 
 4. Before finishing:
-- update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, and the next exact Next Prompt block
-- close task #120 if it lands and create exactly one new finance task issue under phase `#95` for the next smallest remaining gap
-- make that new issue the single `status: ready` finance task only after `#120` is fully landed
-- ensure only one finance task carries `status: ready`
+- update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, validation, and the next exact Next Prompt block
+- run the targeted tests/lint for touched files and run `npm run build` if runtime paths changed
+- do not finish with docs-only blocker notes if the feature can still be landed safely within the task/phase intent
+- close task `#120` and create the next finance task only if `#120` fully lands
+- otherwise leave the clearest possible external blocker with source evidence and do not start a second task in the same session
+- ensure exactly one finance task carries `status: ready` when there is actionable work, and keep that label on the next smallest unblocked task only
 - leave docs/XERO_HANDOFF.md unchanged unless new evidence forces it open
 
 5. Work on exactly one task issue only.
