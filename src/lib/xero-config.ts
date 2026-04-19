@@ -12,6 +12,10 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
+function isValidHexEncryptionKey(value: string): boolean {
+  return /^[0-9a-fA-F]{64}$/.test(value);
+}
+
 const XERO_OAUTH_SCOPES = [
   "openid",
   "profile",
@@ -92,4 +96,28 @@ export function getFinanceXeroConfigIssues(): string[] {
 
 export function hasFinanceXeroConfig(): boolean {
   return getFinanceXeroConfigIssues().length === 0;
+}
+
+export function getFinanceXeroEncryptionKey(): string | undefined {
+  return readEnv("FINANCE_XERO_ENCRYPTION_KEY");
+}
+
+export function getFinanceXeroTokenStorageIssues(): string[] {
+  const issues: string[] = [];
+  const encryptionKey = getFinanceXeroEncryptionKey();
+
+  if (!encryptionKey) {
+    issues.push("FINANCE_XERO_ENCRYPTION_KEY is required");
+    return issues;
+  }
+
+  if (!isValidHexEncryptionKey(encryptionKey)) {
+    issues.push("FINANCE_XERO_ENCRYPTION_KEY must be a 64-character hex string (32 bytes)");
+  }
+
+  return issues;
+}
+
+export function hasFinanceXeroTokenStorageConfig(): boolean {
+  return getFinanceXeroTokenStorageIssues().length === 0;
 }
