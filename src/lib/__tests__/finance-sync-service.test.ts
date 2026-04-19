@@ -366,7 +366,7 @@ describe("finance-sync-service", () => {
       datasets: getFinanceSyncDatasets(),
     });
 
-    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(5);
+    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(6);
     expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -417,15 +417,25 @@ describe("finance-sync-service", () => {
         syncRunId: "run-1",
       })
     );
+    expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
+      6,
+      expect.objectContaining({
+        snapshotType: FinanceSnapshotType.ACCOUNTS_PAYABLE_INVOICES,
+        asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+        periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+        currency: "NZD",
+        syncRunId: "run-1",
+      })
+    );
     expect(mockCompleteFinanceSyncRun).toHaveBeenCalledWith({
       runId: "run-1",
       completedAt: expect.any(Date),
-      snapshotCount: 5,
-      totalRowCount: 5,
+      snapshotCount: 6,
+      totalRowCount: 6,
       resultSummary: {
-        datasetCount: 5,
+        datasetCount: 6,
         failedDatasetCount: 0,
-        successfulDatasetCount: 5,
+        successfulDatasetCount: 6,
         datasets: [
           {
             datasetKey: "xero-profit-and-loss-monthly",
@@ -457,9 +467,16 @@ describe("finance-sync-service", () => {
             totalRowCount: 1,
             snapshotTypes: [FinanceSnapshotType.AGED_PAYABLES],
           },
+          {
+            datasetKey: "xero-accounts-payable-invoices",
+            snapshotCount: 1,
+            totalRowCount: 1,
+            snapshotTypes: [FinanceSnapshotType.ACCOUNTS_PAYABLE_INVOICES],
+          },
         ],
       },
     });
+    expect(xeroClient.accountingApi.getInvoices).toHaveBeenCalledTimes(2);
     expect(result.status).toBe(FinanceSyncRunStatus.SUCCEEDED);
     expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledTimes(5);
   });
