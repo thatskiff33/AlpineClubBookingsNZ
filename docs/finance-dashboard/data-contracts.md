@@ -45,6 +45,18 @@ The minimum dataset surface is:
 - contacts snapshot
 - finance sync run history
 
+## Aged Receivables Contract
+
+- The organisation-level aged receivables snapshot is derived from finance-only Xero `ACCREC` invoices because the currently verified `AgedReceivablesByContact` report surface remains contact-scoped.
+- Include only receivable invoices with a positive outstanding balance and an invoice date on or before the snapshot `asOfDate`.
+- Age buckets are calculated from invoice `dueDate` relative to the snapshot `asOfDate` using:
+  - `current` for invoices not yet due or without a valid due date
+  - `1-30`
+  - `31-60`
+  - `61-90`
+  - `91+`
+- Preserve currency safety. Aggregate organisation totals by currency and group contact rollups by contact plus currency rather than summing mixed-currency balances into one amount.
+
 ## Booking Metrics Contract
 
 Booking-derived finance metrics come from TACBookings `Booking`, `BookingGuest`, and `Payment`.
