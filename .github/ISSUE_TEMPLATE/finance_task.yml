@@ -1,0 +1,79 @@
+name: Finance Task
+description: Small execution issue under a finance phase.
+title: "[Finance Task] "
+labels:
+  - type: task
+  - area: finance
+body:
+  - type: input
+    id: parent_phase
+    attributes:
+      label: Parent Phase
+      description: Link the parent phase issue.
+      placeholder: "#124"
+    validations:
+      required: true
+  - type: input
+    id: parent_epic
+    attributes:
+      label: Parent Epic
+      description: Link the parent epic issue.
+      placeholder: "#123"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What concrete gap are we closing?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What work is included in this task?
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What should this task avoid?
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: What must land first or stay out of scope?
+    validations:
+      required: true
+  - type: textarea
+    id: likely_files
+    attributes:
+      label: Likely Files or Modules
+      description: List the primary files, modules, or templates expected to change.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Test Requirements
+    validations:
+      required: true
+  - type: textarea
+    id: handoff
+    attributes:
+      label: Handoff Notes
+    validations:
+      required: true

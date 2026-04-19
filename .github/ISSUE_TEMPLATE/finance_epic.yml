@@ -1,0 +1,59 @@
+name: Finance Epic
+description: Top-level initiative issue for the finance dashboard integration.
+title: "[Finance Epic] "
+labels:
+  - type: epic
+  - area: finance
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: What outcome should this initiative deliver?
+      placeholder: Integrate the finance dashboard into TACBookings with named-user access, separate finance Xero OAuth, daily sync, and first-party booking data.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In Scope
+      description: List the major deliverables.
+      placeholder: |
+        - Finance access model
+        - Finance Xero boundary
+        - Finance snapshot sync
+        - Native finance reporting pages
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What is explicitly out of scope?
+    validations:
+      required: true
+  - type: textarea
+    id: phases
+    attributes:
+      label: Phase Breakdown
+      description: Reference the planned phases and child issues.
+      placeholder: |
+        - [ ] Phase 1
+        - [ ] Phase 2
+        - [ ] Phase 3
+    validations:
+      required: true
+  - type: textarea
+    id: success_metrics
+    attributes:
+      label: Success Criteria
+      description: How do we know this initiative is complete?
+    validations:
+      required: true
+  - type: textarea
+    id: handoff
+    attributes:
+      label: Handoff Notes
+      description: Current state, blockers, and next recommended step.
+    validations:
+      required: true

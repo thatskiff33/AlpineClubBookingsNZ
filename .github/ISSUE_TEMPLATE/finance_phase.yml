@@ -1,0 +1,77 @@
+name: Finance Phase
+description: Implementation issue for a single finance dashboard phase.
+title: "[Finance Phase] "
+labels:
+  - type: phase
+  - area: finance
+body:
+  - type: input
+    id: parent
+    attributes:
+      label: Parent Epic
+      description: Link the parent epic issue.
+      placeholder: "#123"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this phase solve?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What work is included in this phase?
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What should this phase avoid?
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: What must land first or in parallel?
+      placeholder: |
+        - ADR-001 accepted
+        - Phase 1 complete
+    validations:
+      required: true
+  - type: textarea
+    id: likely_files
+    attributes:
+      label: Likely Files or Modules
+      description: List the primary files, modules, or systems expected to change.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Checklist of required outcomes.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Test Requirements
+      description: What automated and manual checks are required?
+    validations:
+      required: true
+  - type: textarea
+    id: handoff
+    attributes:
+      label: Handoff Notes
+      description: Current state, blockers, and next recommended step.
+    validations:
+      required: true
