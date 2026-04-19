@@ -31,14 +31,17 @@ vi.mock("@/lib/xero", () => ({
 }));
 
 import {
+  FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY,
   FINANCE_SYNC_XERO_AGED_RECEIVABLES_DATASET_KEY,
   FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY,
   FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY,
   FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY,
   FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY,
+  buildFinanceAccountsPayableInvoicesSnapshot,
   buildFinanceAgedReceivablesSnapshot,
   buildFinanceAgedPayablesSnapshot,
   buildFinanceReportSnapshot,
+  syncFinanceAccountsPayableInvoicesSnapshot,
   syncFinanceAgedReceivablesSnapshot,
   syncFinanceAgedPayablesSnapshot,
   syncFinanceBalanceSheetSnapshot,
@@ -113,13 +116,14 @@ describe("finance-sync-datasets", () => {
     mockCallXeroApi.mockImplementation(async (fn: () => unknown) => fn());
   });
 
-  it("registers the finance Xero datasets including aged receivables and payables", () => {
+  it("registers the finance Xero datasets including the accounts payable invoice detail snapshot", () => {
     expect(getFinanceSyncDatasets().map((dataset) => dataset.key)).toEqual([
       FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY,
       FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY,
       FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY,
       FINANCE_SYNC_XERO_AGED_RECEIVABLES_DATASET_KEY,
       FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY,
+      FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY,
     ]);
   });
 
@@ -495,7 +499,149 @@ describe("finance-sync-datasets", () => {
     });
   });
 
-  it("builds report, aged receivables, and aged payables snapshots from the finance sync window", async () => {
+  it("maps open payable invoices into an organisation-level accounts payable invoice snapshot", () => {
+    const snapshot = buildFinanceAccountsPayableInvoicesSnapshot({
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      invoices: [
+        {
+          type: "ACCPAY",
+          invoiceID: "bill-1",
+          invoiceNumber: "BILL-001",
+          reference: "April food order",
+          dueDate: "2026-04-12",
+          plannedPaymentDate: "2026-04-22",
+          date: "2026-04-01",
+          amountDue: 180,
+          amountPaid: 20,
+          amountCredited: 0,
+          subTotal: 180,
+          totalTax: 20,
+          total: 200,
+          status: "AUTHORISED",
+          currencyCode: "NZD",
+          contact: {
+            contactID: "supplier-1",
+            name: "Snow Supplies",
+            contactStatus: "ACTIVE",
+          },
+          updatedDateUTC: new Date("2026-04-20T00:08:00.000Z"),
+        },
+        {
+          type: "ACCPAY",
+          invoiceID: "bill-2",
+          invoiceNumber: "BILL-002",
+          dueDate: "2026-02-15",
+          date: "2026-02-01",
+          amountDue: 60,
+          status: "SUBMITTED",
+          currencyCode: "NZD",
+          contact: {
+            contactID: "supplier-1",
+            name: "Snow Supplies",
+            contactStatus: "ACTIVE",
+          },
+          updatedDateUTC: new Date("2026-04-20T00:09:00.000Z"),
+        },
+        {
+          type: "ACCPAY",
+          invoiceID: "bill-3",
+          invoiceNumber: "BILL-003",
+          dueDate: "2026-04-30",
+          date: "2026-04-18",
+          amountDue: 90,
+          status: "AUTHORISED",
+          currencyCode: "AUD",
+          contact: {
+            contactID: "supplier-2",
+            name: "Alpine Freight",
+            contactStatus: "ACTIVE",
+          },
+          updatedDateUTC: new Date("2026-04-20T00:10:00.000Z"),
+        },
+        {
+          type: "ACCREC",
+          invoiceID: "ignored-type",
+          amountDue: 999,
+        },
+        {
+          type: "ACCPAY",
+          invoiceID: "ignored-zero",
+          amountDue: 0,
+        },
+      ],
+    });
+
+    expect(snapshot).toMatchObject({
+      snapshotType: FinanceSnapshotType.ACCOUNTS_PAYABLE_INVOICES,
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+      rowCount: 3,
+      scope: "organisation",
+      currency: null,
+      sourceUpdatedAt: new Date("2026-04-20T00:10:00.000Z"),
+      payload: {
+        asOfDate: "2026-04-20",
+        invoiceCount: 3,
+        contactCount: 2,
+        currencies: ["AUD", "NZD"],
+        totalsByCurrency: [
+          {
+            currency: "AUD",
+            invoiceCount: 1,
+            contactCount: 1,
+            totalAmountDue: 90,
+          },
+          {
+            currency: "NZD",
+            invoiceCount: 2,
+            contactCount: 1,
+            totalAmountDue: 240,
+          },
+        ],
+        contacts: [
+          {
+            contactId: "supplier-1",
+            contactName: "Snow Supplies",
+            currency: "NZD",
+            invoiceCount: 2,
+            totalAmountDue: 240,
+            oldestDueDate: "2026-02-15",
+            latestDueDate: "2026-04-12",
+            invoices: [
+              {
+                invoiceId: "bill-2",
+                invoiceNumber: "BILL-002",
+                amountDue: 60,
+              },
+              {
+                invoiceId: "bill-1",
+                invoiceNumber: "BILL-001",
+                reference: "April food order",
+                plannedPaymentDate: "2026-04-22",
+                amountDue: 180,
+                amountPaid: 20,
+                amountCredited: 0,
+                subTotal: 180,
+                totalTax: 20,
+                total: 200,
+              },
+            ],
+          },
+          {
+            contactId: "supplier-2",
+            contactName: "Alpine Freight",
+            currency: "AUD",
+            invoiceCount: 1,
+            totalAmountDue: 90,
+            oldestDueDate: "2026-04-30",
+            latestDueDate: "2026-04-30",
+          },
+        ],
+      },
+    });
+  });
+
+  it("builds report, aged receivables, aged payables, and accounts payable invoice snapshots from the finance sync window", async () => {
     const context = createFinanceSyncContext();
     const profitAndLossReport = createReport({
       reportID: "pnl-1",
@@ -572,14 +718,21 @@ describe("finance-sync-datasets", () => {
       }
     );
 
-    const [profitAndLoss, balanceSheet, bankBalances, agedReceivables, agedPayables] =
-      await Promise.all([
-        syncFinanceProfitAndLossMonthlySnapshot(context as never),
-        syncFinanceBalanceSheetSnapshot(context as never),
-        syncFinanceBankBalancesSnapshot(context as never),
-        syncFinanceAgedReceivablesSnapshot(context as never),
-        syncFinanceAgedPayablesSnapshot(context as never),
-      ]);
+    const [
+      profitAndLoss,
+      balanceSheet,
+      bankBalances,
+      agedReceivables,
+      agedPayables,
+      accountsPayableInvoices,
+    ] = await Promise.all([
+      syncFinanceProfitAndLossMonthlySnapshot(context as never),
+      syncFinanceBalanceSheetSnapshot(context as never),
+      syncFinanceBankBalancesSnapshot(context as never),
+      syncFinanceAgedReceivablesSnapshot(context as never),
+      syncFinanceAgedPayablesSnapshot(context as never),
+      syncFinanceAccountsPayableInvoicesSnapshot(context as never),
+    ]);
 
     expect(context.xero.accountingApi.getReportProfitAndLoss).toHaveBeenCalledWith(
       "tenant-123",
@@ -641,6 +794,7 @@ describe("finance-sync-datasets", () => {
       false,
       100
     );
+    expect(context.xero.accountingApi.getInvoices).toHaveBeenCalledTimes(2);
     expect(profitAndLoss).toMatchObject({
       snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_MONTHLY,
       asOfDate: new Date("2026-04-20T00:00:00.000Z"),
@@ -672,6 +826,17 @@ describe("finance-sync-datasets", () => {
     });
     expect(agedPayables).toMatchObject({
       snapshotType: FinanceSnapshotType.AGED_PAYABLES,
+      asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+      periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+      rowCount: 1,
+      currency: "NZD",
+      payload: {
+        invoiceCount: 1,
+        contactCount: 1,
+      },
+    });
+    expect(accountsPayableInvoices).toMatchObject({
+      snapshotType: FinanceSnapshotType.ACCOUNTS_PAYABLE_INVOICES,
       asOfDate: new Date("2026-04-20T00:00:00.000Z"),
       periodEnd: new Date("2026-04-20T00:00:00.000Z"),
       rowCount: 1,

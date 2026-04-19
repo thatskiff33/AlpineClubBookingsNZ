@@ -66,8 +66,15 @@ The minimum dataset surface is:
   - `1-30`
   - `31-60`
   - `61-90`
-  - `91+`
+- `91+`
 - Preserve currency safety. Aggregate organisation totals by currency and group contact rollups by contact plus currency rather than summing mixed-currency balances into one amount.
+
+## Accounts Payable Invoices Contract
+
+- The organisation-level accounts payable invoice snapshot is derived from the finance-only Xero `ACCPAY` invoice listing surface and reuses the same open-invoice fetch boundary as aged payables.
+- Include only payable invoices with a positive outstanding balance and an invoice date on or before the snapshot `asOfDate`.
+- Persist bill-level detail suitable for downstream finance reporting, including supplier contact metadata plus invoice status, invoice date, due date, planned payment date when present, currency, and outstanding balance components.
+- Preserve currency safety. Aggregate organisation totals by currency and group supplier contact rollups by contact plus currency rather than summing mixed-currency balances into one amount.
 
 ## Booking Metrics Contract
 

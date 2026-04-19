@@ -56,6 +56,7 @@ The first scheduled Xero dataset handlers now use the service contract to persis
 - bank balance report snapshots
 - organisation-level aged receivables snapshots derived from open receivable invoices
 - organisation-level aged payables snapshots derived from open payable invoices
+- organisation-level accounts payable invoice snapshots derived from open payable invoices
 
 Those handlers still return `FinanceSyncSnapshotInput` objects and do not bypass `FinanceSyncRun` or `FinanceSnapshot`.
 
@@ -69,7 +70,7 @@ Those handlers still return `FinanceSyncSnapshotInput` objects and do not bypass
 
 This service scaffold does not yet implement:
 
-- the remaining finance dataset surface such as payables/invoice detail snapshots, contacts, and transaction snapshots
+- the remaining finance dataset surface such as accounts receivable invoice detail, contacts, and transaction snapshots
 - cron registration
 - overlap-safe execution
 - diagnostics endpoints or UI
