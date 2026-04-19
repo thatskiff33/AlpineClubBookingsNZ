@@ -1,6 +1,6 @@
 # Finance Dashboard Handoff
 
-Last updated: 2026-04-19
+Last updated: 2026-04-20
 
 ## Current State
 
@@ -12,7 +12,8 @@ Last updated: 2026-04-19
 - Active phase: `#95`
 - Most recent landed task: `#115`
 - Merged implementation PR for `#115`: `#117`
-- No finance task is currently in flight
+- Finance task currently in flight: `#118`
+- Draft implementation PR for `#118`: `#119`
 - Single `status: ready` finance task: `#118`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
@@ -96,6 +97,15 @@ Done:
 - Created follow-up task `#118` under Phase `#95` for first finance Xero snapshot dataset handlers
 - Marked `#118` as the single finance task with `status: ready`
 - Kept diagnostics UI, manual sync route handlers, reporting-page work, and `docs/XERO_HANDOFF.md` out of scope
+- Replaced the bootstrap dataset seam in `src/lib/finance-sync-datasets.ts` with the first concrete finance Xero report handlers for:
+  - `PROFIT_AND_LOSS_MONTHLY`
+  - `BALANCE_SHEET`
+  - `BANK_BALANCES`
+- Added `src/lib/finance-sync-xero-datasets.ts` for finance-only report-window derivation, JSON-safe Xero report-to-snapshot mapping, and finance usage metering around scheduled report fetches
+- Added `src/lib/__tests__/finance-sync-datasets.test.ts` for dataset registration, mapping, finance report window, and usage-metering coverage
+- Extended `src/lib/__tests__/finance-sync-service.test.ts` with a targeted real-registry orchestration check to confirm the registered finance datasets still persist through `runFinanceSync` into `FinanceSnapshot`
+- Updated `docs/finance-dashboard/finance-sync-service-contract.md` and `docs/finance-dashboard/finance-sync-cron-contract.md` for the landed first report-based dataset surface
+- Opened draft PR `#119` for task `#118`
 
 Validation:
 - Verified issue `#105` is closed as completed
@@ -120,11 +130,15 @@ Validation:
 - Verified issue `#115` is closed as completed
 - Verified issue `#118` is open with labels `area: finance`, `type: task`, and `status: ready`
 - Verified no other open finance task is marked `status: ready`
+- Verified `npx vitest run src/lib/__tests__/finance-sync-datasets.test.ts src/lib/__tests__/finance-sync-service.test.ts`
+- Verified `npx eslint src/lib/finance-sync-xero-datasets.ts src/lib/finance-sync-datasets.ts src/lib/__tests__/finance-sync-datasets.test.ts src/lib/__tests__/finance-sync-service.test.ts`
+- Verified draft PR `#119` is open for task `#118`
 - `git diff --check`
 
 What remains:
-- Implement task `#118` for first finance Xero snapshot dataset handlers
-- Keep the next implementation slice on replacing the bootstrap zero-snapshot dataset seam with concrete finance Xero snapshot handlers that persist real `FinanceSnapshot` rows through the landed cron/service/storage boundaries
+- Review and merge PR `#119` so task `#118` lands on `main`
+- Close task `#118` only after PR `#119` is merged
+- Create exactly one new finance task issue under phase `#95` only after `#118` lands; keep the next slice on the smallest remaining dataset gap after the first report-based handlers
 - Leave diagnostics UI, manual sync APIs, reporting pages, booking-adapter work, and operational Xero behavior for later work unless new evidence proves a gap
 
 Blockers:
@@ -141,13 +155,13 @@ Work on exactly one task issue only.
 - docs/finance-dashboard/handoff.md
 - phase issue #95
 - ready task issue #118
-- merged PR #117
+- draft PR #119
 
-2. Implement task #118 and keep it tightly scoped:
-- replace or extend the bootstrap dataset registry in `src/lib/finance-sync-datasets.ts` with the first concrete finance Xero snapshot dataset handlers
+2. Land task #118 and keep it tightly scoped:
+- review and merge PR `#119` if it is still the correct implementation for task `#118`
 - keep the work on finance-only dataset registration, Xero-to-snapshot mapping helpers, and service-adjacent docs/tests only
 - ensure scheduled runs continue through the landed finance sync cron, service, and storage boundaries without bypassing `FinanceSyncRun` or `FinanceSnapshot`
-- add targeted validation for touched finance sync helpers, docs, and tests
+- run only the targeted validation needed for touched finance sync helpers, docs, and tests unless new changes require more
 - keep docs/XERO_HANDOFF.md unchanged unless current evidence proves a new operational Xero gap
 
 3. Scope the next task tightly:
@@ -156,7 +170,6 @@ Work on exactly one task issue only.
 - do not reopen operational Xero work unless current evidence proves a new gap
 
 4. Before finishing:
-- run only the targeted validation needed for touched files; run full build only if the changed files require it
 - update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, and the next exact Next Prompt block
 - close task #118 if it lands and create exactly one new finance task issue under phase #95 for the next smallest remaining gap
 - make that new issue the single `status: ready` finance task only after `#118` is fully landed
