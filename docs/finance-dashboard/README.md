@@ -59,6 +59,7 @@ Deliver a native finance dashboard inside `TACBookings` that:
 - [data-contracts.md](/home/ubuntu/TACBookings/docs/finance-dashboard/data-contracts.md)
 - [finance-xero-config-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-xero-config-contract.md)
 - [finance-snapshot-storage-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-snapshot-storage-contract.md)
+- [finance-sync-service-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-sync-service-contract.md)
 - [test-plan.md](/home/ubuntu/TACBookings/docs/finance-dashboard/test-plan.md)
 - [agent-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/agent-runbook.md)
 - [handoff.md](/home/ubuntu/TACBookings/docs/finance-dashboard/handoff.md)

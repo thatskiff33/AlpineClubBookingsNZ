@@ -79,6 +79,8 @@ It currently owns:
 
 Future services should use this helper or extend it, rather than bypassing the contract with direct file-based or mixed operational-finance storage.
 
+The first service layer on top of this storage seam now lives in `src/lib/finance-sync-service.ts`; see `finance-sync-service-contract.md` for the orchestration contract.
+
 ## Explicit Non-goals
 
 This contract does not, by itself, implement:
