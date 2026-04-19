@@ -13,6 +13,7 @@ Last updated: 2026-04-19
 - Merged implementation PR for `#105`: `#107`
 - Current in-flight task: `#108`
 - Dedicated branch for `#108`: `finance/issue-108-token-storage-metering`
+- Dedicated draft PR for `#108`: `#109`
 - No finance task should remain `status: ready` while `#108` is in flight
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
@@ -61,7 +62,7 @@ Validation:
 - `git diff --check`
 
 What remains:
-- Open or update the dedicated PR for task `#108`
+- Review and update the dedicated draft PR for task `#108` (`#109`)
 - Review the finance-only storage and metering scaffold for naming, migration shape, and test coverage
 - Add finance connect/callback/status/disconnect routes in a later task once this storage boundary is merged
 - Leave finance sync jobs and operational Xero behavior for later work
@@ -83,7 +84,7 @@ Work on exactly one task issue only.
 - closed task issue #105
 - merged PR #107
 - task issue #108
-- the current branch or PR for #108, if one exists
+- draft PR #109
 
 2. Continue task #108 on its dedicated branch/PR only:
 - review the finance-specific token storage and separate finance usage metering scaffold already added
