@@ -12,6 +12,7 @@ const {
   mockCompleteFinanceSyncRun,
   mockFailFinanceSyncRun,
   mockUpsertFinanceSnapshot,
+  mockRecordFinanceXeroApiUsage,
 } = vi.hoisted(() => ({
   mockCreateFinanceXeroClient: vi.fn(),
   mockLoadFinanceXeroTokens: vi.fn(),
@@ -19,6 +20,7 @@ const {
   mockCompleteFinanceSyncRun: vi.fn(),
   mockFailFinanceSyncRun: vi.fn(),
   mockUpsertFinanceSnapshot: vi.fn(),
+  mockRecordFinanceXeroApiUsage: vi.fn(),
 }));
 
 vi.mock("@/lib/finance-xero", () => ({
@@ -36,11 +38,16 @@ vi.mock("@/lib/finance-sync-storage", () => ({
   upsertFinanceSnapshot: mockUpsertFinanceSnapshot,
 }));
 
+vi.mock("@/lib/finance-xero-api-usage", () => ({
+  recordFinanceXeroApiUsage: mockRecordFinanceXeroApiUsage,
+}));
+
 import {
   createFinanceXeroSyncConnection,
   DEFAULT_FINANCE_SYNC_WORKFLOW,
   runFinanceSync,
 } from "@/lib/finance-sync-service";
+import { getFinanceSyncDatasets } from "@/lib/finance-sync-datasets";
 
 function createMockXeroClient(overrides?: {
   tenantId?: string;
@@ -50,6 +57,11 @@ function createMockXeroClient(overrides?: {
     setTokenSet: vi.fn(),
     updateTenants: vi.fn().mockResolvedValue(undefined),
     tenants: overrides?.tenantId ? [{ tenantId: overrides.tenantId }] : [],
+    accountingApi: {
+      getReportProfitAndLoss: vi.fn(),
+      getReportBalanceSheet: vi.fn(),
+      getReportBankSummary: vi.fn(),
+    },
   };
 }
 
@@ -239,6 +251,116 @@ describe("finance-sync-service", () => {
       datasetKey: "profit-and-loss",
       errorMessage: "Xero request failed",
     });
+  });
+
+  it("runs the registered finance Xero datasets through the durable sync boundary", async () => {
+    const xeroClient = createMockXeroClient();
+    const report = {
+      reportTitle: "Demo Finance Report",
+      reportTitles: ["Demo Finance Report"],
+      reportDate: "2026-04-20",
+      updatedDateUTC: new Date("2026-04-20T00:05:00.000Z"),
+      rows: [
+        {
+          rowType: "Section",
+          title: "Totals",
+          rows: [
+            {
+              rowType: "Row",
+              cells: [{ value: "Total" }, { value: "1.00" }],
+            },
+          ],
+        },
+      ],
+    };
+
+    xeroClient.accountingApi.getReportProfitAndLoss.mockResolvedValue({
+      body: {
+        reports: [{ ...report, reportID: "pnl-1", reportName: "Profit and Loss" }],
+      },
+    });
+    xeroClient.accountingApi.getReportBalanceSheet.mockResolvedValue({
+      body: {
+        reports: [{ ...report, reportID: "bs-1", reportName: "Balance Sheet" }],
+      },
+    });
+    xeroClient.accountingApi.getReportBankSummary.mockResolvedValue({
+      body: {
+        reports: [{ ...report, reportID: "bank-1", reportName: "Bank Summary" }],
+      },
+    });
+    mockCreateFinanceXeroClient.mockReturnValue(xeroClient);
+
+    const result = await runFinanceSync({
+      trigger: FinanceSyncRunTrigger.SCHEDULED,
+      startedAt: new Date("2026-04-19T22:15:00.000Z"),
+      datasets: getFinanceSyncDatasets(),
+    });
+
+    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(3);
+    expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_MONTHLY,
+        asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+        periodStart: new Date("2026-04-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+        syncRunId: "run-1",
+      })
+    );
+    expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        snapshotType: FinanceSnapshotType.BALANCE_SHEET,
+        asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+        periodStart: null,
+        periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+        syncRunId: "run-1",
+      })
+    );
+    expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        snapshotType: FinanceSnapshotType.BANK_BALANCES,
+        asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+        periodStart: new Date("2026-04-01T00:00:00.000Z"),
+        periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+        syncRunId: "run-1",
+      })
+    );
+    expect(mockCompleteFinanceSyncRun).toHaveBeenCalledWith({
+      runId: "run-1",
+      completedAt: expect.any(Date),
+      snapshotCount: 3,
+      totalRowCount: 3,
+      resultSummary: {
+        datasetCount: 3,
+        failedDatasetCount: 0,
+        successfulDatasetCount: 3,
+        datasets: [
+          {
+            datasetKey: "xero-profit-and-loss-monthly",
+            snapshotCount: 1,
+            totalRowCount: 1,
+            snapshotTypes: [FinanceSnapshotType.PROFIT_AND_LOSS_MONTHLY],
+          },
+          {
+            datasetKey: "xero-balance-sheet",
+            snapshotCount: 1,
+            totalRowCount: 1,
+            snapshotTypes: [FinanceSnapshotType.BALANCE_SHEET],
+          },
+          {
+            datasetKey: "xero-bank-balances",
+            snapshotCount: 1,
+            totalRowCount: 1,
+            snapshotTypes: [FinanceSnapshotType.BANK_BALANCES],
+          },
+        ],
+      },
+    });
+    expect(result.status).toBe(FinanceSyncRunStatus.SUCCEEDED);
+    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledTimes(3);
   });
 
   it("fails the run durably when the finance Xero connection cannot be established", async () => {

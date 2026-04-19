@@ -28,14 +28,18 @@ It is intentionally narrow. The cron layer owns schedule metadata, in-process ov
 ## Dataset Registration Seam
 
 - `src/lib/finance-sync-datasets.ts` is the narrow seam where scheduled finance datasets are registered.
-- The current bootstrap dataset returns zero snapshots so the daily runner exercises the durable `FinanceSyncRun` / `CronJobRun` boundaries without broadening this slice into concrete Xero dataset fetchers.
-- Future dataset work should replace or extend that registry rather than bypassing the cron or service boundaries.
+- The registry now includes the first concrete finance Xero report handlers for:
+  - monthly profit and loss snapshots
+  - balance sheet snapshots
+  - bank balance snapshots
+- Each handler still hands snapshot persistence back to `runFinanceSync`, so scheduled runs continue through the durable `FinanceSyncRun` / `FinanceSnapshot` boundary.
+- Future dataset work should extend that registry rather than bypassing the cron or service boundaries.
 
 ## Explicit Non-goals
 
 This cron layer does not yet implement:
 
-- concrete finance Xero dataset fetchers
+- the remaining finance Xero dataset handlers beyond the first report-based snapshots
 - finance diagnostics UI or route handlers
 - reporting-page loaders
 - booking-derived finance adapters

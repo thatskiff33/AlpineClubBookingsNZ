@@ -19,7 +19,7 @@ export interface CreateFinanceSyncRunInput {
 
 export interface CompleteFinanceSyncRunInput {
   runId: string;
-  status?: FinanceSyncRunStatus.SUCCEEDED | FinanceSyncRunStatus.PARTIAL;
+  status?: FinanceSyncRunStatus;
   completedAt?: Date;
   snapshotCount?: number;
   totalRowCount?: number;
