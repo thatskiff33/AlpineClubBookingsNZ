@@ -17,6 +17,7 @@ Last updated: 2026-04-19
 - Restored finance ADRs, phase map, data contracts, and test-plan reference docs
 - Added finance-specific GitHub issue templates plus a finance-only PR template
 - Kept the change separate from the Phase 1 finance access-boundary implementation in PR `#102`
+- Added one narrow test-only unblocker on PR `#104` after CI exposed an expired hardcoded nomination token date
 
 ## Implemented Guard Strategy
 
@@ -36,20 +37,23 @@ Done:
 - Added handoff notes for the implemented guard strategy
 - Restored the finance planning scaffold and minimal workflow docs in task `#103`
 - Added finance-specific issue templates and a finance-only PR template
+- Stabilized the time-dependent nomination expiry test that was failing PR `#104` CI
 
 Validation:
 - `git diff --check`
 - Manual review of the restored markdown and template files for readability and scope
-- GitHub Actions `verify` workflow on PR `#104` failed in `npm test`
+- `npx vitest run src/lib/__tests__/membership-nomination.test.ts`
+- `npx eslint src/lib/__tests__/membership-nomination.test.ts`
+- `npm test`
 
 Next:
-- Keep PR `#104` open until the failing `verify` run is understood and green
-- Re-run merge review for task `#103` after CI is green
+- Watch the new `verify` run on PR `#104`
+- Re-run merge review for task `#103` once the current PR head is green
+- Decide whether to keep the nomination-test unblocker on `#104` or split it out if strict docs/templates-only scope is still required
 - After `#103` merges, create the next narrow finance task under phase `#94`
 
 Blockers:
-- PR `#104` is blocked by a failing `verify` workflow run on commit `627994e`
-- Failure detail: `src/lib/__tests__/membership-nomination.test.ts` -> `MembershipApplicationError: This nomination link has expired`
+- PR `#104` is waiting on the new `verify` run for the current head commit
 
 ## Next Prompt
 
@@ -66,9 +70,9 @@ Work on exactly one task issue only.
 - the current PR for #103
 
 2. Run the merge-review stage for task #103 only:
-- verify the diff is limited to finance docs/templates
+- verify the diff is limited to the finance scaffold changes plus the narrow nomination-test CI unblocker now on the branch
 - verify the handoff and prompt pattern are updated
-- inspect the failing `verify` workflow status on the current PR head
+- inspect the current `verify` workflow status on the PR head
 - merge only if the PR is clean and all required checks are satisfied
 
 3. If the PR is not merge-ready:
