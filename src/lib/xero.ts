@@ -634,7 +634,7 @@ export async function getAuthenticatedXeroClient(): Promise<{
         refresh_token: tokens.refreshToken,
         token_type: "Bearer",
       });
-      const config = getXeroConfig();
+      const config = getOperationalXeroConfig();
       try {
         const newTokenSet = await xero.refreshWithRefreshToken(
           config.clientId,
