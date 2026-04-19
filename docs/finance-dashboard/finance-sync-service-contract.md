@@ -49,6 +49,14 @@ Optional snapshot metadata:
 - `currency`
 - `sourceUpdatedAt`
 
+The first scheduled Xero dataset handlers now use the service contract to persist:
+
+- monthly profit and loss report snapshots
+- balance sheet report snapshots
+- bank balance report snapshots
+
+Those handlers still return `FinanceSyncSnapshotInput` objects and do not bypass `FinanceSyncRun` or `FinanceSnapshot`.
+
 ## Outcome Rules
 
 - If all datasets succeed, the run is completed as `SUCCEEDED`.
@@ -59,7 +67,7 @@ Optional snapshot metadata:
 
 This service scaffold does not yet implement:
 
-- concrete Xero dataset fetchers beyond the handler contract
+- the remaining finance dataset surface such as receivables, payables, contacts, and transaction snapshots
 - cron registration
 - overlap-safe execution
 - diagnostics endpoints or UI

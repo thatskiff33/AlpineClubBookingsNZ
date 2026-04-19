@@ -1,17 +1,31 @@
 import type { FinanceSyncDatasetDefinition } from "@/lib/finance-sync-service";
-
-export const FINANCE_SYNC_BOOTSTRAP_DATASET_KEY = "bootstrap";
+import {
+  FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY,
+  FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY,
+  FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY,
+  syncFinanceBalanceSheetSnapshot,
+  syncFinanceBankBalancesSnapshot,
+  syncFinanceProfitAndLossMonthlySnapshot,
+} from "@/lib/finance-sync-xero-datasets";
 
 const financeSyncDatasets: FinanceSyncDatasetDefinition[] = [
   {
-    key: FINANCE_SYNC_BOOTSTRAP_DATASET_KEY,
-    async sync() {
-      // Keep the daily runner on the durable sync boundary until concrete Xero datasets land.
-      return [];
-    },
+    key: FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY,
+    description: "Xero monthly profit and loss report snapshot",
+    sync: syncFinanceProfitAndLossMonthlySnapshot,
+  },
+  {
+    key: FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY,
+    description: "Xero balance sheet report snapshot",
+    sync: syncFinanceBalanceSheetSnapshot,
+  },
+  {
+    key: FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY,
+    description: "Xero bank summary report snapshot",
+    sync: syncFinanceBankBalancesSnapshot,
   },
 ];
 
 export function getFinanceSyncDatasets(): FinanceSyncDatasetDefinition[] {
-  return financeSyncDatasets;
+  return financeSyncDatasets.slice();
 }
