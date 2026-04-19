@@ -309,27 +309,55 @@ describe("finance-sync-service", () => {
         reports: [{ ...report, reportID: "bank-1", reportName: "Bank Summary" }],
       },
     });
-    xeroClient.accountingApi.getInvoices.mockResolvedValue({
-      body: {
-        invoices: [
-          {
-            type: "ACCREC",
-            invoiceID: "inv-1",
-            invoiceNumber: "INV-001",
-            date: "2026-04-10",
-            dueDate: "2026-04-15",
-            amountDue: 42,
-            status: "AUTHORISED",
-            currencyCode: "NZD",
-            contact: {
-              contactID: "contact-1",
-              name: "Alice",
-              contactStatus: "ACTIVE",
+    xeroClient.accountingApi.getInvoices.mockImplementation(
+      async (_tenantId: string, _ifModifiedSince: Date, where?: string) => {
+        if (where?.includes('Type=="ACCREC"')) {
+          return {
+            body: {
+              invoices: [
+                {
+                  type: "ACCREC",
+                  invoiceID: "inv-1",
+                  invoiceNumber: "INV-001",
+                  date: "2026-04-10",
+                  dueDate: "2026-04-15",
+                  amountDue: 42,
+                  status: "AUTHORISED",
+                  currencyCode: "NZD",
+                  contact: {
+                    contactID: "contact-1",
+                    name: "Alice",
+                    contactStatus: "ACTIVE",
+                  },
+                },
+              ],
             },
+          };
+        }
+
+        return {
+          body: {
+            invoices: [
+              {
+                type: "ACCPAY",
+                invoiceID: "bill-1",
+                invoiceNumber: "BILL-001",
+                date: "2026-04-09",
+                dueDate: "2026-04-14",
+                amountDue: 21,
+                status: "AUTHORISED",
+                currencyCode: "NZD",
+                contact: {
+                  contactID: "supplier-1",
+                  name: "Snow Supplies",
+                  contactStatus: "ACTIVE",
+                },
+              },
+            ],
           },
-        ],
-      },
-    });
+        };
+      }
+    );
     mockCreateFinanceXeroClient.mockReturnValue(xeroClient);
 
     const result = await runFinanceSync({
@@ -338,7 +366,7 @@ describe("finance-sync-service", () => {
       datasets: getFinanceSyncDatasets(),
     });
 
-    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(4);
+    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(5);
     expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -379,15 +407,25 @@ describe("finance-sync-service", () => {
         syncRunId: "run-1",
       })
     );
+    expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({
+        snapshotType: FinanceSnapshotType.AGED_PAYABLES,
+        asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+        periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+        currency: "NZD",
+        syncRunId: "run-1",
+      })
+    );
     expect(mockCompleteFinanceSyncRun).toHaveBeenCalledWith({
       runId: "run-1",
       completedAt: expect.any(Date),
-      snapshotCount: 4,
-      totalRowCount: 4,
+      snapshotCount: 5,
+      totalRowCount: 5,
       resultSummary: {
-        datasetCount: 4,
+        datasetCount: 5,
         failedDatasetCount: 0,
-        successfulDatasetCount: 4,
+        successfulDatasetCount: 5,
         datasets: [
           {
             datasetKey: "xero-profit-and-loss-monthly",
@@ -413,11 +451,17 @@ describe("finance-sync-service", () => {
             totalRowCount: 1,
             snapshotTypes: [FinanceSnapshotType.AGED_RECEIVABLES],
           },
+          {
+            datasetKey: "xero-aged-payables",
+            snapshotCount: 1,
+            totalRowCount: 1,
+            snapshotTypes: [FinanceSnapshotType.AGED_PAYABLES],
+          },
         ],
       },
     });
     expect(result.status).toBe(FinanceSyncRunStatus.SUCCEEDED);
-    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledTimes(4);
+    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledTimes(5);
   });
 
   it("fails the run durably when the finance Xero connection cannot be established", async () => {

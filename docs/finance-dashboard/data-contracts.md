@@ -57,6 +57,18 @@ The minimum dataset surface is:
   - `91+`
 - Preserve currency safety. Aggregate organisation totals by currency and group contact rollups by contact plus currency rather than summing mixed-currency balances into one amount.
 
+## Aged Payables Contract
+
+- The organisation-level aged payables snapshot is derived from finance-only Xero `ACCPAY` invoices because the currently verified `AgedPayablesByContact` report surface remains contact-scoped.
+- Include only payable invoices with a positive outstanding balance and an invoice date on or before the snapshot `asOfDate`.
+- Age buckets are calculated from invoice `dueDate` relative to the snapshot `asOfDate` using:
+  - `current` for invoices not yet due or without a valid due date
+  - `1-30`
+  - `31-60`
+  - `61-90`
+  - `91+`
+- Preserve currency safety. Aggregate organisation totals by currency and group contact rollups by contact plus currency rather than summing mixed-currency balances into one amount.
+
 ## Booking Metrics Contract
 
 Booking-derived finance metrics come from TACBookings `Booking`, `BookingGuest`, and `Payment`.

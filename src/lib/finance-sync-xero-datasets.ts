@@ -24,15 +24,19 @@ export const FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY =
   "xero-bank-balances";
 export const FINANCE_SYNC_XERO_AGED_RECEIVABLES_DATASET_KEY =
   "xero-aged-receivables";
+export const FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY =
+  "xero-aged-payables";
 
 const FINANCE_XERO_PAGE_SIZE = 100;
-const FINANCE_AGED_RECEIVABLES_INVOICE_STATUSES = [
+const FINANCE_AGED_INVOICE_STATUSES = [
   "AUTHORISED",
   "SUBMITTED",
 ] as const;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-type FinanceAgedReceivablesBucketKey =
+type FinanceAgedInvoiceType = "ACCREC" | "ACCPAY";
+type FinanceAgedSnapshotType = "AGED_RECEIVABLES" | "AGED_PAYABLES";
+type FinanceAgedInvoiceBucketKey =
   | "current"
   | "days1To30"
   | "days31To60"
@@ -89,7 +93,7 @@ interface FinanceSnapshotReportPayload {
   rows: FinanceSnapshotReportRow[];
 }
 
-interface FinanceAgedReceivablesBucketTotals {
+interface FinanceAgedInvoiceBucketTotals {
   current: number;
   days1To30: number;
   days31To60: number;
@@ -99,7 +103,7 @@ interface FinanceAgedReceivablesBucketTotals {
   total: number;
 }
 
-interface FinanceAgedReceivablesInvoicePayload {
+interface FinanceAgedInvoicePayload {
   invoiceId: string | null;
   invoiceNumber: string | null;
   reference: string | null;
@@ -114,11 +118,11 @@ interface FinanceAgedReceivablesInvoicePayload {
   amountPaid: number | null;
   amountCredited: number | null;
   amountDue: number;
-  bucket: FinanceAgedReceivablesBucketKey;
+  bucket: FinanceAgedInvoiceBucketKey;
   daysOverdue: number | null;
 }
 
-interface FinanceAgedReceivablesContactPayload {
+interface FinanceAgedContactPayload {
   contactId: string | null;
   contactName: string | null;
   contactStatus: string | null;
@@ -126,27 +130,27 @@ interface FinanceAgedReceivablesContactPayload {
   invoiceCount: number;
   oldestDueDate: string | null;
   latestDueDate: string | null;
-  totals: FinanceAgedReceivablesBucketTotals;
-  invoices: FinanceAgedReceivablesInvoicePayload[];
+  totals: FinanceAgedInvoiceBucketTotals;
+  invoices: FinanceAgedInvoicePayload[];
 }
 
-interface FinanceAgedReceivablesCurrencyPayload {
+interface FinanceAgedCurrencyPayload {
   currency: string;
   invoiceCount: number;
   contactCount: number;
-  totals: FinanceAgedReceivablesBucketTotals;
+  totals: FinanceAgedInvoiceBucketTotals;
 }
 
-interface FinanceAgedReceivablesPayload {
+interface FinanceAgedSnapshotPayload {
   asOfDate: string;
   invoiceCount: number;
   contactCount: number;
   currencies: string[];
-  totalsByCurrency: FinanceAgedReceivablesCurrencyPayload[];
-  contacts: FinanceAgedReceivablesContactPayload[];
+  totalsByCurrency: FinanceAgedCurrencyPayload[];
+  contacts: FinanceAgedContactPayload[];
 }
 
-interface FinanceAgedReceivablesContactAccumulator {
+interface FinanceAgedContactAccumulator {
   contactId: string | null;
   contactName: string | null;
   contactStatus: string | null;
@@ -154,15 +158,15 @@ interface FinanceAgedReceivablesContactAccumulator {
   invoiceCount: number;
   oldestDueDate: Date | null;
   latestDueDate: Date | null;
-  totals: FinanceAgedReceivablesBucketTotals;
-  invoices: FinanceAgedReceivablesInvoicePayload[];
+  totals: FinanceAgedInvoiceBucketTotals;
+  invoices: FinanceAgedInvoicePayload[];
 }
 
-interface FinanceAgedReceivablesCurrencyAccumulator {
+interface FinanceAgedCurrencyAccumulator {
   currency: string;
   invoiceCount: number;
   contactKeys: Set<string>;
-  totals: FinanceAgedReceivablesBucketTotals;
+  totals: FinanceAgedInvoiceBucketTotals;
 }
 
 function getDateOnlyStringForTimeZone(
@@ -361,7 +365,7 @@ function getRequiredReport(
   return report;
 }
 
-function createEmptyAgedReceivablesTotals(): FinanceAgedReceivablesBucketTotals {
+function createEmptyAgedInvoiceTotals(): FinanceAgedInvoiceBucketTotals {
   return {
     current: 0,
     days1To30: 0,
@@ -373,9 +377,9 @@ function createEmptyAgedReceivablesTotals(): FinanceAgedReceivablesBucketTotals 
   };
 }
 
-function addToAgedReceivablesTotals(
-  totals: FinanceAgedReceivablesBucketTotals,
-  bucket: FinanceAgedReceivablesBucketKey,
+function addToAgedInvoiceTotals(
+  totals: FinanceAgedInvoiceBucketTotals,
+  bucket: FinanceAgedInvoiceBucketKey,
   amountDue: number
 ): void {
   totals[bucket] += amountDue;
@@ -427,11 +431,11 @@ function getDaysOverdue(asOfDate: Date, dueDate: Date | null): number | null {
   return Math.floor((asOfDate.getTime() - dueDate.getTime()) / MS_PER_DAY);
 }
 
-function getAgedReceivablesBucket(
+function getAgedInvoiceBucket(
   asOfDate: Date,
   dueDate: Date | null
 ): {
-  bucket: FinanceAgedReceivablesBucketKey;
+  bucket: FinanceAgedInvoiceBucketKey;
   daysOverdue: number | null;
 } {
   const daysOverdue = getDaysOverdue(asOfDate, dueDate);
@@ -455,13 +459,15 @@ function getAgedReceivablesBucket(
   return { bucket: "days91Plus", daysOverdue };
 }
 
-function buildAgedReceivablesInvoiceWhereClause(asOfDateString: string): string {
+function buildAgedInvoiceWhereClause(
+  invoiceType: FinanceAgedInvoiceType,
+  asOfDateString: string
+): string {
   const [year, month, day] = asOfDateString.split("-").map((value) => Number(value));
 
-  return [
-    `Type=="ACCREC"`,
-    `Date <= DateTime(${year},${month},${day})`,
-  ].join(" AND ");
+  return [`Type=="${invoiceType}"`, `Date <= DateTime(${year},${month},${day})`].join(
+    " AND "
+  );
 }
 
 function compareNullableStrings(a: string | null, b: string | null): number {
@@ -490,11 +496,12 @@ function getContactAccumulatorKey(invoice: Invoice): string {
   ].join("::");
 }
 
-function isEligibleAgedReceivablesInvoice(
+function isEligibleAgedInvoice(
   invoice: Invoice,
-  asOfDate: Date
+  asOfDate: Date,
+  invoiceType: FinanceAgedInvoiceType
 ): boolean {
-  if (!invoice.type || String(invoice.type) !== "ACCREC") {
+  if (!invoice.type || String(invoice.type) !== invoiceType) {
     return false;
   }
 
@@ -510,9 +517,13 @@ function isEligibleAgedReceivablesInvoice(
   return true;
 }
 
-async function listFinanceAgedReceivablesInvoices(
+async function listFinanceAgedInvoices(
   context: FinanceSyncDatasetContext,
-  asOfDateString: string
+  asOfDateString: string,
+  options: {
+    invoiceType: FinanceAgedInvoiceType;
+    contextLabel: string;
+  }
 ): Promise<Invoice[]> {
   const invoices: Invoice[] = [];
   let page = 1;
@@ -525,12 +536,12 @@ async function listFinanceAgedReceivablesInvoices(
             context.xero.accountingApi.getInvoices(
               context.xeroTenantId,
               undefined,
-              buildAgedReceivablesInvoiceWhereClause(asOfDateString),
+              buildAgedInvoiceWhereClause(options.invoiceType, asOfDateString),
               "DueDate ASC",
               undefined,
               undefined,
               undefined,
-              [...FINANCE_AGED_RECEIVABLES_INVOICE_STATUSES],
+              [...FINANCE_AGED_INVOICE_STATUSES],
               page,
               false,
               false,
@@ -542,7 +553,7 @@ async function listFinanceAgedReceivablesInvoices(
             operation: "getInvoices",
             resourceType: "INVOICE",
             workflow: context.workflow,
-            context: `financeSyncDatasets agedReceivables page ${page}`,
+            context: `financeSyncDatasets ${options.contextLabel} page ${page}`,
             onRateLimit: (event) => observeRateLimit(event.rateLimitCategory),
           }
         ),
@@ -566,63 +577,28 @@ async function listFinanceAgedReceivablesInvoices(
   return invoices;
 }
 
-export function buildFinanceReportSnapshot(input: {
-  snapshotType: FinanceSnapshotType;
-  asOfDate: Date;
-  report: ReportWithRow;
-  periodStart?: Date | null;
-  periodEnd?: Date | null;
-}): FinanceSyncSnapshotInput {
-  const rows = mapReportRows(input.report.rows ?? []);
-  const payload = {
-    reportId: input.report.reportID ?? null,
-    reportName: input.report.reportName ?? null,
-    reportType: input.report.reportType ?? null,
-    reportTitle: input.report.reportTitle ?? null,
-    reportTitles: input.report.reportTitles ?? [],
-    reportDate: input.report.reportDate ?? null,
-    updatedDateUTC: toOptionalDate(input.report.updatedDateUTC)?.toISOString() ?? null,
-    fields: (input.report.fields ?? []).map((field) => mapReportField(field)),
-    rows,
-  } as Prisma.InputJsonObject & FinanceSnapshotReportPayload;
-
-  return {
-    snapshotType: input.snapshotType,
-    asOfDate: input.asOfDate,
-    periodStart: input.periodStart ?? null,
-    periodEnd: input.periodEnd ?? null,
-    rowCount: countReportRows(rows),
-    payload,
-    sourceUpdatedAt: toOptionalDate(input.report.updatedDateUTC),
-  };
-}
-
-export function buildFinanceAgedReceivablesSnapshot(input: {
+function buildFinanceAgedInvoiceSnapshot(input: {
   asOfDate: Date;
   invoices: Invoice[];
+  invoiceType: FinanceAgedInvoiceType;
+  snapshotType: FinanceAgedSnapshotType;
 }): FinanceSyncSnapshotInput {
-  const contacts = new Map<string, FinanceAgedReceivablesContactAccumulator>();
-  const totalsByCurrency = new Map<
-    string,
-    FinanceAgedReceivablesCurrencyAccumulator
-  >();
+  const contacts = new Map<string, FinanceAgedContactAccumulator>();
+  const totalsByCurrency = new Map<string, FinanceAgedCurrencyAccumulator>();
   let sourceUpdatedAt: Date | null = null;
   let invoiceCount = 0;
 
   for (const invoice of input.invoices) {
-    if (!isEligibleAgedReceivablesInvoice(invoice, input.asOfDate)) {
+    if (!isEligibleAgedInvoice(invoice, input.asOfDate, input.invoiceType)) {
       continue;
     }
 
     const amountDue = getInvoiceAmountDue(invoice);
     const dueDate = parseOptionalDateOnly(invoice.dueDate);
-    const { bucket, daysOverdue } = getAgedReceivablesBucket(
-      input.asOfDate,
-      dueDate
-    );
+    const { bucket, daysOverdue } = getAgedInvoiceBucket(input.asOfDate, dueDate);
     const currency = getInvoiceCurrency(invoice);
     const contactKey = getContactAccumulatorKey(invoice);
-    const invoicePayload: FinanceAgedReceivablesInvoicePayload = {
+    const invoicePayload: FinanceAgedInvoicePayload = {
       invoiceId: invoice.invoiceID ?? null,
       invoiceNumber: invoice.invoiceNumber ?? null,
       reference: invoice.reference ?? null,
@@ -656,7 +632,7 @@ export function buildFinanceAgedReceivablesSnapshot(input: {
         invoiceCount: 0,
         oldestDueDate: null,
         latestDueDate: null,
-        totals: createEmptyAgedReceivablesTotals(),
+        totals: createEmptyAgedInvoiceTotals(),
         invoices: [],
       };
 
@@ -671,7 +647,7 @@ export function buildFinanceAgedReceivablesSnapshot(input: {
       (dueDate && dueDate.getTime() > contactSummary.latestDueDate.getTime())
         ? dueDate ?? contactSummary.latestDueDate
         : contactSummary.latestDueDate;
-    addToAgedReceivablesTotals(contactSummary.totals, bucket, amountDue);
+    addToAgedInvoiceTotals(contactSummary.totals, bucket, amountDue);
     contactSummary.invoices.push(invoicePayload);
     contacts.set(contactKey, contactSummary);
 
@@ -681,12 +657,12 @@ export function buildFinanceAgedReceivablesSnapshot(input: {
         currency,
         invoiceCount: 0,
         contactKeys: new Set<string>(),
-        totals: createEmptyAgedReceivablesTotals(),
+        totals: createEmptyAgedInvoiceTotals(),
       };
 
     currencySummary.invoiceCount += 1;
     currencySummary.contactKeys.add(contactKey);
-    addToAgedReceivablesTotals(currencySummary.totals, bucket, amountDue);
+    addToAgedInvoiceTotals(currencySummary.totals, bucket, amountDue);
     totalsByCurrency.set(currency, currencySummary);
 
     invoiceCount += 1;
@@ -699,7 +675,7 @@ export function buildFinanceAgedReceivablesSnapshot(input: {
 
   const contactPayloads = Array.from(contacts.values())
     .map(
-      (contact): FinanceAgedReceivablesContactPayload => ({
+      (contact): FinanceAgedContactPayload => ({
         contactId: contact.contactId,
         contactName: contact.contactName,
         contactStatus: contact.contactStatus,
@@ -741,7 +717,7 @@ export function buildFinanceAgedReceivablesSnapshot(input: {
 
   const currencyPayloads = Array.from(totalsByCurrency.values())
     .map(
-      (currency): FinanceAgedReceivablesCurrencyPayload => ({
+      (currency): FinanceAgedCurrencyPayload => ({
         currency: currency.currency,
         invoiceCount: currency.invoiceCount,
         contactCount: currency.contactKeys.size,
@@ -757,14 +733,14 @@ export function buildFinanceAgedReceivablesSnapshot(input: {
     currencies: currencyPayloads.map((currency) => currency.currency),
     totalsByCurrency: currencyPayloads,
     contacts: contactPayloads,
-  } as Prisma.InputJsonObject & FinanceAgedReceivablesPayload;
+  } as Prisma.InputJsonObject & FinanceAgedSnapshotPayload;
 
   const currencies = currencyPayloads.map((currency) => currency.currency);
   const snapshotCurrency =
     currencies.length === 1 && currencies[0] !== "UNKNOWN" ? currencies[0] : null;
 
   return {
-    snapshotType: FinanceSnapshotType.AGED_RECEIVABLES,
+    snapshotType: input.snapshotType,
     asOfDate: input.asOfDate,
     periodEnd: input.asOfDate,
     rowCount: contactPayloads.length,
@@ -773,6 +749,61 @@ export function buildFinanceAgedReceivablesSnapshot(input: {
     payload,
     sourceUpdatedAt,
   };
+}
+
+export function buildFinanceReportSnapshot(input: {
+  snapshotType: FinanceSnapshotType;
+  asOfDate: Date;
+  report: ReportWithRow;
+  periodStart?: Date | null;
+  periodEnd?: Date | null;
+}): FinanceSyncSnapshotInput {
+  const rows = mapReportRows(input.report.rows ?? []);
+  const payload = {
+    reportId: input.report.reportID ?? null,
+    reportName: input.report.reportName ?? null,
+    reportType: input.report.reportType ?? null,
+    reportTitle: input.report.reportTitle ?? null,
+    reportTitles: input.report.reportTitles ?? [],
+    reportDate: input.report.reportDate ?? null,
+    updatedDateUTC: toOptionalDate(input.report.updatedDateUTC)?.toISOString() ?? null,
+    fields: (input.report.fields ?? []).map((field) => mapReportField(field)),
+    rows,
+  } as Prisma.InputJsonObject & FinanceSnapshotReportPayload;
+
+  return {
+    snapshotType: input.snapshotType,
+    asOfDate: input.asOfDate,
+    periodStart: input.periodStart ?? null,
+    periodEnd: input.periodEnd ?? null,
+    rowCount: countReportRows(rows),
+    payload,
+    sourceUpdatedAt: toOptionalDate(input.report.updatedDateUTC),
+  };
+}
+
+export function buildFinanceAgedReceivablesSnapshot(input: {
+  asOfDate: Date;
+  invoices: Invoice[];
+}): FinanceSyncSnapshotInput {
+  return buildFinanceAgedInvoiceSnapshot({
+    asOfDate: input.asOfDate,
+    invoices: input.invoices,
+    invoiceType: "ACCREC",
+    snapshotType: FinanceSnapshotType.AGED_RECEIVABLES,
+  });
+}
+
+export function buildFinanceAgedPayablesSnapshot(input: {
+  asOfDate: Date;
+  invoices: Invoice[];
+}): FinanceSyncSnapshotInput {
+  return buildFinanceAgedInvoiceSnapshot({
+    asOfDate: input.asOfDate,
+    invoices: input.invoices,
+    invoiceType: "ACCPAY",
+    snapshotType: FinanceSnapshotType.AGED_PAYABLES,
+  });
 }
 
 export async function syncFinanceProfitAndLossMonthlySnapshot(
@@ -902,12 +933,27 @@ export async function syncFinanceAgedReceivablesSnapshot(
   context: FinanceSyncDatasetContext
 ): Promise<FinanceSyncSnapshotInput> {
   const window = getFinanceReportWindow(context.startedAt);
-  const invoices = await listFinanceAgedReceivablesInvoices(
-    context,
-    window.asOfDateString
-  );
+  const invoices = await listFinanceAgedInvoices(context, window.asOfDateString, {
+    invoiceType: "ACCREC",
+    contextLabel: "agedReceivables",
+  });
 
   return buildFinanceAgedReceivablesSnapshot({
+    asOfDate: window.asOfDate,
+    invoices,
+  });
+}
+
+export async function syncFinanceAgedPayablesSnapshot(
+  context: FinanceSyncDatasetContext
+): Promise<FinanceSyncSnapshotInput> {
+  const window = getFinanceReportWindow(context.startedAt);
+  const invoices = await listFinanceAgedInvoices(context, window.asOfDateString, {
+    invoiceType: "ACCPAY",
+    contextLabel: "agedPayables",
+  });
+
+  return buildFinanceAgedPayablesSnapshot({
     asOfDate: window.asOfDate,
     invoices,
   });
