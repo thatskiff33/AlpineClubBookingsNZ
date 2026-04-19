@@ -665,6 +665,20 @@ model XeroToken {
 }
 
 // ---------------------------------------------------------------------------
+// Finance Xero OAuth Token (single row)
+// ---------------------------------------------------------------------------
+
+model FinanceXeroToken {
+  id           String   @id @default(cuid())
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  tenantId     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
 // Xero Reconciliation Ledger
 // ---------------------------------------------------------------------------
 
@@ -760,6 +774,42 @@ model XeroApiUsageDaily {
 }
 
 model XeroApiUsageEvent {
+  id                String   @id @default(cuid())
+  usageDate         DateTime @db.Date
+  operation         String
+  resourceType      String
+  workflow          String?
+  success           Boolean
+  rateLimitCategory String?
+  statusCode        Int?
+  durationMs        Int?
+  errorMessage      String?
+  createdAt         DateTime @default(now())
+
+  @@index([usageDate, createdAt])
+  @@index([operation, usageDate])
+  @@index([workflow, usageDate])
+  @@index([success, createdAt])
+  @@index([rateLimitCategory, createdAt])
+}
+
+model FinanceXeroApiUsageDaily {
+  id                    String    @id @default(cuid())
+  usageDate             DateTime  @unique @db.Date
+  totalCalls            Int       @default(0)
+  successfulCalls       Int       @default(0)
+  failedCalls           Int       @default(0)
+  dayRateLimitHits      Int       @default(0)
+  minuteRateLimitHits   Int       @default(0)
+  lastRateLimitCategory String?
+  lastRateLimitAt       DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([usageDate])
+}
+
+model FinanceXeroApiUsageEvent {
   id                String   @id @default(cuid())
   usageDate         DateTime @db.Date
   operation         String
