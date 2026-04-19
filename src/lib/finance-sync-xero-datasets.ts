@@ -24,6 +24,8 @@ export const FINANCE_SYNC_XERO_BANK_BALANCES_DATASET_KEY =
   "xero-bank-balances";
 export const FINANCE_SYNC_XERO_AGED_RECEIVABLES_DATASET_KEY =
   "xero-aged-receivables";
+export const FINANCE_SYNC_XERO_ACCOUNTS_RECEIVABLE_INVOICES_DATASET_KEY =
+  "xero-accounts-receivable-invoices";
 export const FINANCE_SYNC_XERO_AGED_PAYABLES_DATASET_KEY =
   "xero-aged-payables";
 export const FINANCE_SYNC_XERO_ACCOUNTS_PAYABLE_INVOICES_DATASET_KEY =
@@ -169,6 +171,72 @@ interface FinanceAgedCurrencyAccumulator {
   invoiceCount: number;
   contactKeys: Set<string>;
   totals: FinanceAgedInvoiceBucketTotals;
+}
+
+interface FinanceAccountsReceivableInvoicePayload {
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  reference: string | null;
+  status: string | null;
+  invoiceDate: string | null;
+  dueDate: string | null;
+  expectedPaymentDate: string | null;
+  updatedDateUTC: string | null;
+  currency: string;
+  currencyRate: number | null;
+  subTotal: number | null;
+  totalTax: number | null;
+  total: number | null;
+  amountPaid: number | null;
+  amountCredited: number | null;
+  amountDue: number;
+}
+
+interface FinanceAccountsReceivableContactPayload {
+  contactId: string | null;
+  contactName: string | null;
+  contactStatus: string | null;
+  currency: string;
+  invoiceCount: number;
+  totalAmountDue: number;
+  oldestDueDate: string | null;
+  latestDueDate: string | null;
+  invoices: FinanceAccountsReceivableInvoicePayload[];
+}
+
+interface FinanceAccountsReceivableCurrencyPayload {
+  currency: string;
+  invoiceCount: number;
+  contactCount: number;
+  totalAmountDue: number;
+}
+
+interface FinanceAccountsReceivableInvoicesPayload {
+  asOfDate: string;
+  invoiceCount: number;
+  contactCount: number;
+  currencies: string[];
+  totalsByCurrency: FinanceAccountsReceivableCurrencyPayload[];
+  contacts: FinanceAccountsReceivableContactPayload[];
+}
+
+interface FinanceAccountsReceivableContactAccumulator {
+  contactId: string | null;
+  contactName: string | null;
+  contactStatus: string | null;
+  currency: string;
+  invoiceCount: number;
+  totalAmountDue: number;
+  oldestDueDate: Date | null;
+  latestDueDate: Date | null;
+  invoices: FinanceAccountsReceivableInvoicePayload[];
+}
+
+interface FinanceAccountsReceivableCurrencyAccumulator {
+  currency: string;
+  invoiceCount: number;
+  contactKeys: Set<string>;
+  totalAmountDue: number;
 }
 
 interface FinanceAccountsPayableInvoicePayload {
@@ -898,6 +966,180 @@ export function buildFinanceAgedReceivablesSnapshot(input: {
   });
 }
 
+export function buildFinanceAccountsReceivableInvoicesSnapshot(input: {
+  asOfDate: Date;
+  invoices: Invoice[];
+}): FinanceSyncSnapshotInput {
+  const contacts = new Map<string, FinanceAccountsReceivableContactAccumulator>();
+  const totalsByCurrency = new Map<
+    string,
+    FinanceAccountsReceivableCurrencyAccumulator
+  >();
+  let sourceUpdatedAt: Date | null = null;
+  let invoiceCount = 0;
+
+  for (const invoice of input.invoices) {
+    if (!isEligibleOpenInvoice(invoice, input.asOfDate, "ACCREC")) {
+      continue;
+    }
+
+    const amountDue = getInvoiceAmountDue(invoice);
+    const currency = getInvoiceCurrency(invoice);
+    const dueDate = parseOptionalDateOnly(invoice.dueDate);
+    const contactKey = getContactAccumulatorKey(invoice);
+    const invoicePayload: FinanceAccountsReceivableInvoicePayload = {
+      invoiceId: invoice.invoiceID ?? null,
+      invoiceNumber: invoice.invoiceNumber ?? null,
+      reference: invoice.reference ?? null,
+      status: invoice.status ? String(invoice.status) : null,
+      invoiceDate: invoice.date ?? null,
+      dueDate: invoice.dueDate ?? null,
+      expectedPaymentDate: invoice.expectedPaymentDate ?? null,
+      updatedDateUTC: toOptionalDate(invoice.updatedDateUTC)?.toISOString() ?? null,
+      currency,
+      currencyRate:
+        typeof invoice.currencyRate === "number" ? invoice.currencyRate : null,
+      subTotal: typeof invoice.subTotal === "number" ? invoice.subTotal : null,
+      totalTax: typeof invoice.totalTax === "number" ? invoice.totalTax : null,
+      total: typeof invoice.total === "number" ? invoice.total : null,
+      amountPaid:
+        typeof invoice.amountPaid === "number" ? invoice.amountPaid : null,
+      amountCredited:
+        typeof invoice.amountCredited === "number" ? invoice.amountCredited : null,
+      amountDue,
+    };
+
+    const contactSummary =
+      contacts.get(contactKey) ??
+      {
+        contactId: invoice.contact?.contactID ?? null,
+        contactName: getInvoiceContactName(invoice),
+        contactStatus: invoice.contact?.contactStatus
+          ? String(invoice.contact.contactStatus)
+          : null,
+        currency,
+        invoiceCount: 0,
+        totalAmountDue: 0,
+        oldestDueDate: null,
+        latestDueDate: null,
+        invoices: [],
+      };
+
+    contactSummary.invoiceCount += 1;
+    contactSummary.totalAmountDue += amountDue;
+    contactSummary.oldestDueDate =
+      !contactSummary.oldestDueDate ||
+      (dueDate && dueDate.getTime() < contactSummary.oldestDueDate.getTime())
+        ? dueDate ?? contactSummary.oldestDueDate
+        : contactSummary.oldestDueDate;
+    contactSummary.latestDueDate =
+      !contactSummary.latestDueDate ||
+      (dueDate && dueDate.getTime() > contactSummary.latestDueDate.getTime())
+        ? dueDate ?? contactSummary.latestDueDate
+        : contactSummary.latestDueDate;
+    contactSummary.invoices.push(invoicePayload);
+    contacts.set(contactKey, contactSummary);
+
+    const currencySummary =
+      totalsByCurrency.get(currency) ??
+      {
+        currency,
+        invoiceCount: 0,
+        contactKeys: new Set<string>(),
+        totalAmountDue: 0,
+      };
+
+    currencySummary.invoiceCount += 1;
+    currencySummary.contactKeys.add(contactKey);
+    currencySummary.totalAmountDue += amountDue;
+    totalsByCurrency.set(currency, currencySummary);
+
+    invoiceCount += 1;
+
+    const updatedDate = toOptionalDate(invoice.updatedDateUTC);
+    if (updatedDate && (!sourceUpdatedAt || updatedDate > sourceUpdatedAt)) {
+      sourceUpdatedAt = updatedDate;
+    }
+  }
+
+  const contactPayloads = Array.from(contacts.values())
+    .map(
+      (contact): FinanceAccountsReceivableContactPayload => ({
+        contactId: contact.contactId,
+        contactName: contact.contactName,
+        contactStatus: contact.contactStatus,
+        currency: contact.currency,
+        invoiceCount: contact.invoiceCount,
+        totalAmountDue: contact.totalAmountDue,
+        oldestDueDate: toDateOnlyString(contact.oldestDueDate),
+        latestDueDate: toDateOnlyString(contact.latestDueDate),
+        invoices: contact.invoices.sort((left, right) => {
+          const dueDateOrder = compareNullableStrings(left.dueDate, right.dueDate);
+          if (dueDateOrder !== 0) {
+            return dueDateOrder;
+          }
+
+          const invoiceNumberOrder = compareNullableStrings(
+            left.invoiceNumber,
+            right.invoiceNumber
+          );
+          if (invoiceNumberOrder !== 0) {
+            return invoiceNumberOrder;
+          }
+
+          return compareNullableStrings(left.invoiceId, right.invoiceId);
+        }),
+      })
+    )
+    .sort((left, right) => {
+      if (right.totalAmountDue !== left.totalAmountDue) {
+        return right.totalAmountDue - left.totalAmountDue;
+      }
+
+      const nameOrder = compareNullableStrings(left.contactName, right.contactName);
+      if (nameOrder !== 0) {
+        return nameOrder;
+      }
+
+      return compareNullableStrings(left.currency, right.currency);
+    });
+
+  const currencyPayloads = Array.from(totalsByCurrency.values())
+    .map(
+      (currency): FinanceAccountsReceivableCurrencyPayload => ({
+        currency: currency.currency,
+        invoiceCount: currency.invoiceCount,
+        contactCount: currency.contactKeys.size,
+        totalAmountDue: currency.totalAmountDue,
+      })
+    )
+    .sort((left, right) => left.currency.localeCompare(right.currency));
+
+  const payload = {
+    asOfDate: toDateOnlyString(input.asOfDate),
+    invoiceCount,
+    contactCount: contactPayloads.length,
+    currencies: currencyPayloads.map((currency) => currency.currency),
+    totalsByCurrency: currencyPayloads,
+    contacts: contactPayloads,
+  } as Prisma.InputJsonObject & FinanceAccountsReceivableInvoicesPayload;
+
+  const currencies = currencyPayloads.map((currency) => currency.currency);
+  const snapshotCurrency =
+    currencies.length === 1 && currencies[0] !== "UNKNOWN" ? currencies[0] : null;
+
+  return {
+    snapshotType: FinanceSnapshotType.ACCOUNTS_RECEIVABLE_INVOICES,
+    asOfDate: input.asOfDate,
+    periodEnd: input.asOfDate,
+    rowCount: invoiceCount,
+    scope: "organisation",
+    currency: snapshotCurrency,
+    payload,
+    sourceUpdatedAt,
+  };
+}
+
 export function buildFinanceAgedPayablesSnapshot(input: {
   asOfDate: Date;
   invoices: Invoice[];
@@ -1217,6 +1459,21 @@ export async function syncFinanceAgedReceivablesSnapshot(
   });
 
   return buildFinanceAgedReceivablesSnapshot({
+    asOfDate: window.asOfDate,
+    invoices,
+  });
+}
+
+export async function syncFinanceAccountsReceivableInvoicesSnapshot(
+  context: FinanceSyncDatasetContext
+): Promise<FinanceSyncSnapshotInput> {
+  const window = getFinanceReportWindow(context.startedAt);
+  const invoices = await listFinanceOpenInvoices(context, window.asOfDateString, {
+    invoiceType: "ACCREC",
+    contextLabel: "accountsReceivableInvoices",
+  });
+
+  return buildFinanceAccountsReceivableInvoicesSnapshot({
     asOfDate: window.asOfDate,
     invoices,
   });

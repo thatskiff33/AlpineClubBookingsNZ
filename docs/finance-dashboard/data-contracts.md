@@ -57,6 +57,13 @@ The minimum dataset surface is:
   - `91+`
 - Preserve currency safety. Aggregate organisation totals by currency and group contact rollups by contact plus currency rather than summing mixed-currency balances into one amount.
 
+## Accounts Receivable Invoices Contract
+
+- The organisation-level accounts receivable invoice snapshot is derived from the finance-only Xero `ACCREC` invoice listing surface and reuses the same open-invoice fetch boundary as aged receivables.
+- Include only receivable invoices with a positive outstanding balance and an invoice date on or before the snapshot `asOfDate`.
+- Persist invoice-level detail suitable for downstream finance reporting, including customer contact metadata plus invoice status, invoice date, due date, expected payment date when present, currency, and outstanding balance components.
+- Preserve currency safety. Aggregate organisation totals by currency and group customer contact rollups by contact plus currency rather than summing mixed-currency balances into one amount.
+
 ## Aged Payables Contract
 
 - The organisation-level aged payables snapshot is derived from finance-only Xero `ACCPAY` invoices because the currently verified `AgedPayablesByContact` report surface remains contact-scoped.
@@ -66,7 +73,7 @@ The minimum dataset surface is:
   - `1-30`
   - `31-60`
   - `61-90`
-- `91+`
+  - `91+`
 - Preserve currency safety. Aggregate organisation totals by currency and group contact rollups by contact plus currency rather than summing mixed-currency balances into one amount.
 
 ## Accounts Payable Invoices Contract
