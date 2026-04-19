@@ -13,6 +13,8 @@ const {
   mockFailFinanceSyncRun,
   mockUpsertFinanceSnapshot,
   mockRecordFinanceXeroApiUsage,
+  MockXeroDailyLimitError,
+  mockCallXeroApi,
 } = vi.hoisted(() => ({
   mockCreateFinanceXeroClient: vi.fn(),
   mockLoadFinanceXeroTokens: vi.fn(),
@@ -21,6 +23,16 @@ const {
   mockFailFinanceSyncRun: vi.fn(),
   mockUpsertFinanceSnapshot: vi.fn(),
   mockRecordFinanceXeroApiUsage: vi.fn(),
+  MockXeroDailyLimitError: class TestXeroDailyLimitError extends Error {
+    retryAfterSec: number;
+
+    constructor(retryAfterSec: number) {
+      super(`Retry after ${retryAfterSec} seconds`);
+      this.name = "XeroDailyLimitError";
+      this.retryAfterSec = retryAfterSec;
+    }
+  },
+  mockCallXeroApi: vi.fn(),
 }));
 
 vi.mock("@/lib/finance-xero", () => ({
@@ -42,6 +54,12 @@ vi.mock("@/lib/finance-xero-api-usage", () => ({
   recordFinanceXeroApiUsage: mockRecordFinanceXeroApiUsage,
 }));
 
+vi.mock("@/lib/xero", () => ({
+  XeroDailyLimitError: MockXeroDailyLimitError,
+  callXeroApi: (fn: () => unknown, options: unknown) =>
+    mockCallXeroApi(fn, options),
+}));
+
 import {
   createFinanceXeroSyncConnection,
   DEFAULT_FINANCE_SYNC_WORKFLOW,
@@ -61,6 +79,7 @@ function createMockXeroClient(overrides?: {
       getReportProfitAndLoss: vi.fn(),
       getReportBalanceSheet: vi.fn(),
       getReportBankSummary: vi.fn(),
+      getInvoices: vi.fn(),
     },
   };
 }
@@ -82,6 +101,7 @@ describe("finance-sync-service", () => {
     mockFailFinanceSyncRun.mockResolvedValue({ id: "run-1" });
     mockUpsertFinanceSnapshot.mockResolvedValue({ id: "snapshot-1" });
     mockCreateFinanceXeroClient.mockReturnValue(createMockXeroClient());
+    mockCallXeroApi.mockImplementation(async (fn: () => unknown) => fn());
   });
 
   it("creates a finance Xero sync connection from the finance-only token boundary", async () => {
@@ -289,6 +309,27 @@ describe("finance-sync-service", () => {
         reports: [{ ...report, reportID: "bank-1", reportName: "Bank Summary" }],
       },
     });
+    xeroClient.accountingApi.getInvoices.mockResolvedValue({
+      body: {
+        invoices: [
+          {
+            type: "ACCREC",
+            invoiceID: "inv-1",
+            invoiceNumber: "INV-001",
+            date: "2026-04-10",
+            dueDate: "2026-04-15",
+            amountDue: 42,
+            status: "AUTHORISED",
+            currencyCode: "NZD",
+            contact: {
+              contactID: "contact-1",
+              name: "Alice",
+              contactStatus: "ACTIVE",
+            },
+          },
+        ],
+      },
+    });
     mockCreateFinanceXeroClient.mockReturnValue(xeroClient);
 
     const result = await runFinanceSync({
@@ -297,7 +338,7 @@ describe("finance-sync-service", () => {
       datasets: getFinanceSyncDatasets(),
     });
 
-    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(3);
+    expect(mockUpsertFinanceSnapshot).toHaveBeenCalledTimes(4);
     expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
@@ -328,15 +369,25 @@ describe("finance-sync-service", () => {
         syncRunId: "run-1",
       })
     );
+    expect(mockUpsertFinanceSnapshot).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        snapshotType: FinanceSnapshotType.AGED_RECEIVABLES,
+        asOfDate: new Date("2026-04-20T00:00:00.000Z"),
+        periodEnd: new Date("2026-04-20T00:00:00.000Z"),
+        currency: "NZD",
+        syncRunId: "run-1",
+      })
+    );
     expect(mockCompleteFinanceSyncRun).toHaveBeenCalledWith({
       runId: "run-1",
       completedAt: expect.any(Date),
-      snapshotCount: 3,
-      totalRowCount: 3,
+      snapshotCount: 4,
+      totalRowCount: 4,
       resultSummary: {
-        datasetCount: 3,
+        datasetCount: 4,
         failedDatasetCount: 0,
-        successfulDatasetCount: 3,
+        successfulDatasetCount: 4,
         datasets: [
           {
             datasetKey: "xero-profit-and-loss-monthly",
@@ -356,11 +407,17 @@ describe("finance-sync-service", () => {
             totalRowCount: 1,
             snapshotTypes: [FinanceSnapshotType.BANK_BALANCES],
           },
+          {
+            datasetKey: "xero-aged-receivables",
+            snapshotCount: 1,
+            totalRowCount: 1,
+            snapshotTypes: [FinanceSnapshotType.AGED_RECEIVABLES],
+          },
         ],
       },
     });
     expect(result.status).toBe(FinanceSyncRunStatus.SUCCEEDED);
-    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledTimes(3);
+    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledTimes(4);
   });
 
   it("fails the run durably when the finance Xero connection cannot be established", async () => {
