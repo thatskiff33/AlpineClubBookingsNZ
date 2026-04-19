@@ -335,6 +335,7 @@ describe("membership nomination workflow", () => {
   });
 
   it("moves the application to pending admin when the second nominator confirms", async () => {
+    const futureExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
     const application = {
       id: "app-1",
       applicantFirstName: "Jane",
@@ -363,7 +364,7 @@ describe("membership nomination workflow", () => {
       token: "token-2",
       applicationId: "app-1",
       nominatorMemberId: "nom-2",
-      expiresAt: new Date("2026-04-19T00:00:00.000Z"),
+      expiresAt: futureExpiry,
       confirmedAt: null,
       createdAt: new Date("2026-04-12T00:00:00.000Z"),
       application,
@@ -377,7 +378,7 @@ describe("membership nomination workflow", () => {
           token: "token-2",
           applicationId: "app-1",
           nominatorMemberId: "nom-2",
-          expiresAt: new Date("2026-04-19T00:00:00.000Z"),
+          expiresAt: futureExpiry,
           confirmedAt: null,
           createdAt: new Date("2026-04-12T00:00:00.000Z"),
           application,
