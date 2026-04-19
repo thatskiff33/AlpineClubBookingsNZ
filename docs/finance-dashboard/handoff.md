@@ -10,11 +10,10 @@ Last updated: 2026-04-20
 - Phase `#93` is closed
 - Phase `#94` is closed
 - Active phase: `#95`
-- Most recent landed task: `#115`
-- Merged implementation PR for `#115`: `#117`
-- Finance task currently in flight: `#118`
-- Draft implementation PR for `#118`: `#119`
-- Single `status: ready` finance task: `#118`
+- Most recent landed task: `#118`
+- Merged implementation PR for `#118`: `#119`
+- Finance task currently in flight: none
+- Single `status: ready` finance task: `#120`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Task #115
@@ -105,7 +104,14 @@ Done:
 - Added `src/lib/__tests__/finance-sync-datasets.test.ts` for dataset registration, mapping, finance report window, and usage-metering coverage
 - Extended `src/lib/__tests__/finance-sync-service.test.ts` with a targeted real-registry orchestration check to confirm the registered finance datasets still persist through `runFinanceSync` into `FinanceSnapshot`
 - Updated `docs/finance-dashboard/finance-sync-service-contract.md` and `docs/finance-dashboard/finance-sync-cron-contract.md` for the landed first report-based dataset surface
-- Opened draft PR `#119` for task `#118`
+- Fixed the finance sync build blockers that surfaced during PR `#119` by:
+  - wrapping the new Xero report calls with `callXeroApi` so the wrapper audit stays green
+  - normalizing finance sync run summaries into Prisma JSON-safe objects
+  - relaxing the storage input status annotation to the generated `FinanceSyncRunStatus` union while keeping the runtime guard intact
+- Merged task `#118` to `main` via PR `#119`
+- Closed task `#118` as completed
+- Created follow-up task `#120` under Phase `#95` for a single aged receivables dataset handler
+- Marked `#120` as the single finance task with `status: ready`
 
 Validation:
 - Verified issue `#105` is closed as completed
@@ -128,17 +134,21 @@ Validation:
 - Verified `npx eslint src/instrumentation.ts src/lib/finance-sync-cron.ts src/lib/finance-sync-datasets.ts src/lib/__tests__/finance-sync-cron.test.ts`
 - Verified PR `#117` is merged
 - Verified issue `#115` is closed as completed
-- Verified issue `#118` is open with labels `area: finance`, `type: task`, and `status: ready`
-- Verified no other open finance task is marked `status: ready`
 - Verified `npx vitest run src/lib/__tests__/finance-sync-datasets.test.ts src/lib/__tests__/finance-sync-service.test.ts`
 - Verified `npx eslint src/lib/finance-sync-xero-datasets.ts src/lib/finance-sync-datasets.ts src/lib/__tests__/finance-sync-datasets.test.ts src/lib/__tests__/finance-sync-service.test.ts`
-- Verified draft PR `#119` is open for task `#118`
+- Verified `npx vitest run src/lib/__tests__/finance-sync-datasets.test.ts src/lib/__tests__/finance-sync-service.test.ts src/lib/__tests__/xero-wrapper-audit.test.ts`
+- Verified `npx vitest run src/lib/__tests__/finance-sync-storage.test.ts src/lib/__tests__/finance-sync-service.test.ts`
+- Verified `npx eslint src/lib/finance-sync-service.ts src/lib/finance-sync-storage.ts src/lib/finance-sync-xero-datasets.ts src/lib/finance-sync-datasets.ts src/lib/__tests__/finance-sync-datasets.test.ts src/lib/__tests__/finance-sync-service.test.ts`
+- Verified `npm run build`
+- Verified PR `#119` is merged
+- Verified issue `#118` is closed as completed
+- Verified issue `#120` is open with labels `area: finance`, `type: task`, and `status: ready`
+- Verified no other open finance task is marked `status: ready`
 - `git diff --check`
 
 What remains:
-- Review and merge PR `#119` so task `#118` lands on `main`
-- Close task `#118` only after PR `#119` is merged
-- Create exactly one new finance task issue under phase `#95` only after `#118` lands; keep the next slice on the smallest remaining dataset gap after the first report-based handlers
+- Implement task `#120` for a single aged receivables finance snapshot dataset handler
+- Keep the next slice on finance-only dataset registration, Xero-to-snapshot mapping helpers, and service-adjacent docs/tests
 - Leave diagnostics UI, manual sync APIs, reporting pages, booking-adapter work, and operational Xero behavior for later work unless new evidence proves a gap
 
 Blockers:
@@ -154,11 +164,12 @@ Work on exactly one task issue only.
 1. Read only these sources first:
 - docs/finance-dashboard/handoff.md
 - phase issue #95
-- ready task issue #118
-- draft PR #119
+- ready task issue #120
+- merged PR #119
 
-2. Land task #118 and keep it tightly scoped:
-- review and merge PR `#119` if it is still the correct implementation for task `#118`
+2. Implement task #120 and keep it tightly scoped:
+- extend the finance dataset registry with a single aged receivables Xero snapshot handler
+- add only the Xero-to-snapshot mapping helpers needed for the aged receivables payload
 - keep the work on finance-only dataset registration, Xero-to-snapshot mapping helpers, and service-adjacent docs/tests only
 - ensure scheduled runs continue through the landed finance sync cron, service, and storage boundaries without bypassing `FinanceSyncRun` or `FinanceSnapshot`
 - run only the targeted validation needed for touched finance sync helpers, docs, and tests unless new changes require more
@@ -166,13 +177,13 @@ Work on exactly one task issue only.
 
 3. Scope the next task tightly:
 - do not combine the task with diagnostics UI, diagnostics route handlers, manual sync route handlers, or reporting-page work
-- do not broaden the task into booking-adapter work or finance shell pages
+- do not broaden the task into aged payables, bank transactions, contacts, booking-adapter work, or finance shell pages
 - do not reopen operational Xero work unless current evidence proves a new gap
 
 4. Before finishing:
 - update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, and the next exact Next Prompt block
-- close task #118 if it lands and create exactly one new finance task issue under phase #95 for the next smallest remaining gap
-- make that new issue the single `status: ready` finance task only after `#118` is fully landed
+- close task #120 if it lands and create exactly one new finance task issue under phase `#95` for the next smallest remaining gap
+- make that new issue the single `status: ready` finance task only after `#120` is fully landed
 - ensure only one finance task carries `status: ready`
 - leave docs/XERO_HANDOFF.md unchanged unless new evidence forces it open
 
