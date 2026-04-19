@@ -11,7 +11,8 @@ Last updated: 2026-04-19
 - Active phase: `#94`
 - Most recent landed task: `#108`
 - Merged implementation PR for `#108`: `#109`
-- No finance task is currently in flight
+- Active finance task in flight: `#110`
+- Working branch: `finance/issue-110-route-scaffold`
 - No finance task is currently marked `status: ready`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
@@ -40,8 +41,9 @@ Last updated: 2026-04-19
 
 Done:
 - Confirmed task `#105` landed on `main` via merged PR `#107`
-- Closed out the stale in-flight handoff state for `#105`
 - Landed task `#108` via PR `#109` for finance token storage and separate finance usage metering scaffolding
+- Closed out the stale in-flight handoff state for `#105`
+- Closed out the `#108` in-flight handoff state now that PR `#109` is merged on `main`
 - Added `FINANCE_XERO_ENCRYPTION_KEY` to `.env.example`
 - Added finance-only Prisma models for `FinanceXeroToken`, `FinanceXeroApiUsageDaily`, and `FinanceXeroApiUsageEvent`
 - Added `src/lib/finance-xero-token-store.ts` for finance-only encrypted token persistence and connection-status scaffolding
@@ -49,22 +51,34 @@ Done:
 - Extended `src/lib/xero-config.ts` and `src/lib/__tests__/xero-config.test.ts` with finance token-storage config validation and no-fallback checks
 - Added targeted unit coverage for finance token storage and finance usage metering separation
 - Updated `docs/finance-dashboard/finance-xero-config-contract.md` for the finance encryption key and storage/metering boundary
-- Kept finance connect/callback/status/disconnect routes, finance sync jobs, and `docs/XERO_HANDOFF.md` out of scope
+- Created follow-up task `#110` for finance connect/status/disconnect route scaffolding on top of the landed finance storage boundary
+- Picked up task `#110` and removed its `status: ready` label while the work is in flight
+- Added `src/lib/finance-api-auth.ts` for finance-manager API route authorization without reusing admin-only route guards
+- Added `src/lib/finance-xero.ts` for finance-only consent URL, callback token exchange, status summary, and disconnect behavior
+- Added `src/lib/finance-xero-oauth-state.ts` for a finance-only OAuth state cookie name and `/api/finance/xero` cookie scope
+- Added finance-only manager routes:
+  - `src/app/api/finance/xero/connect/route.ts`
+  - `src/app/api/finance/xero/status/route.ts`
+  - `src/app/api/finance/xero/disconnect/route.ts`
+  - `src/app/api/finance/xero/callback/route.ts`
+- Added targeted route coverage in `src/lib/__tests__/finance-xero-routes.test.ts` for finance manager authorization, config-gated connect behavior, finance-scoped OAuth state cookies, and callback redirects
+- Kept finance sync jobs and `docs/XERO_HANDOFF.md` out of scope
 
 Validation:
 - Verified issue `#105` is closed as completed
 - Verified PR `#107` is merged
+- Verified issue `#108` is closed as completed
 - Verified PR `#109` is merged
-- `npx prisma generate`
-- `npx vitest run src/lib/__tests__/xero-config.test.ts src/lib/__tests__/finance-xero-token-store.test.ts src/lib/__tests__/finance-xero-api-usage.test.ts`
-- `npx eslint src/lib/xero-config.ts src/lib/finance-xero-token-store.ts src/lib/finance-xero-api-usage.ts src/lib/__tests__/xero-config.test.ts src/lib/__tests__/finance-xero-token-store.test.ts src/lib/__tests__/finance-xero-api-usage.test.ts`
+- Verified issue `#110` is open and no longer carries `status: ready`
+- Verified no open finance task is marked `status: ready` while `#110` is in flight
+- `npx vitest run src/lib/__tests__/finance-xero-routes.test.ts src/lib/__tests__/finance-auth.test.ts src/lib/__tests__/finance-xero-token-store.test.ts src/lib/__tests__/xero-config.test.ts`
+- `npx eslint src/lib/finance-api-auth.ts src/lib/finance-xero-oauth-state.ts src/lib/finance-xero.ts src/app/api/finance/xero/connect/route.ts src/app/api/finance/xero/status/route.ts src/app/api/finance/xero/disconnect/route.ts src/app/api/finance/xero/callback/route.ts src/lib/__tests__/finance-xero-routes.test.ts`
 - `git diff --check`
 
 What remains:
-- Identify the next smallest remaining Phase 2 gap under issue `#94`
-- Create exactly one new finance task issue for that next gap and make it the only `status: ready` finance task
-- Add finance connect/callback/status/disconnect routes in a later task once this storage boundary is merged
-- Leave finance sync jobs and operational Xero behavior for later work
+- Review and land task `#110`
+- Keep any follow-up fixes scoped to the finance manager route/auth/status/disconnect surface plus the minimal callback hook that supports it
+- Leave finance sync jobs, broader finance callback/sync orchestration, and operational Xero behavior for later work unless new evidence proves a gap
 
 Blockers:
 - None
@@ -80,27 +94,28 @@ Work on exactly one task issue only.
 - docs/finance-dashboard/handoff.md
 - docs/XERO_HANDOFF.md
 - phase issue #94
-- closed task issue #105
-- merged PR #107
-- closed task issue #108
+- in-flight task issue #110
 - merged PR #109
 
-2. Close out the #108 handoff state and prepare the next Phase 2 task:
-- update docs/finance-dashboard/handoff.md so it reflects that task #108 landed via PR #109 and is no longer in flight
-- identify the next smallest remaining Phase 2 gap under issue #94
-- create exactly one new finance task issue under phase #94 for that next gap
-- make that new issue the single `status: ready` finance task
+2. Finish task #110 and keep it tightly scoped:
+- keep the work on finance connect/status/disconnect route scaffolding on top of the separate finance token-store boundary from PR #109
+- keep finance manager authorization on those routes
+- keep finance route wiring separate from operational Xero routes and helpers
+- allow only the minimal finance callback hook needed to support the finance connect route; do not pull in finance sync jobs
+- run targeted validation for finance route authorization and connection-state behavior
 - keep docs/XERO_HANDOFF.md unchanged unless current evidence proves a new operational Xero gap
 
 3. Scope the next task tightly:
-- prefer the next slice to be finance connect/status/disconnect route scaffolding on top of the separate finance storage boundary
-- do not combine that task with finance sync jobs unless current issue evidence requires it
+- do not combine the task with finance sync jobs
+- do not broaden the task into reporting UI or wider finance sync orchestration beyond the minimal finance callback hook already introduced
 - do not reopen operational Xero work unless current evidence proves a new gap
 
 4. Before finishing:
 - run only the targeted validation needed for touched files; run full build only if the changed files require it
 - update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, and the next exact Next Prompt block
-- ensure only one finance task carries `status: ready`
+- ensure no finance task carries `status: ready` while `#110` is in flight
+- close task #110 if it lands and create exactly one new finance task issue under phase #94 for the next smallest remaining gap
+- make that new issue the single `status: ready` finance task only after `#110` is fully landed
 - leave docs/XERO_HANDOFF.md unchanged unless new evidence forces it open
 
 5. Work on exactly one task issue only.
