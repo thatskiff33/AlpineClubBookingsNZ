@@ -30,6 +30,8 @@ If any metric definition changes, update this file in the same PR.
 
 Production finance data is stored in Postgres-backed snapshots or normalized finance tables, not CSV files.
 
+Phase 3 storage scaffolding persists generic snapshot payloads in `FinanceSnapshot` and sync lifecycle metadata in `FinanceSyncRun`; see `finance-snapshot-storage-contract.md` for the storage-level contract.
+
 The minimum dataset surface is:
 
 - profit and loss monthly snapshot

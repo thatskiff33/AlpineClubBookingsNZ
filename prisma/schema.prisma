@@ -26,6 +26,31 @@ enum FinanceAccessLevel {
   MANAGER
 }
 
+enum FinanceSnapshotType {
+  PROFIT_AND_LOSS_MONTHLY
+  ACCOUNTS_RECEIVABLE_INVOICES
+  ACCOUNTS_PAYABLE_INVOICES
+  BANK_TRANSACTIONS
+  AGED_RECEIVABLES
+  AGED_PAYABLES
+  BALANCE_SHEET
+  BANK_BALANCES
+  CONTACTS
+}
+
+enum FinanceSyncRunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  PARTIAL
+}
+
+enum FinanceSyncRunTrigger {
+  MANUAL
+  SCHEDULED
+  BACKFILL
+}
+
 enum AgeTier {
   INFANT
   CHILD
@@ -676,6 +701,56 @@ model FinanceXeroToken {
   tenantId     String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Finance Snapshot Storage
+// ---------------------------------------------------------------------------
+
+model FinanceSyncRun {
+  id                  String                @id @default(cuid())
+  workflow            String
+  trigger             FinanceSyncRunTrigger
+  status              FinanceSyncRunStatus  @default(RUNNING)
+  startedAt           DateTime              @default(now())
+  completedAt         DateTime?
+  snapshotCount       Int                   @default(0)
+  totalRowCount       Int                   @default(0)
+  xeroTenantId        String?
+  requestedByMemberId String?
+  resultSummary       Json?
+  errorSummary        String?
+  errorDetails        Json?
+  metadata            Json?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  snapshots           FinanceSnapshot[]
+
+  @@index([workflow, startedAt])
+  @@index([status, startedAt])
+  @@index([trigger, startedAt])
+}
+
+model FinanceSnapshot {
+  id              String              @id @default(cuid())
+  snapshotType    FinanceSnapshotType
+  scope           String              @default("default")
+  asOfDate        DateTime            @db.Date
+  periodStart     DateTime?           @db.Date
+  periodEnd       DateTime?           @db.Date
+  rowCount        Int                 @default(0)
+  currency        String?
+  sourceUpdatedAt DateTime?
+  payload         Json
+  syncRunId       String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  syncRun         FinanceSyncRun?     @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+
+  @@unique([snapshotType, scope, asOfDate], map: "FinanceSnapshot_snapshotType_scope_asOfDate_key")
+  @@index([snapshotType, asOfDate])
+  @@index([scope, asOfDate])
+  @@index([syncRunId])
 }
 
 // ---------------------------------------------------------------------------
