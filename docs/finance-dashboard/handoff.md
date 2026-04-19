@@ -8,12 +8,12 @@ Last updated: 2026-04-19
 - Merged implementation PR: `#102`
 - Planning scaffold task `#103` landed via PR `#104`
 - Phase `#93` is closed
-- Active phase: `#94`
-- Most recent landed task: `#108`
-- Merged implementation PR for `#108`: `#109`
-- Active finance task in flight: `#110`
-- Working branch: `finance/issue-110-route-scaffold`
-- No finance task is currently marked `status: ready`
+- Phase `#94` is closed
+- Active phase: `#95`
+- Most recent landed task: `#110`
+- Merged implementation PR for `#110`: `#111`
+- No finance task is currently in flight
+- Single `status: ready` finance task: `#112`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed In Task #105
@@ -62,6 +62,11 @@ Done:
   - `src/app/api/finance/xero/disconnect/route.ts`
   - `src/app/api/finance/xero/callback/route.ts`
 - Added targeted route coverage in `src/lib/__tests__/finance-xero-routes.test.ts` for finance manager authorization, config-gated connect behavior, finance-scoped OAuth state cookies, and callback redirects
+- Merged task `#110` to `main` via PR `#111`
+- Closed task `#110` as completed
+- Closed Phase `#94` as completed
+- Created follow-up task `#112` under Phase `#95` for finance snapshot schema and sync-run storage scaffolding
+- Marked `#112` as the single finance task with `status: ready`
 - Kept finance sync jobs and `docs/XERO_HANDOFF.md` out of scope
 
 Validation:
@@ -69,16 +74,17 @@ Validation:
 - Verified PR `#107` is merged
 - Verified issue `#108` is closed as completed
 - Verified PR `#109` is merged
-- Verified issue `#110` is open and no longer carries `status: ready`
-- Verified no open finance task is marked `status: ready` while `#110` is in flight
-- `npx vitest run src/lib/__tests__/finance-xero-routes.test.ts src/lib/__tests__/finance-auth.test.ts src/lib/__tests__/finance-xero-token-store.test.ts src/lib/__tests__/xero-config.test.ts`
-- `npx eslint src/lib/finance-api-auth.ts src/lib/finance-xero-oauth-state.ts src/lib/finance-xero.ts src/app/api/finance/xero/connect/route.ts src/app/api/finance/xero/status/route.ts src/app/api/finance/xero/disconnect/route.ts src/app/api/finance/xero/callback/route.ts src/lib/__tests__/finance-xero-routes.test.ts`
+- Verified PR `#111` is merged
+- Verified issue `#110` is closed as completed
+- Verified issue `#94` is closed as completed
+- Verified issue `#112` is open with labels `area: finance`, `type: task`, and `status: ready`
+- Verified no other open finance task is marked `status: ready`
 - `git diff --check`
 
 What remains:
-- Review and land task `#110`
-- Keep any follow-up fixes scoped to the finance manager route/auth/status/disconnect surface plus the minimal callback hook that supports it
-- Leave finance sync jobs, broader finance callback/sync orchestration, and operational Xero behavior for later work unless new evidence proves a gap
+- Implement task `#112` for finance snapshot schema and sync-run storage scaffolding
+- Keep the next implementation slice on the durable Postgres storage boundary for finance snapshots and sync runs before adding sync services or cron scheduling
+- Leave daily sync execution, cron registration, diagnostics UI, and operational Xero behavior for later work unless new evidence proves a gap
 
 Blockers:
 - None
@@ -93,29 +99,27 @@ Work on exactly one task issue only.
 1. Read only these sources first:
 - docs/finance-dashboard/handoff.md
 - docs/XERO_HANDOFF.md
-- phase issue #94
-- in-flight task issue #110
-- merged PR #109
+- phase issue #95
+- ready task issue #112
+- merged PR #111
 
-2. Finish task #110 and keep it tightly scoped:
-- keep the work on finance connect/status/disconnect route scaffolding on top of the separate finance token-store boundary from PR #109
-- keep finance manager authorization on those routes
-- keep finance route wiring separate from operational Xero routes and helpers
-- allow only the minimal finance callback hook needed to support the finance connect route; do not pull in finance sync jobs
-- run targeted validation for finance route authorization and connection-state behavior
+2. Implement task #112 and keep it tightly scoped:
+- add finance snapshot schema and sync-run storage scaffolding on top of the completed finance Xero boundary from PR #111
+- keep the work on durable Postgres storage and storage-adjacent helpers/contracts only
+- add targeted validation for touched schema, storage helpers, and docs/tests
 - keep docs/XERO_HANDOFF.md unchanged unless current evidence proves a new operational Xero gap
 
 3. Scope the next task tightly:
-- do not combine the task with finance sync jobs
-- do not broaden the task into reporting UI or wider finance sync orchestration beyond the minimal finance callback hook already introduced
+- do not combine the task with full finance sync services, cron registration, or diagnostics UI
+- do not broaden the task into reporting pages or booking-adapter work
 - do not reopen operational Xero work unless current evidence proves a new gap
 
 4. Before finishing:
 - run only the targeted validation needed for touched files; run full build only if the changed files require it
 - update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, and the next exact Next Prompt block
-- ensure no finance task carries `status: ready` while `#110` is in flight
-- close task #110 if it lands and create exactly one new finance task issue under phase #94 for the next smallest remaining gap
-- make that new issue the single `status: ready` finance task only after `#110` is fully landed
+- close task #112 if it lands and create exactly one new finance task issue under phase #95 for the next smallest remaining gap
+- make that new issue the single `status: ready` finance task only after `#112` is fully landed
+- ensure only one finance task carries `status: ready`
 - leave docs/XERO_HANDOFF.md unchanged unless new evidence forces it open
 
 5. Work on exactly one task issue only.
