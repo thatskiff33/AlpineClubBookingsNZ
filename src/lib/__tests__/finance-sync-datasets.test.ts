@@ -4,9 +4,16 @@ import { FinanceSnapshotType } from "@prisma/client";
 const { mockRecordFinanceXeroApiUsage } = vi.hoisted(() => ({
   mockRecordFinanceXeroApiUsage: vi.fn(),
 }));
+const { mockCallXeroApi } = vi.hoisted(() => ({
+  mockCallXeroApi: vi.fn(),
+}));
 
 vi.mock("@/lib/finance-xero-api-usage", () => ({
   recordFinanceXeroApiUsage: mockRecordFinanceXeroApiUsage,
+}));
+vi.mock("@/lib/xero", () => ({
+  callXeroApi: (fn: () => unknown, options: unknown) =>
+    mockCallXeroApi(fn, options),
 }));
 
 import {
@@ -82,6 +89,7 @@ function createReport(overrides?: {
 describe("finance-sync-datasets", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCallXeroApi.mockImplementation(async (fn: () => unknown) => fn());
   });
 
   it("registers the first concrete finance Xero datasets without the bootstrap seam", () => {
@@ -211,6 +219,7 @@ describe("finance-sync-datasets", () => {
       periodEnd: new Date("2026-04-20T00:00:00.000Z"),
     });
     expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledTimes(3);
+    expect(mockCallXeroApi).toHaveBeenCalledTimes(3);
   });
 
   it("records finance Xero usage metadata when a scheduled report call fails", async () => {
@@ -242,5 +251,6 @@ describe("finance-sync-datasets", () => {
         errorMessage: "Minute limit reached",
       })
     );
+    expect(mockCallXeroApi).toHaveBeenCalledTimes(1);
   });
 });

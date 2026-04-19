@@ -9,6 +9,7 @@ import {
   getXeroErrorHeader,
   getXeroErrorStatusCode,
 } from "@/lib/xero-error-shape";
+import { callXeroApi } from "@/lib/xero";
 import type {
   FinanceSyncDatasetContext,
   FinanceSyncSnapshotInput,
@@ -280,18 +281,27 @@ export async function syncFinanceProfitAndLossMonthlySnapshot(
   const window = getFinanceReportWindow(context.startedAt);
   const response = await callFinanceXeroApi(
     () =>
-      context.xero.accountingApi.getReportProfitAndLoss(
-        context.xeroTenantId,
-        window.periodStartString,
-        window.asOfDateString,
-        1,
-        "MONTH",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        true,
-        false
+      callXeroApi(
+        () =>
+          context.xero.accountingApi.getReportProfitAndLoss(
+            context.xeroTenantId,
+            window.periodStartString,
+            window.asOfDateString,
+            1,
+            "MONTH",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            true,
+            false
+          ),
+        {
+          operation: "getReportProfitAndLoss",
+          resourceType: "REPORT",
+          workflow: context.workflow,
+          context: "financeSyncDatasets profitAndLossMonthly",
+        }
       ),
     {
       operation: "getReportProfitAndLoss",
@@ -315,15 +325,24 @@ export async function syncFinanceBalanceSheetSnapshot(
   const window = getFinanceReportWindow(context.startedAt);
   const response = await callFinanceXeroApi(
     () =>
-      context.xero.accountingApi.getReportBalanceSheet(
-        context.xeroTenantId,
-        window.asOfDateString,
-        1,
-        "MONTH",
-        undefined,
-        undefined,
-        true,
-        false
+      callXeroApi(
+        () =>
+          context.xero.accountingApi.getReportBalanceSheet(
+            context.xeroTenantId,
+            window.asOfDateString,
+            1,
+            "MONTH",
+            undefined,
+            undefined,
+            true,
+            false
+          ),
+        {
+          operation: "getReportBalanceSheet",
+          resourceType: "REPORT",
+          workflow: context.workflow,
+          context: "financeSyncDatasets balanceSheet",
+        }
       ),
     {
       operation: "getReportBalanceSheet",
@@ -346,10 +365,19 @@ export async function syncFinanceBankBalancesSnapshot(
   const window = getFinanceReportWindow(context.startedAt);
   const response = await callFinanceXeroApi(
     () =>
-      context.xero.accountingApi.getReportBankSummary(
-        context.xeroTenantId,
-        window.periodStartString,
-        window.asOfDateString
+      callXeroApi(
+        () =>
+          context.xero.accountingApi.getReportBankSummary(
+            context.xeroTenantId,
+            window.periodStartString,
+            window.asOfDateString
+          ),
+        {
+          operation: "getReportBankSummary",
+          resourceType: "REPORT",
+          workflow: context.workflow,
+          context: "financeSyncDatasets bankBalances",
+        }
       ),
     {
       operation: "getReportBankSummary",
