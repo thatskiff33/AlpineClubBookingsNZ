@@ -1,6 +1,6 @@
 # Finance Dashboard Handoff
 
-Last updated: 2026-04-20
+Last updated: 2026-04-21
 
 ## Current State
 
@@ -9,19 +9,20 @@ Last updated: 2026-04-20
 - Planning scaffold task `#103` landed via PR `#104`
 - Phase `#93` is closed
 - Phase `#94` is closed
-- Active phase: `#95`
-- Most recent landed task: `#126`
-- Merged implementation PR for `#126`: `#128`
+- Phase `#95` is closed
+- Active phase: `#96`
+- Most recent landed task: `#129`
+- Merged implementation PR for `#129`: `#131`
 - Finance task currently in flight: none
-- Single `status: ready` finance task: `#129`
+- Single `status: ready` finance task: `#130`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
-## What Landed Through Task #126
+## What Landed Through Task #129
 
-- Registered the `ACCOUNTS_RECEIVABLE_INVOICES` scheduled dataset in `src/lib/finance-sync-datasets.ts`
-- Extended `src/lib/finance-sync-xero-datasets.ts` with finance-only accounts receivable invoice snapshot mapping from open Xero `ACCREC` invoices, customer contact rollups, expected payment dates, currency-safe totals, and shared per-run open-invoice reuse with aged receivables
-- Extended `src/lib/__tests__/finance-sync-datasets.test.ts` and `src/lib/__tests__/finance-sync-service.test.ts` for receivable invoice mapping, dataset registration, shared-fetch orchestration, and durable sync persistence coverage
-- Updated `docs/finance-dashboard/data-contracts.md` and `docs/finance-dashboard/finance-sync-service-contract.md` for the landed accounts receivable invoice dataset contract
+- Added `src/lib/finance-sync-diagnostics.ts` to load the latest durable finance sync run, finance cron state, and recent failure context into a stable JSON-safe diagnostics payload
+- Added the finance-manager diagnostics route `src/app/api/finance/sync/status/route.ts`
+- Added `src/lib/__tests__/finance-sync-diagnostics.test.ts` and `src/lib/__tests__/finance-sync-diagnostics-route.test.ts` for diagnostics helper normalization, finance-only authorization, and route response coverage
+- Added `docs/finance-dashboard/finance-sync-diagnostics-contract.md` and indexed it from `docs/finance-dashboard/README.md`
 
 ## Implemented Guard Strategy
 
@@ -169,6 +170,19 @@ Done:
 - Closed task `#126` as completed
 - Created follow-up task `#129` under Phase `#95` for finance sync diagnostics status read path end-to-end
 - Marked `#129` as the single finance task with `status: ready`
+- Investigated task `#129` against the current durable finance sync and cron observability seams and kept diagnostics UI, manual sync APIs, reporting pages, booking-adapter work, and `docs/XERO_HANDOFF.md` out of scope
+- Landed task `#129` via PR `#131` for a finance-only sync diagnostics status read path
+- Added `src/lib/finance-sync-diagnostics.ts` to compose the latest durable `FinanceSyncRun`, finance cron `CronJobRun`, dataset result summaries, and recent failure context into a stable JSON-safe payload
+- Added the finance-manager diagnostics route `src/app/api/finance/sync/status/route.ts`
+- Added `src/lib/__tests__/finance-sync-diagnostics.test.ts` and `src/lib/__tests__/finance-sync-diagnostics-route.test.ts` for diagnostics helper normalization, finance-manager authorization, and route response coverage
+- Added `docs/finance-dashboard/finance-sync-diagnostics-contract.md` and indexed it from `docs/finance-dashboard/README.md`
+- Opened draft PR `#131` for task `#129`
+- Removed `status: ready` from task `#129` once the work moved in flight to PR `#131`
+- Merged task `#129` to `main` via PR `#131`
+- Closed task `#129` as completed
+- Closed Phase `#95` as completed
+- Created follow-up task `#130` under Phase `#96` for a finance booking metrics adapter query layer
+- Marked `#130` as the single finance task with `status: ready`
 
 Validation:
 - Verified issue `#105` is closed as completed
@@ -221,13 +235,19 @@ Validation:
 - Verified `npm run build`
 - Verified PR `#128` is merged
 - Verified issue `#126` is closed as completed
-- Verified issue `#129` is open with labels `area: finance`, `type: task`, and `status: ready`
+- Verified `npx vitest run src/lib/__tests__/finance-sync-diagnostics.test.ts src/lib/__tests__/finance-sync-diagnostics-route.test.ts`
+- Verified `npx eslint src/lib/finance-sync-diagnostics.ts src/app/api/finance/sync/status/route.ts src/lib/__tests__/finance-sync-diagnostics.test.ts src/lib/__tests__/finance-sync-diagnostics-route.test.ts`
+- Verified `npm run build`
+- Verified PR `#131` is merged
+- Verified issue `#129` is closed as completed
+- Verified issue `#95` is closed as completed
+- Verified issue `#130` is open with labels `area: finance`, `type: task`, and `status: ready`
 - Verified no other open finance task is marked `status: ready`
 - `git diff --check`
 
 What remains:
-- Land task `#129` end-to-end in production-ready form using the smallest finance-only diagnostics status read path that makes finance sync state queryable through the current durable storage and cron boundaries
-- Leave diagnostics UI pages, manual sync mutation APIs, reporting pages, booking-adapter work, and operational Xero behavior for later work unless new evidence proves a gap
+- Land task `#130` end-to-end in production-ready form using the smallest finance-only booking metrics adapter/query layer that turns TACBookings booking, guest, and payment data into realized and forward finance metrics without Checkfront-shaped assumptions
+- Leave finance UI pages, reporting-page loaders, manual sync routes, and operational Xero behavior for later work unless new evidence proves a gap
 
 Blockers:
 - None currently.
@@ -242,28 +262,28 @@ Work on exactly one task issue only.
 1. Read only these sources first:
 - docs/finance-dashboard/handoff.md
 - epic issue #92
-- phase issue #95
-- ready task issue #129
-- merged PR #128
+- phase issue #96
+- ready task issue #130
+- merged PR #131
 
-2. Land task `#129` end-to-end in this session:
-- treat the goal as shipping a production-ready finance sync diagnostics status read path, not merely documenting the existing `FinanceSyncRun` / cron storage
-- use the smallest finance-only implementation that makes finance sync state queryable through the current durable storage and cron observability boundaries
-- reuse the landed finance-only `FinanceSyncRun`, cron, and finance auth boundaries where that keeps the implementation smaller and production ready
+2. Land task `#130` end-to-end in this session:
+- treat the goal as shipping a production-ready finance booking metrics adapter/query layer, not merely documenting existing booking statuses or legacy dashboard assumptions
+- use the smallest finance-only implementation that turns TACBookings `Booking`, `BookingGuest`, and `Payment` data into explicit realized and forward booking metrics for later reporting work
+- reuse the landed finance access boundaries and existing TACBookings booking/payment models where that keeps the implementation smaller and production ready
 - if the task wording proves too narrow once implementation starts, update the GitHub task issue to the smallest safe production-ready scope and continue in the same session
 - only stop without landing code if a true external blocker remains after exhausting repo code, merged PR context, and any relevant official documentation
 - keep docs/XERO_HANDOFF.md unchanged unless current evidence proves a new operational Xero gap
 
 3. Scope the next task tightly:
-- do not combine the task with diagnostics UI pages, manual sync trigger route handlers, or reporting-page work
-- do not broaden the task beyond the minimum needed to ship queryable diagnostics status safely; manual sync mutations, additional dataset fetchers, booking-adapter work, finance shell pages, and operational Xero changes remain out of scope
+- do not combine the task with finance shell UI pages, reporting-page components, or route handlers
+- do not broaden the task beyond the minimum needed to ship queryable booking metrics safely; dashboard rendering, pricing/pnl pages, booking type schema changes, manual sync work, and operational Xero changes remain out of scope
 - do not reopen operational Xero work unless current evidence proves a new gap
 
 4. Before finishing:
 - update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, validation, and the next exact Next Prompt block
 - run the targeted tests/lint for touched files and run `npm run build` if runtime paths changed
 - do not finish with docs-only blocker notes if the feature can still be landed safely within the task/phase intent
-- close task `#129` and create the next finance task only if `#129` fully lands
+- close task `#130` and create the next finance task only if `#130` fully lands
 - otherwise leave the clearest possible external blocker with source evidence and do not start a second task in the same session
 - ensure exactly one finance task carries `status: ready` when there is actionable work, and keep that label on the next smallest unblocked task only
 - leave docs/XERO_HANDOFF.md unchanged unless new evidence forces it open
