@@ -95,6 +95,7 @@ Include bookings only when all of the following are true:
 
 - status is one of `CONFIRMED`, `PAID`, or `COMPLETED`
 - the stay date being counted is before or equal to the reporting cutoff date
+- stay nights are counted from `checkIn` inclusive to `checkOut` exclusive
 
 Exclude:
 
@@ -113,6 +114,7 @@ Track at least two categories:
 
 - committed pipeline: `CONFIRMED`, `PAID`
 - at-risk pipeline: `PENDING`
+- count only stay dates strictly after the query `asOfDate`
 
 Waitlist states must not be counted as occupied or committed future nights.
 
@@ -122,13 +124,16 @@ For each booking guest:
 
 - nightly contribution is one occupied bed for each night from `checkIn` inclusive to `checkOut` exclusive
 - booking guest nights are the sum across all guests and nights
+- if a booking spans a realized cutoff or forward `asOfDate`, the same booking may contribute realized nights before the boundary and forward nights after it
 
 Do not infer guest counts from external system summaries if TACBookings guest rows exist.
 
 ## Revenue Contract
 
 - Booking revenue uses TACBookings stored amounts for operational booking-facing totals.
+- When booking revenue is exposed at nightly granularity, allocate `Booking.finalPriceCents` evenly across stay nights from `checkIn` inclusive to `checkOut` exclusive.
 - Financial statement revenue uses finance Xero snapshots.
+- Payment-derived cash summaries come from TACBookings `Payment` rows and must remain distinct from booking-derived revenue metrics.
 - Any page combining booking-derived and Xero-derived metrics must state which source owns each number.
 
 ## Booking Type Note

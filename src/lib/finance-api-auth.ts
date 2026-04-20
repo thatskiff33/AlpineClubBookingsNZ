@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import {
+  hasFinanceViewerAccess,
   hasFinanceManagerAccess,
   loadFinanceAccessMember,
   type FinanceAccessMember,
@@ -20,7 +21,10 @@ export type FinanceApiAuthResult =
   | FinanceApiAuthSuccess
   | FinanceApiAuthFailure;
 
-export async function requireFinanceManagerApiAccess(): Promise<FinanceApiAuthResult> {
+async function requireFinanceApiAccess(input: {
+  hasRequiredAccess: (member: FinanceAccessMember) => boolean;
+  missingAccessMessage: string;
+}): Promise<FinanceApiAuthResult> {
   const session = await auth();
 
   if (!session?.user) {
@@ -59,11 +63,11 @@ export async function requireFinanceManagerApiAccess(): Promise<FinanceApiAuthRe
     };
   }
 
-  if (!hasFinanceManagerAccess(member.financeAccessLevel)) {
+  if (!input.hasRequiredAccess(member)) {
     return {
       ok: false,
       response: NextResponse.json(
-        { error: "Finance manager access required" },
+        { error: input.missingAccessMessage },
         { status: 403 }
       ),
     };
@@ -73,4 +77,20 @@ export async function requireFinanceManagerApiAccess(): Promise<FinanceApiAuthRe
     ok: true,
     member,
   };
+}
+
+export async function requireFinanceViewerApiAccess(): Promise<FinanceApiAuthResult> {
+  return requireFinanceApiAccess({
+    hasRequiredAccess: (member) =>
+      hasFinanceViewerAccess(member.financeAccessLevel),
+    missingAccessMessage: "Finance viewer access required",
+  });
+}
+
+export async function requireFinanceManagerApiAccess(): Promise<FinanceApiAuthResult> {
+  return requireFinanceApiAccess({
+    hasRequiredAccess: (member) =>
+      hasFinanceManagerAccess(member.financeAccessLevel),
+    missingAccessMessage: "Finance manager access required",
+  });
 }
