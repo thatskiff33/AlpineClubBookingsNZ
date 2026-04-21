@@ -64,6 +64,7 @@ Deliver a native finance dashboard inside `TACBookings` that:
 - [finance-sync-diagnostics-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-sync-diagnostics-contract.md)
 - [finance-booking-metrics-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-booking-metrics-contract.md)
 - [finance-landing-page-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-landing-page-contract.md)
+- [finance-bookings-report-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-bookings-report-contract.md)
 - [test-plan.md](/home/ubuntu/TACBookings/docs/finance-dashboard/test-plan.md)
 - [agent-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/agent-runbook.md)
 - [handoff.md](/home/ubuntu/TACBookings/docs/finance-dashboard/handoff.md)

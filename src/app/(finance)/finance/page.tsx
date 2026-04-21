@@ -22,6 +22,7 @@ import {
   buildFinanceLandingPageModel,
   type FinanceLandingSectionSummary,
 } from "@/lib/finance-landing-page";
+import { buildFinanceBookingsReportHref } from "@/lib/finance-bookings-report-page";
 
 const sectionIcons = {
   "sync-health": Activity,
@@ -90,6 +91,14 @@ function FinanceSection({ section }: { section: FinanceLandingSectionSummary }) 
 export default async function FinancePage() {
   const member = await requireFinanceViewer("/finance");
   const model = await buildFinanceLandingPageModel({ member });
+  const bookingsReportHref = buildFinanceBookingsReportHref({
+    realizedFrom: model.windows.realized.from,
+    realizedTo: model.windows.realized.to,
+    realizedCutoff: model.windows.realized.to,
+    forwardFrom: model.windows.forward.from,
+    forwardTo: model.windows.forward.to,
+    forwardAsOf: model.windows.forward.asOfDate,
+  });
 
   return (
     <div className="space-y-8">
@@ -118,6 +127,12 @@ export default async function FinancePage() {
                   <Link href={link.href}>{link.label}</Link>
                 </Button>
               ))}
+              <Button asChild size="sm">
+                <Link href={bookingsReportHref}>
+                  Open bookings report
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Realized booking cards use the
