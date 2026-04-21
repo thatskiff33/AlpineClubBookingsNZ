@@ -215,3 +215,36 @@ export async function listFinanceSnapshotHeaders(input?: {
     take,
   });
 }
+
+export async function listFinanceSnapshots(input?: {
+  snapshotType?: FinanceSnapshotType;
+  scope?: string;
+  limit?: number;
+}) {
+  const take = Math.min(Math.max(input?.limit ?? 20, 1), 100);
+  const normalizedScope = normalizeOptionalText(input?.scope);
+
+  return prisma.financeSnapshot.findMany({
+    where: {
+      ...(input?.snapshotType ? { snapshotType: input.snapshotType } : {}),
+      ...(normalizedScope ? { scope: normalizedScope } : {}),
+    },
+    select: {
+      id: true,
+      snapshotType: true,
+      scope: true,
+      asOfDate: true,
+      periodStart: true,
+      periodEnd: true,
+      rowCount: true,
+      currency: true,
+      sourceUpdatedAt: true,
+      payload: true,
+      syncRunId: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+    orderBy: [{ asOfDate: "desc" }, { updatedAt: "desc" }],
+    take,
+  });
+}

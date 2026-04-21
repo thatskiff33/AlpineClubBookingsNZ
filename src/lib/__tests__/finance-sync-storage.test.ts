@@ -27,6 +27,7 @@ import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
   failFinanceSyncRun,
   getLatestFinanceSyncRun,
+  listFinanceSnapshots,
   listFinanceSnapshotHeaders,
   upsertFinanceSnapshot,
 } from "@/lib/finance-sync-storage";
@@ -197,6 +198,40 @@ describe("finance-sync-storage", () => {
       },
       orderBy: [{ asOfDate: "desc" }, { updatedAt: "desc" }],
       take: 100,
+    });
+  });
+
+  it("lists finance snapshots with payloads for report readers", async () => {
+    mockPrisma.financeSnapshot.findMany.mockResolvedValue([]);
+
+    await listFinanceSnapshots({
+      snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_MONTHLY,
+      scope: " default ",
+      limit: 6,
+    });
+
+    expect(mockPrisma.financeSnapshot.findMany).toHaveBeenCalledWith({
+      where: {
+        snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_MONTHLY,
+        scope: "default",
+      },
+      select: {
+        id: true,
+        snapshotType: true,
+        scope: true,
+        asOfDate: true,
+        periodStart: true,
+        periodEnd: true,
+        rowCount: true,
+        currency: true,
+        sourceUpdatedAt: true,
+        payload: true,
+        syncRunId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: [{ asOfDate: "desc" }, { updatedAt: "desc" }],
+      take: 6,
     });
   });
 

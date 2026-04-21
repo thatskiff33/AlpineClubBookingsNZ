@@ -23,6 +23,7 @@ import {
   type FinanceLandingSectionSummary,
 } from "@/lib/finance-landing-page";
 import { buildFinanceBookingsReportHref } from "@/lib/finance-bookings-report-page";
+import { buildFinanceRevenueReportHref } from "@/lib/finance-revenue-report-page";
 
 const sectionIcons = {
   "sync-health": Activity,
@@ -99,6 +100,9 @@ export default async function FinancePage() {
     forwardTo: model.windows.forward.to,
     forwardAsOf: model.windows.forward.asOfDate,
   });
+  const revenueReportHref = buildFinanceRevenueReportHref({
+    periods: 6,
+  });
 
   return (
     <div className="space-y-8">
@@ -130,6 +134,12 @@ export default async function FinancePage() {
               <Button asChild size="sm">
                 <Link href={bookingsReportHref}>
                   Open bookings report
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link href={revenueReportHref}>
+                  Open revenue report
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>
