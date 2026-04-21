@@ -343,7 +343,7 @@ function mapRealizedSection(
         description: `${formatWholeNumber(metrics.paymentSummary.bookingsWithPayment)} of ${formatWholeNumber(metrics.paymentSummary.bookingCount)} contributing booking${metrics.paymentSummary.bookingCount === 1 ? "" : "s"} have payment rows.`,
         footnote:
           metrics.paymentSummary.bookingsWithoutPayment > 0
-            ? `${formatWholeNumber(metrics.paymentSummary.bookingsWithoutPayment)} booking${metrics.paymentSummary.bookingsWithoutPayment === 1 ? "" : "s"} have no payment row yet.`
+            ? `${formatWholeNumber(metrics.paymentSummary.bookingsWithoutPayment)} booking${metrics.paymentSummary.bookingsWithoutPayment === 1 ? "" : "s"} ${metrics.paymentSummary.bookingsWithoutPayment === 1 ? "has" : "have"} no payment row yet.`
             : "Every contributing booking has a payment row.",
       },
     ],
@@ -430,7 +430,7 @@ function mapForwardSection(
       {
         title: "At-risk guest nights",
         value: formatWholeNumber(forward.totals.atRisk.guestNights),
-        description: `${formatWholeNumber(forward.totals.atRisk.bookingCount)} pending booking${forward.totals.atRisk.bookingCount === 1 ? "" : "s"} remain at risk.`,
+        description: `${formatWholeNumber(forward.totals.atRisk.bookingCount)} pending booking${forward.totals.atRisk.bookingCount === 1 ? "" : "s"} ${forward.totals.atRisk.bookingCount === 1 ? "remains" : "remain"} at risk.`,
         footnote: formatCents(forward.totals.atRisk.bookedRevenueCents),
       },
       {

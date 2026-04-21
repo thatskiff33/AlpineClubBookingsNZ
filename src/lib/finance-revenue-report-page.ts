@@ -140,7 +140,16 @@ export function resolveFinanceRevenueReportFilters(input: {
     return { filters, warnings };
   }
 
-  const parsedPeriods = Number.parseInt(requestedPeriods, 10);
+  const normalizedPeriods = requestedPeriods.trim();
+
+  if (!/^\d+$/.test(normalizedPeriods)) {
+    warnings.push(
+      `Revenue periods must be a whole number between ${MIN_FINANCE_REVENUE_PERIODS} and ${MAX_FINANCE_REVENUE_PERIODS}. Showing the default ${DEFAULT_FINANCE_REVENUE_PERIODS}-period window.`
+    );
+    return { filters, warnings };
+  }
+
+  const parsedPeriods = Number(normalizedPeriods);
 
   if (
     !Number.isInteger(parsedPeriods) ||
