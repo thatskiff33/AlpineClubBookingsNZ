@@ -11,21 +11,21 @@ Last updated: 2026-04-21
 - Phase `#94` is closed
 - Phase `#95` is closed
 - Phase `#96` is closed
-- Active phase: `#97`
-- Most recent landed task: `#130`
-- Merged implementation PR for `#130`: `#132`
+- Phase `#97` is closed
+- Active phase: `#98`
+- Most recent landed task: `#133`
+- Merged implementation PR for `#133`: `#135`
 - Finance task currently in flight: none
-- Single `status: ready` finance task: `#133`
+- Single `status: ready` finance task: `#134`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
-## What Landed Through Task #130
+## What Landed Through Task #133
 
-- Added `src/lib/finance-booking-metrics.ts` as the finance-only TACBookings booking metrics query layer over `Booking`, `BookingGuest`, and `Payment`
-- Added the finance-viewer booking metrics route `src/app/api/finance/bookings/metrics/route.ts`
-- Extended `src/lib/finance-api-auth.ts` with finance-viewer API authorization alongside the existing finance-manager checks
-- Added `src/lib/__tests__/finance-booking-metrics.test.ts` and `src/lib/__tests__/finance-booking-metrics-route.test.ts` for realized status handling, guest-night math, forward pipeline categorisation, viewer authorization, and query validation coverage
-- Added `docs/finance-dashboard/finance-booking-metrics-contract.md` and indexed it from `docs/finance-dashboard/README.md`
-- Updated `docs/finance-dashboard/data-contracts.md` with the landed nightly revenue allocation and realized/forward date-boundary rules
+- Replaced the old `/finance` placeholder with a native finance landing page shell backed by live finance sync diagnostics and TACBookings booking metrics
+- Added `src/lib/finance-landing-page.ts` as the finance landing-page loader/model boundary with NZ-local default windows, viewer-safe summaries, and manager-only diagnostics links
+- Updated `src/app/(finance)/finance/page.tsx` and `src/app/(finance)/finance/layout.tsx` for the landed sync-health, realized-stays, and forward-pipeline shell
+- Added `src/lib/__tests__/finance-landing-page.test.ts` for NZ-local window derivation, viewer/manager affordances, and section-level fallback coverage
+- Added `docs/finance-dashboard/finance-landing-page-contract.md` and indexed it from `docs/finance-dashboard/README.md`
 
 ## Implemented Guard Strategy
 
@@ -201,6 +201,20 @@ Done:
 - Closed Phase `#96` as completed
 - Created follow-up task `#133` under Phase `#97` for the finance landing page shell
 - Marked `#133` as the single finance task with `status: ready`
+- Investigated task `#133` against the landed finance route, access, sync diagnostics, and booking metrics seams and kept report pages, charts, manual sync work, and `docs/XERO_HANDOFF.md` out of scope
+- Landed task `#133` via PR `#135` for a native finance landing page shell
+- Added `src/lib/finance-landing-page.ts` as the finance landing-page loader/model boundary for NZ-local realized and forward windows plus section-level fallbacks
+- Replaced the old `/finance` placeholder in `src/app/(finance)/finance/page.tsx` with live sync-health, realized-stays, forward-pipeline, and data-source sections
+- Updated `src/app/(finance)/finance/layout.tsx` copy to reflect the landed finance workspace shell instead of the earlier phase-1 placeholder wording
+- Added `src/lib/__tests__/finance-landing-page.test.ts` for manager/viewer affordances, default windows, and degraded-section behavior when a finance boundary fails
+- Added `docs/finance-dashboard/finance-landing-page-contract.md` and updated `docs/finance-dashboard/README.md` for the landed finance shell boundary
+- Opened draft PR `#135` for task `#133`
+- Removed `status: ready` from task `#133` once the work moved in flight to PR `#135`
+- Merged task `#133` to `main` via PR `#135`
+- Closed task `#133` as completed
+- Closed Phase `#97` as completed
+- Created follow-up task `#134` under Phase `#98` for the finance bookings report page shell
+- Marked `#134` as the single finance task with `status: ready`
 
 Validation:
 - Verified issue `#105` is closed as completed
@@ -265,13 +279,19 @@ Validation:
 - Verified PR `#132` is merged
 - Verified issue `#130` is closed as completed
 - Verified issue `#96` is closed as completed
-- Verified issue `#133` is open with labels `area: finance`, `type: task`, and `status: ready`
+- Verified `npx vitest run src/lib/__tests__/finance-landing-page.test.ts`
+- Verified `npx eslint 'src/app/(finance)/finance/page.tsx' 'src/app/(finance)/finance/layout.tsx' src/lib/finance-landing-page.ts src/lib/__tests__/finance-landing-page.test.ts`
+- Verified `npm run build`
+- Verified PR `#135` is merged
+- Verified issue `#133` is closed as completed
+- Verified issue `#97` is closed as completed
+- Verified issue `#134` is open with labels `area: finance`, `type: task`, and `status: ready`
 - Verified no other open finance task is marked `status: ready`
 - `git diff --check`
 
 What remains:
-- Land task `#133` end-to-end in production-ready form using the smallest finance landing page shell that surfaces the landed finance sync and booking metrics boundaries without broadening into full report pages
-- Leave revenue/booking report pages, charts, manual sync mutations, and operational Xero behavior for later work unless new evidence proves a gap
+- Land task `#134` end-to-end in production-ready form using the smallest native `/finance/bookings` report page backed by the existing booking metrics boundary
+- Leave charts, finance snapshot-backed revenue pages, manual sync mutations, and operational Xero behavior for later work unless new evidence proves a gap
 
 Blockers:
 - None currently.
@@ -287,28 +307,28 @@ Work on exactly one task issue only.
 - docs/finance-dashboard/handoff.md
 - docs/finance-dashboard/data-contracts.md
 - epic issue #92
-- phase issue #97
-- ready task issue #133
-- merged PR #132
+- phase issue #98
+- ready task issue #134
+- merged PR #135
 
-2. Land task `#133` end-to-end in this session:
-- treat the goal as shipping a production-ready finance landing page shell, not merely adding placeholder finance copy or navigation links without live finance data
-- use the smallest finance-only implementation that turns the landed finance sync diagnostics and booking metrics boundaries into a native `/finance` landing page for viewers and managers
-- reuse the landed finance access boundaries, sync-status route, and booking metrics query path where that keeps the implementation smaller and production ready
+2. Land task `#134` end-to-end in this session:
+- treat the goal as shipping a production-ready `/finance/bookings` report page, not merely adding route scaffolding or placeholder cards without detailed booking report data
+- use the smallest finance-only implementation that turns the landed booking metrics boundary into a native bookings report page with realized and forward detail for viewers and managers
+- reuse the landed finance access boundaries, landing-page patterns, and booking metrics query path where that keeps the implementation smaller and production ready
 - if the task wording proves too narrow once implementation starts, update the GitHub task issue to the smallest safe production-ready scope and continue in the same session
 - only stop without landing code if a true external blocker remains after exhausting repo code, merged PR context, and any relevant official documentation
 - keep docs/XERO_HANDOFF.md unchanged unless current evidence proves a new operational Xero gap
 
 3. Scope the next task tightly:
-- do not combine the task with full reporting pages, charts, or speculative phase `#98` work
-- do not broaden the task beyond the minimum needed to ship the finance landing shell safely; report implementation, booking type schema changes, manual sync work, and operational Xero changes remain out of scope
+- do not combine the task with charts, finance snapshot-backed revenue pages, or speculative phase `#99` work
+- do not broaden the task beyond the minimum needed to ship the bookings report page safely; booking type schema changes, manual sync work, and operational Xero changes remain out of scope
 - do not reopen operational Xero work unless current evidence proves a new gap
 
 4. Before finishing:
 - update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, validation, and the next exact Next Prompt block
 - run the targeted tests/lint for touched files and run `npm run build` if runtime paths changed
 - do not finish with docs-only blocker notes if the feature can still be landed safely within the task/phase intent
-- close task `#133` and create the next finance task only if `#133` fully lands
+- close task `#134` and create the next finance task only if `#134` fully lands
 - otherwise leave the clearest possible external blocker with source evidence and do not start a second task in the same session
 - ensure exactly one finance task carries `status: ready` when there is actionable work, and keep that label on the next smallest unblocked task only
 - leave docs/XERO_HANDOFF.md unchanged unless new evidence forces it open
