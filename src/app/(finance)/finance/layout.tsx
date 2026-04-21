@@ -35,8 +35,9 @@ export default async function FinanceLayout({
               TAC finance workspace
             </h1>
             <p className="text-sm text-slate-600">
-              Native finance reporting now lives inside TACBookings. This
-              Phase 1 slice establishes the access boundary and route shape.
+              Live finance sync health and TACBookings booking summaries now
+              sit behind the native finance route for approved viewers and
+              managers.
             </p>
           </div>
           <Badge variant={isManager ? "default" : "secondary"}>
