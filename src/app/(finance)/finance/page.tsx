@@ -23,6 +23,10 @@ import {
   type FinanceLandingSectionSummary,
 } from "@/lib/finance-landing-page";
 import { buildFinanceBookingsReportHref } from "@/lib/finance-bookings-report-page";
+import {
+  buildDefaultFinanceCashReportFilters,
+  buildFinanceCashReportHref,
+} from "@/lib/finance-cash-report-page";
 import { buildFinanceRevenueReportHref } from "@/lib/finance-revenue-report-page";
 
 const sectionIcons = {
@@ -103,6 +107,9 @@ export default async function FinancePage() {
   const revenueReportHref = buildFinanceRevenueReportHref({
     periods: 6,
   });
+  const cashReportHref = buildFinanceCashReportHref(
+    buildDefaultFinanceCashReportFilters()
+  );
 
   return (
     <div className="space-y-8">
@@ -140,6 +147,12 @@ export default async function FinancePage() {
               <Button asChild size="sm" variant="outline">
                 <Link href={revenueReportHref}>
                   Open revenue report
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link href={cashReportHref}>
+                  Open cash report
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>

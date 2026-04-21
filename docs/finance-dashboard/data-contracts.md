@@ -136,6 +136,12 @@ Do not infer guest counts from external system summaries if TACBookings guest ro
 - Payment-derived cash summaries come from TACBookings `Payment` rows and must remain distinct from booking-derived revenue metrics.
 - Any page combining booking-derived and Xero-derived metrics must state which source owns each number.
 
+## Cash Reporting Contract
+
+- Native cash reporting uses stored `BANK_BALANCES` finance snapshots synced through the finance-only Xero boundary.
+- Cash report figures represent stored bank position detail from those snapshots and must remain distinct from TACBookings payment-derived cash summaries.
+- The smallest native cash report page may compare stored bank-balance snapshots across selected periods, but it must not add working-capital rollups or live Xero reads.
+
 ## Booking Type Note
 
 `TACBookings` does not currently have a first-class `bookingType` field.
