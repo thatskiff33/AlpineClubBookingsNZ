@@ -12,21 +12,20 @@ Last updated: 2026-04-22
 - Phase `#95` is closed
 - Phase `#96` is closed
 - Phase `#97` is closed
-- Active phase: `#98`
-- Most recent landed task: `#137`
-- Merged implementation PR for `#137`: `#139`
+- Phase `#98` is closed
+- Active phase: `#99`
+- Most recent landed task: `#138`
+- Merged implementation PR for `#138`: `#141`
 - Finance task currently in flight: none
-- Single `status: ready` finance task: `#138`
+- Single `status: ready` finance task: `#140`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
-## What Landed Through Task #137
+## What Landed Through Task #138
 
-- Added `src/lib/finance-revenue-report-page.ts` as the finance revenue report loader/model boundary for durable monthly snapshot reads, period filter fallback handling, revenue line-item parsing, and viewer-safe unavailable states
-- Added `src/app/(finance)/finance/revenue/page.tsx` for a native finance revenue report page with summary cards, monthly snapshot detail, and revenue line-item tables
-- Extended `src/lib/finance-sync-storage.ts` with a finance-only snapshot read helper that returns payload-bearing `FinanceSnapshot` rows for report pages
-- Updated `src/app/(finance)/finance/page.tsx` to link the finance landing page directly into the revenue report
-- Added `src/lib/__tests__/finance-revenue-report-page.test.ts` and extended `src/lib/__tests__/finance-sync-storage.test.ts` for revenue loader coverage, invalid-period fallback handling, safe unavailable states, and the new snapshot read helper
-- Added `docs/finance-dashboard/finance-revenue-report-contract.md` and indexed it from `docs/finance-dashboard/README.md`
+- Added `src/lib/__tests__/finance-report-output-validation.test.ts` with representative end-to-end validation coverage that exercises the native bookings and revenue report loaders against the landed booking-metrics and finance-snapshot boundaries
+- Hardened `src/lib/finance-revenue-report-page.ts` so malformed `periods` query values such as `6abc`, `3.5`, and `1e2` now fail closed to the default six-period window instead of silently truncating into the wrong snapshot range
+- Tightened singular report copy in `src/lib/finance-bookings-report-page.ts` so viewer-facing payment and at-risk pipeline messages stay grammatically correct when validation fixtures cover single-booking cases
+- Captured durable phase `#98` validation evidence for representative `/finance/bookings` realized/forward totals and `/finance/revenue` snapshot-backed totals without broadening into phase `#99` reporting work
 
 ## Implemented Guard Strategy
 
@@ -325,12 +324,19 @@ Validation:
 - Verified `npm run build`
 - Verified PR `#139` is merged
 - Verified issue `#137` is closed as completed
-- Verified issue `#138` is open with labels `area: finance`, `type: task`, and `status: ready`
+- Verified `npx vitest run src/lib/__tests__/finance-bookings-report-page.test.ts src/lib/__tests__/finance-revenue-report-page.test.ts src/lib/__tests__/finance-booking-metrics.test.ts src/lib/__tests__/finance-sync-storage.test.ts src/lib/__tests__/finance-report-output-validation.test.ts`
+- Verified `npx eslint src/lib/finance-bookings-report-page.ts src/lib/finance-revenue-report-page.ts src/lib/__tests__/finance-report-output-validation.test.ts`
+- Verified `git diff --check`
+- Verified `npm run build`
+- Verified PR `#141` is merged
+- Verified issue `#138` is closed as completed
+- Verified issue `#98` is closed as completed
+- Verified issue `#140` is open with labels `area: finance`, `type: task`, and `status: ready`
 - Verified no other open finance task is marked `status: ready`
 
 What remains:
-- Land task `#138` end-to-end in production-ready form using the smallest durable validation pass for the native bookings and revenue report outputs under phase `#98`
-- Leave charts, costs/cash/balance-sheet pages, manual sync mutations, and operational Xero behavior for later work unless current evidence proves a gap
+- Land task `#140` end-to-end in production-ready form using the smallest native `/finance/cash` report page backed by the landed `BANK_BALANCES` finance snapshot boundary under phase `#99`
+- Leave working-capital rollups, balance-sheet pages, costs reporting, manual sync mutations, and operational Xero behavior for later work unless current evidence proves a gap
 
 Blockers:
 - None currently.
@@ -346,28 +352,28 @@ Work on exactly one task issue only.
 - docs/finance-dashboard/handoff.md
 - docs/finance-dashboard/data-contracts.md
 - epic issue #92
-- phase issue #98
-- ready task issue #138
-- merged PR #139
+- phase issue #99
+- ready task issue #140
+- merged PR #141
 
-2. Land task `#138` end-to-end in this session:
-- treat the goal as shipping durable validation evidence for the native `/finance/bookings` and `/finance/revenue` outputs, not merely adding commentary without proof that the current report totals line up with their source contracts
-- use the smallest finance-only implementation that validates representative bookings and revenue report output against the landed booking-metrics and finance-snapshot boundaries
-- reuse the landed finance access boundaries, report-page loaders, and snapshot/query seams where that keeps the implementation smaller and production ready
+2. Land task `#140` end-to-end in this session:
+- treat the goal as shipping a production-ready native `/finance/cash` report page, not merely adding placeholder cards without stored bank-balance detail that proves the current cash view lines up with the landed finance snapshot contract
+- use the smallest finance-only implementation that turns the landed `BANK_BALANCES` snapshot seam into a native cash balances report page for finance viewers and managers
+- reuse the landed finance access boundaries, report-page patterns, and finance snapshot storage/query seams where that keeps the implementation smaller and production ready
 - if the task wording proves too narrow once implementation starts, update the GitHub task issue to the smallest safe production-ready scope and continue in the same session
 - only stop without landing code if a true external blocker remains after exhausting repo code, merged PR context, and any relevant official documentation
 - keep docs/XERO_HANDOFF.md unchanged unless current evidence proves a new operational Xero gap
 
 3. Scope the next task tightly:
-- do not combine the task with charts, phase `#99` report pages, or manual sync work
-- do not broaden the task beyond the minimum needed to validate the landed phase `#98` report surfaces safely; speculative schema work and operational Xero changes remain out of scope
+- do not combine the task with balance-sheet pages, costs reporting, working-capital rollups, charts, or manual sync work
+- do not broaden the task beyond the minimum needed to ship the native cash balances report safely; speculative schema work and operational Xero changes remain out of scope
 - do not reopen operational Xero work unless current evidence proves a new gap
 
 4. Before finishing:
 - update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, validation, and the next exact Next Prompt block
 - run the targeted tests/lint for touched files and run `npm run build` if runtime paths changed
 - do not finish with docs-only blocker notes if the feature can still be landed safely within the task/phase intent
-- close task `#138` and create the next finance task only if `#138` fully lands
+- close task `#140` and create the next finance task only if `#140` fully lands
 - otherwise leave the clearest possible external blocker with source evidence and do not start a second task in the same session
 - ensure exactly one finance task carries `status: ready` when there is actionable work, and keep that label on the next smallest unblocked task only
 - leave docs/XERO_HANDOFF.md unchanged unless new evidence forces it open
