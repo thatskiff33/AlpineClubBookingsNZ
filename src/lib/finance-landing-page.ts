@@ -216,7 +216,11 @@ function mapSyncSection(
       badgeLabel: "Unavailable",
       badgeVariant: "destructive",
       cards: [],
-      error: readErrorMessage(result.reason, "Failed to load finance sync diagnostics"),
+      error: readErrorMessage({
+        reason: result.reason,
+        fallback: "Finance sync diagnostics are temporarily unavailable.",
+        logContext: "Failed to load finance sync diagnostics for the landing page",
+      }),
     };
   }
 
@@ -322,7 +326,12 @@ function mapRealizedSection(
       title: window.label,
       description: `Window: ${window.detail}.`,
       cards: [],
-      error: readErrorMessage(result.reason, "Failed to load finance booking metrics"),
+      error: readErrorMessage({
+        reason: result.reason,
+        fallback: "Finance booking metrics are temporarily unavailable.",
+        logContext:
+          "Failed to load realized finance booking metrics for the landing page",
+      }),
     };
   }
 
@@ -390,7 +399,12 @@ function mapForwardSection(
       title: window.label,
       description: `Window: ${window.detail}. As of ${formatDisplayDate(window.asOfDate)}.`,
       cards: [],
-      error: readErrorMessage(result.reason, "Failed to load finance booking metrics"),
+      error: readErrorMessage({
+        reason: result.reason,
+        fallback: "Finance booking metrics are temporarily unavailable.",
+        logContext:
+          "Failed to load forward finance booking metrics for the landing page",
+      }),
     };
   }
 
@@ -478,6 +492,11 @@ function formatPercent(value: number): string {
   }).format(value);
 }
 
-function readErrorMessage(reason: unknown, fallback: string): string {
-  return reason instanceof Error ? reason.message : fallback;
+function readErrorMessage(input: {
+  reason: unknown;
+  fallback: string;
+  logContext: string;
+}): string {
+  console.error(input.logContext, input.reason);
+  return input.fallback;
 }

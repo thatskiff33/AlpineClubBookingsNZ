@@ -26,6 +26,10 @@ import {
   buildFinanceLandingPageModel,
 } from "@/lib/finance-landing-page";
 
+const consoleErrorSpy = vi
+  .spyOn(console, "error")
+  .mockImplementation(() => undefined);
+
 function financeViewer() {
   return {
     id: "finance-viewer-1",
@@ -256,6 +260,7 @@ describe("finance landing page model", () => {
   });
 
   afterEach(() => {
+    consoleErrorSpy.mockClear();
     vi.useRealTimers();
   });
 
@@ -328,7 +333,12 @@ describe("finance landing page model", () => {
       title: "Latest durable run",
       value: "Succeeded",
     });
-    expect(model.realized.error).toBe("booking metrics unavailable");
-    expect(model.forward.error).toBe("booking metrics unavailable");
+    expect(model.realized.error).toBe(
+      "Finance booking metrics are temporarily unavailable."
+    );
+    expect(model.forward.error).toBe(
+      "Finance booking metrics are temporarily unavailable."
+    );
+    expect(consoleErrorSpy).toHaveBeenCalled();
   });
 });
