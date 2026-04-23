@@ -12,6 +12,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  formatRedactedJson,
+  redactSensitiveText,
+} from "@/lib/redact-sensitive-json";
 import { cn } from "@/lib/utils";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
 import type {
@@ -45,7 +49,7 @@ function operationStatusClass(status: string) {
 }
 
 function formatJson(value: unknown) {
-  return JSON.stringify(value ?? null, null, 2)
+  return formatRedactedJson(value)
 }
 
 function shortId(value: string | null | undefined) {
@@ -125,7 +129,7 @@ function OperationItem({
       {operation.lastErrorMessage && (
         <p className="text-sm text-red-700">
           {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
-          {operation.lastErrorMessage}
+          {redactSensitiveText(operation.lastErrorMessage)}
         </p>
       )}
 

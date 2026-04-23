@@ -190,6 +190,43 @@ interface CheckMembershipStatusOptions {
   forceRefreshOnlineInvoiceUrl?: boolean;
 }
 
+function normalizeXeroContactMatchValue(value: string | null | undefined): string {
+  return value?.trim().replace(/\s+/g, " ").toLowerCase() ?? "";
+}
+
+function buildMemberFullName(member: {
+  firstName: string | null;
+  lastName: string | null;
+}): string {
+  return [member.firstName, member.lastName]
+    .map((value) => value?.trim() ?? "")
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildXeroContactDisplayName(contact: Pick<Contact, "name" | "firstName" | "lastName">) {
+  if (contact.name?.trim()) {
+    return contact.name.trim();
+  }
+
+  return [contact.firstName, contact.lastName]
+    .map((value) => value?.trim() ?? "")
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isDuplicateActiveXeroContactNameError(error: unknown): boolean {
+  const text = getXeroErrorSearchText(error);
+  return (
+    text.includes("already assigned to another contact") ||
+    (text.includes("contact name") && text.includes("must be unique"))
+  );
+}
+
 interface RefreshedXeroContactGroup {
   id: string;
   name: string;
@@ -686,6 +723,101 @@ export async function getAuthenticatedXeroClient(): Promise<{
  * Find or create a Xero Contact for a member.
  * Updates the member's xeroContactId if a new contact is created.
  */
+async function linkMatchedXeroContact(
+  tx: Prisma.TransactionClient,
+  input: {
+    memberId: string;
+    contactId: string;
+    previousXeroContactId?: string | null;
+    repairExistingLink?: boolean;
+    linkedVia: "email_match" | "email_match_repair" | "name_match" | "name_match_repair";
+    contactName?: string | null;
+  }
+) {
+  const existingLink = await tx.member.findFirst({
+    where: {
+      xeroContactId: input.contactId,
+      id: { not: input.memberId },
+    },
+    select: {
+      firstName: true,
+      lastName: true,
+    },
+  });
+
+  if (existingLink) {
+    throw new Error(
+      `Matched Xero contact is already linked to ${existingLink.firstName} ${existingLink.lastName}.`
+    );
+  }
+
+  await tx.member.update({
+    where: { id: input.memberId },
+    data: { xeroContactId: input.contactId },
+  });
+  await upsertXeroObjectLink({
+    localModel: "Member",
+    localId: input.memberId,
+    xeroObjectType: "CONTACT",
+    xeroObjectId: input.contactId,
+    xeroObjectUrl: buildXeroContactUrl(input.contactId),
+    role: "CONTACT",
+    metadata: {
+      linkedVia: input.linkedVia,
+      contactName: input.contactName?.trim() ? input.contactName.trim() : undefined,
+      repairedFromXeroContactId:
+        input.repairExistingLink &&
+        input.previousXeroContactId &&
+        input.previousXeroContactId !== input.contactId
+          ? input.previousXeroContactId
+          : undefined,
+    },
+  });
+}
+
+async function findExistingXeroContactByExactName(input: {
+  xero: XeroClient;
+  tenantId: string;
+  fullName: string;
+  contextPrefix: string;
+}): Promise<Contact | null> {
+  const normalizedName = normalizeXeroContactMatchValue(input.fullName);
+  if (!normalizedName) {
+    return null;
+  }
+
+  const contactsResponse = await callXeroApi(
+    () =>
+      input.xero.accountingApi.getContacts(
+        input.tenantId,
+        undefined, // ifModifiedSince
+        undefined, // where
+        undefined, // order
+        undefined, // iDs
+        1, // page
+        false, // includeArchived
+        true, // summaryOnly
+        input.fullName.replace(/"/g, ""),
+        20 // pageSize
+      ),
+    {
+      operation: "getContacts",
+      resourceType: "CONTACT",
+      workflow: "findOrCreateXeroContact",
+      context: `${input.contextPrefix} searchByName(${input.fullName})`,
+    }
+  );
+
+  return (
+    contactsResponse.body.contacts?.find(
+      (contact) =>
+        normalizeXeroContactMatchValue(
+          buildXeroContactDisplayName(contact)
+        ) === normalizedName
+    ) ?? null
+  );
+}
+
 export async function findOrCreateXeroContact(
   memberId: string,
   options?: FindOrCreateXeroContactOptions
@@ -738,24 +870,15 @@ export async function findOrCreateXeroContact(
       const contacts = contactsResponse.body.contacts;
       if (contacts && contacts.length > 0) {
         const contactId = contacts[0].contactID!;
-        await tx.member.update({
-          where: { id: memberId },
-          data: { xeroContactId: contactId },
-        });
-        await upsertXeroObjectLink({
-          localModel: "Member",
-          localId: memberId,
-          xeroObjectType: "CONTACT",
-          xeroObjectId: contactId,
-          xeroObjectUrl: buildXeroContactUrl(contactId),
-          role: "CONTACT",
-          metadata: {
-            linkedVia: options?.repairExistingLink ? "email_match_repair" : "email_match",
-            repairedFromXeroContactId:
-              options?.repairExistingLink && previousXeroContactId !== contactId
-                ? previousXeroContactId
-                : undefined,
-          },
+        await linkMatchedXeroContact(tx, {
+          memberId,
+          contactId,
+          previousXeroContactId,
+          repairExistingLink: options?.repairExistingLink,
+          linkedVia: options?.repairExistingLink
+            ? "email_match_repair"
+            : "email_match",
+          contactName: buildXeroContactDisplayName(contacts[0]),
         });
         return contactId;
       }
@@ -849,6 +972,59 @@ export async function findOrCreateXeroContact(
 
       return createdContact.contactID;
     } catch (error) {
+      if (isDuplicateActiveXeroContactNameError(error)) {
+        try {
+          const matchedContact = await findExistingXeroContactByExactName({
+            xero,
+            tenantId,
+            fullName: buildMemberFullName(member),
+            contextPrefix: "findOrCreateXeroContact duplicate-name recovery",
+          });
+
+          if (matchedContact?.contactID) {
+            await linkMatchedXeroContact(tx, {
+              memberId,
+              contactId: matchedContact.contactID,
+              previousXeroContactId,
+              repairExistingLink: options?.repairExistingLink,
+              linkedVia: options?.repairExistingLink
+                ? "name_match_repair"
+                : "name_match",
+              contactName: buildXeroContactDisplayName(matchedContact),
+            });
+
+            await completeXeroSyncOperation(operation.id, {
+              responsePayload: {
+                resolution: "linked_existing_contact_by_name",
+                matchedBy: "name",
+                duplicateCreateError: sanitizeForJson(error),
+              },
+              xeroObjectType: "CONTACT",
+              xeroObjectId: matchedContact.contactID,
+              xeroObjectUrl: buildXeroContactUrl(matchedContact.contactID),
+              extraLinks: [
+                {
+                  localModel: "Member",
+                  localId: memberId,
+                  xeroObjectType: "CONTACT",
+                  xeroObjectId: matchedContact.contactID,
+                  xeroObjectUrl: buildXeroContactUrl(matchedContact.contactID),
+                  role: "CONTACT",
+                },
+              ],
+            });
+
+            return matchedContact.contactID;
+          }
+        } catch (recoveryError) {
+          await failXeroSyncOperation(operation.id, recoveryError, {
+            duplicateCreateError: sanitizeForJson(error),
+            recoveryError: sanitizeForJson(recoveryError),
+          });
+          throw recoveryError;
+        }
+      }
+
       await failXeroSyncOperation(operation.id, error);
       throw error;
     }

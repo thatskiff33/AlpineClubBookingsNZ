@@ -3,6 +3,10 @@ import { createHash } from "crypto";
 import { prisma } from "./prisma";
 import { getXeroErrorStatusCode } from "./xero-error-shape";
 import { buildXeroObjectUrl } from "./xero-links";
+import {
+  redactSensitiveJson,
+  redactSensitiveText,
+} from "./redact-sensitive-json";
 import logger from "@/lib/logger";
 
 export interface XeroSyncOperationInput {
@@ -41,32 +45,14 @@ export interface XeroSyncOperationCompletion {
   extraLinks?: XeroObjectLinkInput[];
 }
 
-function jsonReplacer(_key: string, value: unknown): unknown {
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
-
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: value.message,
-      stack: value.stack,
-    };
-  }
-
-  return value;
-}
-
 export function sanitizeForJson(value: unknown): Prisma.InputJsonValue | undefined {
   if (value === undefined) {
     return undefined;
   }
 
-  return JSON.parse(JSON.stringify(value, jsonReplacer)) as Prisma.InputJsonValue;
+  return JSON.parse(
+    JSON.stringify(redactSensitiveJson(value))
+  ) as Prisma.InputJsonValue;
 }
 
 export function buildXeroPayloadHash(payload: unknown): string {
@@ -258,8 +244,13 @@ export async function failXeroSyncOperation(
   responsePayload?: unknown
 ) {
   const statusCode = getXeroErrorStatusCode(error);
-  const message =
-    error instanceof Error ? error.message : typeof error === "string" ? error : "Unknown Xero sync failure";
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "Unknown Xero sync failure";
+  const message = redactSensitiveText(rawMessage);
 
   const operation = await prisma.xeroSyncOperation.update({
     where: { id: operationId },
