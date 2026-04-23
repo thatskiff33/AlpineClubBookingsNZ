@@ -27,6 +27,10 @@ import {
   buildFinanceCostsReportHref,
 } from "@/lib/finance-costs-report-page";
 import {
+  buildDefaultFinancePricingSensitivityFilters,
+  buildFinancePricingSensitivityReportHref,
+} from "@/lib/finance-pricing-sensitivity-page";
+import {
   buildFinanceLandingPageModel,
   type FinanceLandingSectionSummary,
 } from "@/lib/finance-landing-page";
@@ -124,6 +128,9 @@ export default async function FinancePage() {
   const costsReportHref = buildFinanceCostsReportHref(
     buildDefaultFinanceCostsReportFilters()
   );
+  const pricingSensitivityReportHref = buildFinancePricingSensitivityReportHref(
+    buildDefaultFinancePricingSensitivityFilters()
+  );
 
   return (
     <div className="space-y-8">
@@ -167,6 +174,12 @@ export default async function FinancePage() {
               <Button asChild size="sm" variant="outline">
                 <Link href={costsReportHref}>
                   Open costs report
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link href={pricingSensitivityReportHref}>
+                  Open pricing sensitivity
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>

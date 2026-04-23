@@ -36,7 +36,7 @@ type FinanceCostsReportSearchParams = Record<
   string | string[] | undefined
 >;
 
-type FinanceSnapshotRecord = Awaited<
+export type FinanceCostSnapshotRecord = Awaited<
   ReturnType<typeof listFinanceSnapshots>
 >[number];
 
@@ -64,15 +64,18 @@ interface FinanceSnapshotReportPayload {
   rows: FinanceSnapshotReportRow[];
 }
 
-interface ParsedCostLineItem {
+export interface ParsedCostLineItem {
   section: string;
   lineItem: string;
   amountCents: number;
 }
 
-interface ParsedCostsSnapshot {
+export interface ParsedCostsSnapshot {
   snapshotId: string;
   periodLabel: string;
+  asOfDate: string;
+  periodStart: string | null;
+  periodEnd: string | null;
   sourceWindow: string;
   totalCostsCents: number;
   totalCosts: string;
@@ -405,8 +408,8 @@ function buildCostsLineItemRows(
     }));
 }
 
-function parseCostsSnapshot(
-  snapshot: FinanceSnapshotRecord
+export function parseCostsSnapshot(
+  snapshot: FinanceCostSnapshotRecord
 ): ParsedCostsSnapshot | null {
   const payload = readReportPayload(snapshot.payload);
 
@@ -435,6 +438,13 @@ function parseCostsSnapshot(
   return {
     snapshotId: snapshot.id,
     periodLabel,
+    asOfDate: snapshot.asOfDate.toISOString().slice(0, 10),
+    periodStart: snapshot.periodStart
+      ? snapshot.periodStart.toISOString().slice(0, 10)
+      : null,
+    periodEnd: snapshot.periodEnd
+      ? snapshot.periodEnd.toISOString().slice(0, 10)
+      : null,
     sourceWindow: formatSnapshotWindow(snapshot.periodStart, snapshot.periodEnd),
     totalCostsCents,
     totalCosts: formatFinanceAmount(totalCostsCents),
