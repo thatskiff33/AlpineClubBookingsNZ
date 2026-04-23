@@ -16,8 +16,29 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 const MAX_SCREENSHOT_DATA_URL_LENGTH = 1_500_000;
+const SCREENSHOT_CAPTURE_ID_ATTRIBUTE = "data-report-issue-capture-id";
 const UNSUPPORTED_COLOR_FUNCTION_RE =
   /\b(?:lab|lch|oklab|oklch|color-mix)\(/i;
+const SCREENSHOT_STYLE_PROPERTIES_TO_RESOLVE = [
+  "color",
+  "background-color",
+  "background-image",
+  "border-top-color",
+  "border-right-color",
+  "border-bottom-color",
+  "border-left-color",
+  "outline-color",
+  "text-decoration-color",
+  "text-emphasis-color",
+  "caret-color",
+  "column-rule-color",
+  "fill",
+  "stroke",
+  "box-shadow",
+  "text-shadow",
+  "-webkit-text-fill-color",
+  "-webkit-text-stroke-color",
+] as const;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -42,18 +63,28 @@ function compressCanvasToDataUrl(canvas: HTMLCanvasElement): string {
   return canvas.toDataURL("image/jpeg", 0.55);
 }
 
-function resolveColorExpression(expression: string): string | null {
-  const probe = document.createElement("span");
+function createStyleProbe() {
+  const probe = document.createElement("div");
   probe.setAttribute("aria-hidden", "true");
   probe.style.position = "fixed";
   probe.style.pointerEvents = "none";
   probe.style.opacity = "0";
   probe.style.inset = "-9999px";
-  probe.style.color = expression;
+  probe.style.width = "0";
+  probe.style.height = "0";
   document.body.appendChild(probe);
 
+  return probe;
+}
+
+function resolveColorExpression(
+  probe: HTMLElement,
+  expression: string
+): string | null {
+  probe.style.color = expression;
+
   const resolved = getComputedStyle(probe).color.trim();
-  probe.remove();
+  probe.style.removeProperty("color");
 
   if (!resolved || UNSUPPORTED_COLOR_FUNCTION_RE.test(resolved)) {
     return null;
@@ -62,24 +93,63 @@ function resolveColorExpression(expression: string): string | null {
   return resolved;
 }
 
-function collectResolvedCustomProperties(element: HTMLElement) {
-  const computedStyle = getComputedStyle(element);
+function resolveStylePropertyValue(
+  probe: HTMLElement,
+  propertyName: string,
+  value: string
+) {
+  probe.style.setProperty(propertyName, value);
+  const resolved = getComputedStyle(probe).getPropertyValue(propertyName).trim();
+  probe.style.removeProperty(propertyName);
 
-  return Array.from(computedStyle)
-    .filter((propertyName) => propertyName.startsWith("--"))
-    .map((propertyName) => {
-      const rawValue = computedStyle.getPropertyValue(propertyName).trim();
-      if (!rawValue || !UNSUPPORTED_COLOR_FUNCTION_RE.test(rawValue)) {
-        return null;
-      }
+  if (!resolved || UNSUPPORTED_COLOR_FUNCTION_RE.test(resolved)) {
+    return null;
+  }
 
-      const resolvedValue = resolveColorExpression(`var(${propertyName})`);
-      return resolvedValue ? [propertyName, resolvedValue] : null;
-    })
-    .filter((entry): entry is [string, string] => entry !== null);
+  return resolved;
 }
 
-function applyResolvedCustomProperties(
+function collectResolvedStyleOverrides(
+  element: HTMLElement,
+  probe: HTMLElement
+) {
+  const computedStyle = getComputedStyle(element);
+  const overrides = new Map<string, string>();
+
+  for (const propertyName of Array.from(computedStyle).filter((name) =>
+    name.startsWith("--")
+  )) {
+    const rawValue = computedStyle.getPropertyValue(propertyName).trim();
+    if (!rawValue || !UNSUPPORTED_COLOR_FUNCTION_RE.test(rawValue)) {
+      continue;
+    }
+
+    const resolvedValue = resolveColorExpression(probe, `var(${propertyName})`);
+    if (resolvedValue) {
+      overrides.set(propertyName, resolvedValue);
+    }
+  }
+
+  for (const propertyName of SCREENSHOT_STYLE_PROPERTIES_TO_RESOLVE) {
+    const rawValue = computedStyle.getPropertyValue(propertyName).trim();
+    if (!rawValue || !UNSUPPORTED_COLOR_FUNCTION_RE.test(rawValue)) {
+      continue;
+    }
+
+    const resolvedValue = resolveStylePropertyValue(
+      probe,
+      propertyName,
+      rawValue
+    );
+    if (resolvedValue) {
+      overrides.set(propertyName, resolvedValue);
+    }
+  }
+
+  return Array.from(overrides.entries());
+}
+
+function applyResolvedStyleOverrides(
   element: HTMLElement,
   resolvedEntries: Array<[string, string]>
 ) {
@@ -88,76 +158,91 @@ function applyResolvedCustomProperties(
   }
 }
 
+function prepareResolvedStyleOverrides() {
+  const probe = createStyleProbe();
+  const previousAttributeValues = new Map<HTMLElement, string | null>();
+  const overridesByCaptureId = new Map<string, Array<[string, string]>>();
+
+  try {
+    const elements = Array.from(
+      document.querySelectorAll<HTMLElement>("html, body, body *")
+    );
+
+    for (const [index, element] of elements.entries()) {
+      const captureId = `${index}`;
+      previousAttributeValues.set(
+        element,
+        element.getAttribute(SCREENSHOT_CAPTURE_ID_ATTRIBUTE)
+      );
+      element.setAttribute(SCREENSHOT_CAPTURE_ID_ATTRIBUTE, captureId);
+
+      const resolvedOverrides = collectResolvedStyleOverrides(element, probe);
+      if (resolvedOverrides.length > 0) {
+        overridesByCaptureId.set(captureId, resolvedOverrides);
+      }
+    }
+  } finally {
+    probe.remove();
+  }
+
+  return {
+    applyToClone(clonedDocument: Document) {
+      for (const [captureId, overrides] of overridesByCaptureId) {
+        const clonedElement = clonedDocument.querySelector<HTMLElement>(
+          `[${SCREENSHOT_CAPTURE_ID_ATTRIBUTE}="${captureId}"]`
+        );
+        if (!clonedElement) {
+          continue;
+        }
+
+        applyResolvedStyleOverrides(clonedElement, overrides);
+        clonedElement.removeAttribute(SCREENSHOT_CAPTURE_ID_ATTRIBUTE);
+      }
+    },
+    cleanup() {
+      for (const [element, previousValue] of previousAttributeValues) {
+        if (previousValue === null) {
+          element.removeAttribute(SCREENSHOT_CAPTURE_ID_ATTRIBUTE);
+        } else {
+          element.setAttribute(SCREENSHOT_CAPTURE_ID_ATTRIBUTE, previousValue);
+        }
+      }
+    },
+  };
+}
+
 async function captureViewportScreenshot(options?: {
   foreignObjectRendering?: boolean;
   resolveUnsupportedColors?: boolean;
 }): Promise<string> {
-  const rootColorOverrides = options?.resolveUnsupportedColors
-    ? collectResolvedCustomProperties(document.documentElement)
-    : [];
-  const bodyColorOverrides = options?.resolveUnsupportedColors
-    ? collectResolvedCustomProperties(document.body)
-    : [];
+  const colorOverrides = options?.resolveUnsupportedColors
+    ? prepareResolvedStyleOverrides()
+    : null;
 
-  const fullCanvas = await html2canvas(document.body, {
-    useCORS: true,
-    backgroundColor: "#ffffff",
-    logging: false,
-    foreignObjectRendering: options?.foreignObjectRendering ?? false,
-    ignoreElements: (element) =>
-      element instanceof HTMLElement &&
-      element.dataset.reportIssueIgnore === "true",
-    onclone: (clonedDocument) => {
-      applyResolvedCustomProperties(
-        clonedDocument.documentElement,
-        rootColorOverrides
-      );
-      applyResolvedCustomProperties(clonedDocument.body, bodyColorOverrides);
-    },
-  });
+  try {
+    const viewportCanvas = await html2canvas(document.documentElement, {
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+      foreignObjectRendering: options?.foreignObjectRendering ?? false,
+      x: window.scrollX,
+      y: window.scrollY,
+      width: window.innerWidth,
+      height: window.innerHeight,
+      windowWidth: document.documentElement.clientWidth,
+      windowHeight: document.documentElement.clientHeight,
+      ignoreElements: (element) =>
+        element instanceof HTMLElement &&
+        element.dataset.reportIssueIgnore === "true",
+      onclone: (clonedDocument) => {
+        colorOverrides?.applyToClone(clonedDocument);
+      },
+    });
 
-  const root = document.documentElement;
-  const scaleX = fullCanvas.width / root.scrollWidth;
-  const scaleY = fullCanvas.height / root.scrollHeight;
-
-  const cropX = Math.max(0, Math.round(window.scrollX * scaleX));
-  const cropY = Math.max(0, Math.round(window.scrollY * scaleY));
-  const cropWidth = Math.min(
-    fullCanvas.width - cropX,
-    Math.max(1, Math.round(window.innerWidth * scaleX))
-  );
-  const cropHeight = Math.min(
-    fullCanvas.height - cropY,
-    Math.max(1, Math.round(window.innerHeight * scaleY))
-  );
-
-  const maxOutputWidth = 1440;
-  const outputScale = Math.min(1, maxOutputWidth / cropWidth);
-  const outputWidth = Math.max(1, Math.round(cropWidth * outputScale));
-  const outputHeight = Math.max(1, Math.round(cropHeight * outputScale));
-
-  const viewportCanvas = document.createElement("canvas");
-  viewportCanvas.width = outputWidth;
-  viewportCanvas.height = outputHeight;
-
-  const context = viewportCanvas.getContext("2d");
-  if (!context) {
-    throw new Error("Unable to prepare screenshot");
+    return compressCanvasToDataUrl(viewportCanvas);
+  } finally {
+    colorOverrides?.cleanup();
   }
-
-  context.drawImage(
-    fullCanvas,
-    cropX,
-    cropY,
-    cropWidth,
-    cropHeight,
-    0,
-    0,
-    outputWidth,
-    outputHeight
-  );
-
-  return compressCanvasToDataUrl(viewportCanvas);
 }
 
 async function captureViewportScreenshotWithFallbacks(): Promise<string> {
@@ -203,7 +288,6 @@ export function ReportIssueWidget() {
       const dataUrl = await captureViewportScreenshotWithFallbacks();
       setScreenshotDataUrl(dataUrl);
     } catch (error) {
-      setScreenshotDataUrl(null);
       setCaptureError(
         error instanceof Error
           ? error.message

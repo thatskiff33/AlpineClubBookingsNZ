@@ -19,6 +19,14 @@ import {
 } from "@/components/ui/card";
 import { requireFinanceViewer } from "@/lib/finance-auth";
 import {
+  buildDefaultFinanceBalanceSheetReportFilters,
+  buildFinanceBalanceSheetReportHref,
+} from "@/lib/finance-balance-sheet-report-page";
+import {
+  buildDefaultFinanceCostsReportFilters,
+  buildFinanceCostsReportHref,
+} from "@/lib/finance-costs-report-page";
+import {
   buildFinanceLandingPageModel,
   type FinanceLandingSectionSummary,
 } from "@/lib/finance-landing-page";
@@ -110,6 +118,12 @@ export default async function FinancePage() {
   const cashReportHref = buildFinanceCashReportHref(
     buildDefaultFinanceCashReportFilters()
   );
+  const balanceSheetReportHref = buildFinanceBalanceSheetReportHref(
+    buildDefaultFinanceBalanceSheetReportFilters()
+  );
+  const costsReportHref = buildFinanceCostsReportHref(
+    buildDefaultFinanceCostsReportFilters()
+  );
 
   return (
     <div className="space-y-8">
@@ -151,8 +165,20 @@ export default async function FinancePage() {
                 </Link>
               </Button>
               <Button asChild size="sm" variant="outline">
+                <Link href={costsReportHref}>
+                  Open costs report
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
                 <Link href={cashReportHref}>
                   Open cash report
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link href={balanceSheetReportHref}>
+                  Open balance sheet report
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>

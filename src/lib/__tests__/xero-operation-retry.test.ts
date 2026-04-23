@@ -500,9 +500,9 @@ describe("retryXeroSyncOperation", () => {
       })
     );
 
-    await expect(retryXeroSyncOperation("op_123")).rejects.toMatchObject<XeroOperationRetryError>({
+    await expect(retryXeroSyncOperation("op_123")).rejects.toMatchObject({
       name: "XeroOperationRetryError",
       status: 400,
-    });
+    } satisfies Partial<XeroOperationRetryError>);
   });
 });

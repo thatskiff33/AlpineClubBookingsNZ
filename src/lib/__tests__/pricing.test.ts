@@ -85,6 +85,20 @@ describe("findSeasonForDate", () => {
     expect(season?.seasonId).toBe("season-winter-2026")
   })
 
+  it("matches a season start date for browser-submitted NZ local dates", () => {
+    const boundarySeason = makeSeason({
+      startDate: new Date("2026-07-04T00:00:00.000Z"),
+      endDate: new Date("2026-09-30T00:00:00.000Z"),
+    })
+
+    const season = findSeasonForDate(
+      new Date("2026-07-03T12:00:00.000Z"),
+      [boundarySeason]
+    )
+
+    expect(season?.seasonId).toBe("season-winter-2026")
+  })
+
   it("finds summer season for a December date", () => {
     const season = findSeasonForDate(new Date("2026-12-15"), allSeasons)
     expect(season?.seasonId).toBe("season-summer-2026")
@@ -169,6 +183,24 @@ describe("calculateBookingPrice - single guest", () => {
         allSeasons
       )
     ).toThrow("No rate found")
+  })
+
+  it("prices a season-boundary stay from browser-submitted NZ local dates", () => {
+    const boundarySeason = makeSeason({
+      startDate: new Date("2026-07-04T00:00:00.000Z"),
+      endDate: new Date("2026-09-30T00:00:00.000Z"),
+    })
+    const guests: GuestInput[] = [{ ageTier: "ADULT", isMember: true }]
+
+    const result = calculateBookingPrice(
+      new Date("2026-07-03T12:00:00.000Z"),
+      new Date("2026-07-04T12:00:00.000Z"),
+      guests,
+      [boundarySeason]
+    )
+
+    expect(result.totalPriceCents).toBe(4500)
+    expect(result.guests[0].perNightCents).toEqual([4500])
   })
 })
 
