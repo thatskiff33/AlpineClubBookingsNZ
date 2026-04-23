@@ -10,6 +10,10 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import {
+  formatRedactedJson,
+  redactSensitiveText,
+} from "@/lib/redact-sensitive-json"
 import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache"
 
 interface XeroStatus {
@@ -872,7 +876,7 @@ export default function XeroPage() {
     }
   }
 
-  const formatJson = (value: unknown) => JSON.stringify(value ?? null, null, 2)
+  const formatJson = (value: unknown) => formatRedactedJson(value)
 
   const shortId = (value: string | null | undefined) =>
     value ? (value.length > 12 ? `${value.slice(0, 12)}...` : value) : "-"
@@ -1762,7 +1766,7 @@ export default function XeroPage() {
                     {operation.lastErrorMessage && (
                       <p className="text-sm text-red-700">
                         {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
-                        {operation.lastErrorMessage}
+                        {redactSensitiveText(operation.lastErrorMessage)}
                       </p>
                     )}
 

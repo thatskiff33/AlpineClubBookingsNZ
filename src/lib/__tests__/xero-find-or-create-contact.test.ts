@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => {
   const tx = {
     $executeRaw: vi.fn(),
     member: {
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
       update: vi.fn(),
     },
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => {
     setTokenSet: vi.fn(),
     refreshWithRefreshToken: vi.fn(),
     accountingApi: {
+      createContacts: vi.fn(),
       getContacts: vi.fn(),
     },
   };
@@ -64,7 +66,12 @@ vi.mock("xero-node", () => ({
   Phone: {
     PhoneTypeEnum: { MOBILE: "MOBILE" },
   },
-  Address: class {},
+  Address: {
+    AddressTypeEnum: {
+      STREET: "STREET",
+      POBOX: "POBOX",
+    },
+  },
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -97,14 +104,19 @@ vi.mock("@/lib/xero-links", () => ({
   buildXeroInvoiceUrl: vi.fn((invoiceId: string) => `https://go.xero.test/invoice/${invoiceId}`),
 }));
 
-vi.mock("@/lib/xero-sync", () => ({
-  buildXeroIdempotencyKey: vi.fn((...parts: unknown[]) => parts.join(":")),
-  buildXeroPayloadHash: vi.fn(() => "payload-hash"),
-  completeXeroSyncOperation: mocks.completeXeroSyncOperation,
-  failXeroSyncOperation: mocks.failXeroSyncOperation,
-  startXeroSyncOperation: mocks.startXeroSyncOperation,
-  upsertXeroObjectLink: mocks.upsertXeroObjectLink,
-}));
+vi.mock("@/lib/xero-sync", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+
+  return {
+    ...actual,
+    buildXeroIdempotencyKey: vi.fn((...parts: unknown[]) => parts.join(":")),
+    buildXeroPayloadHash: vi.fn(() => "payload-hash"),
+    completeXeroSyncOperation: mocks.completeXeroSyncOperation,
+    failXeroSyncOperation: mocks.failXeroSyncOperation,
+    startXeroSyncOperation: mocks.startXeroSyncOperation,
+    upsertXeroObjectLink: mocks.upsertXeroObjectLink,
+  };
+});
 
 import {
   encryptToken,
@@ -123,8 +135,10 @@ describe("findOrCreateXeroContact", () => {
 
     mocks.prisma.$transaction.mockImplementation(async (callback) => callback(mocks.tx));
     mocks.tx.$executeRaw.mockResolvedValue(undefined);
+    mocks.tx.member.findFirst.mockResolvedValue(null);
     mocks.tx.member.update.mockResolvedValue({ id: "mem_1", xeroContactId: "xero_new" });
     mocks.prisma.xeroToken.findFirst.mockResolvedValue(null);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_1" });
     mocks.xeroClientInstance.accountingApi.getContacts.mockResolvedValue({
       body: { contacts: [] },
     });
@@ -194,6 +208,127 @@ describe("findOrCreateXeroContact", () => {
       metadata: {
         linkedVia: "email_match_repair",
         repairedFromXeroContactId: "xero_stale",
+      },
+    });
+  });
+
+  it("links an exact Xero name match when createContacts fails with a duplicate-name validation error", async () => {
+    mocks.tx.member.findUnique.mockResolvedValue({
+      id: "mem_1",
+      firstName: "Jordan",
+      lastName: "Hartley-Smith",
+      email: "jordan.hartleysmith@gmail.com",
+      xeroContactId: null,
+      dateOfBirth: new Date("1987-08-30T00:00:00.000Z"),
+      phoneCountryCode: "64",
+      phoneAreaCode: "",
+      phoneNumber: "274224115",
+      streetAddressLine1: "165 Barrett Road",
+      streetAddressLine2: "",
+      streetCity: "New Plymouth",
+      streetRegion: "Taranaki",
+      streetPostalCode: "4310",
+      streetCountry: "NZ",
+      postalAddressLine1: "165 Barrett Road",
+      postalAddressLine2: "",
+      postalCity: "New Plymouth",
+      postalRegion: "Taranaki",
+      postalPostalCode: "4310",
+      postalCountry: "NZ",
+    });
+    mocks.prisma.xeroToken.findFirst.mockResolvedValue({
+      id: "token_1",
+      accessToken: encryptToken("access"),
+      refreshToken: encryptToken("refresh"),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      tenantId: "tenant_1",
+    });
+    mocks.xeroClientInstance.accountingApi.getContacts
+      .mockResolvedValueOnce({ body: { contacts: [] } })
+      .mockResolvedValueOnce({
+        body: {
+          contacts: [
+            {
+              contactID: "xero_existing_by_name",
+              name: "Jordan Hartley-Smith",
+              firstName: "Jordan",
+              lastName: "Hartley-Smith",
+            },
+          ],
+        },
+      });
+    mocks.xeroClientInstance.accountingApi.createContacts.mockRejectedValue({
+      response: { statusCode: 400 },
+      message: JSON.stringify({
+        response: {
+          statusCode: 400,
+        },
+        body: {
+          Message: "A validation exception occurred",
+          Elements: [
+            {
+              ValidationErrors: [
+                {
+                  Message:
+                    "The contact name Jordan Hartley-Smith is already assigned to another contact. The contact name must be unique across all active contacts.",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+
+    await expect(findOrCreateXeroContact("mem_1")).resolves.toBe(
+      "xero_existing_by_name"
+    );
+
+    expect(mocks.xeroClientInstance.accountingApi.getContacts).toHaveBeenNthCalledWith(
+      1,
+      "tenant_1",
+      undefined,
+      'EmailAddress="jordan.hartleysmith@gmail.com"'
+    );
+    expect(mocks.xeroClientInstance.accountingApi.getContacts).toHaveBeenNthCalledWith(
+      2,
+      "tenant_1",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1,
+      false,
+      true,
+      "Jordan Hartley-Smith",
+      20
+    );
+    expect(mocks.tx.member.update).toHaveBeenCalledWith({
+      where: { id: "mem_1" },
+      data: { xeroContactId: "xero_existing_by_name" },
+    });
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_1",
+      expect.objectContaining({
+        xeroObjectType: "CONTACT",
+        xeroObjectId: "xero_existing_by_name",
+        responsePayload: expect.objectContaining({
+          resolution: "linked_existing_contact_by_name",
+          matchedBy: "name",
+        }),
+      })
+    );
+    expect(mocks.failXeroSyncOperation).not.toHaveBeenCalled();
+    expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith({
+      localModel: "Member",
+      localId: "mem_1",
+      xeroObjectType: "CONTACT",
+      xeroObjectId: "xero_existing_by_name",
+      xeroObjectUrl: "https://go.xero.test/contact/xero_existing_by_name",
+      role: "CONTACT",
+      metadata: {
+        linkedVia: "name_match",
+        contactName: "Jordan Hartley-Smith",
+        repairedFromXeroContactId: undefined,
       },
     });
   });
