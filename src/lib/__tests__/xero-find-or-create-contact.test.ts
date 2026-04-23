@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => {
   };
 
   const prisma = {
-    $transaction: vi.fn(async (callback: (tx: typeof tx) => Promise<unknown>) => callback(tx)),
+    $transaction: vi.fn(async (callback) => callback(tx)),
     xeroToken: {
       findFirst: vi.fn(),
     },
@@ -121,9 +121,7 @@ describe("findOrCreateXeroContact", () => {
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     );
 
-    mocks.prisma.$transaction.mockImplementation(
-      async (callback: (tx: typeof mocks.tx) => Promise<unknown>) => callback(mocks.tx)
-    );
+    mocks.prisma.$transaction.mockImplementation(async (callback) => callback(mocks.tx));
     mocks.tx.$executeRaw.mockResolvedValue(undefined);
     mocks.tx.member.update.mockResolvedValue({ id: "mem_1", xeroContactId: "xero_new" });
     mocks.prisma.xeroToken.findFirst.mockResolvedValue(null);

@@ -435,7 +435,11 @@ describe("expireStaleOffers", () => {
         member: { id: "m2", email: "bob@test.com", firstName: "Bob", lastName: "Jones" },
       },
     ]);
-    vi.mocked(checkCapacity).mockResolvedValue({ available: false, availableBeds: 0 });
+    vi.mocked(checkCapacity).mockResolvedValue({
+      available: false,
+      minAvailable: 0,
+      nightDetails: [],
+    });
 
     const result = await expireStaleOffers();
 

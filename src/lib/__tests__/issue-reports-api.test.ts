@@ -43,10 +43,12 @@ import { logAudit } from "@/lib/audit";
 import { sendAdminIssueReportAlert } from "@/lib/email";
 import { POST } from "@/app/api/issue-reports/route";
 
-const mockedPrisma = vi.mocked(prisma);
 const mockedAuth = vi.mocked(auth);
 const mockedLogAudit = vi.mocked(logAudit);
 const mockedSendAdminIssueReportAlert = vi.mocked(sendAdminIssueReportAlert);
+const mockedMemberCount = vi.mocked(prisma.member.count);
+const mockedMemberFindUnique = vi.mocked(prisma.member.findUnique);
+const mockedIssueReportCreate = vi.mocked(prisma.issueReport.create);
 
 describe("issue reports API", () => {
   beforeEach(() => {
@@ -54,14 +56,14 @@ describe("issue reports API", () => {
     mockedAuth.mockResolvedValue({
       user: { id: "member-1", role: "MEMBER" },
     } as never);
-    mockedPrisma.member.count.mockResolvedValue(1 as never);
-    mockedPrisma.member.findUnique.mockResolvedValue({
+    mockedMemberCount.mockResolvedValue(1 as never);
+    mockedMemberFindUnique.mockResolvedValue({
       id: "member-1",
       firstName: "Casey",
       lastName: "Member",
       email: "casey@example.com",
     } as never);
-    mockedPrisma.issueReport.create.mockResolvedValue({ id: "issue-1" } as never);
+    mockedIssueReportCreate.mockResolvedValue({ id: "issue-1" } as never);
     mockedSendAdminIssueReportAlert.mockResolvedValue(undefined as never);
   });
 
@@ -79,7 +81,7 @@ describe("issue reports API", () => {
     const res = await POST(req);
     expect(res.status).toBe(201);
 
-    expect(mockedPrisma.issueReport.create).toHaveBeenCalledWith({
+    expect(mockedIssueReportCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         memberId: "member-1",
         pageUrl: "http://localhost/book",
@@ -119,7 +121,7 @@ describe("issue reports API", () => {
 
     const res = await POST(req);
     expect(res.status).toBe(400);
-    expect(mockedPrisma.issueReport.create).not.toHaveBeenCalled();
+    expect(mockedIssueReportCreate).not.toHaveBeenCalled();
     expect(mockedSendAdminIssueReportAlert).not.toHaveBeenCalled();
   });
 });
