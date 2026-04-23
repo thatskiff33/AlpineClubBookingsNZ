@@ -17,7 +17,7 @@ Last updated: 2026-04-23
 - Most recent landed task: `#144`
 - Most recent merged implementation PR: `#142`
 - Finance task currently in flight: none
-- Single `status: ready` finance task: `#146`
+- Single `status: ready` finance task: none; remaining phase `#99` follow-up needs reassessment after the published `#146` validation slice
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Task #138
@@ -376,20 +376,22 @@ Validation:
 - Verified `git diff --check`
 - Verified `npm run build`
 - Verified issue `#144` is closed as completed
-- Verified issue `#146` is open with labels `area: finance`, `type: task`, and `status: ready`
+- Verified `npx vitest run src/lib/__tests__/finance-cash-report-page.test.ts src/lib/__tests__/finance-balance-sheet-report-page.test.ts src/lib/__tests__/finance-costs-report-page.test.ts src/lib/__tests__/finance-phase99-report-output-validation.test.ts`
+- Verified `npx eslint src/lib/__tests__/finance-phase99-report-output-validation.test.ts`
+- Verified `git diff --check`
+- Verified issue `#146` is the only open finance task that was marked `status: ready` before publish/close
 - Verified no other open finance task is marked `status: ready`
 
 What landed:
-- Added `src/lib/finance-costs-report-page.ts` as the finance costs report loader/model boundary for durable `PROFIT_AND_LOSS_MONTHLY` snapshot reads, safe period-filter fallback handling, cost-section parsing, grouped line-item aggregation, and viewer-safe unavailable states
-- Added `src/app/(finance)/finance/costs/page.tsx` for a native `/finance/costs` report page with summary cards, monthly snapshot detail, and grouped cost line-item comparisons
-- Updated `src/app/(finance)/finance/page.tsx` so the finance landing page now links to bookings, revenue, costs, cash, and balance-sheet reports from the same native shell
-- Added `src/lib/__tests__/finance-costs-report-page.test.ts` for targeted costs-report loader coverage, invalid-period fallback handling, and safe unavailable states
-- Added `docs/finance-dashboard/finance-costs-report-contract.md`, indexed it from `docs/finance-dashboard/README.md`, and updated `docs/finance-dashboard/data-contracts.md` with the native costs-reporting source-ownership boundary
-- Closed task `#144` as completed and created follow-up task `#146` as the single open finance task carrying `status: ready`
+- Added `src/lib/__tests__/finance-phase99-report-output-validation.test.ts` with representative phase `#99` validation coverage for the native `/finance/cash`, `/finance/balance-sheet`, and `/finance/costs` report loaders
+- Captured durable in-repo evidence that the landed cash report output stays aligned with stored `BANK_BALANCES` snapshot totals and account-level summary rows for representative periods
+- Captured durable in-repo evidence that the landed balance-sheet report output stays aligned with stored `BALANCE_SHEET` snapshot totals and grouped line-item detail for representative periods
+- Captured durable in-repo evidence that the landed costs report output stays aligned with stored `PROFIT_AND_LOSS_MONTHLY` snapshot totals and grouped cost-line detail for representative periods
+- Confirmed the representative phase `#99` validation pass did not expose a narrow loader discrepancy, so no runtime report-page changes were required in the same slice
 
 What remains:
-- Land task `#146` as the smallest validation pass for the native cash, balance-sheet, and costs report outputs under phase `#99`
-- After `#146` lands, reassess whether the smallest remaining phase `#99` follow-up is a pricing-sensitivity slice or whether the remaining rollout should stay documented as later work
+- Publish and close task `#146` through the normal GitHub workflow once this validation-only change is reviewed and merged
+- Reassess whether the smallest remaining phase `#99` follow-up is a pricing-sensitivity slice or whether the remaining rollout should stay documented as later work
 - Leave pricing-sensitivity modelling, working-capital calculations, charts, manual sync mutations, and operational Xero behavior for later work unless current evidence proves a gap
 
 Blockers:
@@ -405,33 +407,28 @@ Work on exactly one task issue only.
 1. Read only these sources first:
 - docs/finance-dashboard/handoff.md
 - docs/finance-dashboard/data-contracts.md
-- ready task issue #146
+- task issue #146
 - local `git status --short --branch`
 - local diff for:
   - `src/lib/__tests__/finance-phase99-report-output-validation.test.ts`
-  - `src/lib/finance-cash-report-page.ts`
-  - `src/lib/finance-balance-sheet-report-page.ts`
-  - `src/lib/finance-costs-report-page.ts`
   - `docs/finance-dashboard/handoff.md`
 
-2. Land task `#146` end-to-end in this session:
-- keep the task on validation of the landed native cash, balance-sheet, and costs report outputs only
-- use the smallest finance-only implementation that adds durable in-repo validation evidence against the landed finance snapshot seams without broadening into new report pages
-- reuse the landed finance report-page loaders, finance snapshot storage/query seams, and earlier validation patterns where that keeps the implementation smaller and production ready
-- if the task wording proves too narrow once implementation starts, update the GitHub task issue to the smallest safe production-ready scope and continue in the same session
-- only stop without landing code if a true external blocker remains after exhausting repo code, merged PR context, and any relevant official documentation
-- keep docs/XERO_HANDOFF.md unchanged unless current evidence proves a new operational Xero gap
+2. Finish task `#146` through the GitHub workflow in this session:
+- keep the task on the landed phase `#99` validation-only change for native cash, balance-sheet, and costs report outputs
+- do not broaden into new report pages, pricing-sensitivity modelling, working-capital rollups, charts, manual sync work, or operational Xero changes unless fresh evidence proves a real gap
+- if review or verification surfaces a narrow defect in the phase `#99` report loaders, fix only that smallest safe discrepancy in the same task before publishing
+- otherwise publish the validation-only change, close issue `#146`, and update the finance handoff state to point at the next smallest actionable finance task
 
-3. Scope the next task tightly:
-- do not combine the task with pricing-sensitivity analysis, working-capital rollups, charts, or manual sync work
-- do not broaden the task beyond the minimum needed to validate the landed phase `#99` report outputs safely; speculative schema work and operational Xero changes remain out of scope
-- do not reopen operational Xero work unless current evidence proves a new gap
+3. Only after `#146` is published, scope the next finance task tightly:
+- reassess whether the smallest remaining phase `#99` follow-up should be a pricing-sensitivity slice or whether the remaining rollout should stay documented as later work
+- create the next smallest actionable finance task only if that next slice is genuinely implementation-ready
+- keep speculative schema work, manual sync work, charts, and operational Xero behavior out of scope unless current evidence proves a new gap
 
 4. Before finishing:
 - update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, validation, and the next exact Next Prompt block
-- run the targeted tests/lint for touched files and run `npm run build` if runtime paths changed
+- rerun the targeted phase `#99` report tests/lint for touched files and run `npm run build` only if runtime paths changed
 - do not finish with docs-only blocker notes if the feature can still be landed safely within the task/phase intent
-- close task `#146` and create the next finance task only if `#146` fully lands
+- close task `#146` only after the validation change is published and leave the queue without a speculative next ready task unless a genuinely implementation-ready slice is identified
 - otherwise leave the clearest possible external blocker with source evidence and do not start a second task in the same session
 - ensure exactly one finance task carries `status: ready` when there is actionable work, and keep that label on the next smallest unblocked task only
 - leave docs/XERO_HANDOFF.md unchanged unless new evidence forces it open
