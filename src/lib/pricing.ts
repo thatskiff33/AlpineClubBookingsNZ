@@ -1,5 +1,5 @@
 import { AgeTier, PromoCodeType, SeasonType } from "@prisma/client";
-import { eachDayOfInterval, subDays } from "date-fns";
+import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "./date-only";
 
 export interface SeasonRateData {
   seasonId: string;
@@ -42,17 +42,57 @@ export interface PromoCodeInput {
   freeNights?: number | null;
 }
 
+const BOOKING_TIME_ZONE = "Pacific/Auckland";
+
+function getDateOnlyStringForTimeZone(date: Date, timeZone = BOOKING_TIME_ZONE): string {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    throw new Error(`Unable to derive booking date for timezone ${timeZone}`);
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeBookingDate(date: Date): Date {
+  const normalized = parseDateOnly(getDateOnlyStringForTimeZone(date));
+
+  if (Number.isNaN(normalized.getTime())) {
+    throw new Error(`Invalid booking date: ${date.toISOString()}`);
+  }
+
+  return normalized;
+}
+
+function getBookingDateKey(date: Date): string {
+  return formatDateOnly(normalizeBookingDate(date));
+}
+
 /**
  * Generate an array of dates for each night of a stay.
  * A stay from checkIn to checkOut charges for each night FROM checkIn UP TO (not including) checkOut.
  */
 export function getStayNights(checkIn: Date, checkOut: Date): Date[] {
-  const lastNight = subDays(checkOut, 1);
-  if (lastNight < checkIn) return [];
-  return eachDayOfInterval({
-    start: checkIn,
-    end: lastNight,
-  });
+  const start = normalizeBookingDate(checkIn);
+  const exclusiveEnd = normalizeBookingDate(checkOut);
+
+  if (exclusiveEnd <= start) return [];
+
+  const nights: Date[] = [];
+  for (let current = start; current < exclusiveEnd; current = addDaysDateOnly(current, 1)) {
+    nights.push(current);
+  }
+
+  return nights;
 }
 
 /**
@@ -64,12 +104,12 @@ export function findRateForNight(
   isMember: boolean,
   seasons: SeasonRateData[]
 ): number | null {
-  const dateTime = date.getTime();
+  const dateKey = getBookingDateKey(date);
 
   for (const season of seasons) {
-    const start = season.startDate.getTime();
-    const end = season.endDate.getTime();
-    if (dateTime >= start && dateTime <= end) {
+    const startKey = getBookingDateKey(season.startDate);
+    const endKey = getBookingDateKey(season.endDate);
+    if (dateKey >= startKey && dateKey <= endKey) {
       const rate = season.rates.find(
         (r) => r.ageTier === ageTier && r.isMember === isMember
       );
@@ -87,12 +127,12 @@ export function findSeasonForDate(
   date: Date,
   seasons: SeasonRateData[]
 ): SeasonRateData | null {
-  const dateTime = date.getTime();
+  const dateKey = getBookingDateKey(date);
 
   for (const season of seasons) {
-    const start = season.startDate.getTime();
-    const end = season.endDate.getTime();
-    if (dateTime >= start && dateTime <= end) {
+    const startKey = getBookingDateKey(season.startDate);
+    const endKey = getBookingDateKey(season.endDate);
+    if (dateKey >= startKey && dateKey <= endKey) {
       return season;
     }
   }
@@ -179,7 +219,7 @@ export function calculateBookingPrice(
       const rate = findRateForNight(night, guest.ageTier, effectiveIsMember, seasons);
       if (rate === null) {
         throw new Error(
-          `No rate found for ${guest.ageTier} (member: ${guest.isMember}) on ${night.toLocaleDateString("en-CA")}`
+          `No rate found for ${guest.ageTier} (member: ${guest.isMember}) on ${formatDateOnly(night)}`
         );
       }
       perNightCents.push(rate);

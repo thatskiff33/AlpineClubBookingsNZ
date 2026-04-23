@@ -136,11 +136,23 @@ Do not infer guest counts from external system summaries if TACBookings guest ro
 - Payment-derived cash summaries come from TACBookings `Payment` rows and must remain distinct from booking-derived revenue metrics.
 - Any page combining booking-derived and Xero-derived metrics must state which source owns each number.
 
+## Costs Reporting Contract
+
+- Native costs reporting uses stored `PROFIT_AND_LOSS_MONTHLY` finance snapshots synced through the finance-only Xero boundary.
+- Costs report figures represent stored expense detail from those snapshots and must remain distinct from TACBookings booking revenue, payment-derived cash summaries, and native balance-sheet totals.
+- The smallest native costs report page may compare stored monthly expense snapshots across selected periods and surface grouped line-item detail, but it must not add pricing-sensitivity modelling, working-capital rollups, charts, or live Xero reads.
+
 ## Cash Reporting Contract
 
 - Native cash reporting uses stored `BANK_BALANCES` finance snapshots synced through the finance-only Xero boundary.
 - Cash report figures represent stored bank position detail from those snapshots and must remain distinct from TACBookings payment-derived cash summaries.
 - The smallest native cash report page may compare stored bank-balance snapshots across selected periods, but it must not add working-capital rollups or live Xero reads.
+
+## Balance-Sheet Reporting Contract
+
+- Native balance-sheet reporting uses stored `BALANCE_SHEET` finance snapshots synced through the finance-only Xero boundary.
+- Balance-sheet figures represent stored assets, liabilities, and equity positions from those snapshots and must remain distinct from TACBookings booking metrics, payment-derived cash summaries, and the separate native cash report totals.
+- The smallest native balance-sheet report page may compare stored balance-sheet snapshots across selected periods and surface stored line-item detail, but it must not add costs reporting, working-capital rollups, charts, or live Xero reads.
 
 ## Booking Type Note
 
