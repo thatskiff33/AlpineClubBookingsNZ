@@ -16,8 +16,8 @@ Last updated: 2026-04-25
 - Active phase: `#99`
 - Most recent landed task: `#151`
 - Most recent merged implementation PR: `#152`
-- Most recent published implementation PR: `#152`
-- Finance task currently in flight: `#153`
+- Most recent published implementation PR: `#155`
+- Finance task currently in flight: `#153` via PR `#155`
 - Single `status: ready` finance task: none
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
@@ -420,6 +420,7 @@ Done:
 - Updated `src/app/(finance)/finance/page.tsx` so the finance landing page links directly into the new working-capital report
 - Added `src/lib/__tests__/finance-working-capital-report-page.test.ts` for working-capital loader coverage, current-section parsing, invalid-filter fallback handling, and zero-liability current-ratio behavior
 - Added `docs/finance-dashboard/finance-working-capital-report-contract.md` and updated `docs/finance-dashboard/README.md` plus `docs/finance-dashboard/data-contracts.md` for the explicit working-capital contract and non-goals
+- Opened draft PR `#155` for task `#153`
 
 Validation:
 - `./node_modules/.bin/vitest run src/lib/__tests__/finance-working-capital-report-page.test.ts src/lib/__tests__/finance-balance-sheet-report-page.test.ts`
@@ -428,7 +429,7 @@ Validation:
 - `git diff --check`
 
 Next:
-- Open or update the PR for task `#153`, then update task issue `#153` and phase issue `#99` with the scoped progress note
+- Update task issue `#153` and phase issue `#99` with the scoped progress note, then let CI run on PR `#155`
 - Reassess phase `#99` acceptance only after task `#153` merges and decide whether any additional concrete reporting slice is still required before phase closure
 
 Blockers:
