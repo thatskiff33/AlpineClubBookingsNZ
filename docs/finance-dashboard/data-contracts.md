@@ -142,6 +142,19 @@ Do not infer guest counts from external system summaries if TACBookings guest ro
 - Costs report figures represent stored expense detail from those snapshots and must remain distinct from TACBookings booking revenue, payment-derived cash summaries, and native balance-sheet totals.
 - The smallest native costs report page may compare stored monthly expense snapshots across selected periods and surface grouped line-item detail, but it must not add pricing-sensitivity modelling, working-capital rollups, charts, or live Xero reads.
 
+## Pricing Sensitivity Contract
+
+- Native pricing sensitivity uses stored `PROFIT_AND_LOSS_MONTHLY` finance snapshots plus TACBookings realized booking metrics for the same monthly windows.
+- Pricing sensitivity must keep source ownership explicit:
+  - monthly costs come from finance snapshots
+  - guest nights, occupancy, and booked revenue come from TACBookings booking metrics
+  - payment-derived cash totals remain out of scope
+- A matched monthly window uses the snapshot `periodStart` and the earlier of `periodEnd` or `asOfDate`.
+- Actual revenue per guest night is `bookedRevenueCents / guestNights` for the matched monthly window.
+- Break-even revenue per guest night is `totalCostsCents / guestNights` for the matched monthly window.
+- Scenario rows may use explicit occupancy assumptions only when the assumptions are displayed in the UI and the implied guest nights are derived from the selected periods' average monthly capacity bed nights.
+- The smallest native pricing-sensitivity page may surface summary cards, monthly comparison detail, and an occupancy-assumption table, but it must not add working-capital calculations, charts, live Xero reads, manual sync actions, booking-type schema, or undocumented legacy-dashboard formulas.
+
 ## Cash Reporting Contract
 
 - Native cash reporting uses stored `BANK_BALANCES` finance snapshots synced through the finance-only Xero boundary.

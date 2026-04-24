@@ -1,6 +1,6 @@
 # Finance Dashboard Handoff
 
-Last updated: 2026-04-23
+Last updated: 2026-04-24
 
 ## Current State
 
@@ -14,11 +14,11 @@ Last updated: 2026-04-23
 - Phase `#97` is closed
 - Phase `#98` is closed
 - Active phase: `#99`
-- Most recent landed task: `#144`
-- Most recent merged implementation PR: `#142`
-- Most recent published implementation PR: `#148`
-- Finance task currently in flight: none
-- Single `status: ready` finance task: none; remaining phase `#99` follow-up needs reassessment after published task `#146`
+- Most recent landed task: `#146`
+- Most recent merged implementation PR: `#148`
+- Most recent published implementation PR: `#152`
+- Finance task currently in flight: `#151` via draft PR `#152`
+- Single `status: ready` finance task: none; `#151` moved from `status: ready` to `status: in-progress` once draft PR `#152` opened
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Task #138
@@ -392,49 +392,78 @@ What landed:
 - Captured durable in-repo evidence that the landed balance-sheet report output stays aligned with stored `BALANCE_SHEET` snapshot totals and grouped line-item detail for representative periods
 - Captured durable in-repo evidence that the landed costs report output stays aligned with stored `PROFIT_AND_LOSS_MONTHLY` snapshot totals and grouped cost-line detail for representative periods
 - Confirmed the representative phase `#99` validation pass did not expose a narrow loader discrepancy, so no runtime report-page changes were required in the same slice
+- Reassessed the next smallest phase `#99` follow-up after `#146` and created task `#151` as the smallest implementation-ready pricing-sensitivity slice
+- Added `src/lib/finance-pricing-sensitivity-page.ts` as the native pricing-sensitivity loader/model boundary that combines stored `PROFIT_AND_LOSS_MONTHLY` finance snapshots with TACBookings realized booking metrics
+- Added `src/app/(finance)/finance/pricing-sensitivity/page.tsx` for a native `/finance/pricing-sensitivity` report page with summary cards, monthly comparison detail, and explicit occupancy-assumption scenario rows
+- Updated `src/app/(finance)/finance/page.tsx` so the finance landing page links into the new pricing-sensitivity report
+- Reused the landed monthly cost parsing seam by exporting the narrow snapshot summary helper from `src/lib/finance-costs-report-page.ts`
+- Added `src/lib/__tests__/finance-pricing-sensitivity-page.test.ts` for matched monthly window coverage, scenario math, invalid-filter fallback handling, and fail-soft month skipping
+- Added `docs/finance-dashboard/finance-pricing-sensitivity-report-contract.md` and updated `docs/finance-dashboard/README.md` plus `docs/finance-dashboard/data-contracts.md` for the explicit pricing-sensitivity contract and non-goals
+- Opened draft PR `#152` for task `#151`
+- Removed `status: ready` from issue `#151` and moved it to `status: in-progress` once the work was pushed to PR `#152`
+- Validated the task diff with:
+  - `npx vitest run src/lib/__tests__/finance-pricing-sensitivity-page.test.ts src/lib/__tests__/finance-costs-report-page.test.ts`
+  - `npx eslint 'src/app/(finance)/finance/pricing-sensitivity/page.tsx' src/app/'(finance)'/finance/page.tsx src/lib/finance-pricing-sensitivity-page.ts src/lib/finance-costs-report-page.ts src/lib/__tests__/finance-pricing-sensitivity-page.test.ts`
+  - `git diff --check`
+  - `npm run build` after temporarily stashing unrelated local admin-Xero workspace changes that are outside task `#151` and not part of PR `#152`
 
 What remains:
-- Reassess whether the smallest remaining phase `#99` follow-up is a pricing-sensitivity slice or whether the remaining rollout should stay documented as later work
-- Leave pricing-sensitivity modelling, working-capital calculations, charts, manual sync mutations, and operational Xero behavior for later work unless current evidence proves a gap
+- Run merge review for draft PR `#152` and merge it only if CI stays green, the diff remains scoped to task `#151`, and no blocker comments appear
+- Reassess the next smallest follow-up only after `#151` lands; likely candidates remain a working-capital slice under phase `#99` or leaving later rollout work documented without a speculative ready task
 
 Blockers:
-- None currently.
+- None on task `#151` itself
+- The shared local workspace also contains unrelated admin-Xero changes outside task `#151`; do not pull those files into PR `#152`
 
 ## Next Prompt
 
 ```text
 Use the GitHub workflow for TACBookings finance epic #92.
 
-Work on exactly one task issue only.
+Run the merge-review stage for the current active finance PR only.
 
 1. Read only these sources first:
 - docs/finance-dashboard/README.md
 - docs/finance-dashboard/handoff.md
-- docs/finance-dashboard/data-contracts.md
 - phase issue #99
-- phase issue #100
-- local `git status --short --branch`
-- local search results for `pricing sensitivity`, `working capital`, and `legacy dashboard`
+- task issue #151
+- draft PR #152
 
-2. Reassess the next smallest finance task after published task `#146`:
-- decide whether the next genuinely implementation-ready slice is a pricing-sensitivity task under phase `#99` or whether remaining phase `#99` work should stay documented as later work for now
-- do not create a speculative task issue unless the repo docs and current implementation seams give a safe, production-ready scope
-- if a next slice is implementation-ready, create exactly one finance task issue with concrete acceptance criteria and mark it as the only `status: ready` finance task
-- otherwise leave no ready task and update the handoff with the clearest concrete reason that reassessment stopped short of a new task
+Read docs/finance-dashboard/data-contracts.md only if a review comment or blocker requires touching the pricing-sensitivity contract.
+Read docs/XERO_HANDOFF.md only if a review comment or blocker would reopen finance or operational Xero scope.
 
-3. Scope any next task tightly:
-- keep speculative schema work, manual sync work, charts, and operational Xero behavior out of scope unless current evidence proves a new gap
-- do not combine pricing-sensitivity work with working-capital, rollout, or legacy-retirement scope in the same task
-- prefer the smallest native finance slice that can be code-complete and validated on its own
+2. Verify all merge gates:
+- task `#151` acceptance criteria are complete
+- local validation still covers:
+  - `npx vitest run src/lib/__tests__/finance-pricing-sensitivity-page.test.ts src/lib/__tests__/finance-costs-report-page.test.ts`
+  - `npx eslint 'src/app/(finance)/finance/pricing-sensitivity/page.tsx' src/app/'(finance)'/finance/page.tsx src/lib/finance-pricing-sensitivity-page.ts src/lib/finance-costs-report-page.ts src/lib/__tests__/finance-pricing-sensitivity-page.test.ts`
+  - `npm run build`
+  - `git diff --check`
+- PR `#152` checks are green
+- no unresolved blocker comments or requested changes remain
+- branch `finance/issue-151-pricing-sensitivity-report-shell` is up to date with `main`
+- the diff stays scoped to the pricing-sensitivity shell for task `#151`
 
-4. Before finishing:
-- update docs/finance-dashboard/handoff.md with what landed, what remains, blockers, validation, and the next exact Next Prompt block
-- rerun the targeted checks for any touched finance docs/code and run `npm run build` only if runtime paths changed
-- do not finish with docs-only blocker notes if the feature can still be landed safely within the task/phase intent
-- if a new task is created, ensure exactly one finance task carries `status: ready`
-- if no new task is created, leave the queue without a speculative ready label and explain why
-- otherwise leave the clearest possible external blocker with source evidence and do not start a second task in the same session
-- leave docs/XERO_HANDOFF.md unchanged unless new evidence forces it open
+3. If any gate fails:
+- do not merge
+- leave a short blocker note on PR `#152`
+- update docs/finance-dashboard/handoff.md with the exact failing gate and next action
+- keep the unrelated local admin-Xero workspace changes out of the finance branch
 
-5. Work on exactly one task issue only.
+4. If all gates pass:
+- squash merge PR `#152`
+- delete remote branch `finance/issue-151-pricing-sensitivity-report-shell`
+- sync local:
+  - `git checkout main`
+  - `git pull --ff-only`
+  - `git branch -d finance/issue-151-pricing-sensitivity-report-shell`
+- close task issue `#151` with a minimal Done/Validation/Next/Blockers comment
+- add a short progress comment to phase issue `#99`
+- reassess whether the next smallest safe follow-up is a working-capital task under phase `#99`; only create a new `status: ready` finance task if the scope is concrete and production-ready
+
+5. Keep handoff minimal:
+- Done:
+- Validation:
+- Next:
+- Blockers:
 ```
