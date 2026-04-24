@@ -14,11 +14,11 @@ Last updated: 2026-04-24
 - Phase `#97` is closed
 - Phase `#98` is closed
 - Active phase: `#99`
-- Most recent landed task: `#146`
-- Most recent merged implementation PR: `#148`
+- Most recent landed task: `#151`
+- Most recent merged implementation PR: `#152`
 - Most recent published implementation PR: `#152`
-- Finance task currently in flight: `#151` via draft PR `#152`
-- Single `status: ready` finance task: none; `#151` moved from `status: ready` to `status: in-progress` once draft PR `#152` opened
+- Finance task currently in flight: none
+- Single `status: ready` finance task: `#153`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Task #138
@@ -406,62 +406,56 @@ What landed:
   - `npx eslint 'src/app/(finance)/finance/pricing-sensitivity/page.tsx' src/app/'(finance)'/finance/page.tsx src/lib/finance-pricing-sensitivity-page.ts src/lib/finance-costs-report-page.ts src/lib/__tests__/finance-pricing-sensitivity-page.test.ts`
   - `git diff --check`
   - `npm run build` after temporarily stashing unrelated local admin-Xero workspace changes that are outside task `#151` and not part of PR `#152`
+- Merged PR `#152` into `main`
+- Closed task `#151` as completed with a minimal Done/Validation/Next/Blockers issue comment
+- Added a short phase-progress comment to issue `#99`
+- Reassessed the next smallest concrete phase `#99` follow-up and created task `#153` as the single `status: ready` finance task for the native working-capital report shell
 
 What remains:
-- Run merge review for draft PR `#152` and merge it only if CI stays green, the diff remains scoped to task `#151`, and no blocker comments appear
-- Reassess the next smallest follow-up only after `#151` lands; likely candidates remain a working-capital slice under phase `#99` or leaving later rollout work documented without a speculative ready task
+- Land task `#153` for the native working-capital report shell under phase `#99`
+- Reassess phase `#99` acceptance only after `#153` lands and decide whether any additional concrete reporting slice is still required before phase closure
 
 Blockers:
-- None on task `#151` itself
-- The shared local workspace also contains unrelated admin-Xero changes outside task `#151`; do not pull those files into PR `#152`
+- None on the GitHub merge or issue state for task `#151`
+- The shared local workspace still contains unrelated admin-Xero changes; keep them out of any follow-up finance branch that starts from the current checkout
 
 ## Next Prompt
 
 ```text
 Use the GitHub workflow for TACBookings finance epic #92.
 
-Run the merge-review stage for the current active finance PR only.
+Work only on the single ready finance task under the active phase.
 
 1. Read only these sources first:
 - docs/finance-dashboard/README.md
 - docs/finance-dashboard/handoff.md
 - phase issue #99
-- task issue #151
-- draft PR #152
+- task issue #153
 
-Read docs/finance-dashboard/data-contracts.md only if a review comment or blocker requires touching the pricing-sensitivity contract.
+Read docs/finance-dashboard/data-contracts.md only if the working-capital implementation needs an existing balance-sheet or cash-report contract detail.
 Read docs/XERO_HANDOFF.md only if a review comment or blocker would reopen finance or operational Xero scope.
 
-2. Verify all merge gates:
-- task `#151` acceptance criteria are complete
-- local validation still covers:
-  - `npx vitest run src/lib/__tests__/finance-pricing-sensitivity-page.test.ts src/lib/__tests__/finance-costs-report-page.test.ts`
-  - `npx eslint 'src/app/(finance)/finance/pricing-sensitivity/page.tsx' src/app/'(finance)'/finance/page.tsx src/lib/finance-pricing-sensitivity-page.ts src/lib/finance-costs-report-page.ts src/lib/__tests__/finance-pricing-sensitivity-page.test.ts`
-  - `npm run build`
-  - `git diff --check`
-- PR `#152` checks are green
-- no unresolved blocker comments or requested changes remain
-- branch `finance/issue-151-pricing-sensitivity-report-shell` is up to date with `main`
-- the diff stays scoped to the pricing-sensitivity shell for task `#151`
+2. Before writing code:
+- inspect the landed balance-sheet and cash report seams for the smallest reusable parsing helpers
+- keep the shared local admin-Xero changes out of scope
+- create or reuse a dedicated finance branch from current `main`
 
-3. If any gate fails:
-- do not merge
-- leave a short blocker note on PR `#152`
-- update docs/finance-dashboard/handoff.md with the exact failing gate and next action
-- keep the unrelated local admin-Xero workspace changes out of the finance branch
+3. Deliver task `#153` end to end:
+- add the native `/finance/working-capital` page and the smallest finance-only loader/helper boundary required
+- derive current assets, current liabilities, working capital, and current ratio from stored `BALANCE_SHEET` snapshots using explicit in-repo assumptions
+- wire the report into the finance landing page
+- add only the targeted tests and docs needed for the working-capital slice
 
-4. If all gates pass:
-- squash merge PR `#152`
-- delete remote branch `finance/issue-151-pricing-sensitivity-report-shell`
-- sync local:
-  - `git checkout main`
-  - `git pull --ff-only`
-  - `git branch -d finance/issue-151-pricing-sensitivity-report-shell`
-- close task issue `#151` with a minimal Done/Validation/Next/Blockers comment
-- add a short progress comment to phase issue `#99`
-- reassess whether the next smallest safe follow-up is a working-capital task under phase `#99`; only create a new `status: ready` finance task if the scope is concrete and production-ready
+4. Validate before opening or updating the PR:
+- `npx vitest run src/lib/__tests__/finance-working-capital-report-page.test.ts src/lib/__tests__/finance-balance-sheet-report-page.test.ts`
+- `npx eslint 'src/app/(finance)/finance/working-capital/page.tsx' src/app/'(finance)'/finance/page.tsx src/lib/finance-working-capital-report-page.ts src/lib/finance-balance-sheet-report-page.ts src/lib/__tests__/finance-working-capital-report-page.test.ts`
+- `npm run build`
+- `git diff --check`
 
-5. Keep handoff minimal:
+5. After validation:
+- open or update the PR for task `#153`
+- update task issue `#153` and phase issue `#99` with minimal progress notes
+- keep handoff minimal:
 - Done:
 - Validation:
 - Next:
