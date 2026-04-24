@@ -31,6 +31,10 @@ import {
   buildFinancePricingSensitivityReportHref,
 } from "@/lib/finance-pricing-sensitivity-page";
 import {
+  buildDefaultFinanceWorkingCapitalReportFilters,
+  buildFinanceWorkingCapitalReportHref,
+} from "@/lib/finance-working-capital-report-page";
+import {
   buildFinanceLandingPageModel,
   type FinanceLandingSectionSummary,
 } from "@/lib/finance-landing-page";
@@ -131,6 +135,9 @@ export default async function FinancePage() {
   const pricingSensitivityReportHref = buildFinancePricingSensitivityReportHref(
     buildDefaultFinancePricingSensitivityFilters()
   );
+  const workingCapitalReportHref = buildFinanceWorkingCapitalReportHref(
+    buildDefaultFinanceWorkingCapitalReportFilters()
+  );
 
   return (
     <div className="space-y-8">
@@ -192,6 +199,12 @@ export default async function FinancePage() {
               <Button asChild size="sm" variant="outline">
                 <Link href={balanceSheetReportHref}>
                   Open balance sheet report
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link href={workingCapitalReportHref}>
+                  Open working capital
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>

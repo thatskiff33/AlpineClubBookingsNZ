@@ -19,7 +19,7 @@ type FinanceBalanceSheetReportSearchParams = Record<
   string | string[] | undefined
 >;
 
-type FinanceSnapshotRecord = Awaited<
+export type FinanceSnapshotRecord = Awaited<
   ReturnType<typeof listFinanceSnapshots>
 >[number];
 
@@ -47,22 +47,29 @@ interface FinanceSnapshotReportPayload {
   rows: FinanceSnapshotReportRow[];
 }
 
-interface ParsedBalanceSheetLineItem {
+export interface ParsedBalanceSheetLineItem {
   sectionPath: string;
   lineItem: string;
   amountCents: number;
 }
 
-interface ParsedBalanceSheetSnapshot {
+export interface ParsedBalanceSheetSnapshot {
   snapshotId: string;
   snapshotLabel: string;
   sourceWindow: string;
   totalAssetsCents: number;
   totalAssets: string;
+  currentAssetsCents: number | null;
+  currentAssets: string | null;
   totalLiabilitiesCents: number;
   totalLiabilities: string;
+  currentLiabilitiesCents: number | null;
+  currentLiabilities: string | null;
   netAssetsCents: number;
   netAssets: string;
+  workingCapitalCents: number | null;
+  workingCapital: string | null;
+  currentRatio: number | null;
   lineItemCount: number;
   sourceUpdatedAtLabel: string;
   lineItems: ParsedBalanceSheetLineItem[];
@@ -427,7 +434,7 @@ function buildBalanceSheetLineItemRows(
     }));
 }
 
-function parseBalanceSheetSnapshot(
+export function parseBalanceSheetSnapshot(
   snapshot: FinanceSnapshotRecord
 ): ParsedBalanceSheetSnapshot | null {
   const payload = readReportPayload(snapshot.payload);
@@ -449,10 +456,27 @@ function parseBalanceSheetSnapshot(
   const totalLiabilitiesCents =
     extractSectionTotalCents(liabilitiesSection, ["total liabilities"]) ??
     sumLineItemsInSection(liabilitiesSection);
+  const currentAssetsSection = findBalanceSheetSection(assetsSection.rows, [
+    "current asset",
+  ]);
+  const currentLiabilitiesSection = findBalanceSheetSection(
+    liabilitiesSection.rows,
+    ["current liabilit"]
+  );
 
   if (totalAssetsCents === null || totalLiabilitiesCents === null) {
     return null;
   }
+
+  const currentAssetsCents = currentAssetsSection
+    ? extractSectionTotalCents(currentAssetsSection, ["total current assets"]) ??
+      sumLineItemsInSection(currentAssetsSection)
+    : null;
+  const currentLiabilitiesCents = currentLiabilitiesSection
+    ? extractSectionTotalCents(currentLiabilitiesSection, [
+        "total current liabilities",
+      ]) ?? sumLineItemsInSection(currentLiabilitiesSection)
+    : null;
 
   const equitySection = findBalanceSheetSection(payload.rows, [
     "equity",
@@ -476,10 +500,32 @@ function parseBalanceSheetSnapshot(
     sourceWindow: formatSnapshotWindow(snapshot.periodStart, snapshot.periodEnd),
     totalAssetsCents,
     totalAssets: formatFinanceAmount(totalAssetsCents),
+    currentAssetsCents,
+    currentAssets:
+      currentAssetsCents === null ? null : formatFinanceAmount(currentAssetsCents),
     totalLiabilitiesCents,
     totalLiabilities: formatFinanceAmount(totalLiabilitiesCents),
+    currentLiabilitiesCents,
+    currentLiabilities:
+      currentLiabilitiesCents === null
+        ? null
+        : formatFinanceAmount(currentLiabilitiesCents),
     netAssetsCents,
     netAssets: formatFinanceAmount(netAssetsCents),
+    workingCapitalCents:
+      currentAssetsCents === null || currentLiabilitiesCents === null
+        ? null
+        : currentAssetsCents - currentLiabilitiesCents,
+    workingCapital:
+      currentAssetsCents === null || currentLiabilitiesCents === null
+        ? null
+        : formatFinanceAmount(currentAssetsCents - currentLiabilitiesCents),
+    currentRatio:
+      currentAssetsCents === null ||
+      currentLiabilitiesCents === null ||
+      currentLiabilitiesCents === 0
+        ? null
+        : currentAssetsCents / currentLiabilitiesCents,
     lineItemCount: lineItems.length,
     sourceUpdatedAtLabel: snapshot.sourceUpdatedAt
       ? formatDateTime(snapshot.sourceUpdatedAt.toISOString())

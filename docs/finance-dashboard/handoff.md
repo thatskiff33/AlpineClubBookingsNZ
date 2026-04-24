@@ -1,6 +1,6 @@
 # Finance Dashboard Handoff
 
-Last updated: 2026-04-24
+Last updated: 2026-04-25
 
 ## Current State
 
@@ -17,8 +17,8 @@ Last updated: 2026-04-24
 - Most recent landed task: `#151`
 - Most recent merged implementation PR: `#152`
 - Most recent published implementation PR: `#152`
-- Finance task currently in flight: none
-- Single `status: ready` finance task: `#153`
+- Finance task currently in flight: `#153`
+- Single `status: ready` finance task: none
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Task #138
@@ -411,53 +411,26 @@ What landed:
 - Added a short phase-progress comment to issue `#99`
 - Reassessed the next smallest concrete phase `#99` follow-up and created task `#153` as the single `status: ready` finance task for the native working-capital report shell
 
-What remains:
-- Land task `#153` for the native working-capital report shell under phase `#99`
-- Reassess phase `#99` acceptance only after `#153` lands and decide whether any additional concrete reporting slice is still required before phase closure
+## What Landed Through Task #153
 
-Blockers:
-- None on the GitHub merge or issue state for task `#151`
-- The shared local workspace still contains unrelated admin-Xero changes; keep them out of any follow-up finance branch that starts from the current checkout
+Done:
+- Added `src/lib/finance-working-capital-report-page.ts` as the native working-capital loader/model boundary for durable `BALANCE_SHEET` snapshot reads, safe period-filter fallback handling, current-section parsing, working-capital math, and viewer-safe unavailable states
+- Added `src/app/(finance)/finance/working-capital/page.tsx` for a native `/finance/working-capital` report page with summary cards and stored period comparisons for current assets, current liabilities, working capital, and current ratio
+- Reused the landed balance-sheet parsing seam by exporting the narrow snapshot summary helper from `src/lib/finance-balance-sheet-report-page.ts`
+- Updated `src/app/(finance)/finance/page.tsx` so the finance landing page links directly into the new working-capital report
+- Added `src/lib/__tests__/finance-working-capital-report-page.test.ts` for working-capital loader coverage, current-section parsing, invalid-filter fallback handling, and zero-liability current-ratio behavior
+- Added `docs/finance-dashboard/finance-working-capital-report-contract.md` and updated `docs/finance-dashboard/README.md` plus `docs/finance-dashboard/data-contracts.md` for the explicit working-capital contract and non-goals
 
-## Next Prompt
-
-```text
-Use the GitHub workflow for TACBookings finance epic #92.
-
-Work only on the single ready finance task under the active phase.
-
-1. Read only these sources first:
-- docs/finance-dashboard/README.md
-- docs/finance-dashboard/handoff.md
-- phase issue #99
-- task issue #153
-
-Read docs/finance-dashboard/data-contracts.md only if the working-capital implementation needs an existing balance-sheet or cash-report contract detail.
-Read docs/XERO_HANDOFF.md only if a review comment or blocker would reopen finance or operational Xero scope.
-
-2. Before writing code:
-- inspect the landed balance-sheet and cash report seams for the smallest reusable parsing helpers
-- keep the shared local admin-Xero changes out of scope
-- create or reuse a dedicated finance branch from current `main`
-
-3. Deliver task `#153` end to end:
-- add the native `/finance/working-capital` page and the smallest finance-only loader/helper boundary required
-- derive current assets, current liabilities, working capital, and current ratio from stored `BALANCE_SHEET` snapshots using explicit in-repo assumptions
-- wire the report into the finance landing page
-- add only the targeted tests and docs needed for the working-capital slice
-
-4. Validate before opening or updating the PR:
-- `npx vitest run src/lib/__tests__/finance-working-capital-report-page.test.ts src/lib/__tests__/finance-balance-sheet-report-page.test.ts`
-- `npx eslint 'src/app/(finance)/finance/working-capital/page.tsx' src/app/'(finance)'/finance/page.tsx src/lib/finance-working-capital-report-page.ts src/lib/finance-balance-sheet-report-page.ts src/lib/__tests__/finance-working-capital-report-page.test.ts`
+Validation:
+- `./node_modules/.bin/vitest run src/lib/__tests__/finance-working-capital-report-page.test.ts src/lib/__tests__/finance-balance-sheet-report-page.test.ts`
+- `./node_modules/.bin/eslint 'src/app/(finance)/finance/working-capital/page.tsx' src/app/'(finance)'/finance/page.tsx src/lib/finance-working-capital-report-page.ts src/lib/finance-balance-sheet-report-page.ts src/lib/__tests__/finance-working-capital-report-page.test.ts`
 - `npm run build`
 - `git diff --check`
 
-5. After validation:
-- open or update the PR for task `#153`
-- update task issue `#153` and phase issue `#99` with minimal progress notes
-- keep handoff minimal:
-- Done:
-- Validation:
-- Next:
-- Blockers:
-```
+Next:
+- Open or update the PR for task `#153`, then update task issue `#153` and phase issue `#99` with the scoped progress note
+- Reassess phase `#99` acceptance only after task `#153` merges and decide whether any additional concrete reporting slice is still required before phase closure
+
+Blockers:
+- None on the local implementation or validation for task `#153`
+- The shared local workspace still contains unrelated admin-Xero changes; keep them out of the original checkout and any follow-up work that does not use this isolated branch
