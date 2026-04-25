@@ -167,6 +167,17 @@ Do not infer guest counts from external system summaries if TACBookings guest ro
 - Balance-sheet figures represent stored assets, liabilities, and equity positions from those snapshots and must remain distinct from TACBookings booking metrics, payment-derived cash summaries, and the separate native cash report totals.
 - The smallest native balance-sheet report page may compare stored balance-sheet snapshots across selected periods and surface stored line-item detail, but it must not add costs reporting, working-capital rollups, charts, or live Xero reads.
 
+## Working-Capital Reporting Contract
+
+- Native working-capital reporting uses stored `BALANCE_SHEET` finance snapshots synced through the finance-only Xero boundary.
+- Working-capital figures must keep source ownership explicit:
+  - current assets come from stored balance-sheet sections explicitly labelled as current assets
+  - current liabilities come from stored balance-sheet sections explicitly labelled as current liabilities
+  - working capital is `currentAssetsCents - currentLiabilitiesCents`
+  - current ratio is `currentAssetsCents / currentLiabilitiesCents` only when current liabilities are greater than zero
+- Working-capital figures remain distinct from TACBookings booking metrics, payment-derived cash summaries, and the separate native cash report totals.
+- The smallest native working-capital page may surface summary cards and a period comparison table across selected stored balance-sheet snapshots, but it must not add liquidity forecasting, charts, live Xero reads, or manual sync actions.
+
 ## Booking Type Note
 
 `TACBookings` does not currently have a first-class `bookingType` field.

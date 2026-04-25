@@ -19,7 +19,7 @@ type FinanceBalanceSheetReportSearchParams = Record<
   string | string[] | undefined
 >;
 
-type FinanceSnapshotRecord = Awaited<
+export type FinanceBalanceSheetSnapshotRecord = Awaited<
   ReturnType<typeof listFinanceSnapshots>
 >[number];
 
@@ -53,17 +53,26 @@ interface ParsedBalanceSheetLineItem {
   amountCents: number;
 }
 
-interface ParsedBalanceSheetSnapshot {
+export interface ParsedBalanceSheetSnapshot {
   snapshotId: string;
   snapshotLabel: string;
   sourceWindow: string;
   totalAssetsCents: number;
   totalAssets: string;
+  currentAssetsCents: number | null;
+  currentAssets: string | null;
   totalLiabilitiesCents: number;
   totalLiabilities: string;
+  currentLiabilitiesCents: number | null;
+  currentLiabilities: string | null;
   netAssetsCents: number;
   netAssets: string;
+  workingCapitalCents: number | null;
+  workingCapital: string | null;
+  currentRatio: number | null;
   lineItemCount: number;
+  currentAssetLineItemCount: number;
+  currentLiabilityLineItemCount: number;
   sourceUpdatedAtLabel: string;
   lineItems: ParsedBalanceSheetLineItem[];
 }
@@ -123,7 +132,7 @@ export function buildDefaultFinanceBalanceSheetReportFilters() {
 }
 
 export function buildFinanceBalanceSheetReportQueryString(
-  filters: FinanceBalanceSheetReportFilters
+  filters: FinanceBalanceSheetReportFilters,
 ) {
   return new URLSearchParams({
     periods: String(filters.periods),
@@ -131,7 +140,7 @@ export function buildFinanceBalanceSheetReportQueryString(
 }
 
 export function buildFinanceBalanceSheetReportHref(
-  filters: FinanceBalanceSheetReportFilters
+  filters: FinanceBalanceSheetReportFilters,
 ) {
   return `/finance/balance-sheet?${buildFinanceBalanceSheetReportQueryString(filters)}`;
 }
@@ -151,7 +160,7 @@ export function resolveFinanceBalanceSheetReportFilters(input: {
 
   if (!/^\d+$/.test(normalizedPeriods)) {
     warnings.push(
-      `Balance-sheet periods must be a whole number between ${MIN_FINANCE_BALANCE_SHEET_PERIODS} and ${MAX_FINANCE_BALANCE_SHEET_PERIODS}. Showing the default ${DEFAULT_FINANCE_BALANCE_SHEET_PERIODS}-period window.`
+      `Balance-sheet periods must be a whole number between ${MIN_FINANCE_BALANCE_SHEET_PERIODS} and ${MAX_FINANCE_BALANCE_SHEET_PERIODS}. Showing the default ${DEFAULT_FINANCE_BALANCE_SHEET_PERIODS}-period window.`,
     );
     return { filters, warnings };
   }
@@ -164,7 +173,7 @@ export function resolveFinanceBalanceSheetReportFilters(input: {
     parsedPeriods > MAX_FINANCE_BALANCE_SHEET_PERIODS
   ) {
     warnings.push(
-      `Balance-sheet periods must be a whole number between ${MIN_FINANCE_BALANCE_SHEET_PERIODS} and ${MAX_FINANCE_BALANCE_SHEET_PERIODS}. Showing the default ${DEFAULT_FINANCE_BALANCE_SHEET_PERIODS}-period window.`
+      `Balance-sheet periods must be a whole number between ${MIN_FINANCE_BALANCE_SHEET_PERIODS} and ${MAX_FINANCE_BALANCE_SHEET_PERIODS}. Showing the default ${DEFAULT_FINANCE_BALANCE_SHEET_PERIODS}-period window.`,
     );
     return { filters, warnings };
   }
@@ -191,7 +200,7 @@ export async function buildFinanceBalanceSheetReportPageModel(input: {
     const parsedSnapshots = snapshots
       .map((snapshot) => parseBalanceSheetSnapshot(snapshot))
       .filter(
-        (snapshot): snapshot is ParsedBalanceSheetSnapshot => snapshot !== null
+        (snapshot): snapshot is ParsedBalanceSheetSnapshot => snapshot !== null,
       );
     const skippedSnapshotCount = snapshots.length - parsedSnapshots.length;
 
@@ -208,7 +217,7 @@ export async function buildFinanceBalanceSheetReportPageModel(input: {
 
     if (skippedSnapshotCount > 0) {
       warnings.push(
-        `${skippedSnapshotCount} stored balance-sheet snapshot${skippedSnapshotCount === 1 ? "" : "s"} could not be parsed and ${skippedSnapshotCount === 1 ? "was" : "were"} ignored.`
+        `${skippedSnapshotCount} stored balance-sheet snapshot${skippedSnapshotCount === 1 ? "" : "s"} could not be parsed and ${skippedSnapshotCount === 1 ? "was" : "were"} ignored.`,
       );
     }
 
@@ -278,7 +287,10 @@ export async function buildFinanceBalanceSheetReportPageModel(input: {
       sourceNotes: buildBalanceSheetSourceNotes(),
     };
   } catch (error) {
-    console.error("Failed to load finance balance-sheet report snapshots", error);
+    console.error(
+      "Failed to load finance balance-sheet report snapshots",
+      error,
+    );
 
     return buildUnavailableBalanceSheetReportModel({
       filters,
@@ -334,7 +346,7 @@ function buildBalanceSheetSourceNotes() {
 }
 
 function buildBalanceSheetLineItemRows(
-  snapshots: ParsedBalanceSheetSnapshot[]
+  snapshots: ParsedBalanceSheetSnapshot[],
 ): FinanceBalanceSheetReportLineItemRow[] {
   const latestSnapshot = snapshots[0];
   const lineItemSummaries = new Map<
@@ -417,18 +429,18 @@ function buildBalanceSheetLineItemRows(
           ? "—"
           : formatFinanceAmount(summary.latestAmountCents),
       selectedAverage: formatFinanceAmount(
-        Math.round(summary.selectedTotalAmountCents / summary.periodsPresent)
+        Math.round(summary.selectedTotalAmountCents / summary.periodsPresent),
       ),
       selectedRange: formatFinanceAmountRange(
         summary.lowestAmountCents ?? 0,
-        summary.highestAmountCents ?? 0
+        summary.highestAmountCents ?? 0,
       ),
       periodsPresent: formatWholeNumber(summary.periodsPresent),
     }));
 }
 
-function parseBalanceSheetSnapshot(
-  snapshot: FinanceSnapshotRecord
+export function parseBalanceSheetSnapshot(
+  snapshot: FinanceBalanceSheetSnapshotRecord,
 ): ParsedBalanceSheetSnapshot | null {
   const payload = readReportPayload(snapshot.payload);
 
@@ -437,7 +449,9 @@ function parseBalanceSheetSnapshot(
   }
 
   const assetsSection = findBalanceSheetSection(payload.rows, ["asset"]);
-  const liabilitiesSection = findBalanceSheetSection(payload.rows, ["liabilit"]);
+  const liabilitiesSection = findBalanceSheetSection(payload.rows, [
+    "liabilit",
+  ]);
 
   if (!assetsSection || !liabilitiesSection) {
     return null;
@@ -454,33 +468,89 @@ function parseBalanceSheetSnapshot(
     return null;
   }
 
+  const currentAssetsSection = findBalanceSheetSection(assetsSection.rows, [
+    "current asset",
+  ]);
+  const currentLiabilitiesSection = findBalanceSheetSection(
+    liabilitiesSection.rows,
+    ["current liabilit"],
+  );
+  const currentAssetsCents = currentAssetsSection
+    ? (extractSectionTotalCents(currentAssetsSection, [
+        "total current assets",
+        "current assets",
+      ]) ?? sumLineItemsInSection(currentAssetsSection))
+    : null;
+  const currentLiabilitiesCents = currentLiabilitiesSection
+    ? (extractSectionTotalCents(currentLiabilitiesSection, [
+        "total current liabilities",
+        "current liabilities",
+      ]) ?? sumLineItemsInSection(currentLiabilitiesSection))
+    : null;
+
   const equitySection = findBalanceSheetSection(payload.rows, [
     "equity",
     "net asset",
   ]);
   const netAssetsCents =
     (equitySection
-      ? extractSectionTotalCents(equitySection, [
+      ? (extractSectionTotalCents(equitySection, [
           "total equity",
           "equity",
           "total net assets",
           "net assets",
-        ]) ?? sumLineItemsInSection(equitySection)
-      : null) ??
-    (totalAssetsCents - totalLiabilitiesCents);
+        ]) ?? sumLineItemsInSection(equitySection))
+      : null) ?? totalAssetsCents - totalLiabilitiesCents;
   const lineItems = extractBalanceSheetLineItems(payload.rows);
+  const workingCapitalCents =
+    currentAssetsCents !== null && currentLiabilitiesCents !== null
+      ? currentAssetsCents - currentLiabilitiesCents
+      : null;
+  const currentRatio =
+    currentAssetsCents !== null &&
+    currentLiabilitiesCents !== null &&
+    currentLiabilitiesCents !== 0
+      ? currentAssetsCents / currentLiabilitiesCents
+      : null;
+  const currentAssetLineItemCount = currentAssetsSection
+    ? extractBalanceSheetLineItems(currentAssetsSection.rows).length
+    : 0;
+  const currentLiabilityLineItemCount = currentLiabilitiesSection
+    ? extractBalanceSheetLineItems(currentLiabilitiesSection.rows).length
+    : 0;
 
   return {
     snapshotId: snapshot.id,
     snapshotLabel: formatDisplayDate(snapshot.asOfDate),
-    sourceWindow: formatSnapshotWindow(snapshot.periodStart, snapshot.periodEnd),
+    sourceWindow: formatSnapshotWindow(
+      snapshot.periodStart,
+      snapshot.periodEnd,
+    ),
     totalAssetsCents,
     totalAssets: formatFinanceAmount(totalAssetsCents),
+    currentAssetsCents,
+    currentAssets:
+      currentAssetsCents === null
+        ? null
+        : formatFinanceAmount(currentAssetsCents),
     totalLiabilitiesCents,
     totalLiabilities: formatFinanceAmount(totalLiabilitiesCents),
+    currentLiabilitiesCents,
+    currentLiabilities:
+      currentLiabilitiesCents === null
+        ? null
+        : formatFinanceAmount(currentLiabilitiesCents),
     netAssetsCents,
     netAssets: formatFinanceAmount(netAssetsCents),
+    workingCapitalCents,
+    workingCapital:
+      workingCapitalCents === null
+        ? null
+        : formatFinanceAmount(workingCapitalCents),
+    currentRatio,
     lineItemCount: lineItems.length,
+    currentAssetLineItemCount,
+    currentLiabilityLineItemCount,
     sourceUpdatedAtLabel: snapshot.sourceUpdatedAt
       ? formatDateTime(snapshot.sourceUpdatedAt.toISOString())
       : "Snapshot update time unavailable",
@@ -488,7 +558,9 @@ function parseBalanceSheetSnapshot(
   };
 }
 
-function readReportPayload(value: unknown): FinanceSnapshotReportPayload | null {
+function readReportPayload(
+  value: unknown,
+): FinanceSnapshotReportPayload | null {
   if (!isRecord(value)) {
     return null;
   }
@@ -566,7 +638,7 @@ function readReportCells(value: unknown): FinanceSnapshotReportCell[] {
 
 function findBalanceSheetSection(
   rows: FinanceSnapshotReportRow[],
-  keywords: string[]
+  keywords: string[],
 ): FinanceSnapshotReportRow | null {
   for (const row of rows) {
     const title = row.title?.toLowerCase();
@@ -639,10 +711,10 @@ function extractBalanceSheetLineItems(rows: FinanceSnapshotReportRow[]) {
 
 function extractSectionTotalCents(
   section: FinanceSnapshotReportRow,
-  summaryKeywords: string[]
+  summaryKeywords: string[],
 ) {
   const summaryRows = flattenReportRows(section.rows).filter(
-    (row) => row.rowType?.toLowerCase() === "summaryrow"
+    (row) => row.rowType?.toLowerCase() === "summaryrow",
   );
 
   for (const row of summaryRows) {
@@ -739,10 +811,9 @@ function parseFinanceAmountToCents(value: string | null) {
 
   const isBracketNegative =
     trimmed.startsWith("(") && trimmed.endsWith(")") && trimmed.length > 2;
-  const normalized = (isBracketNegative ? trimmed.slice(1, -1) : trimmed).replace(
-    /,/g,
-    ""
-  );
+  const normalized = (
+    isBracketNegative ? trimmed.slice(1, -1) : trimmed
+  ).replace(/,/g, "");
   const parsed = Number.parseFloat(normalized);
 
   if (!Number.isFinite(parsed)) {
@@ -756,7 +827,10 @@ function formatFinanceAmount(amountCents: number) {
   return formatCents(amountCents);
 }
 
-function formatFinanceAmountRange(minAmountCents: number, maxAmountCents: number) {
+function formatFinanceAmountRange(
+  minAmountCents: number,
+  maxAmountCents: number,
+) {
   if (minAmountCents === maxAmountCents) {
     return formatFinanceAmount(minAmountCents);
   }
@@ -764,7 +838,10 @@ function formatFinanceAmountRange(minAmountCents: number, maxAmountCents: number
   return `${formatFinanceAmount(minAmountCents)} to ${formatFinanceAmount(maxAmountCents)}`;
 }
 
-function formatSnapshotWindow(periodStart: Date | null, periodEnd: Date | null) {
+function formatSnapshotWindow(
+  periodStart: Date | null,
+  periodEnd: Date | null,
+) {
   if (!periodStart && !periodEnd) {
     return "Snapshot period not recorded";
   }
@@ -805,7 +882,7 @@ function formatWholeNumber(value: number) {
 
 function readSearchParam(
   searchParams: FinanceBalanceSheetReportSearchParams | undefined,
-  key: string
+  key: string,
 ) {
   const value = searchParams?.[key];
   return Array.isArray(value) ? value[0] : value;
