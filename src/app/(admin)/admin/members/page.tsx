@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, X, Download, Upload, ChevronLeft, ChevronRight } from "lucide-react"
+import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite"
 
 interface Member {
   id: string; firstName: string; lastName: string; email: string
@@ -141,6 +142,9 @@ export default function MembersPage() {
   const [bulkAction, setBulkAction] = useState("")
   const [bulkRole, setBulkRole] = useState<"MEMBER" | "ADMIN">("MEMBER")
   const [bulkLoading, setBulkLoading] = useState(false)
+  const [setupInviteDialogOpen, setSetupInviteDialogOpen] = useState(false)
+  const [setupInviteTarget, setSetupInviteTarget] = useState<{ ids: string[]; label: string } | null>(null)
+  const [setupInviteLoading, setSetupInviteLoading] = useState(false)
   const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false)
   const [resetPasswordTarget, setResetPasswordTarget] = useState<{ ids: string[]; label: string } | null>(null)
   const [resetPasswordLoading, setResetPasswordLoading] = useState(false)
@@ -466,6 +470,33 @@ export default function MembersPage() {
     finally { setResetPasswordLoading(false) }
   }
 
+  const handleSendSetupInvite = async () => {
+    if (!setupInviteTarget) return
+    setSetupInviteLoading(true)
+    try {
+      const res = await fetch("/api/admin/members/send-setup-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberIds: setupInviteTarget.ids }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to send setup invite")
+      }
+      const data = await res.json()
+      const msg = data.skipped > 0
+        ? `Sent ${data.sent} setup invite(s). ${data.skipped} skipped (inactive or dependent).`
+        : `Sent ${data.sent} setup invite(s).`
+      setSuccess(msg); setTimeout(() => setSuccess(""), 5000)
+      setSetupInviteDialogOpen(false); setSetupInviteTarget(null); setSelectedIds(new Set())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send setup invite")
+      setSetupInviteDialogOpen(false)
+    } finally {
+      setSetupInviteLoading(false)
+    }
+  }
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return
     const reader = new FileReader()
@@ -523,7 +554,7 @@ export default function MembersPage() {
         {activeFilterCount > 0 && <Button variant="ghost" size="sm" onClick={clearFilters}><X className="h-4 w-4 mr-1" />Clear ({activeFilterCount})</Button>}
       </div>
       {activeFilterCount > 0 && <div className="flex flex-wrap gap-2">{Object.entries(filters).filter(([,v]) => v).map(([k, v]) => { const displayValue = k === "xeroContactGroup" ? (xeroContactGroupsList.find(g => g.id === v)?.name ?? v) : v; return <Badge key={k} variant="secondary" className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setFilter(k as keyof Filters, "")}>{k}: {displayValue}<X className="h-3 w-3" /></Badge> })}</div>}
-      {selectedIds.size > 0 && <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-md"><span className="text-sm font-medium text-blue-700">{selectedIds.size} selected</span><Button size="sm" variant="outline" onClick={() => { setBulkAction("deactivate"); setBulkDialogOpen(true) }}>Deactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("reactivate"); setBulkDialogOpen(true) }}>Reactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("set-role"); setBulkDialogOpen(true) }}>Change Role</Button><Button size="sm" variant="outline" onClick={() => { setResetPasswordTarget({ ids: [...selectedIds], label: `${selectedIds.size} selected member(s)` }); setResetPasswordDialogOpen(true) }}>Send Password Reset</Button><Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}><X className="h-4 w-4" /></Button></div>}
+      {selectedIds.size > 0 && <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-md"><span className="text-sm font-medium text-blue-700">{selectedIds.size} selected</span><Button size="sm" variant="outline" onClick={() => { setBulkAction("deactivate"); setBulkDialogOpen(true) }}>Deactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("reactivate"); setBulkDialogOpen(true) }}>Reactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("set-role"); setBulkDialogOpen(true) }}>Change Role</Button><Button size="sm" variant="outline" onClick={() => { setSetupInviteTarget({ ids: [...selectedIds], label: `${selectedIds.size} selected member(s)` }); setSetupInviteDialogOpen(true) }}>Send Setup Invite</Button><Button size="sm" variant="outline" onClick={() => { setResetPasswordTarget({ ids: [...selectedIds], label: `${selectedIds.size} selected member(s)` }); setResetPasswordDialogOpen(true) }}>Send Password Reset</Button><Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}><X className="h-4 w-4" /></Button></div>}
 
       <Card><CardHeader className="pb-0"><CardTitle className="text-base font-medium">Member List</CardTitle></CardHeader><CardContent className="pt-4">
         {loading ? <div className="py-12 text-center"><p className="text-sm text-slate-500">Loading members...</p></div>
@@ -578,7 +609,7 @@ export default function MembersPage() {
                 </div>
               </TableCell>
               <TableCell className="text-slate-500 text-sm">{new Date(member.joinedDate || member.createdAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })}</TableCell>
-              <TableCell className="text-right"><div className="flex justify-end gap-1"><Button variant="outline" size="sm" onClick={() => { setResetPasswordTarget({ ids: [member.id], label: `${member.firstName} ${member.lastName}` }); setResetPasswordDialogOpen(true) }}>Reset Password</Button><Button variant="outline" size="sm" onClick={() => openEditDialog(member)}>Edit</Button></div></TableCell>
+              <TableCell className="text-right"><div className="flex justify-end gap-1"><Button variant="outline" size="sm" onClick={() => { setSetupInviteTarget({ ids: [member.id], label: `${member.firstName} ${member.lastName}` }); setSetupInviteDialogOpen(true) }}>Invite</Button><Button variant="outline" size="sm" onClick={() => { setResetPasswordTarget({ ids: [member.id], label: `${member.firstName} ${member.lastName}` }); setResetPasswordDialogOpen(true) }}>Reset Password</Button><Button variant="outline" size="sm" onClick={() => openEditDialog(member)}>Edit</Button></div></TableCell>
             </TableRow>)}
           </TableBody></Table></div>}
         {totalPages > 1 && <div className="flex items-center justify-between mt-4 pt-4 border-t"><p className="text-sm text-slate-500">Page {page} of {totalPages}</p><div className="flex gap-1"><Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="h-4 w-4" /></Button>{Array.from({ length: Math.min(5, totalPages) }, (_, i) => { let pn: number; if (totalPages <= 5) pn = i + 1; else if (page <= 3) pn = i + 1; else if (page >= totalPages - 2) pn = totalPages - 4 + i; else pn = page - 2 + i; return <Button key={pn} variant={pn === page ? "default" : "outline"} size="sm" onClick={() => setPage(pn)}>{pn}</Button> })}<Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight className="h-4 w-4" /></Button></div></div>}
@@ -599,7 +630,7 @@ export default function MembersPage() {
                 type="checkbox"
                 id="canLogin"
                 checked={form.canLogin}
-                onChange={e => setForm(f => ({ ...f, canLogin: e.target.checked }))}
+                onChange={e => setForm(f => ({ ...f, canLogin: e.target.checked, sendInvite: e.target.checked ? f.sendInvite : false }))}
                 className="h-4 w-4 rounded border-gray-300"
               />
               <Label htmlFor="canLogin">Can Login</Label>
@@ -924,10 +955,10 @@ export default function MembersPage() {
               </div>
             )}
 
-            {!editingMember && (
+            {!editingMember && form.canLogin && (
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="sendInvite" checked={form.sendInvite} onChange={e => setForm(f => ({ ...f, sendInvite: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" />
-                <Label htmlFor="sendInvite">Send invite email (password reset link)</Label>
+                <Label htmlFor="sendInvite">Send account setup invite ({MEMBER_SETUP_INVITE_TTL_DAYS}-day link)</Label>
               </div>
             )}
           </div>
@@ -940,8 +971,9 @@ export default function MembersPage() {
         </DialogContent>
       </Dialog>
       <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Bulk {bulkAction === "set-role" ? "Change Role" : bulkAction === "deactivate" ? "Deactivate" : "Reactivate"}</DialogTitle><DialogDescription>This will affect {selectedIds.size} selected member(s).</DialogDescription></DialogHeader>{bulkAction === "set-role" && <div className="space-y-2"><Label>New Role</Label><Select value={bulkRole} onValueChange={v => setBulkRole(v as "MEMBER" | "ADMIN")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="MEMBER">Member</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select></div>}<DialogFooter><Button variant="outline" onClick={() => setBulkDialogOpen(false)} disabled={bulkLoading}>Cancel</Button><Button onClick={handleBulkAction} disabled={bulkLoading} variant={bulkAction === "deactivate" ? "destructive" : "default"}>{bulkLoading ? "Processing..." : "Confirm"}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={setupInviteDialogOpen} onOpenChange={setSetupInviteDialogOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Send Account Setup Invite</DialogTitle><DialogDescription>Send a first-time password setup email to {setupInviteTarget?.label}. They will receive a link to activate their account and choose a password (expires in {MEMBER_SETUP_INVITE_TTL_DAYS} days).</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => { setSetupInviteDialogOpen(false); setSetupInviteTarget(null) }} disabled={setupInviteLoading}>Cancel</Button><Button onClick={handleSendSetupInvite} disabled={setupInviteLoading}>{setupInviteLoading ? "Sending..." : "Send Invite"}</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={resetPasswordDialogOpen} onOpenChange={setResetPasswordDialogOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Send Password Reset</DialogTitle><DialogDescription>Send a password reset email to {resetPasswordTarget?.label}. They will receive a link to set a new password (expires in 1 hour).</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => { setResetPasswordDialogOpen(false); setResetPasswordTarget(null) }} disabled={resetPasswordLoading}>Cancel</Button><Button onClick={handleSendPasswordReset} disabled={resetPasswordLoading}>{resetPasswordLoading ? "Sending..." : "Send Reset Email"}</Button></DialogFooter></DialogContent></Dialog>
-      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>Import Members from CSV</DialogTitle><DialogDescription>Upload a CSV with columns: First Name, Last Name, Email, Phone (optional), Date of Birth (optional), Role (optional).</DialogDescription></DialogHeader><div className="space-y-4"><div><Label htmlFor="csvFile">CSV File</Label><Input id="csvFile" type="file" accept=".csv" onChange={handleFileUpload} className="mt-1" /></div>{importRows.length > 0 && !importResult && <div><p className="text-sm font-medium mb-2">{importRows.length} rows parsed</p><div className="max-h-48 overflow-y-auto border rounded text-xs"><Table><TableHeader><TableRow><TableHead>First Name</TableHead><TableHead>Last Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead></TableRow></TableHeader><TableBody>{importRows.slice(0, 10).map((row, i) => <TableRow key={i}><TableCell>{row.firstName}</TableCell><TableCell>{row.lastName}</TableCell><TableCell>{row.email}</TableCell><TableCell>{row.role || "MEMBER"}</TableCell></TableRow>)}</TableBody></Table>{importRows.length > 10 && <p className="text-xs text-slate-500 p-2">...and {importRows.length - 10} more</p>}</div><div className="flex items-center gap-2 mt-3"><input type="checkbox" id="sendInvites" checked={importSendInvites} onChange={e => setImportSendInvites(e.target.checked)} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="sendInvites">Send invite emails</Label></div></div>}{importResult && <div className="space-y-2"><p className="text-sm"><span className="font-medium text-green-700">{importResult.created} created</span>, <span className="font-medium text-yellow-700">{importResult.skipped} skipped</span>, <span className="font-medium text-red-700">{importResult.errors.length} errors</span></p>{importResult.errors.length > 0 && <div className="max-h-32 overflow-y-auto text-xs text-red-600 border border-red-200 rounded p-2">{importResult.errors.map((e, i) => <p key={i}>Row {e.row}: {e.errors.join(", ")}</p>)}</div>}</div>}</div><DialogFooter><Button variant="outline" onClick={() => setImportDialogOpen(false)}>Close</Button>{importRows.length > 0 && !importResult && <Button onClick={handleImport} disabled={importLoading}>{importLoading ? "Importing..." : `Import ${importRows.length} Members`}</Button>}</DialogFooter></DialogContent></Dialog>
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>Import Members from CSV</DialogTitle><DialogDescription>Upload a CSV with columns: First Name, Last Name, Email, Phone (optional), Date of Birth (optional), Role (optional).</DialogDescription></DialogHeader><div className="space-y-4"><div><Label htmlFor="csvFile">CSV File</Label><Input id="csvFile" type="file" accept=".csv" onChange={handleFileUpload} className="mt-1" /></div>{importRows.length > 0 && !importResult && <div><p className="text-sm font-medium mb-2">{importRows.length} rows parsed</p><div className="max-h-48 overflow-y-auto border rounded text-xs"><Table><TableHeader><TableRow><TableHead>First Name</TableHead><TableHead>Last Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead></TableRow></TableHeader><TableBody>{importRows.slice(0, 10).map((row, i) => <TableRow key={i}><TableCell>{row.firstName}</TableCell><TableCell>{row.lastName}</TableCell><TableCell>{row.email}</TableCell><TableCell>{row.role || "MEMBER"}</TableCell></TableRow>)}</TableBody></Table>{importRows.length > 10 && <p className="text-xs text-slate-500 p-2">...and {importRows.length - 10} more</p>}</div><div className="flex items-center gap-2 mt-3"><input type="checkbox" id="sendInvites" checked={importSendInvites} onChange={e => setImportSendInvites(e.target.checked)} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="sendInvites">Send account setup invites ({MEMBER_SETUP_INVITE_TTL_DAYS}-day links)</Label></div></div>}{importResult && <div className="space-y-2"><p className="text-sm"><span className="font-medium text-green-700">{importResult.created} created</span>, <span className="font-medium text-yellow-700">{importResult.skipped} skipped</span>, <span className="font-medium text-red-700">{importResult.errors.length} errors</span></p>{importResult.errors.length > 0 && <div className="max-h-32 overflow-y-auto text-xs text-red-600 border border-red-200 rounded p-2">{importResult.errors.map((e, i) => <p key={i}>Row {e.row}: {e.errors.join(", ")}</p>)}</div>}</div>}</div><DialogFooter><Button variant="outline" onClick={() => setImportDialogOpen(false)}>Close</Button>{importRows.length > 0 && !importResult && <Button onClick={handleImport} disabled={importLoading}>{importLoading ? "Importing..." : `Import ${importRows.length} Members`}</Button>}</DialogFooter></DialogContent></Dialog>
     </div>
   )
 }

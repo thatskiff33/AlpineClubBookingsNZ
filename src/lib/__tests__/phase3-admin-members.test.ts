@@ -70,12 +70,15 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroEntranceFeeInvoiceOperation: mockEnqueueXeroEntranceFeeInvoiceOperation,
   processQueuedXeroOutboxOperations: mockProcessQueuedXeroOutboxOperations,
 }));
-vi.mock("@/lib/email", () => ({ sendPasswordResetEmail: vi.fn() }));
+vi.mock("@/lib/email", () => ({
+  sendMemberSetupInviteEmail: vi.fn(),
+}));
 vi.mock("bcryptjs", () => ({ hash: vi.fn().mockResolvedValue("hashed") }));
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
+import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { GET as getMembers, POST as createMember } from "@/app/api/admin/members/route";
 import { GET as exportMembers } from "@/app/api/admin/members/export/route";
 import { POST as importMembers } from "@/app/api/admin/members/import/route";
@@ -83,6 +86,7 @@ import { POST as bulkUpdate } from "@/app/api/admin/members/bulk-update/route";
 import { GET as getMemberDetail } from "@/app/api/admin/members/[id]/route";
 
 const mockedAuth = vi.mocked(auth);
+const mockedSendMemberSetupInviteEmail = vi.mocked(sendMemberSetupInviteEmail);
 const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
 const memberSession = { user: { id: "m1", role: "MEMBER" } } as any;
 
@@ -564,6 +568,50 @@ describe("Phase 3: Admin Member Management", () => {
       const res = await importMembers(req);
       expect(res.status).toBe(409);
     });
+
+    it("sends setup invites for imported login members when requested", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
+        const tx = {
+          member: {
+            create: vi.fn().mockResolvedValue({
+              id: "new1",
+              email: "new@test.com",
+              firstName: "New",
+              lastName: "User",
+            }),
+          },
+        };
+        return fn(tx);
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/members/import", {
+        method: "POST",
+        body: JSON.stringify({
+          rows: [{ firstName: "New", lastName: "User", email: "new@test.com" }],
+          sendInvites: true,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await importMembers(req);
+
+      expect(res.status).toBe(200);
+      expect(prisma.passwordResetToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            memberId: "new1",
+            token: expect.any(String),
+            expiresAt: expect.any(Date),
+          }),
+        })
+      );
+      expect(mockedSendMemberSetupInviteEmail).toHaveBeenCalledWith(
+        "new@test.com",
+        "New",
+        expect.any(String)
+      );
+    });
   });
 
   // ── A5/A6: Bulk Operations ──
@@ -956,6 +1004,86 @@ create: vi.fn().mockResolvedValue({
       expect(createArgs.data.postalRegion).toBe("Waikato");
       expect(createArgs.data.postalPostalCode).toBe("3420");
       expect(createArgs.data.postalCountry).toBe("NZ");
+    });
+
+    it("sends a setup invite when creating a login-enabled member", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
+        const tx = {
+          member: {
+            create: vi.fn().mockResolvedValue({
+              id: "m1",
+              firstName: "Invite",
+              lastName: "User",
+              email: "invite@test.com",
+              phoneCountryCode: null,
+              phoneAreaCode: null,
+              phoneNumber: null,
+              dateOfBirth: null,
+              role: "MEMBER",
+              ageTier: "ADULT",
+              active: true,
+              canLogin: true,
+              xeroContactId: null,
+              joinedDate: null,
+              createdAt: new Date("2026-04-11"),
+            }),
+          },
+          familyGroupMember: { createMany: vi.fn() },
+        };
+        return fn(tx);
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/members", {
+        method: "POST",
+        body: JSON.stringify({
+          firstName: "Invite",
+          lastName: "User",
+          email: "invite@test.com",
+          sendInvite: true,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await createMember(req);
+
+      expect(res.status).toBe(201);
+      expect(prisma.passwordResetToken.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            memberId: "m1",
+            token: expect.any(String),
+            expiresAt: expect.any(Date),
+          }),
+        })
+      );
+      expect(mockedSendMemberSetupInviteEmail).toHaveBeenCalledWith(
+        "invite@test.com",
+        "Invite",
+        expect.any(String)
+      );
+    });
+
+    it("rejects setup invites for members who cannot log in", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+
+      const req = new NextRequest("http://localhost/api/admin/members", {
+        method: "POST",
+        body: JSON.stringify({
+          firstName: "Dependent",
+          lastName: "User",
+          email: "dependent@test.com",
+          canLogin: false,
+          sendInvite: true,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await createMember(req);
+
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.error).toContain("can log in");
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
   });
 });

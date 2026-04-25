@@ -4,6 +4,7 @@
  */
 
 import { LODGE_CAPACITY } from "./capacity";
+import { MEMBER_SETUP_INVITE_TTL_DAYS } from "./member-setup-invite";
 
 const BASE_URL = process.env.NEXTAUTH_URL || "http://localhost:3000";
 
@@ -174,6 +175,24 @@ export function adminPasswordResetTemplate(resetUrl: string): string {
     ${paragraph("Click the button below to set a new password. This link expires in <strong>1 hour</strong>.")}
     ${button("Reset Password", resetUrl)}
     ${muted("If you believe this was sent in error, please contact the club administrator.")}
+  `);
+}
+
+export function memberSetupInviteTemplate(
+  firstName: string,
+  resetUrl: string
+): string {
+  return layout(`
+    ${heading("Set Up Your Account")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ",")}
+    ${paragraph("An administrator has created your Tokoroa Alpine Club booking account.")}
+    ${paragraph(
+      "Use the button below to set your password and activate your login. This link expires in <strong>" +
+        String(MEMBER_SETUP_INVITE_TTL_DAYS) +
+        " days</strong>."
+    )}
+    ${button("Set Up My Password", resetUrl)}
+    ${muted("If you were not expecting this invite, you can safely ignore it or contact the club.")}
   `);
 }
 
@@ -1174,7 +1193,7 @@ export function membershipApplicationApprovedTemplate(
     ${button("Set Up My Account", resetUrl)}
     ${notes}
     ${paragraph("Your entrance fee and any membership charges will be managed separately through the club's normal process.")}
-    ${muted("This setup link expires in 7 days.")}
+    ${muted("This setup link expires in " + String(MEMBER_SETUP_INVITE_TTL_DAYS) + " days.")}
   `);
 }
 
@@ -1202,7 +1221,11 @@ export function ageUpInvitationTemplate(firstName: string, resetUrl: string): st
   return layout(`
     ${heading("Welcome to Your Own Account, " + name + "!")}
     ${paragraph("Congratulations — you've turned 18! As an adult member of the Tokoroa Alpine Club, you can now log in and book stays at the lodge yourself.")}
-    ${paragraph("Click the button below to set up your password and activate your account. This link expires in <strong>7 days</strong>.")}
+    ${paragraph(
+      "Click the button below to set up your password and activate your account. This link expires in <strong>" +
+        String(MEMBER_SETUP_INVITE_TTL_DAYS) +
+        " days</strong>."
+    )}
     ${button("Set Up My Password", resetUrl)}
     ${alertBox("Once you set your password, you can log in at any time to book stays, view your bookings, and manage your profile.", "info")}
     ${muted("If you have any questions, contact the club at support@tokoroa.org.nz.")}

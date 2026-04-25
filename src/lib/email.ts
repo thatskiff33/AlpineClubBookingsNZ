@@ -26,6 +26,7 @@ import {
   adminDailyDigestTemplate,
   adminXeroReconciliationReportTemplate,
   adminPasswordResetTemplate,
+  memberSetupInviteTemplate,
   bookingModifiedTemplate,
   accountDeletionApprovedTemplate,
   accountDeletionRejectedTemplate,
@@ -45,6 +46,7 @@ import {
   adminRefundRequestTemplate,
   adminIssueReportTemplate,
 } from "./email-templates";
+import { MEMBER_SETUP_INVITE_TTL_DAYS } from "./member-setup-invite";
 import {
   ADMIN_NOTIFICATION_PREFERENCE_SELECT,
   type AdminNotificationPreferenceKey,
@@ -76,6 +78,7 @@ const FROM = process.env.EMAIL_FROM || "support@tokoroa.org.nz";
 const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "password-reset",
   "admin-password-reset",
+  "member-setup-invite",
   "email-verification",
   "email-change-verification",
   "age-up-invitation",
@@ -272,6 +275,22 @@ export async function sendAdminPasswordResetEmail(
     subject: "Reset your TAC Bookings password",
     html: adminPasswordResetTemplate(resetUrl),
     templateName: "admin-password-reset",
+  });
+}
+
+export async function sendMemberSetupInviteEmail(
+  email: string,
+  firstName: string,
+  token: string
+) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+
+  await sendEmail({
+    to: email,
+    subject: `Set up your TAC Bookings account (${MEMBER_SETUP_INVITE_TTL_DAYS}-day link)`,
+    html: memberSetupInviteTemplate(firstName, resetUrl),
+    templateName: "member-setup-invite",
   });
 }
 

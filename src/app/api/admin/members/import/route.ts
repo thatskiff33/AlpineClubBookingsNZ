@@ -8,11 +8,12 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { getSeasonYear } from "@/lib/utils";
-import { sendPasswordResetEmail } from "@/lib/email";
+import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { applyRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
+import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
 
 const importRowSchema = z.object({
   firstName: z.string().min(1, "First name is required").max(100),
@@ -210,11 +211,15 @@ export async function POST(req: NextRequest) {
       if (sendInvites) {
         try {
           const token = randomBytes(32).toString("hex");
-          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+          const expiresAt = getMemberSetupInviteExpiryDate();
           await prisma.passwordResetToken.create({
             data: { token, memberId: member.id, expiresAt },
           });
-          await sendPasswordResetEmail(member.email, token);
+          await sendMemberSetupInviteEmail(
+            member.email,
+            member.firstName,
+            token
+          );
         } catch (emailErr) {
           logger.error({ err: emailErr, memberId: member.id }, "Failed to send import invite email");
         }

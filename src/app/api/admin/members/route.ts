@@ -13,7 +13,7 @@ import {
   getXeroContactIdsForGroup,
   isXeroConnected,
 } from "@/lib/xero";
-import { sendPasswordResetEmail } from "@/lib/email";
+import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
@@ -25,6 +25,7 @@ import {
   enqueueXeroEntranceFeeInvoiceOperation,
   processQueuedXeroOutboxOperations,
 } from "@/lib/xero-operation-outbox";
+import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -449,6 +450,13 @@ export async function POST(req: NextRequest) {
         ? false
         : ageTier === "ADULT";
 
+  if (data.sendInvite && !canLogin) {
+    return NextResponse.json(
+      { error: "Setup invites can only be sent to members who can log in" },
+      { status: 422 }
+    );
+  }
+
   // Check for existing member with same email that can login
   if (canLogin) {
     const existing = await prisma.member.findFirst({ where: { email, canLogin: true } });
@@ -587,11 +595,11 @@ export async function POST(req: NextRequest) {
     if (data.sendInvite) {
       try {
         const token = randomBytes(32).toString("hex");
-        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+        const expiresAt = getMemberSetupInviteExpiryDate();
         await prisma.passwordResetToken.create({
           data: { token, memberId: member.id, expiresAt },
         });
-        await sendPasswordResetEmail(member.email, token);
+        await sendMemberSetupInviteEmail(member.email, member.firstName, token);
       } catch (emailErr) {
         logger.error({ err: emailErr, memberId: member.id }, "Failed to send invite email");
         inviteWarning = `Member created but invite email failed to send: ${emailErr instanceof Error ? emailErr.message : String(emailErr)}`;
