@@ -417,20 +417,27 @@ export async function register() {
       );
 
       try {
-        const { runDatabaseBackup } = await import("./lib/backup");
+        const { buildBackupCronOutcome, runDatabaseBackup } = await import("./lib/backup");
         const result = await runDatabaseBackup();
-        if (result.success) {
-          const summary = {
-            filename: result.filename,
-            sizeBytes: result.sizeBytes,
-            s3: result.uploadedToS3,
-          };
-          logger.info({ job: "backup", ...summary }, "Database backup complete");
-          await recordCronRun("backup", startedAt, "SUCCESS", summary);
+        const outcome = buildBackupCronOutcome(result);
+
+        if (outcome.status === "SUCCESS") {
+          logger.info(
+            { job: "backup", ...outcome.resultSummary },
+            "Database backup complete"
+          );
+          await recordCronRun("backup", startedAt, "SUCCESS", outcome.resultSummary);
+          Sentry.captureCheckIn({ checkInId, monitorSlug: "database-backup", status: "ok" });
+        } else if (outcome.status === "SKIPPED") {
+          logger.info(
+            { job: "backup", ...outcome.resultSummary },
+            "Database backup skipped"
+          );
+          await recordCronRun("backup", startedAt, "SKIPPED", outcome.resultSummary);
           Sentry.captureCheckIn({ checkInId, monitorSlug: "database-backup", status: "ok" });
         } else {
-          logger.error({ job: "backup", error: result.error }, "Database backup failed");
-          await recordCronRun("backup", startedAt, "FAILURE", undefined, result.error);
+          logger.error({ job: "backup", error: outcome.error }, "Database backup failed");
+          await recordCronRun("backup", startedAt, "FAILURE", undefined, outcome.error);
           Sentry.captureCheckIn({ checkInId, monitorSlug: "database-backup", status: "error" });
         }
       } catch (err) {

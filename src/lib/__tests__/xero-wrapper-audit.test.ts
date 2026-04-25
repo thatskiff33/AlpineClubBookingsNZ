@@ -90,10 +90,12 @@ function findUnwrappedAccountingApiCalls(filePath: string): string[] {
 
 describe("Xero wrapper audit", () => {
   it("wraps every accountingApi call in callXeroApi", () => {
+    // This audit recursively scans and parses most of src/app and src/lib.
+    // Keep the invariant, but allow enough time for CI-sized trees.
     const violations = SCAN_ROOTS.flatMap((root) =>
       collectSourceFiles(root).flatMap((filePath) => findUnwrappedAccountingApiCalls(filePath))
     );
 
     expect(violations).toEqual([]);
-  });
+  }, 20_000);
 });
