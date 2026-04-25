@@ -22,11 +22,19 @@ const DEFAULT_RETENTION_DAYS = 7;
 
 export interface BackupResult {
   success: boolean;
+  skipped?: boolean;
   filename?: string;
   filepath?: string;
   uploadedToS3?: boolean;
   error?: string;
+  reason?: string;
   sizeBytes?: number;
+}
+
+export interface BackupCronOutcome {
+  status: "SUCCESS" | "FAILURE" | "SKIPPED";
+  error?: string;
+  resultSummary?: Record<string, unknown>;
 }
 
 /**
@@ -34,7 +42,11 @@ export interface BackupResult {
  */
 export async function runDatabaseBackup(): Promise<BackupResult> {
   if (process.env.BACKUP_ENABLED !== "true") {
-    return { success: false, error: "Backups are disabled. Set BACKUP_ENABLED=true." };
+    return {
+      success: false,
+      skipped: true,
+      reason: "Backups are disabled. Set BACKUP_ENABLED=true.",
+    };
   }
 
   const databaseUrl = process.env.DATABASE_URL;
@@ -120,6 +132,33 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
     logger.error({ err, job: "backup" }, "pg_dump failed");
     return { success: false, error: `pg_dump failed: ${message}` };
   }
+}
+
+export function buildBackupCronOutcome(result: BackupResult): BackupCronOutcome {
+  if (result.success) {
+    return {
+      status: "SUCCESS",
+      resultSummary: {
+        filename: result.filename,
+        sizeBytes: result.sizeBytes,
+        s3: result.uploadedToS3,
+      },
+    };
+  }
+
+  if (result.skipped) {
+    return {
+      status: "SKIPPED",
+      resultSummary: {
+        reason: result.reason ?? "Backup skipped",
+      },
+    };
+  }
+
+  return {
+    status: "FAILURE",
+    error: result.error ?? "Unknown backup failure",
+  };
 }
 
 /**
