@@ -112,8 +112,15 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
         );
         uploadedToS3 = true;
       } catch (s3Err) {
+        const message = s3Err instanceof Error ? s3Err.message : String(s3Err);
         logger.error({ err: s3Err, job: "backup" }, "S3 upload failed");
-        // Don't fail the backup if S3 upload fails - local backup is still valid
+        return {
+          success: false,
+          filename,
+          filepath,
+          sizeBytes: stats.size,
+          error: `S3 upload failed: ${message}`,
+        };
       }
     }
 
