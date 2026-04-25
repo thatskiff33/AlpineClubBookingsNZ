@@ -53,3 +53,20 @@ Copy this template into the linked GitHub issue or PR when named-user rollout be
 - Decision timestamp:
 - Decision summary:
 - Required follow-up:
+
+## Retirement Follow-Up
+
+| Check | Status | Evidence reference | Owner |
+| --- | --- | --- | --- |
+| Freeze-eligible decision recorded |  |  |  |
+| Legacy retirement scope documented |  |  |  |
+| Named-user and support communications sent |  |  |  |
+| Retirement window executed or deferred |  |  |  |
+| Fallback or reopen path remained available until final sign-off |  |  |  |
+
+## Retirement Outcome
+
+- Outcome: retired / pause at freeze-ready / reopen fallback
+- Decision timestamp:
+- Decision summary:
+- Follow-up issue or PR:

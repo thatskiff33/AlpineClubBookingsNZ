@@ -73,6 +73,7 @@ Deliver a native finance dashboard inside `TACBookings` that:
 - [finance-balance-sheet-report-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-balance-sheet-report-contract.md)
 - [finance-rollout-cutover-checklist.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-rollout-cutover-checklist.md)
 - [finance-legacy-freeze-monitoring-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-legacy-freeze-monitoring-runbook.md)
+- [finance-legacy-retirement-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-legacy-retirement-runbook.md)
 - [finance-post-cutover-evidence-template.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-post-cutover-evidence-template.md)
 - [test-plan.md](/home/ubuntu/TACBookings/docs/finance-dashboard/test-plan.md)
 - [agent-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/agent-runbook.md)

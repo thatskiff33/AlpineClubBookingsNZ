@@ -1,6 +1,6 @@
 # Finance Dashboard Handoff
 
-Last updated: 2026-04-25
+Last updated: 2026-04-26
 
 ## Current State
 
@@ -15,11 +15,11 @@ Last updated: 2026-04-25
 - Phase `#98` is closed
 - Phase `#99` is closed
 - Active phase: `#100`
-- Most recent landed task: `#161`
-- Most recent merged implementation PR: `#163`
-- Most recent published implementation PR: `#163`
+- Most recent landed task: `#164`
+- Most recent merged implementation PR: `#169`
+- Most recent published implementation PR: `#169`
 - Finance task currently in flight: none
-- Single `status: ready` finance task: `#164`
+- Single `status: ready` finance task: none
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Task #138
@@ -448,52 +448,57 @@ What landed:
 - Deleted remote branch `finance/issue-161-legacy-freeze-monitoring-runbook` after the merge
 - Closed task `#161` as completed
 - Created task `#164` as the single `status: ready` finance task for the final legacy-dashboard retirement runbook follow-up after freeze eligibility is documented
+- Picked up task `#164` and moved it from `status: ready` to `status: in-progress`
+- Added `docs/finance-dashboard/finance-legacy-retirement-runbook.md` with explicit retirement prerequisites, owners, communications, sign-off checkpoints, and fallback or reopen expectations for the final phase `#100` step
+- Updated `docs/finance-dashboard/finance-legacy-freeze-monitoring-runbook.md`, `docs/finance-dashboard/finance-post-cutover-evidence-template.md`, and `docs/finance-dashboard/README.md` so the freeze-ready handoff, retirement evidence, and docs index all point to the new retirement boundary
+- Validated the docs-only diff with `git diff --check`
+- Opened draft PR `#169` for task `#164`
+- Merged PR `#169` into `main`
+- Deleted remote branch `finance/issue-164-legacy-retirement-runbook` after the merge
+- Closed task `#164` as completed
 
 What remains:
-- Pick up task `#164` from current `main` and keep the slice documentation-first unless repo evidence forces a narrow supporting change
+- Phase `#100` still depends on actual rollout, monitoring, and retirement execution evidence that does not yet live in the repo as a new implementation slice
+- Do not create a new `status: ready` finance task until real rollout evidence or a concrete repo-backed gap appears in issue `#100` or its linked operating record
 
 Blockers:
 - None on the finance dashboard path itself
+- There is no new repo-backed finance implementation slice to start until the phase `#100` operational rollout produces evidence that requires a follow-up change
 
 ## Next Prompt
 
 ```text
 Use the GitHub workflow for TACBookings finance epic #92.
 
-Implement the current ready finance task only.
+Reassess phase `#100` only if new rollout or retirement evidence now exists.
 
 1. Read only these sources first:
 - docs/finance-dashboard/README.md
 - docs/finance-dashboard/handoff.md
 - phase issue #100
-- completed task issue #161
-- merged PR #163
-- task issue #164
-- merged task issue #158
-- merged PR #160
 - docs/finance-dashboard/finance-rollout-cutover-checklist.md
 - docs/finance-dashboard/finance-legacy-freeze-monitoring-runbook.md
+- docs/finance-dashboard/finance-legacy-retirement-runbook.md
 - docs/finance-dashboard/finance-post-cutover-evidence-template.md
 
-Read docs/finance-dashboard/phases.md and docs/finance-dashboard/test-plan.md only if the retirement runbook needs the exact phase-`#100` gate language.
-Read docs/finance-dashboard/data-contracts.md only if the retirement runbook needs an exact source-of-truth reference for a landed finance surface.
-Read docs/XERO_HANDOFF.md only if current repo evidence forces finance rollout notes to reopen Xero-specific operational scope.
+Read the merged finance task issues `#158`, `#161`, and `#164` plus PRs `#160`, `#163`, and `#169` only if the new rollout evidence is ambiguous and you need the exact documented phase-`#100` boundary.
+Read docs/finance-dashboard/phases.md or docs/finance-dashboard/test-plan.md only if the new evidence conflicts with the documented phase gates.
+Read docs/XERO_HANDOFF.md only if the new evidence proves the phase `#100` blocker crosses the finance or operational Xero boundary.
 
-2. Reconfirm scope before editing:
-- task `#164` stays focused on the final legacy-dashboard retirement runbook for phase `#100`
-- keep the slice documentation-first unless current repo evidence proves a narrow supporting docs update is required
-- do not broaden into executing retirement steps, removing the legacy dashboard in code, or changing production access in the same task
+2. Reconfirm scope before acting:
+- do not create a new finance task just because phase `#100` is still open
+- only create or pick up a new finance task if fresh rollout, monitoring, or retirement evidence reveals a concrete repo-backed gap
+- if the remaining work is purely operational and no repo change is justified, stop after documenting that state clearly on issue `#100`
 
-3. Implement task `#164` end-to-end:
-- add the smallest production-ready finance runbook for the final legacy-dashboard retirement step under `docs/finance-dashboard/`
-- define explicit prerequisites from the post-cutover monitoring evidence before retirement can begin
-- document the required owners, sign-off checkpoints, communication expectations, and fallback or reopen path if retirement cannot complete cleanly
-- update `docs/finance-dashboard/README.md` and this handoff so the next run starts from current reality
+3. If new repo-backed work is justified:
+- create only the smallest production-ready finance task under phase `#100`
+- keep the slice aligned to the new evidence and avoid reopening settled docs-only work without cause
+- update `docs/finance-dashboard/handoff.md` to name that new task as the single `status: ready` finance slice
 
-4. Validate lightly and publish:
-- run only the lightweight docs validation the touched paths actually require
-- open a scoped PR linked to `#164`
-- keep notes explicit about retirement prerequisites, sign-off, and fallback expectations
+4. If no repo-backed work is justified:
+- do not create a placeholder task
+- add a short issue `#100` note that phase completion now depends on operational rollout evidence rather than another repo change
+- leave finance with no `status: ready` task until that evidence exists
 
 5. Keep handoff minimal:
 - Done:
