@@ -31,6 +31,10 @@ import {
   buildFinancePricingSensitivityReportHref,
 } from "@/lib/finance-pricing-sensitivity-page";
 import {
+  buildDefaultFinanceWorkingCapitalReportFilters,
+  buildFinanceWorkingCapitalReportHref,
+} from "@/lib/finance-working-capital-report-page";
+import {
   buildFinanceLandingPageModel,
   type FinanceLandingSectionSummary,
 } from "@/lib/finance-landing-page";
@@ -47,8 +51,13 @@ const sectionIcons = {
   "forward-pipeline": TrendingUp,
 } as const;
 
-function FinanceSection({ section }: { section: FinanceLandingSectionSummary }) {
-  const Icon = sectionIcons[section.id as keyof typeof sectionIcons] ?? Activity;
+function FinanceSection({
+  section,
+}: {
+  section: FinanceLandingSectionSummary;
+}) {
+  const Icon =
+    sectionIcons[section.id as keyof typeof sectionIcons] ?? Activity;
 
   return (
     <section id={section.id} className="scroll-mt-24 space-y-4">
@@ -60,8 +69,12 @@ function FinanceSection({ section }: { section: FinanceLandingSectionSummary }) 
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
             {section.eyebrow}
           </p>
-          <h2 className="text-2xl font-semibold text-slate-900">{section.title}</h2>
-          <p className="text-sm leading-6 text-slate-600">{section.description}</p>
+          <h2 className="text-2xl font-semibold text-slate-900">
+            {section.title}
+          </h2>
+          <p className="text-sm leading-6 text-slate-600">
+            {section.description}
+          </p>
         </div>
       </div>
 
@@ -120,16 +133,19 @@ export default async function FinancePage() {
     periods: 6,
   });
   const cashReportHref = buildFinanceCashReportHref(
-    buildDefaultFinanceCashReportFilters()
+    buildDefaultFinanceCashReportFilters(),
   );
   const balanceSheetReportHref = buildFinanceBalanceSheetReportHref(
-    buildDefaultFinanceBalanceSheetReportFilters()
+    buildDefaultFinanceBalanceSheetReportFilters(),
   );
   const costsReportHref = buildFinanceCostsReportHref(
-    buildDefaultFinanceCostsReportFilters()
+    buildDefaultFinanceCostsReportFilters(),
   );
   const pricingSensitivityReportHref = buildFinancePricingSensitivityReportHref(
-    buildDefaultFinancePricingSensitivityFilters()
+    buildDefaultFinancePricingSensitivityFilters(),
+  );
+  const workingCapitalReportHref = buildFinanceWorkingCapitalReportHref(
+    buildDefaultFinanceWorkingCapitalReportFilters(),
   );
 
   return (
@@ -146,9 +162,8 @@ export default async function FinancePage() {
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
                 This shell turns the landed finance sync diagnostics and booking
-                metrics boundaries into a single finance entry point for
-                viewers and managers without broadening into full reporting
-                pages.
+                metrics boundaries into a single finance entry point for viewers
+                and managers without broadening into full reporting pages.
               </CardDescription>
             </div>
           </CardHeader>
@@ -184,6 +199,12 @@ export default async function FinancePage() {
                 </Link>
               </Button>
               <Button asChild size="sm" variant="outline">
+                <Link href={workingCapitalReportHref}>
+                  Open working capital
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
                 <Link href={cashReportHref}>
                   Open cash report
                   <ArrowRight className="ml-2 h-4 w-4" />
@@ -198,8 +219,8 @@ export default async function FinancePage() {
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Realized booking cards use the
-              current month to date. Forward pipeline cards use the next 90
-              days after today in New Zealand local time.
+              current month to date. Forward pipeline cards use the next 90 days
+              after today in New Zealand local time.
             </div>
           </CardContent>
         </Card>
@@ -216,7 +237,9 @@ export default async function FinancePage() {
                   diagnostics remain separate.
                 </CardDescription>
               </div>
-              <Badge variant={model.sync.badgeVariant}>{model.sync.badgeLabel}</Badge>
+              <Badge variant={model.sync.badgeVariant}>
+                {model.sync.badgeLabel}
+              </Badge>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
