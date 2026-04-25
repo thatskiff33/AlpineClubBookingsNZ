@@ -242,6 +242,11 @@ describe("N-11: retryFailedEmails", () => {
         attempts: 2,
       }),
     });
+    expect(mockTransporter.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: '"Tokoroa Alpine Club - Online Booking System" <support@tokoroa.org.nz>',
+      })
+    );
   });
 
   it("increments attempt count on retry failure", async () => {

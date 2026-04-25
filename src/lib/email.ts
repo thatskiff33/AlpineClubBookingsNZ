@@ -52,6 +52,7 @@ import {
   type AdminNotificationPreferenceKey,
   resolveAdminNotificationPreferences,
 } from "./admin-notification-preferences";
+import { EMAIL_FROM, formatEmailFromAddress } from "./email-sender";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
@@ -70,8 +71,6 @@ const transporter = nodemailer.createTransport({
     pass: process.env.AWS_SES_SECRET_ACCESS_KEY || "",
   },
 });
-
-const FROM = process.env.EMAIL_FROM || "support@tokoroa.org.nz";
 
 // Token-bearing emails should never persist their rendered HTML in logs or retry
 // tables because that would retain live reset/verification links at rest.
@@ -147,7 +146,7 @@ export async function sendEmail({
 
   try {
     const result = await transporter.sendMail({
-      from: `"TAC Bookings" <${FROM}>`,
+      from: formatEmailFromAddress(EMAIL_FROM),
       to,
       subject,
       html,
