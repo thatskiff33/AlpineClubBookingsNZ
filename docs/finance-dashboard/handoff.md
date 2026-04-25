@@ -15,11 +15,11 @@ Last updated: 2026-04-25
 - Phase `#98` is closed
 - Phase `#99` is closed
 - Active phase: `#100`
-- Most recent landed task: `#158`
-- Most recent merged implementation PR: `#160`
-- Most recent published implementation PR: `#160`
+- Most recent landed task: `#161`
+- Most recent merged implementation PR: `#163`
+- Most recent published implementation PR: `#163`
 - Finance task currently in flight: none
-- Single `status: ready` finance task: `#161`
+- Single `status: ready` finance task: `#164`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Task #138
@@ -438,9 +438,19 @@ What landed:
 - Deleted remote branch `finance/issue-158-rollout-checklist` after the merge
 - Closed task `#158` as completed
 - Reassessed the remaining phase `#100` scope and created task `#161` as the single `status: ready` finance task for the legacy-dashboard freeze and post-cutover monitoring runbook boundary
+- Picked up task `#161` and moved it from `status: ready` to `status: in-progress`
+- Added `docs/finance-dashboard/finance-legacy-freeze-monitoring-runbook.md` with monitoring windows, evidence capture requirements, freeze decision points, fallback expectations, and sign-off checkpoints for the post-cutover period
+- Added `docs/finance-dashboard/finance-post-cutover-evidence-template.md` as the default issue or PR evidence log for named-user rollout monitoring
+- Updated `docs/finance-dashboard/finance-rollout-cutover-checklist.md` and `docs/finance-dashboard/README.md` so the cutover checklist, monitoring runbook, and evidence template operate as one phase `#100` docs packet
+- Opened draft PR `#163` for task `#161`
+- Validated the docs-only diff with `git diff --check`
+- Merged PR `#163` into `main`
+- Deleted remote branch `finance/issue-161-legacy-freeze-monitoring-runbook` after the merge
+- Closed task `#161` as completed
+- Created task `#164` as the single `status: ready` finance task for the final legacy-dashboard retirement runbook follow-up after freeze eligibility is documented
 
 What remains:
-- Pick up task `#161` from current `main` and keep the slice documentation-first unless repo evidence forces a narrow supporting change
+- Pick up task `#164` from current `main` and keep the slice documentation-first unless repo evidence forces a narrow supporting change
 
 Blockers:
 - None on the finance dashboard path itself
@@ -456,29 +466,34 @@ Implement the current ready finance task only.
 - docs/finance-dashboard/README.md
 - docs/finance-dashboard/handoff.md
 - phase issue #100
-- task issue #161
+- completed task issue #161
+- merged PR #163
+- task issue #164
+- merged task issue #158
+- merged PR #160
 - docs/finance-dashboard/finance-rollout-cutover-checklist.md
-- docs/finance-dashboard/phases.md
-- docs/finance-dashboard/test-plan.md
+- docs/finance-dashboard/finance-legacy-freeze-monitoring-runbook.md
+- docs/finance-dashboard/finance-post-cutover-evidence-template.md
 
-Read docs/finance-dashboard/data-contracts.md only if the new runbook needs an exact source-of-truth reference for a landed finance surface.
+Read docs/finance-dashboard/phases.md and docs/finance-dashboard/test-plan.md only if the retirement runbook needs the exact phase-`#100` gate language.
+Read docs/finance-dashboard/data-contracts.md only if the retirement runbook needs an exact source-of-truth reference for a landed finance surface.
 Read docs/XERO_HANDOFF.md only if current repo evidence forces finance rollout notes to reopen Xero-specific operational scope.
 
 2. Reconfirm scope before editing:
-- task `#161` stays focused on post-cutover monitoring and legacy-dashboard freeze preparation for phase `#100`
+- task `#164` stays focused on the final legacy-dashboard retirement runbook for phase `#100`
 - keep the slice documentation-first unless current repo evidence proves a narrow supporting docs update is required
-- do not broaden into executing rollout steps, granting production access, or retiring the legacy dashboard in the same task
+- do not broaden into executing retirement steps, removing the legacy dashboard in code, or changing production access in the same task
 
-3. Implement task `#161` end-to-end:
-- add the smallest production-ready finance runbook for post-cutover monitoring and legacy-dashboard freeze preparation under `docs/finance-dashboard/`
-- document the minimum monitoring checks after named-user rollout across finance access, sync health, and the landed native finance report surfaces
-- define explicit prerequisites and decision points for freezing the legacy dashboard while preserving rollback expectations from the cutover checklist
+3. Implement task `#164` end-to-end:
+- add the smallest production-ready finance runbook for the final legacy-dashboard retirement step under `docs/finance-dashboard/`
+- define explicit prerequisites from the post-cutover monitoring evidence before retirement can begin
+- document the required owners, sign-off checkpoints, communication expectations, and fallback or reopen path if retirement cannot complete cleanly
 - update `docs/finance-dashboard/README.md` and this handoff so the next run starts from current reality
 
 4. Validate lightly and publish:
 - run only the lightweight docs validation the touched paths actually require
-- open a scoped PR linked to `#161`
-- keep notes explicit about monitoring gates, freeze prerequisites, and non-goals
+- open a scoped PR linked to `#164`
+- keep notes explicit about retirement prerequisites, sign-off, and fallback expectations
 
 5. Keep handoff minimal:
 - Done:
