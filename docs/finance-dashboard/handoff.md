@@ -17,8 +17,8 @@ Last updated: 2026-04-26
 - Active phase: `#100`
 - Most recent landed task: `#161`
 - Most recent merged implementation PR: `#163`
-- Most recent published implementation PR: `#163`
-- Finance task currently in flight: `#164` via the active legacy-retirement docs branch or PR
+- Most recent published implementation PR: `#169`
+- Finance task currently in flight: `#164` via draft PR `#169`
 - Single `status: ready` finance task: none
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
@@ -452,9 +452,10 @@ What landed:
 - Added `docs/finance-dashboard/finance-legacy-retirement-runbook.md` with explicit retirement prerequisites, owners, communications, sign-off checkpoints, and fallback or reopen expectations for the final phase `#100` step
 - Updated `docs/finance-dashboard/finance-legacy-freeze-monitoring-runbook.md`, `docs/finance-dashboard/finance-post-cutover-evidence-template.md`, and `docs/finance-dashboard/README.md` so the freeze-ready handoff, retirement evidence, and docs index all point to the new retirement boundary
 - Validated the docs-only diff with `git diff --check`
+- Opened draft PR `#169` for task `#164`
 
 What remains:
-- Review the active finance PR for task `#164` and merge it only if the diff stays scoped to the phase `#100` retirement docs packet, no blocker comments appear, and the branch stays current with `main`
+- Review draft PR `#169` and merge it only if the diff stays scoped to the phase `#100` retirement docs packet, no blocker comments appear, and the branch stays current with `main`
 - Reassess the remaining phase `#100` work after task `#164` lands; if the rest depends on operational rollout evidence rather than a new repo change, leave no `status: ready` finance task until that evidence exists
 
 Blockers:
@@ -474,6 +475,7 @@ Run the merge-review stage for the current active finance PR only.
 - completed task issue #161
 - merged PR #163
 - task issue #164
+- draft PR #169
 - merged task issue #158
 - merged PR #160
 - docs/finance-dashboard/finance-rollout-cutover-checklist.md
@@ -488,7 +490,7 @@ Read docs/XERO_HANDOFF.md only if current repo evidence forces finance rollout n
 2. Verify all merge gates:
 - task `#164` acceptance criteria are complete
 - local validation still covers `git diff --check`
-- the active PR for task `#164` has no blocker comments or requested changes
+- draft PR `#169` has no blocker comments or requested changes
 - the branch stays up to date with `main`
 - the diff stays scoped to:
   - `docs/finance-dashboard/finance-legacy-retirement-runbook.md`
@@ -499,12 +501,12 @@ Read docs/XERO_HANDOFF.md only if current repo evidence forces finance rollout n
 
 3. If any gate fails:
 - do not merge
-- leave a short blocker note on the active PR for task `#164`
+- leave a short blocker note on PR `#169`
 - update `docs/finance-dashboard/handoff.md` with the exact failing gate and next action
 - keep the slice docs-only unless current repo evidence proves a narrow supporting docs change is required
 
 4. If all gates pass:
-- squash merge the active PR for task `#164`
+- squash merge PR `#169`
 - delete the remote branch for the retirement-runbook task
 - close issue `#164` with a minimal Done/Validation/Next/Blockers comment
 - reassess the remaining phase `#100` scope against real rollout evidence
