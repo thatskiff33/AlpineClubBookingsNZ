@@ -13,12 +13,13 @@ Last updated: 2026-04-25
 - Phase `#96` is closed
 - Phase `#97` is closed
 - Phase `#98` is closed
-- Active phase: `#99`
-- Most recent landed task: `#151`
-- Most recent merged implementation PR: `#152`
+- Phase `#99` is closed
+- Active phase: `#100`
+- Most recent landed task: `#153`
+- Most recent merged implementation PR: `#156`
 - Most recent published implementation PR: `#156`
-- Finance task currently in flight: `#153` via draft PR `#156`
-- Single `status: ready` finance task: none
+- Finance task currently in flight: none
+- Single `status: ready` finance task: `#158`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Task #138
@@ -423,57 +424,53 @@ What landed:
   - `npx eslint 'src/app/(finance)/finance/working-capital/page.tsx' src/app/'(finance)'/finance/page.tsx src/lib/finance-working-capital-report-page.ts src/lib/finance-balance-sheet-report-page.ts src/lib/__tests__/finance-working-capital-report-page.test.ts`
   - `git diff --check`
   - `npm run build` after temporarily applying the finance diff in the main checkout because Turbopack rejects a worktree-local `node_modules` symlink outside the project root, then restoring the unrelated admin-Xero WIP state
+- Merged PR `#156` into `main` as commit `8b970c8`
+- Deleted remote branch `finance/issue-153-working-capital-report-shell` after the squash merge
+- Closed task `#153` as completed and removed its `status: in-progress` label
+- Closed phase `#99` as completed now that the native finance reporting slice is landed
+- Created task `#158` as the single `status: ready` finance task for the phase `#100` rollout and cutover checklist boundary
 
 What remains:
-- Run merge review for draft PR `#156` and merge it only if CI stays green, the diff remains scoped to task `#153`, and no blocker comments appear
-- Reassess whether phase `#99` is complete once task `#153` lands; if so, close the phase before opening speculative rollout work
+- Pick up task `#158` from current `main` and keep the slice documentation-first unless repo evidence forces a narrow supporting change
 
 Blockers:
-- None on task `#153` itself
-- The shared local workspace still contains unrelated admin-Xero changes on a separate WIP branch; keep them out of PR `#156` and avoid switching that checkout onto the finance branch while the worktree is in use
+- None on the finance dashboard path itself
+- The shared local workspace still contains unrelated admin-Xero changes on a separate WIP branch; keep them out of finance follow-up work and prefer a clean checkout or worktree for task `#158`
 
 ## Next Prompt
 
 ```text
 Use the GitHub workflow for TACBookings finance epic #92.
 
-Run the merge-review stage for the current active finance PR only.
+Implement the current ready finance task only.
 
 1. Read only these sources first:
 - docs/finance-dashboard/README.md
 - docs/finance-dashboard/handoff.md
-- phase issue #99
-- task issue #153
-- draft PR #156
+- phase issue #100
+- task issue #158
+- docs/finance-dashboard/phases.md
+- docs/finance-dashboard/test-plan.md
 
-Read docs/finance-dashboard/data-contracts.md only if a review comment or blocker requires touching the working-capital contract.
-Read docs/XERO_HANDOFF.md only if a review comment or blocker would reopen finance or operational Xero scope.
+Read docs/finance-dashboard/data-contracts.md only if the rollout checklist needs an exact source-of-truth reference for a landed finance surface.
+Read docs/XERO_HANDOFF.md only if current repo evidence forces finance rollout notes to reopen Xero-specific operational scope.
 
-2. Verify all merge gates:
-- task `#153` acceptance criteria are complete
-- local validation still covers:
-  - `npx vitest run src/lib/__tests__/finance-working-capital-report-page.test.ts src/lib/__tests__/finance-balance-sheet-report-page.test.ts`
-  - `npx eslint 'src/app/(finance)/finance/working-capital/page.tsx' src/app/'(finance)'/finance/page.tsx src/lib/finance-working-capital-report-page.ts src/lib/finance-balance-sheet-report-page.ts src/lib/__tests__/finance-working-capital-report-page.test.ts`
-  - `npm run build`
-  - `git diff --check`
-- PR `#156` checks are green
-- no unresolved blocker comments or requested changes remain
-- branch `finance/issue-153-working-capital-report-shell` is up to date with `main`
-- the diff stays scoped to the working-capital shell for task `#153`
+2. Reconfirm scope before editing:
+- task `#158` stays focused on a concrete rollout or cutover checklist for phase `#100`
+- keep the slice documentation-first unless current repo evidence proves a narrow supporting docs update is required
+- do not broaden into executing rollout steps, changing access, or retiring the legacy dashboard in the same task
 
-3. If any gate fails:
-- do not merge
-- leave a short blocker note on PR `#156`
-- update docs/finance-dashboard/handoff.md with the exact failing gate and next action
-- keep the unrelated local admin-Xero WIP branch out of the finance branch and use a clean checkout or worktree if you need local fixes
+3. Implement task `#158` end-to-end:
+- add the smallest production-ready finance rollout or cutover checklist under `docs/finance-dashboard/`
+- capture explicit UAT gates across finance access, sync health, and the landed native report surfaces from phases `#93`-`#99`
+- document the minimum rollback notes and legacy-dashboard freeze criteria needed before cutover
+- update `docs/finance-dashboard/README.md` and this handoff so the rollout checklist is indexed and the next run starts from current reality
+- use a clean checkout or worktree if local validation needs to avoid the unrelated admin-Xero WIP branch
 
-4. If all gates pass:
-- squash merge PR `#156`
-- delete remote branch `finance/issue-153-working-capital-report-shell`
-- close task issue `#153` with a minimal Done/Validation/Next/Blockers comment
-- add a short progress comment to phase issue `#99`
-- close phase `#99` as completed if task `#153` satisfies the remaining phase scope
-- only reassess phase `#100` after phase `#99` is actually closed, and only create a new `status: ready` finance task if the scope is concrete and production-ready
+4. Validate lightly and publish:
+- run only the lightweight docs validation the touched paths actually require
+- open a scoped PR linked to `#158`
+- keep notes explicit about UAT gates, rollback assumptions, and non-goals
 
 5. Keep handoff minimal:
 - Done:
