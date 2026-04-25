@@ -1,30 +1,30 @@
 tokoroa.org.nz, www.tokoroa.org.nz {
-    header {
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        X-XSS-Protection "1; mode=block"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        Permissions-Policy "camera=(), microphone=(), geolocation=()"
-        Strict-Transport-Security "max-age=63072000; includeSubDomains"
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://js.stripe.com https://api.addressfinder.io; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io https://api.addressfinder.io; frame-src https://js.stripe.com https://hooks.stripe.com; base-uri 'self'; form-action 'self'"
-    }
-    reverse_proxy app:3000
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		X-XSS-Protection "1; mode=block"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://js.stripe.com https://api.addressfinder.io; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io https://api.addressfinder.io; frame-src https://js.stripe.com https://hooks.stripe.com; base-uri 'self'; form-action 'self'"
+	}
+	reverse_proxy app:3000
 }
 
 bookings.tokoroa.org.nz {
-    @root path /
-    redir @root https://tokoroa.org.nz/dashboard permanent
-    redir * https://tokoroa.org.nz{uri} permanent
+	@root path /
+	redir @root https://tokoroa.org.nz/dashboard permanent
+	redir * https://tokoroa.org.nz{uri} permanent
 }
 
 dashboard.tokoroa.org.nz {
-    header {
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        X-XSS-Protection "1; mode=block"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        Permissions-Policy "camera=(), microphone=(), geolocation=()"
-        Strict-Transport-Security "max-age=63072000; includeSubDomains"
-    }
-    reverse_proxy 172.26.3.200:8501
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		X-XSS-Protection "1; mode=block"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+	}
+	reverse_proxy 172.26.3.200:8501
 }
