@@ -71,6 +71,7 @@ Deliver a native finance dashboard inside `TACBookings` that:
 - [finance-working-capital-report-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-working-capital-report-contract.md)
 - [finance-cash-report-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-cash-report-contract.md)
 - [finance-balance-sheet-report-contract.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-balance-sheet-report-contract.md)
+- [finance-rollout-cutover-checklist.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-rollout-cutover-checklist.md)
 - [test-plan.md](/home/ubuntu/TACBookings/docs/finance-dashboard/test-plan.md)
 - [agent-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/agent-runbook.md)
 - [handoff.md](/home/ubuntu/TACBookings/docs/finance-dashboard/handoff.md)
