@@ -108,7 +108,7 @@ export default function GuestChorePage() {
       <header className="bg-blue-800 text-white px-4 py-4">
         <div className="max-w-lg mx-auto flex items-center gap-2">
           <Mountain className="h-5 w-5" />
-          <span className="font-bold">TAC Lodge Chores</span>
+          <span className="font-bold">Tokoroa Alpine Club Lodge Chores</span>
         </div>
       </header>
 

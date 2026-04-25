@@ -54,7 +54,7 @@ const steps = [
   {
     title: "Enter details",
     description:
-      "Tell us about yourself, your household members, and the two current TAC members who are nominating you.",
+      "Tell us about yourself, your household members, and the two current Tokoroa Alpine Club members who are nominating you.",
     icon: UserPlus,
   },
   {
@@ -300,7 +300,7 @@ export default function JoinApplyPage() {
             </CardHeader>
             <CardContent className="space-y-4 text-sm text-brand-deep/78">
               <p>
-                Once both nominators approve, the application moves to the TAC
+                Once both nominators approve, the application moves to the club
                 admin panel for committee consideration.
               </p>
               {warnings.length > 0 && (
@@ -331,7 +331,7 @@ export default function JoinApplyPage() {
             Apply for Membership
           </h1>
           <p className="mt-4 max-w-3xl text-lg text-brand-snow/80">
-            Enter your details, nominate two current TAC members, and we will
+            Enter your details, nominate two current Tokoroa Alpine Club members, and we will
             move your application through nomination confirmation and committee
             approval.
           </p>
@@ -369,7 +369,7 @@ export default function JoinApplyPage() {
               </CardTitle>
               <CardDescription className="text-base text-brand-deep/75">
                 This form creates a membership application only. It does not
-                create a TAC login until nominators and the committee approve
+                create a Tokoroa Alpine Club login until nominators and the committee approve
                 it.
               </CardDescription>
             </CardHeader>
@@ -586,7 +586,8 @@ export default function JoinApplyPage() {
                       Nominators
                     </h2>
                     <p className="text-sm text-brand-deep/70">
-                      Enter the email addresses of two active, paid-up TAC
+                      Enter the email addresses of two active, paid-up Tokoroa
+                      Alpine Club
                       members who have agreed to nominate you.
                     </p>
                   </div>

@@ -192,7 +192,7 @@ export default function ReportsPage() {
 
     const revenueGranularityLabel = getRevenueGranularityLabel(data.revenueGranularity);
     const rows: string[][] = [];
-    rows.push(["TAC Bookings Report", `${from} to ${to}`]);
+    rows.push(["Tokoroa Alpine Club - Bookings Report", `${from} to ${to}`]);
     rows.push([]);
     rows.push(["Summary"]);
     rows.push(["Total Bookings", String(data.summary.totalBookings)]);

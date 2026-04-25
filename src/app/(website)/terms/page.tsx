@@ -35,8 +35,8 @@ export default function TermsPage() {
             <div>
               <h2>1. Agreement to Terms</h2>
               <p>
-                By registering an account or using the Tokoroa Alpine Club Incorporated (&ldquo;TAC&rdquo;,
-                &ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) booking and membership system (&ldquo;the System&rdquo;), you agree to be bound
+                By registering an account or using the Tokoroa Alpine Club Incorporated
+                (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) booking and membership system (&ldquo;the System&rdquo;), you agree to be bound
                 by these Terms of Service. If you do not agree, do not use the System.
               </p>
               <p className="mt-3">
@@ -54,7 +54,7 @@ export default function TermsPage() {
                   account.
                 </li>
                 <li>
-                  Membership is subject to approval by the TAC committee. Creating an account does not
+                  Membership is subject to approval by the Tokoroa Alpine Club committee. Creating an account does not
                   constitute membership.
                 </li>
                 <li>
@@ -126,7 +126,7 @@ export default function TermsPage() {
                   All prices are in New Zealand dollars (NZD) inclusive of GST where applicable.
                 </li>
                 <li>
-                  Payment processing is handled by Stripe. TAC does not store credit card details.
+                  Payment processing is handled by Stripe. Tokoroa Alpine Club does not store credit card details.
                 </li>
               </ul>
             </div>
@@ -151,7 +151,7 @@ export default function TermsPage() {
                   Bumped bookings receive a full refund and immediate email notification.
                 </li>
                 <li>
-                  TAC accepts no liability for costs incurred by guests (e.g. travel, equipment hire)
+                  Tokoroa Alpine Club accepts no liability for costs incurred by guests (e.g. travel, equipment hire)
                   as a result of a booking being bumped.
                 </li>
               </ul>
@@ -160,7 +160,7 @@ export default function TermsPage() {
             <div>
               <h2>6. Cancellation and Refunds</h2>
               <p>
-                Refunds are calculated based on the cancellation policy set by the TAC committee.
+                Refunds are calculated based on the cancellation policy set by the Tokoroa Alpine Club committee.
                 Current tiers are shown on the{" "}
                 <Link href="/rules" className="website-link">
                   Club Rules
@@ -178,7 +178,7 @@ export default function TermsPage() {
                   Refunds are processed to the original payment method within 5&ndash;10 business days.
                 </li>
                 <li>
-                  TAC reserves the right to cancel a booking due to circumstances beyond our control
+                  Tokoroa Alpine Club reserves the right to cancel a booking due to circumstances beyond our control
                   (e.g. natural disaster, lodge damage) and will provide a full refund in such cases.
                 </li>
               </ul>
@@ -219,7 +219,7 @@ export default function TermsPage() {
                   contact us.
                 </li>
                 <li>
-                  TAC accepts no liability for losses resulting from unauthorised access to your account
+                  Tokoroa Alpine Club accepts no liability for losses resulting from unauthorised access to your account
                   due to your failure to maintain credential security.
                 </li>
               </ul>
@@ -236,11 +236,11 @@ export default function TermsPage() {
                   The System is provided &ldquo;as is&rdquo; without warranties of any kind, express or implied.
                 </li>
                 <li>
-                  TAC is not liable for any indirect, incidental, or consequential losses arising from
+                  Tokoroa Alpine Club is not liable for any indirect, incidental, or consequential losses arising from
                   use of the System or the lodge.
                 </li>
                 <li>
-                  TAC is not responsible for personal injury, loss of property, or other incidents
+                  Tokoroa Alpine Club is not responsible for personal injury, loss of property, or other incidents
                   occurring during your lodge stay. All guests are advised to hold appropriate personal
                   insurance.
                 </li>
@@ -255,7 +255,7 @@ export default function TermsPage() {
               <h2>10. Account Suspension and Termination</h2>
               <ul className="list-disc pl-6 space-y-2">
                 <li>
-                  TAC may suspend or terminate an account for breach of these terms, unpaid membership
+                  Tokoroa Alpine Club may suspend or terminate an account for breach of these terms, unpaid membership
                   fees, or conduct that is harmful to the club or other members.
                 </li>
                 <li>
@@ -273,7 +273,7 @@ export default function TermsPage() {
             <div>
               <h2>11. Changes to These Terms</h2>
               <p>
-                TAC may update these Terms of Service from time to time. We will update the &ldquo;Last
+                Tokoroa Alpine Club may update these Terms of Service from time to time. We will update the &ldquo;Last
                 updated&rdquo; date at the top of this page. Continued use of the System after any changes
                 constitutes acceptance of the updated terms.
               </p>

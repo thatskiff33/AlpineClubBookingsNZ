@@ -57,7 +57,7 @@ function SummaryCards({
           </h2>
           <p className="text-sm leading-6 text-slate-600">
             Stored finance bank summary snapshots now surface closing bank
-            positions directly inside TACBookings for finance viewers and
+            positions directly inside Tokoroa Alpine Club - Bookings for finance viewers and
             managers.
           </p>
         </div>
@@ -194,7 +194,7 @@ export default async function FinanceCashPage({
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Cash balances on this page come
               from stored finance bank-balance snapshots synced through the
-              finance-only Xero boundary. No TACBookings payment rows,
+              finance-only Xero boundary. No Tokoroa Alpine Club payment rows,
               working-capital rollups, or live Xero reads are used here.
             </div>
 
@@ -242,7 +242,7 @@ export default async function FinanceCashPage({
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
               Cash stays explicitly finance-snapshot-backed here so it is not
-              conflated with TACBookings payment-derived cash collections.
+              conflated with Tokoroa Alpine Club payment-derived cash collections.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">

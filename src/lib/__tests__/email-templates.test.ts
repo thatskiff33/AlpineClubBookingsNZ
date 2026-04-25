@@ -8,6 +8,7 @@ import {
   bookingCancelledTemplate,
   choreRosterTemplate,
   hutLeaderAssignmentTemplate,
+  adminDailyDigestTemplate,
 } from "../email-templates";
 
 describe("email-templates", () => {
@@ -22,11 +23,26 @@ describe("email-templates", () => {
       expect(html).toContain("/login");
     });
 
-    it("includes TAC branding", () => {
+    it("includes Tokoroa Alpine Club branding", () => {
       const html = welcomeTemplate("Test");
       expect(html).toContain("Tokoroa Alpine Club");
       expect(html).toContain("/images/tac-logo.png");
       expect(html).toContain("#ffcb05");
+    });
+
+    it("uses dark text on light table headers", () => {
+      const html = adminDailyDigestTemplate({
+        newBookings: 1,
+        paymentFailures: 0,
+        capacityWarnings: 0,
+        bookingsBumped: 0,
+        pendingDeadlines: 0,
+        xeroErrors: 0,
+        totalAlerts: 1,
+      });
+
+      expect(html).toContain("background-color: #d9d5c2; color: #2f2f2b;");
+      expect(html).not.toContain("background-color: #d9d5c2; color: #ffcb05;");
     });
 
     it("produces valid HTML structure", () => {

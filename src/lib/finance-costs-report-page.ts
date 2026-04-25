@@ -330,7 +330,7 @@ function buildCostsSourceNotes() {
     {
       label: "Finance snapshot source",
       description:
-        "Costs on this page come from stored `PROFIT_AND_LOSS_MONTHLY` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from TACBookings booking or payment data.",
+        "Costs on this page come from stored `PROFIT_AND_LOSS_MONTHLY` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from Tokoroa Alpine Club booking or payment data.",
     },
     {
       label: "Durable read path",
@@ -340,7 +340,7 @@ function buildCostsSourceNotes() {
     {
       label: "Scope boundary",
       description:
-        "This report is cost-only. It keeps finance snapshot-backed expense figures distinct from TACBookings booking revenue, payment-derived cash, balance-sheet positions, and pricing-sensitivity analysis.",
+        "This report is cost-only. It keeps finance snapshot-backed expense figures distinct from Tokoroa Alpine Club booking revenue, payment-derived cash, balance-sheet positions, and pricing-sensitivity analysis.",
     },
   ];
 }

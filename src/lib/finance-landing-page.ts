@@ -158,12 +158,12 @@ export async function buildFinanceLandingPageModel(input: {
       {
         href: "#realized-bookings",
         label: "Realized stays",
-        description: "Current month TACBookings stay, occupancy, and cash coverage",
+        description: "Current month stay, occupancy, and cash coverage",
       },
       {
         href: "#forward-pipeline",
         label: "Forward pipeline",
-        description: "Next 90 days of committed and at-risk TACBookings demand",
+        description: "Next 90 days of committed and at-risk booking demand",
       },
     ],
     sync,
@@ -173,7 +173,7 @@ export async function buildFinanceLandingPageModel(input: {
       {
         label: "Booking cards",
         description:
-          "These figures come from TACBookings Booking, BookingGuest, and Payment rows through the finance booking metrics boundary.",
+          "These figures come from the booking system's Booking, BookingGuest, and Payment rows through the finance booking metrics boundary.",
       },
       {
         label: "Sync health",

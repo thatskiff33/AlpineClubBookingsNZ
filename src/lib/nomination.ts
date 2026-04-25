@@ -266,7 +266,7 @@ async function verifyNominator(email: string): Promise<VerifiedNominator> {
 
   if (!nominator || nominator.subscriptions.length === 0) {
     throw new MembershipApplicationError(
-      `${normalizedEmail} is not an active, paid-up TAC member`,
+      `${normalizedEmail} is not an active, paid-up Tokoroa Alpine Club member`,
       422
     );
   }
@@ -306,7 +306,7 @@ async function ensureApplicationCanBeCreated(
 
   if (existingMember) {
     throw new MembershipApplicationError(
-      "An active TAC account already exists for this email address",
+      "An active Tokoroa Alpine Club account already exists for this email address",
       409
     );
   }
@@ -708,7 +708,7 @@ export async function approveMemberApplication(
 
     if (existing) {
       throw new MembershipApplicationError(
-        "A TAC login already exists for this applicant email address",
+        "A Tokoroa Alpine Club login already exists for this applicant email address",
         409
       );
     }

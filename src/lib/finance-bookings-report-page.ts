@@ -261,12 +261,12 @@ export async function buildFinanceBookingsReportPageModel(input: {
       realized: buildUnavailableSection({
         title: "Realized stay detail",
         description:
-          "This section uses TACBookings booking and payment rows for realized stays, occupancy, booked revenue, and payment coverage.",
+          "This section uses Tokoroa Alpine Club booking and payment rows for realized stays, occupancy, booked revenue, and payment coverage.",
       }),
       forward: buildUnavailableSection({
         title: "Forward pipeline detail",
         description:
-          "This section uses TACBookings booking rows for committed and at-risk future stay demand.",
+          "This section uses Tokoroa Alpine Club booking rows for committed and at-risk future stay demand.",
       }),
     };
   }
@@ -277,12 +277,12 @@ function buildSourceNotes() {
     {
       label: "Booked revenue",
       description:
-        "Booked revenue on this page comes from TACBookings Booking.finalPriceCents allocated evenly across stay nights. It is not a Xero snapshot figure.",
+        "Booked revenue on this page comes from Tokoroa Alpine Club Booking.finalPriceCents allocated evenly across stay nights. It is not a Xero snapshot figure.",
     },
     {
       label: "Net collected cash",
       description:
-        "Net collected cash comes from TACBookings Payment rows and stays separate from booked revenue so cash and revenue are not conflated.",
+        "Net collected cash comes from Tokoroa Alpine Club Payment rows and stays separate from booked revenue so cash and revenue are not conflated.",
     },
     {
       label: "Scope boundary",
@@ -301,14 +301,14 @@ function mapRealizedSection(
     return buildUnavailableSection({
       title: "Realized stay detail",
       description:
-        "This section uses TACBookings booking and payment rows for realized stays, occupancy, booked revenue, and payment coverage.",
+        "This section uses Tokoroa Alpine Club booking and payment rows for realized stays, occupancy, booked revenue, and payment coverage.",
     });
   }
 
   return {
     title: "Realized stay detail",
     description:
-      "Realized stays count TACBookings guest nights through the selected cutoff date and keep booked revenue separate from payment-derived cash.",
+      "Realized stays count Tokoroa Alpine Club guest nights through the selected cutoff date and keep booked revenue separate from payment-derived cash.",
     requestedWindow: `${formatDisplayDate(realized.window.from)} to ${formatDisplayDate(realized.window.to)}`,
     effectiveWindow: readEffectiveWindowLabel(
       realized.window.effectiveFrom,
@@ -331,7 +331,7 @@ function mapRealizedSection(
         title: "Booked revenue",
         value: formatCents(realized.totals.bookedRevenueCents),
         description:
-          "Revenue is allocated evenly across realized stay nights from TACBookings booking totals.",
+          "Revenue is allocated evenly across realized stay nights from Tokoroa Alpine Club booking totals.",
         footnote:
           realized.totals.averageNightlyRevenueCents === null
             ? "No nightly revenue is available for this realized window."
@@ -383,7 +383,7 @@ function mapForwardSection(
     return buildUnavailableSection({
       title: "Forward pipeline detail",
       description:
-        "This section uses TACBookings booking rows for committed and at-risk future stay demand.",
+        "This section uses Tokoroa Alpine Club booking rows for committed and at-risk future stay demand.",
     });
   }
 
@@ -413,7 +413,7 @@ function mapForwardSection(
   return {
     title: "Forward pipeline detail",
     description:
-      "Forward pipeline counts future TACBookings stay dates strictly after the selected as-of date and separates committed demand from pending demand.",
+      "Forward pipeline counts future Tokoroa Alpine Club stay dates strictly after the selected as-of date and separates committed demand from pending demand.",
     requestedWindow: `${formatDisplayDate(forward.window.from)} to ${formatDisplayDate(forward.window.to)}`,
     effectiveWindow: readEffectiveWindowLabel(
       forward.window.effectiveFrom,

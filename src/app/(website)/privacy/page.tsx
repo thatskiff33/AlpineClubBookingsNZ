@@ -35,7 +35,7 @@ export default function PrivacyPage() {
             <div>
               <h2>1. Who We Are</h2>
               <p>
-                The Tokoroa Alpine Club Incorporated (&ldquo;TAC&rdquo;, &ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit
+                The Tokoroa Alpine Club Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit
                 incorporated society registered in New Zealand. We operate Waldvogel Lodge at Iwikau
                 Village, Mt Ruapehu, and this booking and membership management system (&ldquo;the
                 System&rdquo;).

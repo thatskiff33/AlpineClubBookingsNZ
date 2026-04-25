@@ -314,12 +314,12 @@ function buildCashSourceNotes() {
     {
       label: "Finance snapshot source",
       description:
-        "Cash balances on this page come from stored `BANK_BALANCES` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from TACBookings booking or payment data.",
+        "Cash balances on this page come from stored `BANK_BALANCES` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from Tokoroa Alpine Club booking or payment data.",
     },
     {
       label: "Stored bank positions only",
       description:
-        "The report reflects stored bank summary positions for the selected snapshots and keeps those figures distinct from TACBookings payment-derived cash collections.",
+        "The report reflects stored bank summary positions for the selected snapshots and keeps those figures distinct from Tokoroa Alpine Club payment-derived cash collections.",
     },
     {
       label: "Durable read path",

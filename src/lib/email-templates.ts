@@ -1,5 +1,5 @@
 /**
- * HTML email templates for TAC Bookings.
+ * HTML email templates for club emails.
  * All templates use inline CSS for maximum email client compatibility.
  */
 
@@ -38,7 +38,7 @@ function layout(content: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TAC Bookings</title>
+  <title>Tokoroa Alpine Club - Online Booking System</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: ${BG_COLOR}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${BG_COLOR};">
@@ -55,7 +55,7 @@ function layout(content: string): string {
                 style="display: block; margin: 0 auto 14px; width: 176px; max-width: 100%; height: auto;"
               />
               <p style="margin: 0; color: ${WHITE}; font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;">
-                Lodge Booking System
+                Online Booking System
               </p>
             </td>
           </tr>
@@ -69,7 +69,7 @@ function layout(content: string): string {
           <tr>
             <td style="background-color: ${WHITE}; padding: 20px 32px; border-top: 1px solid ${BORDER_COLOR}; border-radius: 0 0 8px 8px; border-left: 1px solid ${BORDER_COLOR}; border-right: 1px solid ${BORDER_COLOR}; border-bottom: 1px solid ${BORDER_COLOR};">
               <p style="margin: 0; color: ${TEXT_MUTED}; font-size: 12px; text-align: center;">
-                Tokoroa Alpine Club &bull; Lodge Bookings<br>
+                Tokoroa Alpine Club &bull; Online Booking System<br>
                 <a href="${BASE_URL}" style="color: ${BRAND_CHARCOAL}; font-weight: 600; text-decoration: none;">${BASE_URL.replace(/^https?:\/\//, "")}</a>
               </p>
             </td>
@@ -370,7 +370,7 @@ export function nominationRequestTemplate(params: {
 export function emailChangeVerificationTemplate(newEmail: string, verifyUrl: string): string {
   return layout(`
     ${heading("Confirm Your New Email")}
-    ${paragraph("You requested to change your TAC Bookings email to <strong>" + escapeHtml(newEmail) + "</strong>.")}
+    ${paragraph("You requested to change the email address on your Tokoroa Alpine Club account to <strong>" + escapeHtml(newEmail) + "</strong>.")}
     ${paragraph("Click the button below to confirm this change.")}
     ${button("Confirm Email Change", verifyUrl)}
     ${muted("This link expires in 1 hour. If you did not request this change, please ignore this email.")}
@@ -380,7 +380,7 @@ export function emailChangeVerificationTemplate(newEmail: string, verifyUrl: str
 export function emailChangeNotificationTemplate(newEmail: string): string {
   return layout(`
     ${heading("Email Change Requested")}
-    ${paragraph("Someone requested to change the email address on your TAC Bookings account to <strong>" + escapeHtml(newEmail) + "</strong>.")}
+    ${paragraph("Someone requested to change the email address on your Tokoroa Alpine Club account to <strong>" + escapeHtml(newEmail) + "</strong>.")}
     ${alertBox("If this wasn't you, please contact the club immediately.", "warning")}
     ${muted("If you made this request, you can safely ignore this email. The change will only take effect after verification.")}
   `);
@@ -553,11 +553,11 @@ export function adminPendingDeadlineTemplate(bookings: Array<{
     ${alertBox(bookings.length + " pending booking" + (bookings.length > 1 ? "s" : "") + " will reach their hold deadline within 48 hours.", "warning")}
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Member</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Dates</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Guests</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Deadline</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Remaining</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Member</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Dates</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Guests</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Deadline</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Remaining</th>
       </tr>
       ${tableRowsHtml}
     </table>
@@ -690,10 +690,10 @@ export function adminCapacityWarningTemplate(days: Array<{
     ${alertBox(days.length + " day" + (days.length > 1 ? "s" : "") + " in the next 14 days have high occupancy.", "warning")}
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Date</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Occupied</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Available</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Occupancy</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Date</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Occupied</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Available</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Occupancy</th>
       </tr>
       ${tableRowsHtml}
     </table>
@@ -712,7 +712,7 @@ export function postStayFeedbackTemplate(
 ): string {
   return layout(`
     ${heading("How Was Your Stay?")}
-    ${paragraph("Hi " + escapeHtml(firstName) + ", we hope you enjoyed your time at the TAC Lodge!")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", we hope you enjoyed your time at the Tokoroa Alpine Club Lodge!")}
     ${infoTable([
       { label: "Check-in", value: formatNZDate(checkIn) },
       { label: "Check-out", value: formatNZDate(checkOut) },
@@ -779,9 +779,9 @@ export function adminDailyDigestTemplate(sections: {
     ${rows.length > 0 ? `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Alert Type</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Count</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Action</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Alert Type</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Count</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Action</th>
       </tr>
       ${tableRowsHtml}
     </table>` : ""}
@@ -896,10 +896,10 @@ export function adminXeroReconciliationReportTemplate(report: {
         ? `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Correlation Key</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Failures</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Local Record</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Correlation Key</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Failures</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Local Record</th>
       </tr>
       ${repeatedFailureRows}
     </table>`
@@ -910,10 +910,10 @@ export function adminXeroReconciliationReportTemplate(report: {
         ? `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation ID</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Local Record</th>
-        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${BRAND_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Repair Gap</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation ID</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Operation</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Local Record</th>
+        <th style="padding: 8px 12px; font-size: 13px; text-align: left; background-color: ${BRAND_LIGHT}; color: ${TEXT_COLOR}; border-bottom: 2px solid ${BORDER_COLOR};">Repair Gap</th>
       </tr>
       ${unsupportedPartialRows}
     </table>`

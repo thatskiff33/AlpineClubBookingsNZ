@@ -245,7 +245,7 @@ export async function buildFinancePricingSensitivityPageModel(input: {
         isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
         warnings,
         loadError:
-          "Pricing sensitivity is temporarily unavailable because none of the selected monthly cost snapshots could be matched to realized TACBookings booking metrics.",
+          "Pricing sensitivity is temporarily unavailable because none of the selected monthly cost snapshots could be matched to realized Tokoroa Alpine Club booking metrics.",
       });
     }
 
@@ -304,7 +304,7 @@ export async function buildFinancePricingSensitivityPageModel(input: {
           title: "Average realized guest nights",
           value: formatDecimal(averageGuestNights),
           description:
-            "Average TACBookings guest nights across the same selected monthly windows.",
+            "Average Tokoroa Alpine Club guest nights across the same selected monthly windows.",
           footnote: `Average realized occupancy ${formatOccupancyRate(averageOccupancyRate)}.`,
         },
         {
@@ -314,7 +314,7 @@ export async function buildFinancePricingSensitivityPageModel(input: {
               ? "Unavailable"
               : formatFinanceAmount(averageRevenuePerGuestNightCents),
           description:
-            "Booked revenue per guest night from TACBookings booking metrics, not payment-derived cash.",
+            "Booked revenue per guest night from Tokoroa Alpine Club booking metrics, not payment-derived cash.",
           footnote:
             averageRevenuePerGuestNightCents === null
               ? "No guest nights were present in the selected realized booking windows."
@@ -401,7 +401,7 @@ function buildPricingSensitivitySourceNotes() {
     {
       label: "Booking source",
       description:
-        "Guest nights and booked revenue come from TACBookings realized booking metrics for the same monthly windows. Booked revenue uses TACBookings booking totals, not payment-derived cash.",
+        "Guest nights and booked revenue come from Tokoroa Alpine Club realized booking metrics for the same monthly windows. Booked revenue uses Tokoroa Alpine Club booking totals, not payment-derived cash.",
     },
     {
       label: "Sensitivity assumptions",

@@ -58,7 +58,7 @@ function SummaryCards({
           </h2>
           <p className="text-sm leading-6 text-slate-600">
             Stored monthly profit-and-loss snapshots now surface cost totals
-            and expense mix directly inside TACBookings for finance viewers and
+            and expense mix directly inside Tokoroa Alpine Club - Bookings for finance viewers and
             managers.
           </p>
         </div>
@@ -198,7 +198,7 @@ export default async function FinanceCostsPage({
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Cost totals on this page come from
               stored finance snapshots synced through the finance-only Xero
-              boundary. No TACBookings booking metrics, payment-derived cash,
+              boundary. No Tokoroa Alpine Club booking metrics, payment-derived cash,
               or live Xero reads are used here.
             </div>
 
@@ -246,7 +246,7 @@ export default async function FinanceCostsPage({
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
               Costs stay explicitly finance-snapshot-backed here so they are not
-              conflated with TACBookings booking, cash, or balance-sheet totals.
+              conflated with Tokoroa Alpine Club booking, cash, or balance-sheet totals.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">

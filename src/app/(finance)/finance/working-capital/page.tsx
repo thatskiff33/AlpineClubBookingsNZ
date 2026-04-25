@@ -66,7 +66,7 @@ function SummaryCards({
           <p className="text-sm leading-6 text-slate-600">
             This page derives current assets, current liabilities, working
             capital, and current-assets coverage from stored finance
-            balance-sheet snapshots inside TACBookings.
+            balance-sheet snapshots inside Tokoroa Alpine Club - Bookings.
           </p>
         </div>
       </div>
@@ -190,7 +190,7 @@ export default async function FinanceWorkingCapitalPage({
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Working-capital figures on this
-              page come from stored balance-sheet snapshots only. No TACBookings
+              page come from stored balance-sheet snapshots only. No Tokoroa Alpine Club
               booking totals, payment-derived cash summaries, live Xero reads,
               or forecasting calculations are used here.
             </div>
