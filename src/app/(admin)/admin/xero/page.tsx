@@ -2,7 +2,6 @@
 
 import type { AgeTier } from "@prisma/client"
 import { useEffect, useState, useCallback } from "react"
-import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -207,6 +206,73 @@ interface XeroUsageSummary {
   lastDailyLimitEvent: XeroUsageFailure | null
 }
 
+interface XeroHealthSnapshot {
+  unlinkedMembers: {
+    count: number
+    href: string
+  }
+  failedOperations: {
+    count: number
+  }
+  pendingOperations: {
+    count: number
+  }
+  lastMembershipRefresh: {
+    at: string | null
+    lastCronStatus: string | null
+    lastCronStartedAt: string | null
+  }
+  missingInvoices: {
+    count: number
+  }
+  apiBudget: {
+    status: "healthy" | "warning" | "critical" | "exhausted" | "unknown"
+    usagePercent: number | null
+    totalCalls: number | null
+    failedCalls: number | null
+  }
+}
+
+interface MissingInvoiceBooking {
+  bookingId: string
+  paymentId: string
+  memberId: string
+  memberName: string
+  memberEmail: string
+  status: "CONFIRMED" | "PAID"
+  checkIn: string
+  checkOut: string
+  createdAt: string
+  hasLinkedInvoice: boolean
+}
+
+interface MissingInvoicesResponse {
+  count: number
+  bookings: MissingInvoiceBooking[]
+}
+
+type SectionKey =
+  | "health"
+  | "operations"
+  | "inbound"
+  | "contactSync"
+  | "membershipSync"
+  | "usage"
+  | "mappings"
+  | "setup"
+
+const SECTION_STORAGE_KEY = "admin-xero-section-state-v1"
+const SECTION_DEFAULTS: Record<SectionKey, boolean> = {
+  health: true,
+  operations: true,
+  inbound: true,
+  contactSync: true,
+  membershipSync: true,
+  usage: false,
+  mappings: false,
+  setup: false,
+}
+
 type MappingValue = {
   code: string | null
   itemCode: string | null
@@ -359,13 +425,116 @@ function SyncReportView({ report }: { report: SyncReport }) {
   )
 }
 
+function SectionCard({
+  id,
+  title,
+  description,
+  open,
+  onToggle,
+  actions,
+  children,
+}: {
+  id: string
+  title: string
+  description: string
+  open: boolean
+  onToggle: (nextOpen: boolean) => void
+  actions?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <Card id={id} className="mb-6 scroll-mt-24">
+      <CardHeader className="gap-4 md:flex-row md:items-start md:justify-between">
+        <button
+          type="button"
+          onClick={() => onToggle(!open)}
+          className="flex w-full items-start justify-between gap-3 text-left md:flex-1"
+        >
+          <div className="space-y-1">
+            <CardTitle>{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </div>
+          <span className="pt-0.5 text-xs text-muted-foreground">{open ? "▼" : "▶"}</span>
+        </button>
+        {actions ? (
+          <div className="flex shrink-0 items-center gap-2" onClick={(event) => event.stopPropagation()}>
+            {actions}
+          </div>
+        ) : null}
+      </CardHeader>
+      {open ? <CardContent>{children}</CardContent> : null}
+    </Card>
+  )
+}
+
+function HealthStatCard({
+  label,
+  value,
+  subtitle,
+  badge,
+  href,
+  onClick,
+}: {
+  label: string
+  value: React.ReactNode
+  subtitle: string
+  badge?: React.ReactNode
+  href?: string
+  onClick?: () => void
+}) {
+  const className =
+    "rounded-lg border p-4 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+
+  const content = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+          <div className="mt-2 text-2xl font-semibold">{value}</div>
+        </div>
+        {badge}
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">{subtitle}</p>
+    </>
+  )
+
+  if (href) {
+    return (
+      <a href={href} className={className}>
+        {content}
+      </a>
+    )
+  }
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={className}>
+        {content}
+      </button>
+    )
+  }
+
+  return <div className={className}>{content}</div>
+}
+
 export default function XeroPage() {
-  const searchParams = useSearchParams()
   const [status, setStatus] = useState<XeroStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
   const [error, setError] = useState("")
+  const [connectSuccess, setConnectSuccess] = useState(false)
+  const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>(SECTION_DEFAULTS)
+  const [healthSnapshot, setHealthSnapshot] = useState<XeroHealthSnapshot | null>(null)
+  const [loadingHealth, setLoadingHealth] = useState(false)
+  const [missingInvoiceDetails, setMissingInvoiceDetails] = useState<MissingInvoicesResponse | null>(null)
+  const [loadingMissingInvoices, setLoadingMissingInvoices] = useState(false)
+  const [showMissingInvoices, setShowMissingInvoices] = useState(false)
+  const [triggeringMissingInvoices, setTriggeringMissingInvoices] = useState(false)
+  const [retryingAllFailed, setRetryingAllFailed] = useState(false)
+  const [forceSyncQuery, setForceSyncQuery] = useState("")
+  const [forceSyncType, setForceSyncType] = useState<"CONTACT" | "INVOICE" | "MEMBERSHIP">("CONTACT")
+  const [forceSyncing, setForceSyncing] = useState(false)
 
   // Import state
   const [contactGroups, setContactGroups] = useState<ContactGroup[]>([])
@@ -413,6 +582,16 @@ export default function XeroPage() {
   const [entranceFeeItemCodes, setEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
   const [savedEntranceFeeItemCodes, setSavedEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
 
+  const scrollToSection = useCallback((section: SectionKey) => {
+    setSectionOpen((prev) => ({ ...prev, [section]: true }))
+    window.setTimeout(() => {
+      document.getElementById(`xero-section-${section}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      })
+    }, 0)
+  }, [])
+
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/xero/status")
@@ -423,6 +602,34 @@ export default function XeroPage() {
       setError("Failed to load Xero connection status")
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  const fetchHealth = useCallback(async () => {
+    setLoadingHealth(true)
+    try {
+      const res = await fetch("/api/admin/xero/health")
+      if (!res.ok) throw new Error("Failed to fetch Xero health")
+      const data = await res.json()
+      setHealthSnapshot(data)
+    } catch {
+      setError("Failed to load Xero health snapshot")
+    } finally {
+      setLoadingHealth(false)
+    }
+  }, [])
+
+  const fetchMissingInvoices = useCallback(async () => {
+    setLoadingMissingInvoices(true)
+    try {
+      const res = await fetch("/api/admin/xero/missing-invoices")
+      if (!res.ok) throw new Error("Failed to fetch missing invoices")
+      const data = await res.json()
+      setMissingInvoiceDetails(data)
+    } catch {
+      setError("Failed to load bookings missing Xero invoices")
+    } finally {
+      setLoadingMissingInvoices(false)
     }
   }, [])
 
@@ -533,15 +740,35 @@ export default function XeroPage() {
   }, [fetchStatus])
 
   useEffect(() => {
-    const connected = searchParams.get("connected")
-    const errorParam = searchParams.get("error")
+    try {
+      const storedState = window.localStorage.getItem(SECTION_STORAGE_KEY)
+      if (!storedState) return
+      const parsed = JSON.parse(storedState) as Partial<Record<SectionKey, boolean>>
+      setSectionOpen((prev) => ({
+        ...prev,
+        ...parsed,
+      }))
+    } catch {
+      // Ignore malformed localStorage state and fall back to defaults.
+    }
+  }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem(SECTION_STORAGE_KEY, JSON.stringify(sectionOpen))
+  }, [sectionOpen])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const connected = params.get("connected")
+    const errorParam = params.get("error")
     if (connected === "true") {
+      setConnectSuccess(true)
       fetchStatus()
     }
     if (errorParam) {
       setError(decodeURIComponent(errorParam))
     }
-  }, [searchParams, fetchStatus])
+  }, [fetchStatus])
 
   // Load account mappings whenever Xero is connected
   useEffect(() => {
@@ -568,6 +795,16 @@ export default function XeroPage() {
     }
   }, [status?.connected, fetchUsage])
 
+  useEffect(() => {
+    if (status?.connected) {
+      fetchHealth()
+    } else {
+      setHealthSnapshot(null)
+      setMissingInvoiceDetails(null)
+      setShowMissingInvoices(false)
+    }
+  }, [status?.connected, fetchHealth])
+
   const handleRetryOperation = async (operationId: string) => {
     setRetryingOperationId(operationId)
     setOperationMessage("")
@@ -581,7 +818,10 @@ export default function XeroPage() {
         throw new Error(data.error || "Failed to retry Xero operation")
       }
       setOperationMessage(data.message || "Xero operation queued for background retry.")
-      await fetchOperations(operationStatusFilter, operationEntityFilter)
+      await Promise.all([
+        fetchOperations(operationStatusFilter, operationEntityFilter),
+        fetchHealth(),
+      ])
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to retry Xero operation")
     } finally {
@@ -605,11 +845,106 @@ export default function XeroPage() {
       await Promise.all([
         fetchInboundEvents(inboundEventStatusFilter, inboundEventCategoryFilter),
         fetchOperations(operationStatusFilter, operationEntityFilter),
+        fetchHealth(),
       ])
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to replay Xero inbound event")
     } finally {
       setReplayingInboundEventId(null)
+    }
+  }
+
+  const handleRetryAllFailed = async () => {
+    setRetryingAllFailed(true)
+    setOperationMessage("")
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/operations/retry-all", {
+        method: "POST",
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to queue failed Xero operations")
+      }
+      setOperationMessage(data.message || "Queued failed Xero operations for retry.")
+      await Promise.all([
+        fetchOperations(operationStatusFilter, operationEntityFilter),
+        fetchHealth(),
+      ])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to queue failed Xero operations")
+    } finally {
+      setRetryingAllFailed(false)
+    }
+  }
+
+  const handleToggleMissingInvoices = async () => {
+    const nextOpen = !showMissingInvoices
+    setShowMissingInvoices(nextOpen)
+    if (nextOpen && !missingInvoiceDetails && !loadingMissingInvoices) {
+      await fetchMissingInvoices()
+    }
+  }
+
+  const handleTriggerMissingInvoices = async () => {
+    setTriggeringMissingInvoices(true)
+    setOperationMessage("")
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/missing-invoices", {
+        method: "POST",
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to queue missing invoices")
+      }
+      setOperationMessage(data.message || "Queued missing booking invoices.")
+      await Promise.all([
+        fetchHealth(),
+        fetchOperations(operationStatusFilter, operationEntityFilter),
+        fetchMissingInvoices(),
+      ])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to queue missing invoices")
+    } finally {
+      setTriggeringMissingInvoices(false)
+    }
+  }
+
+  const handleForceSync = async () => {
+    if (!forceSyncQuery.trim()) {
+      setError("Enter a member email or booking ID to sync.")
+      return
+    }
+
+    setForceSyncing(true)
+    setOperationMessage("")
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/force-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          syncType: forceSyncType,
+          query: forceSyncQuery.trim(),
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed targeted Xero sync")
+      }
+      setOperationMessage(data.message || "Targeted Xero sync queued.")
+      await Promise.all([
+        fetchHealth(),
+        fetchOperations(operationStatusFilter, operationEntityFilter),
+      ])
+      if (forceSyncType === "INVOICE") {
+        await fetchMissingInvoices()
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed targeted Xero sync")
+    } finally {
+      setForceSyncing(false)
     }
   }
 
@@ -626,6 +961,9 @@ export default function XeroPage() {
       if (!res.ok) throw new Error("Failed to disconnect")
       setStatus({ connected: false, tenantId: null, tokenExpiresAt: null })
       setSyncResult(null)
+      setHealthSnapshot(null)
+      setMissingInvoiceDetails(null)
+      setShowMissingInvoices(false)
     } catch {
       setError("Failed to disconnect Xero")
     }
@@ -643,6 +981,7 @@ export default function XeroPage() {
       }
       const data = await res.json()
       setSyncResult(data)
+      await fetchHealth()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Contact sync failed")
     } finally {
@@ -662,6 +1001,7 @@ export default function XeroPage() {
       }
       const data = await res.json()
       setSyncResult(data)
+      await fetchHealth()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Membership sync failed")
     } finally {
@@ -733,6 +1073,7 @@ export default function XeroPage() {
       }
       const data = await res.json()
       setSyncResult(data)
+      await fetchHealth()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Member import failed")
     } finally {
@@ -894,6 +1235,17 @@ export default function XeroPage() {
     }
   }
 
+  const healthBudgetToneClass = (status: XeroHealthSnapshot["apiBudget"]["status"]) => {
+    if (status === "unknown") {
+      return "bg-slate-600"
+    }
+    return usageToneClass(status)
+  }
+
+  const setSectionState = useCallback((section: SectionKey, nextOpen: boolean) => {
+    setSectionOpen((prev) => ({ ...prev, [section]: nextOpen }))
+  }, [])
+
   if (loading) {
     return (
       <div className="p-6">
@@ -904,14 +1256,14 @@ export default function XeroPage() {
   }
 
   return (
-    <div className="p-6 max-w-4xl">
-      <h1 className="text-2xl font-bold mb-2">Xero Integration</h1>
-      <p className="text-muted-foreground mb-6">
+    <div className="max-w-6xl p-6">
+      <h1 className="mb-2 text-2xl font-bold">Xero Integration</h1>
+      <p className="mb-6 text-muted-foreground">
         Connect to Xero for automatic invoice creation, membership verification, and contact sync.
       </p>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {error}
           <button onClick={() => setError("")} className="ml-2 underline">
             Dismiss
@@ -920,7 +1272,7 @@ export default function XeroPage() {
       )}
 
       {operationMessage && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">
+        <div className="mb-4 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
           {operationMessage}
           <button onClick={() => setOperationMessage("")} className="ml-2 underline">
             Dismiss
@@ -928,19 +1280,23 @@ export default function XeroPage() {
         </div>
       )}
 
-      {searchParams.get("connected") === "true" && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">
+      {connectSuccess && (
+        <div className="mb-4 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
           Xero connected successfully!
+          <button onClick={() => setConnectSuccess(false)} className="ml-2 underline">
+            Dismiss
+          </button>
         </div>
       )}
 
-      {/* Connection Status */}
       <Card className="mb-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-3">
             Connection Status
             {status?.connected ? (
-              <Badge variant="default" className="bg-green-600">Connected</Badge>
+              <Badge variant="default" className="bg-green-600">
+                Connected
+              </Badge>
             ) : (
               <Badge variant="secondary">Not Connected</Badge>
             )}
@@ -956,15 +1312,13 @@ export default function XeroPage() {
             <div className="space-y-3">
               <div className="text-sm">
                 <span className="text-muted-foreground">Tenant ID:</span>{" "}
-                <code className="text-xs bg-muted px-1 py-0.5 rounded">
-                  {status.tenantId}
-                </code>
+                <code className="rounded bg-muted px-1 py-0.5 text-xs">{status.tenantId}</code>
               </div>
               {status.tokenExpiresAt && (
                 <div className="text-sm">
                   <span className="text-muted-foreground">Token expires:</span>{" "}
                   {new Date(status.tokenExpiresAt).toLocaleString("en-NZ")}
-                  <span className="text-muted-foreground ml-1">(auto-refreshes)</span>
+                  <span className="ml-1 text-muted-foreground">(auto-refreshes)</span>
                 </div>
               )}
               <Button variant="destructive" size="sm" onClick={handleDisconnect}>
@@ -978,19 +1332,697 @@ export default function XeroPage() {
       </Card>
 
       {status?.connected && (
-        <Card className="mb-6">
-          <CardHeader className="flex flex-row items-start justify-between gap-4">
-            <div>
-              <CardTitle>Xero API Budget</CardTitle>
-              <CardDescription>
-                Daily call volume, hot spots, and recent failures from local metering.
-              </CardDescription>
+        <>
+          <SectionCard
+            id="xero-section-health"
+            title="Health Snapshot"
+            description="Quick checks for link coverage, stuck work, missing invoices, and daily Xero budget pressure."
+            open={sectionOpen.health}
+            onToggle={(nextOpen) => setSectionState("health", nextOpen)}
+            actions={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void Promise.all([fetchHealth(), fetchUsage()])
+                }}
+                disabled={loadingHealth}
+              >
+                {loadingHealth ? "Refreshing..." : "Refresh Health"}
+              </Button>
+            }
+          >
+            {loadingHealth && !healthSnapshot ? (
+              <p className="text-sm text-muted-foreground">Loading health snapshot...</p>
+            ) : healthSnapshot ? (
+              <div className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                  <HealthStatCard
+                    label="Unlinked members"
+                    value={healthSnapshot.unlinkedMembers.count}
+                    subtitle="Active members without a Xero contact link."
+                    href={healthSnapshot.unlinkedMembers.href}
+                  />
+                  <HealthStatCard
+                    label="Failed operations"
+                    value={healthSnapshot.failedOperations.count}
+                    subtitle="Replayable failures waiting for review or retry."
+                    badge={
+                      <Badge className={healthSnapshot.failedOperations.count > 0 ? "bg-red-600" : "bg-green-600"}>
+                        {healthSnapshot.failedOperations.count > 0 ? "Needs attention" : "Clear"}
+                      </Badge>
+                    }
+                    onClick={() => scrollToSection("operations")}
+                  />
+                  <HealthStatCard
+                    label="Pending operations"
+                    value={healthSnapshot.pendingOperations.count}
+                    subtitle="Queued or running work that has not completed yet."
+                    badge={
+                      <Badge className={healthSnapshot.pendingOperations.count > 0 ? "bg-slate-600" : "bg-green-600"}>
+                        {healthSnapshot.pendingOperations.count > 0 ? "In flight" : "Idle"}
+                      </Badge>
+                    }
+                    onClick={() => scrollToSection("operations")}
+                  />
+                  <HealthStatCard
+                    label="Last membership refresh"
+                    value={
+                      <span className="text-base font-semibold">
+                        {healthSnapshot.lastMembershipRefresh.at
+                          ? new Date(healthSnapshot.lastMembershipRefresh.at).toLocaleString("en-NZ")
+                          : "Never"}
+                      </span>
+                    }
+                    subtitle={
+                      healthSnapshot.lastMembershipRefresh.lastCronStatus
+                        ? `Last cron status: ${healthSnapshot.lastMembershipRefresh.lastCronStatus}`
+                        : "No cron run recorded yet."
+                    }
+                    onClick={() => scrollToSection("membershipSync")}
+                  />
+                  <HealthStatCard
+                    label="API budget"
+                    value={
+                      healthSnapshot.apiBudget.usagePercent != null
+                        ? `${Math.round(healthSnapshot.apiBudget.usagePercent * 100)}%`
+                        : "Unknown"
+                    }
+                    subtitle={
+                      healthSnapshot.apiBudget.totalCalls != null
+                        ? `${healthSnapshot.apiBudget.totalCalls} calls today, ${healthSnapshot.apiBudget.failedCalls ?? 0} failed`
+                        : "Usage snapshot not available yet."
+                    }
+                    badge={<Badge className={healthBudgetToneClass(healthSnapshot.apiBudget.status)}>{healthSnapshot.apiBudget.status}</Badge>}
+                    onClick={() => scrollToSection("usage")}
+                  />
+                </div>
+
+                <div className="rounded-lg border p-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold">Missing invoice detector</h3>
+                        <Badge className={healthSnapshot.missingInvoices.count > 0 ? "bg-amber-500" : "bg-green-600"}>
+                          {healthSnapshot.missingInvoices.count}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Bookings with a payment but no successful Xero invoice sync on record.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" onClick={handleToggleMissingInvoices}>
+                        {showMissingInvoices ? "Hide Details" : "Show Details"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleTriggerMissingInvoices}
+                        disabled={triggeringMissingInvoices || healthSnapshot.missingInvoices.count === 0}
+                      >
+                        {triggeringMissingInvoices ? "Queueing..." : "Trigger All Missing"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {showMissingInvoices ? (
+                    <div className="mt-4 border-t pt-4">
+                      {loadingMissingInvoices && !missingInvoiceDetails ? (
+                        <p className="text-sm text-muted-foreground">Loading missing invoice details...</p>
+                      ) : missingInvoiceDetails ? (
+                        missingInvoiceDetails.count === 0 ? (
+                          <p className="text-sm text-green-700">No paid or confirmed bookings are currently missing a Xero invoice.</p>
+                        ) : (
+                          <div className="space-y-3">
+                            <p className="text-sm text-muted-foreground">
+                              Showing {missingInvoiceDetails.bookings.length} of {missingInvoiceDetails.count} booking{missingInvoiceDetails.count !== 1 ? "s" : ""}.
+                            </p>
+                            {missingInvoiceDetails.bookings.map((booking) => (
+                              <div key={booking.bookingId} className="rounded-md border p-3">
+                                <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                                  <div className="space-y-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <a
+                                        href={`/admin/bookings/${booking.bookingId}`}
+                                        className="text-sm font-medium text-blue-600 hover:underline"
+                                      >
+                                        Booking {shortId(booking.bookingId)}
+                                      </a>
+                                      <Badge variant="outline">{booking.status}</Badge>
+                                    </div>
+                                    <p className="text-sm">
+                                      <a href={`/admin/members/${booking.memberId}`} className="text-blue-600 hover:underline">
+                                        {booking.memberName}
+                                      </a>
+                                      <span className="ml-2 text-muted-foreground">{booking.memberEmail}</span>
+                                    </p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {new Date(booking.checkIn).toLocaleDateString("en-NZ")} to{" "}
+                                      {new Date(booking.checkOut).toLocaleDateString("en-NZ")} • Payment {shortId(booking.paymentId)}
+                                    </p>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground">
+                                    Created {new Date(booking.createdAt).toLocaleString("en-NZ")}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No missing invoice details loaded yet.</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No health data recorded yet.</p>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            id="xero-section-operations"
+            title="Xero Operations"
+            description="Recent outbound sync attempts and replayable failures."
+            open={sectionOpen.operations}
+            onToggle={(nextOpen) => setSectionState("operations", nextOpen)}
+            actions={
+              <>
+                <Button
+                  size="sm"
+                  onClick={handleRetryAllFailed}
+                  disabled={retryingAllFailed || (healthSnapshot?.failedOperations.count ?? 0) === 0}
+                >
+                  {retryingAllFailed ? "Queueing..." : "Retry All Failed"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchOperations(operationStatusFilter, operationEntityFilter)}
+                  disabled={loadingOperations}
+                >
+                  {loadingOperations ? "Refreshing..." : "Refresh"}
+                </Button>
+              </>
+            }
+          >
+            <div className="space-y-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="w-full md:w-48">
+                  <Label className="mb-1 block text-xs text-muted-foreground">Status</Label>
+                  <Select value={operationStatusFilter} onValueChange={setOperationStatusFilter}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All statuses</SelectItem>
+                      <SelectItem value="FAILED">Failed</SelectItem>
+                      <SelectItem value="PENDING">Pending</SelectItem>
+                      <SelectItem value="PARTIAL">Partial</SelectItem>
+                      <SelectItem value="RUNNING">Running</SelectItem>
+                      <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="w-full md:w-48">
+                  <Label className="mb-1 block text-xs text-muted-foreground">Entity</Label>
+                  <Select value={operationEntityFilter} onValueChange={setOperationEntityFilter}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All entities</SelectItem>
+                      <SelectItem value="CONTACT">Contact</SelectItem>
+                      <SelectItem value="INVOICE">Invoice</SelectItem>
+                      <SelectItem value="PAYMENT">Payment</SelectItem>
+                      <SelectItem value="CREDIT_NOTE">Credit Note</SelectItem>
+                      <SelectItem value="ALLOCATION">Allocation</SelectItem>
+                      <SelectItem value="SUBSCRIPTION">Subscription</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {loadingOperations ? (
+                <p className="text-sm text-muted-foreground">Loading recent operations...</p>
+              ) : operations.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No Xero operations recorded yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {operations.map((operation) => (
+                    <div key={operation.id} className="space-y-2 rounded-md border p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="default" className={operationStatusClass(operation.status)}>
+                          {operation.status}
+                        </Badge>
+                        <span className="text-sm font-medium">
+                          {operation.entityType} {operation.operationType}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(operation.createdAt).toLocaleString("en-NZ")}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                        <span>Direction: {operation.direction}</span>
+                        <span>Attempt: {operation.attemptCount}</span>
+                        {operation.localModel && (
+                          <span>
+                            Local:{" "}
+                            {operation.localUrl ? (
+                              <a href={operation.localUrl} className="text-blue-600 hover:underline">
+                                {operation.localModel} {shortId(operation.localId)}
+                              </a>
+                            ) : (
+                              `${operation.localModel} ${shortId(operation.localId)}`
+                            )}
+                          </span>
+                        )}
+                        {operation.xeroObjectId && (
+                          <span>
+                            Xero:{" "}
+                            {operation.xeroObjectUrl ? (
+                              <a
+                                href={operation.xeroObjectUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:underline"
+                              >
+                                {operation.xeroObjectNumber || shortId(operation.xeroObjectId)}
+                              </a>
+                            ) : (
+                              operation.xeroObjectNumber || shortId(operation.xeroObjectId)
+                            )}
+                          </span>
+                        )}
+                      </div>
+
+                      {operation.lastErrorMessage && (
+                        <p className="text-sm text-red-700">
+                          {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
+                          {redactSensitiveText(operation.lastErrorMessage)}
+                        </p>
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        {operation.supported ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleRetryOperation(operation.id)}
+                            disabled={retryingOperationId === operation.id}
+                          >
+                            {retryingOperationId === operation.id ? "Queueing..." : "Retry in background"}
+                          </Button>
+                        ) : operation.reason && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
+                          <p className="text-xs text-muted-foreground">{operation.reason}</p>
+                        ) : null}
+                      </div>
+
+                      <details className="rounded-md bg-slate-50 p-2">
+                        <summary className="cursor-pointer text-xs font-medium text-slate-700">
+                          View request / response payloads
+                        </summary>
+                        <div className="mt-2 grid gap-3 lg:grid-cols-2">
+                          <div>
+                            <p className="mb-1 text-xs font-medium text-slate-700">Request</p>
+                            <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">
+                              {formatJson(operation.requestPayload)}
+                            </pre>
+                          </div>
+                          <div>
+                            <p className="mb-1 text-xs font-medium text-slate-700">Response</p>
+                            <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">
+                              {formatJson(operation.responsePayload)}
+                            </pre>
+                          </div>
+                        </div>
+                      </details>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <Button variant="outline" size="sm" onClick={fetchUsage} disabled={loadingUsage}>
-              {loadingUsage ? "Refreshing..." : "Refresh Usage"}
-            </Button>
-          </CardHeader>
-          <CardContent>
+          </SectionCard>
+
+          <SectionCard
+            id="xero-section-inbound"
+            title="Inbound Events"
+            description="Stored webhook events and their reconciliation state."
+            open={sectionOpen.inbound}
+            onToggle={(nextOpen) => setSectionState("inbound", nextOpen)}
+            actions={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchInboundEvents(inboundEventStatusFilter, inboundEventCategoryFilter)}
+                disabled={loadingInboundEvents}
+              >
+                {loadingInboundEvents ? "Refreshing..." : "Refresh"}
+              </Button>
+            }
+          >
+            <div className="space-y-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                <div className="w-full md:w-48">
+                  <Label className="mb-1 block text-xs text-muted-foreground">Status</Label>
+                  <Select value={inboundEventStatusFilter} onValueChange={setInboundEventStatusFilter}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All statuses</SelectItem>
+                      <SelectItem value="FAILED">Failed</SelectItem>
+                      <SelectItem value="RECEIVED">Received</SelectItem>
+                      <SelectItem value="PROCESSING">Processing</SelectItem>
+                      <SelectItem value="PROCESSED">Processed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="w-full md:w-48">
+                  <Label className="mb-1 block text-xs text-muted-foreground">Category</Label>
+                  <Select value={inboundEventCategoryFilter} onValueChange={setInboundEventCategoryFilter}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All categories</SelectItem>
+                      <SelectItem value="CONTACT">Contact</SelectItem>
+                      <SelectItem value="INVOICE">Invoice</SelectItem>
+                      <SelectItem value="PAYMENT">Payment</SelectItem>
+                      <SelectItem value="CREDIT_NOTE">Credit Note</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {loadingInboundEvents ? (
+                <p className="text-sm text-muted-foreground">Loading stored inbound events...</p>
+              ) : inboundEvents.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No stored inbound events found.</p>
+              ) : (
+                <div className="space-y-3">
+                  {inboundEvents.map((event) => (
+                    <div key={event.id} className="space-y-2 rounded-md border p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="default" className={operationStatusClass(event.status)}>
+                          {event.status}
+                        </Badge>
+                        <span className="text-sm font-medium">
+                          {event.eventCategory ?? "UNKNOWN"} {event.eventType}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(event.createdAt).toLocaleString("en-NZ")}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                        <span>Source: {event.source}</span>
+                        <span>
+                          Correlation: <code>{shortId(event.correlationKey)}</code>
+                        </span>
+                        {event.resourceId && (
+                          <span>
+                            Resource:{" "}
+                            {event.xeroObjectUrl ? (
+                              <a
+                                href={event.xeroObjectUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 hover:underline"
+                              >
+                                {shortId(event.resourceId)}
+                              </a>
+                            ) : (
+                              shortId(event.resourceId)
+                            )}
+                          </span>
+                        )}
+                        {event.processedAt && (
+                          <span>Processed: {new Date(event.processedAt).toLocaleString("en-NZ")}</span>
+                        )}
+                      </div>
+
+                      {event.errorMessage && <p className="text-sm text-red-700">{event.errorMessage}</p>}
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleReplayInboundEvent(event.id)}
+                          disabled={!event.canReplay || replayingInboundEventId === event.id}
+                        >
+                          {replayingInboundEventId === event.id ? "Replaying..." : inboundEventActionLabel(event.status)}
+                        </Button>
+                        {!event.canReplay && (
+                          <p className="text-xs text-muted-foreground">This event is currently being processed.</p>
+                        )}
+                      </div>
+
+                      <details className="rounded-md bg-slate-50 p-2">
+                        <summary className="cursor-pointer text-xs font-medium text-slate-700">
+                          View stored payload
+                        </summary>
+                        <div className="mt-2">
+                          <pre className="max-h-64 overflow-auto rounded border bg-white p-2 text-[11px]">
+                            {formatJson(event.payload)}
+                          </pre>
+                        </div>
+                      </details>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            id="xero-section-contactSync"
+            title="Contact Sync"
+            description="Run a broad link pass, or repair a single record with a targeted force sync."
+            open={sectionOpen.contactSync}
+            onToggle={(nextOpen) => setSectionState("contactSync", nextOpen)}
+            actions={
+              <Button onClick={handleSyncContacts} disabled={syncing !== null}>
+                {syncing === "contacts" ? "Syncing..." : "Sync Contacts from Xero"}
+              </Button>
+            }
+          >
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Link existing TACBookings members to their Xero contacts by email address, or push a single member or booking without running a full sweep.
+              </p>
+
+              <div className="rounded-lg border p-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold">Targeted force sync</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Use this when one record is out of sync and you do not want to run the full admin workflow.
+                  </p>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
+                  <div className="space-y-1">
+                    <Label>Sync target</Label>
+                    <Select value={forceSyncType} onValueChange={(value) => setForceSyncType(value as "CONTACT" | "INVOICE" | "MEMBERSHIP")}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="CONTACT">Contact</SelectItem>
+                        <SelectItem value="INVOICE">Booking invoice</SelectItem>
+                        <SelectItem value="MEMBERSHIP">Membership status</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label>{forceSyncType === "INVOICE" ? "Booking ID" : "Member email or member ID"}</Label>
+                    <Input
+                      value={forceSyncQuery}
+                      onChange={(event) => setForceSyncQuery(event.target.value)}
+                      placeholder={
+                        forceSyncType === "INVOICE"
+                          ? "Paste a booking ID"
+                          : "member@example.com or partial member ID"
+                      }
+                    />
+                  </div>
+
+                  <Button onClick={handleForceSync} disabled={forceSyncing}>
+                    {forceSyncing ? "Running..." : "Run Force Sync"}
+                  </Button>
+                </div>
+
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {forceSyncType === "CONTACT"
+                    ? "Contact sync repairs or creates the Xero contact link for one member."
+                    : forceSyncType === "INVOICE"
+                      ? "Invoice sync queues the selected booking for invoice creation in Xero."
+                      : "Membership sync refreshes one member’s subscription state from Xero invoices."}
+                </p>
+              </div>
+            </div>
+          </SectionCard>
+
+          <SectionCard
+            id="xero-section-membershipSync"
+            title="Membership Status Refresh"
+            description="Check Xero invoices for active members and refresh the current season membership state."
+            open={sectionOpen.membershipSync}
+            onToggle={(nextOpen) => setSectionState("membershipSync", nextOpen)}
+            actions={
+              <Button onClick={handleSyncMemberships} disabled={syncing !== null}>
+                {syncing === "memberships" ? "Refreshing..." : "Refresh Membership Statuses"}
+              </Button>
+            }
+          >
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                This runs automatically as a daily cron job. Only members already linked to Xero contacts can be refreshed.
+              </p>
+              <div className="rounded-md border bg-slate-50 p-3 text-sm">
+                <p>
+                  <span className="text-muted-foreground">Last refresh:</span>{" "}
+                  {healthSnapshot?.lastMembershipRefresh.at
+                    ? new Date(healthSnapshot.lastMembershipRefresh.at).toLocaleString("en-NZ")
+                    : "No refresh recorded yet"}
+                </p>
+                {healthSnapshot?.lastMembershipRefresh.lastCronStartedAt ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Cron started {new Date(healthSnapshot.lastMembershipRefresh.lastCronStartedAt).toLocaleString("en-NZ")}
+                    {healthSnapshot.lastMembershipRefresh.lastCronStatus
+                      ? ` • ${healthSnapshot.lastMembershipRefresh.lastCronStatus}`
+                      : ""}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </SectionCard>
+
+          {syncResult && (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle>Results</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2 text-sm">
+                  {syncResult.message && <p>{syncResult.message}</p>}
+
+                  {syncResult.created !== undefined && (
+                    <>
+                      <p>
+                        <span className="text-muted-foreground">New members created:</span>{" "}
+                        <span className="font-medium text-green-700">{syncResult.created}</span>
+                      </p>
+                      {syncResult.createdAsDependent !== undefined && syncResult.createdAsDependent > 0 && (
+                        <p>
+                          <span className="text-muted-foreground">Family dependents created:</span>{" "}
+                          <span className="font-medium text-blue-700">{syncResult.createdAsDependent}</span>
+                        </p>
+                      )}
+                      {syncResult.skippedExisting !== undefined && syncResult.skippedExisting > 0 && (
+                        <p>
+                          <span className="text-muted-foreground">Skipped (already exist):</span>{" "}
+                          {syncResult.skippedExisting}
+                        </p>
+                      )}
+                      {syncResult.linkedExisting !== undefined && syncResult.linkedExisting > 0 && (
+                        <p>
+                          <span className="text-muted-foreground">Existing members linked to Xero:</span>{" "}
+                          {syncResult.linkedExisting}
+                        </p>
+                      )}
+                      {syncResult.skippedNoEmail !== undefined && syncResult.skippedNoEmail > 0 && (
+                        <div>
+                          <p>
+                            <span className="text-muted-foreground">Skipped (no email):</span>{" "}
+                            {syncResult.skippedNoEmail}
+                          </p>
+                          {syncResult.skippedNoEmailDetails && syncResult.skippedNoEmailDetails.length > 0 && (
+                            <ul className="ml-4 mt-1 space-y-0.5 text-sm">
+                              {syncResult.skippedNoEmailDetails.map((c, i) => (
+                                <li key={i} className="flex items-center gap-2">
+                                  <span>{c.name}</span>
+                                  <a
+                                    href={`https://go.xero.com/Contacts/View/${c.xeroContactId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:underline"
+                                  >
+                                    Open in Xero ↗
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                      {syncResult.groupsProcessed && syncResult.groupsProcessed.length > 0 && (
+                        <p>
+                          <span className="text-muted-foreground">Groups processed:</span>{" "}
+                          {syncResult.groupsProcessed.join(", ")}
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                  {syncResult.syncReport && <SyncReportView report={syncResult.syncReport} />}
+
+                  {syncResult.checked !== undefined && (
+                    <>
+                      <p>
+                        <span className="text-muted-foreground">Members checked:</span>{" "}
+                        {syncResult.checked}
+                      </p>
+                      {syncResult.checked === 0 && (
+                        <p className="text-amber-600">
+                          No members with linked Xero contacts found. Use the setup tools below to import and link members first.
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                  {syncResult.errors !== undefined && syncResult.errors > 0 && (
+                    <div className="text-red-600">
+                      <p>
+                        <span className="text-muted-foreground">Errors:</span> {syncResult.errors}
+                      </p>
+                      {syncResult.errorDetails && syncResult.errorDetails.length > 0 && (
+                        <ul className="mt-2 list-inside list-disc space-y-1 text-sm">
+                          {syncResult.errorDetails.map((detail, i) => (
+                            <li key={i}>
+                              <span className="font-medium">{detail.member}</span>: {detail.error}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+
+      {status?.connected && (
+        <>
+          <SectionCard
+            id="xero-section-usage"
+            title="Xero API Budget"
+            description="Daily call volume, hotspots, rate limits, and recent failures from local metering."
+            open={sectionOpen.usage}
+            onToggle={(nextOpen) => setSectionState("usage", nextOpen)}
+            actions={
+              <Button variant="outline" size="sm" onClick={fetchUsage} disabled={loadingUsage}>
+                {loadingUsage ? "Refreshing..." : "Refresh Usage"}
+              </Button>
+            }
+          >
             {loadingUsage && !usageSummary ? (
               <p className="text-sm text-muted-foreground">Loading usage summary...</p>
             ) : usageSummary ? (
@@ -1023,7 +2055,8 @@ export default function XeroPage() {
                       </Badge>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Last rate limit: {usageSummary.today.lastRateLimitAt
+                      Last rate limit:{" "}
+                      {usageSummary.today.lastRateLimitAt
                         ? new Date(usageSummary.today.lastRateLimitAt).toLocaleString("en-NZ")
                         : "none"}
                     </p>
@@ -1054,9 +2087,7 @@ export default function XeroPage() {
                         {usageSummary.byOperation.map((bucket) => (
                           <div key={bucket.label} className="flex items-center justify-between gap-3">
                             <span className="truncate">{bucket.label}</span>
-                            <span className="text-muted-foreground">
-                              {bucket.count} calls
-                            </span>
+                            <span className="text-muted-foreground">{bucket.count} calls</span>
                           </div>
                         ))}
                       </div>
@@ -1072,9 +2103,7 @@ export default function XeroPage() {
                         {usageSummary.topWorkflows.map((bucket) => (
                           <div key={bucket.label} className="flex items-center justify-between gap-3">
                             <span className="truncate">{bucket.label}</span>
-                            <span className="text-muted-foreground">
-                              {bucket.count} calls
-                            </span>
+                            <span className="text-muted-foreground">{bucket.count} calls</span>
                           </div>
                         ))}
                       </div>
@@ -1115,174 +2144,21 @@ export default function XeroPage() {
             ) : (
               <p className="text-sm text-muted-foreground">No Xero usage data recorded yet.</p>
             )}
-          </CardContent>
-        </Card>
-      )}
+          </SectionCard>
 
-      {status?.connected && (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Inbound Events</CardTitle>
-            <CardDescription>
-              Stored webhook events and their reconciliation state. Use replay to retry failed
-              events or re-run a previously processed event after handler changes.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center">
-              <div className="w-full md:w-48">
-                <Label className="mb-1 block text-xs text-muted-foreground">Status</Label>
-                <Select value={inboundEventStatusFilter} onValueChange={setInboundEventStatusFilter}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All statuses</SelectItem>
-                    <SelectItem value="FAILED">Failed</SelectItem>
-                    <SelectItem value="RECEIVED">Received</SelectItem>
-                    <SelectItem value="PROCESSING">Processing</SelectItem>
-                    <SelectItem value="PROCESSED">Processed</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="w-full md:w-48">
-                <Label className="mb-1 block text-xs text-muted-foreground">Category</Label>
-                <Select value={inboundEventCategoryFilter} onValueChange={setInboundEventCategoryFilter}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All categories</SelectItem>
-                    <SelectItem value="CONTACT">Contact</SelectItem>
-                    <SelectItem value="INVOICE">Invoice</SelectItem>
-                    <SelectItem value="PAYMENT">Payment</SelectItem>
-                    <SelectItem value="CREDIT_NOTE">Credit Note</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="md:pt-5">
-                <Button
-                  variant="outline"
-                  onClick={() => fetchInboundEvents(inboundEventStatusFilter, inboundEventCategoryFilter)}
-                  disabled={loadingInboundEvents}
-                >
-                  {loadingInboundEvents ? "Refreshing..." : "Refresh"}
-                </Button>
-              </div>
-            </div>
-
-            {loadingInboundEvents ? (
-              <p className="text-sm text-muted-foreground">Loading stored inbound events...</p>
-            ) : inboundEvents.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No stored inbound events found.</p>
-            ) : (
-              <div className="space-y-3">
-                {inboundEvents.map((event) => (
-                  <div key={event.id} className="rounded-md border p-3 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="default" className={operationStatusClass(event.status)}>
-                        {event.status}
-                      </Badge>
-                      <span className="text-sm font-medium">
-                        {event.eventCategory ?? "UNKNOWN"} {event.eventType}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(event.createdAt).toLocaleString("en-NZ")}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                      <span>Source: {event.source}</span>
-                      <span>
-                        Correlation: <code>{shortId(event.correlationKey)}</code>
-                      </span>
-                      {event.resourceId && (
-                        <span>
-                          Resource:{" "}
-                          {event.xeroObjectUrl ? (
-                            <a
-                              href={event.xeroObjectUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:underline"
-                            >
-                              {shortId(event.resourceId)}
-                            </a>
-                          ) : (
-                            shortId(event.resourceId)
-                          )}
-                        </span>
-                      )}
-                      {event.processedAt && (
-                        <span>
-                          Processed: {new Date(event.processedAt).toLocaleString("en-NZ")}
-                        </span>
-                      )}
-                    </div>
-
-                    {event.errorMessage && (
-                      <p className="text-sm text-red-700">{event.errorMessage}</p>
-                    )}
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleReplayInboundEvent(event.id)}
-                        disabled={!event.canReplay || replayingInboundEventId === event.id}
-                      >
-                        {replayingInboundEventId === event.id
-                          ? "Replaying..."
-                          : inboundEventActionLabel(event.status)}
-                      </Button>
-                      {!event.canReplay && (
-                        <p className="text-xs text-muted-foreground">
-                          This event is currently being processed.
-                        </p>
-                      )}
-                    </div>
-
-                    <details className="rounded-md bg-slate-50 p-2">
-                      <summary className="cursor-pointer text-xs font-medium text-slate-700">
-                        View stored payload
-                      </summary>
-                      <div className="mt-2">
-                        <pre className="max-h-64 overflow-auto rounded bg-white p-2 text-[11px] border">
-                          {formatJson(event.payload)}
-                        </pre>
-                      </div>
-                    </details>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Account Mappings - only show when connected */}
-      {status?.connected && (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Account Mappings</CardTitle>
-            <CardDescription>
-              Map TACBookings transactions to your Xero chart of accounts. Changes take effect
-              on the next invoice or credit note created.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+          <SectionCard
+            id="xero-section-mappings"
+            title="Account Mappings"
+            description="Map TACBookings transactions to Xero accounts and items."
+            open={sectionOpen.mappings}
+            onToggle={(nextOpen) => setSectionState("mappings", nextOpen)}
+          >
             {loadingMappings ? (
               <p className="text-sm text-muted-foreground">Loading accounts...</p>
             ) : (
               <div className="space-y-4">
-                {mappingError && (
-                  <p className="text-sm text-red-600">{mappingError}</p>
-                )}
-                {mappingSaved && (
-                  <p className="text-sm text-green-700">Account mappings saved.</p>
-                )}
+                {mappingError && <p className="text-sm text-red-600">{mappingError}</p>}
+                {mappingSaved && <p className="text-sm text-green-700">Account mappings saved.</p>}
                 <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600 md:flex-row md:items-center md:justify-between">
                   <div className="space-y-1">
                     <p>{formatReferenceCacheLabel("Accounts", accountCacheMeta)}</p>
@@ -1298,7 +2174,7 @@ export default function XeroPage() {
                     {refreshingReferenceData ? "Refreshing..." : "Refresh Xero reference data"}
                   </Button>
                 </div>
-                {/* Account Code Mappings */}
+
                 <h4 className="text-sm font-semibold text-slate-700">Account Code Mappings</h4>
                 {accountMappings && ACCOUNT_MAPPING_KEYS.map((key) => {
                   const typeFilter = MAPPING_TYPE_FILTER[key]
@@ -1341,7 +2217,7 @@ export default function XeroPage() {
                             </SelectContent>
                           </Select>
                         ) : (
-                          <p className="text-sm py-2 px-3 bg-slate-50 rounded-md border border-slate-200">
+                          <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                             {matchedAccount
                               ? `${matchedAccount.code} — ${matchedAccount.name}`
                               : currentCode
@@ -1354,11 +2230,10 @@ export default function XeroPage() {
                   )
                 })}
 
-                {/* Refund Item Code */}
                 <Separator />
                 <h4 className="text-sm font-semibold text-slate-700">Refund Item Code</h4>
                 <p className="text-xs text-muted-foreground">
-                  Xero Item for refund credit note line items. When set, Xero auto-fills the account code from the Item&apos;s configuration.
+                  Xero Item for refund credit note line items. When set, Xero auto-fills the account code from the item configuration.
                 </p>
                 {accountMappings && (() => {
                   const key = "hutFeeRefundItem" as const
@@ -1395,7 +2270,7 @@ export default function XeroPage() {
                             </SelectContent>
                           </Select>
                         ) : (
-                          <p className="text-sm py-2 px-3 bg-slate-50 rounded-md border border-slate-200">
+                          <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                             {matchedItem
                               ? `${matchedItem.code} — ${matchedItem.name}`
                               : currentItemCode
@@ -1408,12 +2283,10 @@ export default function XeroPage() {
                   )
                 })()}
 
-                {/* Hut Fee Item Code Matrix */}
                 <Separator />
                 <h4 className="text-sm font-semibold text-slate-700">Hut Fee Item Codes</h4>
                 <p className="text-xs text-muted-foreground">
                   Map each combination of age tier, season, and membership status to a Xero Item.
-                  Each booking invoice line item will use the item code matching the guest&apos;s profile.
                 </p>
                 {isEditingMappings && (
                   <div className="flex gap-2">
@@ -1436,11 +2309,7 @@ export default function XeroPage() {
                     >
                       Copy first item to all
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setHutFeeItemCodes({})}
-                    >
+                    <Button variant="outline" size="sm" onClick={() => setHutFeeItemCodes({})}>
                       Clear all
                     </Button>
                   </div>
@@ -1509,12 +2378,10 @@ export default function XeroPage() {
                   </table>
                 </div>
 
-                {/* Entrance Fee Categories */}
                 <Separator />
                 <h4 className="text-sm font-semibold text-slate-700">Entrance Fee Categories</h4>
                 <p className="text-xs text-muted-foreground">
                   Configure entrance fee amounts and Xero Item codes per membership category.
-                  When a new member is added, the system automatically determines their category and creates a Xero invoice.
                 </p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm border-collapse">
@@ -1648,189 +2515,29 @@ export default function XeroPage() {
                 </div>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </SectionCard>
+        </>
       )}
 
       {status?.connected && (
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>Xero Operations</CardTitle>
-            <CardDescription>
-              Recent outbound sync attempts and webhook-related reconciliation state.
-              Use this to inspect failures, confirm what was sent, and jump to related records.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center">
-              <div className="w-full md:w-48">
-                <Label className="mb-1 block text-xs text-muted-foreground">Status</Label>
-                <Select value={operationStatusFilter} onValueChange={setOperationStatusFilter}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All statuses</SelectItem>
-                    <SelectItem value="FAILED">Failed</SelectItem>
-                    <SelectItem value="PENDING">Pending</SelectItem>
-                    <SelectItem value="PARTIAL">Partial</SelectItem>
-                    <SelectItem value="RUNNING">Running</SelectItem>
-                    <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
-                  </SelectContent>
-                </Select>
+        <SectionCard
+          id="xero-section-setup"
+          title="Setup Tools"
+          description="One-off import and duplicate cleanup tools used during Xero setup or remediation."
+          open={sectionOpen.setup}
+          onToggle={(nextOpen) => setSectionState("setup", nextOpen)}
+        >
+          <div className="space-y-6">
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold">Import Members from Xero</h3>
+                <p className="text-sm text-muted-foreground">
+                  Import members from Xero contact groups into TACBookings and map each group to an age tier.
+                </p>
               </div>
 
-              <div className="w-full md:w-48">
-                <Label className="mb-1 block text-xs text-muted-foreground">Entity</Label>
-                <Select value={operationEntityFilter} onValueChange={setOperationEntityFilter}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All entities</SelectItem>
-                    <SelectItem value="CONTACT">Contact</SelectItem>
-                    <SelectItem value="INVOICE">Invoice</SelectItem>
-                    <SelectItem value="PAYMENT">Payment</SelectItem>
-                    <SelectItem value="CREDIT_NOTE">Credit Note</SelectItem>
-                    <SelectItem value="ALLOCATION">Allocation</SelectItem>
-                    <SelectItem value="SUBSCRIPTION">Subscription</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="md:pt-5">
-                <Button
-                  variant="outline"
-                  onClick={() => fetchOperations(operationStatusFilter, operationEntityFilter)}
-                  disabled={loadingOperations}
-                >
-                  {loadingOperations ? "Refreshing..." : "Refresh"}
-                </Button>
-              </div>
-            </div>
-
-            {loadingOperations ? (
-              <p className="text-sm text-muted-foreground">Loading recent operations...</p>
-            ) : operations.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No Xero operations recorded yet.</p>
-            ) : (
-              <div className="space-y-3">
-                {operations.map((operation) => (
-                  <div key={operation.id} className="rounded-md border p-3 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="default" className={operationStatusClass(operation.status)}>
-                        {operation.status}
-                      </Badge>
-                      <span className="text-sm font-medium">
-                        {operation.entityType} {operation.operationType}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(operation.createdAt).toLocaleString("en-NZ")}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                      <span>Direction: {operation.direction}</span>
-                      <span>Attempt: {operation.attemptCount}</span>
-                      {operation.localModel && (
-                        <span>
-                          Local:{" "}
-                          {operation.localUrl ? (
-                            <a href={operation.localUrl} className="text-blue-600 hover:underline">
-                              {operation.localModel} {shortId(operation.localId)}
-                            </a>
-                          ) : (
-                            `${operation.localModel} ${shortId(operation.localId)}`
-                          )}
-                        </span>
-                      )}
-                      {operation.xeroObjectId && (
-                        <span>
-                          Xero:{" "}
-                          {operation.xeroObjectUrl ? (
-                            <a
-                              href={operation.xeroObjectUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:underline"
-                            >
-                              {operation.xeroObjectNumber || shortId(operation.xeroObjectId)}
-                            </a>
-                          ) : (
-                            operation.xeroObjectNumber || shortId(operation.xeroObjectId)
-                          )}
-                        </span>
-                      )}
-                    </div>
-
-                    {operation.lastErrorMessage && (
-                      <p className="text-sm text-red-700">
-                        {operation.lastErrorCode ? `${operation.lastErrorCode}: ` : ""}
-                        {redactSensitiveText(operation.lastErrorMessage)}
-                      </p>
-                    )}
-
-                    <div className="flex flex-wrap items-center gap-2">
-                      {operation.supported ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleRetryOperation(operation.id)}
-                          disabled={retryingOperationId === operation.id}
-                        >
-                          {retryingOperationId === operation.id ? "Queueing..." : "Retry in background"}
-                        </Button>
-                      ) : operation.reason && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
-                        <p className="text-xs text-muted-foreground">{operation.reason}</p>
-                      ) : null}
-                    </div>
-
-                    <details className="rounded-md bg-slate-50 p-2">
-                      <summary className="cursor-pointer text-xs font-medium text-slate-700">
-                        View request / response payloads
-                      </summary>
-                      <div className="mt-2 grid gap-3 lg:grid-cols-2">
-                        <div>
-                          <p className="mb-1 text-xs font-medium text-slate-700">Request</p>
-                          <pre className="max-h-64 overflow-auto rounded bg-white p-2 text-[11px] border">
-                            {formatJson(operation.requestPayload)}
-                          </pre>
-                        </div>
-                        <div>
-                          <p className="mb-1 text-xs font-medium text-slate-700">Response</p>
-                          <pre className="max-h-64 overflow-auto rounded bg-white p-2 text-[11px] border">
-                            {formatJson(operation.responsePayload)}
-                          </pre>
-                        </div>
-                      </div>
-                    </details>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Sync Operations - only show when connected */}
-      {status?.connected && (
-        <>
-          {/* Import Members from Xero */}
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Import Members from Xero</CardTitle>
-              <CardDescription>
-                Import members from Xero contact groups into TACBookings. Select which groups
-                to import and map each to an age tier. Existing members (matched by email)
-                will be skipped but linked to their Xero contact.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
               {contactGroups.length === 0 ? (
-                <Button
-                  onClick={handleFetchGroups}
-                  disabled={loadingGroups}
-                >
+                <Button onClick={handleFetchGroups} disabled={loadingGroups}>
                   {loadingGroups ? "Refreshing Groups..." : "Refresh Contact Groups from Xero"}
                 </Button>
               ) : (
@@ -1839,12 +2546,9 @@ export default function XeroPage() {
                     {contactGroups.map((group) => {
                       const mapping = groupMappings.find((m) => m.groupId === group.id)
                       return (
-                        <div
-                          key={group.id}
-                          className="flex items-center gap-4 p-3 border rounded-md"
-                        >
+                        <div key={group.id} className="flex items-center gap-4 rounded-md border p-3">
                           <div className="flex-1">
-                            <p className="font-medium text-sm">{group.name}</p>
+                            <p className="text-sm font-medium">{group.name}</p>
                             <p className="text-xs text-muted-foreground">
                               {group.contactCount} contact{group.contactCount !== 1 ? "s" : ""}
                             </p>
@@ -1887,10 +2591,7 @@ export default function XeroPage() {
                   <div className="flex gap-2">
                     <Button
                       onClick={handleImportMembers}
-                      disabled={
-                        syncing !== null ||
-                        groupMappings.every((m) => m.ageTier === "SKIP")
-                      }
+                      disabled={syncing !== null || groupMappings.every((m) => m.ageTier === "SKIP")}
                     >
                       {syncing === "import" ? "Importing..." : "Import Members"}
                     </Button>
@@ -1906,25 +2607,19 @@ export default function XeroPage() {
                   </div>
                 </>
               )}
-            </CardContent>
-          </Card>
+            </div>
 
-          {/* Duplicate Contact Detection & Family Groups */}
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Duplicates &amp; Family Groups</CardTitle>
-              <CardDescription>
-                Scan Xero contacts for duplicate email addresses and suggest Family Group
-                associations. Duplicates are shown with invoice counts so you can identify
-                which contact to keep, merge them in Xero, or create Family Groups for
-                members sharing an email.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Button
-                onClick={handleScanDuplicates}
-                disabled={scanningDuplicates || syncing !== null}
-              >
+            <Separator />
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold">Duplicates &amp; Family Groups</h3>
+                <p className="text-sm text-muted-foreground">
+                  Scan Xero contacts for duplicate email addresses and create family groups where appropriate.
+                </p>
+              </div>
+
+              <Button onClick={handleScanDuplicates} disabled={scanningDuplicates || syncing !== null}>
                 {scanningDuplicates ? "Scanning..." : "Scan for Duplicates & Family Groups"}
               </Button>
 
@@ -1952,15 +2647,15 @@ export default function XeroPage() {
                   ) : (
                     <div className="space-y-3">
                       {duplicates.duplicateGroups.map((group) => (
-                        <div key={group.email} className="border rounded-md p-4 space-y-2">
+                        <div key={group.email} className="space-y-2 rounded-md border p-4">
                           <div className="flex items-center justify-between">
-                            <p className="font-medium text-sm">
+                            <p className="text-sm font-medium">
                               {group.email}
-                              <span className="ml-2 text-xs text-muted-foreground font-normal">
+                              <span className="ml-2 text-xs font-normal text-muted-foreground">
                                 ({group.contacts.length} contacts)
                               </span>
                               {group.suggestedGroupName && (
-                                <span className="ml-2 text-xs text-blue-600 font-normal">
+                                <span className="ml-2 text-xs font-normal text-blue-600">
                                   — {group.suggestedGroupName}
                                 </span>
                               )}
@@ -1972,9 +2667,7 @@ export default function XeroPage() {
                                 onClick={() => handleCreateFamilyGroup(group)}
                                 disabled={creatingFamilyGroup === group.email}
                               >
-                                {creatingFamilyGroup === group.email
-                                  ? "Creating..."
-                                  : "Create Family Group"}
+                                {creatingFamilyGroup === group.email ? "Creating..." : "Create Family Group"}
                               </Button>
                             )}
                           </div>
@@ -1982,12 +2675,12 @@ export default function XeroPage() {
                             {group.contacts.map((contact) => (
                               <div
                                 key={contact.contactID}
-                                className="flex items-center gap-3 text-sm pl-2 py-1 border-l-2 border-muted"
+                                className="flex items-center gap-3 border-l-2 border-muted py-1 pl-2 text-sm"
                               >
-                                <div className="flex-1 min-w-0">
+                                <div className="min-w-0 flex-1">
                                   <span className="font-medium">{contact.name}</span>
                                   {contact.memberId && (
-                                    <Badge variant="outline" className="ml-2 text-xs border-green-300 text-green-700">
+                                    <Badge variant="outline" className="ml-2 border-green-300 text-xs text-green-700">
                                       TACBookings member
                                     </Badge>
                                   )}
@@ -2000,15 +2693,13 @@ export default function XeroPage() {
                                       No invoices
                                     </Badge>
                                   )}
-                                  <span className="ml-2 text-xs text-muted-foreground">
-                                    {contact.contactStatus}
-                                  </span>
+                                  <span className="ml-2 text-xs text-muted-foreground">{contact.contactStatus}</span>
                                 </div>
                                 <a
                                   href={contact.xeroLink}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-xs text-blue-600 hover:underline whitespace-nowrap"
+                                  className="whitespace-nowrap text-xs text-blue-600 hover:underline"
                                 >
                                   Open in Xero
                                 </a>
@@ -2017,8 +2708,8 @@ export default function XeroPage() {
                           </div>
                           <p className="text-xs text-muted-foreground">
                             {group.canCreateFamilyGroup
-                              ? "These contacts match TACBookings members. Create a Family Group to link them, or merge in Xero."
-                              : "Merge into the contact with invoices. Open each in Xero, then use Xero\u0027s \u0022Merge\u0022 option from the contact with no invoices."}
+                              ? "These contacts match TACBookings members. Create a family group to link them, or merge them in Xero."
+                              : "Merge into the contact with invoices. Open each in Xero, then use Xero’s merge option from the contact with no invoices."}
                           </p>
                         </div>
                       ))}
@@ -2026,196 +2717,9 @@ export default function XeroPage() {
                   )}
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          {/* Contact Sync */}
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Contact Sync</CardTitle>
-              <CardDescription>
-                Link existing TACBookings members to their Xero contacts by email address.
-                This is useful after members are already in the database.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button
-                onClick={handleSyncContacts}
-                disabled={syncing !== null}
-              >
-                {syncing === "contacts" ? "Syncing..." : "Sync Contacts from Xero"}
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Membership Status Refresh */}
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>Membership Status Refresh</CardTitle>
-              <CardDescription>
-                Check Xero invoices for all active members and update their subscription status
-                for the current season year. This runs automatically as a daily cron job.
-                Only checks members that have been linked to a Xero contact.
-                Unlinked members remain Not Invoiced until linked.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button
-                onClick={handleSyncMemberships}
-                disabled={syncing !== null}
-              >
-                {syncing === "memberships" ? "Refreshing..." : "Refresh Membership Statuses"}
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Sync Results */}
-          {syncResult && (
-            <Card className="mb-6">
-              <CardHeader>
-                <CardTitle>Results</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2 text-sm">
-                  {syncResult.message && <p>{syncResult.message}</p>}
-
-                  {/* Import results */}
-                  {syncResult.created !== undefined && (
-                    <>
-                      <p>
-                        <span className="text-muted-foreground">New members created:</span>{" "}
-                        <span className="font-medium text-green-700">{syncResult.created}</span>
-                      </p>
-                      {syncResult.createdAsDependent !== undefined && syncResult.createdAsDependent > 0 && (
-                        <p>
-                          <span className="text-muted-foreground">Family dependents created:</span>{" "}
-                          <span className="font-medium text-blue-700">{syncResult.createdAsDependent}</span>
-                        </p>
-                      )}
-                      {syncResult.skippedExisting !== undefined && syncResult.skippedExisting > 0 && (
-                        <p>
-                          <span className="text-muted-foreground">Skipped (already exist):</span>{" "}
-                          {syncResult.skippedExisting}
-                        </p>
-                      )}
-                      {syncResult.linkedExisting !== undefined && syncResult.linkedExisting > 0 && (
-                        <p>
-                          <span className="text-muted-foreground">Existing members linked to Xero:</span>{" "}
-                          {syncResult.linkedExisting}
-                        </p>
-                      )}
-                      {syncResult.skippedNoEmail !== undefined && syncResult.skippedNoEmail > 0 && (
-                        <div>
-                          <p>
-                            <span className="text-muted-foreground">Skipped (no email):</span>{" "}
-                            {syncResult.skippedNoEmail}
-                          </p>
-                          {syncResult.skippedNoEmailDetails && syncResult.skippedNoEmailDetails.length > 0 && (
-                            <ul className="mt-1 ml-4 text-sm space-y-0.5">
-                              {syncResult.skippedNoEmailDetails.map((c, i) => (
-                                <li key={i} className="flex items-center gap-2">
-                                  <span>{c.name}</span>
-                                  <a
-                                    href={`https://go.xero.com/Contacts/View/${c.xeroContactId}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-blue-600 hover:underline text-xs"
-                                  >
-                                    Open in Xero ↗
-                                  </a>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      )}
-                      {syncResult.groupsProcessed && syncResult.groupsProcessed.length > 0 && (
-                        <p>
-                          <span className="text-muted-foreground">Groups processed:</span>{" "}
-                          {syncResult.groupsProcessed.join(", ")}
-                        </p>
-                      )}
-                    </>
-                  )}
-
-                  {/* Detailed sync report (#29) */}
-                  {syncResult.syncReport && (
-                    <SyncReportView report={syncResult.syncReport} />
-                  )}
-
-                  {/* Membership results */}
-                  {syncResult.checked !== undefined && (
-                    <>
-                      <p>
-                        <span className="text-muted-foreground">Members checked:</span>{" "}
-                        {syncResult.checked}
-                      </p>
-                      {syncResult.checked === 0 && (
-                        <p className="text-amber-600">
-                          No members with linked Xero contacts found. Use &quot;Import Members from Xero&quot;
-                          above to import members from your Xero contact groups first.
-                        </p>
-                      )}
-                    </>
-                  )}
-
-                  {syncResult.errors !== undefined && syncResult.errors > 0 && (
-                    <div className="text-red-600">
-                      <p>
-                        <span className="text-muted-foreground">Errors:</span>{" "}
-                        {syncResult.errors}
-                      </p>
-                      {syncResult.errorDetails && syncResult.errorDetails.length > 0 && (
-                        <ul className="mt-2 text-sm space-y-1 list-disc list-inside">
-                          {syncResult.errorDetails.map((detail, i) => (
-                            <li key={i}>
-                              <span className="font-medium">{detail.member}</span>:{" "}
-                              {detail.error}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          <Separator className="my-6" />
-
-          <div className="text-sm text-muted-foreground space-y-2">
-            <h3 className="font-medium text-foreground">How it works</h3>
-            <ul className="list-disc list-inside space-y-1">
-              <li>
-                <strong>Import members:</strong> Import members from Xero contact groups,
-                mapping each group to an age tier (Adult, Youth, Child). New members get
-                an invite email with a password reset link.
-              </li>
-              <li>
-                <strong>Invoice creation:</strong> When a booking is confirmed and paid,
-                an invoice is automatically created in Xero with line items per guest.
-              </li>
-              <li>
-                <strong>Credit notes:</strong> When a booking is cancelled and refunded,
-                a credit note is created against the original invoice.
-              </li>
-              <li>
-                <strong>Membership verification:</strong> A daily cron job checks Xero
-                invoices for keywords like &quot;subscription&quot; or &quot;membership&quot; to verify
-                each member&apos;s subscription is paid for the current season.
-              </li>
-              <li>
-                <strong>Contact sync:</strong> Members are matched to Xero contacts by email.
-                New contacts are created automatically when invoices are generated.
-              </li>
-              <li>
-                <strong>Two-way sync:</strong> Editing a member in the admin panel syncs
-                changes to their linked Xero contact.
-              </li>
-            </ul>
+            </div>
           </div>
-        </>
+        </SectionCard>
       )}
     </div>
   )
