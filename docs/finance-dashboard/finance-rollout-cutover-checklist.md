@@ -4,6 +4,8 @@ This document is the minimum pre-cutover checklist for phase `#100`.
 
 It defines what must be true before named-user rollout, how to run final UAT against the landed finance surface, how to roll back safely, and when the legacy dashboard can move from primary workspace to fallback path.
 
+Once named-user rollout begins, continue with [finance-legacy-freeze-monitoring-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-legacy-freeze-monitoring-runbook.md) and capture the operating record in [finance-post-cutover-evidence-template.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-post-cutover-evidence-template.md).
+
 This document does not itself execute rollout, change access, or retire the legacy dashboard.
 
 ## Scope Boundary
@@ -82,6 +84,7 @@ This document does not itself execute rollout, change access, or retire the lega
 - Monitor at least the next scheduled finance sync after rollout
 - Recheck representative report routes after that sync completes
 - Capture user-reported mismatches before starting any legacy-dashboard freeze step
+- Use the post-cutover monitoring runbook to record first-use results, scheduled-sync evidence, and freeze-readiness decisions
 
 ## Rollback Notes
 
@@ -95,6 +98,7 @@ This document does not itself execute rollout, change access, or retire the lega
 
 ## Legacy Dashboard Freeze Criteria
 
+- Confirm the post-cutover monitoring runbook is complete and the evidence log is attached to the linked issue or PR
 - The UAT checklist is complete with no unresolved blocker that still requires normal legacy-dashboard usage
 - Named users are actively using TACBookings finance routes for normal reporting
 - At least one scheduled finance sync succeeds after named-user rollout without introducing blocker-level regressions
