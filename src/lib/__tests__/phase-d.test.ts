@@ -235,10 +235,12 @@ describe("#33: Status colors exist for all booking statuses", () => {
 
 describe("#34: Report PDF module", () => {
   it("generateReportPDF is exported as a function", async () => {
+    // Importing the PDF helper pulls in heavier browser/PDF dependencies.
+    // Keep the assertion narrow, but give CI a realistic module-load budget.
     const mod = await import("@/lib/report-pdf");
     expect(mod).toHaveProperty("generateReportPDF");
     expect(typeof mod.generateReportPDF).toBe("function");
-  });
+  }, 10_000);
 });
 
 // ---------------------------------------------------------------------------
