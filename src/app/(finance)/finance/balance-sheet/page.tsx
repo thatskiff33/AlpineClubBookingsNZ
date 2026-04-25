@@ -58,7 +58,7 @@ function SummaryCards({
           </h2>
           <p className="text-sm leading-6 text-slate-600">
             Stored finance balance-sheet snapshots now surface assets,
-            liabilities, and net asset positions directly inside TACBookings
+            liabilities, and net asset positions directly inside Tokoroa Alpine Club - Bookings
             for finance viewers and managers.
           </p>
         </div>
@@ -203,7 +203,7 @@ export default async function FinanceBalanceSheetPage({
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Balance-sheet figures on this page
               come from stored finance snapshots synced through the finance-only
-              Xero boundary. No TACBookings booking totals, payment-derived
+              Xero boundary. No Tokoroa Alpine Club booking totals, payment-derived
               cash summaries, or live Xero reads are used here.
             </div>
 
@@ -251,7 +251,7 @@ export default async function FinanceBalanceSheetPage({
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
               Balance-sheet figures stay explicitly finance-snapshot-backed here
-              so they are not conflated with TACBookings operational booking,
+              so they are not conflated with Tokoroa Alpine Club operational booking,
               payment, or cash-report totals.
             </CardDescription>
           </CardHeader>

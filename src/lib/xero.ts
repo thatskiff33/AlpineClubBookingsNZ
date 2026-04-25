@@ -4231,7 +4231,7 @@ export async function createXeroRefundPaymentForInvoice(
     account: { code: bankCode },
     amount: params.refundAmountCents / 100,
     date: formatDate(new Date()),
-    reference: `Stripe Refund - TACBookings payment ${params.paymentId.slice(0, 8)}`,
+    reference: `Stripe Refund - Tokoroa Alpine Club payment ${params.paymentId.slice(0, 8)}`,
     isReconciled: false,
   };
   const idempotencyKey = buildXeroIdempotencyKey(

@@ -154,7 +154,7 @@ export default async function NominationPage({
             <p className="text-sm text-slate-700">
               Confirming this nomination records that you support this
               application progressing to committee review. Committee approval is
-              still required before any TAC account is created.
+              still required before any Tokoroa Alpine Club account is created.
             </p>
           </div>
 

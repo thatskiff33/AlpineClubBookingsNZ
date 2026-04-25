@@ -347,7 +347,7 @@ function buildWorkingCapitalSourceNotes() {
     {
       label: "Finance snapshot source",
       description:
-        "Working-capital figures on this page come from stored `BALANCE_SHEET` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from TACBookings booking or payment data.",
+        "Working-capital figures on this page come from stored `BALANCE_SHEET` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from Tokoroa Alpine Club booking or payment data.",
     },
     {
       label: "Current-section assumption",
@@ -357,7 +357,7 @@ function buildWorkingCapitalSourceNotes() {
     {
       label: "Distinct from cash totals",
       description:
-        "Working capital here remains separate from TACBookings payment-derived cash summaries and the native cash report. The page reads durable stored balance-sheet snapshots only and does not trigger live Xero reads, forecasts, or manual sync actions.",
+        "Working capital here remains separate from Tokoroa Alpine Club payment-derived cash summaries and the native cash report. The page reads durable stored balance-sheet snapshots only and does not trigger live Xero reads, forecasts, or manual sync actions.",
     },
   ];
 }

@@ -62,9 +62,9 @@ function SummaryCards({
             Break-even pricing assumptions from landed finance seams
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            This page combines stored monthly cost snapshots with TACBookings
+            This page combines stored monthly cost snapshots with Tokoroa Alpine Club
             realized booking metrics so finance viewers and managers can inspect
-            explicit pricing sensitivity assumptions inside TACBookings.
+            explicit pricing sensitivity assumptions inside Tokoroa Alpine Club - Bookings.
           </p>
         </div>
       </div>
@@ -209,7 +209,7 @@ export default async function FinancePricingSensitivityPage({
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
                 This page turns the landed monthly costs snapshots and
-                TACBookings realized booking metrics into a native
+                Tokoroa Alpine Club realized booking metrics into a native
                 pricing-sensitivity surface with explicit assumptions. It keeps
                 costs, booked revenue, and payment-derived cash distinct.
               </CardDescription>
@@ -219,7 +219,7 @@ export default async function FinancePricingSensitivityPage({
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Monthly costs come from stored
               finance snapshots. Guest nights and booked revenue come from
-              TACBookings realized booking metrics for the same monthly windows.
+              Tokoroa Alpine Club realized booking metrics for the same monthly windows.
               No live Xero reads, payment cash, or working-capital calculations
               are used here.
             </div>
@@ -397,7 +397,7 @@ export default async function FinancePricingSensitivityPage({
                   </CardTitle>
                   <CardDescription className="text-sm leading-6 text-slate-600">
                     Each selected period compares stored monthly costs against
-                    the same period&apos;s realized TACBookings guest nights,
+                    the same period&apos;s realized Tokoroa Alpine Club guest nights,
                     occupancy, and booked revenue rate.
                   </CardDescription>
                 </div>

@@ -225,7 +225,7 @@ function DetailTables({
           </CardTitle>
           <CardDescription className="text-sm text-slate-600">
             Status totals stay explicit so realized and pipeline views can be
-            reconciled back to TACBookings booking states.
+            reconciled back to Tokoroa Alpine Club booking states.
           </CardDescription>
         </CardHeader>
         <CardContent>{statusTable}</CardContent>
@@ -258,7 +258,7 @@ export default async function FinanceBookingsPage({
                 Realized stays and forward booking pipeline
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                This page turns the landed TACBookings finance booking metrics
+                This page turns the landed Tokoroa Alpine Club finance booking metrics
                 boundary into a native `/finance/bookings` report with summary
                 cards, daily detail, and status breakdowns for realized and
                 forward windows.
@@ -268,7 +268,7 @@ export default async function FinanceBookingsPage({
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Booked revenue comes from
-              TACBookings bookings. Net collected cash comes from TACBookings
+              Tokoroa Alpine Club bookings. Net collected cash comes from Tokoroa Alpine Club
               payments. No finance snapshot-backed or Xero-only figures appear
               on this page.
             </div>

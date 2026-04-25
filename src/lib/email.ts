@@ -256,7 +256,7 @@ export async function sendPasswordResetEmail(
 
   await sendEmail({
     to: email,
-    subject: "Reset your TAC Bookings password",
+    subject: "Reset your Tokoroa Alpine Club password",
     html: passwordResetTemplate(resetUrl),
     templateName: "password-reset",
   });
@@ -271,7 +271,7 @@ export async function sendAdminPasswordResetEmail(
 
   await sendEmail({
     to: email,
-    subject: "Reset your TAC Bookings password",
+    subject: "Reset your Tokoroa Alpine Club password",
     html: adminPasswordResetTemplate(resetUrl),
     templateName: "admin-password-reset",
   });
@@ -287,7 +287,7 @@ export async function sendMemberSetupInviteEmail(
 
   await sendEmail({
     to: email,
-    subject: `Set up your TAC Bookings account (${MEMBER_SETUP_INVITE_TTL_DAYS}-day link)`,
+    subject: `Set up your Tokoroa Alpine Club account (${MEMBER_SETUP_INVITE_TTL_DAYS}-day link)`,
     html: memberSetupInviteTemplate(firstName, resetUrl),
     templateName: "member-setup-invite",
   });
@@ -304,7 +304,7 @@ export async function sendBookingConfirmedEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Booking Confirmed - TAC Lodge",
+    subject: "Booking Confirmed - Tokoroa Alpine Club Lodge",
     html: bookingConfirmedTemplate(firstName, checkIn, checkOut, guestCount, totalCents, options),
     templateName: "booking-confirmed",
   });
@@ -320,7 +320,7 @@ export async function sendBookingPendingEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Booking Pending - TAC Lodge",
+    subject: "Booking Pending - Tokoroa Alpine Club Lodge",
     html: bookingPendingTemplate(firstName, checkIn, checkOut, guestCount, holdUntil),
     templateName: "booking-pending",
   });
@@ -335,7 +335,7 @@ export async function sendBookingBumpedEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Booking Update - TAC Lodge",
+    subject: "Booking Update - Tokoroa Alpine Club Lodge",
     html: bookingBumpedTemplate(firstName, checkIn, checkOut, guestCount),
     templateName: "booking-bumped",
   });
@@ -351,7 +351,7 @@ export async function sendBookingCancelledEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Booking Cancelled - TAC Lodge",
+    subject: "Booking Cancelled - Tokoroa Alpine Club Lodge",
     html: bookingCancelledTemplate(firstName, checkIn, checkOut, refundCents, refundMethod),
     templateName: "booking-cancelled",
   });
@@ -373,7 +373,7 @@ export async function sendChoreRosterEmail(
 
   await sendEmail({
     to: email,
-    subject: `Your chore roster for ${formattedDate} - TAC Lodge`,
+    subject: `Your chore roster for ${formattedDate} - Tokoroa Alpine Club Lodge`,
     html: choreRosterTemplate(guestName, date, chores, choreLink),
     templateName: "chore-roster",
   });
@@ -388,7 +388,7 @@ export async function sendHutLeaderAssignmentEmail(params: {
 }) {
   await sendEmail({
     to: params.email,
-    subject: "Your TAC hut leader assignment",
+    subject: "Your Tokoroa Alpine Club hut leader assignment",
     html: hutLeaderAssignmentTemplate(params),
     templateName: "hut-leader-assignment",
   });
@@ -397,7 +397,7 @@ export async function sendHutLeaderAssignmentEmail(params: {
 export async function sendWelcomeEmail(email: string, firstName: string) {
   await sendEmail({
     to: email,
-    subject: "Welcome to TAC Bookings",
+    subject: "Welcome to Tokoroa Alpine Club - Bookings",
     html: welcomeTemplate(firstName),
     templateName: "welcome",
   });
@@ -409,7 +409,7 @@ export async function sendVerificationEmail(email: string, firstName: string, to
 
   await sendEmail({
     to: email,
-    subject: "Verify your email — TAC Bookings",
+    subject: "Verify your email — Tokoroa Alpine Club - Bookings",
     html: emailVerificationTemplate(firstName, verifyUrl),
     templateName: "email-verification",
   });
@@ -428,7 +428,7 @@ export async function sendNominationRequestEmail(params: {
 
   await sendEmail({
     to: params.email,
-    subject: `Nomination request for ${params.applicantName} — TAC Bookings`,
+    subject: `Nomination request for ${params.applicantName} — Tokoroa Alpine Club`,
     html: nominationRequestTemplate({
       nominatorName: params.nominatorName,
       applicantName: params.applicantName,
@@ -451,7 +451,7 @@ export async function sendMembershipApplicationApprovedEmail(params: {
 
   await sendEmail({
     to: params.email,
-    subject: "Your TAC membership has been approved",
+    subject: "Your Tokoroa Alpine Club membership has been approved",
     html: membershipApplicationApprovedTemplate(
       params.firstName,
       resetUrl,
@@ -468,7 +468,7 @@ export async function sendMembershipApplicationRejectedEmail(params: {
 }) {
   await sendEmail({
     to: params.email,
-    subject: "Update on your TAC membership application",
+    subject: "Update on your Tokoroa Alpine Club membership application",
     html: membershipApplicationRejectedTemplate(
       params.firstName,
       params.adminNotes
@@ -506,7 +506,7 @@ export async function sendEmailChangeVerification(newEmail: string, token: strin
 
   await sendEmail({
     to: newEmail,
-    subject: "Confirm your new email — TAC Bookings",
+    subject: "Confirm your new email — Tokoroa Alpine Club - Bookings",
     html: emailChangeVerificationTemplate(newEmail, verifyUrl),
     templateName: "email-change-verification",
   });
@@ -515,7 +515,7 @@ export async function sendEmailChangeVerification(newEmail: string, token: strin
 export async function sendEmailChangeNotification(oldEmail: string, newEmail: string) {
   await sendEmail({
     to: oldEmail,
-    subject: "Email change requested — TAC Bookings",
+    subject: "Email change requested — Tokoroa Alpine Club - Bookings",
     html: emailChangeNotificationTemplate(newEmail),
     templateName: "email-change-notification",
   });
@@ -532,7 +532,7 @@ export async function sendCheckinReminderEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Check-in Reminder - TAC Lodge",
+    subject: "Check-in Reminder - Tokoroa Alpine Club Lodge",
     html: checkinReminderTemplate(firstName, checkIn, checkOut, guests, chores),
     templateName: "checkin-reminder",
   });
@@ -568,7 +568,7 @@ export async function sendAdminPaymentFailureAlert(data: {
   paymentIntentId: string;
 }) {
   await sendToAdmins({
-    subject: "Payment Failed - TAC Bookings",
+    subject: "Payment Failed — Tokoroa Alpine Club - Bookings",
     html: adminPaymentFailureTemplate(data),
     templateName: "admin-payment-failure",
     preferenceKey: "adminPaymentFailure",
@@ -616,7 +616,7 @@ export async function sendAdminXeroSyncErrorAlert(data: {
   timestamp: Date;
 }) {
   await sendToAdmins({
-    subject: "Xero Sync Error - TAC Bookings",
+    subject: "Xero Sync Error — Tokoroa Alpine Club - Bookings",
     html: adminXeroSyncErrorTemplate(data),
     templateName: "admin-xero-sync-error",
     preferenceKey: "adminXeroSyncError",
@@ -810,7 +810,7 @@ export async function sendFamilyGroupInvitationEmail(
 
   await sendEmail({
     to: email,
-    subject: `${inviterName} invited you to join ${groupName} — TAC Bookings`,
+    subject: `${inviterName} invited you to join ${groupName} — Tokoroa Alpine Club - Bookings`,
     html: familyGroupInvitationTemplate(inviterName, groupName, profileUrl),
     templateName: "family-group-invitation",
   });
@@ -823,7 +823,7 @@ export async function sendFamilyGroupInviteAcceptedEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: `${inviteeName} has joined ${groupName} — TAC Bookings`,
+    subject: `${inviteeName} has joined ${groupName} — Tokoroa Alpine Club - Bookings`,
     html: familyGroupInviteAcceptedTemplate(inviteeName, groupName),
     templateName: "family-group-invite-accepted",
   });
@@ -837,7 +837,7 @@ export async function sendChildRequestSubmittedEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Child/Youth request submitted — TAC Bookings",
+    subject: "Child/Youth request submitted — Tokoroa Alpine Club - Bookings",
     html: childRequestSubmittedTemplate(parentName, childName, groupName),
     templateName: "child-request-submitted",
   });
@@ -851,7 +851,7 @@ export async function sendChildRequestApprovedEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: `${childName} has been added to ${groupName} — TAC Bookings`,
+    subject: `${childName} has been added to ${groupName} — Tokoroa Alpine Club - Bookings`,
     html: childRequestApprovedTemplate(parentName, childName, groupName),
     templateName: "child-request-approved",
   });
@@ -865,7 +865,7 @@ export async function sendChildRequestRejectedEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Child/Youth request update — TAC Bookings",
+    subject: "Child/Youth request update — Tokoroa Alpine Club - Bookings",
     html: childRequestRejectedTemplate(parentName, childName, reason),
     templateName: "child-request-rejected",
   });
@@ -894,7 +894,7 @@ export async function sendJoinRequestConfirmationEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Join request submitted — TAC Bookings",
+    subject: "Join request submitted — Tokoroa Alpine Club - Bookings",
     html: joinRequestConfirmationTemplate(requesterName, groupName),
     templateName: "join-request-confirmation",
   });
@@ -911,7 +911,7 @@ export async function sendAgeUpInvitationEmail(
 
   await sendEmail({
     to: email,
-    subject: "You're 18! Set up your TAC Bookings account",
+    subject: "You're 18! Set up your Tokoroa Alpine Club account",
     html: ageUpInvitationTemplate(firstName, resetUrl),
     templateName: "age-up-invitation",
   });
@@ -936,7 +936,7 @@ export async function sendBookingModifiedEmail(params: {
 }) {
   await sendEmail({
     to: params.email,
-    subject: "Booking Modified - TAC Lodge",
+    subject: "Booking Modified - Tokoroa Alpine Club Lodge",
     html: bookingModifiedTemplate(params),
     templateName: "booking-modified",
   });
@@ -950,7 +950,7 @@ export async function sendSetupIntentFailedEmail(params: {
 }) {
   await sendEmail({
     to: params.email,
-    subject: "Card Setup Failed - TAC Lodge Booking",
+    subject: "Card Setup Failed - Tokoroa Alpine Club Lodge",
     html: setupIntentFailedTemplate(params),
     templateName: "setup-intent-failed",
   });
@@ -968,7 +968,7 @@ export async function sendWaitlistConfirmationEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Waitlist Confirmation - TAC Lodge",
+    subject: "Waitlist Confirmation - Tokoroa Alpine Club Lodge",
     html: waitlistConfirmationTemplate(firstName, checkIn, checkOut, guestCount, position),
     templateName: "waitlist-confirmation",
   });
@@ -985,7 +985,7 @@ export async function sendWaitlistOfferEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Spot Available! - TAC Lodge",
+    subject: "Spot Available! - Tokoroa Alpine Club Lodge",
     html: waitlistOfferTemplate(firstName, checkIn, checkOut, guestCount, expiresAt, bookingId),
     templateName: "waitlist-offer",
   });
@@ -1000,7 +1000,7 @@ export async function sendWaitlistOfferExpiredEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Waitlist Offer Expired - TAC Lodge",
+    subject: "Waitlist Offer Expired - Tokoroa Alpine Club Lodge",
     html: waitlistOfferExpiredTemplate(firstName, checkIn, checkOut, position),
     templateName: "waitlist-offer-expired",
   });

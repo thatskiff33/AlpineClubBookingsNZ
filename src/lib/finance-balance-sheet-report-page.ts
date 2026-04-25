@@ -330,12 +330,12 @@ function buildBalanceSheetSourceNotes() {
     {
       label: "Finance snapshot source",
       description:
-        "Balance-sheet figures on this page come from stored `BALANCE_SHEET` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from TACBookings booking or payment data.",
+        "Balance-sheet figures on this page come from stored `BALANCE_SHEET` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from Tokoroa Alpine Club booking or payment data.",
     },
     {
       label: "Stored positions only",
       description:
-        "The report reflects stored assets, liabilities, and equity positions for the selected snapshots and keeps those figures distinct from TACBookings operational booking metrics, payment-derived cash summaries, and the native cash report.",
+        "The report reflects stored assets, liabilities, and equity positions for the selected snapshots and keeps those figures distinct from Tokoroa Alpine Club operational booking metrics, payment-derived cash summaries, and the native cash report.",
     },
     {
       label: "Durable read path",

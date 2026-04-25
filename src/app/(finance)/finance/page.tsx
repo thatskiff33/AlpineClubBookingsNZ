@@ -158,7 +158,7 @@ export default async function FinancePage() {
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Live finance state inside TACBookings
+                Live finance state inside Tokoroa Alpine Club - Bookings
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
                 This shell turns the landed finance sync diagnostics and booking

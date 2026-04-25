@@ -78,8 +78,8 @@ export function NavBar({ user }: NavBarProps) {
           <span className="app-brand-mark h-9 w-9">
             <Mountain className="h-5 w-5" />
           </span>
-          <span className="hidden sm:block">TAC Bookings</span>
-          <span className="sm:hidden">TAC</span>
+          <span className="hidden sm:block">Tokoroa Alpine Club - Bookings</span>
+          <span className="sm:hidden text-sm">Tokoroa Alpine Club</span>
         </Link>
 
         {/* Desktop nav links */}
@@ -156,7 +156,7 @@ export function NavBar({ user }: NavBarProps) {
                 <span className="app-brand-mark h-8 w-8">
                   <Mountain className="h-4 w-4" />
                 </span>
-                TAC Bookings
+                Tokoroa Alpine Club
               </SheetTitle>
             </SheetHeader>
 

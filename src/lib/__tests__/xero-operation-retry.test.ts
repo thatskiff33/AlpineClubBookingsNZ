@@ -369,7 +369,7 @@ describe("retryXeroSyncOperation", () => {
       invoiceId: "inv_123",
       amountCents: 4567,
       idempotencyKey: "payment:pay_123:invoice-payment:v1",
-      reference: "TACBookings invoice payment pay_123",
+      reference: "Tokoroa Alpine Club invoice payment pay_123",
       role: "INVOICE_PAYMENT",
       createdByMemberId: "admin_1",
       metadata: {
@@ -406,7 +406,7 @@ describe("retryXeroSyncOperation", () => {
       invoiceId: "inv_sup_123",
       amountCents: 3000,
       idempotencyKey: "booking-mod:mod_123:supplementary-payment:3000:v1",
-      reference: "TACBookings supplementary payment mod_123",
+      reference: "Tokoroa Alpine Club supplementary payment mod_123",
       role: "SUPPLEMENTARY_INVOICE_PAYMENT",
       createdByMemberId: "admin_1",
       metadata: {

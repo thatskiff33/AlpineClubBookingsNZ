@@ -256,7 +256,7 @@ function parsePartialInvoiceRepairInput(
       ),
       reference:
         amountCents > 0
-          ? `TACBookings invoice payment ${operation.localId.slice(0, 8)}`
+          ? `Tokoroa Alpine Club invoice payment ${operation.localId.slice(0, 8)}`
           : "Zero-dollar booking (100% promo discount)",
     };
   }
@@ -273,7 +273,7 @@ function parsePartialInvoiceRepairInput(
         amountCents,
         "v1"
       ),
-      reference: `TACBookings supplementary payment ${operation.localId.slice(0, 8)}`,
+      reference: `Tokoroa Alpine Club supplementary payment ${operation.localId.slice(0, 8)}`,
     };
   }
 

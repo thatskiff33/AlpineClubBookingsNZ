@@ -208,7 +208,7 @@ export async function PUT(
     if (memberEmail) {
       sendEmail({
         to: memberEmail,
-        subject: "Refund Appeal Approved - TAC Bookings",
+        subject: "Refund Appeal Approved — Tokoroa Alpine Club - Bookings",
         html: refundRequestResolvedTemplate({
           firstName: refundRequest.member.firstName,
           status: "APPROVED",
@@ -257,7 +257,7 @@ export async function PUT(
     if (memberEmail) {
       sendEmail({
         to: memberEmail,
-        subject: "Refund Appeal Update - TAC Bookings",
+        subject: "Refund Appeal Update — Tokoroa Alpine Club - Bookings",
         html: refundRequestResolvedTemplate({
           firstName: refundRequest.member.firstName,
           status: "REJECTED",

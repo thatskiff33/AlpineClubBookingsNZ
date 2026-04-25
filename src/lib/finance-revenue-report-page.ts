@@ -310,7 +310,7 @@ function buildRevenueSourceNotes() {
     {
       label: "Finance snapshot source",
       description:
-        "Revenue on this page comes from stored `PROFIT_AND_LOSS_MONTHLY` FinanceSnapshot rows synced through the finance-only Xero boundary. It is not derived from TACBookings booking metrics.",
+        "Revenue on this page comes from stored `PROFIT_AND_LOSS_MONTHLY` FinanceSnapshot rows synced through the finance-only Xero boundary. It is not derived from Tokoroa Alpine Club booking metrics.",
     },
     {
       label: "Durable read path",
@@ -320,7 +320,7 @@ function buildRevenueSourceNotes() {
     {
       label: "Scope boundary",
       description:
-        "This report is revenue-only. It does not include TACBookings booking occupancy, payment-derived cash, costs, balance-sheet figures, or manual sync controls.",
+        "This report is revenue-only. It does not include Tokoroa Alpine Club booking occupancy, payment-derived cash, costs, balance-sheet figures, or manual sync controls.",
     },
   ];
 }
