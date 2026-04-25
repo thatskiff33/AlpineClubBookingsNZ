@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import nodemailer from "nodemailer";
+import { EMAIL_FROM, formatEmailFromAddress } from "./email-sender";
 import logger from "@/lib/logger";
 
 const MAX_ATTEMPTS = 3;
@@ -13,8 +14,6 @@ const transporter = nodemailer.createTransport({
     pass: process.env.AWS_SES_SECRET_ACCESS_KEY || "",
   },
 });
-
-const FROM = process.env.EMAIL_FROM || "support@tokoroa.org.nz";
 
 /**
  * N-11: Retry failed emails with backoff.
@@ -64,7 +63,7 @@ export async function retryFailedEmails(): Promise<{ retried: number; succeeded:
       }
 
       const result = await transporter.sendMail({
-        from: `"TAC Bookings" <${FROM}>`,
+        from: formatEmailFromAddress(EMAIL_FROM),
         to: emailLog.to,
         subject: emailLog.subject,
         html: emailLog.htmlBody!,

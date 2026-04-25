@@ -154,6 +154,11 @@ describe("N-10: EmailLog tracking", () => {
         messageId: "msg-123",
       }),
     });
+    expect(mockTransporter.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: '"Tokoroa Alpine Club - Online Booking System" <support@tokoroa.org.nz>',
+      })
+    );
 
     (process.env as Record<string, string>).NODE_ENV =origEnv;
   });
