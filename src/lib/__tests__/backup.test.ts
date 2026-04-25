@@ -143,6 +143,12 @@ describe("backup", () => {
       }),
       "S3 upload failed"
     );
+    expect(execSyncMock).toHaveBeenCalledWith(
+      expect.stringMatching(/s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/),
+      expect.objectContaining({
+        env: expect.objectContaining(process.env),
+      })
+    );
     expect(mkdirSyncMock).not.toHaveBeenCalled();
     expect(unlinkSyncMock).not.toHaveBeenCalled();
   });

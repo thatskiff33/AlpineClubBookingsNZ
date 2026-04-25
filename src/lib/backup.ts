@@ -4,7 +4,7 @@
  *
  * Environment variables:
  *   BACKUP_ENABLED=true           - Enable/disable backups
- *   BACKUP_S3_BUCKET              - S3 bucket name (optional, if not set dumps to /tmp)
+ *   BACKUP_S3_BUCKET              - S3 bucket name (optional, uploads to the tacbookings_s3backup/ prefix)
  *   BACKUP_S3_REGION              - AWS region for S3 (defaults to ap-southeast-2)
  *   BACKUP_S3_ACCESS_KEY_ID       - AWS access key for S3 uploads
  *   BACKUP_S3_SECRET_ACCESS_KEY   - AWS secret key for S3 uploads
@@ -19,6 +19,7 @@ import logger from "@/lib/logger";
 
 const BACKUP_DIR = "/tmp/tacbookings-backups";
 const DEFAULT_RETENTION_DAYS = 7;
+const S3_BACKUP_PREFIX = "tacbookings_s3backup";
 
 export interface BackupResult {
   success: boolean;
@@ -91,7 +92,7 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
     if (s3Bucket) {
       try {
         const s3Region = process.env.BACKUP_S3_REGION || "ap-southeast-2";
-        const s3Key = `backups/${filename}`;
+        const s3Key = `${S3_BACKUP_PREFIX}/${filename}`;
 
         // Use AWS CLI for upload (simpler than SDK for this use case)
         const envVars: Record<string, string> = {};
