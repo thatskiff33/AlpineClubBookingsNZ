@@ -15,11 +15,11 @@ Last updated: 2026-04-25
 - Phase `#98` is closed
 - Phase `#99` is closed
 - Active phase: `#100`
-- Most recent landed task: `#153`
-- Most recent merged implementation PR: `#156`
-- Most recent published implementation PR: `#156`
-- Finance task currently in flight: `#158` via draft PR `#160`
-- Single `status: ready` finance task: none
+- Most recent landed task: `#158`
+- Most recent merged implementation PR: `#160`
+- Most recent published implementation PR: `#160`
+- Finance task currently in flight: none
+- Single `status: ready` finance task: `#161`
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Task #138
@@ -434,56 +434,51 @@ What landed:
 - Updated `docs/finance-dashboard/README.md` to index the new rollout checklist
 - Opened draft PR `#160` for task `#158`
 - Validated the docs-only diff with `git diff --check`
+- Merged PR `#160` into `main` as commit `82e391b`
+- Deleted remote branch `finance/issue-158-rollout-checklist` after the merge
+- Closed task `#158` as completed
+- Reassessed the remaining phase `#100` scope and created task `#161` as the single `status: ready` finance task for the legacy-dashboard freeze and post-cutover monitoring runbook boundary
 
 What remains:
-- Review draft PR `#160` and merge it only if the diff stays scoped to the rollout checklist docs, no blocker comments appear, and no newer `main` change requires a rebase
-- Reassess the next smallest concrete phase `#100` follow-up only after task `#158` lands
+- Pick up task `#161` from current `main` and keep the slice documentation-first unless repo evidence forces a narrow supporting change
 
 Blockers:
 - None on the finance dashboard path itself
-- `origin/main` moved after the branch was created via admin-Xero PR `#157`; it does not overlap the finance docs, but recheck branch freshness before merging PR `#160`
-- The shared local workspace still contains unrelated admin-Xero history; keep finance follow-up work on a clean checkout or worktree
 
 ## Next Prompt
 
 ```text
 Use the GitHub workflow for TACBookings finance epic #92.
 
-Run the merge-review stage for the current active finance PR only.
+Implement the current ready finance task only.
 
 1. Read only these sources first:
 - docs/finance-dashboard/README.md
 - docs/finance-dashboard/handoff.md
 - phase issue #100
-- task issue #158
-- draft PR #160
+- task issue #161
+- docs/finance-dashboard/finance-rollout-cutover-checklist.md
+- docs/finance-dashboard/phases.md
+- docs/finance-dashboard/test-plan.md
 
-Read docs/finance-dashboard/phases.md and docs/finance-dashboard/test-plan.md only if a review comment or blocker requires rechecking rollout gates.
-Read docs/finance-dashboard/data-contracts.md only if a review comment needs an exact source-of-truth reference for a landed finance surface.
-Read docs/XERO_HANDOFF.md only if a review comment or blocker would reopen Xero-specific operational scope.
+Read docs/finance-dashboard/data-contracts.md only if the new runbook needs an exact source-of-truth reference for a landed finance surface.
+Read docs/XERO_HANDOFF.md only if current repo evidence forces finance rollout notes to reopen Xero-specific operational scope.
 
-2. Verify all merge gates:
-- task `#158` acceptance criteria are complete
-- local validation still covers `git diff --check`
-- PR `#160` has no blocker comments or requested changes
-- branch `finance/issue-158-rollout-checklist` is up to date with `main`
-- the diff stays scoped to:
-  - `docs/finance-dashboard/finance-rollout-cutover-checklist.md`
-  - `docs/finance-dashboard/README.md`
-  - `docs/finance-dashboard/handoff.md`
+2. Reconfirm scope before editing:
+- task `#161` stays focused on post-cutover monitoring and legacy-dashboard freeze preparation for phase `#100`
+- keep the slice documentation-first unless current repo evidence proves a narrow supporting docs update is required
+- do not broaden into executing rollout steps, granting production access, or retiring the legacy dashboard in the same task
 
-3. If any gate fails:
-- do not merge
-- leave a short blocker note on PR `#160`
-- update `docs/finance-dashboard/handoff.md` with the exact failing gate and next action
-- keep finance work on a clean checkout or worktree instead of the unrelated admin-Xero history
+3. Implement task `#161` end-to-end:
+- add the smallest production-ready finance runbook for post-cutover monitoring and legacy-dashboard freeze preparation under `docs/finance-dashboard/`
+- document the minimum monitoring checks after named-user rollout across finance access, sync health, and the landed native finance report surfaces
+- define explicit prerequisites and decision points for freezing the legacy dashboard while preserving rollback expectations from the cutover checklist
+- update `docs/finance-dashboard/README.md` and this handoff so the next run starts from current reality
 
-4. If all gates pass:
-- squash merge PR `#160`
-- delete remote branch `finance/issue-158-rollout-checklist`
-- close task issue `#158` with a minimal Done/Validation/Next/Blockers comment
-- add a short progress comment to phase issue `#100`
-- only create the next `status: ready` finance task if the remaining phase `#100` scope can be expressed as a concrete, production-ready slice
+4. Validate lightly and publish:
+- run only the lightweight docs validation the touched paths actually require
+- open a scoped PR linked to `#161`
+- keep notes explicit about monitoring gates, freeze prerequisites, and non-goals
 
 5. Keep handoff minimal:
 - Done:
