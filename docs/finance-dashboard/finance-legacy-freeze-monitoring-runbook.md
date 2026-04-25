@@ -91,7 +91,7 @@ Decision outcomes:
 | Outcome | When to use it | Required action |
 | --- | --- | --- |
 | Continue monitoring | Minor or non-blocker gaps remain but normal finance reporting does not depend on the legacy dashboard | Keep TACBookings as primary for named users, keep legacy fallback available, and track the gap to closure |
-| Freeze eligible | Every gate above passed and sign-off is recorded | Mark the legacy dashboard as freeze-ready in docs or issue notes, then hand off actual retirement steps to a separate phase `#100` follow-up |
+| Freeze eligible | Every gate above passed and sign-off is recorded | Mark the legacy dashboard as freeze-ready in docs or issue notes, then continue with [finance-legacy-retirement-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-legacy-retirement-runbook.md) for the final phase `#100` retirement step |
 | Roll back | Any blocker-level access, sync, or report failure appears | Pause the rollout, direct users back to the legacy dashboard, preserve evidence, and reopen targeted follow-up work before retrying |
 
 ## Required Evidence
@@ -132,6 +132,6 @@ Record sign-off only after the supporting evidence exists.
 
 ## Exit Boundary
 
-- If the runbook ends in `freeze eligible`, move to a separate phase `#100` follow-up for actual legacy-dashboard shutdown or retirement steps.
+- If the runbook ends in `freeze eligible`, continue with [finance-legacy-retirement-runbook.md](/home/ubuntu/TACBookings/docs/finance-dashboard/finance-legacy-retirement-runbook.md) for the actual legacy-dashboard shutdown or retirement decision path.
 - If the runbook ends in `continue monitoring`, keep the evidence log open and do not describe the legacy dashboard as frozen.
 - If the runbook ends in `roll back`, follow the rollback notes from the cutover checklist and reopen only the narrow follow-up work needed to correct the blocker.

@@ -1,6 +1,6 @@
 # Finance Dashboard Handoff
 
-Last updated: 2026-04-25
+Last updated: 2026-04-26
 
 ## Current State
 
@@ -18,8 +18,8 @@ Last updated: 2026-04-25
 - Most recent landed task: `#161`
 - Most recent merged implementation PR: `#163`
 - Most recent published implementation PR: `#163`
-- Finance task currently in flight: none
-- Single `status: ready` finance task: `#164`
+- Finance task currently in flight: `#164` via the active legacy-retirement docs branch or PR
+- Single `status: ready` finance task: none
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Task #138
@@ -448,9 +448,14 @@ What landed:
 - Deleted remote branch `finance/issue-161-legacy-freeze-monitoring-runbook` after the merge
 - Closed task `#161` as completed
 - Created task `#164` as the single `status: ready` finance task for the final legacy-dashboard retirement runbook follow-up after freeze eligibility is documented
+- Picked up task `#164` and moved it from `status: ready` to `status: in-progress`
+- Added `docs/finance-dashboard/finance-legacy-retirement-runbook.md` with explicit retirement prerequisites, owners, communications, sign-off checkpoints, and fallback or reopen expectations for the final phase `#100` step
+- Updated `docs/finance-dashboard/finance-legacy-freeze-monitoring-runbook.md`, `docs/finance-dashboard/finance-post-cutover-evidence-template.md`, and `docs/finance-dashboard/README.md` so the freeze-ready handoff, retirement evidence, and docs index all point to the new retirement boundary
+- Validated the docs-only diff with `git diff --check`
 
 What remains:
-- Pick up task `#164` from current `main` and keep the slice documentation-first unless repo evidence forces a narrow supporting change
+- Review the active finance PR for task `#164` and merge it only if the diff stays scoped to the phase `#100` retirement docs packet, no blocker comments appear, and the branch stays current with `main`
+- Reassess the remaining phase `#100` work after task `#164` lands; if the rest depends on operational rollout evidence rather than a new repo change, leave no `status: ready` finance task until that evidence exists
 
 Blockers:
 - None on the finance dashboard path itself
@@ -460,7 +465,7 @@ Blockers:
 ```text
 Use the GitHub workflow for TACBookings finance epic #92.
 
-Implement the current ready finance task only.
+Run the merge-review stage for the current active finance PR only.
 
 1. Read only these sources first:
 - docs/finance-dashboard/README.md
@@ -473,27 +478,37 @@ Implement the current ready finance task only.
 - merged PR #160
 - docs/finance-dashboard/finance-rollout-cutover-checklist.md
 - docs/finance-dashboard/finance-legacy-freeze-monitoring-runbook.md
+- docs/finance-dashboard/finance-legacy-retirement-runbook.md
 - docs/finance-dashboard/finance-post-cutover-evidence-template.md
 
-Read docs/finance-dashboard/phases.md and docs/finance-dashboard/test-plan.md only if the retirement runbook needs the exact phase-`#100` gate language.
-Read docs/finance-dashboard/data-contracts.md only if the retirement runbook needs an exact source-of-truth reference for a landed finance surface.
+Read docs/finance-dashboard/phases.md and docs/finance-dashboard/test-plan.md only if a review comment or blocker requires rechecking the phase-`#100` gate language.
+Read docs/finance-dashboard/data-contracts.md only if a review comment needs an exact source-of-truth reference for a landed finance surface.
 Read docs/XERO_HANDOFF.md only if current repo evidence forces finance rollout notes to reopen Xero-specific operational scope.
 
-2. Reconfirm scope before editing:
-- task `#164` stays focused on the final legacy-dashboard retirement runbook for phase `#100`
-- keep the slice documentation-first unless current repo evidence proves a narrow supporting docs update is required
-- do not broaden into executing retirement steps, removing the legacy dashboard in code, or changing production access in the same task
+2. Verify all merge gates:
+- task `#164` acceptance criteria are complete
+- local validation still covers `git diff --check`
+- the active PR for task `#164` has no blocker comments or requested changes
+- the branch stays up to date with `main`
+- the diff stays scoped to:
+  - `docs/finance-dashboard/finance-legacy-retirement-runbook.md`
+  - `docs/finance-dashboard/finance-legacy-freeze-monitoring-runbook.md`
+  - `docs/finance-dashboard/finance-post-cutover-evidence-template.md`
+  - `docs/finance-dashboard/README.md`
+  - `docs/finance-dashboard/handoff.md`
 
-3. Implement task `#164` end-to-end:
-- add the smallest production-ready finance runbook for the final legacy-dashboard retirement step under `docs/finance-dashboard/`
-- define explicit prerequisites from the post-cutover monitoring evidence before retirement can begin
-- document the required owners, sign-off checkpoints, communication expectations, and fallback or reopen path if retirement cannot complete cleanly
-- update `docs/finance-dashboard/README.md` and this handoff so the next run starts from current reality
+3. If any gate fails:
+- do not merge
+- leave a short blocker note on the active PR for task `#164`
+- update `docs/finance-dashboard/handoff.md` with the exact failing gate and next action
+- keep the slice docs-only unless current repo evidence proves a narrow supporting docs change is required
 
-4. Validate lightly and publish:
-- run only the lightweight docs validation the touched paths actually require
-- open a scoped PR linked to `#164`
-- keep notes explicit about retirement prerequisites, sign-off, and fallback expectations
+4. If all gates pass:
+- squash merge the active PR for task `#164`
+- delete the remote branch for the retirement-runbook task
+- close issue `#164` with a minimal Done/Validation/Next/Blockers comment
+- reassess the remaining phase `#100` scope against real rollout evidence
+- only create the next `status: ready` finance task if the remaining work can be expressed as a concrete repo-backed slice
 
 5. Keep handoff minimal:
 - Done:
