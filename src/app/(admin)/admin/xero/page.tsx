@@ -974,7 +974,11 @@ export default function XeroPage() {
     setSyncResult(null)
     setError("")
     try {
-      const res = await fetch("/api/admin/xero/sync-contacts", { method: "POST" })
+      const res = await fetch("/api/admin/xero/sync-contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fullResync: true }),
+      })
       if (!res.ok) {
         const data = await res.json()
         throw new Error(data.error || "Sync failed")
