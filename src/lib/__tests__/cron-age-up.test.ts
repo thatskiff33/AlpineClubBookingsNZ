@@ -90,7 +90,7 @@ describe("checkAgeUpMembers", () => {
     expect(mockedCreateToken).toHaveBeenCalledWith({
       data: expect.objectContaining({
         memberId: "m1",
-        token: expect.any(String),
+        tokenHash: expect.any(String),
         expiresAt: expect.any(Date),
       }),
     });

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+const mockRequireActiveSessionUser = vi.fn(async () => null);
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+}));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {

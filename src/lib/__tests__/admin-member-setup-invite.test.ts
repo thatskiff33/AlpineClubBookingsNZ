@@ -93,7 +93,7 @@ describe("Admin Send Setup Invite API", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           memberId: "m1",
-          token: expect.any(String),
+          tokenHash: expect.any(String),
           expiresAt: new Date(Date.now() + MEMBER_SETUP_INVITE_TTL_MS),
         }),
       })

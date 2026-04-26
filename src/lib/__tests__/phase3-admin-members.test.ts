@@ -91,9 +91,7 @@ const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
 const memberSession = { user: { id: "m1", role: "MEMBER" } } as any;
 
 function mockSessionAndMemberListCounts(total: number) {
-  vi.mocked(prisma.member.count)
-    .mockResolvedValueOnce(1)
-    .mockResolvedValueOnce(total);
+  vi.mocked(prisma.member.count).mockResolvedValue(total);
 }
 
 describe("Phase 3: Admin Member Management", () => {
@@ -102,6 +100,11 @@ describe("Phase 3: Admin Member Management", () => {
     mockIsXeroConnected.mockResolvedValue(false);
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
     vi.mocked(prisma.member.count).mockResolvedValue(1);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      id: "session-member",
+      active: true,
+      forcePasswordChange: false,
+    } as any);
     delete process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS;
   });
 
@@ -601,7 +604,7 @@ describe("Phase 3: Admin Member Management", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             memberId: "new1",
-            token: expect.any(String),
+            tokenHash: expect.any(String),
             expiresAt: expect.any(Date),
           }),
         })
@@ -711,7 +714,13 @@ describe("Phase 3: Admin Member Management", () => {
   describe("A8 - Member Detail", () => {
     it("returns 404 for non-existent member", async () => {
       mockedAuth.mockResolvedValue(adminSession);
-      vi.mocked(prisma.member.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.member.findUnique)
+        .mockResolvedValueOnce({
+          id: "session-member",
+          active: true,
+          forcePasswordChange: false,
+        } as any)
+        .mockResolvedValueOnce(null);
       vi.mocked(prisma.booking.findMany).mockResolvedValue([]);
       vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
       vi.mocked(prisma.booking.aggregate).mockResolvedValue({
@@ -1052,7 +1061,7 @@ create: vi.fn().mockResolvedValue({
         expect.objectContaining({
           data: expect.objectContaining({
             memberId: "m1",
-            token: expect.any(String),
+            tokenHash: expect.any(String),
             expiresAt: expect.any(Date),
           }),
         })

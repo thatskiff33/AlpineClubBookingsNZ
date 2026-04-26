@@ -1,5 +1,5 @@
-import crypto from "crypto";
 import { prisma } from "./prisma";
+import { hashActionToken, issueActionToken } from "./action-tokens";
 
 const TOKEN_EXPIRY_HOURS = 48;
 
@@ -7,7 +7,7 @@ const TOKEN_EXPIRY_HOURS = 48;
  * Generate a secure, URL-safe token for guest chore access.
  */
 export function generateChoreToken(): string {
-  return crypto.randomBytes(32).toString("hex");
+  return issueActionToken().token;
 }
 
 /**
@@ -18,13 +18,13 @@ export async function createGuestChoreToken(
   bookingGuestId: string,
   date: Date
 ): Promise<string> {
-  const token = generateChoreToken();
+  const { token, tokenHash } = issueActionToken();
   const expiresAt = new Date();
   expiresAt.setHours(expiresAt.getHours() + TOKEN_EXPIRY_HOURS);
 
   await prisma.guestChoreToken.create({
     data: {
-      token,
+      tokenHash,
       bookingGuestId,
       date,
       expiresAt,
@@ -40,7 +40,7 @@ export async function createGuestChoreToken(
  */
 export async function validateGuestChoreToken(token: string) {
   const record = await prisma.guestChoreToken.findUnique({
-    where: { token },
+    where: { tokenHash: hashActionToken(token) },
     include: {
       bookingGuest: {
         include: {

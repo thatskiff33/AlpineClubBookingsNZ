@@ -8,6 +8,7 @@ import { NextRequest } from "next/server";
 const mockPrisma = {
   member: {
     count: vi.fn(),
+    findUnique: vi.fn(),
   },
   booking: {
     findMany: vi.fn(),
@@ -40,6 +41,11 @@ describe("#33: Admin Bookings Calendar API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "session-member",
+      active: true,
+      forcePasswordChange: false,
+    });
   });
 
   it("rejects non-admin users with 403", async () => {

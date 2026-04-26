@@ -10,6 +10,10 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+const mockRequireActiveSessionUser = vi.fn(async () => null);
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+}));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -161,13 +165,18 @@ describe("POST /api/members/family/request-child", () => {
     expect(body.error).toMatch(/already pending/i);
   });
 
-  it("returns 404 for inactive member", async () => {
+  it("returns 403 for inactive member", async () => {
     mockedAuth.mockResolvedValue(adultSession);
-    vi.mocked(prisma.member.findUnique).mockResolvedValue(null);
+    mockRequireActiveSessionUser.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Account is deactivated" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
 
     const res = await requestChild(makeRequest({
       familyGroupId: "g1", firstName: "Sam", lastName: "Smith",
     }));
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
   });
 });

@@ -41,6 +41,7 @@ import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { POST as forgotPassword } from "@/app/api/auth/forgot-password/route";
 import { POST as resetPassword } from "@/app/api/auth/reset-password/route";
+import { hashActionToken } from "@/lib/action-tokens";
 import { SELF_SERVICE_PASSWORD_RESET_TTL_MS } from "@/lib/password-reset";
 
 const mockedFindMember = vi.mocked(prisma.member.findFirst);
@@ -87,7 +88,7 @@ describe("password reset routes", () => {
     expect(mockedCreateToken).toHaveBeenCalledWith({
       data: expect.objectContaining({
         memberId: "member-1",
-        token: expect.any(String),
+        tokenHash: expect.any(String),
         expiresAt: new Date(Date.now() + SELF_SERVICE_PASSWORD_RESET_TTL_MS),
       }),
     });
@@ -115,6 +116,10 @@ describe("password reset routes", () => {
     const res = await resetPassword(req);
 
     expect(res.status).toBe(200);
+    expect(mockedFindToken).toHaveBeenCalledWith({
+      where: { tokenHash: hashActionToken("reset-token") },
+      include: { member: true },
+    });
     expect(mockedMemberUpdate).toHaveBeenCalledWith({
       where: { id: "member-1" },
       data: {

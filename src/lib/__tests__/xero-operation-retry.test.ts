@@ -502,6 +502,68 @@ describe("retryXeroSyncOperation", () => {
       refundAmountCents: 1234,
       createdByMemberId: "admin_1",
     });
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_123",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: "cn_123",
+        responsePayload: expect.objectContaining({
+          allocation: null,
+          allocationSkipped: true,
+          allocationSkipReason:
+            "Refund credit notes are settled via a credit-note payment instead of invoice allocation.",
+          refundPaymentError: null,
+        }),
+      })
+    );
+  });
+
+  it("repairs failed refund credit note creates from the existing Xero credit note", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "FAILED",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        xeroObjectId: "cn_legacy_123",
+        requestPayload: {
+          allocation: {
+            invoiceId: "inv_legacy_123",
+            amount: 0.1,
+          },
+        },
+        responsePayload: "{\"response\":{\"statusCode\":400}}",
+      })
+    );
+    mocks.updatePayment.mockResolvedValue({ id: "pay_123" });
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Repaired Xero refund credit note follow-up actions.",
+    });
+
+    expect(mocks.createXeroCreditNote).not.toHaveBeenCalled();
+    expect(mocks.allocateCreditNoteToInvoice).not.toHaveBeenCalled();
+    expect(mocks.updatePayment).toHaveBeenCalledWith({
+      where: { id: "pay_123" },
+      data: { xeroRefundCreditNoteId: "cn_legacy_123" },
+    });
+    expect(mocks.createXeroRefundPaymentForInvoice).toHaveBeenCalledWith({
+      paymentId: "pay_123",
+      invoiceId: "inv_legacy_123",
+      creditNoteId: "cn_legacy_123",
+      refundAmountCents: 10,
+      createdByMemberId: "admin_1",
+    });
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_123",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: "cn_legacy_123",
+      })
+    );
   });
 
   it("repairs partial modification credit note allocations", async () => {

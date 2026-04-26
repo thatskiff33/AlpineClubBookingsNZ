@@ -19,7 +19,11 @@ const mocks = vi.hoisted(() => {
       findFirst: vi.fn(),
     },
     payment: {
+      findUnique: vi.fn(),
       update: vi.fn(),
+    },
+    xeroObjectLink: {
+      findFirst: vi.fn(),
     },
     xeroToken: {
       findFirst: vi.fn(),
@@ -43,6 +47,8 @@ const mocks = vi.hoisted(() => {
     accountingApi: {
       createInvoices: vi.fn(),
       createPayment: vi.fn(),
+      createPayments: vi.fn(),
+      createCreditNotes: vi.fn(),
       createContacts: vi.fn(),
       getContacts: vi.fn(),
     },
@@ -140,7 +146,9 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
 });
 
 import {
+  createXeroCreditNote,
   createXeroInvoiceForBooking,
+  createXeroRefundPaymentForInvoice,
   encryptToken,
   resetXeroRateLimitStateForTests,
 } from "@/lib/xero";
@@ -189,8 +197,10 @@ describe("createXeroInvoiceForBooking", () => {
         xeroInvoiceNumber: null,
       },
     });
+    mocks.prisma.payment.findUnique.mockResolvedValue(null);
     mocks.prisma.season.findFirst.mockResolvedValue({ type: "WINTER" });
     mocks.prisma.payment.update.mockResolvedValue({ id: "pay_1" });
+    mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue(null);
     mocks.prisma.xeroToken.findFirst.mockResolvedValue({
       id: "token_1",
       accessToken: encryptToken("access"),
@@ -241,5 +251,125 @@ describe("createXeroInvoiceForBooking", () => {
         }),
       })
     );
+  });
+});
+
+describe("createXeroRefundPaymentForInvoice", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetXeroRateLimitStateForTests();
+    vi.stubEnv(
+      "XERO_ENCRYPTION_KEY",
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    );
+    vi.stubEnv("XERO_CLIENT_ID", "client-id");
+    vi.stubEnv("XERO_CLIENT_SECRET", "client-secret");
+
+    mocks.prisma.xeroToken.findFirst.mockResolvedValue({
+      id: "token_1",
+      accessToken: encryptToken("access"),
+      refreshToken: encryptToken("refresh"),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      tenantId: "tenant_1",
+    });
+    mocks.prisma.xeroAccountMapping.findUnique.mockResolvedValue(null);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_payment_1" });
+    mocks.xeroClientInstance.accountingApi.createPayments.mockResolvedValue({
+      body: {
+        payments: [
+          {
+            paymentID: "xpay_1",
+            creditNoteNumber: "CN-1",
+          },
+        ],
+      },
+    });
+  });
+
+  it("creates the Xero refund payment against the credit note", async () => {
+    await expect(
+      createXeroRefundPaymentForInvoice({
+        paymentId: "pay_1",
+        invoiceId: "inv_1",
+        creditNoteId: "cn_1",
+        refundAmountCents: 2500,
+      })
+    ).resolves.toBe("xpay_1");
+
+    expect(mocks.xeroClientInstance.accountingApi.createPayments).toHaveBeenCalledWith(
+      "tenant_1",
+      {
+        payments: [
+          expect.objectContaining({
+            creditNote: { creditNoteID: "cn_1" },
+            account: { code: "606" },
+            amount: 25,
+          }),
+        ],
+      },
+      undefined,
+      "payment:pay_1:refund-payment:2500:v1"
+    );
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_payment_1",
+      expect.objectContaining({
+        xeroObjectType: "PAYMENT",
+        xeroObjectId: "xpay_1",
+        xeroObjectNumber: "CN-1",
+      })
+    );
+  });
+});
+
+describe("createXeroCreditNote", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetXeroRateLimitStateForTests();
+    vi.stubEnv(
+      "XERO_ENCRYPTION_KEY",
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    );
+    vi.stubEnv("XERO_CLIENT_ID", "client-id");
+    vi.stubEnv("XERO_CLIENT_SECRET", "client-secret");
+  });
+
+  it("reuses an existing refund credit note link before attempting a new create", async () => {
+    mocks.prisma.payment.findUnique.mockResolvedValue({
+      id: "pay_1",
+      xeroInvoiceId: "inv_1",
+      xeroRefundCreditNoteId: null,
+      booking: {
+        id: "booking_1",
+        memberId: "mem_1",
+        member: { id: "mem_1" },
+        guests: [],
+        checkIn: "2026-07-31T00:00:00.000Z",
+        checkOut: "2026-08-02T00:00:00.000Z",
+      },
+    });
+    mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue({
+      xeroObjectId: "cn_existing",
+      xeroObjectNumber: "CN-99",
+    });
+    mocks.prisma.payment.update.mockResolvedValue({ id: "pay_1" });
+
+    await expect(createXeroCreditNote("pay_1", 2500)).resolves.toBe("cn_existing");
+
+    expect(mocks.prisma.payment.update).toHaveBeenCalledWith({
+      where: { id: "pay_1" },
+      data: {
+        xeroRefundCreditNoteId: "cn_existing",
+      },
+    });
+    expect(mocks.upsertXeroObjectLink).toHaveBeenCalledWith({
+      localModel: "Payment",
+      localId: "pay_1",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_existing",
+      xeroObjectNumber: "CN-99",
+      role: "REFUND_CREDIT_NOTE",
+    });
+    expect(mocks.xeroClientInstance.accountingApi.createCreditNotes).not.toHaveBeenCalled();
+    expect(mocks.xeroClientInstance.accountingApi.createPayments).not.toHaveBeenCalled();
   });
 });

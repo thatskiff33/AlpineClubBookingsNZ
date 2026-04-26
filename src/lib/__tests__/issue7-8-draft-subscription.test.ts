@@ -76,6 +76,10 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+const mockRequireActiveSessionUser = vi.fn(async () => null);
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+}));
 
 vi.mock("@/lib/cancellation", () => ({
   getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
@@ -333,8 +337,13 @@ describe("Issue 7: GET /api/bookings/drafts", () => {
   });
 
   it("returns 403 when the member was deactivated after the session was issued", async () => {
+    mockRequireActiveSessionUser.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Account is deactivated" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
     mockAuth.mockResolvedValue(memberSession());
-    mockPrisma.member.count.mockResolvedValue(0);
 
     const res = await getDrafts();
     expect(res.status).toBe(403);

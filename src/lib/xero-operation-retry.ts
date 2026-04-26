@@ -33,6 +33,9 @@ export interface XeroOperationRetryMeta {
   reason: string | null;
 }
 
+const REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON =
+  "Refund credit notes are settled via a credit-note payment instead of invoice allocation.";
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -282,7 +285,7 @@ function parsePartialInvoiceRepairInput(
 
 function parseRefundCreditNoteRepairInput(
   operation: Pick<RetryableOperation, "localModel" | "localId" | "requestPayload" | "responsePayload" | "xeroObjectId">
-): { creditNoteId: string; invoiceId: string; amountCents: number; needsAllocationRepair: boolean; needsRefundPaymentRepair: boolean } | null {
+): { creditNoteId: string; invoiceId: string; amountCents: number; needsRefundPaymentRepair: boolean } | null {
   if (operation.localModel !== "Payment" || !operation.localId || !operation.xeroObjectId) {
     return null;
   }
@@ -300,9 +303,60 @@ function parseRefundCreditNoteRepairInput(
     creditNoteId: operation.xeroObjectId,
     invoiceId,
     amountCents: Math.round(amount * 100),
-    needsAllocationRepair: !asRecord(responsePayload?.allocation),
     needsRefundPaymentRepair: !asRecord(responsePayload?.refundPayment),
   };
+}
+
+async function repairRefundCreditNoteFollowUpActions(
+  operation: Pick<RetryableOperation, "id" | "localId" | "responsePayload">,
+  xero: typeof import("@/lib/xero"),
+  repair: {
+    creditNoteId: string;
+    invoiceId: string;
+    amountCents: number;
+    needsRefundPaymentRepair: boolean;
+  },
+  createdByMemberId?: string
+) {
+  await prisma.payment.update({
+    where: { id: operation.localId! },
+    data: {
+      xeroRefundCreditNoteId: repair.creditNoteId,
+    },
+  });
+
+  if (repair.needsRefundPaymentRepair) {
+    await xero.createXeroRefundPaymentForInvoice({
+      paymentId: operation.localId!,
+      invoiceId: repair.invoiceId,
+      creditNoteId: repair.creditNoteId,
+      refundAmountCents: repair.amountCents,
+      createdByMemberId,
+    });
+  }
+
+  const existingResponsePayload = asRecord(operation.responsePayload);
+  await completeXeroSyncOperation(operation.id, {
+    status: "SUCCEEDED",
+    responsePayload: {
+      ...(existingResponsePayload ?? {}),
+      allocation: null,
+      allocationSkipped: true,
+      allocationSkipReason: REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON,
+      refundPaymentError: null,
+    },
+    xeroObjectType: "CREDIT_NOTE",
+    xeroObjectId: repair.creditNoteId,
+    extraLinks: [
+      {
+        localModel: "Payment",
+        localId: operation.localId!,
+        xeroObjectType: "CREDIT_NOTE",
+        xeroObjectId: repair.creditNoteId,
+        role: "REFUND_CREDIT_NOTE",
+      },
+    ],
+  });
 }
 
 function parseModificationCreditNoteRepairInput(
@@ -554,35 +608,12 @@ export async function retryXeroSyncOperation(
       operation.operationType === "CREATE" &&
       refundCreditNoteRepair
     ) {
-      if (refundCreditNoteRepair.needsAllocationRepair) {
-        await xero.allocateCreditNoteToInvoice(
-          refundCreditNoteRepair.creditNoteId,
-          refundCreditNoteRepair.invoiceId,
-          refundCreditNoteRepair.amountCents,
-          {
-            localModel: "Payment",
-            localId: operation.localId ?? undefined,
-            createdByMemberId,
-          }
-        );
-      }
-
-      await prisma.payment.update({
-        where: { id: operation.localId! },
-        data: {
-          xeroRefundCreditNoteId: refundCreditNoteRepair.creditNoteId,
-        },
-      });
-
-      if (refundCreditNoteRepair.needsRefundPaymentRepair) {
-        await xero.createXeroRefundPaymentForInvoice({
-          paymentId: operation.localId!,
-          invoiceId: refundCreditNoteRepair.invoiceId,
-          creditNoteId: refundCreditNoteRepair.creditNoteId,
-          refundAmountCents: refundCreditNoteRepair.amountCents,
-          createdByMemberId,
-        });
-      }
+      await repairRefundCreditNoteFollowUpActions(
+        operation,
+        xero,
+        refundCreditNoteRepair,
+        createdByMemberId
+      );
 
       return { message: "Repaired Xero refund credit note follow-up actions." };
     }
@@ -669,6 +700,17 @@ export async function retryXeroSyncOperation(
 
   if (operation.entityType === "CREDIT_NOTE" && operation.operationType === "CREATE") {
     if (operation.localModel === "Payment") {
+      const refundCreditNoteRepair = parseRefundCreditNoteRepairInput(operation);
+      if (refundCreditNoteRepair) {
+        await repairRefundCreditNoteFollowUpActions(
+          operation,
+          xero,
+          refundCreditNoteRepair,
+          createdByMemberId
+        );
+        return { message: "Repaired Xero refund credit note follow-up actions." };
+      }
+
       const retryInput = parsePaymentCreditNoteRetryInput(operation);
       if (!retryInput) {
         throw new XeroOperationRetryError("Stored credit note payload is incomplete.");

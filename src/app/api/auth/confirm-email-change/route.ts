@@ -4,6 +4,7 @@ import { isXeroConnected, updateXeroContact } from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
 import { buildXeroContactUpdatePayload } from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
+import { hashActionToken } from "@/lib/action-tokens";
 
 export async function GET(request: NextRequest) {
   const baseUrl = process.env.NEXTAUTH_URL || request.url;
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const record = await prisma.emailChangeToken.findUnique({
-      where: { token },
+      where: { tokenHash: hashActionToken(token) },
       include: {
         member: {
           select: {

@@ -68,6 +68,10 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+const mockRequireActiveSessionUser = vi.fn(async () => null);
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+}));
 vi.mock("@/lib/capacity", () => ({ checkCapacity: vi.fn(), LODGE_CAPACITY: 29 }));
 vi.mock("@/lib/pricing", () => ({
   calculateBookingPrice: vi.fn(),
@@ -850,8 +854,13 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
   });
 
   it("returns 403 for deactivated members", async () => {
+    mockRequireActiveSessionUser.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Account is deactivated" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
     mockedAuth.mockResolvedValue(makeSession() as any);
-    mockMemberCount.mockResolvedValueOnce(0);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/confirm-modification-payment", {
       method: "POST",

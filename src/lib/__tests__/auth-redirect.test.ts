@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildLoginPath, resolvePostLoginPath } from "@/lib/auth-redirect";
+import {
+  buildBookingLoginPath,
+  buildLoginPath,
+  resolvePostLoginPath,
+} from "@/lib/auth-redirect";
 
 describe("auth redirect helpers", () => {
   it("keeps safe internal callback paths", () => {
@@ -21,5 +25,9 @@ describe("auth redirect helpers", () => {
     expect(buildLoginPath("/nominations/token-1")).toBe(
       "/login?callbackUrl=%2Fnominations%2Ftoken-1"
     );
+  });
+
+  it("builds the booking login URL with the booking callback path", () => {
+    expect(buildBookingLoginPath()).toBe("/login?callbackUrl=%2Fbook");
   });
 });

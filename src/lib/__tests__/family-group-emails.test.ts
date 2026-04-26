@@ -144,6 +144,11 @@ const mockedSendChildSubmitted = vi.mocked(sendChildRequestSubmittedEmail);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(prisma.member.findUnique).mockResolvedValue({
+    id: "session-member",
+    active: true,
+    forcePasswordChange: false,
+  } as any);
 });
 
 describe("POST /api/members/family/invite — email sending", () => {
@@ -214,10 +219,16 @@ describe("PUT /api/members/family/invitations — email on accept", () => {
       requester: { id: "u1", firstName: "Jane", lastName: "Doe", email: "jane@test.com" },
     } as any);
 
-    vi.mocked(prisma.member.findUnique).mockResolvedValue({
-      firstName: "Bob",
-      lastName: "Smith",
-    } as any);
+    vi.mocked(prisma.member.findUnique)
+      .mockResolvedValueOnce({
+        id: "u2",
+        active: true,
+        forcePasswordChange: false,
+      } as any)
+      .mockResolvedValueOnce({
+        firstName: "Bob",
+        lastName: "Smith",
+      } as any);
 
     mockedSendInviteAccepted.mockResolvedValue(undefined);
 
@@ -251,13 +262,18 @@ describe("POST /api/members/family/request-child — email on submit", () => {
     vi.mocked(prisma.member.findUnique)
       .mockResolvedValueOnce({
         id: "u1",
+        active: true,
+        forcePasswordChange: false,
+      } as any)
+      .mockResolvedValueOnce({
+        id: "u1",
         firstName: "Jane",
         lastName: "Doe",
         active: true,
         ageTier: "ADULT",
         familyGroupMemberships: [{ familyGroupId: "fg1" }],
       } as any)
-      // Second call: parent email lookup
+      // Third call: parent email lookup
       .mockResolvedValueOnce({ email: "parent@test.com" } as any);
 
     vi.mocked(prisma.familyGroupJoinRequest.findFirst).mockResolvedValue(null);

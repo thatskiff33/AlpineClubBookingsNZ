@@ -6,6 +6,7 @@ import { ApplicationStatus, AgeTier, type MemberApplication } from "@prisma/clie
 import { z } from "zod";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { logAudit } from "@/lib/audit";
+import { hashActionToken } from "@/lib/action-tokens";
 import {
   sendAdminMembershipApplicationPendingEmail,
   sendMembershipApplicationApprovedEmail,
@@ -820,7 +821,7 @@ export async function approveMemberApplication(
 
     await tx.passwordResetToken.create({
       data: {
-        token: passwordSetupToken,
+        tokenHash: hashActionToken(passwordSetupToken),
         memberId: applicantMember.id,
         expiresAt: passwordSetupExpiresAt,
       },

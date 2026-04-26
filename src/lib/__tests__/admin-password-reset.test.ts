@@ -124,6 +124,7 @@ describe("Admin Send Password Reset API", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           memberId: "m1",
+          tokenHash: expect.any(String),
           expiresAt: new Date(
             Date.now() + getAdminPasswordResetExpiryDurationMs(DEFAULT_ADMIN_PASSWORD_RESET_EXPIRY_WINDOW)
           ),
@@ -162,6 +163,7 @@ describe("Admin Send Password Reset API", () => {
       expect(mockedCreateToken).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
+            tokenHash: expect.any(String),
             expiresAt: new Date(Date.now() + getAdminPasswordResetExpiryDurationMs(option.value)),
           }),
         })

@@ -28,6 +28,10 @@ const mockAuth = vi.fn();
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
 }));
+const mockRequireActiveSessionUser = vi.fn(async () => null);
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+}));
 
 // ---------------------------------------------------------------------------
 // Mock Xero
