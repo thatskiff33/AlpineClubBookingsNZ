@@ -247,7 +247,7 @@ Audit deployment and operations:
 1. Docker: Read docker-compose.yml and Dockerfile.
    - Is the app container non-root? (check USER directive)
    - Is read_only set? tmpfs for writable dirs?
-   - Are resource limits appropriate for 2GB Lightsail?
+   - Are resource limits appropriate for the 4 GB RAM, 2 vCPU, 80 GB SSD Lightsail host?
    - Health checks configured correctly?
    - Log rotation configured?
 
@@ -264,7 +264,7 @@ Audit deployment and operations:
 
 6. Health: Read src/app/api/health/route.ts. Does it check all critical dependencies?
 
-7. Deployment script: Read /home/ubuntu/clean-build-docker-tacbookings.sh. Is it robust? Does it handle failures?
+7. Deployment scripts: Read /home/ubuntu/clean-build-docker-tacbookings.sh and scripts/blue-green-deploy.sh. Are they robust? Do they handle failures?
 
 Report gaps and risks.
 EOF

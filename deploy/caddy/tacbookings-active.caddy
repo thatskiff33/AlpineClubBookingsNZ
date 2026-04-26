@@ -1,0 +1,9 @@
+reverse_proxy {
+	lb_policy first
+	lb_try_duration 10s
+	fail_duration 30s
+	health_uri /api/health/ready
+	health_interval 10s
+	health_timeout 5s
+	to app:3000
+}
