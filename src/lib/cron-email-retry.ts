@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import nodemailer from "nodemailer";
 import { EMAIL_FROM, formatEmailFromAddress } from "./email-sender";
+import { htmlToPlainText } from "./email-text";
 import logger from "@/lib/logger";
 
 const MAX_ATTEMPTS = 3;
@@ -68,6 +69,7 @@ export async function retryFailedEmails(): Promise<{ retried: number; succeeded:
         to: emailLog.to,
         subject: emailLog.subject,
         html: emailLog.htmlBody!,
+        text: htmlToPlainText(emailLog.htmlBody!),
       });
 
       await prisma.emailLog.update({

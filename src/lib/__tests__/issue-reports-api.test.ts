@@ -72,11 +72,11 @@ describe("issue reports API", () => {
   });
 
   it("stores the report and sends admin notifications", async () => {
-    const req = new NextRequest("http://localhost/api/issue-reports", {
+    const req = new NextRequest("http://localhost:3000/api/issue-reports", {
       method: "POST",
       headers: { "Content-Type": "application/json", "User-Agent": "Vitest Browser" },
       body: JSON.stringify({
-        pageUrl: "http://localhost/book",
+        pageUrl: "http://localhost:3000/book",
         pageTitle: "Book | TAC Bookings",
         description: "The review step shows the wrong guest ages after editing the guest list.",
       }),
@@ -88,7 +88,7 @@ describe("issue reports API", () => {
     expect(mockedIssueReportCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         memberId: "member-1",
-        pageUrl: "http://localhost/book",
+        pageUrl: "http://localhost:3000/book",
         pageTitle: "Book | TAC Bookings",
         browserInfo: "Vitest Browser",
       }),
@@ -99,7 +99,7 @@ describe("issue reports API", () => {
       expect.objectContaining({
         memberName: "Casey Member",
         memberEmail: "casey@example.com",
-        pageUrl: "http://localhost/book",
+        pageUrl: "http://localhost:3000/book",
       })
     );
 
@@ -112,12 +112,55 @@ describe("issue reports API", () => {
     );
   });
 
-  it("rejects invalid screenshot payloads", async () => {
-    const req = new NextRequest("http://localhost/api/issue-reports", {
+  it("normalizes relative page URLs to same-origin absolute URLs", async () => {
+    const req = new NextRequest("https://tokoroa.org.nz/api/issue-reports", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        pageUrl: "http://localhost/book",
+        pageUrl: "/book?step=review",
+        description: "The relative page URL should be stored as an internal absolute link.",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+
+    expect(mockedIssueReportCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        pageUrl: "https://tokoroa.org.nz/book?step=review",
+      }),
+      select: { id: true },
+    });
+
+    expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pageUrl: "https://tokoroa.org.nz/book?step=review",
+      })
+    );
+  });
+
+  it("rejects external page URLs", async () => {
+    const req = new NextRequest("https://tokoroa.org.nz/api/issue-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pageUrl: "https://evil.example/phish",
+        description: "This should be rejected because it points outside the app origin.",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(mockedIssueReportCreate).not.toHaveBeenCalled();
+    expect(mockedSendAdminIssueReportAlert).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid screenshot payloads", async () => {
+    const req = new NextRequest("http://localhost:3000/api/issue-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pageUrl: "http://localhost:3000/book",
         description: "The screenshot upload should be rejected when the payload is malformed.",
         screenshotDataUrl: "not-a-valid-data-url",
       }),

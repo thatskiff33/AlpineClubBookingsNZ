@@ -704,41 +704,6 @@ export async function register() {
 
     logger.info({ job: "email-retry" }, "Scheduled email retry (every 30 minutes)");
 
-    // N-12: Cron job - Post-stay feedback requests (daily at 10:00 AM NZST)
-    let isFeedbackRequestRunning = false;
-    cron.default.schedule("0 10 * * *", async () => {
-      if (isFeedbackRequestRunning) {
-        logger.info({ job: "feedback-requests" }, "Already running, skipping");
-        return;
-      }
-      isFeedbackRequestRunning = true;
-      const startedAt = new Date();
-      logger.info({ job: "feedback-requests" }, "Sending post-stay feedback requests");
-
-      const checkInId = Sentry.captureCheckIn(
-        { monitorSlug: "feedback-requests", status: "in_progress" },
-        { schedule: { type: "crontab", value: "0 10 * * *" }, checkinMargin: 10, maxRuntime: 10 }
-      );
-
-      try {
-        const { sendFeedbackRequests } = await import("./lib/cron-feedback-requests");
-        const result = await sendFeedbackRequests();
-        logger.info({ job: "feedback-requests", ...result }, "Feedback requests complete");
-        await recordCronRun("feedback-requests", startedAt, "SUCCESS", result);
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "feedback-requests", status: "ok" });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error({ err, job: "feedback-requests" }, "Error in feedback requests");
-        Sentry.captureException(err);
-        await recordCronRun("feedback-requests", startedAt, "FAILURE", undefined, message);
-        Sentry.captureCheckIn({ checkInId, monitorSlug: "feedback-requests", status: "error" });
-      } finally {
-        isFeedbackRequestRunning = false;
-      }
-    }, { timezone: "Pacific/Auckland" });
-
-    logger.info({ job: "feedback-requests" }, "Scheduled post-stay feedback requests (daily at 10:00 AM NZST)");
-
     // Cron job - Complete bookings (daily at 1:00 AM NZST)
     // Transitions PAID bookings to COMPLETED once check-in date has passed
     let isCompleteBookingsRunning = false;

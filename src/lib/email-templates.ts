@@ -3,10 +3,13 @@
  * All templates use inline CSS for maximum email client compatibility.
  */
 
+import { getAppBaseUrl, sanitizeEmailHref } from "./app-url";
 import { LODGE_CAPACITY } from "./capacity";
+import { SUPPORT_EMAIL } from "./email-sender";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "./member-setup-invite";
+import { formatNZDate, formatNZDateTime } from "./nzst-date";
 
-const BASE_URL = process.env.NEXTAUTH_URL || "http://localhost:3000";
+const BASE_URL = getAppBaseUrl();
 
 /** Escape HTML special characters to prevent injection in email templates. */
 export function escapeHtml(str: string): string {
@@ -82,12 +85,34 @@ function layout(content: string): string {
 </html>`;
 }
 
-function button(text: string, url: string): string {
+function supportEmailLink(): string {
+  const address = escapeHtml(SUPPORT_EMAIL);
+  return `<a href="mailto:${address}" style="color: ${BRAND_CHARCOAL}; font-weight: 600; text-decoration: none;">${address}</a>`;
+}
+
+function supportContactMuted(): string {
+  return muted(`Tokoroa Alpine Club — ${supportEmailLink()}`);
+}
+
+function supportContactSentence(prefix: string): string {
+  return muted(`${prefix}${supportEmailLink()}.`);
+}
+
+function button(
+  text: string,
+  url: string,
+  options?: { sameOrigin?: boolean }
+): string {
+  const safeUrl = sanitizeEmailHref(url, {
+    baseUrl: BASE_URL,
+    sameOrigin: options?.sameOrigin,
+  });
+
   return `
 <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 24px 0;">
   <tr>
     <td style="background-color: ${BRAND_COLOR}; border-radius: 6px;">
-      <a href="${url}" target="_blank" style="display: inline-block; padding: 12px 28px; color: ${BRAND_CHARCOAL}; text-decoration: none; font-weight: 700; font-size: 14px;">
+      <a href="${escapeHtml(safeUrl)}" target="_blank" style="display: inline-block; padding: 12px 28px; color: ${BRAND_CHARCOAL}; text-decoration: none; font-weight: 700; font-size: 14px;">
         ${text}
       </a>
     </td>
@@ -120,11 +145,18 @@ function paragraph(text: string): string {
   return `<p style="margin: 0 0 12px 0; color: ${TEXT_COLOR}; font-size: 15px; line-height: 1.6;">${text}</p>`;
 }
 
+function multilineBlock(text: string): string {
+  return `<div style="margin: 0 0 12px 0; color: ${TEXT_COLOR}; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">${text}</div>`;
+}
+
 function muted(text: string): string {
   return `<p style="margin: 0 0 8px 0; color: ${TEXT_MUTED}; font-size: 13px; line-height: 1.5;">${text}</p>`;
 }
 
-function alertBox(text: string, type: "info" | "warning" | "success" = "info"): string {
+function alertBox(
+  text: string,
+  type: "info" | "warning" | "success" = "info"
+): string {
   const colors = {
     info: { bg: "#fff7d6", border: BRAND_COLOR, text: BRAND_DEEP },
     warning: { bg: "#fef3c7", border: "#fcd34d", text: "#92400e" },
@@ -133,15 +165,11 @@ function alertBox(text: string, type: "info" | "warning" | "success" = "info"): 
   const c = colors[type];
   return `
 <div style="background-color: ${c.bg}; border: 1px solid ${c.border}; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
-  <p style="margin: 0; color: ${c.text}; font-size: 14px; font-weight: 600;">${text}</p>
+  <p style="margin: 0; color: ${c.text}; font-size: 14px; font-weight: 600; white-space: pre-wrap;">${text}</p>
 </div>`;
 }
 
 // ---- Exported template functions ----
-
-function formatNZDate(date: Date): string {
-  return date.toLocaleDateString("en-NZ", { dateStyle: "medium" });
-}
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
@@ -248,9 +276,9 @@ export function bookingPendingTemplate(
       { label: "Check-in", value: formatNZDate(checkIn) },
       { label: "Check-out", value: formatNZDate(checkOut) },
       { label: "Guests", value: String(guestCount) },
-      { label: "Hold Until", value: formatNZDate(holdUntil) },
+      { label: "Hold Until", value: formatNZDateTime(holdUntil) },
     ])}
-    ${alertBox("Your booking includes non-member guests and will be held as pending until " + formatNZDate(holdUntil) + ".", "warning")}
+    ${alertBox("Your booking includes non-member guests and will be held as pending until " + formatNZDateTime(holdUntil) + ".", "warning")}
     ${paragraph("During this time, club members have priority. If the lodge fills up with member bookings, your booking may be bumped. <strong>Your card will only be charged when the booking is confirmed.</strong>")}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
@@ -366,7 +394,7 @@ export function nominationRequestTemplate(params: {
     ${paragraph("Please review the application and confirm whether you agree to nominate this person for membership.")}
     ${alertBox("You will need to sign in before you can confirm the nomination.", "info")}
     ${button("Review Application", params.reviewUrl)}
-    ${muted("This link expires on " + escapeHtml(formatNZDate(params.expiresAt)) + ".")}
+    ${muted("This link expires on " + escapeHtml(formatNZDateTime(params.expiresAt)) + ".")}
   `);
 }
 
@@ -545,7 +573,7 @@ export function adminPendingDeadlineTemplate(bookings: Array<{
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${escapeHtml(b.memberName)}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDate(b.checkIn)} – ${formatNZDate(b.checkOut)}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${b.guestCount}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDate(b.deadline)}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDateTime(b.deadline)}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${b.hoursRemaining <= 24 ? "#dc2626" : TEXT_COLOR}; font-weight: ${b.hoursRemaining <= 24 ? "700" : "400"};">${Math.round(b.hoursRemaining)}h</td>
     </tr>`
     )
@@ -701,28 +729,6 @@ export function adminCapacityWarningTemplate(days: Array<{
       ${tableRowsHtml}
     </table>
     ${button("View Bookings", BASE_URL + "/admin/bookings")}
-  `);
-}
-
-// ---- N-13: Admin Daily Digest ----
-
-// ---- N-12: Post-Stay Feedback Request ----
-
-export function postStayFeedbackTemplate(
-  firstName: string,
-  checkIn: Date,
-  checkOut: Date
-): string {
-  return layout(`
-    ${heading("How Was Your Stay?")}
-    ${paragraph("Hi " + escapeHtml(firstName) + ", we hope you enjoyed your time at the Tokoroa Alpine Club Lodge!")}
-    ${infoTable([
-      { label: "Check-in", value: formatNZDate(checkIn) },
-      { label: "Check-out", value: formatNZDate(checkOut) },
-    ])}
-    ${paragraph("We'd love to hear your feedback. Your input helps us improve the lodge experience for all members.")}
-    ${button("Share Your Feedback", BASE_URL + "/feedback")}
-    ${muted("Thank you for staying with us at the Tokoroa Alpine Club Lodge.")}
   `);
 }
 
@@ -1035,7 +1041,7 @@ export function accountDeletionApprovedTemplate(firstName: string): string {
     ${paragraph("We have processed your account deletion request. Your personal data has been anonymised in accordance with our Privacy Policy.")}
     ${alertBox("Your account is now deactivated and you will no longer be able to log in. Booking history has been retained for financial and audit purposes with your personal details removed.", "info")}
     ${paragraph("If you have any questions, please contact the club.")}
-    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+    ${supportContactMuted()}
   `);
 }
 
@@ -1065,7 +1071,7 @@ export function familyGroupInviteAcceptedTemplate(
     ${heading("Invitation Accepted")}
     ${paragraph("<strong>" + escapeHtml(inviteeName) + "</strong> has accepted your invitation and joined <strong>" + escapeHtml(groupName) + "</strong>.")}
     ${alertBox("Your family group has been updated.", "success")}
-    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+    ${supportContactMuted()}
   `);
 }
 
@@ -1080,7 +1086,7 @@ export function childRequestSubmittedTemplate(
     ${paragraph("Hi " + escapeHtml(parentName) + ",")}
     ${paragraph("Your request to add <strong>" + escapeHtml(childName) + "</strong> to the family group <strong>" + escapeHtml(groupName) + "</strong> has been submitted.")}
     ${alertBox("An administrator will review your request and link the member to your family group. You'll be notified once it's been processed.", "info")}
-    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+    ${supportContactMuted()}
   `);
 }
 
@@ -1095,7 +1101,7 @@ export function childRequestApprovedTemplate(
     ${paragraph("Hi " + escapeHtml(parentName) + ",")}
     ${paragraph("<strong>" + escapeHtml(childName) + "</strong> has been added to your family group <strong>" + escapeHtml(groupName) + "</strong>.")}
     ${alertBox("You can now include them when making bookings.", "success")}
-    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+    ${supportContactMuted()}
   `);
 }
 
@@ -1114,7 +1120,7 @@ export function childRequestRejectedTemplate(
     ${paragraph("Your request to add <strong>" + escapeHtml(childName) + "</strong> to your family group was not approved.")}
     ${reasonHtml}
     ${paragraph("If you have questions, please contact the club.")}
-    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+    ${supportContactMuted()}
   `);
 }
 
@@ -1130,9 +1136,9 @@ export function adminFamilyGroupRequestTemplate(data: {
     ${paragraph("A new <strong>" + escapeHtml(data.requestType) + "</strong> request has been submitted.")}
     ${paragraph("<strong>Requester:</strong> " + escapeHtml(data.requesterName))}
     ${paragraph("<strong>Group:</strong> " + escapeHtml(data.groupName))}
-    ${paragraph(escapeHtml(data.details))}
+    ${multilineBlock(escapeHtml(data.details))}
     ${button("Review Requests", (process.env.NEXTAUTH_URL || "http://localhost:3000") + "/admin/family-groups")}
-    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+    ${supportContactMuted()}
   `);
 }
 
@@ -1146,7 +1152,7 @@ export function joinRequestConfirmationTemplate(
     ${paragraph("Hi " + escapeHtml(requesterName) + ",")}
     ${paragraph("Your request to join the family group <strong>" + escapeHtml(groupName) + "</strong> has been submitted.")}
     ${alertBox("An administrator will review your request. You'll be notified once it's been processed.", "info")}
-    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+    ${supportContactMuted()}
   `);
 }
 
@@ -1176,7 +1182,7 @@ export function adminMembershipApplicationPendingTemplate(data: {
     ])}
     ${dependentSummary}
     ${button("Review Application", data.reviewUrl)}
-    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+    ${supportContactMuted()}
   `);
 }
 
@@ -1214,7 +1220,7 @@ export function membershipApplicationRejectedTemplate(
     ${paragraph("The committee has decided not to approve the application at this time.")}
     ${notes}
     ${paragraph("If you would like more information, please contact the club directly.")}
-    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+    ${supportContactMuted()}
   `);
 }
 
@@ -1231,7 +1237,7 @@ export function ageUpInvitationTemplate(firstName: string, resetUrl: string): st
     )}
     ${button("Set Up My Password", resetUrl)}
     ${alertBox("Once you set your password, you can log in at any time to book stays, view your bookings, and manage your profile.", "info")}
-    ${muted("If you have any questions, contact the club at support@tokoroa.org.nz.")}
+    ${supportContactSentence("If you have any questions, contact the club at ")}
   `);
 }
 
@@ -1249,7 +1255,7 @@ export function accountDeletionRejectedTemplate(
     ${paragraph("Your account deletion request has been reviewed and was not approved at this time.")}
     ${noteHtml}
     ${paragraph("If you have questions about this decision, please contact the club directly.")}
-    ${muted("Tokoroa Alpine Club — support@tokoroa.org.nz")}
+    ${supportContactMuted()}
   `);
 }
 
@@ -1293,7 +1299,7 @@ export function waitlistOfferTemplate(
       { label: "Check-out", value: formatNZDate(checkOut) },
       { label: "Guests", value: String(guestCount) },
     ])}
-    ${alertBox("This offer expires on " + expiresAt.toLocaleString("en-NZ", { dateStyle: "medium", timeStyle: "short", timeZone: "Pacific/Auckland" }) + ". If you don't confirm in time, the spot will be offered to the next person in line.", "warning")}
+    ${alertBox("This offer expires on " + formatNZDateTime(expiresAt) + ". If you don't confirm in time, the spot will be offered to the next person in line.", "warning")}
     ${button("Confirm Booking", BASE_URL + "/bookings/" + bookingId)}
     ${muted("If you no longer need this booking, you can decline from your booking page.")}
   `);
@@ -1352,7 +1358,7 @@ export function setupIntentFailedTemplate(data: {
     ${alertBox("We were unable to save your card details for your upcoming booking (" + dates + "). Your booking is still held, but we won't be able to charge you automatically when it's confirmed.", "warning")}
     ${paragraph("Please log in and update your payment method to avoid your booking being cancelled.")}
     ${button("Update Payment Method", (process.env.NEXTAUTH_URL || "http://localhost:3000") + "/bookings")}
-    ${muted("If you need help, contact the club at support@tokoroa.org.nz")}
+    ${supportContactSentence("If you need help, contact the club at ")}
   `);
 }
 
@@ -1402,7 +1408,7 @@ export function adminIssueReportTemplate(data: {
       { label: "Screenshot", value: data.hasScreenshot ? "Attached" : "Not included" },
     ])}
     ${alertBox(escapeHtml(data.description), "info")}
-    ${button("Open Reported Page", data.pageUrl)}
+    ${button("Open Reported Page", data.pageUrl, { sameOrigin: true })}
   `);
 }
 
@@ -1428,7 +1434,7 @@ export function refundRequestResolvedTemplate(data: {
           "warning"
         )
     }
-    ${data.adminNotes ? paragraph("<strong>Notes:</strong> " + escapeHtml(data.adminNotes)) : ""}
-    ${muted("If you have questions, contact the club at support@tokoroa.org.nz")}
+    ${data.adminNotes ? multilineBlock("<strong>Notes:</strong>\n" + escapeHtml(data.adminNotes)) : ""}
+    ${supportContactSentence("If you have questions, contact the club at ")}
   `);
 }
