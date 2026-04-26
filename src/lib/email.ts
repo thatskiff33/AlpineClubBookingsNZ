@@ -86,8 +86,15 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "hut-leader-assignment",
 ]);
 
+// Failure-alert emails should also skip HTML retention so a broken admin
+// mailbox or SMTP path cannot recurse into retrying the retry-failure alert.
+const NON_RETRYABLE_EMAIL_LOG_TEMPLATES = new Set([
+  ...SENSITIVE_EMAIL_LOG_TEMPLATES,
+  "admin-email-failure",
+]);
+
 function shouldPersistEmailHtml(templateName: string): boolean {
-  return !SENSITIVE_EMAIL_LOG_TEMPLATES.has(templateName);
+  return !NON_RETRYABLE_EMAIL_LOG_TEMPLATES.has(templateName);
 }
 
 export async function sendEmail({

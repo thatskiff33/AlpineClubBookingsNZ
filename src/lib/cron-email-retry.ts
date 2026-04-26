@@ -4,6 +4,7 @@ import { EMAIL_FROM, formatEmailFromAddress } from "./email-sender";
 import logger from "@/lib/logger";
 
 const MAX_ATTEMPTS = 3;
+const RETRY_FAILURE_ALERT_TEMPLATE = "admin-email-failure";
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "email-smtp.ap-southeast-2.amazonaws.com",
@@ -98,7 +99,10 @@ export async function retryFailedEmails(): Promise<{ retried: number; succeeded:
       });
 
       // Alert admin when email exhausts retries
-      if (newAttempts >= MAX_ATTEMPTS) {
+      if (
+        newAttempts >= MAX_ATTEMPTS &&
+        emailLog.templateName !== RETRY_FAILURE_ALERT_TEMPLATE
+      ) {
         try {
           const { sendEmail } = await import("./email");
           const admins = await prisma.member.findMany({
@@ -110,7 +114,7 @@ export async function retryFailedEmails(): Promise<{ retried: number; succeeded:
               to: admin.email,
               subject: "Email delivery permanently failed",
               html: `<p>Email to ${emailLog.to} (template: ${emailLog.templateName}) has failed after ${newAttempts} attempts and will not be retried.</p>`,
-              templateName: "admin-email-failure",
+              templateName: RETRY_FAILURE_ALERT_TEMPLATE,
             }).catch(() => {}); // Don't let alert failure break the cron
           }
         } catch {

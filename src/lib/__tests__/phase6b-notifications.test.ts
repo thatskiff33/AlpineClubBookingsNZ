@@ -108,6 +108,31 @@ describe("N-08: shouldSendEmail", () => {
   });
 });
 
+describe("sendEmail logging safeguards", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  it("does not persist retry HTML for admin-email-failure alerts", async () => {
+    const { sendEmail } = await import("../email");
+
+    await sendEmail({
+      to: "admin@example.com",
+      subject: "Email delivery permanently failed",
+      html: "<p>Alert body</p>",
+      templateName: "admin-email-failure",
+    });
+
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        templateName: "admin-email-failure",
+        htmlBody: null,
+      }),
+    });
+  });
+});
+
 // ============================================================================
 // N-03: Capacity warnings cron
 // ============================================================================
@@ -279,6 +304,41 @@ describe("N-11: retryFailedEmails", () => {
         errorMessage: "SMTP error",
       }),
     });
+
+    (process.env as Record<string, string>).NODE_ENV = origEnv!;
+  });
+
+  it("does not alert on failed admin-email-failure retries", async () => {
+    mockPrisma.emailLog.findMany.mockResolvedValue([
+      {
+        id: "log-fail-3",
+        to: "secretary@tokoroa.org.nz",
+        subject: "Email delivery permanently failed",
+        templateName: "admin-email-failure",
+        htmlBody: "<p>Alert</p>",
+        attempts: 2,
+        status: "FAILED",
+      },
+    ]);
+    mockTransporter.sendMail.mockRejectedValueOnce(new Error("SMTP error"));
+    mockPrisma.emailLog.update.mockResolvedValue({});
+
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV = "production";
+
+    const { retryFailedEmails } = await import("../cron-email-retry");
+    const result = await retryFailedEmails();
+
+    expect(result).toEqual({ retried: 1, succeeded: 0, failed: 1 });
+    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
+      where: { id: "log-fail-3" },
+      data: expect.objectContaining({
+        attempts: 3,
+        errorMessage: "SMTP error",
+      }),
+    });
+    expect(mockPrisma.member.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.emailLog.create).not.toHaveBeenCalled();
 
     (process.env as Record<string, string>).NODE_ENV = origEnv!;
   });
