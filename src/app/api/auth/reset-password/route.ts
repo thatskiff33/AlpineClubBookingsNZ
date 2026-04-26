@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { hashActionToken } from "@/lib/action-tokens";
 
 const resetPasswordSchema = z.object({
   token: z.string().min(1, "Token is required"),
@@ -28,7 +29,7 @@ export async function POST(req: NextRequest) {
     const { token, password } = parsed.data;
 
     const resetToken = await prisma.passwordResetToken.findUnique({
-      where: { token },
+      where: { tokenHash: hashActionToken(token) },
       include: { member: true },
     });
 

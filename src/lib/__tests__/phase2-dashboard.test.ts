@@ -15,6 +15,10 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+const mockRequireActiveSessionUser = vi.fn(async () => null);
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+}));
 
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -67,8 +71,13 @@ describe("PUT /api/bookings/[id]/notes", () => {
   });
 
   it("returns 403 for deactivated members even if they own the booking", async () => {
+    mockRequireActiveSessionUser.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Account is deactivated" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
-    mockedMember.count.mockResolvedValue(0 as never);
 
     const res = await putNotes(makeRequest("b1", { notes: "hi" }), makeParams("b1"));
     expect(res.status).toBe(403);

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { hashActionToken } from "@/lib/action-tokens";
 
 // ---------------------------------------------------------------------------
 // Mock Prisma
@@ -76,6 +77,11 @@ function makeTokenParams(token = "test-token-abc") {
 describe("F8: Hut Leader Role Assignment", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "session-member",
+      active: true,
+      forcePasswordChange: false,
+    });
   });
 
   describe("isHutLeader helper", () => {
@@ -267,7 +273,13 @@ describe("F8: Hut Leader Role Assignment", () => {
         user: { id: "admin1", role: "ADMIN", email: "support@tokoroa.org.nz" },
       });
 
-      mockPrisma.member.findUnique.mockResolvedValue({ id: "m1", active: false });
+      mockPrisma.member.findUnique
+        .mockResolvedValueOnce({
+          id: "admin1",
+          active: true,
+          forcePasswordChange: false,
+        })
+        .mockResolvedValueOnce({ id: "m1", active: false });
 
       const { POST } = await import(
         "@/app/api/admin/hut-leaders/route"
@@ -596,6 +608,7 @@ describe("F10: Per-Guest Email Link for Chore Access", () => {
 
       const call = mockPrisma.guestChoreToken.create.mock.calls[0][0];
       expect(call.data.bookingGuestId).toBe("guest-1");
+      expect(call.data.tokenHash).toMatch(/^[a-f0-9]{64}$/);
 
       // Check expiry is ~48h from now
       const expiresAt = call.data.expiresAt as Date;
@@ -612,6 +625,11 @@ describe("F10: Per-Guest Email Link for Chore Access", () => {
 
       const { validateGuestChoreToken } = await import("@/lib/guest-chore-token");
       const result = await validateGuestChoreToken("bad-token");
+      expect(mockPrisma.guestChoreToken.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { tokenHash: hashActionToken("bad-token") },
+        })
+      );
       expect(result).toBeNull();
     });
 

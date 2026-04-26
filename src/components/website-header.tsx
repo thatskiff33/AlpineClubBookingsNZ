@@ -13,6 +13,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { buildBookingLoginPath } from "@/lib/auth-redirect";
 import { cn } from "@/lib/utils";
 
 interface WebsiteHeaderProps {
@@ -37,9 +38,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
     return pathname.startsWith(href);
   };
 
-  const bookingsHref = isAuthenticated
-    ? "/book"
-    : "https://tokoroa-alpine-club.checkfront.com/";
+  const bookingsHref = isAuthenticated ? "/book" : buildBookingLoginPath();
   const dashboardHref = isAuthenticated ? "/dashboard" : "/login";
 
   return (
@@ -105,7 +104,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                 <Link href="/login">Log In</Link>
               </Button>
               <Button size="sm" asChild className="shadow-lg shadow-brand-gold/20">
-                <a href={bookingsHref} target="_blank" rel="noopener noreferrer">Book Now</a>
+                <Link href={bookingsHref}>Book Now</Link>
               </Button>
             </>
           )}
@@ -189,9 +188,9 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
                     </Link>
                   </Button>
                   <Button size="sm" asChild className="w-full shadow-lg shadow-brand-gold/20">
-                    <a href={bookingsHref} target="_blank" rel="noopener noreferrer" onClick={() => setMobileOpen(false)}>
+                    <Link href={bookingsHref} onClick={() => setMobileOpen(false)}>
                       Book Now
-                    </a>
+                    </Link>
                   </Button>
                 </>
               )}

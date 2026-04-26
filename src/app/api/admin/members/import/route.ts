@@ -13,6 +13,7 @@ import { applyRateLimit } from "@/lib/rate-limit";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
+import { issueActionToken } from "@/lib/action-tokens";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
 
 const importRowSchema = z.object({
@@ -210,10 +211,10 @@ export async function POST(req: NextRequest) {
 
       if (sendInvites) {
         try {
-          const token = randomBytes(32).toString("hex");
+          const { token, tokenHash } = issueActionToken();
           const expiresAt = getMemberSetupInviteExpiryDate();
           await prisma.passwordResetToken.create({
-            data: { token, memberId: member.id, expiresAt },
+            data: { tokenHash, memberId: member.id, expiresAt },
           });
           await sendMemberSetupInviteEmail(
             member.email,

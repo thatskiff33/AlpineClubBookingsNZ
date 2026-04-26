@@ -11,6 +11,10 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+const mockRequireActiveSessionUser = vi.fn(async () => null);
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+}));
 
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -237,8 +241,13 @@ describe("Admin Audit Log API", () => {
   });
 
   it("returns 403 for deactivated admin sessions", async () => {
+    mockRequireActiveSessionUser.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Account is deactivated" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
-    vi.mocked(prisma.member.count).mockResolvedValue(0 as any);
 
     const req = new NextRequest("http://localhost/api/admin/audit-log");
     const res = await getAuditLog(req);

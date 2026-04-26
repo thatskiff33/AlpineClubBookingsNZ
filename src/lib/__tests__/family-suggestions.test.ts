@@ -19,6 +19,10 @@ vi.mock("../prisma", () => ({
 vi.mock("../logger", () => ({
   default: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
+const mockRequireActiveSessionUser = vi.fn(async () => null);
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+}));
 
 import { prisma } from "../prisma";
 import { suggestFamilyGroups, createFamilyGroupFromSuggestion } from "../family-suggestions";

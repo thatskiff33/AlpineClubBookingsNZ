@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomBytes } from "crypto";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -7,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { issueActionToken } from "@/lib/action-tokens";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
 
 const sendSetupInviteSchema = z.object({
@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
       await Promise.all(
         batch.map(async (member) => {
           try {
-            const token = randomBytes(32).toString("hex");
+            const { token, tokenHash } = issueActionToken();
 
             await prisma.passwordResetToken.deleteMany({
               where: { memberId: member.id },
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
 
             await prisma.passwordResetToken.create({
               data: {
-                token,
+                tokenHash,
                 memberId: member.id,
                 expiresAt: getMemberSetupInviteExpiryDate(),
               },

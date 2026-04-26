@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomBytes } from "crypto";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { issueActionToken } from "@/lib/action-tokens";
 import { SELF_SERVICE_PASSWORD_RESET_TTL_MS } from "@/lib/password-reset";
 
 const forgotPasswordSchema = z.object({
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     });
 
     if (member && member.active) {
-      const token = randomBytes(32).toString("hex");
+      const { token, tokenHash } = issueActionToken();
       const expiresAt = new Date(Date.now() + SELF_SERVICE_PASSWORD_RESET_TTL_MS);
 
       // Invalidate any existing reset tokens for this member
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
 
       await prisma.passwordResetToken.create({
         data: {
-          token,
+          tokenHash,
           memberId: member.id,
           expiresAt,
         },

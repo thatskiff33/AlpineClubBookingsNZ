@@ -67,7 +67,7 @@ describe("createEmailVerificationToken", () => {
     expect(mockPrisma.emailVerificationToken.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         memberId: "member-1",
-        token: expect.stringMatching(/^[a-f0-9]{64}$/),
+        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
         expiresAt: expect.any(Date),
       }),
     });
@@ -109,7 +109,7 @@ describe("createEmailChangeToken", () => {
       data: expect.objectContaining({
         memberId: "member-1",
         newEmail: "new@example.com",
-        token: expect.stringMatching(/^[a-f0-9]{64}$/),
+        tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
         expiresAt: expect.any(Date),
       }),
     });

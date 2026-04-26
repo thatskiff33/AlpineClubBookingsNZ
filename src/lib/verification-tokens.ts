@@ -1,11 +1,11 @@
-import { randomBytes } from "crypto";
 import { prisma } from "./prisma";
+import { issueActionToken } from "./action-tokens";
 
 /**
  * Generate a cryptographically random 64-character hex token.
  */
 export function generateToken(): string {
-  return randomBytes(32).toString("hex");
+  return issueActionToken().token;
 }
 
 /**
@@ -16,12 +16,12 @@ export async function createEmailVerificationToken(memberId: string): Promise<st
   // Delete existing tokens for this member
   await prisma.emailVerificationToken.deleteMany({ where: { memberId } });
 
-  const token = generateToken();
+  const { token, tokenHash } = issueActionToken();
   // Email verification: 48h (generous — users may not check email same day)
   const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000); // 48 hours
 
   await prisma.emailVerificationToken.create({
-    data: { memberId, token, expiresAt },
+    data: { memberId, tokenHash, expiresAt },
   });
 
   return token;
@@ -35,12 +35,12 @@ export async function createEmailChangeToken(memberId: string, newEmail: string)
   // Delete existing tokens for this member
   await prisma.emailChangeToken.deleteMany({ where: { memberId } });
 
-  const token = generateToken();
+  const { token, tokenHash } = issueActionToken();
   // Email change: 2h (moderate — user initiated, but allow for email delay)
   const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours
 
   await prisma.emailChangeToken.create({
-    data: { memberId, newEmail, token, expiresAt },
+    data: { memberId, newEmail, tokenHash, expiresAt },
   });
 
   return token;

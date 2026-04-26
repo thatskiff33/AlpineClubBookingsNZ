@@ -1,4 +1,5 @@
 const DEFAULT_POST_LOGIN_PATH = "/dashboard";
+const DEFAULT_BOOKING_PATH = "/book";
 
 export function resolvePostLoginPath(
   candidate?: string | null,
@@ -21,4 +22,8 @@ export function buildLoginPath(callbackPath?: string | null) {
   });
 
   return `/login?${params.toString()}`;
+}
+
+export function buildBookingLoginPath() {
+  return buildLoginPath(DEFAULT_BOOKING_PATH);
 }

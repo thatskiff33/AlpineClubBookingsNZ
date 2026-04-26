@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomBytes } from "crypto";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -7,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { sendAdminPasswordResetEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { issueActionToken } from "@/lib/action-tokens";
 import {
   ADMIN_PASSWORD_RESET_EXPIRY_WINDOWS,
   DEFAULT_ADMIN_PASSWORD_RESET_EXPIRY_WINDOW,
@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
       await Promise.all(
         batch.map(async (member) => {
           try {
-            const token = randomBytes(32).toString("hex");
+            const { token, tokenHash } = issueActionToken();
             const expiresAt = getAdminPasswordResetExpiryDate(expiryWindow);
 
             await prisma.passwordResetToken.deleteMany({
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
 
             await prisma.passwordResetToken.create({
               data: {
-                token,
+                tokenHash,
                 memberId: member.id,
                 expiresAt,
               },

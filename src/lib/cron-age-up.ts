@@ -1,9 +1,9 @@
-import { randomBytes } from "crypto";
 import { prisma } from "./prisma";
 import { computeAge, getSeasonStartDate } from "./age-tier";
 import { getSeasonYear } from "./utils";
 import { sendAgeUpInvitationEmail } from "./email";
 import logger from "./logger";
+import { issueActionToken } from "./action-tokens";
 
 /**
  * Daily cron: detect members who have turned 18 (at the season reference date)
@@ -99,12 +99,12 @@ export async function checkAgeUpMembers(): Promise<{
       });
 
       // Create password reset token (7-day expiry for age-up — generous window)
-      const token = randomBytes(32).toString("hex");
+      const { token, tokenHash } = issueActionToken();
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
       await prisma.passwordResetToken.create({
         data: {
-          token,
+          tokenHash,
           memberId: member.id,
           expiresAt,
         },

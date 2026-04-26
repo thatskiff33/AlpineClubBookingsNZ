@@ -245,7 +245,7 @@ model Member {
 
 model PasswordResetToken {
   id        String   @id @default(cuid())
-  token     String   @unique
+  tokenHash String   @unique
   memberId  String
   expiresAt DateTime
   used      Boolean  @default(false)
@@ -260,13 +260,13 @@ model PasswordResetToken {
 model EmailVerificationToken {
   id        String   @id @default(cuid())
   memberId  String
-  token     String   @unique
+  tokenHash String   @unique
   expiresAt DateTime
   createdAt DateTime @default(now())
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
-  @@index([token])
+  @@index([tokenHash])
   @@index([memberId])
 }
 
@@ -274,13 +274,13 @@ model EmailChangeToken {
   id        String   @id @default(cuid())
   memberId  String
   newEmail  String
-  token     String   @unique
+  tokenHash String   @unique
   expiresAt DateTime
   createdAt DateTime @default(now())
 
   member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 
-  @@index([token])
+  @@index([tokenHash])
   @@index([memberId])
 }
 
@@ -1197,7 +1197,7 @@ model HutLeaderAssignment {
 
 model GuestChoreToken {
   id             String   @id @default(cuid())
-  token          String   @unique
+  tokenHash      String   @unique
   bookingGuestId String
   date           DateTime @db.Date
   expiresAt      DateTime
@@ -1205,7 +1205,7 @@ model GuestChoreToken {
 
   bookingGuest BookingGuest @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
 
-  @@index([token])
+  @@index([tokenHash])
   @@index([bookingGuestId])
 }
 

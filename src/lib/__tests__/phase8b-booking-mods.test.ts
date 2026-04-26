@@ -194,6 +194,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockFindUnique.mockResolvedValue({
       id: "m1",
       active: true,
+      forcePasswordChange: false,
       email: "alice@test.com",
       firstName: "Alice",
     } as any);
@@ -237,7 +238,11 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
 
   it("returns 403 for deactivated members before modifying dates", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
-    mockMemberCount.mockResolvedValueOnce(0);
+    mockFindUnique.mockResolvedValueOnce({
+      id: "m1",
+      active: false,
+      forcePasswordChange: false,
+    } as any);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
       method: "PUT",

@@ -17,6 +17,7 @@ const mockPrisma = {
   },
   member: {
     count: vi.fn(),
+    findUnique: vi.fn(),
   },
 };
 
@@ -50,6 +51,11 @@ describe("#24: Kiosk Access Tiers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "session-member",
+      active: true,
+      forcePasswordChange: false,
+    });
   });
 
   describe("getKioskAccessTier", () => {
@@ -225,6 +231,11 @@ describe("#24: Lodge Auth Tier-Based Restrictions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "session-member",
+      active: true,
+      forcePasswordChange: false,
+    });
   });
 
   describe("checkLodgeAuth", () => {
@@ -318,6 +329,11 @@ describe("#31: Expected Arrival Time", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "session-member",
+      active: true,
+      forcePasswordChange: false,
+    });
   });
 
   describe("PUT /api/bookings/[id]/arrival-time", () => {
@@ -492,7 +508,11 @@ describe("#31: Expected Arrival Time", () => {
       mockAuth.mockResolvedValue({
         user: { id: "member-1", role: "MEMBER" },
       });
-      mockPrisma.member.count.mockResolvedValue(0);
+      mockPrisma.member.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        active: false,
+        forcePasswordChange: false,
+      });
 
       const { NextRequest } = await import("next/server");
       const { PUT } = await import(
@@ -666,6 +686,11 @@ describe("#24: Lodge Access API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "session-member",
+      active: true,
+      forcePasswordChange: false,
+    });
   });
 
   it("returns access info for authenticated user", async () => {
@@ -704,7 +729,11 @@ describe("#24: Lodge Access API", () => {
     mockAuth.mockResolvedValue({
       user: { id: "admin-1", role: "ADMIN" },
     });
-    mockPrisma.member.count.mockResolvedValue(0);
+    mockPrisma.member.findUnique.mockResolvedValueOnce({
+      id: "admin-1",
+      active: false,
+      forcePasswordChange: false,
+    });
 
     const { NextRequest } = await import("next/server");
     const { GET } = await import("@/app/api/lodge/access/route");

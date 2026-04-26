@@ -19,6 +19,10 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
+const mockRequireActiveSessionUser = vi.fn(async () => null);
+vi.mock("@/lib/session-guards", () => ({
+  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+}));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -219,8 +223,13 @@ describe("Profile API: structured phone and address fields", () => {
   });
 
   it("returns 403 for deactivated members", async () => {
+    mockRequireActiveSessionUser.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "Account is deactivated" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
     vi.mocked(auth).mockResolvedValue(memberSession);
-    vi.mocked(prisma.member.count).mockResolvedValueOnce(0);
 
     const res = await updateProfile(makeProfilePut(validProfileBody));
     expect(res.status).toBe(403);

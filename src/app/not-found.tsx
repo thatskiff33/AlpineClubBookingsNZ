@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { buildBookingLoginPath } from "@/lib/auth-redirect";
 
 export default function NotFound() {
   return (
@@ -19,7 +20,7 @@ export default function NotFound() {
             Go Home
           </Link>
           <Link
-            href="/book"
+            href={buildBookingLoginPath()}
             className="inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
           >
             Book a Stay

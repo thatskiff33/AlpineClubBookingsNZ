@@ -10,6 +10,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { prisma } from "./prisma";
 import { sendPasswordResetEmail } from "./email";
+import { issueActionToken } from "./action-tokens";
 import { AgeTier, CreditType, EntranceFeeCategory, Prisma } from "@prisma/client";
 import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
@@ -3210,14 +3211,14 @@ export async function importMembersFromXeroGroups(
 
         if (sendInvites) {
           try {
-            const token = randomBytes(32).toString("hex");
+            const { token, tokenHash } = issueActionToken();
             const expiresAt = new Date(
               Date.now() + 7 * 24 * 60 * 60 * 1000
             );
 
             await prisma.passwordResetToken.create({
               data: {
-                token,
+                tokenHash,
                 memberId: member.id,
                 expiresAt,
               },
@@ -4222,19 +4223,36 @@ interface CreateXeroRefundPaymentParams {
   createdByMemberId?: string;
 }
 
-export async function createXeroRefundPaymentForInvoice(
-  params: CreateXeroRefundPaymentParams
-): Promise<string> {
-  const { xero, tenantId } = await getAuthenticatedXeroClient();
-  const bankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
-  const payment = {
-    invoice: { invoiceID: params.invoiceId },
-    account: { code: bankCode },
+const REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON =
+  "Refund credit notes are settled via a credit-note payment instead of invoice allocation.";
+
+function buildRefundCreditNotePayment(params: {
+  paymentId: string;
+  creditNoteId: string;
+  refundAmountCents: number;
+  bankCode: string;
+}): XeroPayment {
+  return {
+    creditNote: { creditNoteID: params.creditNoteId },
+    account: { code: params.bankCode },
     amount: params.refundAmountCents / 100,
     date: formatDate(new Date()),
     reference: `Stripe Refund - Tokoroa Alpine Club payment ${params.paymentId.slice(0, 8)}`,
     isReconciled: false,
   };
+}
+
+export async function createXeroRefundPaymentForInvoice(
+  params: CreateXeroRefundPaymentParams
+): Promise<string> {
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const bankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+  const payment = buildRefundCreditNotePayment({
+    paymentId: params.paymentId,
+    creditNoteId: params.creditNoteId,
+    refundAmountCents: params.refundAmountCents,
+    bankCode,
+  });
   const idempotencyKey = buildXeroIdempotencyKey(
     "payment",
     params.paymentId,
@@ -4252,6 +4270,7 @@ export async function createXeroRefundPaymentForInvoice(
     correlationKey: idempotencyKey,
     requestPayload: {
       payments: [payment],
+      invoiceId: params.invoiceId,
       creditNoteId: params.creditNoteId,
     },
     createdByMemberId: params.createdByMemberId ?? null,
@@ -4283,14 +4302,14 @@ export async function createXeroRefundPaymentForInvoice(
       responsePayload: response.body,
       xeroObjectType: "PAYMENT",
       xeroObjectId: createdPayment.paymentID,
-      xeroObjectNumber: createdPayment.invoiceNumber ?? null,
+      xeroObjectNumber: createdPayment.creditNoteNumber ?? createdPayment.invoiceNumber ?? null,
       extraLinks: [
         {
           localModel: "Payment",
           localId: params.paymentId,
           xeroObjectType: "PAYMENT",
           xeroObjectId: createdPayment.paymentID,
-          xeroObjectNumber: createdPayment.invoiceNumber ?? null,
+          xeroObjectNumber: createdPayment.creditNoteNumber ?? createdPayment.invoiceNumber ?? null,
           role: "REFUND_PAYMENT",
           metadata: {
             creditNoteId: params.creditNoteId,
@@ -4639,36 +4658,65 @@ export async function createXeroCreditNote(
   }
   const originalInvoiceId = payment.xeroInvoiceId;
   const queuedOperationId = options?.syncOperationId ?? null;
+  const existingLink = payment.xeroRefundCreditNoteId
+    ? null
+    : await prisma.xeroObjectLink.findFirst({
+        where: {
+          localModel: "Payment",
+          localId: paymentId,
+          xeroObjectType: "CREDIT_NOTE",
+          role: "REFUND_CREDIT_NOTE",
+          active: true,
+        },
+        select: {
+          xeroObjectId: true,
+          xeroObjectNumber: true,
+        },
+      });
+  const existingCreditNoteId = payment.xeroRefundCreditNoteId ?? existingLink?.xeroObjectId ?? null;
+  const existingCreditNoteNumber = existingLink?.xeroObjectNumber ?? null;
 
   // Idempotency guard: skip if credit note already created for this payment
-  if (payment.xeroRefundCreditNoteId) {
+  if (existingCreditNoteId) {
+    if (!payment.xeroRefundCreditNoteId && existingLink?.xeroObjectId) {
+      await prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          xeroRefundCreditNoteId: existingLink.xeroObjectId,
+        },
+      });
+    }
+
     await upsertXeroObjectLink({
       localModel: "Payment",
       localId: paymentId,
       xeroObjectType: "CREDIT_NOTE",
-      xeroObjectId: payment.xeroRefundCreditNoteId,
+      xeroObjectId: existingCreditNoteId,
+      xeroObjectNumber: existingCreditNoteNumber,
       role: "REFUND_CREDIT_NOTE",
     });
     if (queuedOperationId) {
       await completeXeroSyncOperation(queuedOperationId, {
         responsePayload: {
-          existingCreditNoteId: payment.xeroRefundCreditNoteId,
+          existingCreditNoteId,
         },
         xeroObjectType: "CREDIT_NOTE",
-        xeroObjectId: payment.xeroRefundCreditNoteId,
+        xeroObjectId: existingCreditNoteId,
+        xeroObjectNumber: existingCreditNoteNumber,
         extraLinks: [
           {
             localModel: "Payment",
             localId: paymentId,
             xeroObjectType: "CREDIT_NOTE",
-            xeroObjectId: payment.xeroRefundCreditNoteId,
+            xeroObjectId: existingCreditNoteId,
+            xeroObjectNumber: existingCreditNoteNumber,
             role: "REFUND_CREDIT_NOTE",
           },
         ],
       });
     }
-    logger.info({ paymentId, creditNoteId: payment.xeroRefundCreditNoteId }, "Xero credit note already exists, skipping");
-    return payment.xeroRefundCreditNoteId;
+    logger.info({ paymentId, creditNoteId: existingCreditNoteId }, "Xero credit note already exists, skipping");
+    return existingCreditNoteId;
   }
 
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -4778,172 +4826,109 @@ export async function createXeroCreditNote(
       throw new Error("Failed to create Xero credit note");
     }
 
-    const allocationIdempotencyKey = buildXeroIdempotencyKey(
-      "payment",
-      paymentId,
-      "refund-credit-note-allocation",
-      refundAmountCents,
-      "v1"
-    );
+    // Save credit note ID immediately so follow-up retries repair the existing note instead
+    // of minting duplicates when downstream bookkeeping calls fail.
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { xeroRefundCreditNoteId: createdNote.creditNoteID },
+    });
+
+    let refundPaymentResponseBody:
+      | { paymentID?: string; invoiceNumber?: string; creditNoteNumber?: string; amount?: number }
+      | null = null;
+    let refundPaymentErr: unknown = null;
 
     try {
-      const allocationResponse = await callXeroApi(
+      const bankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
+      const refundPaymentIdempotencyKey = buildXeroIdempotencyKey(
+        "payment",
+        paymentId,
+        "refund-payment",
+        refundAmountCents,
+        "v1"
+      );
+      const refundPayment = buildRefundCreditNotePayment({
+        paymentId,
+        creditNoteId: createdNote.creditNoteID,
+        refundAmountCents,
+        bankCode,
+      });
+      const refundPaymentResponse = await callXeroApi(
         () =>
-          xero.accountingApi.createCreditNoteAllocation(
+          xero.accountingApi.createPayments(
             tenantId,
-            createdNote.creditNoteID!,
             {
-              allocations: [
-                {
-                  invoice: { invoiceID: originalInvoiceId },
-                  amount: refundAmountCents / 100,
-                  date: formatDate(new Date()),
-                },
-              ],
+              payments: [refundPayment],
             },
             undefined,
-            allocationIdempotencyKey
+            refundPaymentIdempotencyKey
           ),
         {
-          operation: "createCreditNoteAllocation",
-          resourceType: "ALLOCATION",
+          operation: "createPayments",
+          resourceType: "PAYMENT",
           workflow: "createXeroCreditNote",
-          context: `createCreditNoteAllocation(refund ${paymentId})`,
+          context: `createPayments(refund credit note ${paymentId})`,
         }
       );
-
-      // Save credit note ID to prevent duplicate creation once the core reconciliation steps succeeded
-      await prisma.payment.update({
-        where: { id: paymentId },
-        data: { xeroRefundCreditNoteId: createdNote.creditNoteID },
-      });
-
-      // QF-3: Create refund payment against Stripe bank account for auto-reconciliation
-      let refundPaymentResponseBody: { paymentID?: string; invoiceNumber?: string; amount?: number } | null = null;
-      let refundPaymentErr: unknown = null;
-
-      try {
-        const bankCode = (await getAccountMapping("stripeBankAccount")) ?? "606";
-        const refundPaymentIdempotencyKey = buildXeroIdempotencyKey(
-          "payment",
-          paymentId,
-          "refund-payment",
-          refundAmountCents,
-          "v1"
-        );
-        const refundPaymentResponse = await callXeroApi(
-          () =>
-            xero.accountingApi.createPayments(
-              tenantId,
-              {
-                payments: [
-                  {
-                    invoice: { invoiceID: originalInvoiceId },
-                    account: { code: bankCode },
-                    amount: refundAmountCents / 100,
-                    date: formatDate(new Date()),
-                    reference: `Stripe Refund - Booking ${payment.booking.id.slice(0, 8)}`,
-                    isReconciled: false,
-                  },
-                ],
-              },
-              undefined,
-              refundPaymentIdempotencyKey
-            ),
-          {
-            operation: "createPayments",
-            resourceType: "PAYMENT",
-            workflow: "createXeroCreditNote",
-            context: `createPayments(refund ${paymentId})`,
-          }
-        );
-        refundPaymentResponseBody = refundPaymentResponse.body.payments?.[0] ?? null;
-        logger.info({ paymentId, creditNoteId: createdNote.creditNoteID }, "Xero refund payment created against Stripe bank account");
-      } catch (error) {
-        refundPaymentErr = error;
-        logger.error({ err: error, paymentId }, "Failed to create Xero refund payment against Stripe bank account");
-      }
-
-      await completeXeroSyncOperation(operationId!, {
-        status: refundPaymentErr ? "PARTIAL" : "SUCCEEDED",
-        responsePayload: {
-          creditNote: response.body,
-          allocation: allocationResponse.body,
-          refundPayment: refundPaymentResponseBody,
-          refundPaymentError: refundPaymentErr,
-        },
-        xeroObjectType: "CREDIT_NOTE",
-        xeroObjectId: createdNote.creditNoteID,
-        xeroObjectNumber: createdNote.creditNoteNumber ?? null,
-        extraLinks: [
-          {
-            localModel: "Payment",
-            localId: paymentId,
-            xeroObjectType: "CREDIT_NOTE",
-            xeroObjectId: createdNote.creditNoteID,
-            xeroObjectNumber: createdNote.creditNoteNumber ?? null,
-            role: "REFUND_CREDIT_NOTE",
-          },
-          {
-            localModel: "Payment",
-            localId: paymentId,
-            xeroObjectType: "ALLOCATION",
-            xeroObjectId: buildSyntheticAllocationId(
-              createdNote.creditNoteID,
-              originalInvoiceId,
-              refundAmountCents
-            ),
-            xeroObjectUrl: buildXeroInvoiceUrl(originalInvoiceId),
-            role: "CREDIT_NOTE_ALLOCATION",
-            metadata: {
-              creditNoteId: createdNote.creditNoteID,
-              invoiceId: originalInvoiceId,
-              amountCents: refundAmountCents,
-            },
-          },
-          ...(refundPaymentResponseBody?.paymentID
-            ? [
-                {
-                  localModel: "Payment",
-                  localId: paymentId,
-                  xeroObjectType: "PAYMENT",
-                  xeroObjectId: refundPaymentResponseBody.paymentID,
-                  xeroObjectNumber: refundPaymentResponseBody.invoiceNumber ?? null,
-                  role: "REFUND_PAYMENT",
-                  metadata: {
-                    creditNoteId: createdNote.creditNoteID,
-                    amountCents: refundAmountCents,
-                  },
-                },
-              ]
-            : []),
-        ],
-      });
-
-      return createdNote.creditNoteID;
-    } catch (allocationError) {
-      await completeXeroSyncOperation(operationId!, {
-        status: "PARTIAL",
-        responsePayload: {
-          creditNote: response.body,
-          allocationError,
-        },
-        xeroObjectType: "CREDIT_NOTE",
-        xeroObjectId: createdNote.creditNoteID,
-        xeroObjectNumber: createdNote.creditNoteNumber ?? null,
-        extraLinks: [
-          {
-            localModel: "Payment",
-            localId: paymentId,
-            xeroObjectType: "CREDIT_NOTE",
-            xeroObjectId: createdNote.creditNoteID,
-            xeroObjectNumber: createdNote.creditNoteNumber ?? null,
-            role: "REFUND_CREDIT_NOTE",
-          },
-        ],
-      });
-      throw allocationError;
+      refundPaymentResponseBody = refundPaymentResponse.body.payments?.[0] ?? null;
+      logger.info(
+        { paymentId, creditNoteId: createdNote.creditNoteID },
+        "Xero refund payment created against Stripe bank account via credit note"
+      );
+    } catch (error) {
+      refundPaymentErr = error;
+      logger.error(
+        { err: error, paymentId, creditNoteId: createdNote.creditNoteID },
+        "Failed to create Xero refund payment against Stripe bank account via credit note"
+      );
     }
+
+    await completeXeroSyncOperation(operationId!, {
+      status: refundPaymentErr ? "PARTIAL" : "SUCCEEDED",
+      responsePayload: {
+        creditNote: response.body,
+        allocation: null,
+        allocationSkipped: true,
+        allocationSkipReason: REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON,
+        refundPayment: refundPaymentResponseBody,
+        refundPaymentError: refundPaymentErr,
+      },
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: createdNote.creditNoteID,
+      xeroObjectNumber: createdNote.creditNoteNumber ?? null,
+      extraLinks: [
+        {
+          localModel: "Payment",
+          localId: paymentId,
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: createdNote.creditNoteID,
+          xeroObjectNumber: createdNote.creditNoteNumber ?? null,
+          role: "REFUND_CREDIT_NOTE",
+        },
+        ...(refundPaymentResponseBody?.paymentID
+          ? [
+              {
+                localModel: "Payment",
+                localId: paymentId,
+                xeroObjectType: "PAYMENT",
+                xeroObjectId: refundPaymentResponseBody.paymentID,
+                xeroObjectNumber:
+                  refundPaymentResponseBody.creditNoteNumber
+                  ?? refundPaymentResponseBody.invoiceNumber
+                  ?? null,
+                role: "REFUND_PAYMENT",
+                metadata: {
+                  creditNoteId: createdNote.creditNoteID,
+                  invoiceId: originalInvoiceId,
+                  amountCents: refundAmountCents,
+                },
+              },
+            ]
+          : []),
+      ],
+    });
+
+    return createdNote.creditNoteID;
   } catch (error) {
     await failXeroSyncOperation(operationId!, error);
     throw error;

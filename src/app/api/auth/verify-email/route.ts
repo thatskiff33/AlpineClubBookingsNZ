@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import { hashActionToken } from "@/lib/action-tokens";
 
 export async function GET(request: NextRequest) {
   const baseUrl = process.env.NEXTAUTH_URL || request.url;
@@ -12,7 +13,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const record = await prisma.emailVerificationToken.findUnique({
-      where: { token },
+      where: { tokenHash: hashActionToken(token) },
       include: { member: { select: { id: true, emailVerified: true } } },
     });
 

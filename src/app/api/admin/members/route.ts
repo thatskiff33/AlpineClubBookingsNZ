@@ -26,6 +26,7 @@ import {
   processQueuedXeroOutboxOperations,
 } from "@/lib/xero-operation-outbox";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
+import { issueActionToken } from "@/lib/action-tokens";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
@@ -600,10 +601,10 @@ export async function POST(req: NextRequest) {
     let inviteWarning: string | undefined;
     if (data.sendInvite) {
       try {
-        const token = randomBytes(32).toString("hex");
+        const { token, tokenHash } = issueActionToken();
         const expiresAt = getMemberSetupInviteExpiryDate();
         await prisma.passwordResetToken.create({
-          data: { token, memberId: member.id, expiresAt },
+          data: { tokenHash, memberId: member.id, expiresAt },
         });
         await sendMemberSetupInviteEmail(member.email, member.firstName, token);
       } catch (emailErr) {
