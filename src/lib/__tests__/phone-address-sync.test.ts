@@ -32,6 +32,7 @@ vi.mock("@/lib/age-tier", () => ({
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+  syncManagedXeroContactGroupForMember: vi.fn(),
   updateXeroContact: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
 }));
@@ -55,7 +56,11 @@ vi.mock("bcryptjs", () => ({
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { isXeroConnected, updateXeroContact } from "@/lib/xero";
+import {
+  isXeroConnected,
+  syncManagedXeroContactGroupForMember,
+  updateXeroContact,
+} from "@/lib/xero";
 import { PUT as updateProfile } from "@/app/api/profile/route";
 import { PUT as updateMember } from "@/app/api/admin/members/[id]/route";
 import { POST as register } from "@/app/api/auth/register/route";
@@ -320,6 +325,7 @@ describe("Profile API: structured phone and address fields", () => {
 
     expect(isXeroConnected).not.toHaveBeenCalled();
     expect(updateXeroContact).not.toHaveBeenCalled();
+    expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
   });
 
   it("does not sync to Xero when not connected", async () => {
@@ -333,6 +339,34 @@ describe("Profile API: structured phone and address fields", () => {
     await updateProfile(makeProfilePut(validProfileBody));
 
     expect(updateXeroContact).not.toHaveBeenCalled();
+    expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
+  });
+
+  it("syncs managed Xero contact groups when the profile age tier changes", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      ageTier: "CHILD",
+      xeroContactId: "xc1",
+    } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      ageTier: "YOUTH",
+      xeroContactId: "xc1",
+      dateOfBirth: new Date("2010-06-15"),
+    } as any);
+    vi.mocked(isXeroConnected).mockResolvedValue(true);
+
+    await updateProfile(
+      makeProfilePut({
+        ...validProfileBody,
+        dateOfBirth: "2010-06-15",
+      })
+    );
+
+    expect(syncManagedXeroContactGroupForMember).toHaveBeenCalledWith("m1", {
+      createdByMemberId: "m1",
+    });
   });
 
   it("nullifies empty phone fields", async () => {

@@ -31,10 +31,10 @@ export function computeAge(dateOfBirth: Date, referenceDate: Date): number {
 // ---------------------------------------------------------------------------
 
 export const AGE_TIER_DEFAULTS = [
-  { tier: "INFANT" as AgeTier, minAge: 0, maxAge: 4, label: "Infant (under 5)", sortOrder: 0 },
-  { tier: "CHILD" as AgeTier, minAge: 5, maxAge: 9 as number | null, label: "Child (5-9)", sortOrder: 1 },
-  { tier: "YOUTH" as AgeTier, minAge: 10, maxAge: 17 as number | null, label: "Youth (10-17)", sortOrder: 2 },
-  { tier: "ADULT" as AgeTier, minAge: 18, maxAge: null as number | null, label: "Adult (18+)", sortOrder: 3 },
+  { tier: "INFANT" as AgeTier, minAge: 0, maxAge: 4, label: "Infant (under 5)", xeroContactGroupId: null, xeroContactGroupName: null, sortOrder: 0 },
+  { tier: "CHILD" as AgeTier, minAge: 5, maxAge: 9 as number | null, label: "Child (5-9)", xeroContactGroupId: null, xeroContactGroupName: null, sortOrder: 1 },
+  { tier: "YOUTH" as AgeTier, minAge: 10, maxAge: 17 as number | null, label: "Youth (10-17)", xeroContactGroupId: null, xeroContactGroupName: null, sortOrder: 2 },
+  { tier: "ADULT" as AgeTier, minAge: 18, maxAge: null as number | null, label: "Adult (18+)", xeroContactGroupId: null, xeroContactGroupName: null, sortOrder: 3 },
 ];
 
 export type AgeTierSettingData = {
@@ -42,6 +42,8 @@ export type AgeTierSettingData = {
   minAge: number;
   maxAge: number | null;
   label: string;
+  xeroContactGroupId?: string | null;
+  xeroContactGroupName?: string | null;
   sortOrder: number;
 };
 
@@ -144,6 +146,8 @@ export async function getAgeTierSettings(): Promise<AgeTierSettingData[]> {
         minAge: r.minAge,
         maxAge: r.maxAge,
         label: r.label,
+        xeroContactGroupId: r.xeroContactGroupId,
+        xeroContactGroupName: r.xeroContactGroupName,
         sortOrder: r.sortOrder,
       }))
     );

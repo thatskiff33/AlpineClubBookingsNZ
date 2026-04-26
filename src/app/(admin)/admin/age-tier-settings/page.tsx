@@ -2,24 +2,71 @@
 
 import type { AgeTier } from "@prisma/client";
 import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type AgeTierRow = {
   tier: AgeTier;
   minAge: number;
   maxAge: number | null;
   label: string;
+  xeroContactGroupId: string | null;
+  xeroContactGroupName: string | null;
   sortOrder: number;
 };
 
+type XeroContactGroup = {
+  id: string;
+  name: string;
+  contactCount: number;
+};
+
 const DEFAULT_SETTINGS: AgeTierRow[] = [
-  { tier: "INFANT", minAge: 0, maxAge: 4, label: "Infant (under 5)", sortOrder: 0 },
-  { tier: "CHILD", minAge: 5, maxAge: 9, label: "Child (5-9)", sortOrder: 1 },
-  { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
-  { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
+  {
+    tier: "INFANT",
+    minAge: 0,
+    maxAge: 4,
+    label: "Infant (under 5)",
+    xeroContactGroupId: null,
+    xeroContactGroupName: null,
+    sortOrder: 0,
+  },
+  {
+    tier: "CHILD",
+    minAge: 5,
+    maxAge: 9,
+    label: "Child (5-9)",
+    xeroContactGroupId: null,
+    xeroContactGroupName: null,
+    sortOrder: 1,
+  },
+  {
+    tier: "YOUTH",
+    minAge: 10,
+    maxAge: 17,
+    label: "Youth (10-17)",
+    xeroContactGroupId: null,
+    xeroContactGroupName: null,
+    sortOrder: 2,
+  },
+  {
+    tier: "ADULT",
+    minAge: 18,
+    maxAge: null,
+    label: "Adult (18+)",
+    xeroContactGroupId: null,
+    xeroContactGroupName: null,
+    sortOrder: 3,
+  },
 ];
 
 export default function AgeTierSettingsPage() {
@@ -30,6 +77,39 @@ export default function AgeTierSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [xeroGroups, setXeroGroups] = useState<XeroContactGroup[]>([]);
+  const [loadingXeroGroups, setLoadingXeroGroups] = useState(true);
+  const [refreshingXeroGroups, setRefreshingXeroGroups] = useState(false);
+  const [xeroGroupsError, setXeroGroupsError] = useState<string | null>(null);
+
+  async function loadXeroGroups(refreshFromXero = false) {
+    if (refreshFromXero) {
+      setRefreshingXeroGroups(true);
+    } else {
+      setLoadingXeroGroups(true);
+    }
+    setXeroGroupsError(null);
+
+    try {
+      const res = await fetch(
+        `/api/admin/xero/contact-groups${refreshFromXero ? "?refresh=1" : ""}`
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Failed to load Xero contact groups");
+      }
+      setXeroGroups(data?.groups ?? []);
+    } catch (loadError) {
+      setXeroGroupsError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load Xero contact groups"
+      );
+    } finally {
+      setLoadingXeroGroups(false);
+      setRefreshingXeroGroups(false);
+    }
+  }
 
   useEffect(() => {
     fetch("/api/admin/age-tier-settings")
@@ -42,15 +122,43 @@ export default function AgeTierSettingsPage() {
       })
       .catch(() => setError("Failed to load settings"))
       .finally(() => setLoading(false));
+
+    void loadXeroGroups();
   }, []);
 
-  // Sort by sortOrder for display
   const sorted = [...settings].sort((a, b) => a.sortOrder - b.sortOrder);
   const lastTier = sorted[sorted.length - 1];
 
-  function updateRow(tier: string, field: keyof AgeTierRow, value: string | number | null) {
+  function updateRow(
+    tier: string,
+    field: keyof AgeTierRow,
+    value: string | number | null
+  ) {
     setSettings((prev) =>
-      prev.map((s) => (s.tier === tier ? { ...s, [field]: value } : s))
+      prev.map((setting) =>
+        setting.tier === tier ? { ...setting, [field]: value } : setting
+      )
+    );
+    setSuccess(false);
+    setError(null);
+  }
+
+  function updateXeroContactGroup(tier: AgeTier, groupId: string) {
+    const selectedGroup =
+      groupId === "__none__"
+        ? null
+        : xeroGroups.find((group) => group.id === groupId) ?? null;
+
+    setSettings((prev) =>
+      prev.map((setting) =>
+        setting.tier === tier
+          ? {
+              ...setting,
+              xeroContactGroupId: selectedGroup?.id ?? null,
+              xeroContactGroupName: selectedGroup?.name ?? null,
+            }
+          : setting
+      )
     );
     setSuccess(false);
     setError(null);
@@ -61,13 +169,11 @@ export default function AgeTierSettingsPage() {
     setError(null);
     setSuccess(false);
 
-    // Auto-calculate maxAge for each tier based on the next tier's minAge - 1
     const bySort = [...settings].sort((a, b) => a.sortOrder - b.sortOrder);
-    const payload = bySort.map((s, i) => {
-      const next = bySort[i + 1];
+    const payload = bySort.map((setting, index) => {
+      const next = bySort[index + 1];
       return {
-        ...s,
-        // Last tier (highest sortOrder) has no upper limit; others use next tier's minAge - 1
+        ...setting,
         maxAge: next ? next.minAge - 1 : null,
       };
     });
@@ -106,8 +212,10 @@ export default function AgeTierSettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Age Group Settings</h1>
         <p className="text-slate-600 mt-1">
-          Configure the age boundaries for each membership tier. The highest tier has no upper limit.
-          MaxAge for each tier is automatically set to the next tier&apos;s MinAge minus 1.
+          Configure the age boundaries for each membership tier. The highest tier has no
+          upper limit. MaxAge for each tier is automatically set to the next tier&apos;s
+          MinAge minus 1. Optional Xero contact-group mappings drive managed Xero
+          contact-group allocation for linked members.
         </p>
       </div>
 
@@ -115,24 +223,69 @@ export default function AgeTierSettingsPage() {
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Age Tier Boundaries</CardTitle>
           {!editing && (
-            <Button variant="outline" size="sm" onClick={() => { setEditing(true); setSuccess(false); }}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setEditing(true);
+                setSuccess(false);
+              }}
+            >
               Edit
             </Button>
           )}
         </CardHeader>
         <CardContent className="space-y-6">
-          {loading && (
+          {loading ? (
             <p className="text-sm text-slate-500">Loading settings...</p>
-          )}
-          {sorted.map((s) => (
-            <div key={s.tier} className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end border-b pb-4 last:border-0 last:pb-0">
+          ) : null}
+
+          <div className="flex flex-col gap-3 rounded-md border bg-slate-50/70 p-4 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-slate-900">Xero Contact Groups</p>
+              <p className="text-sm text-slate-600">
+                Use cached Xero contact groups here to assign one managed group per age tier.
+              </p>
+              {loadingXeroGroups ? (
+                <p className="text-xs text-slate-500">Loading cached Xero contact groups...</p>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  {xeroGroups.length > 0
+                    ? `${xeroGroups.length} cached Xero group${xeroGroups.length === 1 ? "" : "s"} available.`
+                    : "No cached Xero contact groups available yet."}
+                </p>
+              )}
+              {xeroGroupsError ? (
+                <p className="text-xs text-red-700">{xeroGroupsError}</p>
+              ) : null}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void loadXeroGroups(true)}
+              disabled={refreshingXeroGroups}
+            >
+              {refreshingXeroGroups ? "Refreshing..." : "Refresh Xero Groups"}
+            </Button>
+          </div>
+
+          {sorted.map((setting) => (
+            <div
+              key={setting.tier}
+              className="grid grid-cols-1 items-end gap-4 border-b pb-4 last:border-0 last:pb-0 sm:grid-cols-4"
+            >
               <div className="space-y-1">
-                <Label className="text-xs text-slate-500 uppercase tracking-wide">{s.tier}</Label>
+                <Label className="text-xs text-slate-500 uppercase tracking-wide">
+                  {setting.tier}
+                </Label>
                 <div className="space-y-1">
                   <Label>Label</Label>
                   <Input
-                    value={s.label}
-                    onChange={(e) => updateRow(s.tier, "label", e.target.value)}
+                    value={setting.label}
+                    onChange={(event) =>
+                      updateRow(setting.tier, "label", event.target.value)
+                    }
                     disabled={!editing}
                     className={!editing ? "bg-slate-50 text-slate-700" : ""}
                   />
@@ -143,8 +296,14 @@ export default function AgeTierSettingsPage() {
                 <Input
                   type="number"
                   min={0}
-                  value={s.minAge}
-                  onChange={(e) => updateRow(s.tier, "minAge", parseInt(e.target.value, 10))}
+                  value={setting.minAge}
+                  onChange={(event) =>
+                    updateRow(
+                      setting.tier,
+                      "minAge",
+                      parseInt(event.target.value, 10)
+                    )
+                  }
                   disabled={!editing}
                   className={!editing ? "bg-slate-50 text-slate-700" : ""}
                 />
@@ -155,33 +314,65 @@ export default function AgeTierSettingsPage() {
                   type="text"
                   disabled
                   value={
-                    lastTier && s.tier === lastTier.tier
+                    lastTier && setting.tier === lastTier.tier
                       ? "No limit"
                       : String(
-                          (sorted.find((x) => x.sortOrder === s.sortOrder + 1)?.minAge ?? 0) - 1
+                          (sorted.find((row) => row.sortOrder === setting.sortOrder + 1)
+                            ?.minAge ?? 0) - 1
                         )
                   }
                   className="bg-slate-50 text-slate-500"
                 />
-                {!(lastTier && s.tier === lastTier.tier) && (
-                  <p className="text-xs text-slate-400">Auto-calculated from next tier&apos;s min age</p>
-                )}
+                {!(lastTier && setting.tier === lastTier.tier) ? (
+                  <p className="text-xs text-slate-400">
+                    Auto-calculated from next tier&apos;s min age
+                  </p>
+                ) : null}
+              </div>
+              <div className="space-y-1">
+                <Label>Xero Contact Group</Label>
+                <Select
+                  value={setting.xeroContactGroupId ?? "__none__"}
+                  onValueChange={(value) => updateXeroContactGroup(setting.tier, value)}
+                  disabled={!editing || loadingXeroGroups || refreshingXeroGroups}
+                >
+                  <SelectTrigger className={!editing ? "bg-slate-50 text-slate-700" : ""}>
+                    <SelectValue placeholder="Not mapped" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Not mapped</SelectItem>
+                    {setting.xeroContactGroupId &&
+                    !xeroGroups.some((group) => group.id === setting.xeroContactGroupId) ? (
+                      <SelectItem value={setting.xeroContactGroupId}>
+                        {setting.xeroContactGroupName ?? setting.xeroContactGroupId}
+                      </SelectItem>
+                    ) : null}
+                    {xeroGroups.map((group) => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.name} ({group.contactCount})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-slate-400">
+                  Linked members in this tier will be kept in the mapped Xero group.
+                </p>
               </div>
             </div>
           ))}
 
-          {error && (
-            <div className="rounded-md bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+          {error ? (
+            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               {error}
             </div>
-          )}
-          {success && (
-            <div className="rounded-md bg-green-50 border border-green-200 p-3 text-sm text-green-700">
+          ) : null}
+          {success ? (
+            <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
               Age tier settings saved successfully.
             </div>
-          )}
+          ) : null}
 
-          {editing && (
+          {editing ? (
             <div className="flex gap-3">
               <Button onClick={handleSave} disabled={saving}>
                 {saving ? "Saving..." : "Save Changes"}
@@ -190,7 +381,7 @@ export default function AgeTierSettingsPage() {
                 Cancel
               </Button>
             </div>
-          )}
+          ) : null}
         </CardContent>
       </Card>
 
@@ -205,17 +396,23 @@ export default function AgeTierSettingsPage() {
                 <th className="text-left py-2 font-medium text-slate-700">Tier</th>
                 <th className="text-left py-2 font-medium text-slate-700">Label</th>
                 <th className="text-left py-2 font-medium text-slate-700">Age Range</th>
+                <th className="text-left py-2 font-medium text-slate-700">Xero Group</th>
               </tr>
             </thead>
             <tbody>
-              {sorted.map((s) => (
-                <tr key={s.tier} className="border-b last:border-0">
-                  <td className="py-2 font-medium text-slate-900">{s.tier}</td>
-                  <td className="py-2 text-slate-600">{s.label}</td>
+              {sorted.map((setting) => (
+                <tr key={setting.tier} className="border-b last:border-0">
+                  <td className="py-2 font-medium text-slate-900">{setting.tier}</td>
+                  <td className="py-2 text-slate-600">{setting.label}</td>
                   <td className="py-2 text-slate-600">
-                    {s.maxAge !== null
-                      ? `${s.minAge} – ${s.maxAge}`
-                      : `${s.minAge}+`}
+                    {setting.maxAge !== null
+                      ? `${setting.minAge} – ${setting.maxAge}`
+                      : `${setting.minAge}+`}
+                  </td>
+                  <td className="py-2 text-slate-600">
+                    {setting.xeroContactGroupName ??
+                      setting.xeroContactGroupId ??
+                      "Not mapped"}
                   </td>
                 </tr>
               ))}

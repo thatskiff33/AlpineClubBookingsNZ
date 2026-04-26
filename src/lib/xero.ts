@@ -6,12 +6,14 @@
  */
 
 import { XeroClient, Contact, ContactGroup, Invoice, LineItem, LineAmountTypes, CreditNote, Payment as XeroPayment, Phone, Address } from "xero-node";
+import type { Contacts } from "xero-node";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { hash } from "bcryptjs";
 import { prisma } from "./prisma";
 import { sendPasswordResetEmail } from "./email";
 import { issueActionToken } from "./action-tokens";
 import { AgeTier, CreditType, EntranceFeeCategory, Prisma } from "@prisma/client";
+import { getAgeTierXeroContactGroupMappings } from "@/lib/age-tier-xero-groups";
 import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
@@ -823,7 +825,7 @@ export async function findOrCreateXeroContact(
   memberId: string,
   options?: FindOrCreateXeroContactOptions
 ): Promise<string> {
-  return prisma.$transaction(async (tx) => {
+  const xeroContactId = await prisma.$transaction(async (tx) => {
     // Advisory lock prevents concurrent duplicate creation for same member
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
 
@@ -1030,6 +1032,19 @@ export async function findOrCreateXeroContact(
       throw error;
     }
   });
+
+  try {
+    await syncManagedXeroContactGroupForMember(memberId, {
+      createdByMemberId: options?.createdByMemberId,
+    });
+  } catch (error) {
+    logger.error(
+      { err: error, memberId, xeroContactId },
+      "Failed to sync managed Xero contact groups after linking contact"
+    );
+  }
+
+  return xeroContactId;
 }
 
 /**
@@ -1040,7 +1055,7 @@ export async function createXeroContactForMember(
   memberId: string,
   options?: { createdByMemberId?: string }
 ): Promise<string> {
-  return prisma.$transaction(async (tx) => {
+  const xeroContactId = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${memberId}))`;
 
     const member = await tx.member.findUnique({ where: { id: memberId } });
@@ -1138,6 +1153,19 @@ export async function createXeroContactForMember(
       throw error;
     }
   });
+
+  try {
+    await syncManagedXeroContactGroupForMember(memberId, {
+      createdByMemberId: options?.createdByMemberId,
+    });
+  } catch (error) {
+    logger.error(
+      { err: error, memberId, xeroContactId },
+      "Failed to sync managed Xero contact groups after creating contact"
+    );
+  }
+
+  return xeroContactId;
 }
 
 /**
@@ -2195,6 +2223,245 @@ export async function getXeroContactIdsForGroup(
   });
 
   return memberships.map((membership) => membership.contactId);
+}
+
+export interface SyncManagedMemberXeroContactGroupResult {
+  memberId: string;
+  xeroContactId: string | null;
+  expectedGroupId: string | null;
+  expectedGroupName: string | null;
+  addedGroupIds: string[];
+  removedGroupIds: string[];
+  skippedReason: string | null;
+}
+
+export async function syncManagedXeroContactGroupForMember(
+  memberId: string,
+  options?: {
+    createdByMemberId?: string;
+  }
+): Promise<SyncManagedMemberXeroContactGroupResult> {
+  const member = await prisma.member.findUnique({
+    where: { id: memberId },
+    select: {
+      id: true,
+      ageTier: true,
+      firstName: true,
+      lastName: true,
+      xeroContactId: true,
+    },
+  });
+  if (!member) {
+    throw new Error(`Member not found: ${memberId}`);
+  }
+
+  if (!member.xeroContactId) {
+    return {
+      memberId,
+      xeroContactId: null,
+      expectedGroupId: null,
+      expectedGroupName: null,
+      addedGroupIds: [],
+      removedGroupIds: [],
+      skippedReason: "member_has_no_xero_contact",
+    };
+  }
+
+  const mappings = await getAgeTierXeroContactGroupMappings();
+  const expectedGroup = mappings.find((mapping) => mapping.tier === member.ageTier) ?? null;
+  const managedGroupIds = Array.from(new Set(mappings.map((mapping) => mapping.groupId)));
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+
+  const getContactFromXero = async () => {
+    const response = await callXeroApi(
+      () => xero.accountingApi.getContact(tenantId, member.xeroContactId!),
+      {
+        operation: "getContact",
+        resourceType: "CONTACT",
+        workflow: "syncManagedXeroContactGroupForMember",
+        context: `syncManagedXeroContactGroupForMember getContact(${member.xeroContactId})`,
+      }
+    );
+    const contact = response.body.contacts?.[0];
+    if (!contact?.contactID) {
+      throw new Error(`Xero contact ${member.xeroContactId} was not found`);
+    }
+    return contact;
+  };
+
+  const initialContact = await getContactFromXero();
+  const currentGroups = extractActiveXeroContactGroups(initialContact) ?? [];
+  const currentManagedGroups = currentGroups.filter((group) =>
+    managedGroupIds.includes(group.id)
+  );
+
+  if (!expectedGroup) {
+    await refreshXeroContactCachesFromContact(initialContact);
+    return {
+      memberId,
+      xeroContactId: member.xeroContactId,
+      expectedGroupId: null,
+      expectedGroupName: null,
+      addedGroupIds: [],
+      removedGroupIds: [],
+      skippedReason: "no_mapping_for_member_age_tier",
+    };
+  }
+
+  const missingExpectedGroup = !currentManagedGroups.some(
+    (group) => group.id === expectedGroup.groupId
+  );
+  const removedGroupIds = currentManagedGroups
+    .filter((group) => group.id !== expectedGroup.groupId)
+    .map((group) => group.id);
+
+  if (!missingExpectedGroup && removedGroupIds.length === 0) {
+    await refreshXeroContactCachesFromContact(initialContact);
+    return {
+      memberId,
+      xeroContactId: member.xeroContactId,
+      expectedGroupId: expectedGroup.groupId,
+      expectedGroupName: expectedGroup.groupName,
+      addedGroupIds: [],
+      removedGroupIds: [],
+      skippedReason: null,
+    };
+  }
+
+  const requestPayload = {
+    memberId,
+    memberName: `${member.firstName} ${member.lastName}`,
+    ageTier: member.ageTier,
+    xeroContactId: member.xeroContactId,
+    expectedGroup: {
+      id: expectedGroup.groupId,
+      name: expectedGroup.groupName,
+    },
+    currentManagedGroups: currentManagedGroups.map((group) => ({
+      id: group.id,
+      name: group.name,
+    })),
+  };
+  const payloadHash = buildXeroPayloadHash(requestPayload);
+  const idempotencyKey = buildXeroIdempotencyKey(
+    "member",
+    memberId,
+    "managed-contact-group",
+    payloadHash,
+    "v1"
+  );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CONTACT_GROUP",
+    operationType: "SYNC_MANAGED_MEMBERSHIP",
+    localModel: "Member",
+    localId: memberId,
+    idempotencyKey,
+    correlationKey: idempotencyKey,
+    requestPayload,
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  const addedGroupIds: string[] = [];
+  try {
+    if (missingExpectedGroup) {
+      const contacts: Contacts = {
+        contacts: [{ contactID: member.xeroContactId }],
+      };
+      const addIdempotencyKey = buildXeroIdempotencyKey(
+        "contact",
+        member.xeroContactId,
+        "contact-group-add",
+        expectedGroup.groupId,
+        "v1"
+      );
+      await callXeroApi(
+        () =>
+          xero.accountingApi.createContactGroupContacts(
+            tenantId,
+            expectedGroup.groupId,
+            contacts,
+            addIdempotencyKey
+          ),
+        {
+          operation: "createContactGroupContacts",
+          resourceType: "CONTACT_GROUP",
+          workflow: "syncManagedXeroContactGroupForMember",
+          context: `createContactGroupContacts(${expectedGroup.groupId}, ${member.xeroContactId})`,
+        }
+      );
+      addedGroupIds.push(expectedGroup.groupId);
+    }
+
+    for (const groupId of removedGroupIds) {
+      await callXeroApi(
+        () =>
+          xero.accountingApi.deleteContactGroupContact(
+            tenantId,
+            groupId,
+            member.xeroContactId!
+          ),
+        {
+          operation: "deleteContactGroupContact",
+          resourceType: "CONTACT_GROUP",
+          workflow: "syncManagedXeroContactGroupForMember",
+          context: `deleteContactGroupContact(${groupId}, ${member.xeroContactId})`,
+        }
+      );
+    }
+
+    const refreshedContact = await getContactFromXero();
+    await refreshXeroContactCachesFromContact(refreshedContact);
+
+    await completeXeroSyncOperation(operation.id, {
+      responsePayload: {
+        addedGroupIds,
+        removedGroupIds,
+        resultingGroups: (extractActiveXeroContactGroups(refreshedContact) ?? []).map(
+          (group) => ({
+            id: group.id,
+            name: group.name,
+          })
+        ),
+      },
+      xeroObjectType: "CONTACT",
+      xeroObjectId: member.xeroContactId,
+      xeroObjectUrl: buildXeroContactUrl(member.xeroContactId),
+      extraLinks: [
+        {
+          localModel: "Member",
+          localId: memberId,
+          xeroObjectType: "CONTACT",
+          xeroObjectId: member.xeroContactId,
+          xeroObjectUrl: buildXeroContactUrl(member.xeroContactId),
+          role: "CONTACT",
+        },
+      ],
+    });
+
+    return {
+      memberId,
+      xeroContactId: member.xeroContactId,
+      expectedGroupId: expectedGroup.groupId,
+      expectedGroupName: expectedGroup.groupName,
+      addedGroupIds,
+      removedGroupIds,
+      skippedReason: null,
+    };
+  } catch (error) {
+    try {
+      const latestContact = await getContactFromXero();
+      await refreshXeroContactCachesFromContact(latestContact);
+    } catch (refreshError) {
+      logger.warn(
+        { err: refreshError, memberId, xeroContactId: member.xeroContactId },
+        "Failed to refresh Xero contact caches after managed contact group sync error"
+      );
+    }
+
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
+  }
 }
 
 /**

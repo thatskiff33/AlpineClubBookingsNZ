@@ -1325,6 +1325,8 @@ model AgeTierSetting {
   minAge    Int
   maxAge    Int? // null for ADULT (no upper limit)
   label     String // e.g. "Child (under 10)"
+  xeroContactGroupId   String?
+  xeroContactGroupName String?
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   logAudit: vi.fn(),
   getXeroAdminHealthSnapshot: vi.fn(),
   getMissingXeroInvoiceBookings: vi.fn(),
+  getFailedXeroOperationOverview: vi.fn(),
   enqueueXeroBookingInvoiceOperation: vi.fn(),
   processQueuedXeroOutboxOperations: vi.fn(),
   enqueueXeroSyncOperationRetry: vi.fn(),
@@ -68,6 +69,10 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/xero-admin-health", () => ({
   getXeroAdminHealthSnapshot: mocks.getXeroAdminHealthSnapshot,
   getMissingXeroInvoiceBookings: mocks.getMissingXeroInvoiceBookings,
+}));
+
+vi.mock("@/lib/xero-admin-failures", () => ({
+  getFailedXeroOperationOverview: mocks.getFailedXeroOperationOverview,
 }));
 
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -160,7 +165,7 @@ describe("Xero admin bulk routes", () => {
   it("returns the Xero admin health snapshot for admins", async () => {
     const snapshot = {
       unlinkedMembers: { count: 4, href: "/admin/members?active=true&xeroLinked=false" },
-      failedOperations: { count: 2 },
+      failedOperations: { count: 2, legacyCount: 5 },
       pendingOperations: { count: 3 },
       lastMembershipRefresh: {
         at: "2026-04-24T10:00:00.000Z",
@@ -257,7 +262,16 @@ describe("Xero admin bulk routes", () => {
   });
 
   it("retries all replayable failed operations and reports skipped ones", async () => {
-    mocks.prisma.xeroSyncOperation.findMany.mockResolvedValue([{ id: "op-1" }, { id: "op-2" }]);
+    mocks.getFailedXeroOperationOverview.mockResolvedValue({
+      totalFailedRows: 7,
+      activeFailedCount: 2,
+      legacyFailedCount: 5,
+      activeOperations: [
+        { id: "op-1", replayable: true },
+        { id: "op-2", replayable: true },
+      ],
+      resolutions: new Map(),
+    });
     mocks.enqueueXeroSyncOperationRetry
       .mockResolvedValueOnce({
         queueOperationId: "queue-op-1",
@@ -280,7 +294,7 @@ describe("Xero admin bulk routes", () => {
     expect(mocks.logAudit).toHaveBeenCalledWith({
       action: "XERO_OPERATION_RETRY_ALL",
       memberId: "admin-1",
-      details: "Queued 1 Xero retries (1 skipped)",
+      details: "Queued 1 active Xero retries (1 skipped, 5 legacy hidden)",
     });
 
     await expect(response.json()).resolves.toEqual({
@@ -288,13 +302,14 @@ describe("Xero admin bulk routes", () => {
       found: 2,
       queued: 1,
       skipped: 1,
+      legacySkipped: 5,
       skippedOperations: [
         {
           id: "op-2",
           reason: "A queued retry is already pending for this Xero operation.",
         },
       ],
-      message: "Queued 1 failed Xero operation for background retry.",
+      message: "Queued 1 active failed Xero operation for background retry.",
     });
   });
 

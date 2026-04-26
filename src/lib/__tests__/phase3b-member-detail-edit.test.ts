@@ -29,6 +29,7 @@ vi.mock("@/lib/age-tier", () => ({
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+  syncManagedXeroContactGroupForMember: vi.fn(),
   updateXeroContact: vi.fn(),
 }));
 
@@ -265,7 +266,11 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
   });
 
   it("does not call updateXeroContact when only local-only fields change", async () => {
-    const { isXeroConnected, updateXeroContact } = await import("@/lib/xero");
+    const {
+      isXeroConnected,
+      syncManagedXeroContactGroupForMember,
+      updateXeroContact,
+    } = await import("@/lib/xero");
 
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, xeroContactId: "xc1" } as any);
@@ -279,10 +284,15 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
 
     expect(isXeroConnected).not.toHaveBeenCalled();
     expect(updateXeroContact).not.toHaveBeenCalled();
+    expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
   });
 
   it("does not call updateXeroContact when Xero is not connected", async () => {
-    const { isXeroConnected, updateXeroContact } = await import("@/lib/xero");
+    const {
+      isXeroConnected,
+      syncManagedXeroContactGroupForMember,
+      updateXeroContact,
+    } = await import("@/lib/xero");
     vi.mocked(isXeroConnected).mockResolvedValue(false);
 
     mockedAuth.mockResolvedValue(adminSession);
@@ -292,6 +302,32 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     await updateMember(makePutRequest("m1", { firstName: "Bob" }), { params: Promise.resolve({ id: "m1" }) });
 
     expect(updateXeroContact).not.toHaveBeenCalled();
+    expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
+  });
+
+  it("syncs managed Xero contact groups when the member age tier changes", async () => {
+    const { isXeroConnected, syncManagedXeroContactGroupForMember } = await import("@/lib/xero");
+    vi.mocked(isXeroConnected).mockResolvedValue(true);
+
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      xeroContactId: "xc1",
+      ageTier: "CHILD",
+    } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      xeroContactId: "xc1",
+      ageTier: "YOUTH",
+    } as any);
+
+    await updateMember(makePutRequest("m1", { ageTier: "YOUTH" }), {
+      params: Promise.resolve({ id: "m1" }),
+    });
+
+    expect(syncManagedXeroContactGroupForMember).toHaveBeenCalledWith("m1", {
+      createdByMemberId: "admin1",
+    });
   });
 
   it("blocks self-demotion via the API", async () => {

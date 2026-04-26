@@ -1,8 +1,8 @@
 import { after, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
+import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import logger from "@/lib/logger";
-import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
   enqueueXeroSyncOperationRetry,
@@ -32,17 +32,10 @@ export async function POST() {
   }
 
   try {
-    const failedOperations = await prisma.xeroSyncOperation.findMany({
-      where: {
-        status: "FAILED",
-        replayable: true,
-      },
-      select: {
-        id: true,
-      },
-      orderBy: { createdAt: "desc" },
-      take: 200,
-    });
+    const failedOperationOverview = await getFailedXeroOperationOverview({ limit: 200 });
+    const failedOperations = failedOperationOverview.activeOperations
+      .filter((operation) => operation.replayable)
+      .map((operation) => ({ id: operation.id }));
 
     if (failedOperations.length === 0) {
       return NextResponse.json({
@@ -50,7 +43,11 @@ export async function POST() {
         found: 0,
         queued: 0,
         skipped: 0,
-        message: "No failed replayable Xero operations found.",
+        legacySkipped: failedOperationOverview.legacyFailedCount,
+        message:
+          failedOperationOverview.legacyFailedCount > 0
+            ? "No active failed Xero operations found. Remaining failed rows are already repaired or superseded."
+            : "No active failed Xero operations found.",
       });
     }
 
@@ -92,7 +89,7 @@ export async function POST() {
     logAudit({
       action: "XERO_OPERATION_RETRY_ALL",
       memberId: session.user.id,
-      details: `Queued ${queued} Xero retries (${skipped} skipped)`,
+      details: `Queued ${queued} active Xero retries (${skipped} skipped, ${failedOperationOverview.legacyFailedCount} legacy hidden)`,
     });
 
     return NextResponse.json(
@@ -101,11 +98,12 @@ export async function POST() {
         found: failedOperations.length,
         queued,
         skipped,
+        legacySkipped: failedOperationOverview.legacyFailedCount,
         skippedOperations,
         message:
           queued > 0
-            ? `Queued ${queued} failed Xero operation${queued === 1 ? "" : "s"} for background retry.`
-            : "No failed Xero operations could be queued for retry.",
+            ? `Queued ${queued} active failed Xero operation${queued === 1 ? "" : "s"} for background retry.`
+            : "No active failed Xero operations could be queued for retry.",
       },
       { status: queued > 0 ? 202 : 200 }
     );

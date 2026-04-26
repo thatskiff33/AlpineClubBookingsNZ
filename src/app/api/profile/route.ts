@@ -4,7 +4,11 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { getSeasonYear } from "@/lib/utils";
-import { isXeroConnected, updateXeroContact } from "@/lib/xero";
+import {
+  isXeroConnected,
+  syncManagedXeroContactGroupForMember,
+  updateXeroContact,
+} from "@/lib/xero";
 import {
   buildXeroContactUpdatePayload,
   hasMemberXeroContactChanges,
@@ -169,22 +173,32 @@ export async function PUT(req: NextRequest) {
       select: PROFILE_XERO_SYNC_SELECT,
     });
 
-    // Sync to Xero if connected and member has a linked contact
-    if (
+    const needsContactUpdate =
       updated.xeroContactId &&
-      hasMemberXeroContactChanges(existing, updated)
-    ) {
+      hasMemberXeroContactChanges(existing, updated);
+    const needsContactGroupSync =
+      updated.xeroContactId && existing.ageTier !== updated.ageTier;
+
+    if (updated.xeroContactId && (needsContactUpdate || needsContactGroupSync)) {
       try {
         if (await isXeroConnected()) {
-          await updateXeroContact(
-            updated.xeroContactId,
-            buildXeroContactUpdatePayload(updated),
-            {
-              localModel: "Member",
-              localId: session.user.id,
+          if (needsContactUpdate) {
+            await updateXeroContact(
+              updated.xeroContactId,
+              buildXeroContactUpdatePayload(updated),
+              {
+                localModel: "Member",
+                localId: session.user.id,
+                createdByMemberId: session.user.id,
+              }
+            );
+          }
+
+          if (needsContactGroupSync) {
+            await syncManagedXeroContactGroupForMember(session.user.id, {
               createdByMemberId: session.user.id,
-            }
-          );
+            });
+          }
         }
       } catch (xeroErr) {
         logger.error({ err: xeroErr, memberId: session.user.id }, "Xero sync failed for profile update");

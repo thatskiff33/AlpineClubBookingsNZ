@@ -127,6 +127,9 @@ interface XeroOperation {
   updatedAt: string
   supported: boolean
   reason: string | null
+  failureState: "ACTIVE" | "REPAIRED" | "SUPERSEDED" | null
+  failureStateReason: string | null
+  failureRootKey: string | null
 }
 
 interface XeroInboundEvent {
@@ -213,6 +216,7 @@ interface XeroHealthSnapshot {
   }
   failedOperations: {
     count: number
+    legacyCount: number
   }
   pendingOperations: {
     count: number
@@ -224,6 +228,10 @@ interface XeroHealthSnapshot {
   }
   missingInvoices: {
     count: number
+  }
+  contactGroupMismatches: {
+    count: number
+    cacheReady: boolean
   }
   apiBudget: {
     status: "healthy" | "warning" | "critical" | "exhausted" | "unknown"
@@ -251,8 +259,47 @@ interface MissingInvoicesResponse {
   bookings: MissingInvoiceBooking[]
 }
 
+interface ConfiguredAgeTierContactGroup {
+  tier: AgeTier
+  label: string
+  sortOrder: number
+  groupId: string
+  groupName: string | null
+}
+
+interface ContactGroupMismatch {
+  memberId: string
+  memberName: string
+  memberEmail: string
+  ageTier: AgeTier
+  xeroContactId: string
+  expectedGroup: {
+    id: string
+    name: string | null
+  }
+  actualGroups: Array<{
+    id: string
+    name: string
+  }>
+  unexpectedManagedGroups: Array<{
+    id: string
+    name: string
+    tier: AgeTier | null
+  }>
+  missingExpectedGroup: boolean
+}
+
+interface ContactGroupMismatchResponse {
+  cacheReady: boolean
+  lastRefreshedAt: string | null
+  configuredMappings: ConfiguredAgeTierContactGroup[]
+  count: number
+  mismatches: ContactGroupMismatch[]
+}
+
 type SectionKey =
   | "health"
+  | "contactGroupMismatches"
   | "operations"
   | "inbound"
   | "contactSync"
@@ -264,6 +311,7 @@ type SectionKey =
 const SECTION_STORAGE_KEY = "admin-xero-section-state-v1"
 const SECTION_DEFAULTS: Record<SectionKey, boolean> = {
   health: true,
+  contactGroupMismatches: false,
   operations: true,
   inbound: true,
   contactSync: true,
@@ -527,6 +575,8 @@ export default function XeroPage() {
   const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>(SECTION_DEFAULTS)
   const [healthSnapshot, setHealthSnapshot] = useState<XeroHealthSnapshot | null>(null)
   const [loadingHealth, setLoadingHealth] = useState(false)
+  const [contactGroupMismatches, setContactGroupMismatches] = useState<ContactGroupMismatchResponse | null>(null)
+  const [loadingContactGroupMismatches, setLoadingContactGroupMismatches] = useState(false)
   const [missingInvoiceDetails, setMissingInvoiceDetails] = useState<MissingInvoicesResponse | null>(null)
   const [loadingMissingInvoices, setLoadingMissingInvoices] = useState(false)
   const [showMissingInvoices, setShowMissingInvoices] = useState(false)
@@ -630,6 +680,20 @@ export default function XeroPage() {
       setError("Failed to load bookings missing Xero invoices")
     } finally {
       setLoadingMissingInvoices(false)
+    }
+  }, [])
+
+  const fetchContactGroupMismatches = useCallback(async () => {
+    setLoadingContactGroupMismatches(true)
+    try {
+      const res = await fetch("/api/admin/xero/contact-group-mismatches?limit=200")
+      if (!res.ok) throw new Error("Failed to fetch contact group mismatches")
+      const data = await res.json()
+      setContactGroupMismatches(data)
+    } catch {
+      setError("Failed to load Xero contact group mismatches")
+    } finally {
+      setLoadingContactGroupMismatches(false)
     }
   }, [])
 
@@ -800,10 +864,28 @@ export default function XeroPage() {
       fetchHealth()
     } else {
       setHealthSnapshot(null)
+      setContactGroupMismatches(null)
       setMissingInvoiceDetails(null)
       setShowMissingInvoices(false)
     }
   }, [status?.connected, fetchHealth])
+
+  useEffect(() => {
+    if (
+      status?.connected &&
+      sectionOpen.contactGroupMismatches &&
+      !contactGroupMismatches &&
+      !loadingContactGroupMismatches
+    ) {
+      void fetchContactGroupMismatches()
+    }
+  }, [
+    contactGroupMismatches,
+    fetchContactGroupMismatches,
+    loadingContactGroupMismatches,
+    sectionOpen.contactGroupMismatches,
+    status?.connected,
+  ])
 
   const handleRetryOperation = async (operationId: string) => {
     setRetryingOperationId(operationId)
@@ -1032,6 +1114,10 @@ export default function XeroPage() {
           ageTier: "SKIP",
         }))
       )
+      await fetchHealth()
+      if (sectionOpen.contactGroupMismatches) {
+        await fetchContactGroupMismatches()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch contact groups")
     } finally {
@@ -1210,6 +1296,32 @@ export default function XeroPage() {
     }
   }
 
+  const failureStateBadgeClass = (state: XeroOperation["failureState"]) => {
+    switch (state) {
+      case "ACTIVE":
+        return "bg-red-600"
+      case "REPAIRED":
+        return "bg-green-600"
+      case "SUPERSEDED":
+        return "bg-slate-600"
+      default:
+        return ""
+    }
+  }
+
+  const failureStateLabel = (state: XeroOperation["failureState"]) => {
+    switch (state) {
+      case "ACTIVE":
+        return "Active"
+      case "REPAIRED":
+        return "Repaired"
+      case "SUPERSEDED":
+        return "Superseded"
+      default:
+        return null
+    }
+  }
+
   const inboundEventActionLabel = (status: string) => {
     switch (status) {
       case "FAILED":
@@ -1360,7 +1472,7 @@ export default function XeroPage() {
               <p className="text-sm text-muted-foreground">Loading health snapshot...</p>
             ) : healthSnapshot ? (
               <div className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
                   <HealthStatCard
                     label="Unlinked members"
                     value={healthSnapshot.unlinkedMembers.count}
@@ -1368,9 +1480,13 @@ export default function XeroPage() {
                     href={healthSnapshot.unlinkedMembers.href}
                   />
                   <HealthStatCard
-                    label="Failed operations"
+                    label="Active failed issues"
                     value={healthSnapshot.failedOperations.count}
-                    subtitle="Replayable failures waiting for review or retry."
+                    subtitle={
+                      healthSnapshot.failedOperations.legacyCount > 0
+                        ? `Replayable failures that still need action. ${healthSnapshot.failedOperations.legacyCount} older failed row${healthSnapshot.failedOperations.legacyCount === 1 ? "" : "s"} are already repaired or superseded.`
+                        : "Replayable failures that still need action."
+                    }
                     badge={
                       <Badge className={healthSnapshot.failedOperations.count > 0 ? "bg-red-600" : "bg-green-600"}>
                         {healthSnapshot.failedOperations.count > 0 ? "Needs attention" : "Clear"}
@@ -1404,6 +1520,33 @@ export default function XeroPage() {
                         : "No cron run recorded yet."
                     }
                     onClick={() => scrollToSection("membershipSync")}
+                  />
+                  <HealthStatCard
+                    label="Group mismatches"
+                    value={healthSnapshot.contactGroupMismatches.count}
+                    subtitle={
+                      healthSnapshot.contactGroupMismatches.cacheReady
+                        ? "Linked members whose managed Xero group does not match their current age tier."
+                        : "Refresh Xero contact groups before mismatch checks can run."
+                    }
+                    badge={
+                      <Badge
+                        className={
+                          !healthSnapshot.contactGroupMismatches.cacheReady
+                            ? "bg-slate-600"
+                            : healthSnapshot.contactGroupMismatches.count > 0
+                              ? "bg-amber-500"
+                              : "bg-green-600"
+                        }
+                      >
+                        {!healthSnapshot.contactGroupMismatches.cacheReady
+                          ? "Cache needed"
+                          : healthSnapshot.contactGroupMismatches.count > 0
+                            ? "Review"
+                            : "Clear"}
+                      </Badge>
+                    }
+                    onClick={() => scrollToSection("contactGroupMismatches")}
                   />
                   <HealthStatCard
                     label="API budget"
@@ -1506,6 +1649,138 @@ export default function XeroPage() {
           </SectionCard>
 
           <SectionCard
+            id="xero-section-contactGroupMismatches"
+            title="Contact Group Mismatches"
+            description="Audit linked members against the managed Xero contact-group mapping configured in Age Group Settings."
+            open={sectionOpen.contactGroupMismatches}
+            onToggle={(nextOpen) => setSectionState("contactGroupMismatches", nextOpen)}
+            actions={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchContactGroupMismatches()}
+                disabled={loadingContactGroupMismatches}
+              >
+                {loadingContactGroupMismatches ? "Refreshing..." : "Refresh"}
+              </Button>
+            }
+          >
+            {loadingContactGroupMismatches && !contactGroupMismatches ? (
+              <p className="text-sm text-muted-foreground">Loading contact group mismatches...</p>
+            ) : contactGroupMismatches ? (
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 rounded-lg border p-4 md:flex-row md:items-start md:justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-semibold">Managed mapping status</h3>
+                      <Badge
+                        className={
+                          !contactGroupMismatches.cacheReady
+                            ? "bg-slate-600"
+                            : contactGroupMismatches.count > 0
+                              ? "bg-amber-500"
+                              : "bg-green-600"
+                        }
+                      >
+                        {!contactGroupMismatches.cacheReady
+                          ? "Cache needed"
+                          : `${contactGroupMismatches.count} mismatch${contactGroupMismatches.count === 1 ? "" : "es"}`}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {contactGroupMismatches.configuredMappings.length > 0
+                        ? `Configured mappings: ${contactGroupMismatches.configuredMappings.map((mapping) => `${mapping.tier} → ${mapping.groupName ?? mapping.groupId}`).join(", ")}`
+                        : "No age-tier to Xero contact-group mappings are configured yet."}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {contactGroupMismatches.cacheReady && contactGroupMismatches.lastRefreshedAt
+                        ? `Cache last refreshed ${new Date(contactGroupMismatches.lastRefreshedAt).toLocaleString("en-NZ")}.`
+                        : "The shared Xero contact-group cache has not been refreshed yet."}
+                    </p>
+                  </div>
+                  <a
+                    href="/admin/age-tier-settings"
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    Open Age Group Settings
+                  </a>
+                </div>
+
+                {!contactGroupMismatches.cacheReady ? (
+                  <p className="text-sm text-muted-foreground">
+                    Refresh Xero contact groups before relying on this audit.
+                  </p>
+                ) : contactGroupMismatches.mismatches.length === 0 ? (
+                  <p className="text-sm text-green-700">
+                    No linked members are currently mismatched against the managed age-tier mappings.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      Showing {contactGroupMismatches.mismatches.length} of {contactGroupMismatches.count} mismatch{contactGroupMismatches.count === 1 ? "" : "es"}.
+                    </p>
+                    {contactGroupMismatches.mismatches.map((mismatch) => (
+                      <div key={mismatch.memberId} className="rounded-md border p-3">
+                        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <a
+                                href={`/admin/members/${mismatch.memberId}`}
+                                className="text-sm font-medium text-blue-600 hover:underline"
+                              >
+                                {mismatch.memberName}
+                              </a>
+                              <Badge variant="outline">{mismatch.ageTier}</Badge>
+                              {mismatch.missingExpectedGroup ? (
+                                <Badge className="bg-red-600">Missing expected group</Badge>
+                              ) : null}
+                              {mismatch.unexpectedManagedGroups.length > 0 ? (
+                                <Badge className="bg-amber-500">
+                                  {mismatch.unexpectedManagedGroups.length} extra managed group{mismatch.unexpectedManagedGroups.length === 1 ? "" : "s"}
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <p className="text-sm text-muted-foreground">{mismatch.memberEmail}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Expected managed group: {mismatch.expectedGroup.name ?? mismatch.expectedGroup.id}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Actual cached groups:{" "}
+                              {mismatch.actualGroups.length > 0
+                                ? mismatch.actualGroups.map((group) => group.name).join(", ")
+                                : "None"}
+                            </p>
+                            {mismatch.unexpectedManagedGroups.length > 0 ? (
+                              <p className="text-xs text-amber-700">
+                                Unexpected managed groups:{" "}
+                                {mismatch.unexpectedManagedGroups
+                                  .map((group) =>
+                                    group.tier ? `${group.name} (${group.tier})` : group.name
+                                  )
+                                  .join(", ")}
+                              </p>
+                            ) : null}
+                          </div>
+                          <a
+                            href={`https://go.xero.com/app/contacts/contact/${mismatch.xeroContactId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-blue-600 hover:underline"
+                          >
+                            Open in Xero
+                          </a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No mismatch audit has been loaded yet.</p>
+            )}
+          </SectionCard>
+
+          <SectionCard
             id="xero-section-operations"
             title="Xero Operations"
             description="Recent outbound sync attempts and replayable failures."
@@ -1518,7 +1793,7 @@ export default function XeroPage() {
                   onClick={handleRetryAllFailed}
                   disabled={retryingAllFailed || (healthSnapshot?.failedOperations.count ?? 0) === 0}
                 >
-                  {retryingAllFailed ? "Queueing..." : "Retry All Failed"}
+                  {retryingAllFailed ? "Queueing..." : "Retry Active Failed"}
                 </Button>
                 <Button
                   variant="outline"
@@ -1559,6 +1834,7 @@ export default function XeroPage() {
                     <SelectContent>
                       <SelectItem value="all">All entities</SelectItem>
                       <SelectItem value="CONTACT">Contact</SelectItem>
+                      <SelectItem value="CONTACT_GROUP">Contact Group</SelectItem>
                       <SelectItem value="INVOICE">Invoice</SelectItem>
                       <SelectItem value="PAYMENT">Payment</SelectItem>
                       <SelectItem value="CREDIT_NOTE">Credit Note</SelectItem>
@@ -1581,6 +1857,11 @@ export default function XeroPage() {
                         <Badge variant="default" className={operationStatusClass(operation.status)}>
                           {operation.status}
                         </Badge>
+                        {operation.failureState ? (
+                          <Badge variant="default" className={failureStateBadgeClass(operation.failureState)}>
+                            {failureStateLabel(operation.failureState)}
+                          </Badge>
+                        ) : null}
                         <span className="text-sm font-medium">
                           {operation.entityType} {operation.operationType}
                         </span>
@@ -1630,8 +1911,12 @@ export default function XeroPage() {
                         </p>
                       )}
 
+                      {operation.failureStateReason && operation.status === "FAILED" ? (
+                        <p className="text-xs text-muted-foreground">{operation.failureStateReason}</p>
+                      ) : null}
+
                       <div className="flex flex-wrap items-center gap-2">
-                        {operation.supported ? (
+                        {operation.supported && operation.failureState !== "REPAIRED" && operation.failureState !== "SUPERSEDED" ? (
                           <Button
                             variant="outline"
                             size="sm"

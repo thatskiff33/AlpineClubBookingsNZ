@@ -17,6 +17,8 @@ type AgeTierSettingInput = {
   minAge: number;
   maxAge: number | null;
   label: string;
+  xeroContactGroupId: string | null;
+  xeroContactGroupName: string | null;
   sortOrder: number;
 };
 
@@ -28,6 +30,8 @@ const putSchema = z.object({
         minAge: z.number().int().min(0),
         maxAge: z.number().int().min(0).nullable(),
         label: z.string().min(1).max(100),
+        xeroContactGroupId: z.string().trim().min(1).max(100).nullable().optional(),
+        xeroContactGroupName: z.string().trim().min(1).max(255).nullable().optional(),
         sortOrder: z.number().int().min(0),
       })
     )
@@ -46,7 +50,15 @@ export async function GET() {
 
   const settings = await prisma.ageTierSetting.findMany({
     orderBy: { sortOrder: "asc" },
-    select: { tier: true, minAge: true, maxAge: true, label: true, sortOrder: true },
+    select: {
+      tier: true,
+      minAge: true,
+      maxAge: true,
+      label: true,
+      xeroContactGroupId: true,
+      xeroContactGroupName: true,
+      sortOrder: true,
+    },
   });
 
   return NextResponse.json({ settings: normalizeAgeTierSettings(settings) });
@@ -74,6 +86,11 @@ export async function PUT(request: NextRequest) {
   const settings: AgeTierSettingInput[] = parsed.data.settings.map((setting) => ({
     ...setting,
     tier: setting.tier as AgeTier,
+    xeroContactGroupId: setting.xeroContactGroupId?.trim() || null,
+    xeroContactGroupName:
+      setting.xeroContactGroupId?.trim()
+        ? setting.xeroContactGroupName?.trim() || null
+        : null,
   }));
   const requiredTiers = new Set(AGE_TIER_DEFAULTS.map((setting) => setting.tier));
   const providedTiers = new Set(settings.map((setting) => setting.tier));
@@ -121,13 +138,38 @@ export async function PUT(request: NextRequest) {
     );
   }
 
+  const mappedGroupIds = settings
+    .map((setting) => setting.xeroContactGroupId)
+    .filter((groupId): groupId is string => Boolean(groupId));
+  if (new Set(mappedGroupIds).size !== mappedGroupIds.length) {
+    return NextResponse.json(
+      { error: "Each Xero contact group can only be mapped to one age tier." },
+      { status: 400 }
+    );
+  }
+
   // Persist each tier
   await Promise.all(
     settings.map((s) =>
       prisma.ageTierSetting.upsert({
         where: { tier: s.tier },
-        update: { minAge: s.minAge, maxAge: s.maxAge, label: s.label, sortOrder: s.sortOrder },
-        create: { tier: s.tier, minAge: s.minAge, maxAge: s.maxAge, label: s.label, sortOrder: s.sortOrder },
+        update: {
+          minAge: s.minAge,
+          maxAge: s.maxAge,
+          label: s.label,
+          xeroContactGroupId: s.xeroContactGroupId,
+          xeroContactGroupName: s.xeroContactGroupName,
+          sortOrder: s.sortOrder,
+        },
+        create: {
+          tier: s.tier,
+          minAge: s.minAge,
+          maxAge: s.maxAge,
+          label: s.label,
+          xeroContactGroupId: s.xeroContactGroupId,
+          xeroContactGroupName: s.xeroContactGroupName,
+          sortOrder: s.sortOrder,
+        },
       })
     )
   );
@@ -143,7 +185,15 @@ export async function PUT(request: NextRequest) {
 
   const updated = await prisma.ageTierSetting.findMany({
     orderBy: { sortOrder: "asc" },
-    select: { tier: true, minAge: true, maxAge: true, label: true, sortOrder: true },
+    select: {
+      tier: true,
+      minAge: true,
+      maxAge: true,
+      label: true,
+      xeroContactGroupId: true,
+      xeroContactGroupName: true,
+      sortOrder: true,
+    },
   });
 
   return NextResponse.json({ settings: normalizeAgeTierSettings(updated) });
