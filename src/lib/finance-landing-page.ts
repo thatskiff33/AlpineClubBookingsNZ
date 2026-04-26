@@ -13,6 +13,7 @@ import {
   getFinanceSyncDiagnosticsStatus,
   type FinanceSyncDiagnosticsStatus,
 } from "@/lib/finance-sync-diagnostics";
+import { getFinanceXeroRouteStatus } from "@/lib/finance-xero";
 import { formatCents } from "@/lib/utils";
 
 const FINANCE_TIMEZONE = "Pacific/Auckland";
@@ -48,9 +49,23 @@ export interface FinanceLandingSectionLink {
 }
 
 export interface FinanceLandingManagerAction {
-  href: string;
+  kind: "link" | "connect" | "disconnect";
+  href?: string;
   label: string;
   description: string;
+}
+
+export interface FinanceLandingManagerWorkspace {
+  eyebrow: string;
+  title: string;
+  description: string;
+  badgeLabel: string;
+  badgeVariant: BadgeProps["variant"];
+  cards: FinanceLandingMetricCard[];
+  configIssues: string[];
+  tokenStorageIssues: string[];
+  actions: FinanceLandingManagerAction[];
+  error?: string;
 }
 
 export interface FinanceLandingPageModel {
@@ -73,7 +88,7 @@ export interface FinanceLandingPageModel {
     label: string;
     description: string;
   }>;
-  managerActions: FinanceLandingManagerAction[];
+  managerWorkspace: FinanceLandingManagerWorkspace | null;
 }
 
 export function buildFinanceLandingMetricsQuery(today = getTodayDateOnly()) {
@@ -128,9 +143,10 @@ export async function buildFinanceLandingPageModel(input: {
   const { member } = input;
   const isManager = hasFinanceManagerAccess(member.financeAccessLevel);
   const { query, windows } = buildFinanceLandingMetricsQuery(input.today);
-  const [syncResult, bookingResult] = await Promise.allSettled([
+  const [syncResult, bookingResult, xeroResult] = await Promise.allSettled([
     getFinanceSyncDiagnosticsStatus(),
     getFinanceBookingMetrics(query),
+    isManager ? getFinanceXeroRouteStatus() : Promise.resolve(null),
   ]);
 
   const sync = mapSyncSection(syncResult);
@@ -180,26 +196,184 @@ export async function buildFinanceLandingPageModel(input: {
         description:
           "These figures come from finance sync runs and cron observability. They indicate freshness and failures, not financial statement balances.",
       },
+      ...(isManager
+        ? [
+            {
+              label: "Finance Xero boundary",
+              description:
+                "Manager operations use the separate finance-only Xero OAuth boundary. Connection state and configuration blockers stay separate from operational Xero.",
+            },
+          ]
+        : []),
     ],
-    managerActions: isManager
+    managerWorkspace: isManager
+      ? mapManagerWorkspace(
+          xeroResult as PromiseSettledResult<
+            Awaited<ReturnType<typeof getFinanceXeroRouteStatus>> | null
+          >,
+          queryString
+        )
+      : null,
+  };
+}
+
+function mapManagerWorkspace(
+  result: PromiseSettledResult<
+    Awaited<ReturnType<typeof getFinanceXeroRouteStatus>> | null
+  >,
+  bookingMetricsQueryString: string
+): FinanceLandingManagerWorkspace {
+  const fallbackActions: FinanceLandingManagerAction[] = [
+    {
+      kind: "link",
+      href: "/api/finance/sync/status",
+      label: "Open sync diagnostics JSON",
+      description:
+        "Manager-only detail for the latest durable finance sync and recent failures.",
+    },
+    {
+      kind: "link",
+      href: "/api/finance/xero/status",
+      label: "Open finance Xero status JSON",
+      description:
+        "Manager-only connection status for the separate finance Xero boundary.",
+    },
+    {
+      kind: "link",
+      href: `/api/finance/bookings/metrics?${bookingMetricsQueryString}`,
+      label: "Open booking metrics JSON",
+      description:
+        "Viewer-safe raw booking metrics output for the same landing-page date windows.",
+    },
+  ];
+
+  if (result.status === "rejected") {
+    return {
+      eyebrow: "Manager tools",
+      title: "Finance manager operations are temporarily unavailable",
+      description:
+        "The landing page could not load the finance Xero manager boundary right now.",
+      badgeLabel: "Unavailable",
+      badgeVariant: "destructive",
+      cards: [],
+      configIssues: [],
+      tokenStorageIssues: [],
+      actions: fallbackActions,
+      error: readErrorMessage({
+        reason: result.reason,
+        fallback:
+          "Finance Xero manager operations are temporarily unavailable.",
+        logContext:
+          "Failed to load finance Xero status for the landing page manager workspace",
+      }),
+    };
+  }
+
+  const status = result.value;
+  if (!status) {
+    return {
+      eyebrow: "Manager tools",
+      title: "Finance manager operations",
+      description:
+        "Manager controls are only available to finance managers on the native landing page.",
+      badgeLabel: "Hidden",
+      badgeVariant: "secondary",
+      cards: [],
+      configIssues: [],
+      tokenStorageIssues: [],
+      actions: [],
+    };
+  }
+
+  const badgeVariant = status.connected
+    ? "success"
+    : status.canConnect
+      ? "warning"
+      : "destructive";
+  const badgeLabel = status.connected
+    ? "Connected"
+    : status.canConnect
+      ? "Ready to connect"
+      : "Config required";
+  const connectionActions: FinanceLandingManagerAction[] = status.connected
+    ? [
+        {
+          kind: "connect",
+          href: "/api/finance/xero/connect",
+          label: "Reconnect finance Xero",
+          description:
+            "Start the finance-only OAuth flow again if this boundary needs to be refreshed.",
+        },
+        {
+          kind: "disconnect",
+          label: "Disconnect finance Xero",
+          description:
+            "Clear the stored finance-only tokens and revoke them in Xero when possible.",
+        },
+      ]
+    : status.canConnect
       ? [
           {
-            href: "/api/finance/sync/status",
-            label: "Open sync diagnostics JSON",
-            description: "Manager-only detail for the latest durable finance sync and recent failures.",
-          },
-          {
-            href: "/api/finance/xero/status",
-            label: "Open finance Xero status JSON",
-            description: "Manager-only connection status for the separate finance Xero boundary.",
-          },
-          {
-            href: `/api/finance/bookings/metrics?${queryString}`,
-            label: "Open booking metrics JSON",
-            description: "Viewer-safe raw booking metrics output for the same landing-page date windows.",
+            kind: "connect",
+            href: "/api/finance/xero/connect",
+            label: "Connect finance Xero",
+            description:
+              "Complete the finance-only OAuth flow before live sync verification or fresh snapshot validation.",
           },
         ]
-      : [],
+      : [];
+
+  return {
+    eyebrow: "Manager tools",
+    title: "Finance manager operations",
+    description: status.connected
+      ? "The finance-only Xero boundary is connected from the native finance workspace."
+      : status.canConnect
+        ? "This environment is ready for the finance-only Xero OAuth flow, but no finance tenant is connected yet."
+        : "The finance-only Xero boundary is blocked by runtime configuration and must be fixed before live cutover.",
+    badgeLabel,
+    badgeVariant,
+    cards: [
+      {
+        title: "Finance Xero",
+        value: status.connected
+          ? "Connected"
+          : status.canConnect
+            ? "Ready to connect"
+            : "Blocked",
+        description: status.connected
+          ? "Separate finance tokens are stored for the native reporting boundary."
+          : status.canConnect
+            ? "Connect the finance-only Xero tenant before rollout checks that depend on fresh snapshot sync."
+            : "Fix the runtime blockers below before the first finance Xero connect flow.",
+        footnote: status.connected
+          ? buildConnectionFootnote(status.tenantId, status.tokenExpiresAt)
+          : "No finance Xero token record is stored yet.",
+      },
+      {
+        title: "OAuth config",
+        value: status.oauthConfigured ? "Ready" : "Action required",
+        description: status.oauthConfigured
+          ? "Client ID, client secret, and callback URL are configured for the finance-only OAuth app."
+          : "Finance OAuth settings are incomplete for this environment.",
+        footnote: status.configIssues.length
+          ? formatIssueList(status.configIssues)
+          : "No finance OAuth configuration issues detected.",
+      },
+      {
+        title: "Token storage",
+        value: status.tokenStorageConfigured ? "Ready" : "Action required",
+        description: status.tokenStorageConfigured
+          ? "Encrypted finance token storage is configured separately from operational Xero."
+          : "Finance token encryption must be fixed before storing tokens from the connect flow.",
+        footnote: status.tokenStorageIssues.length
+          ? formatIssueList(status.tokenStorageIssues)
+          : "No finance token-storage issues detected.",
+      },
+    ],
+    configIssues: status.configIssues,
+    tokenStorageIssues: status.tokenStorageIssues,
+    actions: [...connectionActions, ...fallbackActions],
   };
 }
 
@@ -490,6 +664,29 @@ function formatPercent(value: number): string {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
   }).format(value);
+}
+
+function buildConnectionFootnote(
+  tenantId: string | null,
+  tokenExpiresAt: Date | null
+): string {
+  const details: string[] = [];
+
+  if (tenantId) {
+    details.push(`Tenant ${tenantId}.`);
+  }
+
+  if (tokenExpiresAt) {
+    details.push(`Token expires ${formatDateTime(tokenExpiresAt.toISOString())}.`);
+  }
+
+  return details.length > 0
+    ? details.join(" ")
+    : "Connected without a stored tenant or expiry detail.";
+}
+
+function formatIssueList(issues: string[]): string {
+  return issues.join(" ");
 }
 
 function readErrorMessage(input: {
