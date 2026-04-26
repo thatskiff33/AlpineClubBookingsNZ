@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
+import { resolveFailedXeroOperationStates } from "@/lib/xero-admin-failures";
 import logger from "@/lib/logger";
 import { buildXeroObjectUrl } from "@/lib/xero-links";
 import { getXeroOperationRetryMeta } from "@/lib/xero-operation-retry";
@@ -52,11 +53,16 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: "desc" },
       take: limit,
     });
+    const failedOperations = operations.filter((operation) => operation.status === "FAILED");
+    const failureResolutions = await resolveFailedXeroOperationStates(failedOperations);
 
     return NextResponse.json({
       data: operations.map((operation) => ({
         ...operation,
         ...getXeroOperationRetryMeta(operation),
+        failureState: failureResolutions.get(operation.id)?.state ?? null,
+        failureStateReason: failureResolutions.get(operation.id)?.reason ?? null,
+        failureRootKey: failureResolutions.get(operation.id)?.rootKey ?? null,
         xeroObjectUrl:
           operation.xeroObjectUrl ??
           (operation.xeroObjectType && operation.xeroObjectId

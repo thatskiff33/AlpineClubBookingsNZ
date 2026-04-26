@@ -39,6 +39,7 @@ vi.mock("@/lib/age-tier", () => ({
 const {
   mockIsXeroConnected,
   mockGetXeroContactGroupMemberships,
+  mockSyncManagedXeroContactGroupForMember,
   mockUpdateXeroContact,
   mockCreateXeroEntranceFeeInvoice,
   mockEnqueueXeroEntranceFeeInvoiceOperation,
@@ -46,6 +47,7 @@ const {
 } = vi.hoisted(() => ({
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
   mockGetXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
+  mockSyncManagedXeroContactGroupForMember: vi.fn(),
   mockUpdateXeroContact: vi.fn(),
   mockCreateXeroEntranceFeeInvoice: vi.fn().mockResolvedValue(null),
   mockEnqueueXeroEntranceFeeInvoiceOperation: vi.fn().mockResolvedValue({
@@ -63,6 +65,7 @@ const {
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: mockIsXeroConnected,
   getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
+  syncManagedXeroContactGroupForMember: mockSyncManagedXeroContactGroupForMember,
   updateXeroContact: mockUpdateXeroContact,
   createXeroEntranceFeeInvoice: mockCreateXeroEntranceFeeInvoice,
 }));

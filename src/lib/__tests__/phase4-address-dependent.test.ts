@@ -47,6 +47,7 @@ vi.mock("@/lib/age-tier", () => ({
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
+  syncManagedXeroContactGroupForMember: vi.fn(),
   updateXeroContact: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
   getXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),

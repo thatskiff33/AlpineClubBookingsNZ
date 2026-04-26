@@ -8,6 +8,7 @@ import { getSeasonYear } from "@/lib/utils";
 import {
   getXeroContactGroupMemberships,
   isXeroConnected,
+  syncManagedXeroContactGroupForMember,
   updateXeroContact,
 } from "@/lib/xero";
 import {
@@ -441,22 +442,32 @@ export async function PUT(
       },
     });
 
-    // Sync to Xero if connected and member has a linked contact
-    if (
+    const needsContactUpdate =
       updated.xeroContactId &&
-      hasMemberXeroContactChanges(existing, updated)
-    ) {
+      hasMemberXeroContactChanges(existing, updated);
+    const needsContactGroupSync =
+      updated.xeroContactId && existing.ageTier !== updated.ageTier;
+
+    if (updated.xeroContactId && (needsContactUpdate || needsContactGroupSync)) {
       try {
         if (await isXeroConnected()) {
-          await updateXeroContact(
-            updated.xeroContactId,
-            buildXeroContactUpdatePayload(updated),
-            {
-              localModel: "Member",
-              localId: id,
+          if (needsContactUpdate) {
+            await updateXeroContact(
+              updated.xeroContactId,
+              buildXeroContactUpdatePayload(updated),
+              {
+                localModel: "Member",
+                localId: id,
+                createdByMemberId: session.user.id,
+              }
+            );
+          }
+
+          if (needsContactGroupSync) {
+            await syncManagedXeroContactGroupForMember(id, {
               createdByMemberId: session.user.id,
-            }
-          );
+            });
+          }
         }
       } catch (xeroErr) {
         logger.error({ err: xeroErr, memberId: id }, "Xero sync failed for member update");

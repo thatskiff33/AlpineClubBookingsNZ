@@ -1,5 +1,7 @@
 import type { BookingStatus } from "@prisma/client";
+import { getXeroContactGroupMismatchSnapshot } from "@/lib/age-tier-xero-groups";
 import { prisma } from "@/lib/prisma";
+import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
 
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
@@ -29,6 +31,7 @@ export interface XeroAdminHealthSnapshot {
   };
   failedOperations: {
     count: number;
+    legacyCount: number;
   };
   pendingOperations: {
     count: number;
@@ -40,6 +43,10 @@ export interface XeroAdminHealthSnapshot {
   };
   missingInvoices: {
     count: number;
+  };
+  contactGroupMismatches: {
+    count: number;
+    cacheReady: boolean;
   };
   apiBudget: {
     status: "healthy" | "warning" | "critical" | "exhausted" | "unknown";
@@ -162,11 +169,12 @@ export async function getMissingXeroInvoiceBookings(options?: {
 export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnapshot> {
   const [
     unlinkedMemberCount,
-    failedOperationCount,
+    failedOperationOverview,
     pendingOperationCount,
     latestMembershipCursor,
     latestMembershipCron,
     missingInvoices,
+    contactGroupMismatches,
     usageSummaryResult,
   ] = await Promise.all([
     prisma.member.count({
@@ -175,9 +183,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
         xeroContactId: null,
       },
     }),
-    prisma.xeroSyncOperation.count({
-      where: { status: "FAILED" },
-    }),
+    getFailedXeroOperationOverview(),
     prisma.xeroSyncOperation.count({
       where: { status: "PENDING" },
     }),
@@ -202,6 +208,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
       },
     }),
     getMissingXeroInvoiceBookings({ limit: 1 }),
+    getXeroContactGroupMismatchSnapshot({ limit: 1 }),
     getTodaysXeroUsageSummary()
       .then((summary) => ({
         status: summary.today.budgetStatus,
@@ -223,7 +230,8 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
       href: "/admin/members?active=true&xeroLinked=false",
     },
     failedOperations: {
-      count: failedOperationCount,
+      count: failedOperationOverview.activeFailedCount,
+      legacyCount: failedOperationOverview.legacyFailedCount,
     },
     pendingOperations: {
       count: pendingOperationCount,
@@ -235,6 +243,10 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     },
     missingInvoices: {
       count: missingInvoices.count,
+    },
+    contactGroupMismatches: {
+      count: contactGroupMismatches.count,
+      cacheReady: contactGroupMismatches.cacheReady,
     },
     apiBudget: usageSummaryResult,
   };
