@@ -40,6 +40,7 @@ const updateMemberSchema = z.object({
     .nullable()
     .or(z.literal("")),
   role: z.enum(["MEMBER", "ADMIN"]).optional(),
+  financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).optional(),
   ageTier: z.enum(["ADULT", "YOUTH", "CHILD", "INFANT"]).optional(),
   active: z.boolean().optional(),
   canLogin: z.boolean().optional(),
@@ -105,6 +106,7 @@ export async function GET(
         phoneNumber: true,
         dateOfBirth: true,
         role: true,
+        financeAccessLevel: true,
         ageTier: true,
         active: true,
         canLogin: true,
@@ -339,6 +341,9 @@ export async function PUT(
     if (data[f] !== undefined) updateData[f] = data[f]?.trim() || null;
   }
   if (data.role !== undefined) updateData.role = data.role;
+  if (data.financeAccessLevel !== undefined) {
+    updateData.financeAccessLevel = data.financeAccessLevel;
+  }
   if (data.active !== undefined) updateData.active = data.active;
   if (data.canLogin !== undefined) updateData.canLogin = data.canLogin;
   if (data.forcePasswordChange !== undefined) updateData.forcePasswordChange = data.forcePasswordChange;
@@ -411,6 +416,7 @@ export async function PUT(
         phoneNumber: true,
         dateOfBirth: true,
         role: true,
+        financeAccessLevel: true,
         ageTier: true,
         active: true,
         canLogin: true,

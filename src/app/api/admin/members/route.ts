@@ -44,6 +44,7 @@ const createMemberSchema = z.object({
     .optional()
     .nullable(),
   role: z.enum(["MEMBER", "ADMIN"]).default("MEMBER"),
+  financeAccessLevel: z.enum(["NONE", "VIEWER", "MANAGER"]).default("NONE"),
   ageTier: ageTierEnum.optional(),
   active: z.boolean().default(true),
   sendInvite: z.boolean().default(false),
@@ -160,6 +161,14 @@ export async function GET(req: NextRequest) {
     andConditions.push({ role: roleFilter });
   }
 
+  const financeAccessFilter = sp.get("financeAccess");
+  if (
+    financeAccessFilter &&
+    ["NONE", "VIEWER", "MANAGER"].includes(financeAccessFilter)
+  ) {
+    andConditions.push({ financeAccessLevel: financeAccessFilter });
+  }
+
   // Filter: active
   const activeFilter = sp.get("active");
   if (activeFilter === "true") {
@@ -248,6 +257,7 @@ export async function GET(req: NextRequest) {
     phoneNumber: true,
     dateOfBirth: true,
     role: true,
+    financeAccessLevel: true,
     ageTier: true,
     active: true,
     canLogin: true,
@@ -508,6 +518,7 @@ export async function POST(req: NextRequest) {
           phoneNumber: data.phoneNumber?.trim() || null,
           dateOfBirth,
           role: data.role,
+          financeAccessLevel: data.financeAccessLevel,
           ageTier: ageTier as AgeTier,
           active: data.active,
           canLogin,
@@ -540,6 +551,7 @@ export async function POST(req: NextRequest) {
           phoneNumber: true,
           dateOfBirth: true,
           role: true,
+          financeAccessLevel: true,
           ageTier: true,
           active: true,
           canLogin: true,
