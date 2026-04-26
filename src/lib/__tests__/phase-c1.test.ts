@@ -182,6 +182,20 @@ describe("#27: Xero import supports INFANT tier mapping", () => {
   });
 });
 
+describe("#27: Xero contact sync admin action", () => {
+  it("runs the broad contact sync as a full resync", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const content = fs.readFileSync(
+      path.resolve("src/app/(admin)/admin/xero/page.tsx"),
+      "utf-8"
+    );
+
+    expect(content).toContain('fetch("/api/admin/xero/sync-contacts", {');
+    expect(content).toContain('body: JSON.stringify({ fullResync: true })');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // #32: Admin Subscriptions API
 // ---------------------------------------------------------------------------
