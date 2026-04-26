@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { getAppBaseUrl, normalizeInternalAppUrl } from "@/lib/app-url";
+import { normalizeInternalAppUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { logAudit } from "@/lib/audit";
@@ -103,9 +103,8 @@ export async function POST(request: NextRequest) {
     }
 
     const screenshot = parseScreenshot(parsed.data.screenshotDataUrl);
-    const appBaseUrl = getAppBaseUrl(request.nextUrl.origin);
     const pageUrl = normalizeInternalAppUrl(parsed.data.pageUrl, {
-      baseUrl: appBaseUrl,
+      baseUrl: request.nextUrl.origin,
     });
     if (!pageUrl) {
       return NextResponse.json(

@@ -44,6 +44,7 @@ const baseMember = {
   id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
   phoneCountryCode: null, phoneAreaCode: null, phoneNumber: "021-123", dateOfBirth: new Date("1990-01-15"),
   role: "MEMBER", ageTier: "ADULT", active: true, forcePasswordChange: false,
+  financeAccessLevel: "NONE",
   xeroContactId: null, joinedDate: null, createdAt: new Date("2025-01-01"),
   canLogin: true,
 };
@@ -158,6 +159,27 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ role: "ADMIN" }),
     }));
+  });
+
+  it("updates finance access level", async () => {
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      financeAccessLevel: "MANAGER",
+      xeroContactId: null,
+    } as any);
+
+    const res = await updateMember(
+      makePutRequest("m1", { financeAccessLevel: "MANAGER" }),
+      { params: Promise.resolve({ id: "m1" }) }
+    );
+    expect(res.status).toBe(200);
+    expect(prisma.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ financeAccessLevel: "MANAGER" }),
+      })
+    );
   });
 
   it("sets forcePasswordChange to true", async () => {

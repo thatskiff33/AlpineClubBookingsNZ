@@ -22,6 +22,8 @@ import {
 } from "@/lib/member-address"
 import { bookingStatusClass, bookingStatusLabel, subscriptionStatusClass } from "@/lib/status-colors"
 
+type FinanceAccessLevel = "NONE" | "VIEWER" | "MANAGER"
+
 interface XeroSearchResult {
   contactId: string; name: string; email: string | null; isLinked: boolean; linkedMemberName: string | null
 }
@@ -31,6 +33,7 @@ interface MemberDetail {
   phoneCountryCode: string | null; phoneAreaCode: string | null; phoneNumber: string | null
   dateOfBirth: string | null
   role: "MEMBER" | "ADMIN"; ageTier: string
+  financeAccessLevel: FinanceAccessLevel
   active: boolean; forcePasswordChange: boolean; xeroContactId: string | null; joinedDate: string | null; createdAt: string
   canLogin: boolean
   xeroContactGroupsLoaded: boolean
@@ -62,12 +65,24 @@ interface CreditHistoryItem {
 interface EditForm {
   firstName: string; lastName: string; email: string
   phoneCountryCode: string; phoneAreaCode: string; phoneNumber: string
-  dateOfBirth: string; role: "MEMBER" | "ADMIN"; active: boolean; forcePasswordChange: boolean
+  dateOfBirth: string; role: "MEMBER" | "ADMIN"; financeAccessLevel: FinanceAccessLevel; active: boolean; forcePasswordChange: boolean
   inheritEmailFromId: string | null
   streetAddressLine1: string; streetAddressLine2: string; streetCity: string
   streetRegion: string; streetPostalCode: string; streetCountry: string
   postalAddressLine1: string; postalAddressLine2: string; postalCity: string
   postalRegion: string; postalPostalCode: string; postalCountry: string
+}
+
+const financeAccessLabels: Record<FinanceAccessLevel, string> = {
+  NONE: "No Finance Access",
+  VIEWER: "Finance Viewer",
+  MANAGER: "Finance Manager",
+}
+
+const financeAccessBadgeClass: Record<FinanceAccessLevel, string> = {
+  NONE: "bg-slate-100 text-slate-700 border-slate-200",
+  VIEWER: "bg-amber-100 text-amber-800 border-amber-200",
+  MANAGER: "bg-emerald-100 text-emerald-800 border-emerald-200",
 }
 
 interface DependentForm extends MemberAddressValues {
@@ -124,7 +139,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [success, setSuccess] = useState("")
   const [xeroError, setXeroError] = useState("")
   const [editOpen, setEditOpen] = useState(false)
-  const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", role: "MEMBER", active: true, forcePasswordChange: false, inheritEmailFromId: null, streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: "", postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: "" })
+  const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", role: "MEMBER", financeAccessLevel: "NONE", active: true, forcePasswordChange: false, inheritEmailFromId: null, streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: "", postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: "" })
   const [editPostalSameAsPhysical, setEditPostalSameAsPhysical] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState("")
@@ -210,6 +225,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       phoneNumber: member.phoneNumber || "",
       dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "",
       role: member.role,
+      financeAccessLevel: member.financeAccessLevel,
       active: member.active,
       forcePasswordChange: member.forcePasswordChange,
       inheritEmailFromId: member.inheritEmailFromId,
@@ -303,6 +319,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           phoneNumber: form.phoneNumber || null,
           dateOfBirth: form.dateOfBirth || null,
           role: form.role,
+          financeAccessLevel: form.financeAccessLevel,
           active: form.active,
           forcePasswordChange: form.forcePasswordChange,
           inheritEmailFromId: form.inheritEmailFromId || null,
@@ -472,6 +489,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             <p className="mt-1 text-sm text-slate-500">{member.email}</p>
             <div className="flex flex-wrap gap-2 mt-2">
               <Badge variant={member.role === "ADMIN" ? "default" : "secondary"} className={member.role === "ADMIN" ? "bg-blue-600 text-white hover:bg-blue-700" : ""}>{member.role}</Badge>
+              <Badge variant="secondary" className={financeAccessBadgeClass[member.financeAccessLevel]}>{financeAccessLabels[member.financeAccessLevel]}</Badge>
               <Badge variant={member.active ? "default" : "destructive"} className={member.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}>{member.active ? "Active" : "Inactive"}</Badge>
               {member.forcePasswordChange && <Badge variant="destructive" className="text-xs">PW Reset Required</Badge>}
             </div>
@@ -511,6 +529,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       <Card><CardHeader><CardTitle className="text-base font-medium">Member Information</CardTitle></CardHeader><CardContent><dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
         <div><dt className="text-slate-500">Phone</dt><dd className="font-medium">{member.phoneNumber ? [member.phoneCountryCode ? `+${member.phoneCountryCode}` : null, member.phoneAreaCode, member.phoneNumber].filter(Boolean).join(" ") : "Not provided"}</dd></div>
         <div><dt className="text-slate-500">Member Since</dt><dd className="font-medium">{fmtDate(member.joinedDate || member.createdAt)}{member.joinedDate && <span className="text-xs text-slate-400 ml-1">(from Xero)</span>}</dd></div>
+        <div><dt className="text-slate-500">Finance Access</dt><dd className="font-medium"><Badge variant="secondary" className={financeAccessBadgeClass[member.financeAccessLevel]}>{financeAccessLabels[member.financeAccessLevel]}</Badge></dd></div>
         <div><dt className="text-slate-500">Login</dt><dd className="font-medium">{member.canLogin ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Can Login</Badge> : <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Non-Login</Badge>}</dd></div>
         <div><dt className="text-slate-500">Email Inheritance</dt><dd className="font-medium">{member.inheritEmailFrom ? <span className="text-xs">{member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} <span className="text-slate-400">({member.inheritEmailFrom.email})</span></span> : <span className="text-xs text-slate-500">Own email</span>}</dd></div>
         <div><dt className="text-slate-500">Family Groups</dt><dd className="font-medium">{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Badge key={fg.id} variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200">{fg.name || "Unnamed"}</Badge>)}</div> : <span className="text-xs text-slate-500">None</span>}</dd></div>
@@ -842,7 +861,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               <Input id="edit-dateOfBirth" type="date" value={form.dateOfBirth} onChange={e => setForm(f => ({ ...f, dateOfBirth: e.target.value }))} />
               <p className="text-xs text-muted-foreground">Age tier is calculated automatically from date of birth.</p>
             </div>
-            <div className="space-y-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
               <Label>Role</Label>
               <Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as "MEMBER" | "ADMIN" }))} disabled={isSelf}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -852,6 +872,23 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 </SelectContent>
               </Select>
               {isSelf && <p className="text-xs text-muted-foreground">You cannot change your own role.</p>}
+              </div>
+              <div className="space-y-2">
+                <Label>Finance Access</Label>
+                <Select
+                  value={form.financeAccessLevel}
+                  onValueChange={v => setForm(f => ({ ...f, financeAccessLevel: v as FinanceAccessLevel }))}
+                  disabled={!member.canLogin}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="NONE">No Finance Access</SelectItem>
+                    <SelectItem value="VIEWER">Finance Viewer</SelectItem>
+                    <SelectItem value="MANAGER">Finance Manager</SelectItem>
+                  </SelectContent>
+                </Select>
+                {!member.canLogin && <p className="text-xs text-muted-foreground">Finance access only applies to login-enabled members.</p>}
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <input type="checkbox" id="edit-active" checked={form.active} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" disabled={isSelf} />

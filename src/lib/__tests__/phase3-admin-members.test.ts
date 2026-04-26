@@ -302,6 +302,18 @@ describe("Phase 3: Admin Member Management", () => {
       expect(call.where?.AND).toEqual(expect.arrayContaining([{ role: "ADMIN" }]));
     });
 
+    it("filters by finance access level", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(new NextRequest("http://localhost/api/admin/members?financeAccess=MANAGER"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(
+        expect.arrayContaining([{ financeAccessLevel: "MANAGER" }])
+      );
+    });
+
     it("filters by active status", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
@@ -1013,6 +1025,57 @@ create: vi.fn().mockResolvedValue({
       expect(createArgs.data.postalRegion).toBe("Waikato");
       expect(createArgs.data.postalPostalCode).toBe("3420");
       expect(createArgs.data.postalCountry).toBe("NZ");
+    });
+
+    it("stores finance access when creating a member", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findFirst).mockResolvedValue(null);
+
+      let createArgs: any;
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
+        const tx = {
+          member: {
+            create: vi.fn().mockImplementation(async (args: any) => {
+              createArgs = args;
+              return {
+                id: "m1",
+                firstName: "Finance",
+                lastName: "Viewer",
+                email: "finance@test.com",
+                phoneCountryCode: null,
+                phoneAreaCode: null,
+                phoneNumber: null,
+                dateOfBirth: null,
+                role: "MEMBER",
+                financeAccessLevel: "VIEWER",
+                ageTier: "ADULT",
+                active: true,
+                canLogin: true,
+                xeroContactId: null,
+                joinedDate: null,
+                createdAt: new Date("2026-04-11"),
+              };
+            }),
+          },
+          familyGroupMember: { createMany: vi.fn() },
+        };
+        return fn(tx);
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/members", {
+        method: "POST",
+        body: JSON.stringify({
+          firstName: "Finance",
+          lastName: "Viewer",
+          email: "finance@test.com",
+          financeAccessLevel: "VIEWER",
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await createMember(req);
+
+      expect(res.status).toBe(201);
+      expect(createArgs.data.financeAccessLevel).toBe("VIEWER");
     });
 
     it("sends a setup invite when creating a login-enabled member", async () => {

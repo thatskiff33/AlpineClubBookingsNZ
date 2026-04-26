@@ -1,6 +1,6 @@
 "use client"
 
-import type { AgeTier } from "@prisma/client"
+import type { AgeTier, FinanceAccessLevel } from "@prisma/client"
 import { useEffect, useState, useCallback } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
@@ -26,6 +26,7 @@ interface Member {
   phoneCountryCode: string | null; phoneAreaCode: string | null; phoneNumber: string | null
   dateOfBirth: string | null
   role: "MEMBER" | "ADMIN"; ageTier: AgeTier
+  financeAccessLevel: FinanceAccessLevel
   active: boolean; xeroContactId: string | null
   xeroContactGroupsLoaded: boolean
   xeroContactGroups: Array<{ id: string; name: string }>
@@ -53,6 +54,7 @@ interface MemberForm {
   firstName: string; lastName: string; email: string
   phoneCountryCode: string; phoneAreaCode: string; phoneNumber: string
   dateOfBirth: string; role: "MEMBER" | "ADMIN"; ageTier: AgeTier
+  financeAccessLevel: FinanceAccessLevel
   active: boolean; sendInvite: boolean; forcePasswordChange: boolean
   joinedDate: string; canLogin: boolean
   streetAddressLine1: string; streetAddressLine2: string; streetCity: string
@@ -68,7 +70,7 @@ interface XeroFeatureFlags {
   liveMemberGroupLookups: boolean
 }
 
-interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string; xeroContactGroup: string }
+interface Filters { role: string; financeAccess: string; active: string; ageTier: string; xeroLinked: string; subscription: string; xeroContactGroup: string }
 interface ImportRow { firstName: string; lastName: string; email: string; phone?: string; dateOfBirth?: string; role?: string }
 interface PasswordActionTarget {
   label: string
@@ -76,10 +78,23 @@ interface PasswordActionTarget {
   resetIds: string[]
 }
 
+const financeAccessLabels: Record<FinanceAccessLevel, string> = {
+  NONE: "None",
+  VIEWER: "Viewer",
+  MANAGER: "Manager",
+}
+
+const financeAccessBadgeClass: Record<FinanceAccessLevel, string> = {
+  NONE: "bg-slate-100 text-slate-700 border-slate-200",
+  VIEWER: "bg-amber-100 text-amber-800 border-amber-200",
+  MANAGER: "bg-emerald-100 text-emerald-800 border-emerald-200",
+}
+
 const emptyForm: MemberForm = {
   firstName: "", lastName: "", email: "",
   phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "",
   dateOfBirth: "", role: "MEMBER", ageTier: "ADULT",
+  financeAccessLevel: "NONE",
   active: true, sendInvite: false, forcePasswordChange: false,
   joinedDate: "", canLogin: true,
   streetAddressLine1: "", streetAddressLine2: "", streetCity: "",
@@ -87,7 +102,7 @@ const emptyForm: MemberForm = {
   postalAddressLine1: "", postalAddressLine2: "", postalCity: "",
   postalRegion: "", postalPostalCode: "", postalCountry: "",
 }
-const emptyFilters: Filters = { role: "", active: "", ageTier: "", xeroLinked: "", subscription: "", xeroContactGroup: "" }
+const emptyFilters: Filters = { role: "", financeAccess: "", active: "", ageTier: "", xeroLinked: "", subscription: "", xeroContactGroup: "" }
 
 function getMissingFieldsForXeroCreate(form: MemberForm): string[] {
   const missing: string[] = []
@@ -136,6 +151,7 @@ export default function MembersPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">((searchParams.get("sortDir") as "asc" | "desc") || "asc")
   const [filters, setFilters] = useState<Filters>({
     role: searchParams.get("role") || "",
+    financeAccess: searchParams.get("financeAccess") || "",
     active: searchParams.get("active") || "",
     ageTier: searchParams.get("ageTier") || "",
     xeroLinked: searchParams.get("xeroLinked") || "",
@@ -352,6 +368,7 @@ export default function MembersPage() {
       dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "",
       role: member.role,
       ageTier: member.ageTier,
+      financeAccessLevel: member.financeAccessLevel,
       active: member.active,
       sendInvite: false,
       forcePasswordChange: member.forcePasswordChange,
@@ -423,7 +440,7 @@ export default function MembersPage() {
       }
 
       const url = editingMember ? `/api/admin/members/${editingMember.id}` : "/api/admin/members"
-      const body: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, phoneCountryCode: form.phoneCountryCode || null, phoneAreaCode: form.phoneAreaCode || null, phoneNumber: form.phoneNumber || null, dateOfBirth: form.dateOfBirth || null, role: form.role, ageTier: form.ageTier, active: form.active, canLogin: form.canLogin, joinedDate: form.joinedDate || null, streetAddressLine1: form.streetAddressLine1 || null, streetAddressLine2: form.streetAddressLine2 || null, streetCity: form.streetCity || null, streetRegion: form.streetRegion || null, streetPostalCode: form.streetPostalCode || null, streetCountry: form.streetCountry || null, postalAddressLine1: form.postalAddressLine1 || null, postalAddressLine2: form.postalAddressLine2 || null, postalCity: form.postalCity || null, postalRegion: form.postalRegion || null, postalPostalCode: form.postalPostalCode || null, postalCountry: form.postalCountry || null }
+      const body: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, phoneCountryCode: form.phoneCountryCode || null, phoneAreaCode: form.phoneAreaCode || null, phoneNumber: form.phoneNumber || null, dateOfBirth: form.dateOfBirth || null, role: form.role, ageTier: form.ageTier, financeAccessLevel: form.financeAccessLevel, active: form.active, canLogin: form.canLogin, joinedDate: form.joinedDate || null, streetAddressLine1: form.streetAddressLine1 || null, streetAddressLine2: form.streetAddressLine2 || null, streetCity: form.streetCity || null, streetRegion: form.streetRegion || null, streetPostalCode: form.streetPostalCode || null, streetCountry: form.streetCountry || null, postalAddressLine1: form.postalAddressLine1 || null, postalAddressLine2: form.postalAddressLine2 || null, postalCity: form.postalCity || null, postalRegion: form.postalRegion || null, postalPostalCode: form.postalPostalCode || null, postalCountry: form.postalCountry || null }
       if (editingMember) {
         body.forcePasswordChange = form.forcePasswordChange
       }
@@ -631,6 +648,7 @@ export default function MembersPage() {
       <div className="flex flex-wrap gap-3 items-end">
         <div className="flex-1 min-w-[200px] max-w-sm"><Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or email..." className="bg-white" /></div>
         <Select value={filters.role || "all"} onValueChange={v => setFilter("role", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Role" /></SelectTrigger><SelectContent><SelectItem value="all">All Roles</SelectItem><SelectItem value="MEMBER">Member</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select>
+        <Select value={filters.financeAccess || "all"} onValueChange={v => setFilter("financeAccess", v === "all" ? "" : v)}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Finance" /></SelectTrigger><SelectContent><SelectItem value="all">All Finance Access</SelectItem><SelectItem value="NONE">No Finance Access</SelectItem><SelectItem value="VIEWER">Finance Viewer</SelectItem><SelectItem value="MANAGER">Finance Manager</SelectItem></SelectContent></Select>
         <Select value={filters.active || "all"} onValueChange={v => setFilter("active", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Status" /></SelectTrigger><SelectContent><SelectItem value="all">All Status</SelectItem><SelectItem value="true">Active</SelectItem><SelectItem value="false">Inactive</SelectItem></SelectContent></Select>
         <Select value={filters.ageTier || "all"} onValueChange={v => setFilter("ageTier", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Age Tier" /></SelectTrigger><SelectContent><SelectItem value="all">All Tiers</SelectItem><SelectItem value="INFANT">Infant</SelectItem><SelectItem value="CHILD">Child</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="ADULT">Adult</SelectItem></SelectContent></Select>
         <Select value={filters.xeroLinked || "all"} onValueChange={v => setFilter("xeroLinked", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Xero" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero</SelectItem><SelectItem value="true">Linked</SelectItem><SelectItem value="false">Not Linked</SelectItem></SelectContent></Select>
@@ -649,6 +667,7 @@ export default function MembersPage() {
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("name")}><span className="inline-flex items-center">Name<SortIcon col="name" /></span></TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("email")}><span className="inline-flex items-center">Email<SortIcon col="email" /></span></TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("role")}><span className="inline-flex items-center">Role<SortIcon col="role" /></span></TableHead>
+            <TableHead>Finance</TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("ageTier")}><span className="inline-flex items-center">Age Tier<SortIcon col="ageTier" /></span></TableHead>
             <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("active")}><span className="inline-flex items-center">Status<SortIcon col="active" /></span></TableHead>
             <TableHead>Type</TableHead>
@@ -662,6 +681,7 @@ export default function MembersPage() {
               <TableCell className="font-medium"><Link href={`/admin/members/${member.id}`} className="text-blue-600 hover:underline">{member.firstName} {member.lastName}</Link>{member.forcePasswordChange && <Badge variant="destructive" className="ml-2 text-xs">PW Reset</Badge>}</TableCell>
               <TableCell className="text-slate-600">{member.email}</TableCell>
               <TableCell><Badge variant={member.role === "ADMIN" ? "default" : "secondary"} className={member.role === "ADMIN" ? "bg-blue-600 text-white hover:bg-blue-700" : ""}>{member.role}</Badge></TableCell>
+              <TableCell><Badge variant="secondary" className={financeAccessBadgeClass[member.financeAccessLevel]}>{financeAccessLabels[member.financeAccessLevel]}</Badge></TableCell>
               <TableCell><span className="text-sm text-slate-600">{member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()}</span></TableCell>
               <TableCell><Badge variant={member.active ? "default" : "destructive"} className={member.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}>{member.active ? "Active" : "Inactive"}</Badge></TableCell>
               <TableCell>{member.canLogin ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Can Login</Badge> : <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Non-Login</Badge>}</TableCell>
@@ -715,7 +735,7 @@ export default function MembersPage() {
                 type="checkbox"
                 id="canLogin"
                 checked={form.canLogin}
-                onChange={e => setForm(f => ({ ...f, canLogin: e.target.checked, sendInvite: e.target.checked ? f.sendInvite : false }))}
+                onChange={e => setForm(f => ({ ...f, canLogin: e.target.checked, sendInvite: e.target.checked ? f.sendInvite : false, financeAccessLevel: e.target.checked ? f.financeAccessLevel : "NONE" }))}
                 className="h-4 w-4 rounded border-gray-300"
               />
               <Label htmlFor="canLogin">Can Login</Label>
@@ -762,7 +782,7 @@ export default function MembersPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>Role</Label>
                 <Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as "MEMBER" | "ADMIN" }))}>
@@ -772,6 +792,22 @@ export default function MembersPage() {
                     <SelectItem value="ADMIN">Admin</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Finance Access</Label>
+                <Select
+                  value={form.financeAccessLevel}
+                  onValueChange={v => setForm(f => ({ ...f, financeAccessLevel: v as FinanceAccessLevel }))}
+                  disabled={!form.canLogin}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="NONE">No Finance Access</SelectItem>
+                    <SelectItem value="VIEWER">Finance Viewer</SelectItem>
+                    <SelectItem value="MANAGER">Finance Manager</SelectItem>
+                  </SelectContent>
+                </Select>
+                {!form.canLogin && <p className="text-xs text-muted-foreground">Finance access only applies to login-enabled members.</p>}
               </div>
               <div className="space-y-2">
                 <Label>Age Tier</Label>
