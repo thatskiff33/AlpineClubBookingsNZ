@@ -29,6 +29,20 @@ export interface PublicHealthReport {
   };
 }
 
+export interface ReadinessHealthReport {
+  status: "healthy" | "unhealthy";
+  version: string;
+  uptime: number;
+  checks: {
+    db: Omit<CheckResult, "error">;
+    config: Omit<CheckResult, "error">;
+  };
+  runtime: {
+    cronEnabled: boolean;
+    role: string;
+  };
+}
+
 const CHECK_TIMEOUT_MS = 3000;
 const processStartTime = Date.now();
 
@@ -141,6 +155,20 @@ function getBaseMetadata() {
   };
 }
 
+function toPublicCheckResult(check: CheckResult) {
+  return {
+    status: check.status,
+    latencyMs: check.latencyMs,
+  };
+}
+
+function getRuntimeReadinessMetadata() {
+  return {
+    cronEnabled: (process.env.CRON_ENABLED ?? "true").toLowerCase() === "true",
+    role: process.env.APP_RUNTIME_ROLE ?? "unknown",
+  };
+}
+
 export async function getDetailedHealthReport(): Promise<{
   httpStatus: number;
   report: DetailedHealthReport;
@@ -176,10 +204,7 @@ export async function getPublicHealthReport(): Promise<{
   report: PublicHealthReport;
 }> {
   const db = await checkDatabase();
-  const publicDbCheck = {
-    status: db.status,
-    latencyMs: db.latencyMs,
-  };
+  const publicDbCheck = toPublicCheckResult(db);
 
   return {
     httpStatus: db.status === "ok" ? 200 : 503,
@@ -187,6 +212,28 @@ export async function getPublicHealthReport(): Promise<{
       ...getBaseMetadata(),
       status: db.status === "ok" ? "healthy" : "unhealthy",
       checks: { db: publicDbCheck },
+    },
+  };
+}
+
+export async function getReadinessHealthReport(): Promise<{
+  httpStatus: number;
+  report: ReadinessHealthReport;
+}> {
+  const db = await checkDatabase();
+  const config = getRuntimeConfigCheck();
+  const isHealthy = db.status === "ok" && config.status === "ok";
+
+  return {
+    httpStatus: isHealthy ? 200 : 503,
+    report: {
+      ...getBaseMetadata(),
+      status: isHealthy ? "healthy" : "unhealthy",
+      checks: {
+        db: toPublicCheckResult(db),
+        config: toPublicCheckResult(config),
+      },
+      runtime: getRuntimeReadinessMetadata(),
     },
   };
 }

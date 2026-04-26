@@ -396,6 +396,7 @@ cd ~/TACBookings
 ```
 
 This script is robust, but it is not zero-downtime. It tears down and recreates the live app stack during the rollout.
+It also rewrites the active Caddy upstream back to the single `app` service, so it is the fallback path when blue/green is not required.
 
 ### Blue/Green Deployment Guidance
 
@@ -412,22 +413,33 @@ What the script does:
 
 1. Build the new image while the current app stays live.
 2. Start the inactive color service (`app_blue` or `app_green`) alongside the live one.
-3. Health-check the new app instance before any traffic switch.
-4. Point Caddy at the new healthy upstream.
-5. Wait a short drain period so in-flight requests on the previous service can finish.
-6. Refresh the `app` cron leader off-traffic.
-7. Stop the previously live color service after the cutover succeeds.
+3. Verify the target color with `/api/health/ready` before any traffic switch.
+4. Recreate `app` on the new release and verify cron registration before any traffic switch.
+5. Point Caddy at the target color as the primary upstream with `app` as the automatic fallback upstream.
+6. Verify the public domain still resolves to the target color, not just the fallback.
+7. Wait a short drain period so in-flight requests on the previous color can finish.
+8. Stop the previously live color service after the cutover succeeds.
 
 Current constraints and rules:
 
-- `app` remains the cron leader and fallback app instance.
+- `app` remains the cron leader and the Caddy fallback upstream after a successful blue/green deploy.
 - `app_blue` and `app_green` are web-only services with cron disabled.
 - Caddy switches traffic by reloading a managed upstream file under `deploy/caddy/`.
+- Caddy no longer depends on `app` health to start. Live traffic is modeled as `active color -> app fallback`.
+- `/api/health` stays public and DB-only. Blue/green health gates and container health checks use `/api/health/ready`, which also verifies runtime config and confirms whether the instance is a web slot or the cron leader.
 - The blue/green script waits `BLUE_GREEN_DRAIN_SECONDS` before it restarts or stops the previous service so in-flight requests can complete.
 - Postgres remains a shared dependency, not a blue/green service on this host.
-- The blue/green script scans pending Prisma migrations and blocks obviously breaking SQL unless `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` is set deliberately.
+- The blue/green script scans pending Prisma migrations and blocks obviously breaking SQL unless both `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and `BLUE_GREEN_MIGRATION_OVERRIDE_REASON="..."` are set deliberately.
+- The Prisma migration scan is heuristic only. A pass means "no obvious breaking SQL was detected", not "old and new code are definitely compatible".
 - Prisma migrations must be backward-compatible across the cutover. Use expand-contract schema changes so old and new app versions can overlap safely.
 - `/home/ubuntu/clean-build-docker-tacbookings.sh` still exists as the standard full rebuild path when zero-downtime is not required.
+
+### Cutover Safety And Recovery Model
+
+- If the target color fails readiness, deploy stops before any traffic switch.
+- If the refreshed `app` cron leader fails readiness or cron registration, deploy stops before any traffic switch and the existing live color stays in service.
+- If cutover begins but the public domain resolves to the fallback `app` instead of the target color, the deploy is treated as failed and the script restores the previous primary color automatically.
+- After a successful cutover, Caddy can fail over from the active color to `app` if the color container dies or stops passing readiness checks. Treat that as degraded mode and repair or redeploy the color service promptly.
 
 ### Database Continuity During Blue/Green
 
@@ -436,7 +448,7 @@ There is only one live PostgreSQL database. Blue/green switches the web applicat
 If someone is booking during cutover:
 
 1. Existing requests keep writing to the shared Postgres database.
-2. New requests are routed to the new color only after the target app passes health checks.
+2. New requests are routed to the new color only after the target app and refreshed cron leader both pass readiness checks.
 3. The previous service is left running for a short drain window before it is restarted or stopped.
 
 For booking consistency specifically, the write paths already serialize booking creation and key booking transitions inside database transactions with PostgreSQL advisory locks. See `src/app/api/bookings/route.ts` and `src/app/api/bookings/[id]/confirm-draft/route.ts`.
@@ -463,6 +475,16 @@ Treat these as breaking unless you explicitly review and override them:
 - table renames
 - column type changes
 - `SET NOT NULL` on an existing column without a prior compatible rollout
+
+If you must override the guard, the deploy command must be intentionally noisy:
+
+```bash
+ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1 \
+BLUE_GREEN_MIGRATION_OVERRIDE_REASON="explain the reviewed expand/contract plan" \
+./scripts/blue-green-deploy.sh
+```
+
+That override only bypasses the regex guard. It does not prove compatibility, and it should not be used instead of a staged expand-contract rollout.
 
 ### Viewing Logs
 

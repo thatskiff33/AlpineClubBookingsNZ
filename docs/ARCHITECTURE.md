@@ -339,7 +339,7 @@ Concurrency guardrail:
 
 **Instance:** 4 GB RAM, 2 vCPUs, 80 GB SSD, Ubuntu 24.04 LTS.
 
-**Docker Compose services:** `caddy` (reverse proxy, auto HTTPS), `app` (cron leader and fallback app instance), `app_blue` / `app_green` (blue/green web slots), `postgres` (PostgreSQL 16 on port 5432), `migrate` (Prisma migration runner).
+**Docker Compose services:** `caddy` (reverse proxy, auto HTTPS), `app` (cron leader and warm fallback upstream), `app_blue` / `app_green` (blue/green web slots), `postgres` (PostgreSQL 16 on port 5432), `migrate` (Prisma migration runner).
 
 **Deploy process:**
 ```bash
@@ -349,9 +349,9 @@ docker compose build migrate        # only if schema changed
 docker compose run --rm migrate     # only if schema changed
 ```
 
-**Current deploy behavior:** Two deploy paths now exist. `/home/ubuntu/clean-build-docker-tacbookings.sh` remains the standard rebuild/redeploy path and still recreates the single `app` upstream, which can cause a brief user-visible interruption. `scripts/blue-green-deploy.sh` performs same-host blue/green cutover for the web tier by warming the inactive color, switching Caddy, then refreshing the `app` cron leader off-traffic.
+**Current deploy behavior:** Two deploy paths now exist. `/home/ubuntu/clean-build-docker-tacbookings.sh` remains the standard rebuild/redeploy path, recreates the single `app` upstream, and can cause a brief user-visible interruption. `scripts/blue-green-deploy.sh` performs same-host blue/green cutover for the web tier by warming the inactive color, refreshing the `app` cron leader on the new image before cutover, then switching Caddy.
 
-**Blue/green guidance:** The blue/green path keeps Postgres shared, runs cron only on `app`, and keeps `app_blue` / `app_green` web-only by setting `CRON_ENABLED=false` on the color services. During cutover, the previous upstream is left running briefly so in-flight requests can drain before the old service is restarted or stopped. Prisma changes must follow an expand-contract pattern so the old and new app versions can overlap safely during cutover.
+**Blue/green guidance:** The blue/green path keeps Postgres shared, runs cron only on `app`, and keeps `app_blue` / `app_green` web-only by setting `CRON_ENABLED=false` on the color services. Caddy routes to the active color first and `app` second using readiness checks on `/api/health/ready`. During cutover, the previous color is kept running until the public domain verifies against the target color and the drain period ends. Prisma changes must follow an expand-contract pattern so the old and new app versions can overlap safely during cutover. The migration SQL scan in `scripts/blue-green-deploy.sh` is heuristic only and requires explicit operator review even when it passes.
 
 **Backups:** Lightsail snapshots + daily pg_dump to S3 (env vars: `BACKUP_S3_BUCKET`, `BACKUP_S3_KEY_ID`, `BACKUP_S3_SECRET`, `BACKUP_SCHEDULE`).
 
