@@ -2,7 +2,7 @@
 
 This document defines the native `/finance` landing page shell added for phase `#97`.
 
-It is intentionally small. The landing page surfaces live finance sync health and TACBookings booking summaries for finance viewers and managers, but it does not implement report pages, charts, or manual sync controls.
+It is intentionally small. The landing page surfaces live finance sync health and TACBookings booking summaries for finance viewers and managers, and it may expose finance-manager Xero connection controls and diagnostics deep links, but it does not implement report pages, charts, or manual sync controls.
 
 ## Boundary
 
@@ -14,6 +14,7 @@ It is intentionally small. The landing page surfaces live finance sync health an
 
 - Sync health comes from `src/lib/finance-sync-diagnostics.ts`.
 - Booking summary cards come from `src/lib/finance-booking-metrics.ts`.
+- Finance-manager connection status comes from `src/lib/finance-xero.ts`.
 - Finance access stays gated by `src/lib/finance-auth.ts`.
 
 The landing page must keep those source boundaries explicit in the UI:
@@ -37,8 +38,8 @@ The landing page uses New Zealand local dates (`Pacific/Auckland`) for its booki
 
 - finance viewers and finance managers can load `/finance`
 - viewers see the landing page summaries and section links
-- manager-only diagnostics links may be shown only for capabilities that already exist
-- manager-only diagnostics links must stay hidden from viewers
+- managers may see finance Xero connection state plus connect or disconnect controls for the already-landed finance-only OAuth boundary
+- manager-only diagnostics links and finance Xero controls must stay hidden from viewers
 
 ## Failure Handling
 
