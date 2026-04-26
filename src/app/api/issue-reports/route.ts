@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { getAppBaseUrl, normalizeInternalAppUrl } from "@/lib/app-url";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { logAudit } from "@/lib/audit";
@@ -10,7 +11,7 @@ import logger from "@/lib/logger";
 const MAX_SCREENSHOT_BYTES = 900_000;
 
 const issueReportSchema = z.object({
-  pageUrl: z.string().url().max(2048),
+  pageUrl: z.string().trim().min(1).max(2048),
   pageTitle: z.string().trim().max(300).optional(),
   description: z.string().trim().min(10).max(2000),
   screenshotDataUrl: z.string().max(2_000_000).optional(),
@@ -102,13 +103,24 @@ export async function POST(request: NextRequest) {
     }
 
     const screenshot = parseScreenshot(parsed.data.screenshotDataUrl);
+    const appBaseUrl = getAppBaseUrl(request.nextUrl.origin);
+    const pageUrl = normalizeInternalAppUrl(parsed.data.pageUrl, {
+      baseUrl: appBaseUrl,
+    });
+    if (!pageUrl) {
+      return NextResponse.json(
+        { error: "Page URL must point to this site" },
+        { status: 400 }
+      );
+    }
+
     const pageTitle = parsed.data.pageTitle?.trim() || null;
     const description = parsed.data.description.trim();
 
     const issueReport = await prisma.issueReport.create({
       data: {
         memberId: member.id,
-        pageUrl: parsed.data.pageUrl,
+        pageUrl,
         pageTitle,
         description,
         screenshotDataUrl: screenshot?.dataUrl ?? null,
@@ -122,7 +134,7 @@ export async function POST(request: NextRequest) {
       memberId: member.id,
       targetId: issueReport.id,
       details: JSON.stringify({
-        pageUrl: parsed.data.pageUrl,
+        pageUrl,
         pageTitle,
         hasScreenshot: Boolean(screenshot),
       }),
@@ -133,7 +145,7 @@ export async function POST(request: NextRequest) {
     sendAdminIssueReportAlert({
       memberName: `${member.firstName} ${member.lastName}`.trim(),
       memberEmail: member.email,
-      pageUrl: parsed.data.pageUrl,
+      pageUrl,
       pageTitle,
       description,
       screenshot: screenshot

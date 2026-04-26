@@ -40,46 +40,6 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 // ============================================================================
-// N-12: Post-Stay Feedback Requests
-// ============================================================================
-
-describe("N-12: sendFeedbackRequests", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-    mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
-    mockPrisma.emailLog.update.mockResolvedValue({});
-  });
-
-  it("returns zero counts while the feature is disabled", async () => {
-    const { sendFeedbackRequests } = await import("../cron-feedback-requests");
-    const result = await sendFeedbackRequests();
-
-    expect(result).toEqual({ sent: 0, skippedPreference: 0, failed: 0 });
-  });
-
-  it("does not query bookings or send any emails", async () => {
-    mockPrisma.booking.findMany.mockResolvedValue([
-      {
-        id: "booking-1",
-        checkIn: new Date("2026-04-01"),
-        checkOut: new Date("2026-04-05"),
-        status: "CONFIRMED",
-        member: { id: "member-1", email: "user@example.com", firstName: "Alice" },
-      },
-    ]);
-
-    const { sendFeedbackRequests } = await import("../cron-feedback-requests");
-    const result = await sendFeedbackRequests();
-
-    expect(result).toEqual({ sent: 0, skippedPreference: 0, failed: 0 });
-    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
-    expect(mockPrisma.notificationPreference.findUnique).not.toHaveBeenCalled();
-    expect(mockPrisma.emailLog.create).not.toHaveBeenCalled();
-  });
-});
-
-// ============================================================================
 // N-09: Bulk Member Communication - Input Sanitisation
 // ============================================================================
 
@@ -232,34 +192,13 @@ describe("N-09: Bulk communication preference filtering", () => {
 });
 
 // ============================================================================
-// N-12: Post-stay feedback email template
+// N-12: Feedback flow removal
 // ============================================================================
 
-describe("N-12: postStayFeedbackTemplate", () => {
-  it("renders template with member name and dates", async () => {
-    const { postStayFeedbackTemplate } = await import("../email-templates");
-    const html = postStayFeedbackTemplate(
-      "Alice",
-      new Date("2026-04-01"),
-      new Date("2026-04-05")
-    );
-
-    expect(html).toContain("How Was Your Stay?");
-    expect(html).toContain("Alice");
-    expect(html).toContain("Share Your Feedback");
-    expect(html).toContain("/feedback");
-  });
-
-  it("escapes HTML in member name", async () => {
-    const { postStayFeedbackTemplate } = await import("../email-templates");
-    const html = postStayFeedbackTemplate(
-      "<script>xss</script>",
-      new Date("2026-04-01"),
-      new Date("2026-04-05")
-    );
-
-    expect(html).not.toContain("<script>xss</script>");
-    expect(html).toContain("&lt;script&gt;");
+describe("N-12: dormant feedback flow removal", () => {
+  it("does not export the removed feedback template", async () => {
+    const templates = await import("../email-templates");
+    expect(templates).not.toHaveProperty("postStayFeedbackTemplate");
   });
 });
 
