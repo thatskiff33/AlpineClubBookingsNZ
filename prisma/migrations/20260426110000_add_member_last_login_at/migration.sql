@@ -1,0 +1,2 @@
+ALTER TABLE "Member"
+ADD COLUMN "lastLoginAt" TIMESTAMP(3);

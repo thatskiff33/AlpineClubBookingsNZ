@@ -26,6 +26,7 @@ import {
   processQueuedXeroOutboxOperations,
 } from "@/lib/xero-operation-outbox";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
+import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -253,6 +254,8 @@ export async function GET(req: NextRequest) {
     joinedDate: true,
     createdAt: true,
     forcePasswordChange: true,
+    passwordChangedAt: true,
+    lastLoginAt: true,
     streetAddressLine1: true,
     streetAddressLine2: true,
     streetCity: true,
@@ -319,10 +322,13 @@ export async function GET(req: NextRequest) {
     })),
     subscriptions: undefined,
     familyGroupMemberships: undefined,
+    passwordChangedAt: undefined,
+    lastLoginAt: undefined,
     xeroContactGroupsLoaded,
     xeroContactGroups: m.xeroContactId
       ? xeroContactGroups[m.xeroContactId] ?? []
       : [],
+    hasCompletedAccountSetup: hasMemberCompletedAccountSetup(m),
   }));
 
   return NextResponse.json({

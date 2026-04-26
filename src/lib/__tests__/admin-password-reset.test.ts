@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { count: vi.fn(), findMany: vi.fn() },
-    passwordResetToken: { create: vi.fn() },
+    member: { count: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
+    passwordResetToken: { create: vi.fn(), deleteMany: vi.fn() },
     auditLog: { create: vi.fn() },
   },
 }));
@@ -28,9 +28,16 @@ import { auth } from "@/lib/auth";
 import { sendAdminPasswordResetEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import { POST } from "@/app/api/admin/members/send-password-reset/route";
+import {
+  ADMIN_PASSWORD_RESET_EXPIRY_OPTIONS,
+  DEFAULT_ADMIN_PASSWORD_RESET_EXPIRY_WINDOW,
+  getAdminPasswordResetExpiryDurationMs,
+} from "@/lib/password-reset";
 
 const mockedAuth = vi.mocked(auth);
 const mockedFindMany = vi.mocked(prisma.member.findMany);
+const mockedFindUnique = vi.mocked(prisma.member.findUnique);
+const mockedDeleteTokens = vi.mocked(prisma.passwordResetToken.deleteMany);
 const mockedCreateToken = vi.mocked(prisma.passwordResetToken.create);
 const mockedSendEmail = vi.mocked(sendAdminPasswordResetEmail);
 const mockedLogAudit = vi.mocked(logAudit);
@@ -45,8 +52,16 @@ function makeReq(body: unknown) {
 
 describe("Admin Send Password Reset API", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-26T12:00:00.000Z"));
     vi.clearAllMocks();
+    mockedFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false } as any);
     mockedCreateToken.mockResolvedValue({ id: "tok1", token: "uuid", memberId: "m1", expiresAt: new Date(), used: false, createdAt: new Date() } as any);
+    mockedDeleteTokens.mockResolvedValue({ count: 1 } as any);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("returns 401 for unauthenticated requests", async () => {
@@ -98,13 +113,27 @@ describe("Admin Send Password Reset API", () => {
     const body = await res.json();
     expect(body.sent).toBe(1);
     expect(body.skipped).toBe(0);
+    expect(body.expiryLabel).toBe("1 hour");
 
     // Verify token was created
     expect(mockedCreateToken).toHaveBeenCalledTimes(1);
+    expect(mockedDeleteTokens).toHaveBeenCalledWith({
+      where: { memberId: "m1" },
+    });
+    expect(mockedCreateToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          memberId: "m1",
+          expiresAt: new Date(
+            Date.now() + getAdminPasswordResetExpiryDurationMs(DEFAULT_ADMIN_PASSWORD_RESET_EXPIRY_WINDOW)
+          ),
+        }),
+      })
+    );
 
     // Verify email was sent
     expect(mockedSendEmail).toHaveBeenCalledTimes(1);
-    expect(mockedSendEmail).toHaveBeenCalledWith("alice@test.com", expect.any(String));
+    expect(mockedSendEmail).toHaveBeenCalledWith("alice@test.com", expect.any(String), "1 hour");
 
     // Verify audit log
     expect(mockedLogAudit).toHaveBeenCalledTimes(1);
@@ -116,6 +145,34 @@ describe("Admin Send Password Reset API", () => {
       })
     );
   });
+
+  it.each(ADMIN_PASSWORD_RESET_EXPIRY_OPTIONS.filter((option) => option.value !== "1h"))(
+    "supports the $label admin reset window",
+    async (option) => {
+      mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+      mockedFindMany.mockResolvedValue([
+        { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
+      ] as any);
+
+      const res = await POST(makeReq({ memberIds: ["m1"], expiryWindow: option.value }));
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.expiryLabel).toBe(option.label);
+      expect(mockedCreateToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            expiresAt: new Date(Date.now() + getAdminPasswordResetExpiryDurationMs(option.value)),
+          }),
+        })
+      );
+      expect(mockedSendEmail).toHaveBeenCalledWith(
+        "alice@test.com",
+        expect.any(String),
+        option.label
+      );
+    }
+  );
 
   it("skips inactive and dependent members", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);

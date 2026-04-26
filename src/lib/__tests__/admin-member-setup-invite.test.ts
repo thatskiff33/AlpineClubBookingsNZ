@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { count: vi.fn(), findMany: vi.fn() },
+    member: { count: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
     passwordResetToken: { create: vi.fn(), deleteMany: vi.fn() },
     auditLog: { create: vi.fn() },
   },
@@ -32,6 +32,7 @@ import { MEMBER_SETUP_INVITE_TTL_MS } from "@/lib/member-setup-invite";
 
 const mockedAuth = vi.mocked(auth);
 const mockedFindMany = vi.mocked(prisma.member.findMany);
+const mockedFindUnique = vi.mocked(prisma.member.findUnique);
 const mockedDeleteTokens = vi.mocked(prisma.passwordResetToken.deleteMany);
 const mockedCreateToken = vi.mocked(prisma.passwordResetToken.create);
 const mockedSendEmail = vi.mocked(sendMemberSetupInviteEmail);
@@ -50,6 +51,7 @@ describe("Admin Send Setup Invite API", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-26T12:00:00.000Z"));
     vi.clearAllMocks();
+    mockedFindUnique.mockResolvedValue({ active: true, forcePasswordChange: false } as any);
     mockedCreateToken.mockResolvedValue({
       id: "tok1",
       token: "uuid",

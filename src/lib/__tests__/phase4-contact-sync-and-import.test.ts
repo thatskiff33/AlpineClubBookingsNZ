@@ -368,6 +368,27 @@ describe("Phase 4 contact sync and cached import", () => {
         }),
       })
     );
+    expect(mocks.prisma.xeroContactGroupCache.updateMany).toHaveBeenCalledWith({
+      where: {
+        contactGroupId: { in: ["group_old"] },
+        contactCount: { gt: 0 },
+      },
+      data: expect.objectContaining({
+        contactCount: { decrement: 1 },
+      }),
+    });
+    expect(mocks.prisma.xeroContactGroupCache.updateMany).toHaveBeenCalledWith({
+      where: {
+        contactGroupId: { in: ["group_new"] },
+      },
+      data: expect.objectContaining({
+        contactCount: { increment: 1 },
+      }),
+    });
+    expect(mocks.prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { timeout: 15000 }
+    );
     expect(mocks.prisma.xeroSyncCursor.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({

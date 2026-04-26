@@ -15,7 +15,9 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  const inactiveResponse = await requireActiveSessionUser(session.user.id, {
+    allowForcePasswordChange: true,
+  });
   if (inactiveResponse) {
     return inactiveResponse;
   }

@@ -54,11 +54,16 @@ export async function POST(req: NextRequest) {
     }
 
     const passwordHash = await bcrypt.hash(password, 13);
+    const passwordChangedAt = new Date();
 
     await prisma.$transaction([
       prisma.member.update({
         where: { id: resetToken.memberId },
-        data: { passwordHash },
+        data: {
+          passwordHash,
+          forcePasswordChange: false,
+          passwordChangedAt,
+        },
       }),
       prisma.passwordResetToken.update({
         where: { id: resetToken.id },

@@ -1,11 +1,26 @@
-import NextAuth, { CredentialsSignin } from "next-auth";
+import NextAuth, { CredentialsSignin, type NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { getAuthSecret, getAuthTrustHost } from "./runtime-config";
+import logger from "./logger";
 
 class EmailNotVerifiedError extends CredentialsSignin {
   code = "EMAIL_NOT_VERIFIED";
+}
+
+const SESSION_MEMBER_SECURITY_SELECT = {
+  role: true,
+  forcePasswordChange: true,
+  emailVerified: true,
+  passwordChangedAt: true,
+} as const;
+
+async function loadSessionMemberSecurity(userId: string) {
+  return prisma.member.findUnique({
+    where: { id: userId },
+    select: SESSION_MEMBER_SECURITY_SELECT,
+  });
 }
 
 declare module "next-auth" {
@@ -17,6 +32,7 @@ declare module "next-auth" {
       role: "MEMBER" | "ADMIN" | "LODGE";
       forcePasswordChange: boolean;
       isEmailVerified: boolean;
+      sessionInvalidated?: boolean;
     };
   }
   interface User {
@@ -26,7 +42,25 @@ declare module "next-auth" {
   }
 }
 
-export const { handlers, signIn, signOut, auth } = NextAuth({
+function getTokenSessionIssuedAtMs(token: {
+  sessionIssuedAt?: unknown;
+  iat?: unknown;
+}) {
+  if (
+    typeof token.sessionIssuedAt === "number" &&
+    Number.isFinite(token.sessionIssuedAt)
+  ) {
+    return token.sessionIssuedAt;
+  }
+
+  if (typeof token.iat === "number" && Number.isFinite(token.iat)) {
+    return token.iat * 1000;
+  }
+
+  return Date.now();
+}
+
+export const authConfig = {
   trustHost: getAuthTrustHost(),
   secret: getAuthSecret(),
   providers: [
@@ -63,6 +97,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           throw new EmailNotVerifiedError();
         }
 
+        try {
+          await prisma.member.update({
+            where: { id: member.id },
+            data: { lastLoginAt: new Date() },
+          });
+        } catch (error) {
+          logger.warn(
+            { err: error, memberId: member.id },
+            "Failed to update member last login timestamp"
+          );
+        }
+
         return {
           id: member.id,
           email: member.email,
@@ -81,11 +127,32 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.id = user.id as string;
         token.forcePasswordChange = user.forcePasswordChange;
         token.isEmailVerified = user.isEmailVerified;
+        token.sessionIssuedAt = Date.now();
+        token.sessionInvalidated = false;
         // LODGE accounts get 30-day sessions for shared iPad kiosk
         if (user.role === "LODGE") {
           token.exp = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
         }
       }
+
+      const sessionIssuedAt = getTokenSessionIssuedAtMs(token);
+      token.sessionIssuedAt = sessionIssuedAt;
+
+      if (typeof token.id === "string") {
+        // Refresh security-sensitive session fields so role changes take effect
+        // on the next request instead of waiting for JWT expiry.
+        const member = await loadSessionMemberSecurity(token.id);
+
+        if (member) {
+          token.role = member.role;
+          token.forcePasswordChange = member.forcePasswordChange;
+          token.isEmailVerified = member.emailVerified;
+          token.sessionInvalidated =
+            member.passwordChangedAt instanceof Date &&
+            member.passwordChangedAt.getTime() > sessionIssuedAt;
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {
@@ -93,6 +160,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       session.user.id = token.id as string;
       session.user.forcePasswordChange = token.forcePasswordChange as boolean;
       session.user.isEmailVerified = token.isEmailVerified as boolean;
+      session.user.sessionInvalidated = Boolean(token.sessionInvalidated);
       return session;
     },
   },
@@ -103,4 +171,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     strategy: "jwt",
     maxAge: 8 * 60 * 60, // 8 hours
   },
-});
+} satisfies NextAuthConfig;
+
+const nextAuth = NextAuth(authConfig);
+
+export const { handlers, signIn, signOut } = nextAuth;
+
+export async function auth() {
+  const session = await nextAuth.auth();
+
+  if (session?.user?.sessionInvalidated) {
+    return null;
+  }
+
+  return session;
+}

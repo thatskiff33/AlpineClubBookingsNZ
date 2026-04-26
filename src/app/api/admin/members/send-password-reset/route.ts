@@ -7,9 +7,16 @@ import { prisma } from "@/lib/prisma";
 import { sendAdminPasswordResetEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import {
+  ADMIN_PASSWORD_RESET_EXPIRY_WINDOWS,
+  DEFAULT_ADMIN_PASSWORD_RESET_EXPIRY_WINDOW,
+  getAdminPasswordResetExpiryDate,
+  getAdminPasswordResetExpiryLabel,
+} from "@/lib/password-reset";
 
 const sendPasswordResetSchema = z.object({
   memberIds: z.array(z.string()).min(1, "At least one member ID is required").max(100),
+  expiryWindow: z.enum(ADMIN_PASSWORD_RESET_EXPIRY_WINDOWS).default(DEFAULT_ADMIN_PASSWORD_RESET_EXPIRY_WINDOW),
 });
 
 // Simple in-memory throttle for bulk sends (>1 member): 1 per 10 minutes per admin
@@ -48,8 +55,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { memberIds } = parsed.data;
+  const { memberIds, expiryWindow } = parsed.data;
   const adminId = session.user.id;
+  const expiryLabel = getAdminPasswordResetExpiryLabel(expiryWindow);
 
   // Throttle bulk sends (>1 member) to 1 per 10 minutes per admin
   if (memberIds.length > 1) {
@@ -93,7 +101,11 @@ export async function POST(req: NextRequest) {
         batch.map(async (member) => {
           try {
             const token = randomBytes(32).toString("hex");
-            const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+            const expiresAt = getAdminPasswordResetExpiryDate(expiryWindow);
+
+            await prisma.passwordResetToken.deleteMany({
+              where: { memberId: member.id },
+            });
 
             await prisma.passwordResetToken.create({
               data: {
@@ -103,7 +115,7 @@ export async function POST(req: NextRequest) {
               },
             });
 
-            sendAdminPasswordResetEmail(member.email, token).catch((err) => {
+            sendAdminPasswordResetEmail(member.email, token, expiryLabel).catch((err) => {
               logger.error(
                 { err, to: member.email },
                 "Failed to send admin password reset email"
@@ -114,7 +126,7 @@ export async function POST(req: NextRequest) {
               action: "member.password-reset-sent",
               memberId: adminId,
               targetId: member.id,
-              details: `Admin sent password reset to ${member.firstName} ${member.lastName} (${member.email})`,
+              details: `Admin sent ${expiryLabel} password reset to ${member.firstName} ${member.lastName} (${member.email})`,
             });
 
             sent++;
@@ -128,7 +140,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json({ sent, skipped });
+    return NextResponse.json({ sent, skipped, expiryLabel });
   } catch (error) {
     logger.error({ err: error }, "Failed to send password reset emails");
     return NextResponse.json(

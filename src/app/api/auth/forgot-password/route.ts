@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
+import { SELF_SERVICE_PASSWORD_RESET_TTL_MS } from "@/lib/password-reset";
 
 const forgotPasswordSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -34,8 +35,7 @@ export async function POST(req: NextRequest) {
 
     if (member && member.active) {
       const token = randomBytes(32).toString("hex");
-      // Password reset: 2h expiry (allows time for email delivery delays)
-      const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000); // 2 hours
+      const expiresAt = new Date(Date.now() + SELF_SERVICE_PASSWORD_RESET_TTL_MS);
 
       // Invalidate any existing reset tokens for this member
       await prisma.passwordResetToken.deleteMany({

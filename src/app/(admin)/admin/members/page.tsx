@@ -14,6 +14,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, X, Download, Upload, ChevronLeft, ChevronRight } from "lucide-react"
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite"
+import {
+  ADMIN_PASSWORD_RESET_EXPIRY_OPTIONS,
+  DEFAULT_ADMIN_PASSWORD_RESET_EXPIRY_WINDOW,
+  getAdminPasswordResetExpiryLabel,
+  type AdminPasswordResetExpiryWindow,
+} from "@/lib/password-reset"
 
 interface Member {
   id: string; firstName: string; lastName: string; email: string
@@ -26,6 +32,7 @@ interface Member {
   subscriptionStatus: "NOT_INVOICED" | "UNPAID" | "PAID" | "OVERDUE" | null
   subscriptionXeroInvoiceId: string | null; createdAt: string; joinedDate: string | null
   forcePasswordChange: boolean
+  hasCompletedAccountSetup: boolean
   canLogin: boolean
   streetAddressLine1: string | null; streetAddressLine2: string | null; streetCity: string | null
   streetRegion: string | null; streetPostalCode: string | null; streetCountry: string | null
@@ -63,6 +70,11 @@ interface XeroFeatureFlags {
 
 interface Filters { role: string; active: string; ageTier: string; xeroLinked: string; subscription: string; xeroContactGroup: string }
 interface ImportRow { firstName: string; lastName: string; email: string; phone?: string; dateOfBirth?: string; role?: string }
+interface PasswordActionTarget {
+  label: string
+  inviteIds: string[]
+  resetIds: string[]
+}
 
 const emptyForm: MemberForm = {
   firstName: "", lastName: "", email: "",
@@ -142,12 +154,12 @@ export default function MembersPage() {
   const [bulkAction, setBulkAction] = useState("")
   const [bulkRole, setBulkRole] = useState<"MEMBER" | "ADMIN">("MEMBER")
   const [bulkLoading, setBulkLoading] = useState(false)
-  const [setupInviteDialogOpen, setSetupInviteDialogOpen] = useState(false)
-  const [setupInviteTarget, setSetupInviteTarget] = useState<{ ids: string[]; label: string } | null>(null)
-  const [setupInviteLoading, setSetupInviteLoading] = useState(false)
-  const [resetPasswordDialogOpen, setResetPasswordDialogOpen] = useState(false)
-  const [resetPasswordTarget, setResetPasswordTarget] = useState<{ ids: string[]; label: string } | null>(null)
-  const [resetPasswordLoading, setResetPasswordLoading] = useState(false)
+  const [passwordActionDialogOpen, setPasswordActionDialogOpen] = useState(false)
+  const [passwordActionTarget, setPasswordActionTarget] = useState<PasswordActionTarget | null>(null)
+  const [passwordActionLoading, setPasswordActionLoading] = useState(false)
+  const [resetExpiryWindow, setResetExpiryWindow] = useState<AdminPasswordResetExpiryWindow>(
+    DEFAULT_ADMIN_PASSWORD_RESET_EXPIRY_WINDOW
+  )
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importRows, setImportRows] = useState<ImportRow[]>([])
   const [importSendInvites, setImportSendInvites] = useState(false)
@@ -240,6 +252,25 @@ export default function MembersPage() {
     return n
   })
   const toggleSelectAll = () => { if (selectedIds.size === members.length) setSelectedIds(new Set()); else setSelectedIds(new Set(members.map(m => m.id))) }
+  const getPasswordActionTarget = (ids: string[], label: string): PasswordActionTarget => {
+    const memberById = new Map(members.map((member) => [member.id, member]))
+
+    return ids.reduce<PasswordActionTarget>(
+      (target, id) => {
+        const member = memberById.get(id)
+        if (!member) return target
+        if (member.hasCompletedAccountSetup) target.resetIds.push(id)
+        else target.inviteIds.push(id)
+        return target
+      },
+      { label, inviteIds: [], resetIds: [] }
+    )
+  }
+  const openPasswordActionDialog = (ids: string[], label: string) => {
+    setPasswordActionTarget(getPasswordActionTarget(ids, label))
+    setResetExpiryWindow(DEFAULT_ADMIN_PASSWORD_RESET_EXPIRY_WINDOW)
+    setPasswordActionDialogOpen(true)
+  }
   const openCreateDialog = () => {
     setEditingMember(null)
     setForm(emptyForm)
@@ -456,45 +487,76 @@ export default function MembersPage() {
     finally { setBulkLoading(false) }
   }
 
-  const handleSendPasswordReset = async () => {
-    if (!resetPasswordTarget) return
-    setResetPasswordLoading(true)
-    try {
-      const res = await fetch("/api/admin/members/send-password-reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ memberIds: resetPasswordTarget.ids }) })
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to send password reset") }
-      const data = await res.json()
-      const msg = data.skipped > 0 ? `Sent ${data.sent} password reset email(s). ${data.skipped} skipped (inactive or dependent).` : `Sent ${data.sent} password reset email(s).`
-      setSuccess(msg); setTimeout(() => setSuccess(""), 5000)
-      setResetPasswordDialogOpen(false); setResetPasswordTarget(null); setSelectedIds(new Set())
-    } catch (err) { setError(err instanceof Error ? err.message : "Failed to send password reset"); setResetPasswordDialogOpen(false) }
-    finally { setResetPasswordLoading(false) }
+  const sendPasswordResetRequest = async (memberIds: string[]) => {
+    const res = await fetch("/api/admin/members/send-password-reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memberIds, expiryWindow: resetExpiryWindow }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || "Failed to send password reset")
+    return data as { sent: number; skipped: number; expiryLabel: string }
   }
 
-  const handleSendSetupInvite = async () => {
-    if (!setupInviteTarget) return
-    setSetupInviteLoading(true)
-    try {
-      const res = await fetch("/api/admin/members/send-setup-invite", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memberIds: setupInviteTarget.ids }),
-      })
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || "Failed to send setup invite")
-      }
-      const data = await res.json()
-      const msg = data.skipped > 0
-        ? `Sent ${data.sent} setup invite(s). ${data.skipped} skipped (inactive or dependent).`
-        : `Sent ${data.sent} setup invite(s).`
-      setSuccess(msg); setTimeout(() => setSuccess(""), 5000)
-      setSetupInviteDialogOpen(false); setSetupInviteTarget(null); setSelectedIds(new Set())
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send setup invite")
-      setSetupInviteDialogOpen(false)
-    } finally {
-      setSetupInviteLoading(false)
+  const sendSetupInviteRequest = async (memberIds: string[]) => {
+    const res = await fetch("/api/admin/members/send-setup-invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memberIds }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || "Failed to send setup invite")
+    return data as { sent: number; skipped: number }
+  }
+
+  const handleSendPasswordAction = async () => {
+    if (!passwordActionTarget) return
+    setPasswordActionLoading(true)
+
+    const inviteOperation = passwordActionTarget.inviteIds.length > 0
+      ? sendSetupInviteRequest(passwordActionTarget.inviteIds)
+      : Promise.resolve(null)
+    const resetOperation = passwordActionTarget.resetIds.length > 0
+      ? sendPasswordResetRequest(passwordActionTarget.resetIds)
+      : Promise.resolve(null)
+
+    const [inviteResult, resetResult] = await Promise.allSettled([inviteOperation, resetOperation])
+    const successMessages: string[] = []
+    const errorMessages: string[] = []
+
+    if (inviteResult.status === "fulfilled" && inviteResult.value) {
+      successMessages.push(
+        inviteResult.value.skipped > 0
+          ? `Sent ${inviteResult.value.sent} setup invite(s). ${inviteResult.value.skipped} skipped (inactive or dependent).`
+          : `Sent ${inviteResult.value.sent} setup invite(s).`
+      )
+    } else if (inviteResult.status === "rejected") {
+      errorMessages.push(inviteResult.reason instanceof Error ? inviteResult.reason.message : "Failed to send setup invite")
     }
+
+    if (resetResult.status === "fulfilled" && resetResult.value) {
+      successMessages.push(
+        resetResult.value.skipped > 0
+          ? `Sent ${resetResult.value.sent} password reset email(s) with a ${resetResult.value.expiryLabel} window. ${resetResult.value.skipped} skipped (inactive or dependent).`
+          : `Sent ${resetResult.value.sent} password reset email(s) with a ${resetResult.value.expiryLabel} window.`
+      )
+    } else if (resetResult.status === "rejected") {
+      errorMessages.push(resetResult.reason instanceof Error ? resetResult.reason.message : "Failed to send password reset")
+    }
+
+    if (successMessages.length > 0) {
+      setSuccess(successMessages.join(" "))
+      setTimeout(() => setSuccess(""), 5000)
+      setPasswordActionDialogOpen(false)
+      setPasswordActionTarget(null)
+      setSelectedIds(new Set())
+    }
+
+    if (errorMessages.length > 0) {
+      setError(errorMessages.join(" "))
+    }
+
+    setPasswordActionLoading(false)
   }
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -529,6 +591,29 @@ export default function MembersPage() {
 
   const buildExportUrl = () => { const p = new URLSearchParams(); if (debouncedSearch) p.set("q", debouncedSearch); Object.entries(filters).forEach(([k, v]) => { if (v) p.set(k, v) }); const qs = p.toString(); return qs ? `/api/admin/members/export?${qs}` : "/api/admin/members/export" }
   const statusConfig: Record<string, { className: string; label: string }> = { PAID: { className: "bg-green-100 text-green-800 border-green-200 hover:bg-green-200", label: "Paid" }, UNPAID: { className: "bg-yellow-100 text-yellow-800 border-yellow-200 hover:bg-yellow-200", label: "Unpaid" }, OVERDUE: { className: "bg-red-100 text-red-800 border-red-200 hover:bg-red-200", label: "Overdue" }, NOT_INVOICED: { className: "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200", label: "Not Invoiced" } }
+  const selectedMembers = members.filter((member) => selectedIds.has(member.id))
+  const selectedInviteCount = selectedMembers.filter((member) => !member.hasCompletedAccountSetup).length
+  const selectedResetCount = selectedMembers.length - selectedInviteCount
+  const bulkPasswordActionLabel =
+    selectedInviteCount > 0 && selectedResetCount > 0
+      ? "Invite / Reset Password"
+      : selectedResetCount > 0
+        ? "Send Password Reset"
+        : "Send Invite"
+  const passwordActionInviteCount = passwordActionTarget?.inviteIds.length ?? 0
+  const passwordActionResetCount = passwordActionTarget?.resetIds.length ?? 0
+  const passwordActionTitle =
+    passwordActionResetCount > 0 && passwordActionInviteCount === 0
+      ? "Send Password Reset"
+      : passwordActionInviteCount > 0 && passwordActionResetCount === 0
+        ? "Send Account Setup Invite"
+        : "Send Login Emails"
+  const passwordActionButtonLabel =
+    passwordActionResetCount > 0 && passwordActionInviteCount === 0
+      ? "Send Reset Email"
+      : passwordActionInviteCount > 0 && passwordActionResetCount === 0
+        ? "Send Invite"
+        : "Send Emails"
 
   return (
     <div className="space-y-6">
@@ -554,7 +639,7 @@ export default function MembersPage() {
         {activeFilterCount > 0 && <Button variant="ghost" size="sm" onClick={clearFilters}><X className="h-4 w-4 mr-1" />Clear ({activeFilterCount})</Button>}
       </div>
       {activeFilterCount > 0 && <div className="flex flex-wrap gap-2">{Object.entries(filters).filter(([,v]) => v).map(([k, v]) => { const displayValue = k === "xeroContactGroup" ? (xeroContactGroupsList.find(g => g.id === v)?.name ?? v) : v; return <Badge key={k} variant="secondary" className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setFilter(k as keyof Filters, "")}>{k}: {displayValue}<X className="h-3 w-3" /></Badge> })}</div>}
-      {selectedIds.size > 0 && <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-md"><span className="text-sm font-medium text-blue-700">{selectedIds.size} selected</span><Button size="sm" variant="outline" onClick={() => { setBulkAction("deactivate"); setBulkDialogOpen(true) }}>Deactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("reactivate"); setBulkDialogOpen(true) }}>Reactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("set-role"); setBulkDialogOpen(true) }}>Change Role</Button><Button size="sm" variant="outline" onClick={() => { setSetupInviteTarget({ ids: [...selectedIds], label: `${selectedIds.size} selected member(s)` }); setSetupInviteDialogOpen(true) }}>Send Setup Invite</Button><Button size="sm" variant="outline" onClick={() => { setResetPasswordTarget({ ids: [...selectedIds], label: `${selectedIds.size} selected member(s)` }); setResetPasswordDialogOpen(true) }}>Send Password Reset</Button><Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}><X className="h-4 w-4" /></Button></div>}
+      {selectedIds.size > 0 && <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-md"><span className="text-sm font-medium text-blue-700">{selectedIds.size} selected</span><Button size="sm" variant="outline" onClick={() => { setBulkAction("deactivate"); setBulkDialogOpen(true) }}>Deactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("reactivate"); setBulkDialogOpen(true) }}>Reactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("set-role"); setBulkDialogOpen(true) }}>Change Role</Button><Button size="sm" variant="outline" onClick={() => openPasswordActionDialog([...selectedIds], `${selectedIds.size} selected member(s)`)}>{bulkPasswordActionLabel}</Button><Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}><X className="h-4 w-4" /></Button></div>}
 
       <Card><CardHeader className="pb-0"><CardTitle className="text-base font-medium">Member List</CardTitle></CardHeader><CardContent className="pt-4">
         {loading ? <div className="py-12 text-center"><p className="text-sm text-slate-500">Loading members...</p></div>
@@ -609,7 +694,7 @@ export default function MembersPage() {
                 </div>
               </TableCell>
               <TableCell className="text-slate-500 text-sm">{new Date(member.joinedDate || member.createdAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })}</TableCell>
-              <TableCell className="text-right"><div className="flex justify-end gap-1"><Button variant="outline" size="sm" onClick={() => { setSetupInviteTarget({ ids: [member.id], label: `${member.firstName} ${member.lastName}` }); setSetupInviteDialogOpen(true) }}>Invite</Button><Button variant="outline" size="sm" onClick={() => { setResetPasswordTarget({ ids: [member.id], label: `${member.firstName} ${member.lastName}` }); setResetPasswordDialogOpen(true) }}>Reset Password</Button><Button variant="outline" size="sm" onClick={() => openEditDialog(member)}>Edit</Button></div></TableCell>
+              <TableCell className="text-right"><div className="flex justify-end gap-1"><Button variant="outline" size="sm" onClick={() => openPasswordActionDialog([member.id], `${member.firstName} ${member.lastName}`)}>{member.hasCompletedAccountSetup ? "Reset Password" : "Invite"}</Button><Button variant="outline" size="sm" onClick={() => openEditDialog(member)}>Edit</Button></div></TableCell>
             </TableRow>)}
           </TableBody></Table></div>}
         {totalPages > 1 && <div className="flex items-center justify-between mt-4 pt-4 border-t"><p className="text-sm text-slate-500">Page {page} of {totalPages}</p><div className="flex gap-1"><Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="h-4 w-4" /></Button>{Array.from({ length: Math.min(5, totalPages) }, (_, i) => { let pn: number; if (totalPages <= 5) pn = i + 1; else if (page <= 3) pn = i + 1; else if (page >= totalPages - 2) pn = totalPages - 4 + i; else pn = page - 2 + i; return <Button key={pn} variant={pn === page ? "default" : "outline"} size="sm" onClick={() => setPage(pn)}>{pn}</Button> })}<Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}><ChevronRight className="h-4 w-4" /></Button></div></div>}
@@ -971,8 +1056,7 @@ export default function MembersPage() {
         </DialogContent>
       </Dialog>
       <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Bulk {bulkAction === "set-role" ? "Change Role" : bulkAction === "deactivate" ? "Deactivate" : "Reactivate"}</DialogTitle><DialogDescription>This will affect {selectedIds.size} selected member(s).</DialogDescription></DialogHeader>{bulkAction === "set-role" && <div className="space-y-2"><Label>New Role</Label><Select value={bulkRole} onValueChange={v => setBulkRole(v as "MEMBER" | "ADMIN")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="MEMBER">Member</SelectItem><SelectItem value="ADMIN">Admin</SelectItem></SelectContent></Select></div>}<DialogFooter><Button variant="outline" onClick={() => setBulkDialogOpen(false)} disabled={bulkLoading}>Cancel</Button><Button onClick={handleBulkAction} disabled={bulkLoading} variant={bulkAction === "deactivate" ? "destructive" : "default"}>{bulkLoading ? "Processing..." : "Confirm"}</Button></DialogFooter></DialogContent></Dialog>
-      <Dialog open={setupInviteDialogOpen} onOpenChange={setSetupInviteDialogOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Send Account Setup Invite</DialogTitle><DialogDescription>Send a first-time password setup email to {setupInviteTarget?.label}. They will receive a link to activate their account and choose a password (expires in {MEMBER_SETUP_INVITE_TTL_DAYS} days).</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => { setSetupInviteDialogOpen(false); setSetupInviteTarget(null) }} disabled={setupInviteLoading}>Cancel</Button><Button onClick={handleSendSetupInvite} disabled={setupInviteLoading}>{setupInviteLoading ? "Sending..." : "Send Invite"}</Button></DialogFooter></DialogContent></Dialog>
-      <Dialog open={resetPasswordDialogOpen} onOpenChange={setResetPasswordDialogOpen}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Send Password Reset</DialogTitle><DialogDescription>Send a password reset email to {resetPasswordTarget?.label}. They will receive a link to set a new password (expires in 1 hour).</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => { setResetPasswordDialogOpen(false); setResetPasswordTarget(null) }} disabled={resetPasswordLoading}>Cancel</Button><Button onClick={handleSendPasswordReset} disabled={resetPasswordLoading}>{resetPasswordLoading ? "Sending..." : "Send Reset Email"}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={passwordActionDialogOpen} onOpenChange={(open) => { setPasswordActionDialogOpen(open); if (!open) setPasswordActionTarget(null) }}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>{passwordActionTitle}</DialogTitle><DialogDescription>{passwordActionInviteCount > 0 && passwordActionResetCount > 0 ? `Send login emails to ${passwordActionTarget?.label}. ${passwordActionInviteCount} member(s) will receive a first-time account setup invite. ${passwordActionResetCount} member(s) will receive a password reset email.` : passwordActionResetCount > 0 ? `Send a password reset email to ${passwordActionTarget?.label}. They will receive a link to set a new password.` : `Send a first-time password setup email to ${passwordActionTarget?.label}. They will receive a link to activate their account and choose a password (expires in ${MEMBER_SETUP_INVITE_TTL_DAYS} days).`}</DialogDescription></DialogHeader>{passwordActionResetCount > 0 && <div className="space-y-2"><Label htmlFor="reset-expiry-window">Reset link expiry</Label><Select value={resetExpiryWindow} onValueChange={(value) => setResetExpiryWindow(value as AdminPasswordResetExpiryWindow)}><SelectTrigger id="reset-expiry-window"><SelectValue placeholder="Select expiry" /></SelectTrigger><SelectContent>{ADMIN_PASSWORD_RESET_EXPIRY_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select><p className="text-sm text-slate-500">This applies to password reset emails only. The current selection expires in {getAdminPasswordResetExpiryLabel(resetExpiryWindow)}.</p></div>}<DialogFooter><Button variant="outline" onClick={() => { setPasswordActionDialogOpen(false); setPasswordActionTarget(null) }} disabled={passwordActionLoading}>Cancel</Button><Button onClick={handleSendPasswordAction} disabled={passwordActionLoading}>{passwordActionLoading ? "Sending..." : passwordActionButtonLabel}</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>Import Members from CSV</DialogTitle><DialogDescription>Upload a CSV with columns: First Name, Last Name, Email, Phone (optional), Date of Birth (optional), Role (optional).</DialogDescription></DialogHeader><div className="space-y-4"><div><Label htmlFor="csvFile">CSV File</Label><Input id="csvFile" type="file" accept=".csv" onChange={handleFileUpload} className="mt-1" /></div>{importRows.length > 0 && !importResult && <div><p className="text-sm font-medium mb-2">{importRows.length} rows parsed</p><div className="max-h-48 overflow-y-auto border rounded text-xs"><Table><TableHeader><TableRow><TableHead>First Name</TableHead><TableHead>Last Name</TableHead><TableHead>Email</TableHead><TableHead>Role</TableHead></TableRow></TableHeader><TableBody>{importRows.slice(0, 10).map((row, i) => <TableRow key={i}><TableCell>{row.firstName}</TableCell><TableCell>{row.lastName}</TableCell><TableCell>{row.email}</TableCell><TableCell>{row.role || "MEMBER"}</TableCell></TableRow>)}</TableBody></Table>{importRows.length > 10 && <p className="text-xs text-slate-500 p-2">...and {importRows.length - 10} more</p>}</div><div className="flex items-center gap-2 mt-3"><input type="checkbox" id="sendInvites" checked={importSendInvites} onChange={e => setImportSendInvites(e.target.checked)} className="h-4 w-4 rounded border-gray-300" /><Label htmlFor="sendInvites">Send account setup invites ({MEMBER_SETUP_INVITE_TTL_DAYS}-day links)</Label></div></div>}{importResult && <div className="space-y-2"><p className="text-sm"><span className="font-medium text-green-700">{importResult.created} created</span>, <span className="font-medium text-yellow-700">{importResult.skipped} skipped</span>, <span className="font-medium text-red-700">{importResult.errors.length} errors</span></p>{importResult.errors.length > 0 && <div className="max-h-32 overflow-y-auto text-xs text-red-600 border border-red-200 rounded p-2">{importResult.errors.map((e, i) => <p key={i}>Row {e.row}: {e.errors.join(", ")}</p>)}</div>}</div>}</div><DialogFooter><Button variant="outline" onClick={() => setImportDialogOpen(false)}>Close</Button>{importRows.length > 0 && !importResult && <Button onClick={handleImport} disabled={importLoading}>{importLoading ? "Importing..." : `Import ${importRows.length} Members`}</Button>}</DialogFooter></DialogContent></Dialog>
     </div>
   )

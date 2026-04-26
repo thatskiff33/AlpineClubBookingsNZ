@@ -168,11 +168,14 @@ export function passwordResetTemplate(resetUrl: string): string {
   `);
 }
 
-export function adminPasswordResetTemplate(resetUrl: string): string {
+export function adminPasswordResetTemplate(
+  resetUrl: string,
+  expiryLabel = "1 hour"
+): string {
   return layout(`
     ${heading("Password Reset")}
     ${paragraph("An administrator has requested a password reset for your Tokoroa Alpine Club booking account.")}
-    ${paragraph("Click the button below to set a new password. This link expires in <strong>1 hour</strong>.")}
+    ${paragraph("Click the button below to set a new password. This link expires in <strong>" + escapeHtml(expiryLabel) + "</strong>.")}
     ${button("Reset Password", resetUrl)}
     ${muted("If you believe this was sent in error, please contact the club administrator.")}
   `);

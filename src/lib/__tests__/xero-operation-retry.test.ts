@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   findUniquePayment: vi.fn(),
   updatePayment: vi.fn(),
   findUniqueBookingModification: vi.fn(),
+  completeXeroSyncOperation: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
   updateXeroContact: vi.fn(),
   createXeroInvoiceForBooking: vi.fn(),
@@ -48,6 +49,15 @@ vi.mock("@/lib/xero", () => ({
   allocateCreditNoteToInvoice: mocks.allocateCreditNoteToInvoice,
   checkMembershipStatus: mocks.checkMembershipStatus,
 }));
+
+vi.mock("@/lib/xero-sync", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/xero-sync")>();
+
+  return {
+    ...actual,
+    completeXeroSyncOperation: mocks.completeXeroSyncOperation,
+  };
+});
 
 import {
   getXeroOperationRetryMeta,
@@ -414,6 +424,42 @@ describe("retryXeroSyncOperation", () => {
         amountCents: 3000,
       },
     });
+  });
+
+  it("marks zero-total booking invoice partials as repaired without creating a payment", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        status: "PARTIAL",
+        xeroObjectId: "inv_zero",
+        responsePayload: {
+          invoice: {
+            invoices: [{ total: 0 }],
+          },
+        },
+      })
+    );
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Marked zero-total Xero booking invoice as repaired without payment recording.",
+    });
+
+    expect(mocks.createXeroPaymentForInvoice).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_123",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        xeroObjectType: "INVOICE",
+        xeroObjectId: "inv_zero",
+        responsePayload: expect.objectContaining({
+          payment: null,
+          paymentError: null,
+          paymentSkipped: true,
+          paymentSkipReason: "Zero-total invoice does not require Xero payment recording.",
+        }),
+      })
+    );
   });
 
   it("repairs partial refund credit note follow-up actions", async () => {

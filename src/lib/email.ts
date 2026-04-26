@@ -264,7 +264,8 @@ export async function sendPasswordResetEmail(
 
 export async function sendAdminPasswordResetEmail(
   email: string,
-  token: string
+  token: string,
+  expiryLabel = "1 hour"
 ) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const resetUrl = `${baseUrl}/reset-password?token=${token}`;
@@ -272,7 +273,7 @@ export async function sendAdminPasswordResetEmail(
   await sendEmail({
     to: email,
     subject: "Reset your Tokoroa Alpine Club password",
-    html: adminPasswordResetTemplate(resetUrl),
+    html: adminPasswordResetTemplate(resetUrl, expiryLabel),
     templateName: "admin-password-reset",
   });
 }

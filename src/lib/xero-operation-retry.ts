@@ -1,7 +1,7 @@
 import type { XeroContactUpdateData } from "@/lib/xero";
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { buildXeroIdempotencyKey } from "@/lib/xero-sync";
+import { buildXeroIdempotencyKey, completeXeroSyncOperation } from "@/lib/xero-sync";
 
 type RetryableOperation = Pick<
   XeroSyncOperation,
@@ -501,6 +501,30 @@ export async function retryXeroSyncOperation(
       operation.localModel &&
       operation.localId
     ) {
+      if (partialInvoiceRepair.amountCents === 0) {
+        const existingResponsePayload = asRecord(operation.responsePayload);
+
+        await completeXeroSyncOperation(operation.id, {
+          status: "SUCCEEDED",
+          responsePayload: {
+            ...(existingResponsePayload ?? {}),
+            payment: null,
+            paymentError: null,
+            paymentSkipped: true,
+            paymentSkipReason: "Zero-total invoice does not require Xero payment recording.",
+          },
+          xeroObjectType: "INVOICE",
+          xeroObjectId: partialInvoiceRepair.invoiceId,
+        });
+
+        return {
+          message:
+            partialInvoiceRepair.linkRole === "INVOICE_PAYMENT"
+              ? "Marked zero-total Xero booking invoice as repaired without payment recording."
+              : "Marked zero-total Xero supplementary invoice as repaired without payment recording.",
+        };
+      }
+
       await xero.createXeroPaymentForInvoice({
         localModel: operation.localModel,
         localId: operation.localId,

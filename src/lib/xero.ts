@@ -2479,52 +2479,28 @@ export async function refreshXeroContactGroupMembershipCacheForContact(
   const contactId = contact.contactID;
   const sourceUpdatedAt = getXeroContactSourceUpdatedAt(contact) ?? fetchedAt;
   const contactName = getXeroContactDisplayName(contact) || null;
-
-  return prisma.$transaction(async (tx) => {
-    const previousMemberships = await tx.xeroContactGroupMembershipCache.findMany({
-      where: {
-        contactId,
-      },
-      select: {
-        contactGroupId: true,
-      },
-    });
-    const desiredGroupIds = activeGroups.map((group) => group.id);
-    const previousGroupIds = previousMemberships.map(
-      (membership) => membership.contactGroupId
-    );
-    const previousGroupIdSet = new Set(previousGroupIds);
-    const desiredGroupIdSet = new Set(desiredGroupIds);
-    const addedGroupIds = desiredGroupIds.filter(
-      (groupId) => !previousGroupIdSet.has(groupId)
-    );
-    const removedGroupIds = previousGroupIds.filter(
-      (groupId) => !desiredGroupIdSet.has(groupId)
-    );
-    const retainedGroupIds = desiredGroupIds.filter((groupId) =>
-      previousGroupIdSet.has(groupId)
-    );
-
-    const existingGroups =
-      desiredGroupIds.length > 0
-        ? await tx.xeroContactGroupCache.findMany({
-            where: {
-              contactGroupId: {
-                in: desiredGroupIds,
-              },
+  const desiredGroupIds = activeGroups.map((group) => group.id);
+  const existingGroups =
+    desiredGroupIds.length > 0
+      ? await prisma.xeroContactGroupCache.findMany({
+          where: {
+            contactGroupId: {
+              in: desiredGroupIds,
             },
-            select: {
-              contactGroupId: true,
-              name: true,
-            },
-          })
-        : [];
-    const existingGroupNames = new Map(
-      existingGroups.map((group) => [group.contactGroupId, group.name])
-    );
+          },
+          select: {
+            contactGroupId: true,
+            name: true,
+          },
+        })
+      : [];
+  const existingGroupNames = new Map(
+    existingGroups.map((group) => [group.contactGroupId, group.name])
+  );
 
-    for (const group of activeGroups) {
-      await tx.xeroContactGroupCache.upsert({
+  await Promise.all(
+    activeGroups.map((group) =>
+      prisma.xeroContactGroupCache.upsert({
         where: {
           contactGroupId: group.id,
         },
@@ -2542,8 +2518,33 @@ export async function refreshXeroContactGroupMembershipCacheForContact(
           fetchedAt,
           sourceUpdatedAt,
         },
-      });
-    }
+      })
+    )
+  );
+
+  return prisma.$transaction(async (tx) => {
+    const previousMemberships = await tx.xeroContactGroupMembershipCache.findMany({
+      where: {
+        contactId,
+      },
+      select: {
+        contactGroupId: true,
+      },
+    });
+    const previousGroupIds = previousMemberships.map(
+      (membership) => membership.contactGroupId
+    );
+    const previousGroupIdSet = new Set(previousGroupIds);
+    const desiredGroupIdSet = new Set(desiredGroupIds);
+    const addedGroupIds = desiredGroupIds.filter(
+      (groupId) => !previousGroupIdSet.has(groupId)
+    );
+    const removedGroupIds = previousGroupIds.filter(
+      (groupId) => !desiredGroupIdSet.has(groupId)
+    );
+    const retainedGroupIds = desiredGroupIds.filter((groupId) =>
+      previousGroupIdSet.has(groupId)
+    );
 
     if (removedGroupIds.length > 0) {
       await tx.xeroContactGroupMembershipCache.deleteMany({
@@ -2555,23 +2556,23 @@ export async function refreshXeroContactGroupMembershipCacheForContact(
         },
       });
 
-      for (const groupId of removedGroupIds) {
-        await tx.xeroContactGroupCache.updateMany({
-          where: {
-            contactGroupId: groupId,
-            contactCount: {
-              gt: 0,
-            },
+      await tx.xeroContactGroupCache.updateMany({
+        where: {
+          contactGroupId: {
+            in: removedGroupIds,
           },
-          data: {
-            contactCount: {
-              decrement: 1,
-            },
-            fetchedAt,
-            sourceUpdatedAt,
+          contactCount: {
+            gt: 0,
           },
-        });
-      }
+        },
+        data: {
+          contactCount: {
+            decrement: 1,
+          },
+          fetchedAt,
+          sourceUpdatedAt,
+        },
+      });
     }
 
     if (retainedGroupIds.length > 0) {
@@ -2602,20 +2603,20 @@ export async function refreshXeroContactGroupMembershipCacheForContact(
         skipDuplicates: true,
       });
 
-      for (const groupId of addedGroupIds) {
-        await tx.xeroContactGroupCache.updateMany({
-          where: {
-            contactGroupId: groupId,
+      await tx.xeroContactGroupCache.updateMany({
+        where: {
+          contactGroupId: {
+            in: addedGroupIds,
           },
-          data: {
-            contactCount: {
-              increment: 1,
-            },
-            fetchedAt,
-            sourceUpdatedAt,
+        },
+        data: {
+          contactCount: {
+            increment: 1,
           },
-        });
-      }
+          fetchedAt,
+          sourceUpdatedAt,
+        },
+      });
     }
 
     await tx.xeroSyncCursor.upsert({
@@ -2647,7 +2648,7 @@ export async function refreshXeroContactGroupMembershipCacheForContact(
         new Set([...desiredGroupIds, ...removedGroupIds])
       ).length,
     } satisfies RefreshXeroContactGroupMembershipCacheForContactResult;
-  });
+  }, { timeout: 15000 });
 }
 
 async function upsertXeroContactCacheEntry(
@@ -4496,21 +4497,19 @@ export async function createXeroInvoiceForBooking(
       throw new Error("Failed to create Xero invoice");
     }
 
-    // Record payment against the invoice in Xero.
-    // For zero-dollar bookings (100% promo discount), we still record a $0 payment so the
-    // invoice shows as PAID in Xero rather than sitting as an open AUTHORISED invoice.
+    // Record payment against the invoice in Xero when real funds moved.
+    // Xero already marks zero-total invoices as PAID and rejects $0 payments.
     let paymentResponseBody: XeroPayment | null = null;
     let paymentWriteError: unknown = null;
+    const paymentSkipped = booking.payment.status === "SUCCEEDED" && booking.payment.amountCents === 0;
 
-    if (booking.payment.status === "SUCCEEDED") {
+    if (booking.payment.status === "SUCCEEDED" && booking.payment.amountCents > 0) {
       const payment: XeroPayment = {
         invoice: { invoiceID: createdInvoice.invoiceID },
         account: { code: bankCode },
         amount: booking.payment.amountCents / 100,
         date: formatDate(new Date()),
-        reference: booking.payment.amountCents > 0
-          ? `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`
-          : "Zero-dollar booking (100% promo discount)",
+        reference: `Stripe ${booking.payment.stripePaymentIntentId ?? "payment"}`,
       };
       const paymentIdempotencyKey = buildXeroIdempotencyKey(
         "payment",
@@ -4542,6 +4541,11 @@ export async function createXeroInvoiceForBooking(
           "Created Xero invoice but failed to record the corresponding Xero payment"
         );
       }
+    } else if (paymentSkipped) {
+      logger.info(
+        { bookingId, invoiceId: createdInvoice.invoiceID },
+        "Skipping Xero payment recording for zero-total booking invoice"
+      );
     }
 
     // Store the Xero invoice ID and number on the payment record
@@ -4559,6 +4563,10 @@ export async function createXeroInvoiceForBooking(
         invoice: response.body,
         payment: paymentResponseBody,
         paymentError: paymentWriteError,
+        paymentSkipped,
+        paymentSkipReason: paymentSkipped
+          ? "Zero-total invoice does not require Xero payment recording."
+          : null,
       },
       xeroObjectType: "INVOICE",
       xeroObjectId: createdInvoice.invoiceID,
