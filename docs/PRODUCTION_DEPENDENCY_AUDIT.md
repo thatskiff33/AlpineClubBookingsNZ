@@ -32,5 +32,6 @@ Issue `#176` re-triaged production dependencies from the current lockfile and ap
 ## Residual Risk / Follow-up
 
 - `npm ls` still reports an optional peer-range mismatch because `next-auth@5.0.0-beta.31` and `@auth/core@0.41.2` declare `nodemailer@^7.0.7`, while the app now installs `nodemailer@8.0.6`.
+- The repo now sets `legacy-peer-deps=true` in `.npmrc` so `npm ci` continues to install the validated dependency graph in local and CI environments while that upstream optional peer range remains stale.
 - This app uses `next-auth` credentials auth only and does not use the Auth.js email provider path. Current mail sending goes through the app's own `nodemailer.createTransport(...)` usage in `src/lib/email.ts`, `src/lib/cron-email-retry.ts`, and `src/lib/health-check.ts`.
 - Accept this as a temporary compatibility warning unless runtime email regressions appear. Revisit once Auth.js expands its optional peer range to include Nodemailer 8.
