@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { getAppBaseUrl } from "../app-url";
 
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
@@ -282,6 +283,64 @@ describe("N-10: EmailLog tracking", () => {
     });
 
     (process.env as Record<string, string>).NODE_ENV =origEnv;
+  });
+
+  it("includes a plain-text alternative for member emails", async () => {
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV = "production";
+
+    const { sendBookingPendingEmail } = await import("../email");
+
+    await sendBookingPendingEmail(
+      "member@example.com",
+      "Casey",
+      new Date("2026-07-15"),
+      new Date("2026-07-18"),
+      2,
+      new Date("2026-07-08T00:30:00Z")
+    );
+
+    expect(mockTransporter.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining(
+          `View Booking: ${getAppBaseUrl()}/bookings`
+        ),
+      })
+    );
+
+    (process.env as Record<string, string>).NODE_ENV = origEnv;
+  });
+
+  it("includes a plain-text alternative for admin issue report alerts", async () => {
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV = "production";
+    mockPrisma.member.findMany.mockResolvedValue([
+      { email: "support@tokoroa.org.nz", notificationPreference: null },
+    ]);
+
+    const { sendAdminIssueReportAlert } = await import("../email");
+    const appBaseUrl = getAppBaseUrl();
+
+    await sendAdminIssueReportAlert({
+      memberName: "Casey Member",
+      memberEmail: "casey@example.com",
+      pageUrl: `${appBaseUrl}/book`,
+      pageTitle: "Book | TAC Bookings",
+      description: "Line 1\nLine 2",
+      screenshot: null,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockTransporter.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining(
+          `Open Reported Page: ${appBaseUrl}/book`
+        ),
+      })
+    );
+
+    (process.env as Record<string, string>).NODE_ENV = origEnv;
   });
 });
 

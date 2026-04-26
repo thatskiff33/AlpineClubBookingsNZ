@@ -53,6 +53,7 @@ import {
   resolveAdminNotificationPreferences,
 } from "./admin-notification-preferences";
 import { EMAIL_FROM, formatEmailFromAddress } from "./email-sender";
+import { htmlToPlainText } from "./email-text";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
@@ -101,16 +102,19 @@ export async function sendEmail({
   to,
   subject,
   html,
+  text,
   templateName = "unknown",
   attachments,
 }: {
   to: string;
   subject: string;
   html: string;
+  text?: string;
   templateName?: string;
   attachments?: EmailAttachment[];
 }) {
   const persistHtmlBody = shouldPersistEmailHtml(templateName);
+  const plainTextBody = text || htmlToPlainText(html);
 
   // Create EmailLog record (fire-and-forget logging won't break email delivery)
   let emailLogId: string | null = null;
@@ -157,6 +161,7 @@ export async function sendEmail({
       to,
       subject,
       html,
+      text: plainTextBody,
       attachments,
     });
 
