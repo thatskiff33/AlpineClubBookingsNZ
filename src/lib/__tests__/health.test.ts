@@ -17,7 +17,15 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+vi.mock("@/lib/runtime-config", () => ({
+  getRuntimeConfigCheck: vi.fn(() => ({
+    status: "ok",
+    latencyMs: 1,
+  })),
+}));
+
 import { prisma } from "@/lib/prisma";
+import { getRuntimeConfigCheck } from "@/lib/runtime-config";
 
 // Helper to call the route handler
 async function callHealthEndpoint(envOverrides: Record<string, string | undefined> = {}) {
@@ -26,6 +34,18 @@ async function callHealthEndpoint(envOverrides: Record<string, string | undefine
 
   // Re-import the route to pick up env changes
   const { GET } = await import("@/app/api/health/route");
+  const response = await GET();
+  const data = await response.json();
+
+  process.env = originalEnv;
+  return { response, data };
+}
+
+async function callReadinessEndpoint(envOverrides: Record<string, string | undefined> = {}) {
+  const originalEnv = { ...process.env };
+  Object.assign(process.env, envOverrides);
+
+  const { GET } = await import("@/app/api/health/ready/route");
   const response = await GET();
   const data = await response.json();
 
@@ -93,5 +113,67 @@ describe("GET /api/health", () => {
     const { data } = await callHealthEndpoint();
 
     expect(data.checks.db.latencyMs).toBeTypeOf("number");
+  });
+});
+
+describe("GET /api/health/ready", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns healthy when database and runtime config checks pass", async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([{ "?column?": 1 }]);
+    vi.mocked(getRuntimeConfigCheck).mockReturnValue({
+      status: "ok",
+      latencyMs: 4,
+    });
+
+    const { response, data } = await callReadinessEndpoint({
+      APP_RUNTIME_ROLE: "web-blue",
+      CRON_ENABLED: "false",
+    });
+
+    expect(response.status).toBe(200);
+    expect(data.status).toBe("healthy");
+    expect(data.checks.db.status).toBe("ok");
+    expect(data.checks.config.status).toBe("ok");
+    expect(data.runtime).toEqual({
+      cronEnabled: false,
+      role: "web-blue",
+    });
+  });
+
+  it("returns unhealthy when the runtime config check fails", async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([{ "?column?": 1 }]);
+    vi.mocked(getRuntimeConfigCheck).mockReturnValue({
+      status: "error",
+      latencyMs: 2,
+      error: "AUTH_SECRET missing",
+    });
+
+    const { response, data } = await callReadinessEndpoint();
+
+    expect(response.status).toBe(503);
+    expect(data.status).toBe("unhealthy");
+    expect(data.checks.config.status).toBe("error");
+    expect(data.checks.config.error).toBeUndefined();
+  });
+
+  it("returns unhealthy when the database is down", async () => {
+    vi.mocked(prisma.$queryRaw).mockRejectedValue(new Error("Connection refused"));
+
+    const { response, data } = await callReadinessEndpoint({
+      APP_RUNTIME_ROLE: "cron-leader",
+      CRON_ENABLED: "true",
+    });
+
+    expect(response.status).toBe(503);
+    expect(data.status).toBe("unhealthy");
+    expect(data.checks.db.status).toBe("error");
+    expect(data.checks.db.error).toBeUndefined();
+    expect(data.runtime).toEqual({
+      cronEnabled: true,
+      role: "cron-leader",
+    });
   });
 });
