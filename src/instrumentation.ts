@@ -13,11 +13,20 @@ export async function register() {
     await import("../sentry.edge.config");
   }
 
-  // Only run cron in the Node.js runtime (not Edge)
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { default: logger } = await import("./lib/logger");
+    const cronEnabled = (process.env.CRON_ENABLED ?? "true").toLowerCase() === "true";
+
+    if (!cronEnabled) {
+      logger.info(
+        { cronEnabled: process.env.CRON_ENABLED ?? "true" },
+        "Cron scheduling disabled for this app instance"
+      );
+      return;
+    }
+
     const cron = await import("node-cron");
     const Sentry = await import("@sentry/nextjs");
-    const { default: logger } = await import("./lib/logger");
     const { prisma } = await import("./lib/prisma");
     const { isXeroDailyMembershipRefreshEnabled } = await import("./lib/xero-feature-flags");
 

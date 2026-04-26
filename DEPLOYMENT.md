@@ -10,7 +10,7 @@ Deploy TACBookings to an AWS Lightsail instance with live Stripe, Xero, and emai
 
 Before starting, ensure you have:
 
-- [ ] AWS Lightsail instance (2GB+ RAM, Ubuntu 24.04)
+- [ ] AWS Lightsail instance (4 GB RAM, 2 vCPUs, 80 GB SSD, Ubuntu 24.04)
 - [ ] Domain name with DNS access
 - [ ] Stripe account with live API keys
 - [ ] Xero developer app with client ID and secret
@@ -388,6 +388,82 @@ docker compose up -d --build
 docker compose exec app npx prisma migrate deploy
 ```
 
+For the repo-standard full rebuild and verification flow, use:
+
+```bash
+cd ~/TACBookings
+/home/ubuntu/clean-build-docker-tacbookings.sh
+```
+
+This script is robust, but it is not zero-downtime. It tears down and recreates the live app stack during the rollout.
+
+### Blue/Green Deployment Guidance
+
+With the current production host size of 4 GB RAM, 2 vCPUs, and 80 GB SSD, same-host blue/green is implemented for the web tier.
+
+Run it with:
+
+```bash
+cd ~/TACBookings
+./scripts/blue-green-deploy.sh
+```
+
+What the script does:
+
+1. Build the new image while the current app stays live.
+2. Start the inactive color service (`app_blue` or `app_green`) alongside the live one.
+3. Health-check the new app instance before any traffic switch.
+4. Point Caddy at the new healthy upstream.
+5. Wait a short drain period so in-flight requests on the previous service can finish.
+6. Refresh the `app` cron leader off-traffic.
+7. Stop the previously live color service after the cutover succeeds.
+
+Current constraints and rules:
+
+- `app` remains the cron leader and fallback app instance.
+- `app_blue` and `app_green` are web-only services with cron disabled.
+- Caddy switches traffic by reloading a managed upstream file under `deploy/caddy/`.
+- The blue/green script waits `BLUE_GREEN_DRAIN_SECONDS` before it restarts or stops the previous service so in-flight requests can complete.
+- Postgres remains a shared dependency, not a blue/green service on this host.
+- The blue/green script scans pending Prisma migrations and blocks obviously breaking SQL unless `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` is set deliberately.
+- Prisma migrations must be backward-compatible across the cutover. Use expand-contract schema changes so old and new app versions can overlap safely.
+- `/home/ubuntu/clean-build-docker-tacbookings.sh` still exists as the standard full rebuild path when zero-downtime is not required.
+
+### Database Continuity During Blue/Green
+
+There is only one live PostgreSQL database. Blue/green switches the web application tier, not the database tier, so there is no replication lag or data copy step during cutover. Both the old and new app versions talk to the same Postgres instance before, during, and after the switch.
+
+If someone is booking during cutover:
+
+1. Existing requests keep writing to the shared Postgres database.
+2. New requests are routed to the new color only after the target app passes health checks.
+3. The previous service is left running for a short drain window before it is restarted or stopped.
+
+For booking consistency specifically, the write paths already serialize booking creation and key booking transitions inside database transactions with PostgreSQL advisory locks. See `src/app/api/bookings/route.ts` and `src/app/api/bookings/[id]/confirm-draft/route.ts`.
+
+### Prisma Migration Rules For Blue/Green
+
+Do not ship a breaking Prisma migration in the same deploy where old and new app versions overlap.
+
+Safe pattern:
+
+1. Add new tables, columns, indexes, or nullable fields.
+2. Deploy code that can work with both old and new schema shapes.
+3. Backfill data if needed.
+4. Switch reads and writes fully to the new shape.
+5. Remove old columns or constraints in a later deploy after all live instances are on the new code.
+
+Treat these as breaking unless you explicitly review and override them:
+
+- `DROP TABLE`
+- `DROP COLUMN`
+- `DROP TYPE`
+- `DROP CONSTRAINT`
+- column renames
+- table renames
+- column type changes
+- `SET NOT NULL` on an existing column without a prior compatible rollout
+
 ### Viewing Logs
 
 ```bash
@@ -488,7 +564,7 @@ free -m                  # Memory
 - Clean old Docker images: `docker system prune -a`
 - Check backup files: `ls -lah /tmp/tacbookings-backups/`
 
-### Out of memory (2GB instance)
+### Out of memory
 - Check usage: `free -m` and `docker stats`
-- Consider upgrading to 4GB Lightsail instance ($20/mo)
+- Current production host is 4 GB RAM, 2 vCPUs, 80 GB SSD. If memory pressure persists, review container limits and host usage before scaling further.
 - Restart to reclaim memory: `docker compose restart`
