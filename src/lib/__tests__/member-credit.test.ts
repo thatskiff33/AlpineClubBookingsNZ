@@ -1,24 +1,37 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mock Prisma ─────────────────────────────────────────────────────────────
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    memberCredit: {
-      aggregate: vi.fn(),
-      create: vi.fn(),
-      findMany: vi.fn(),
-      groupBy: vi.fn(),
-    },
-    payment: { findUnique: vi.fn() },
-    cancellationPolicy: {
-      findMany: vi.fn().mockResolvedValue([]),
-    },
+const prismaMock = {
+  memberCredit: {
+    aggregate: vi.fn(),
+    create: vi.fn(),
+    findMany: vi.fn(),
+    groupBy: vi.fn(),
   },
-}));
+  auditLog: {
+    create: vi.fn(),
+  },
+  adminCreditAdjustmentRequest: {
+    create: vi.fn(),
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+    updateMany: vi.fn(),
+  },
+  payment: { findUnique: vi.fn() },
+  cancellationPolicy: {
+    findMany: vi.fn().mockResolvedValue([]),
+  },
+  $executeRaw: vi.fn().mockResolvedValue(undefined),
+  $transaction: vi.fn(),
+};
 
-vi.mock("@/lib/audit", () => ({
-  logAudit: vi.fn(),
+prismaMock.$transaction.mockImplementation(async (callback: (tx: typeof prismaMock) => unknown) =>
+  callback(prismaMock)
+);
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: prismaMock,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -29,6 +42,29 @@ vi.mock("@/lib/logger", () => ({
     debug: vi.fn(),
   },
 }));
+
+function aggregateResult(amountCents: number | null) {
+  return {
+    _sum: { amountCents },
+    _count: null,
+    _avg: null,
+    _max: null,
+    _min: null,
+  } as any;
+}
+
+function pendingRequest(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "req-1",
+    memberId: "member-1",
+    amountCents: 2500,
+    description: "Service recovery",
+    idempotencyKey: "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+    status: "PENDING",
+    requestedById: "admin-requester",
+    ...overrides,
+  };
+}
 
 // ── Tests: Credit Balance Helpers ───────────────────────────────────────────
 
@@ -120,6 +156,7 @@ describe("member-credit helpers", () => {
   describe("applyCreditToBooking", () => {
     it("creates a negative BOOKING_APPLIED record", async () => {
       const txClient = {
+        $executeRaw: vi.fn().mockResolvedValue(undefined),
         memberCredit: {
           aggregate: vi.fn().mockResolvedValue({
             _sum: { amountCents: 10000 },
@@ -143,6 +180,7 @@ describe("member-credit helpers", () => {
 
     it("throws if insufficient balance", async () => {
       const txClient = {
+        $executeRaw: vi.fn().mockResolvedValue(undefined),
         memberCredit: {
           aggregate: vi.fn().mockResolvedValue({
             _sum: { amountCents: 2000 },
@@ -157,7 +195,10 @@ describe("member-credit helpers", () => {
     });
 
     it("throws if amount is zero or negative", async () => {
-      const txClient = { memberCredit: { aggregate: vi.fn() } };
+      const txClient = {
+        $executeRaw: vi.fn().mockResolvedValue(undefined),
+        memberCredit: { aggregate: vi.fn() },
+      };
 
       const { applyCreditToBooking } = await import("@/lib/member-credit");
       await expect(
@@ -202,41 +243,534 @@ describe("member-credit helpers", () => {
   });
 
   describe("createAdminAdjustment", () => {
-    it("creates a positive admin adjustment", async () => {
+    it("creates a pending admin adjustment request", async () => {
       const { prisma } = await import("@/lib/prisma");
-      vi.mocked(prisma.memberCredit.create).mockResolvedValue({} as any);
+      vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(prisma.adminCreditAdjustmentRequest.create).mockResolvedValue({
+        ...pendingRequest({
+          amountCents: 2000,
+          description: "Goodwill credit",
+          requestedById: "admin-1",
+        }),
+      } as any);
+      vi.mocked(prisma.auditLog.create).mockResolvedValue({} as any);
 
-      const { createAdminAdjustment } = await import("@/lib/member-credit");
-      await createAdminAdjustment("member-1", 2000, "Goodwill credit", "admin-1");
+      const { createAdminAdjustmentRequest } = await import("@/lib/member-credit");
+      const result = await createAdminAdjustmentRequest(
+        "member-1",
+        2000,
+        "Goodwill credit",
+        "admin-1",
+        "9a13b0af-7ffc-451b-a50b-81f6fb8630f4"
+      );
 
-      expect(prisma.memberCredit.create).toHaveBeenCalledWith({
+      expect(prisma.adminCreditAdjustmentRequest.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           memberId: "member-1",
           amountCents: 2000,
-          type: "ADMIN_ADJUSTMENT",
           description: "Goodwill credit",
+          idempotencyKey: "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+          requestedById: "admin-1",
         }),
+        select: expect.any(Object),
       });
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(prisma.memberCredit.create).not.toHaveBeenCalled();
+      expect(result.replayed).toBe(false);
+      expect(result.request.status).toBe("PENDING");
+    });
+
+    it("replays a duplicate request with the same idempotency key", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      const existingRequest = pendingRequest({
+        amountCents: 2000,
+        description: "Goodwill credit",
+        requestedById: "admin-1",
+      });
+
+      vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(existingRequest as any);
+      vi.mocked(prisma.adminCreditAdjustmentRequest.create).mockResolvedValue(
+        existingRequest as any
+      );
+      vi.mocked(prisma.auditLog.create).mockResolvedValue({} as any);
+
+      const { createAdminAdjustmentRequest } = await import("@/lib/member-credit");
+      const first = await createAdminAdjustmentRequest(
+        "member-1",
+        2000,
+        "Goodwill credit",
+        "admin-1",
+        existingRequest.idempotencyKey
+      );
+      const replay = await createAdminAdjustmentRequest(
+        "member-1",
+        2000,
+        "Goodwill credit",
+        "admin-1",
+        existingRequest.idempotencyKey
+      );
+
+      expect(prisma.adminCreditAdjustmentRequest.create).toHaveBeenCalledTimes(1);
+      expect(first.replayed).toBe(false);
+      expect(replay.replayed).toBe(true);
+      expect(replay.request).toEqual(first.request);
+    });
+
+    it("rolls back request creation when the audit write fails", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique).mockResolvedValueOnce(null);
+
+      const committedRequestIds: string[] = [];
+      vi.mocked(prisma.$transaction).mockImplementationOnce(async (callback: (tx: any) => Promise<unknown>) => {
+        const stagedRequestIds: string[] = [];
+        const tx = {
+          adminCreditAdjustmentRequest: {
+            create: vi.fn(async ({ data }: any) => {
+              stagedRequestIds.push("req-audit-fail");
+              return {
+                ...pendingRequest({
+                  id: "req-audit-fail",
+                  amountCents: data.amountCents,
+                  description: data.description,
+                  idempotencyKey: data.idempotencyKey,
+                  requestedById: data.requestedById,
+                }),
+              };
+            }),
+          },
+          memberCredit: {
+            aggregate: vi.fn().mockResolvedValue(aggregateResult(5000)),
+          },
+          auditLog: {
+            create: vi.fn().mockRejectedValue(new Error("audit write failed")),
+          },
+        };
+
+        try {
+          const result = await callback(tx);
+          committedRequestIds.push(...stagedRequestIds);
+          return result;
+        } catch (error) {
+          return Promise.reject(error);
+        }
+      });
+
+      const { createAdminAdjustmentRequest } = await import("@/lib/member-credit");
+      await expect(
+        createAdminAdjustmentRequest(
+          "member-1",
+          2000,
+          "Goodwill credit",
+          "admin-1",
+          "9a13b0af-7ffc-451b-a50b-81f6fb8630f4"
+        )
+      ).rejects.toThrow("audit write failed");
+
+      expect(committedRequestIds).toHaveLength(0);
     });
 
     it("validates negative adjustment doesn't exceed balance", async () => {
       const { prisma } = await import("@/lib/prisma");
-      vi.mocked(prisma.memberCredit.aggregate).mockResolvedValue({
-        _sum: { amountCents: 1000 },
-        _count: null, _avg: null, _max: null, _min: null,
-      } as any);
+      vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(prisma.adminCreditAdjustmentRequest.create).mockResolvedValue(
+        pendingRequest({
+          amountCents: -2000,
+          description: "Correction",
+          requestedById: "admin-1",
+        }) as any
+      );
+      vi.mocked(prisma.memberCredit.aggregate).mockResolvedValue(
+        aggregateResult(1000)
+      );
 
-      const { createAdminAdjustment } = await import("@/lib/member-credit");
+      const { createAdminAdjustmentRequest } = await import("@/lib/member-credit");
       await expect(
-        createAdminAdjustment("member-1", -2000, "Correction", "admin-1")
+        createAdminAdjustmentRequest(
+          "member-1",
+          -2000,
+          "Correction",
+          "admin-1",
+          "9a13b0af-7ffc-451b-a50b-81f6fb8630f4"
+        )
       ).rejects.toThrow("Cannot deduct 2000 cents: only 1000 cents available");
+
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
 
     it("rejects zero amount", async () => {
-      const { createAdminAdjustment } = await import("@/lib/member-credit");
+      const { createAdminAdjustmentRequest } = await import("@/lib/member-credit");
       await expect(
-        createAdminAdjustment("member-1", 0, "Nothing", "admin-1")
+        createAdminAdjustmentRequest(
+          "member-1",
+          0,
+          "Nothing",
+          "admin-1",
+          "9a13b0af-7ffc-451b-a50b-81f6fb8630f4"
+        )
       ).rejects.toThrow("Adjustment amount cannot be zero");
+    });
+  });
+
+  describe("reviewAdminAdjustmentRequest", () => {
+    it("approves a pending request and stamps both admins on the credit row", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique).mockResolvedValue(
+        pendingRequest() as any
+      );
+      vi.mocked(prisma.adminCreditAdjustmentRequest.updateMany).mockResolvedValue({
+        count: 1,
+      } as any);
+      vi.mocked(prisma.memberCredit.create).mockResolvedValue({
+        id: "credit-1",
+      } as any);
+      vi.mocked(prisma.auditLog.create).mockResolvedValue({} as any);
+
+      const { reviewAdminAdjustmentRequest } = await import("@/lib/member-credit");
+      const result = await reviewAdminAdjustmentRequest(
+        "member-1",
+        "req-1",
+        "APPROVE",
+        "admin-approver"
+      );
+
+      expect(prisma.adminCreditAdjustmentRequest.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "req-1",
+          memberId: "member-1",
+          status: "PENDING",
+        },
+        data: expect.objectContaining({
+          status: "APPROVED",
+          reviewedById: "admin-approver",
+        }),
+      });
+      expect(prisma.memberCredit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          memberId: "member-1",
+          amountCents: 2500,
+          type: "ADMIN_ADJUSTMENT",
+          description: "Service recovery",
+          requestedById: "admin-requester",
+          approvedById: "admin-approver",
+          approvalRequestId: "req-1",
+        }),
+      });
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(result.credit).toEqual({ id: "credit-1" });
+    });
+
+    it("rejects self-approval", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique).mockResolvedValue(
+        pendingRequest({ requestedById: "admin-1" }) as any
+      );
+
+      const { reviewAdminAdjustmentRequest } = await import("@/lib/member-credit");
+      await expect(
+        reviewAdminAdjustmentRequest("member-1", "req-1", "APPROVE", "admin-1")
+      ).rejects.toThrow("A different admin must approve this adjustment");
+
+      expect(prisma.adminCreditAdjustmentRequest.updateMany).not.toHaveBeenCalled();
+      expect(prisma.memberCredit.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects a pending request without creating a credit row", async () => {
+      const { prisma } = await import("@/lib/prisma");
+      vi.mocked(prisma.adminCreditAdjustmentRequest.findUnique).mockResolvedValue(
+        pendingRequest() as any
+      );
+      vi.mocked(prisma.adminCreditAdjustmentRequest.updateMany).mockResolvedValue({
+        count: 1,
+      } as any);
+      vi.mocked(prisma.auditLog.create).mockResolvedValue({} as any);
+
+      const { reviewAdminAdjustmentRequest } = await import("@/lib/member-credit");
+      const result = await reviewAdminAdjustmentRequest(
+        "member-1",
+        "req-1",
+        "REJECT",
+        "admin-approver"
+      );
+
+      expect(prisma.adminCreditAdjustmentRequest.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "req-1",
+          memberId: "member-1",
+          status: "PENDING",
+        },
+        data: expect.objectContaining({
+          status: "REJECTED",
+          reviewedById: "admin-approver",
+        }),
+      });
+      expect(prisma.memberCredit.create).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+      expect(result.credit).toBeNull();
+    });
+
+    it("rolls back approval when the audit write fails", async () => {
+      const { prisma } = await import("@/lib/prisma");
+
+      const state = {
+        credits: [] as Array<{ id: string; amountCents: number; memberId: string }>,
+        request: pendingRequest(),
+      };
+
+      vi.mocked(prisma.$transaction).mockImplementationOnce(async (callback: (tx: any) => Promise<unknown>) => {
+        const stagedCredits: typeof state.credits = [];
+        const stagedRequest = {
+          ...state.request,
+        };
+        let releaseLock: (() => void) | null = null;
+        const tx = {
+          $executeRaw: vi.fn(async () => {
+            releaseLock = () => undefined;
+          }),
+          adminCreditAdjustmentRequest: {
+            findUnique: vi.fn(async () => ({ ...state.request })),
+            updateMany: vi.fn(async () => {
+              stagedRequest.status = "APPROVED";
+              stagedRequest.reviewedById = "admin-approver";
+              return { count: 1 };
+            }),
+          },
+          memberCredit: {
+            aggregate: vi.fn().mockResolvedValue(aggregateResult(5000)),
+            create: vi.fn(async ({ data }: any) => {
+              const credit = { id: "credit-audit-fail", ...data };
+              stagedCredits.push(credit);
+              return credit;
+            }),
+          },
+          auditLog: {
+            create: vi.fn().mockRejectedValue(new Error("audit write failed")),
+          },
+        };
+
+        try {
+          const result = await callback(tx);
+          state.credits.push(...stagedCredits);
+          state.request = stagedRequest as any;
+          return result;
+        } finally {
+          releaseLock?.();
+        }
+      });
+
+      const { reviewAdminAdjustmentRequest } = await import("@/lib/member-credit");
+      await expect(
+        reviewAdminAdjustmentRequest(
+          "member-1",
+          "req-1",
+          "APPROVE",
+          "admin-approver"
+        )
+      ).rejects.toThrow("audit write failed");
+
+      expect(state.credits).toHaveLength(0);
+      expect(state.request.status).toBe("PENDING");
+      expect((state.request as any).reviewedById).toBeUndefined();
+    });
+
+    it("rolls back rejection when the audit write fails", async () => {
+      const { prisma } = await import("@/lib/prisma");
+
+      const state = {
+        request: pendingRequest(),
+      };
+
+      vi.mocked(prisma.$transaction).mockImplementationOnce(async (callback: (tx: any) => Promise<unknown>) => {
+        const stagedRequest = {
+          ...state.request,
+        };
+        const tx = {
+          $executeRaw: vi.fn().mockResolvedValue(undefined),
+          adminCreditAdjustmentRequest: {
+            findUnique: vi.fn(async () => ({ ...state.request })),
+            updateMany: vi.fn(async () => {
+              stagedRequest.status = "REJECTED";
+              stagedRequest.reviewedById = "admin-approver";
+              return { count: 1 };
+            }),
+          },
+          memberCredit: {
+            create: vi.fn(),
+          },
+          auditLog: {
+            create: vi.fn().mockRejectedValue(new Error("audit write failed")),
+          },
+        };
+
+        try {
+          const result = await callback(tx);
+          state.request = stagedRequest as any;
+          return result;
+        } catch (error) {
+          return Promise.reject(error);
+        }
+      });
+
+      const { reviewAdminAdjustmentRequest } = await import("@/lib/member-credit");
+      await expect(
+        reviewAdminAdjustmentRequest(
+          "member-1",
+          "req-1",
+          "REJECT",
+          "admin-approver"
+        )
+      ).rejects.toThrow("audit write failed");
+
+      expect(state.request.status).toBe("PENDING");
+      expect((state.request as any).reviewedById).toBeUndefined();
+    });
+
+    it("prevents concurrent negative approvals from overdrawing the balance", async () => {
+      const { prisma } = await import("@/lib/prisma");
+
+      const state = {
+        credits: [
+          {
+            id: "credit-seed",
+            memberId: "member-1",
+            amountCents: 1000,
+            type: "CANCELLATION_REFUND",
+          },
+        ],
+        requests: {
+          "req-1": pendingRequest({
+            id: "req-1",
+            amountCents: -700,
+            description: "Manual deduction 1",
+            requestedById: "admin-requester-1",
+          }),
+          "req-2": pendingRequest({
+            id: "req-2",
+            amountCents: -700,
+            description: "Manual deduction 2",
+            requestedById: "admin-requester-2",
+            idempotencyKey: "26822a78-5929-4471-889f-b49f7c88914d",
+          }),
+        } as Record<string, any>,
+        audits: [] as Array<{ action: string }>,
+      };
+
+      let lockTail = Promise.resolve();
+
+      vi.mocked(prisma.$transaction).mockImplementation(async (callback: (tx: any) => Promise<unknown>) => {
+        const stagedCredits: any[] = [];
+        const stagedRequestUpdates: Array<() => void> = [];
+        const stagedAudits: Array<{ action: string }> = [];
+        let releaseLock: (() => void) | null = null;
+
+        const tx = {
+          $executeRaw: vi.fn(async () => {
+            const previousLock = lockTail;
+            lockTail = new Promise<void>((resolve) => {
+              releaseLock = resolve;
+            });
+            await previousLock;
+          }),
+          adminCreditAdjustmentRequest: {
+            findUnique: vi.fn(async ({ where }: any) => {
+              const request = state.requests[where.id];
+              return request ? { ...request } : null;
+            }),
+            updateMany: vi.fn(async ({ where, data }: any) => {
+              const request = state.requests[where.id];
+              if (!request || request.memberId !== where.memberId || request.status !== where.status) {
+                return { count: 0 };
+              }
+
+              stagedRequestUpdates.push(() => {
+                request.status = data.status;
+                request.reviewedById = data.reviewedById;
+                request.reviewedAt = data.reviewedAt;
+              });
+
+              return { count: 1 };
+            }),
+          },
+          memberCredit: {
+            aggregate: vi.fn(async ({ where }: any) => {
+              const committedBalance = state.credits
+                .filter((credit) => credit.memberId === where.memberId)
+                .reduce((sum, credit) => sum + credit.amountCents, 0);
+              const stagedBalance = stagedCredits
+                .filter((credit) => credit.memberId === where.memberId)
+                .reduce((sum, credit) => sum + credit.amountCents, 0);
+
+              return aggregateResult(committedBalance + stagedBalance);
+            }),
+            create: vi.fn(async ({ data }: any) => {
+              const credit = {
+                id: `credit-${state.credits.length + stagedCredits.length + 1}`,
+                ...data,
+              };
+              stagedCredits.push(credit);
+              return credit;
+            }),
+          },
+          auditLog: {
+            create: vi.fn(async ({ data }: any) => {
+              stagedAudits.push(data);
+              return data;
+            }),
+          },
+        };
+
+        try {
+          const result = await callback(tx);
+          stagedRequestUpdates.forEach((commit) => commit());
+          state.credits.push(...stagedCredits);
+          state.audits.push(...stagedAudits);
+          return result;
+        } finally {
+          releaseLock?.();
+        }
+      });
+
+      const { reviewAdminAdjustmentRequest } = await import("@/lib/member-credit");
+      const [firstResult, secondResult] = await Promise.allSettled([
+        reviewAdminAdjustmentRequest(
+          "member-1",
+          "req-1",
+          "APPROVE",
+          "admin-approver-1"
+        ),
+        reviewAdminAdjustmentRequest(
+          "member-1",
+          "req-2",
+          "APPROVE",
+          "admin-approver-2"
+        ),
+      ]);
+
+      expect([firstResult.status, secondResult.status].sort()).toEqual([
+        "fulfilled",
+        "rejected",
+      ]);
+
+      const rejectedResult = [firstResult, secondResult].find(
+        (result) => result.status === "rejected"
+      ) as PromiseRejectedResult;
+      expect(rejectedResult.reason.message).toBe(
+        "Cannot deduct 700 cents: only 300 cents available"
+      );
+
+      const approvedRequests = Object.values(state.requests).filter(
+        (request) => request.status === "APPROVED"
+      );
+      const pendingRequests = Object.values(state.requests).filter(
+        (request) => request.status === "PENDING"
+      );
+
+      expect(
+        state.credits.filter((credit) => credit.type === "ADMIN_ADJUSTMENT")
+      ).toHaveLength(1);
+      expect(approvedRequests).toHaveLength(1);
+      expect(pendingRequests).toHaveLength(1);
     });
   });
 });
@@ -351,13 +885,26 @@ describe("schema contracts", () => {
     const schema = z.object({
       amountCents: z.number().int().refine((v: number) => v !== 0, "Amount cannot be zero"),
       description: z.string().min(1, "Description is required").max(500),
+      idempotencyKey: z.string().uuid("Idempotency key must be a UUID"),
     });
 
     expect(schema.safeParse({ amountCents: 100 }).success).toBe(false);
     expect(schema.safeParse({ amountCents: 100, description: "" }).success).toBe(false);
-    expect(schema.safeParse({ amountCents: 0, description: "test" }).success).toBe(false);
-    expect(schema.safeParse({ amountCents: 100, description: "test" }).success).toBe(true);
-    expect(schema.safeParse({ amountCents: -500, description: "deduct" }).success).toBe(true);
+    expect(schema.safeParse({
+      amountCents: 0,
+      description: "test",
+      idempotencyKey: "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      amountCents: 100,
+      description: "test",
+      idempotencyKey: "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+    }).success).toBe(true);
+    expect(schema.safeParse({
+      amountCents: -500,
+      description: "deduct",
+      idempotencyKey: "9a13b0af-7ffc-451b-a50b-81f6fb8630f4",
+    }).success).toBe(true);
   });
 
   it("cancellation policy schema accepts creditRefundPercentage", async () => {

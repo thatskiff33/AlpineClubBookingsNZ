@@ -116,6 +116,12 @@ enum CreditType {
   BOOKING_APPLIED
 }
 
+enum AdminCreditAdjustmentRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum AgeRestriction {
   ANY
   ADULTS_ONLY
@@ -214,24 +220,29 @@ model Member {
   familyGroupMemberships FamilyGroupMember[]
 
   // Relations
-  passwordResetTokens       PasswordResetToken[]
-  emailVerificationTokens   EmailVerificationToken[]
-  emailChangeTokens         EmailChangeToken[]
-  subscriptions             MemberSubscription[]
-  bookings                  Booking[]
-  guestAppearances          BookingGuest[]
-  promoRedemptions          PromoRedemption[]
-  promoCodeAssignments      PromoCodeAssignment[]
-  notificationPreference    NotificationPreference?
-  hutLeaderAssignments      HutLeaderAssignment[]
-  familyGroupRequests       FamilyGroupJoinRequest[] @relation("FamilyGroupRequester")
-  familyGroupInvitations    FamilyGroupJoinRequest[] @relation("FamilyGroupInvitedMember")
-  familyGroupLinkedRequests FamilyGroupJoinRequest[] @relation("FamilyGroupLinkedMember")
-  deletionRequests          DeletionRequest[]
-  credits                   MemberCredit[]
-  bookingsCreatedOnBehalf   Booking[]                @relation("BookingsCreatedBy")
-  refundRequests            RefundRequest[]
-  issueReports              IssueReport[]
+  passwordResetTokens                    PasswordResetToken[]
+  emailVerificationTokens                EmailVerificationToken[]
+  emailChangeTokens                      EmailChangeToken[]
+  subscriptions                          MemberSubscription[]
+  bookings                               Booking[]
+  guestAppearances                       BookingGuest[]
+  promoRedemptions                       PromoRedemption[]
+  promoCodeAssignments                   PromoCodeAssignment[]
+  notificationPreference                 NotificationPreference?
+  hutLeaderAssignments                   HutLeaderAssignment[]
+  familyGroupRequests                    FamilyGroupJoinRequest[]       @relation("FamilyGroupRequester")
+  familyGroupInvitations                 FamilyGroupJoinRequest[]       @relation("FamilyGroupInvitedMember")
+  familyGroupLinkedRequests              FamilyGroupJoinRequest[]       @relation("FamilyGroupLinkedMember")
+  deletionRequests                       DeletionRequest[]
+  credits                                MemberCredit[]
+  requestedCreditAdjustments             MemberCredit[]                 @relation("RequestedAdminCredits")
+  approvedCreditAdjustments              MemberCredit[]                 @relation("ApprovedAdminCredits")
+  adminCreditAdjustmentRequestsRequested AdminCreditAdjustmentRequest[] @relation("AdminCreditAdjustmentRequestsRequested")
+  adminCreditAdjustmentRequestsReviewed  AdminCreditAdjustmentRequest[] @relation("AdminCreditAdjustmentRequestsReviewed")
+  bookingsCreatedOnBehalf                Booking[]                      @relation("BookingsCreatedBy")
+  refundRequests                         RefundRequest[]
+  issueReports                           IssueReport[]
+  adminCreditAdjustmentRequests          AdminCreditAdjustmentRequest[] @relation("AdminCreditAdjustmentTarget")
 
   @@index([email])
   @@index([xeroContactId])
@@ -1320,16 +1331,16 @@ model XeroItemCodeMapping {
 // ---------------------------------------------------------------------------
 
 model AgeTierSetting {
-  id        String   @id @default(cuid())
-  tier      AgeTier  @unique
-  minAge    Int
-  maxAge    Int? // null for ADULT (no upper limit)
-  label     String // e.g. "Child (under 10)"
+  id                   String   @id @default(cuid())
+  tier                 AgeTier  @unique
+  minAge               Int
+  maxAge               Int? // null for ADULT (no upper limit)
+  label                String // e.g. "Child (under 10)"
   xeroContactGroupId   String?
   xeroContactGroupName String?
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  sortOrder            Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   @@index([sortOrder])
 }
@@ -1372,18 +1383,50 @@ model MemberCredit {
   amountCents        Int // Positive = credit added, negative = credit used
   type               CreditType
   description        String // Human-readable reason
+  requestedById      String? // Admin who requested a manual adjustment
+  approvedById       String? // Admin who approved a manual adjustment
+  approvalRequestId  String?    @unique // Links approved manual adjustments to their request
   sourceBookingId    String? // Booking that generated the credit (cancellation)
   appliedToBookingId String? // Booking where credit was spent
   xeroCreditNoteId   String? // Linked Xero credit note ID
   createdAt          DateTime   @default(now())
 
-  member           Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
-  sourceBooking    Booking? @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: SetNull)
-  appliedToBooking Booking? @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: SetNull)
+  member           Member                        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  requestedBy      Member?                       @relation("RequestedAdminCredits", fields: [requestedById], references: [id], onDelete: SetNull)
+  approvedBy       Member?                       @relation("ApprovedAdminCredits", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvalRequest  AdminCreditAdjustmentRequest? @relation("ApprovedAdminCreditAdjustment", fields: [approvalRequestId], references: [id], onDelete: SetNull)
+  sourceBooking    Booking?                      @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: SetNull)
+  appliedToBooking Booking?                      @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: SetNull)
 
   @@index([memberId])
+  @@index([requestedById])
+  @@index([approvedById])
   @@index([sourceBookingId])
   @@index([appliedToBookingId])
+}
+
+model AdminCreditAdjustmentRequest {
+  id             String                             @id @default(cuid())
+  memberId       String
+  amountCents    Int
+  description    String
+  idempotencyKey String
+  status         AdminCreditAdjustmentRequestStatus @default(PENDING)
+  requestedById  String
+  reviewedById   String?
+  reviewedAt     DateTime?
+  createdAt      DateTime                           @default(now())
+  updatedAt      DateTime                           @updatedAt
+
+  member         Member        @relation("AdminCreditAdjustmentTarget", fields: [memberId], references: [id], onDelete: Cascade)
+  requestedBy    Member        @relation("AdminCreditAdjustmentRequestsRequested", fields: [requestedById], references: [id])
+  reviewedBy     Member?       @relation("AdminCreditAdjustmentRequestsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  approvedCredit MemberCredit? @relation("ApprovedAdminCreditAdjustment")
+
+  @@unique([requestedById, idempotencyKey])
+  @@index([memberId, status, createdAt])
+  @@index([requestedById, createdAt])
+  @@index([reviewedById, createdAt])
 }
 
 // ---------------------------------------------------------------------------

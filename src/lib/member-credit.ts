@@ -1,7 +1,30 @@
 import { prisma } from "./prisma";
-import { CreditType, Prisma } from "@prisma/client";
-import { logAudit } from "./audit";
+import {
+  AdminCreditAdjustmentRequestStatus,
+  CreditType,
+  Prisma,
+} from "@prisma/client";
+import { createAuditLog } from "./audit";
+import { isPrismaUniqueConstraintError } from "./prisma-errors";
 import logger from "@/lib/logger";
+
+const MEMBER_CREDIT_LOCK_NAMESPACE = "member-credit-ledger";
+const ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT =
+  "This idempotency key was already used for a different adjustment request";
+
+const adminAdjustmentRequestSelect = {
+  id: true,
+  memberId: true,
+  amountCents: true,
+  description: true,
+  idempotencyKey: true,
+  status: true,
+  requestedById: true,
+} satisfies Prisma.AdminCreditAdjustmentRequestSelect;
+
+type AdminAdjustmentRequestRecord = Prisma.AdminCreditAdjustmentRequestGetPayload<{
+  select: typeof adminAdjustmentRequestSelect;
+}>;
 
 /**
  * Get a member's available credit balance (sum of all credit entries).
@@ -56,6 +79,8 @@ export async function applyCreditToBooking(
   if (amountCents <= 0) {
     throw new Error("Credit amount must be positive");
   }
+
+  await lockMemberCreditLedger(memberId, tx);
 
   const balance = await getMemberCreditBalance(memberId, tx);
   if (balance < amountCents) {
@@ -137,48 +162,362 @@ export async function getMemberCreditHistory(memberId: string) {
 }
 
 /**
- * Create an admin manual credit adjustment.
+ * Get credit transaction history for a member, including admin approval metadata.
  */
-export async function createAdminAdjustment(
-  memberId: string,
-  amountCents: number,
-  description: string,
-  adminId: string,
-  ipAddress?: string
-): Promise<void> {
+export async function getAdminMemberCreditHistory(memberId: string) {
+  return prisma.memberCredit.findMany({
+    where: { memberId },
+    include: {
+      sourceBooking: {
+        select: { id: true, checkIn: true, checkOut: true },
+      },
+      appliedToBooking: {
+        select: { id: true, checkIn: true, checkOut: true },
+      },
+      requestedBy: {
+        select: { id: true, firstName: true, lastName: true },
+      },
+      approvedBy: {
+        select: { id: true, firstName: true, lastName: true },
+      },
+      approvalRequest: {
+        select: { createdAt: true, reviewedAt: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+/**
+ * Get pending admin adjustment requests for a member.
+ */
+export async function getPendingAdminAdjustmentRequests(memberId: string) {
+  return prisma.adminCreditAdjustmentRequest.findMany({
+    where: {
+      memberId,
+      status: AdminCreditAdjustmentRequestStatus.PENDING,
+    },
+    include: {
+      requestedBy: {
+        select: { id: true, firstName: true, lastName: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+function formatAdjustmentAmount(amountCents: number) {
+  return `${amountCents > 0 ? "+" : ""}${amountCents} cents`;
+}
+
+function validateAdjustmentAmount(amountCents: number) {
   if (amountCents === 0) {
     throw new Error("Adjustment amount cannot be zero");
   }
+}
 
-  // If negative adjustment, verify balance is sufficient
+async function lockMemberCreditLedger(
+  memberId: string,
+  tx: Prisma.TransactionClient
+) {
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(
+      hashtext(${MEMBER_CREDIT_LOCK_NAMESPACE}),
+      hashtext(${memberId})
+    )
+  `;
+}
+
+async function validateNegativeAdjustmentBalance(
+  memberId: string,
+  amountCents: number,
+  tx?: Prisma.TransactionClient
+) {
   if (amountCents < 0) {
-    const balance = await getMemberCreditBalance(memberId);
+    const balance = await getMemberCreditBalance(memberId, tx);
     if (balance + amountCents < 0) {
       throw new Error(
         `Cannot deduct ${Math.abs(amountCents)} cents: only ${balance} cents available`
       );
     }
   }
+}
 
-  await prisma.memberCredit.create({
-    data: {
+async function findAdminAdjustmentRequestByIdempotencyKey(
+  requestedById: string,
+  idempotencyKey: string
+): Promise<AdminAdjustmentRequestRecord | null> {
+  return prisma.adminCreditAdjustmentRequest.findUnique({
+    where: {
+      requestedById_idempotencyKey: {
+        requestedById,
+        idempotencyKey,
+      },
+    },
+    select: adminAdjustmentRequestSelect,
+  });
+}
+
+function assertMatchingIdempotentAdjustmentRequest(
+  request: AdminAdjustmentRequestRecord,
+  expected: {
+    memberId: string;
+    amountCents: number;
+    description: string;
+    requestedById: string;
+  }
+) {
+  if (
+    request.memberId !== expected.memberId ||
+    request.amountCents !== expected.amountCents ||
+    request.description !== expected.description ||
+    request.requestedById !== expected.requestedById
+  ) {
+    throw new Error(ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT);
+  }
+}
+
+/**
+ * Create an admin manual credit adjustment request.
+ * A second admin must approve the request before the credit is applied.
+ */
+export async function createAdminAdjustmentRequest(
+  memberId: string,
+  amountCents: number,
+  description: string,
+  adminId: string,
+  idempotencyKey: string,
+  ipAddress?: string
+) {
+  validateAdjustmentAmount(amountCents);
+
+  const existingRequest = await findAdminAdjustmentRequestByIdempotencyKey(
+    adminId,
+    idempotencyKey
+  );
+
+  if (existingRequest) {
+    assertMatchingIdempotentAdjustmentRequest(existingRequest, {
       memberId,
       amountCents,
-      type: CreditType.ADMIN_ADJUSTMENT,
       description,
-    },
-  });
+      requestedById: adminId,
+    });
 
-  logAudit({
-    action: "member.credit.adjustment",
-    memberId: adminId,
-    targetId: memberId,
-    details: `Admin credit adjustment: ${amountCents > 0 ? "+" : ""}${amountCents} cents. Reason: ${description}`,
-    ipAddress,
+    logger.info(
+      {
+        memberId,
+        amountCents,
+        adminId,
+        requestId: existingRequest.id,
+        idempotencyKey,
+      },
+      "Admin credit adjustment request replayed"
+    );
+
+    return {
+      request: existingRequest,
+      replayed: true,
+    };
+  }
+
+  try {
+    const request = await prisma.$transaction(async (tx) => {
+      const createdRequest = await tx.adminCreditAdjustmentRequest.create({
+        data: {
+          memberId,
+          amountCents,
+          description,
+          idempotencyKey,
+          requestedById: adminId,
+        },
+        select: adminAdjustmentRequestSelect,
+      });
+
+      await validateNegativeAdjustmentBalance(memberId, amountCents, tx);
+
+      await createAuditLog(
+        {
+          action: "member.credit.adjustment.request",
+          memberId: adminId,
+          targetId: memberId,
+          details: `Requested admin credit adjustment ${createdRequest.id}: ${formatAdjustmentAmount(amountCents)}. Reason: ${description}`,
+          ipAddress,
+        },
+        tx
+      );
+
+      return createdRequest;
+    });
+
+    logger.info(
+      { memberId, amountCents, adminId, requestId: request.id, idempotencyKey },
+      "Admin credit adjustment request created"
+    );
+
+    return {
+      request,
+      replayed: false,
+    };
+  } catch (error) {
+    if (isPrismaUniqueConstraintError(error)) {
+      const replayedRequest = await findAdminAdjustmentRequestByIdempotencyKey(
+        adminId,
+        idempotencyKey
+      );
+
+      if (replayedRequest) {
+        assertMatchingIdempotentAdjustmentRequest(replayedRequest, {
+          memberId,
+          amountCents,
+          description,
+          requestedById: adminId,
+        });
+
+        logger.info(
+          {
+            memberId,
+            amountCents,
+            adminId,
+            requestId: replayedRequest.id,
+            idempotencyKey,
+          },
+          "Admin credit adjustment request replayed after unique conflict"
+        );
+
+        return {
+          request: replayedRequest,
+          replayed: true,
+        };
+      }
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Review a pending admin adjustment request.
+ * Approval applies the adjustment and stamps both admins onto the credit row.
+ */
+export async function reviewAdminAdjustmentRequest(
+  memberId: string,
+  requestId: string,
+  decision: "APPROVE" | "REJECT",
+  adminId: string,
+  ipAddress?: string
+) {
+  const result = await prisma.$transaction(async (tx) => {
+    await lockMemberCreditLedger(memberId, tx);
+
+    const request = await tx.adminCreditAdjustmentRequest.findUnique({
+      where: { id: requestId },
+      select: adminAdjustmentRequestSelect,
+    });
+
+    if (!request || request.memberId !== memberId) {
+      throw new Error("Adjustment request not found");
+    }
+
+    if (request.status !== AdminCreditAdjustmentRequestStatus.PENDING) {
+      throw new Error("This adjustment request has already been reviewed");
+    }
+
+    if (request.requestedById === adminId) {
+      throw new Error("A different admin must approve this adjustment");
+    }
+
+    if (decision === "APPROVE") {
+      validateAdjustmentAmount(request.amountCents);
+      await validateNegativeAdjustmentBalance(
+        request.memberId,
+        request.amountCents,
+        tx
+      );
+    }
+
+    const reviewedAt = new Date();
+    const updated = await tx.adminCreditAdjustmentRequest.updateMany({
+      where: {
+        id: request.id,
+        memberId,
+        status: AdminCreditAdjustmentRequestStatus.PENDING,
+      },
+      data: {
+        status:
+          decision === "APPROVE"
+            ? AdminCreditAdjustmentRequestStatus.APPROVED
+            : AdminCreditAdjustmentRequestStatus.REJECTED,
+        reviewedById: adminId,
+        reviewedAt,
+      },
+    });
+
+    if (updated.count !== 1) {
+      throw new Error("This adjustment request has already been reviewed");
+    }
+
+    if (decision === "REJECT") {
+      await createAuditLog(
+        {
+          action: "member.credit.adjustment.reject",
+          memberId: adminId,
+          targetId: memberId,
+          details: `Rejected admin credit adjustment ${request.id}: ${formatAdjustmentAmount(request.amountCents)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
+          ipAddress,
+        },
+        tx
+      );
+
+      return {
+        decision,
+        request,
+        credit: null,
+      };
+    }
+
+    const credit = await tx.memberCredit.create({
+      data: {
+        memberId: request.memberId,
+        amountCents: request.amountCents,
+        type: CreditType.ADMIN_ADJUSTMENT,
+        description: request.description,
+        requestedById: request.requestedById,
+        approvedById: adminId,
+        approvalRequestId: request.id,
+      },
+    });
+
+    await createAuditLog(
+      {
+        action: "member.credit.adjustment.approve",
+        memberId: adminId,
+        targetId: memberId,
+        details: `Approved admin credit adjustment ${request.id} as credit ${credit.id}: ${formatAdjustmentAmount(request.amountCents)}. Requested by ${request.requestedById}. Reason: ${request.description}`,
+        ipAddress,
+      },
+      tx
+    );
+
+    return {
+      decision,
+      request,
+      credit,
+    };
   });
 
   logger.info(
-    { memberId, amountCents, adminId },
-    "Admin credit adjustment created"
+    {
+      memberId,
+      requestId: result.request.id,
+      creditId: result.credit?.id,
+      amountCents: result.request.amountCents,
+      adminId,
+    },
+    result.decision === "APPROVE"
+      ? "Admin credit adjustment approved"
+      : "Admin credit adjustment rejected"
   );
+
+  return result;
 }

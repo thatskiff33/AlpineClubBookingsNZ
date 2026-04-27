@@ -4,8 +4,9 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 import {
   getMemberCreditBalance,
-  getMemberCreditHistory,
-  createAdminAdjustment,
+  getAdminMemberCreditHistory,
+  getPendingAdminAdjustmentRequests,
+  createAdminAdjustmentRequest,
 } from "@/lib/member-credit";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
@@ -15,7 +16,7 @@ import logger from "@/lib/logger";
  * Returns credit balance and history for a member (admin only).
  */
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -30,12 +31,13 @@ export async function GET(
 
     const { id } = await params;
 
-    const [balanceCents, history] = await Promise.all([
+    const [balanceCents, history, pendingRequests] = await Promise.all([
       getMemberCreditBalance(id),
-      getMemberCreditHistory(id),
+      getAdminMemberCreditHistory(id),
+      getPendingAdminAdjustmentRequests(id),
     ]);
 
-    return NextResponse.json({ balanceCents, history });
+    return NextResponse.json({ balanceCents, history, pendingRequests });
   } catch (error) {
     logger.error({ err: error }, "Error fetching member credit history");
     return NextResponse.json(
@@ -48,11 +50,12 @@ export async function GET(
 const adjustmentSchema = z.object({
   amountCents: z.number().int().refine((v) => v !== 0, "Amount cannot be zero"),
   description: z.string().min(1, "Description is required").max(500),
+  idempotencyKey: z.string().uuid("Idempotency key must be a UUID"),
 });
 
 /**
  * POST /api/admin/members/[id]/credits
- * Create a manual credit adjustment (admin only).
+ * Submit a manual credit adjustment for second-admin approval.
  */
 export async function POST(
   request: NextRequest,
@@ -79,24 +82,34 @@ export async function POST(
       );
     }
 
-    await createAdminAdjustment(
+    const result = await createAdminAdjustmentRequest(
       id,
       parsed.data.amountCents,
       parsed.data.description,
       session.user.id,
+      parsed.data.idempotencyKey,
       getClientIp(request)
     );
 
-    const balanceCents = await getMemberCreditBalance(id);
-
     return NextResponse.json({
       success: true,
-      balanceCents,
-      message: `Adjustment of ${parsed.data.amountCents > 0 ? "+" : ""}${(parsed.data.amountCents / 100).toFixed(2)} applied`,
+      requestId: result.request.id,
+      requestStatus: result.request.status,
+      replayed: result.replayed,
+      message: `Adjustment of ${parsed.data.amountCents > 0 ? "+" : ""}${(parsed.data.amountCents / 100).toFixed(2)} submitted for approval`,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to create adjustment";
+    const message =
+      error instanceof Error ? error.message : "Failed to create adjustment";
     logger.error({ err: error }, "Error creating credit adjustment");
+
+    if (
+      message ===
+      "This idempotency key was already used for a different adjustment request"
+    ) {
+      return NextResponse.json({ error: message }, { status: 409 });
+    }
+
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
