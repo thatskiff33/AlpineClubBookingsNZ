@@ -35,6 +35,7 @@ interface SyncResult {
   errors?: number
   errorDetails?: Array<{ member: string; error: string }>
   message?: string
+  mode?: "incremental" | "backfill"
   // Import-specific fields
   created?: number
   createdAsDependent?: number
@@ -97,6 +98,29 @@ interface DuplicateResult {
   totalContacts: number
   totalDuplicateEmails: number
   filteredByFamilyGroup: number
+}
+
+interface ForceSyncMemberOption {
+  id: string
+  firstName: string
+  lastName: string
+  email: string
+  active: boolean
+  xeroContactId: string | null
+}
+
+interface ForceSyncBookingOption {
+  id: string
+  memberName: string
+  memberEmail: string
+  checkIn: string
+  checkOut: string
+  status: string
+  guestCount: number
+  paymentId: string | null
+  xeroInvoiceId: string | null
+  canForceSyncInvoice: boolean
+  forceSyncInvoiceReason: string | null
 }
 
 interface XeroOperation {
@@ -296,6 +320,8 @@ interface ContactGroupMismatchResponse {
   count: number
   mismatches: ContactGroupMismatch[]
 }
+
+type MembershipSyncMode = "incremental" | "backfill"
 
 type SectionKey =
   | "health"
@@ -582,9 +608,16 @@ export default function XeroPage() {
   const [showMissingInvoices, setShowMissingInvoices] = useState(false)
   const [triggeringMissingInvoices, setTriggeringMissingInvoices] = useState(false)
   const [retryingAllFailed, setRetryingAllFailed] = useState(false)
-  const [forceSyncQuery, setForceSyncQuery] = useState("")
   const [forceSyncType, setForceSyncType] = useState<"CONTACT" | "INVOICE" | "MEMBERSHIP">("CONTACT")
   const [forceSyncing, setForceSyncing] = useState(false)
+  const [forceSyncMemberSearch, setForceSyncMemberSearch] = useState("")
+  const [forceSyncMemberResults, setForceSyncMemberResults] = useState<ForceSyncMemberOption[]>([])
+  const [forceSyncMemberSearching, setForceSyncMemberSearching] = useState(false)
+  const [selectedForceSyncMember, setSelectedForceSyncMember] = useState<ForceSyncMemberOption | null>(null)
+  const [forceSyncBookingSearch, setForceSyncBookingSearch] = useState("")
+  const [forceSyncBookingResults, setForceSyncBookingResults] = useState<ForceSyncBookingOption[]>([])
+  const [forceSyncBookingSearching, setForceSyncBookingSearching] = useState(false)
+  const [selectedForceSyncBooking, setSelectedForceSyncBooking] = useState<ForceSyncBookingOption | null>(null)
 
   // Import state
   const [contactGroups, setContactGroups] = useState<ContactGroup[]>([])
@@ -887,6 +920,107 @@ export default function XeroPage() {
     status?.connected,
   ])
 
+  useEffect(() => {
+    if (forceSyncType === "INVOICE" || selectedForceSyncMember) {
+      setForceSyncMemberResults([])
+      setForceSyncMemberSearching(false)
+      return
+    }
+
+    const query = forceSyncMemberSearch.trim()
+    if (query.length < 2) {
+      setForceSyncMemberResults([])
+      setForceSyncMemberSearching(false)
+      return
+    }
+
+    let cancelled = false
+    setForceSyncMemberSearching(true)
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/admin/members?q=${encodeURIComponent(query)}&pageSize=8`)
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to search members")
+        }
+
+        if (!cancelled) {
+          setForceSyncMemberResults(
+            (data.members ?? []).map((member: ForceSyncMemberOption) => ({
+              id: member.id,
+              firstName: member.firstName,
+              lastName: member.lastName,
+              email: member.email,
+              active: member.active,
+              xeroContactId: member.xeroContactId ?? null,
+            }))
+          )
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setForceSyncMemberResults([])
+          setError(err instanceof Error ? err.message : "Failed to search members")
+        }
+      } finally {
+        if (!cancelled) {
+          setForceSyncMemberSearching(false)
+        }
+      }
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [forceSyncMemberSearch, forceSyncType, selectedForceSyncMember])
+
+  useEffect(() => {
+    if (forceSyncType !== "INVOICE" || selectedForceSyncBooking) {
+      setForceSyncBookingResults([])
+      setForceSyncBookingSearching(false)
+      return
+    }
+
+    const query = forceSyncBookingSearch.trim()
+    if (query.length < 2) {
+      setForceSyncBookingResults([])
+      setForceSyncBookingSearching(false)
+      return
+    }
+
+    let cancelled = false
+    setForceSyncBookingSearching(true)
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/admin/bookings/search?q=${encodeURIComponent(query)}&limit=8`)
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to search bookings")
+        }
+
+        if (!cancelled) {
+          setForceSyncBookingResults(data.bookings ?? [])
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setForceSyncBookingResults([])
+          setError(err instanceof Error ? err.message : "Failed to search bookings")
+        }
+      } finally {
+        if (!cancelled) {
+          setForceSyncBookingSearching(false)
+        }
+      }
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [forceSyncBookingSearch, forceSyncType, selectedForceSyncBooking])
+
   const handleRetryOperation = async (operationId: string) => {
     setRetryingOperationId(operationId)
     setOperationMessage("")
@@ -994,8 +1128,21 @@ export default function XeroPage() {
   }
 
   const handleForceSync = async () => {
-    if (!forceSyncQuery.trim()) {
-      setError("Enter a member email or booking ID to sync.")
+    const selectedBooking = selectedForceSyncBooking
+    const selectedMember = selectedForceSyncMember
+
+    if (forceSyncType === "INVOICE") {
+      if (!selectedBooking) {
+        setError("Search for and select the booking you want to sync.")
+        return
+      }
+
+      if (!selectedBooking.canForceSyncInvoice) {
+        setError(selectedBooking.forceSyncInvoiceReason || "This booking cannot be synced right now.")
+        return
+      }
+    } else if (!selectedMember) {
+      setError("Search for and select the member you want to sync.")
       return
     }
 
@@ -1003,12 +1150,25 @@ export default function XeroPage() {
     setOperationMessage("")
     setError("")
     try {
+      let query = ""
+      if (forceSyncType === "INVOICE") {
+        if (!selectedBooking) {
+          throw new Error("Missing selected booking for invoice sync.")
+        }
+        query = selectedBooking.id
+      } else {
+        if (!selectedMember) {
+          throw new Error("Missing selected member for targeted sync.")
+        }
+        query = selectedMember.id
+      }
+
       const res = await fetch("/api/admin/xero/force-sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           syncType: forceSyncType,
-          query: forceSyncQuery.trim(),
+          query,
         }),
       })
       const data = await res.json().catch(() => ({}))
@@ -1028,6 +1188,17 @@ export default function XeroPage() {
     } finally {
       setForceSyncing(false)
     }
+  }
+
+  const handleForceSyncTypeChange = (value: "CONTACT" | "INVOICE" | "MEMBERSHIP") => {
+    setForceSyncType(value)
+    setError("")
+    setSelectedForceSyncMember(null)
+    setForceSyncMemberSearch("")
+    setForceSyncMemberResults([])
+    setSelectedForceSyncBooking(null)
+    setForceSyncBookingSearch("")
+    setForceSyncBookingResults([])
   }
 
   const handleConnect = () => {
@@ -1075,12 +1246,12 @@ export default function XeroPage() {
     }
   }
 
-  const handleSyncMemberships = async () => {
-    setSyncing("memberships")
+  const handleSyncMemberships = async (mode: MembershipSyncMode = "incremental") => {
+    setSyncing(mode === "backfill" ? "memberships-backfill" : "memberships")
     setSyncResult(null)
     setError("")
     try {
-      const res = await fetch("/api/admin/xero/sync-memberships", { method: "POST" })
+      const res = await fetch(`/api/admin/xero/sync-memberships?mode=${mode}`, { method: "POST" })
       if (!res.ok) {
         const data = await res.json()
         throw new Error(data.error || "Sync failed")
@@ -2116,7 +2287,7 @@ export default function XeroPage() {
                 <div className="mt-4 grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
                   <div className="space-y-1">
                     <Label>Sync target</Label>
-                    <Select value={forceSyncType} onValueChange={(value) => setForceSyncType(value as "CONTACT" | "INVOICE" | "MEMBERSHIP")}>
+                    <Select value={forceSyncType} onValueChange={(value) => handleForceSyncTypeChange(value as "CONTACT" | "INVOICE" | "MEMBERSHIP")}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
@@ -2129,29 +2300,226 @@ export default function XeroPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <Label>{forceSyncType === "INVOICE" ? "Booking ID" : "Member email or member ID"}</Label>
-                    <Input
-                      value={forceSyncQuery}
-                      onChange={(event) => setForceSyncQuery(event.target.value)}
-                      placeholder={
-                        forceSyncType === "INVOICE"
-                          ? "Paste a booking ID"
-                          : "member@example.com or partial member ID"
-                      }
-                    />
+                    <Label>{forceSyncType === "INVOICE" ? "Booking" : "Member"}</Label>
+                    {forceSyncType === "INVOICE" ? (
+                      selectedForceSyncBooking ? (
+                        <div className="rounded-md border bg-slate-50 px-3 py-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-slate-900">
+                                {selectedForceSyncBooking.memberName}
+                              </p>
+                              <p className="truncate text-xs text-slate-500">
+                                {selectedForceSyncBooking.memberEmail}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                Booking ID: {selectedForceSyncBooking.id}
+                                {" • "}
+                                {selectedForceSyncBooking.checkIn} to {selectedForceSyncBooking.checkOut}
+                                {" • "}
+                                {selectedForceSyncBooking.guestCount} guest{selectedForceSyncBooking.guestCount === 1 ? "" : "s"}
+                                {" • "}
+                                {selectedForceSyncBooking.status}
+                              </p>
+                              <p
+                                className={`text-xs ${
+                                  selectedForceSyncBooking.canForceSyncInvoice
+                                    ? "text-emerald-700"
+                                    : "text-amber-700"
+                                }`}
+                              >
+                                {selectedForceSyncBooking.canForceSyncInvoice
+                                  ? "Ready to queue invoice sync."
+                                  : selectedForceSyncBooking.forceSyncInvoiceReason}
+                              </p>
+                              {selectedForceSyncBooking.xeroInvoiceId ? (
+                                <p className="text-xs text-slate-500">
+                                  Xero invoice: {selectedForceSyncBooking.xeroInvoiceId}
+                                </p>
+                              ) : null}
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setError("")
+                                setSelectedForceSyncBooking(null)
+                                setForceSyncBookingSearch("")
+                                setForceSyncBookingResults([])
+                              }}
+                            >
+                              Change
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="relative">
+                          <Input
+                            value={forceSyncBookingSearch}
+                            onChange={(event) => {
+                              setError("")
+                              setForceSyncBookingSearch(event.target.value)
+                            }}
+                            placeholder="Search by booking ID, member name, or email"
+                          />
+                          {forceSyncBookingSearching ? (
+                            <div className="absolute right-3 top-2.5 text-xs text-slate-400">
+                              Searching...
+                            </div>
+                          ) : null}
+                          {forceSyncBookingResults.length > 0 ? (
+                            <div className="absolute z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-white shadow-lg">
+                              {forceSyncBookingResults.map((booking) => (
+                                <button
+                                  key={booking.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setError("")
+                                    setSelectedForceSyncBooking(booking)
+                                    setForceSyncBookingSearch("")
+                                    setForceSyncBookingResults([])
+                                  }}
+                                  className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                                >
+                                  <div className="font-medium text-slate-900">
+                                    {booking.memberName}
+                                  </div>
+                                  <div className="truncate text-xs text-slate-500">
+                                    {booking.memberEmail}
+                                  </div>
+                                  <div className="text-xs text-slate-500">
+                                    {booking.id}
+                                    {" • "}
+                                    {booking.checkIn} to {booking.checkOut}
+                                    {" • "}
+                                    {booking.guestCount} guest{booking.guestCount === 1 ? "" : "s"}
+                                    {" • "}
+                                    {booking.status}
+                                  </div>
+                                  {booking.forceSyncInvoiceReason ? (
+                                    <div className="text-xs text-amber-700">
+                                      {booking.forceSyncInvoiceReason}
+                                    </div>
+                                  ) : (
+                                    <div className="text-xs text-emerald-700">
+                                      Ready to queue invoice sync.
+                                    </div>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                          {forceSyncBookingSearch.trim().length >= 2 && !forceSyncBookingSearching && forceSyncBookingResults.length === 0 ? (
+                            <p className="mt-1 text-xs text-slate-500">
+                              No matching bookings found yet.
+                            </p>
+                          ) : null}
+                        </div>
+                      )
+                    ) : selectedForceSyncMember ? (
+                      <div className="rounded-md border bg-slate-50 px-3 py-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-slate-900">
+                              {selectedForceSyncMember.firstName} {selectedForceSyncMember.lastName}
+                            </p>
+                            <p className="truncate text-xs text-slate-500">
+                              {selectedForceSyncMember.email}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              Member ID: {selectedForceSyncMember.id}
+                              {selectedForceSyncMember.xeroContactId ? " • already linked to Xero" : " • not yet linked to Xero"}
+                              {!selectedForceSyncMember.active ? " • inactive" : ""}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setError("")
+                              setSelectedForceSyncMember(null)
+                              setForceSyncMemberSearch("")
+                              setForceSyncMemberResults([])
+                            }}
+                          >
+                            Change
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <Input
+                          value={forceSyncMemberSearch}
+                          onChange={(event) => {
+                            setError("")
+                            setForceSyncMemberSearch(event.target.value)
+                          }}
+                          placeholder="Search by member name, email, or member ID"
+                        />
+                        {forceSyncMemberSearching ? (
+                          <div className="absolute right-3 top-2.5 text-xs text-slate-400">
+                            Searching...
+                          </div>
+                        ) : null}
+                        {forceSyncMemberResults.length > 0 ? (
+                          <div className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-md border bg-white shadow-lg">
+                            {forceSyncMemberResults.map((member) => (
+                              <button
+                                key={member.id}
+                                type="button"
+                                onClick={() => {
+                                  setError("")
+                                  setSelectedForceSyncMember(member)
+                                  setForceSyncMemberSearch("")
+                                  setForceSyncMemberResults([])
+                                }}
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                              >
+                                <div className="font-medium text-slate-900">
+                                  {member.firstName} {member.lastName}
+                                </div>
+                                <div className="truncate text-xs text-slate-500">
+                                  {member.email}
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                  ID {member.id}
+                                  {member.xeroContactId ? " • linked" : " • unlinked"}
+                                  {!member.active ? " • inactive" : ""}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        {forceSyncMemberSearch.trim().length >= 2 && !forceSyncMemberSearching && forceSyncMemberResults.length === 0 ? (
+                          <p className="mt-1 text-xs text-slate-500">
+                            No matching member records found yet.
+                          </p>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
 
-                  <Button onClick={handleForceSync} disabled={forceSyncing}>
+                  <Button
+                    onClick={handleForceSync}
+                    disabled={
+                      forceSyncing
+                      || (forceSyncType === "INVOICE"
+                        ? !selectedForceSyncBooking || !selectedForceSyncBooking.canForceSyncInvoice
+                        : !selectedForceSyncMember)
+                    }
+                  >
                     {forceSyncing ? "Running..." : "Run Force Sync"}
                   </Button>
                 </div>
 
                 <p className="mt-3 text-xs text-muted-foreground">
                   {forceSyncType === "CONTACT"
-                    ? "Contact sync repairs or creates the Xero contact link for one member."
+                    ? "Search for the member by name or email, then run a one-off repair or create the missing Xero contact link."
                     : forceSyncType === "INVOICE"
-                      ? "Invoice sync queues the selected booking for invoice creation in Xero."
-                      : "Membership sync refreshes one member’s subscription state from Xero invoices."}
+                      ? "Search for the booking by ID, member name, or email, then queue invoice creation only when that booking is eligible."
+                      : "Search for the member by name or email, then refresh that member’s subscription state from Xero invoices."}
                 </p>
               </div>
             </div>
@@ -2164,14 +2532,29 @@ export default function XeroPage() {
             open={sectionOpen.membershipSync}
             onToggle={(nextOpen) => setSectionState("membershipSync", nextOpen)}
             actions={
-              <Button onClick={handleSyncMemberships} disabled={syncing !== null}>
-                {syncing === "memberships" ? "Refreshing..." : "Refresh Membership Statuses"}
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => handleSyncMemberships("backfill")}
+                  disabled={syncing !== null}
+                >
+                  {syncing === "memberships-backfill" ? "Repairing..." : "Run Repair Backfill"}
+                </Button>
+                <Button
+                  onClick={() => handleSyncMemberships("incremental")}
+                  disabled={syncing !== null}
+                >
+                  {syncing === "memberships" ? "Refreshing..." : "Run Incremental Refresh"}
+                </Button>
+              </>
             }
           >
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
                 This runs automatically as a daily cron job. Only members already linked to Xero contacts can be refreshed.
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Incremental refresh is the normal low-API-cost path. Repair backfill is manual only and rechecks linked members whose local season status still looks stale.
               </p>
               <div className="rounded-md border bg-slate-50 p-3 text-sm">
                 <p>

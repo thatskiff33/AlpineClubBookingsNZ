@@ -375,6 +375,22 @@ describe("Phase 3: Admin Member Management", () => {
       expect(andConditions.some((c: any) => c.OR)).toBe(true);
     });
 
+    it("includes member ID prefix matching in text search", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(new NextRequest("http://localhost/api/admin/members?q=member-12"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      const andConditions = call.where?.AND as any[];
+      const textSearchCondition = andConditions.find((condition: any) => condition.OR);
+
+      expect(textSearchCondition).toBeDefined();
+      expect(textSearchCondition.OR).toEqual(expect.arrayContaining([
+        { id: { startsWith: "member-12" } },
+      ]));
+    });
+
     it("filters by subscription status NONE (no record)", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);

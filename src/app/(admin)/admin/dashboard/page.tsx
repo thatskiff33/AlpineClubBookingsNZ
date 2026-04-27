@@ -41,6 +41,8 @@ async function getStats() {
     revenueResult,
     upcomingCheckIns,
     recentBookings,
+    pendingRefundAppeals,
+    pendingCreditApprovals,
   ] = await Promise.all([
     prisma.member.count(),
     prisma.member.count({ where: { active: true } }),
@@ -75,6 +77,12 @@ async function getStats() {
         member: { select: { firstName: true, lastName: true } },
         _count: { select: { guests: true } },
       },
+    }),
+    prisma.refundRequest.count({
+      where: { status: "PENDING" },
+    }),
+    prisma.adminCreditAdjustmentRequest.count({
+      where: { status: "PENDING" },
     }),
   ]);
 
@@ -122,12 +130,24 @@ async function getStats() {
     upcomingCheckIns,
     recentBookings,
     unassignedDatesWithBookings,
+    pendingRefundAppeals,
+    pendingCreditApprovals,
   };
 }
 
 
 export default async function AdminDashboardPage() {
   const stats = await getStats();
+  const hasPendingAdminReviews =
+    stats.pendingRefundAppeals > 0 || stats.pendingCreditApprovals > 0;
+  const pendingReviewSummary = [
+    stats.pendingRefundAppeals > 0
+      ? `${stats.pendingRefundAppeals} refund appeal${stats.pendingRefundAppeals === 1 ? "" : "s"}`
+      : null,
+    stats.pendingCreditApprovals > 0
+      ? `${stats.pendingCreditApprovals} manual credit approval${stats.pendingCreditApprovals === 1 ? "" : "s"}`
+      : null,
+  ].filter(Boolean) as string[];
 
   return (
     <div className="space-y-8">
@@ -137,6 +157,22 @@ export default async function AdminDashboardPage() {
           Tokoroa Alpine Club — Administration
         </p>
       </div>
+
+      {hasPendingAdminReviews && (
+        <Link href="/admin/refund-requests">
+          <Card className="border-blue-200 bg-blue-50 hover:shadow-md transition-shadow cursor-pointer">
+            <CardContent className="flex items-start gap-3 pt-5">
+              <AlertTriangle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-blue-900">Pending Review Queue</p>
+                <p className="text-sm text-blue-700 mt-1">
+                  {pendingReviewSummary.join(" and ")} waiting for admin review.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
 
       {/* Hut Leader warning */}
       {stats.unassignedDatesWithBookings.length > 0 && (

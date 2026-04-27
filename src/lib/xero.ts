@@ -3716,6 +3716,17 @@ function buildMembershipInvoiceWhereClause(
   return conditions.join(" AND ");
 }
 
+function invoiceTextSuggestsMembershipSubscription(
+  value: string | null | undefined
+): boolean {
+  const normalized = (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  return normalized.includes("subscription") && normalized.includes("member");
+}
+
 function didMembershipStatusChange(
   previous:
     | {
@@ -3787,6 +3798,28 @@ async function listChangedMembershipInvoices(input: {
   }
 
   return invoices;
+}
+
+export function shouldBackfillMembershipStatus(input: {
+  memberUpdatedAt: Date;
+  subscription:
+    | {
+        status: string;
+        xeroInvoiceId: string | null;
+        updatedAt: Date;
+      }
+    | null
+    | undefined;
+}): boolean {
+  if (!input.subscription) {
+    return true;
+  }
+
+  return (
+    input.subscription.status === "NOT_INVOICED" &&
+    !input.subscription.xeroInvoiceId &&
+    input.memberUpdatedAt.getTime() > input.subscription.updatedAt.getTime()
+  );
 }
 
 export async function checkMembershipStatus(
@@ -4055,11 +4088,14 @@ export function findSubscriptionInvoice(
       (li) => li.accountCode === SUBSCRIPTION_ACCOUNT_CODE
     );
 
-    // Also check invoice reference for "Annual Member Subscription"
-    const ref = (invoice.reference ?? "").toLowerCase();
-    const hasRefMatch = ref.includes("annual member subscription");
+    const hasRefMatch = invoiceTextSuggestsMembershipSubscription(
+      invoice.reference
+    );
+    const hasDescriptionMatch = invoice.lineItems?.some((lineItem) =>
+      invoiceTextSuggestsMembershipSubscription(lineItem.description)
+    );
 
-    if (hasSubsAccountCode || hasRefMatch) {
+    if (hasSubsAccountCode || hasRefMatch || hasDescriptionMatch) {
       return invoice;
     }
   }
@@ -4107,7 +4143,12 @@ export function determineSubscriptionStatus(invoice: Invoice): {
  * Refresh membership status for all active members.
  * Called by the daily cron job.
  */
-export async function refreshAllMembershipStatuses(seasonYear?: number): Promise<{
+export async function refreshAllMembershipStatuses(
+  seasonYear?: number,
+  options?: {
+    includeBackfillCandidates?: boolean;
+  }
+): Promise<{
   seasonYear: number;
   cursorFrom: string | null;
   cursorTo: string | null;
@@ -4154,7 +4195,7 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
     memberWhereClauses.push({ id: { in: retryMemberIds } });
   }
 
-  const affectedMembers =
+  const incrementalAffectedMembers =
     memberWhereClauses.length === 0
       ? []
       : await prisma.member.findMany({
@@ -4168,8 +4209,86 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
             firstName: true,
             lastName: true,
             xeroContactId: true,
+            updatedAt: true,
           },
         });
+
+  const backfillCandidates = options?.includeBackfillCandidates
+    ? await prisma.member.findMany({
+        where: {
+          active: true,
+          xeroContactId: { not: null },
+          OR: [
+            { subscriptions: { none: { seasonYear: year } } },
+            {
+              subscriptions: {
+                some: {
+                  seasonYear: year,
+                  status: "NOT_INVOICED",
+                  xeroInvoiceId: null,
+                },
+              },
+            },
+          ],
+        },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          xeroContactId: true,
+          updatedAt: true,
+          subscriptions: {
+            where: { seasonYear: year },
+            select: {
+              status: true,
+              xeroInvoiceId: true,
+              updatedAt: true,
+            },
+            orderBy: { updatedAt: "desc" },
+            take: 1,
+          },
+        },
+      })
+    : [];
+
+  const affectedMembers = new Map<
+    string,
+    {
+      id: string;
+      email: string;
+      firstName: string;
+      lastName: string;
+      xeroContactId: string | null;
+      updatedAt: Date;
+    }
+  >();
+
+  for (const member of incrementalAffectedMembers) {
+    affectedMembers.set(member.id, member);
+  }
+
+  for (const member of backfillCandidates) {
+    if (
+      !shouldBackfillMembershipStatus({
+        memberUpdatedAt: member.updatedAt,
+        subscription: member.subscriptions[0] ?? null,
+      })
+    ) {
+      continue;
+    }
+
+    affectedMembers.set(member.id, {
+      id: member.id,
+      email: member.email,
+      firstName: member.firstName,
+      lastName: member.lastName,
+      xeroContactId: member.xeroContactId,
+      updatedAt: member.updatedAt,
+    });
+  }
+
+  const affectedMembersList = Array.from(affectedMembers.values());
 
   logger.info(
     {
@@ -4179,7 +4298,9 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
       changedInvoices: changedInvoices.length,
       changedContacts: changedContactIds.length,
       retryMembers: retryMemberIds.length,
-      affectedMembers: affectedMembers.length,
+      backfillCandidates: backfillCandidates.length,
+      affectedMembers: affectedMembersList.length,
+      includeBackfillCandidates: Boolean(options?.includeBackfillCandidates),
     },
     "Refreshing membership subscriptions from the incremental Xero invoice cursor"
   );
@@ -4203,8 +4324,8 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
   const errorDetails: Array<{ member: string; error: string }> = [];
   const nextRetryMemberIds: string[] = [];
 
-  for (let index = 0; index < affectedMembers.length; index += 1) {
-    const member = affectedMembers[index];
+  for (let index = 0; index < affectedMembersList.length; index += 1) {
+    const member = affectedMembersList[index];
     try {
       const before = await prisma.memberSubscription.findFirst({
         where: { memberId: member.id, seasonYear: year },
@@ -4229,7 +4350,9 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
       if (err instanceof XeroDailyLimitError) {
         nextRetryMemberIds.push(
           member.id,
-          ...affectedMembers.slice(index + 1).map((remaining) => remaining.id)
+          ...affectedMembersList
+            .slice(index + 1)
+            .map((remaining) => remaining.id)
         );
         logger.warn(
           { job: "xero-membership-refresh", checked, errors, seasonYear: year },
@@ -4261,7 +4384,7 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
     metadata: {
       retryMemberIds: Array.from(new Set(nextRetryMemberIds)),
       changedInvoiceCount: changedInvoices.length,
-      affectedMemberCount: affectedMembers.length,
+      affectedMemberCount: affectedMembersList.length,
       windowStart: windowStart.toISOString(),
       windowEnd: windowEnd.toISOString(),
     },
@@ -4279,7 +4402,7 @@ export async function refreshAllMembershipStatuses(seasonYear?: number): Promise
           .filter((invoiceId): invoiceId is string => Boolean(invoiceId))
       )
     ),
-    affectedMembers: affectedMembers.length,
+    affectedMembers: affectedMembersList.length,
     checked,
     updated,
     errors,

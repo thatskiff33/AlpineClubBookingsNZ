@@ -53,7 +53,21 @@ function aggregateResult(amountCents: number | null) {
   } as any;
 }
 
-function pendingRequest(overrides: Record<string, unknown> = {}) {
+type PendingAdjustmentRequest = {
+  id: string;
+  memberId: string;
+  amountCents: number;
+  description: string;
+  idempotencyKey: string;
+  status: string;
+  requestedById: string;
+  reviewedById?: string;
+  reviewedAt?: Date;
+};
+
+function pendingRequest(
+  overrides: Record<string, unknown> = {}
+): PendingAdjustmentRequest {
   return {
     id: "req-1",
     memberId: "member-1",
@@ -523,10 +537,10 @@ describe("member-credit helpers", () => {
         const stagedRequest = {
           ...state.request,
         };
-        let releaseLock: (() => void) | null = null;
+        const lockState: { release: (() => void) | null } = { release: null };
         const tx = {
           $executeRaw: vi.fn(async () => {
-            releaseLock = () => undefined;
+            lockState.release = () => undefined;
           }),
           adminCreditAdjustmentRequest: {
             findUnique: vi.fn(async () => ({ ...state.request })),
@@ -555,7 +569,7 @@ describe("member-credit helpers", () => {
           state.request = stagedRequest as any;
           return result;
         } finally {
-          releaseLock?.();
+          lockState.release?.();
         }
       });
 
@@ -656,19 +670,19 @@ describe("member-credit helpers", () => {
         audits: [] as Array<{ action: string }>,
       };
 
-      let lockTail = Promise.resolve();
+      let lockTail: Promise<void> = Promise.resolve();
 
       vi.mocked(prisma.$transaction).mockImplementation(async (callback: (tx: any) => Promise<unknown>) => {
         const stagedCredits: any[] = [];
         const stagedRequestUpdates: Array<() => void> = [];
         const stagedAudits: Array<{ action: string }> = [];
-        let releaseLock: (() => void) | null = null;
+        const lockState: { release: (() => void) | null } = { release: null };
 
         const tx = {
           $executeRaw: vi.fn(async () => {
             const previousLock = lockTail;
             lockTail = new Promise<void>((resolve) => {
-              releaseLock = resolve;
+              lockState.release = resolve;
             });
             await previousLock;
           }),
@@ -727,7 +741,7 @@ describe("member-credit helpers", () => {
           state.audits.push(...stagedAudits);
           return result;
         } finally {
-          releaseLock?.();
+          lockState.release?.();
         }
       });
 

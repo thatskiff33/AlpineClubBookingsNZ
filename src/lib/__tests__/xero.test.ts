@@ -17,6 +17,7 @@ import {
   buildInvoiceLineItems,
   isRetryableXeroContactReferenceError,
   retryXeroWriteWithContactRepair,
+  shouldBackfillMembershipStatus,
   withXeroRetry,
   XeroDailyLimitError,
   resetXeroRateLimitStateForTests,
@@ -135,6 +136,27 @@ describe("findSubscriptionInvoice", () => {
     expect(findSubscriptionInvoice(invoices, 2026)).not.toBeNull()
   })
 
+  it("matches membership subscription wording in a line description", () => {
+    const invoices = [
+      makeInvoice({
+        invoiceID: "inv-003",
+        reference: "Renewal",
+        lineItems: [
+          {
+            description: "Annual Membership Subscription 2026/2027 - Family",
+            quantity: 1,
+            unitAmount: 180,
+          },
+        ],
+      }),
+    ]
+
+    const result = findSubscriptionInvoice(invoices, 2026)
+
+    expect(result).not.toBeNull()
+    expect(result!.invoiceID).toBe("inv-003")
+  })
+
   it("returns null for invoices outside the season year", () => {
     const invoices = [
       makeInvoice({
@@ -178,6 +200,56 @@ describe("findSubscriptionInvoice", () => {
   it("rejects invoices just outside season year (March 31 before)", () => {
     const invoices = [makeInvoice({ date: "2026-03-31" })]
     expect(findSubscriptionInvoice(invoices, 2026)).toBeNull()
+  })
+})
+
+describe("shouldBackfillMembershipStatus", () => {
+  it("requests a backfill when the member has no season subscription row yet", () => {
+    expect(
+      shouldBackfillMembershipStatus({
+        memberUpdatedAt: new Date("2026-04-20T10:00:00Z"),
+        subscription: null,
+      })
+    ).toBe(true)
+  })
+
+  it("requests a backfill when a linked member changed after a not-invoiced row was written", () => {
+    expect(
+      shouldBackfillMembershipStatus({
+        memberUpdatedAt: new Date("2026-04-20T10:00:00Z"),
+        subscription: {
+          status: "NOT_INVOICED",
+          xeroInvoiceId: null,
+          updatedAt: new Date("2026-04-20T09:00:00Z"),
+        },
+      })
+    ).toBe(true)
+  })
+
+  it("skips backfill when the stale row has already been rechecked after the member update", () => {
+    expect(
+      shouldBackfillMembershipStatus({
+        memberUpdatedAt: new Date("2026-04-20T09:00:00Z"),
+        subscription: {
+          status: "NOT_INVOICED",
+          xeroInvoiceId: null,
+          updatedAt: new Date("2026-04-20T10:00:00Z"),
+        },
+      })
+    ).toBe(false)
+  })
+
+  it("skips backfill when a subscription invoice is already linked", () => {
+    expect(
+      shouldBackfillMembershipStatus({
+        memberUpdatedAt: new Date("2026-04-20T10:00:00Z"),
+        subscription: {
+          status: "PAID",
+          xeroInvoiceId: "inv-1",
+          updatedAt: new Date("2026-04-20T09:00:00Z"),
+        },
+      })
+    ).toBe(false)
   })
 })
 
