@@ -4,6 +4,13 @@ const mocks = vi.hoisted(() => ({
   inboundFindUnique: vi.fn(),
   inboundCreate: vi.fn(),
   inboundUpdate: vi.fn(),
+  paymentFindUnique: vi.fn(),
+  linkFindMany: vi.fn(),
+  operationFindFirst: vi.fn(),
+  transaction: vi.fn(),
+  txPaymentFindUnique: vi.fn(),
+  txLinkUpdateMany: vi.fn(),
+  txLinkUpsert: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -13,6 +20,16 @@ vi.mock("@/lib/prisma", () => ({
       create: mocks.inboundCreate,
       update: mocks.inboundUpdate,
     },
+    payment: {
+      findUnique: mocks.paymentFindUnique,
+    },
+    xeroObjectLink: {
+      findMany: mocks.linkFindMany,
+    },
+    xeroSyncOperation: {
+      findFirst: mocks.operationFindFirst,
+    },
+    $transaction: mocks.transaction,
   },
 }));
 
@@ -25,7 +42,10 @@ vi.mock("@/lib/xero-links", async (importOriginal) => {
 
   return {
     ...actual,
-    buildXeroObjectUrl: vi.fn(),
+    buildXeroObjectUrl: vi.fn(
+      (xeroObjectType: string, xeroObjectId: string) =>
+        `https://go.xero.test/${xeroObjectType}/${xeroObjectId}`
+    ),
   };
 });
 
@@ -38,7 +58,11 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
-import { recordXeroInboundEvent } from "@/lib/xero-sync";
+import {
+  findCanonicalPaymentRefundCreditNote,
+  recordXeroInboundEvent,
+  upsertXeroObjectLink,
+} from "@/lib/xero-sync";
 
 describe("recordXeroInboundEvent", () => {
   beforeEach(() => {
@@ -92,5 +116,159 @@ describe("recordXeroInboundEvent", () => {
         processedAt,
       }),
     });
+  });
+});
+
+describe("findCanonicalPaymentRefundCreditNote", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.paymentFindUnique.mockResolvedValue({
+      xeroRefundCreditNoteId: null,
+    });
+    mocks.linkFindMany.mockImplementation(async ({ where }: any) => {
+      if (where?.role === "REFUND_CREDIT_NOTE") {
+        return [
+          {
+            xeroObjectId: "cn_stale",
+            xeroObjectNumber: "CN-OLD",
+          },
+        ];
+      }
+
+      if (where?.role === "REFUND_PAYMENT") {
+        return [
+          {
+            metadata: {
+              creditNoteId: "cn_paid",
+            },
+          },
+        ];
+      }
+
+      return [];
+    });
+    mocks.operationFindFirst.mockResolvedValue({
+      xeroObjectId: "cn_success",
+      xeroObjectNumber: "CN-SUCCESS",
+    });
+  });
+
+  it("prefers the credit note referenced by the active refund payment link", async () => {
+    await expect(
+      findCanonicalPaymentRefundCreditNote("payment_1")
+    ).resolves.toEqual({
+      xeroObjectId: "cn_paid",
+      xeroObjectNumber: null,
+      source: "refund_payment",
+    });
+  });
+
+  it("falls back to the latest succeeded credit note create when no durable link exists yet", async () => {
+    mocks.linkFindMany.mockImplementation(async ({ where }: any) => {
+      if (where?.role === "REFUND_CREDIT_NOTE") {
+        return [];
+      }
+
+      return [];
+    });
+
+    await expect(
+      findCanonicalPaymentRefundCreditNote("payment_1")
+    ).resolves.toEqual({
+      xeroObjectId: "cn_success",
+      xeroObjectNumber: "CN-SUCCESS",
+      source: "operation",
+    });
+  });
+});
+
+describe("upsertXeroObjectLink", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.txLinkUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.txLinkUpsert.mockResolvedValue({ id: "link_1" });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        payment: {
+          findUnique: mocks.txPaymentFindUnique,
+        },
+        xeroObjectLink: {
+          updateMany: mocks.txLinkUpdateMany,
+          upsert: mocks.txLinkUpsert,
+        },
+      })
+    );
+  });
+
+  it("deactivates older active refund credit note links when the payment already has a canonical note", async () => {
+    mocks.txPaymentFindUnique.mockResolvedValue({
+      xeroRefundCreditNoteId: "cn_canonical",
+    });
+
+    await upsertXeroObjectLink({
+      localModel: "Payment",
+      localId: "payment_1",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_canonical",
+      xeroObjectNumber: "CN-1",
+      role: "REFUND_CREDIT_NOTE",
+    });
+
+    expect(mocks.txLinkUpdateMany).toHaveBeenCalledWith({
+      where: {
+        localModel: "Payment",
+        localId: "payment_1",
+        xeroObjectType: "CREDIT_NOTE",
+        role: "REFUND_CREDIT_NOTE",
+        active: true,
+        xeroObjectId: {
+          not: "cn_canonical",
+        },
+      },
+      data: {
+        active: false,
+      },
+    });
+    expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          active: true,
+          xeroObjectNumber: "CN-1",
+        }),
+        update: expect.objectContaining({
+          active: true,
+          xeroObjectNumber: "CN-1",
+        }),
+      })
+    );
+  });
+
+  it("keeps a stale duplicate refund credit note link inactive when it conflicts with the payment canonical note", async () => {
+    mocks.txPaymentFindUnique.mockResolvedValue({
+      xeroRefundCreditNoteId: "cn_canonical",
+    });
+
+    await upsertXeroObjectLink({
+      localModel: "Payment",
+      localId: "payment_1",
+      xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: "cn_duplicate",
+      xeroObjectNumber: "CN-2",
+      role: "REFUND_CREDIT_NOTE",
+    });
+
+    expect(mocks.txLinkUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          active: false,
+          xeroObjectNumber: "CN-2",
+        }),
+        update: expect.objectContaining({
+          active: false,
+          xeroObjectNumber: "CN-2",
+        }),
+      })
+    );
   });
 });

@@ -64,6 +64,7 @@ const mocks = vi.hoisted(() => {
     startXeroSyncOperation: vi.fn(),
     completeXeroSyncOperation: vi.fn(),
     failXeroSyncOperation: vi.fn(),
+    findCanonicalPaymentRefundCreditNote: vi.fn(),
     upsertXeroObjectLink: vi.fn(),
     recordXeroApiUsage: vi.fn(),
     logger: {
@@ -140,6 +141,7 @@ vi.mock("@/lib/xero-sync", async (importOriginal) => {
     buildXeroPayloadHash: vi.fn(() => "payload-hash"),
     completeXeroSyncOperation: mocks.completeXeroSyncOperation,
     failXeroSyncOperation: mocks.failXeroSyncOperation,
+    findCanonicalPaymentRefundCreditNote: mocks.findCanonicalPaymentRefundCreditNote,
     startXeroSyncOperation: mocks.startXeroSyncOperation,
     upsertXeroObjectLink: mocks.upsertXeroObjectLink,
   };
@@ -331,6 +333,7 @@ describe("createXeroCreditNote", () => {
     );
     vi.stubEnv("XERO_CLIENT_ID", "client-id");
     vi.stubEnv("XERO_CLIENT_SECRET", "client-secret");
+    mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue(null);
   });
 
   it("reuses an existing refund credit note link before attempting a new create", async () => {
@@ -350,6 +353,11 @@ describe("createXeroCreditNote", () => {
     mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue({
       xeroObjectId: "cn_existing",
       xeroObjectNumber: "CN-99",
+    });
+    mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({
+      xeroObjectId: "cn_existing",
+      xeroObjectNumber: "CN-99",
+      source: "link",
     });
     mocks.prisma.payment.update.mockResolvedValue({ id: "pay_1" });
 

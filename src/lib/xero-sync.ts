@@ -45,6 +45,24 @@ export interface XeroSyncOperationCompletion {
   extraLinks?: XeroObjectLinkInput[];
 }
 
+export interface CanonicalPaymentRefundCreditNoteLink {
+  xeroObjectId: string;
+  xeroObjectNumber: string | null;
+  source: "payment" | "refund_payment" | "operation" | "link";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
 export function sanitizeForJson(value: unknown): Prisma.InputJsonValue | undefined {
   if (value === undefined) {
     return undefined;
@@ -78,6 +96,123 @@ export function buildXeroIdempotencyKey(
 
   const digest = createHash("sha256").update(base).digest("hex").slice(0, 12);
   return `${base.slice(0, 107)}:${digest}`;
+}
+
+export async function findCanonicalPaymentRefundCreditNote(
+  paymentId: string
+): Promise<CanonicalPaymentRefundCreditNoteLink | null> {
+  const [payment, refundCreditNoteLinks, refundPaymentLinks, succeededOperation] =
+    await Promise.all([
+      prisma.payment.findUnique({
+        where: { id: paymentId },
+        select: {
+          xeroRefundCreditNoteId: true,
+        },
+      }),
+      prisma.xeroObjectLink.findMany({
+        where: {
+          localModel: "Payment",
+          localId: paymentId,
+          xeroObjectType: "CREDIT_NOTE",
+          role: "REFUND_CREDIT_NOTE",
+          active: true,
+        },
+        orderBy: [
+          { updatedAt: "desc" },
+          { createdAt: "desc" },
+        ],
+        select: {
+          xeroObjectId: true,
+          xeroObjectNumber: true,
+        },
+      }),
+      prisma.xeroObjectLink.findMany({
+        where: {
+          localModel: "Payment",
+          localId: paymentId,
+          xeroObjectType: "PAYMENT",
+          role: "REFUND_PAYMENT",
+          active: true,
+        },
+        orderBy: [
+          { updatedAt: "desc" },
+          { createdAt: "desc" },
+        ],
+        select: {
+          metadata: true,
+        },
+      }),
+      prisma.xeroSyncOperation.findFirst({
+        where: {
+          status: "SUCCEEDED",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localModel: "Payment",
+          localId: paymentId,
+          xeroObjectId: { not: null },
+        },
+        orderBy: [
+          { completedAt: "desc" },
+          { createdAt: "desc" },
+        ],
+        select: {
+          xeroObjectId: true,
+          xeroObjectNumber: true,
+        },
+      }),
+    ]);
+
+  const xeroObjectNumberById = new Map<string, string | null>();
+  for (const link of refundCreditNoteLinks) {
+    xeroObjectNumberById.set(link.xeroObjectId, link.xeroObjectNumber ?? null);
+  }
+
+  if (succeededOperation?.xeroObjectId && !xeroObjectNumberById.has(succeededOperation.xeroObjectId)) {
+    xeroObjectNumberById.set(
+      succeededOperation.xeroObjectId,
+      succeededOperation.xeroObjectNumber ?? null
+    );
+  }
+
+  if (payment?.xeroRefundCreditNoteId) {
+    return {
+      xeroObjectId: payment.xeroRefundCreditNoteId,
+      xeroObjectNumber:
+        xeroObjectNumberById.get(payment.xeroRefundCreditNoteId) ?? null,
+      source: "payment",
+    };
+  }
+
+  for (const link of refundPaymentLinks) {
+    const metadata = asRecord(link.metadata);
+    const linkedCreditNoteId = readString(metadata?.creditNoteId);
+    if (linkedCreditNoteId) {
+      return {
+        xeroObjectId: linkedCreditNoteId,
+        xeroObjectNumber: xeroObjectNumberById.get(linkedCreditNoteId) ?? null,
+        source: "refund_payment",
+      };
+    }
+  }
+
+  if (succeededOperation?.xeroObjectId) {
+    return {
+      xeroObjectId: succeededOperation.xeroObjectId,
+      xeroObjectNumber: succeededOperation.xeroObjectNumber ?? null,
+      source: "operation",
+    };
+  }
+
+  const latestActiveLink = refundCreditNoteLinks[0];
+  if (!latestActiveLink) {
+    return null;
+  }
+
+  return {
+    xeroObjectId: latestActiveLink.xeroObjectId,
+    xeroObjectNumber: latestActiveLink.xeroObjectNumber ?? null,
+    source: "link",
+  };
 }
 
 function getAttemptWhere(
@@ -125,40 +260,124 @@ export async function startXeroSyncOperation(input: XeroSyncOperationInput) {
   });
 }
 
+async function normalizePaymentRefundLinkWithClient(
+  client: Prisma.TransactionClient,
+  link: XeroObjectLinkInput
+): Promise<XeroObjectLinkInput> {
+  if (link.localModel !== "Payment") {
+    return link;
+  }
+
+  if (link.role === "REFUND_CREDIT_NOTE" && link.xeroObjectType === "CREDIT_NOTE") {
+    const payment = await client.payment.findUnique({
+      where: { id: link.localId },
+      select: {
+        xeroRefundCreditNoteId: true,
+      },
+    });
+    const canonicalCreditNoteId = payment?.xeroRefundCreditNoteId ?? link.xeroObjectId;
+    const shouldBeActive = (link.active ?? true) && canonicalCreditNoteId === link.xeroObjectId;
+
+    if (canonicalCreditNoteId === link.xeroObjectId) {
+      await client.xeroObjectLink.updateMany({
+        where: {
+          localModel: "Payment",
+          localId: link.localId,
+          xeroObjectType: "CREDIT_NOTE",
+          role: "REFUND_CREDIT_NOTE",
+          active: true,
+          xeroObjectId: {
+            not: canonicalCreditNoteId,
+          },
+        },
+        data: {
+          active: false,
+        },
+      });
+    }
+
+    return {
+      ...link,
+      active: shouldBeActive,
+    };
+  }
+
+  if (link.role === "REFUND_PAYMENT" && link.xeroObjectType === "PAYMENT") {
+    const payment = await client.payment.findUnique({
+      where: { id: link.localId },
+      select: {
+        xeroRefundCreditNoteId: true,
+      },
+    });
+    const metadata = asRecord(link.metadata);
+    const linkedCreditNoteId = readString(metadata?.creditNoteId);
+    const canonicalCreditNoteId = payment?.xeroRefundCreditNoteId ?? linkedCreditNoteId;
+    const shouldBeActive =
+      (link.active ?? true)
+      && (!canonicalCreditNoteId || linkedCreditNoteId === canonicalCreditNoteId);
+
+    if (shouldBeActive) {
+      await client.xeroObjectLink.updateMany({
+        where: {
+          localModel: "Payment",
+          localId: link.localId,
+          xeroObjectType: "PAYMENT",
+          role: "REFUND_PAYMENT",
+          active: true,
+          xeroObjectId: {
+            not: link.xeroObjectId,
+          },
+        },
+        data: {
+          active: false,
+        },
+      });
+    }
+
+    return {
+      ...link,
+      active: shouldBeActive,
+    };
+  }
+
+  return link;
+}
+
 async function upsertXeroObjectLinkWithClient(
   client: Prisma.TransactionClient,
   link: XeroObjectLinkInput
 ) {
+  const normalizedLink = await normalizePaymentRefundLinkWithClient(client, link);
   const xeroObjectUrl =
-    link.xeroObjectUrl ??
-    buildXeroObjectUrl(link.xeroObjectType, link.xeroObjectId);
+    normalizedLink.xeroObjectUrl ??
+    buildXeroObjectUrl(normalizedLink.xeroObjectType, normalizedLink.xeroObjectId);
 
   return client.xeroObjectLink.upsert({
     where: {
       localModel_localId_xeroObjectType_xeroObjectId_role: {
-        localModel: link.localModel,
-        localId: link.localId,
-        xeroObjectType: link.xeroObjectType,
-        xeroObjectId: link.xeroObjectId,
-        role: link.role,
+        localModel: normalizedLink.localModel,
+        localId: normalizedLink.localId,
+        xeroObjectType: normalizedLink.xeroObjectType,
+        xeroObjectId: normalizedLink.xeroObjectId,
+        role: normalizedLink.role,
       },
     },
     create: {
-      localModel: link.localModel,
-      localId: link.localId,
-      xeroObjectType: link.xeroObjectType,
-      xeroObjectId: link.xeroObjectId,
-      xeroObjectNumber: link.xeroObjectNumber ?? null,
+      localModel: normalizedLink.localModel,
+      localId: normalizedLink.localId,
+      xeroObjectType: normalizedLink.xeroObjectType,
+      xeroObjectId: normalizedLink.xeroObjectId,
+      xeroObjectNumber: normalizedLink.xeroObjectNumber ?? null,
       xeroObjectUrl,
-      role: link.role,
-      active: link.active ?? true,
-      metadata: sanitizeForJson(link.metadata),
+      role: normalizedLink.role,
+      active: normalizedLink.active ?? true,
+      metadata: sanitizeForJson(normalizedLink.metadata),
     },
     update: {
-      xeroObjectNumber: link.xeroObjectNumber ?? null,
+      xeroObjectNumber: normalizedLink.xeroObjectNumber ?? null,
       xeroObjectUrl,
-      active: link.active ?? true,
-      metadata: sanitizeForJson(link.metadata),
+      active: normalizedLink.active ?? true,
+      metadata: sanitizeForJson(normalizedLink.metadata),
     },
   });
 }

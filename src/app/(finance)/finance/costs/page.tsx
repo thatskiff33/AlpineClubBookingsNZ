@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   ArrowLeft,
-  ArrowUpRight,
   Database,
   Filter,
   ShieldAlert,
@@ -16,6 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { FinanceTechnicalDetails } from "@/components/finance/technical-details";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -54,11 +54,10 @@ function SummaryCards({
             Costs report
           </p>
           <h2 className="text-2xl font-semibold text-slate-900">
-            Monthly finance snapshot cost detail
+            Monthly cost detail
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            Review cost totals and expense mix from stored monthly finance
-            snapshots.
+            Review cost totals and expense mix from synced monthly finance data.
           </p>
         </div>
       </div>
@@ -179,23 +178,20 @@ export default async function FinanceCostsPage({
         <Card>
           <CardHeader className="space-y-3">
             <Badge variant="outline" className="w-fit">
-              Native costs report
+              Finance costs report
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Monthly costs from stored finance snapshots
+                Monthly costs
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                Review stored cost snapshots with summary cards, monthly
-                detail, and expense line breakdowns.
+                Review monthly costs and expense lines from the synced finance dataset.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Generated {model.generatedOn}. Cost totals on this page come from
-              stored finance snapshots. Booking metrics, payment cash, and
-              live Xero calls are not used here.
+              Generated {model.generatedOn}. Cost figures on this page come from synced finance snapshots and update after the finance sync runs.
             </div>
 
             <form action="/finance/costs" className="space-y-4">
@@ -238,34 +234,25 @@ export default async function FinanceCostsPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-lg text-slate-900">
-              Report notes
+              About this report
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
-              Cost figures on this page come only from stored finance
-              snapshots.
+              Cost figures here come from the finance sync rather than live Xero calls.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {model.isManager ? (
-              <Button asChild variant="outline" className="w-full justify-between">
-                <Link href="/api/finance/sync/status" target="_blank" rel="noreferrer">
-                  <span className="text-left">
-                    <span className="block text-sm font-medium">
-                      View sync diagnostics
-                    </span>
-                    <span className="block text-xs text-slate-500">
-                      Technical detail for the latest finance sync.
-                    </span>
-                  </span>
-                  <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />
-                </Link>
-              </Button>
-            ) : (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                Finance viewer access does not expose manager-only finance sync
-                diagnostics here.
-              </div>
-            )}
+              <FinanceTechnicalDetails
+                actions={[
+                  {
+                    href: "/api/finance/sync/status",
+                    label: "Open sync diagnostics JSON",
+                    description:
+                      "Technical detail for the latest finance sync and recent failures.",
+                  },
+                ]}
+              />
+            ) : null}
 
             <Button asChild variant="ghost" className="w-full justify-between">
               <Link href="/finance">
@@ -347,12 +334,10 @@ export default async function FinanceCostsPage({
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg text-slate-900">
-                  Stored cost line items
+                  Cost line items
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600">
-                  Line items stay grouped by the stored profit-and-loss section
-                  labels so the page remains aligned with the finance snapshot
-                  source.
+                  Line items stay grouped by the synced profit and loss sections so they line up with the source finance reports.
                 </CardDescription>
               </CardHeader>
               <CardContent>

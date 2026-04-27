@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   ArrowLeft,
-  ArrowUpRight,
   CalendarRange,
   Database,
   Filter,
@@ -17,6 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { FinanceTechnicalDetails } from "@/components/finance/technical-details";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -251,7 +251,7 @@ export default async function FinanceBookingsPage({
         <Card>
           <CardHeader className="space-y-3">
             <Badge variant="outline" className="w-fit">
-              Native bookings report
+              Finance bookings report
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
@@ -266,9 +266,7 @@ export default async function FinanceBookingsPage({
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Booked revenue comes from
-              Tokoroa Alpine Club bookings. Net collected cash comes from Tokoroa Alpine Club
-              payments. No finance snapshot-backed or Xero-only figures appear
-              on this page.
+              TACBookings bookings. Net collected cash comes from TACBookings payments. Xero-backed finance snapshots do not appear on this page.
             </div>
 
             <form action="/finance/bookings" className="space-y-4">
@@ -363,26 +361,25 @@ export default async function FinanceBookingsPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-lg text-slate-900">
-              Report notes
+              About this report
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
-              The same filters power both this page and the raw metrics export.
+              This report uses TACBookings booking and payment data rather than finance snapshots.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Button asChild variant="outline" className="w-full justify-between">
-              <Link href={model.rawMetricsHref} target="_blank" rel="noreferrer">
-                <span className="text-left">
-                  <span className="block text-sm font-medium">
-                    View raw booking metrics
-                  </span>
-                  <span className="block text-xs text-slate-500">
-                    Technical export for the active report windows.
-                  </span>
-                </span>
-                <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />
-              </Link>
-            </Button>
+            {model.isManager ? (
+              <FinanceTechnicalDetails
+                actions={[
+                  {
+                    href: model.rawMetricsHref,
+                    label: "Open booking metrics JSON",
+                    description:
+                      "Technical export for the active report windows.",
+                  },
+                ]}
+              />
+            ) : null}
 
             <Button asChild variant="ghost" className="w-full justify-between">
               <Link href="/finance">

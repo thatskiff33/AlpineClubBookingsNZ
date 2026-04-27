@@ -5,6 +5,7 @@ import {
   Activity,
   ArrowRight,
   ArrowUpRight,
+  BarChart3,
   CalendarRange,
   Database,
   ShieldAlert,
@@ -19,6 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { FinanceTechnicalDetails } from "@/components/finance/technical-details";
 import {
   requireFinanceManager,
   requireFinanceViewer,
@@ -58,6 +60,44 @@ const sectionIcons = {
   "realized-bookings": Database,
   "forward-pipeline": TrendingUp,
 } as const;
+
+const financeReportCards = [
+  {
+    title: "Bookings",
+    description:
+      "Review realized stays, forward demand, occupancy, and booked revenue from TACBookings booking activity.",
+  },
+  {
+    title: "Revenue",
+    description:
+      "Review monthly finance revenue totals and line items from synced Xero snapshots.",
+  },
+  {
+    title: "Costs",
+    description:
+      "Review monthly finance costs and expense mix from synced Xero snapshots.",
+  },
+  {
+    title: "Pricing sensitivity",
+    description:
+      "Compare monthly costs against realized booking demand to test occupancy assumptions.",
+  },
+  {
+    title: "Working capital",
+    description:
+      "Review current assets, current liabilities, and working capital from synced balance sheet snapshots.",
+  },
+  {
+    title: "Cash",
+    description:
+      "Review synced bank balance snapshots without mixing them with TACBookings payment collections.",
+  },
+  {
+    title: "Balance sheet",
+    description:
+      "Review assets, liabilities, and net assets from synced balance sheet snapshots.",
+  },
+] as const;
 
 function FinanceSection({
   section,
@@ -242,11 +282,11 @@ function FinanceManagerWorkspace({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {workspace.error ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-sm leading-6 text-amber-950">
-            {workspace.error}
-          </div>
-        ) : (
+      {workspace.error ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-sm leading-6 text-amber-950">
+          {workspace.error}
+        </div>
+      ) : (
           <div className="grid gap-4 md:grid-cols-3">
             {workspace.cards.map((card) => (
               <Card key={card.title}>
@@ -284,15 +324,29 @@ function FinanceManagerWorkspace({
           </div>
         ) : null}
 
-        <div className="grid gap-3 md:grid-cols-2">
-          {workspace.actions.map((action) => (
-            <ManagerActionButton
-              key={`${action.kind}:${action.label}`}
-              action={action}
-              disconnectAction={disconnectAction}
-            />
-          ))}
-        </div>
+        {workspace.actions.length > 0 ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            {workspace.actions.map((action) => (
+              <ManagerActionButton
+                key={`${action.kind}:${action.label}`}
+                action={action}
+                disconnectAction={disconnectAction}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        <FinanceTechnicalDetails
+          title="Technical diagnostics"
+          description="Use these links for support checks and rollout troubleshooting."
+          actions={workspace.technicalActions
+            .filter((action) => action.href)
+            .map((action) => ({
+              href: action.href!,
+              label: action.label,
+              description: action.description,
+            }))}
+        />
       </CardContent>
     </Card>
   );
@@ -356,19 +410,19 @@ export default async function FinancePage({
         }
       : params.connected === "true"
         ? {
+          tone: "success" as const,
+          title: "Finance Xero connected",
+          description:
+              "The finance Xero connection completed successfully. The next finance sync can now refresh Xero-backed reports.",
+        }
+      : params.xero === "disconnected"
+        ? {
             tone: "success" as const,
-            title: "Finance Xero connected",
+            title: "Finance Xero disconnected",
             description:
-              "The finance Xero connection completed successfully. Check the manager status cards before relying on the latest synced data.",
+                "The saved finance Xero connection was cleared. Reconnect it before expecting fresh Xero-backed finance data.",
           }
-        : params.xero === "disconnected"
-          ? {
-              tone: "success" as const,
-              title: "Finance Xero disconnected",
-              description:
-                "The saved finance Xero connection was cleared. Reconnect it before running checks that depend on fresh Xero data.",
-            }
-          : null;
+        : null;
 
   return (
     <div className="space-y-8">
@@ -388,11 +442,10 @@ export default async function FinancePage({
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Finance summary and report access
+                Finance overview
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                Use this page to check sync status, review booking activity,
-                and open the main finance reports.
+                Start here for finance reporting, data freshness, and manager setup status.
               </CardDescription>
             </div>
           </CardHeader>
@@ -403,53 +456,55 @@ export default async function FinancePage({
                   <Link href={link.href}>{link.label}</Link>
                 </Button>
               ))}
-              <Button asChild size="sm">
-                <Link href={bookingsReportHref}>
-                  Open bookings report
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline">
-                <Link href={revenueReportHref}>
-                  Open revenue report
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline">
-                <Link href={costsReportHref}>
-                  Open costs report
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline">
-                <Link href={pricingSensitivityReportHref}>
-                  Open pricing sensitivity
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline">
-                <Link href={workingCapitalReportHref}>
-                  Open working capital
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline">
-                <Link href={cashReportHref}>
-                  Open cash report
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-              <Button asChild size="sm" variant="outline">
-                <Link href={balanceSheetReportHref}>
-                  Open balance sheet report
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Realized booking cards use the
               current month to date. Forward pipeline cards use the next 90 days
               after today in New Zealand local time.
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {financeReportCards.map((report) => {
+                const href =
+                  report.title === "Bookings"
+                    ? bookingsReportHref
+                    : report.title === "Revenue"
+                      ? revenueReportHref
+                      : report.title === "Costs"
+                        ? costsReportHref
+                        : report.title === "Pricing sensitivity"
+                          ? pricingSensitivityReportHref
+                          : report.title === "Working capital"
+                            ? workingCapitalReportHref
+                            : report.title === "Cash"
+                              ? cashReportHref
+                              : balanceSheetReportHref;
+
+                return (
+                  <Card key={report.title} className="border-slate-200/80">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                          <BarChart3 className="h-4 w-4" />
+                        </div>
+                        <CardTitle className="text-lg text-slate-900">
+                          {report.title}
+                        </CardTitle>
+                      </div>
+                      <CardDescription className="text-sm leading-6 text-slate-600">
+                        {report.description}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Button asChild className="w-full justify-between">
+                        <Link href={href}>
+                          Open report
+                          <ArrowRight className="h-4 w-4" />
+                        </Link>
+                      </Button>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
@@ -465,11 +520,10 @@ export default async function FinancePage({
               <div className="flex items-center justify-between gap-3">
                 <div className="space-y-1">
                   <CardTitle className="text-lg text-slate-900">
-                    Finance workspace actions
+                    Finance access
                   </CardTitle>
                   <CardDescription className="text-sm text-slate-600">
-                    This page shows shared finance summaries. Manager-only
-                    connection tools stay hidden from viewers.
+                    This page shows shared finance reporting summaries. Manager-only connection tools stay hidden from viewers.
                   </CardDescription>
                 </div>
                 <Badge variant={model.sync.badgeVariant}>
@@ -479,8 +533,7 @@ export default async function FinancePage({
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                Viewer access does not include Xero setup tools or technical
-                diagnostics.
+                Viewer access includes reports and shared status, but not Xero setup or technical diagnostics.
               </div>
 
               <Button asChild variant="ghost" className="w-full justify-between">

@@ -5,8 +5,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { XeroClient } from "xero-node";
-import { createFinanceXeroClient } from "@/lib/finance-xero";
-import { loadFinanceXeroTokens } from "@/lib/finance-xero-token-store";
+import { getAuthenticatedFinanceXeroClient } from "@/lib/finance-xero";
 import {
   completeFinanceSyncRun,
   createFinanceSyncRun,
@@ -171,30 +170,12 @@ function assertDatasets(datasets: FinanceSyncDatasetDefinition[]): void {
 }
 
 export async function createFinanceXeroSyncConnection(): Promise<FinanceXeroSyncConnection> {
-  const tokens = await loadFinanceXeroTokens();
-
-  if (!tokens) {
-    throw new Error("Finance Xero is not connected");
-  }
-
-  const xero = createFinanceXeroClient();
-  await xero.initialize();
-  xero.setTokenSet({
-    access_token: tokens.accessToken,
-    refresh_token: tokens.refreshToken,
-    token_type: "Bearer",
-  });
-  await xero.updateTenants();
-
-  const tenantId = tokens.tenantId ?? xero.tenants[0]?.tenantId;
-
-  if (!tenantId) {
-    throw new Error("Finance Xero tenant is not available");
-  }
+  const { xero, tenantId, tokenExpiresAt } =
+    await getAuthenticatedFinanceXeroClient();
 
   return {
     tenantId,
-    tokenExpiresAt: tokens.expiresAt,
+    tokenExpiresAt,
     xero,
   };
 }

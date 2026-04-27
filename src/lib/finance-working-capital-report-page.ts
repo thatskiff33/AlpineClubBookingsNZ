@@ -11,6 +11,10 @@ import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
   listFinanceSnapshots,
 } from "@/lib/finance-sync-storage";
+import {
+  buildFinanceSnapshotLoadErrorMessage,
+  buildFinanceSnapshotMissingMessage,
+} from "@/lib/finance-report-availability";
 
 const FINANCE_TIMEZONE = "Pacific/Auckland";
 const DEFAULT_FINANCE_WORKING_CAPITAL_PERIODS = 6;
@@ -143,6 +147,7 @@ export async function buildFinanceWorkingCapitalReportPageModel(input: {
     searchParams: input.searchParams,
   });
   const reportHref = buildFinanceWorkingCapitalReportHref(filters);
+  const isManager = hasFinanceManagerAccess(input.member.financeAccessLevel);
 
   try {
     const snapshots = await listFinanceSnapshots({
@@ -161,10 +166,13 @@ export async function buildFinanceWorkingCapitalReportPageModel(input: {
       return buildUnavailableWorkingCapitalReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "No balance-sheet snapshots are available yet. Run the finance sync and try again once the balance-sheet dataset has landed.",
+        loadError: await buildFinanceSnapshotMissingMessage({
+          member: input.member,
+          reportTitle: "This working capital report",
+          dataLabel: "balance sheet snapshots",
+        }),
       });
     }
 
@@ -178,10 +186,13 @@ export async function buildFinanceWorkingCapitalReportPageModel(input: {
       return buildUnavailableWorkingCapitalReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "Finance working-capital snapshots are temporarily unavailable. Try again shortly after the next finance sync completes.",
+        loadError: await buildFinanceSnapshotLoadErrorMessage({
+          member: input.member,
+          reportTitle: "This working capital report",
+          dataLabel: "balance sheet snapshots",
+        }),
       });
     }
 
@@ -223,10 +234,10 @@ export async function buildFinanceWorkingCapitalReportPageModel(input: {
       return buildUnavailableWorkingCapitalReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
         loadError:
-          "Working capital is temporarily unavailable because none of the selected balance-sheet snapshots exposed both current-asset and current-liability detail.",
+          "Working capital could not be shown because the selected balance sheet snapshots did not include both current assets and current liabilities.",
       });
     }
 
@@ -234,7 +245,7 @@ export async function buildFinanceWorkingCapitalReportPageModel(input: {
 
     return {
       generatedOn: formatDateTime(new Date().toISOString()),
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       filters,
       reportHref,
       filterWarnings: warnings,
@@ -267,10 +278,13 @@ export async function buildFinanceWorkingCapitalReportPageModel(input: {
     return buildUnavailableWorkingCapitalReportModel({
       filters,
       reportHref,
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       warnings,
-      loadError:
-        "Finance working-capital snapshots are temporarily unavailable. Try again shortly or use manager diagnostics to confirm the latest finance sync status.",
+      loadError: await buildFinanceSnapshotLoadErrorMessage({
+        member: input.member,
+        reportTitle: "This working capital report",
+        dataLabel: "balance sheet snapshots",
+      }),
     });
   }
 }
@@ -345,19 +359,19 @@ function buildWorkingCapitalSummaryCards(
 function buildWorkingCapitalSourceNotes() {
   return [
     {
-      label: "Finance snapshot source",
+      label: "Working capital source",
       description:
-        "Working-capital figures on this page come from stored `BALANCE_SHEET` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from Tokoroa Alpine Club booking or payment data.",
+        "Working capital on this page is calculated from finance balance sheet snapshots synced from Xero. It is separate from TACBookings booking and payment data.",
     },
     {
-      label: "Current-section assumption",
+      label: "How working capital is calculated",
       description:
-        "Current assets and current liabilities are derived only from stored balance-sheet sections explicitly labelled as current-asset and current-liability detail. Snapshots without both sections are skipped with a viewer-safe warning.",
+        "Current assets and current liabilities are taken from the current sections inside each balance sheet snapshot. Snapshots without both sections are skipped.",
     },
     {
-      label: "Distinct from cash totals",
+      label: "What is not included",
       description:
-        "Working capital here remains separate from Tokoroa Alpine Club payment-derived cash summaries and the native cash report. The page reads durable stored balance-sheet snapshots only and does not trigger live Xero reads, forecasts, or manual sync actions.",
+        "This report is separate from booking cash collected in TACBookings and from the cash report's bank balances. Opening the page does not call Xero live.",
     },
   ];
 }

@@ -526,6 +526,7 @@ describe("retryXeroSyncOperation", () => {
         entityType: "CREDIT_NOTE",
         operationType: "CREATE",
         xeroObjectId: "cn_legacy_123",
+        xeroObjectNumber: "CN-123",
         requestPayload: {
           allocation: {
             invoiceId: "inv_legacy_123",
@@ -562,6 +563,7 @@ describe("retryXeroSyncOperation", () => {
         status: "SUCCEEDED",
         xeroObjectType: "CREDIT_NOTE",
         xeroObjectId: "cn_legacy_123",
+        xeroObjectNumber: "CN-123",
       })
     );
   });

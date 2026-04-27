@@ -209,6 +209,7 @@ describe("Stripe webhook Xero alerting", () => {
     mockPaymentFindUnique.mockResolvedValue({
       id: "payment-2",
       amountCents: 5000,
+      refundedAmountCents: 0,
     });
     mockIsXeroConnected.mockResolvedValue(true);
     mockEnqueueXeroRefundCreditNoteOperation.mockRejectedValue(
@@ -225,10 +226,80 @@ describe("Stripe webhook Xero alerting", () => {
         status: "REFUNDED",
       },
     });
+    expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "payment-2",
+      5000
+    );
     expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
       errorType: "CREDIT_NOTE_CREATION",
       operation: "Queue refund credit note for payment payment-2",
       errorMessage: "Xero credit note failed",
     });
+  });
+
+  it("queues only the newly observed refund delta from Stripe's cumulative amount", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_refund_delta",
+      type: "charge.refunded",
+      data: {
+        object: {
+          payment_intent: "pi_refund_delta",
+          amount_refunded: 5000,
+        },
+      },
+    } as any);
+
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-3",
+      amountCents: 5000,
+      refundedAmountCents: 1200,
+    });
+    mockIsXeroConnected.mockResolvedValue(false);
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockPaymentUpdate).toHaveBeenCalledWith({
+      where: { id: "payment-3" },
+      data: {
+        refundedAmountCents: 5000,
+        status: "REFUNDED",
+      },
+    });
+    expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
+      "payment-3",
+      3800
+    );
+  });
+
+  it("does not queue a new Xero refund credit note when Stripe repeats the same cumulative refund total", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_refund_repeat",
+      type: "charge.refunded",
+      data: {
+        object: {
+          payment_intent: "pi_refund_repeat",
+          amount_refunded: 5000,
+        },
+      },
+    } as any);
+
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-4",
+      amountCents: 5000,
+      refundedAmountCents: 5000,
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockPaymentUpdate).toHaveBeenCalledWith({
+      where: { id: "payment-4" },
+      data: {
+        refundedAmountCents: 5000,
+        status: "REFUNDED",
+      },
+    });
+    expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
 });

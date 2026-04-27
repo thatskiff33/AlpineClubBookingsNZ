@@ -19,6 +19,14 @@ This document does not itself execute rollout, change access, or retire the lega
 - Phase `#93` through phase `#99` are merged and closed, and the native finance workspace is available on `main`
 - The rollout owner and rollback owner are identified before any named-user access change
 - The named finance viewer and finance manager list is approved
+- Production env wiring includes the finance-only Xero settings, not just the operational Xero settings:
+  - `FINANCE_XERO_CLIENT_ID`
+  - `FINANCE_XERO_CLIENT_SECRET`
+  - `FINANCE_XERO_REDIRECT_URI`
+  - `FINANCE_XERO_ENCRYPTION_KEY`
+- `FINANCE_XERO_REDIRECT_URI` matches the live TACBookings finance callback path and production domain
+- Prisma migrations that create finance snapshot and finance token tables are deployed in the target environment
+- The daily finance sync cron remains registered and enabled in the deployed runtime
 - Finance sync diagnostics show a recent successful run with no unresolved repeated failures
 - Representative snapshot periods are available for bookings, revenue, costs, cash, balance sheet, pricing sensitivity, and working capital validation
 - The manual comparison window against the legacy dashboard is chosen before UAT starts
@@ -43,7 +51,13 @@ This document does not itself execute rollout, change access, or retire the lega
 ### Sync and Observability
 
 - Finance Xero connection status is healthy from the finance-manager surface
+- Finance Xero shows the correct operational state for managers:
+  - setup blocked when finance env/config is missing
+  - ready to connect when config is complete but no tenant is linked yet
+  - connected when a finance tenant is linked
+  - reconnect required if the saved connection is incomplete or invalid
 - The latest finance sync completed successfully and exposes usable timestamps and dataset coverage
+- If no finance snapshots exist yet, the finance UI explains that the first finance sync still needs to run instead of reading as a broken page
 - Failures remain visible from finance diagnostics with enough detail to route follow-up work
 - Repeated syncs remain overlap-safe
 - Finance Xero usage remains separate from operational Xero usage

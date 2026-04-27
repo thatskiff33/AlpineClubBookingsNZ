@@ -106,6 +106,7 @@ export async function loadFinanceXeroTokens(): Promise<FinanceXeroTokenRecord | 
 
 export async function getFinanceXeroConnectionStatus(): Promise<{
   connected: boolean;
+  hasStoredTokens: boolean;
   tenantId: string | null;
   tokenExpiresAt: Date | null;
 }> {
@@ -113,13 +114,15 @@ export async function getFinanceXeroConnectionStatus(): Promise<{
   if (!record) {
     return {
       connected: false,
+      hasStoredTokens: false,
       tenantId: null,
       tokenExpiresAt: null,
     };
   }
 
   return {
-    connected: true,
+    connected: record.tenantId !== null,
+    hasStoredTokens: true,
     tenantId: record.tenantId,
     tokenExpiresAt: record.expiresAt,
   };

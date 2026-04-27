@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   updateManyOperation: vi.fn(),
   startXeroSyncOperation: vi.fn(),
   failXeroSyncOperation: vi.fn(),
+  findCanonicalPaymentRefundCreditNote: vi.fn(),
+  upsertXeroObjectLink: vi.fn(),
   getEntranceFeeContext: vi.fn(),
   createUnappliedXeroCreditNote: vi.fn(),
   createXeroCreditNote: vi.fn(),
@@ -55,6 +57,8 @@ vi.mock("@/lib/xero-sync", () => ({
       .join(":"),
   startXeroSyncOperation: mocks.startXeroSyncOperation,
   failXeroSyncOperation: mocks.failXeroSyncOperation,
+  findCanonicalPaymentRefundCreditNote: mocks.findCanonicalPaymentRefundCreditNote,
+  upsertXeroObjectLink: mocks.upsertXeroObjectLink,
 }));
 
 vi.mock("@/lib/xero", () => ({
@@ -287,6 +291,7 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
       xeroRefundCreditNoteId: null,
     });
     mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue(null);
     mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_credit_note_1" });
   });
 
@@ -324,6 +329,11 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
       id: "payment_1",
       xeroRefundCreditNoteId: "cn_existing",
     });
+    mocks.findCanonicalPaymentRefundCreditNote.mockResolvedValue({
+      xeroObjectId: "cn_existing",
+      xeroObjectNumber: "CN-1",
+      source: "payment",
+    });
 
     await expect(
       enqueueXeroRefundCreditNoteOperation("payment_1", 5000)
@@ -332,6 +342,18 @@ describe("enqueueXeroRefundCreditNoteOperation", () => {
       message: "Xero refund credit note already linked for this payment.",
     });
 
+    expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
+  });
+
+  it("skips queueing when the webhook delta is zero", async () => {
+    await expect(
+      enqueueXeroRefundCreditNoteOperation("payment_1", 0)
+    ).resolves.toEqual({
+      queueOperationId: null,
+      message: "No additional Xero refund credit note is required for this payment.",
+    });
+
+    expect(mocks.findCanonicalPaymentRefundCreditNote).not.toHaveBeenCalled();
     expect(mocks.startXeroSyncOperation).not.toHaveBeenCalled();
   });
 });

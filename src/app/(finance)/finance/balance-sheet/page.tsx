@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   ArrowLeft,
-  ArrowUpRight,
   Database,
   Filter,
   Scale,
@@ -16,6 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { FinanceTechnicalDetails } from "@/components/finance/technical-details";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -54,11 +54,10 @@ function SummaryCards({
             Balance sheet report
           </p>
           <h2 className="text-2xl font-semibold text-slate-900">
-            Stored balance-sheet detail
+            Balance sheet detail
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            Review assets, liabilities, and net assets from stored
-            balance-sheet snapshots.
+            Review assets, liabilities, and net assets from synced balance sheet snapshots.
           </p>
         </div>
       </div>
@@ -184,23 +183,20 @@ export default async function FinanceBalanceSheetPage({
         <Card>
           <CardHeader className="space-y-3">
             <Badge variant="outline" className="w-fit">
-              Native balance-sheet report
+              Finance balance sheet report
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Stored balance-sheet positions
+                Balance sheet
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                Review stored balance-sheet snapshots with summary cards,
-                snapshot detail, and line-item comparisons.
+                Review synced balance sheet snapshots with summary cards, snapshot detail, and line-item comparisons.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Generated {model.generatedOn}. Balance-sheet figures on this page
-              come from stored finance snapshots. Booking totals, payment cash
-              summaries, and live Xero calls are not used here.
+              Generated {model.generatedOn}. Balance sheet figures on this page come from synced finance snapshots and update after the finance sync runs.
             </div>
 
             <form action="/finance/balance-sheet" className="space-y-4">
@@ -243,34 +239,25 @@ export default async function FinanceBalanceSheetPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-lg text-slate-900">
-              Report notes
+              About this report
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
-              Balance-sheet figures on this page come only from stored finance
-              snapshots.
+              Balance sheet figures here come from the finance sync rather than live Xero calls.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {model.isManager ? (
-              <Button asChild variant="outline" className="w-full justify-between">
-                <Link href="/api/finance/sync/status" target="_blank" rel="noreferrer">
-                  <span className="text-left">
-                    <span className="block text-sm font-medium">
-                      View sync diagnostics
-                    </span>
-                    <span className="block text-xs text-slate-500">
-                      Technical detail for the latest finance sync.
-                    </span>
-                  </span>
-                  <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />
-                </Link>
-              </Button>
-            ) : (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                Finance viewer access does not expose manager-only finance sync
-                diagnostics here.
-              </div>
-            )}
+              <FinanceTechnicalDetails
+                actions={[
+                  {
+                    href: "/api/finance/sync/status",
+                    label: "Open sync diagnostics JSON",
+                    description:
+                      "Technical detail for the latest finance sync and recent failures.",
+                  },
+                ]}
+              />
+            ) : null}
 
             <Button asChild variant="ghost" className="w-full justify-between">
               <Link href="/finance">

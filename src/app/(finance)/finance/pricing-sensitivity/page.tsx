@@ -5,7 +5,6 @@ import {
   Calculator,
   Database,
   Filter,
-  ShieldAlert,
   TrendingUp,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -200,27 +199,20 @@ export default async function FinancePricingSensitivityPage({
         <Card>
           <CardHeader className="space-y-3">
             <Badge variant="outline" className="w-fit">
-              Native pricing-sensitivity report
+              Finance pricing report
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
                 Break-even pricing from costs and realized demand
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                This page turns the landed monthly costs snapshots and
-                Tokoroa Alpine Club realized booking metrics into a native
-                pricing-sensitivity surface with explicit assumptions. It keeps
-                costs, booked revenue, and payment-derived cash distinct.
+                This page combines synced monthly costs with realized booking demand so managers can test pricing assumptions in plain terms.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Generated {model.generatedOn}. Monthly costs come from stored
-              finance snapshots. Guest nights and booked revenue come from
-              Tokoroa Alpine Club realized booking metrics for the same monthly windows.
-              No live Xero reads, payment cash, or working-capital calculations
-              are used here.
+              Generated {model.generatedOn}. Monthly costs come from synced finance data. Guest nights and booked revenue come from TACBookings activity for the same monthly windows.
             </div>
 
             <form action="/finance/pricing-sensitivity" className="space-y-4">
@@ -283,11 +275,10 @@ export default async function FinancePricingSensitivityPage({
             <div className="flex items-center justify-between gap-3">
               <div className="space-y-1">
                 <CardTitle className="text-lg text-slate-900">
-                  Pricing-sensitivity actions
+                  Related reports
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600">
-                  Use the supporting reports to cross-check the same
-                  underlying finance data.
+                  Use the supporting reports to cross-check the same underlying finance data.
                 </CardDescription>
               </div>
               <Badge variant={model.isManager ? "secondary" : "outline"}>
@@ -303,8 +294,7 @@ export default async function FinancePricingSensitivityPage({
                     Open costs report
                   </span>
                   <span className="block text-xs text-slate-500">
-                    Inspect the stored monthly cost line items behind these
-                    scenarios.
+                    Inspect the monthly cost line items behind these scenarios.
                   </span>
                 </span>
                 <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />
@@ -395,9 +385,7 @@ export default async function FinancePricingSensitivityPage({
                     Monthly comparison detail
                   </CardTitle>
                   <CardDescription className="text-sm leading-6 text-slate-600">
-                    Each selected period compares stored monthly costs against
-                    the same period&apos;s realized guest nights, occupancy,
-                    and booked revenue rate.
+                    Each selected period compares synced monthly costs against the same period&apos;s realized guest nights, occupancy, and booked revenue rate.
                   </CardDescription>
                 </div>
               </div>
@@ -409,20 +397,6 @@ export default async function FinancePricingSensitivityPage({
         </>
       )}
 
-      {model.loadError ? (
-        <Card className="border-amber-200 bg-amber-50/60">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg text-amber-950">
-              <ShieldAlert className="h-5 w-5" />
-              Pricing sensitivity unavailable
-            </CardTitle>
-            <CardDescription className="text-amber-900">
-              The page stayed on a safe fallback state instead of exposing raw
-              loading failures to finance viewers.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      ) : null}
     </div>
   );
 }

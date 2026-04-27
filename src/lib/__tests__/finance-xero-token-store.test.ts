@@ -111,7 +111,26 @@ describe("finance-xero-token-store", () => {
 
     await expect(getFinanceXeroConnectionStatus()).resolves.toEqual({
       connected: true,
+      hasStoredTokens: true,
       tenantId: "tenant-123",
+      tokenExpiresAt: expiresAt,
+    });
+  });
+
+  it("treats a token row without a tenant as disconnected", async () => {
+    const expiresAt = new Date("2026-04-20T10:00:00.000Z");
+    mockPrisma.financeXeroToken.findFirst.mockResolvedValueOnce({
+      id: "finance-token-1",
+      accessToken: "encrypted-access",
+      refreshToken: "encrypted-refresh",
+      expiresAt,
+      tenantId: null,
+    });
+
+    await expect(getFinanceXeroConnectionStatus()).resolves.toEqual({
+      connected: false,
+      hasStoredTokens: true,
+      tenantId: null,
       tokenExpiresAt: expiresAt,
     });
   });

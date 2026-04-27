@@ -1,6 +1,6 @@
 # Finance Dashboard Handoff
 
-Last updated: 2026-04-26
+Last updated: 2026-04-27
 
 ## Current State
 
@@ -21,6 +21,16 @@ Last updated: 2026-04-26
 - Finance task currently in flight: none
 - Single `status: ready` finance task: none
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
+
+## What Landed Through Finance Rollout Readiness Cleanup
+
+- Hardened the finance-only Xero boundary so the finance sync now refreshes expiring finance tokens instead of relying on a one-time callback token forever
+- Tightened finance connection semantics so the finance manager surface no longer treats a token row without a linked tenant as a healthy connection
+- Updated the finance callback flow to fail closed when Xero does not return a finance organisation instead of saving a half-connected token record
+- Reworked the finance landing page and report pages so they explain setup, first-sync, stale-sync, and no-data states in plain English rather than rollout or engineering handoff language
+- Demoted finance diagnostics and raw JSON exports into clearly labeled technical sections instead of presenting them as the main product UI
+- Fixed deployment/runtime wiring so the Docker app containers receive the finance-only Xero env vars
+- Updated the blue/green deploy script and finance rollout checklist so production validation now explicitly checks finance-only Xero env vars, callback URL, migrations, and cron registration
 
 ## What Landed Through Task #138
 

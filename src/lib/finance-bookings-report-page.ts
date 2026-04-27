@@ -256,7 +256,7 @@ export async function buildFinanceBookingsReportPageModel(input: {
       rawMetricsHref: `/api/finance/bookings/metrics?${queryString}`,
       filterWarnings: warnings,
       loadError:
-        "Finance booking metrics are temporarily unavailable. Try again shortly or use the raw metrics endpoint once the finance booking boundary recovers.",
+        "Booking figures could not be loaded right now. Try again shortly.",
       sourceNotes: buildSourceNotes(),
       realized: buildUnavailableSection({
         title: "Realized stay detail",
@@ -277,17 +277,17 @@ function buildSourceNotes() {
     {
       label: "Booked revenue",
       description:
-        "Booked revenue on this page comes from Tokoroa Alpine Club Booking.finalPriceCents allocated evenly across stay nights. It is not a Xero snapshot figure.",
+        "Booked revenue on this page comes from TACBookings booking totals allocated across stay nights. It is separate from Xero finance snapshots.",
     },
     {
       label: "Net collected cash",
       description:
-        "Net collected cash comes from Tokoroa Alpine Club Payment rows and stays separate from booked revenue so cash and revenue are not conflated.",
+        "Net collected cash comes from TACBookings payment rows and stays separate from booked revenue so cash and revenue are not mixed together.",
     },
     {
-      label: "Scope boundary",
+      label: "What is not included",
       description:
-        "This report is bookings-only. It does not include finance snapshot-backed revenue, costs, cash, or balance-sheet reporting.",
+        "This report focuses on booking activity only. Use the other finance reports for synced revenue, costs, cash, and balance sheet figures.",
     },
   ];
 }

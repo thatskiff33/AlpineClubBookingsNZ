@@ -29,6 +29,7 @@ import {
   buildXeroPayloadHash,
   completeXeroSyncOperation,
   failXeroSyncOperation,
+  findCanonicalPaymentRefundCreditNote,
   sanitizeForJson,
   startXeroSyncOperation,
   upsertXeroObjectLink,
@@ -4687,19 +4688,31 @@ export async function createXeroRefundPaymentForInvoice(
     if (!createdPayment?.paymentID) {
       throw new Error("Failed to create Xero refund payment");
     }
+    const createdPaymentNumber =
+      createdPayment.creditNoteNumber
+      ?? createdPayment.invoiceNumber
+      ?? (
+        (createdPayment as unknown as {
+          creditNote?: { creditNoteNumber?: string | null; CreditNoteNumber?: string | null } | null;
+        }).creditNote?.creditNoteNumber
+        ?? (createdPayment as unknown as {
+          creditNote?: { creditNoteNumber?: string | null; CreditNoteNumber?: string | null } | null;
+        }).creditNote?.CreditNoteNumber
+        ?? null
+      );
 
     await completeXeroSyncOperation(operation.id, {
       responsePayload: response.body,
       xeroObjectType: "PAYMENT",
       xeroObjectId: createdPayment.paymentID,
-      xeroObjectNumber: createdPayment.creditNoteNumber ?? createdPayment.invoiceNumber ?? null,
+      xeroObjectNumber: createdPaymentNumber,
       extraLinks: [
         {
           localModel: "Payment",
           localId: params.paymentId,
           xeroObjectType: "PAYMENT",
           xeroObjectId: createdPayment.paymentID,
-          xeroObjectNumber: createdPayment.creditNoteNumber ?? createdPayment.invoiceNumber ?? null,
+          xeroObjectNumber: createdPaymentNumber,
           role: "REFUND_PAYMENT",
           metadata: {
             creditNoteId: params.creditNoteId,
@@ -5048,31 +5061,19 @@ export async function createXeroCreditNote(
   }
   const originalInvoiceId = payment.xeroInvoiceId;
   const queuedOperationId = options?.syncOperationId ?? null;
-  const existingLink = payment.xeroRefundCreditNoteId
-    ? null
-    : await prisma.xeroObjectLink.findFirst({
-        where: {
-          localModel: "Payment",
-          localId: paymentId,
-          xeroObjectType: "CREDIT_NOTE",
-          role: "REFUND_CREDIT_NOTE",
-          active: true,
-        },
-        select: {
-          xeroObjectId: true,
-          xeroObjectNumber: true,
-        },
-      });
-  const existingCreditNoteId = payment.xeroRefundCreditNoteId ?? existingLink?.xeroObjectId ?? null;
-  const existingCreditNoteNumber = existingLink?.xeroObjectNumber ?? null;
+  const canonicalRefundCreditNote = await findCanonicalPaymentRefundCreditNote(paymentId);
+  const existingCreditNoteId =
+    payment.xeroRefundCreditNoteId ?? canonicalRefundCreditNote?.xeroObjectId ?? null;
+  const existingCreditNoteNumber =
+    canonicalRefundCreditNote?.xeroObjectNumber ?? null;
 
   // Idempotency guard: skip if credit note already created for this payment
   if (existingCreditNoteId) {
-    if (!payment.xeroRefundCreditNoteId && existingLink?.xeroObjectId) {
+    if (payment.xeroRefundCreditNoteId !== existingCreditNoteId) {
       await prisma.payment.update({
         where: { id: paymentId },
         data: {
-          xeroRefundCreditNoteId: existingLink.xeroObjectId,
+          xeroRefundCreditNoteId: existingCreditNoteId,
         },
       });
     }

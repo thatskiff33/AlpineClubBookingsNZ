@@ -456,7 +456,7 @@ describe("finance report output validation", () => {
       {
         title: "Revenue lines tracked",
         value: "2",
-        footnote: "2 periods loaded from durable FinanceSnapshot storage.",
+        footnote: "2 months included in this report.",
       },
     ]);
     expect(model.monthlyRows).toEqual([

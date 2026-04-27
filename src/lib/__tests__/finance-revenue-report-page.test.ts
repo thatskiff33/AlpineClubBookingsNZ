@@ -228,7 +228,7 @@ describe("finance revenue report page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "No monthly finance revenue snapshots are available yet. Run the finance sync and try again once the profit-and-loss dataset has landed."
+      "The setup status for This revenue report could not be checked right now. Try again shortly."
     );
     expect(model.summaryCards).toEqual([]);
     expect(model.monthlyRows).toEqual([]);
@@ -243,7 +243,7 @@ describe("finance revenue report page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "Finance revenue snapshots are temporarily unavailable. Try again shortly or use manager diagnostics to confirm the latest finance sync status."
+      "This revenue report could not be loaded right now. Try again shortly."
     );
     expect(model.lineItemRows).toEqual([]);
     expect(consoleErrorSpy).toHaveBeenCalled();

@@ -12,6 +12,10 @@ import {
   type ParsedCostsSnapshot,
 } from "@/lib/finance-costs-report-page";
 import {
+  buildFinanceSnapshotLoadErrorMessage,
+  buildFinanceSnapshotMissingMessage,
+} from "@/lib/finance-report-availability";
+import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
   listFinanceSnapshots,
 } from "@/lib/finance-sync-storage";
@@ -163,6 +167,7 @@ export async function buildFinancePricingSensitivityPageModel(input: {
     searchParams: input.searchParams,
   });
   const reportHref = buildFinancePricingSensitivityReportHref(filters);
+  const isManager = hasFinanceManagerAccess(input.member.financeAccessLevel);
 
   try {
     const snapshots = await listFinanceSnapshots({
@@ -179,10 +184,13 @@ export async function buildFinancePricingSensitivityPageModel(input: {
       return buildUnavailablePricingSensitivityModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "No monthly finance costs snapshots are available yet. Run the finance sync and try again once the profit-and-loss dataset has landed.",
+        loadError: await buildFinanceSnapshotMissingMessage({
+          member: input.member,
+          reportTitle: "This pricing report",
+          dataLabel: "monthly cost snapshots",
+        }),
       });
     }
 
@@ -242,10 +250,10 @@ export async function buildFinancePricingSensitivityPageModel(input: {
       return buildUnavailablePricingSensitivityModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
         loadError:
-          "Pricing sensitivity is temporarily unavailable because none of the selected monthly cost snapshots could be matched to realized Tokoroa Alpine Club booking metrics.",
+          "Pricing sensitivity could not be calculated because the selected finance periods could not be matched to realized booking activity.",
       });
     }
 
@@ -287,7 +295,7 @@ export async function buildFinancePricingSensitivityPageModel(input: {
 
     return {
       generatedOn: formatDateTime(new Date().toISOString()),
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       filters,
       reportHref,
       filterWarnings: warnings,
@@ -298,7 +306,7 @@ export async function buildFinancePricingSensitivityPageModel(input: {
           value: formatFinanceAmount(averageMonthlyCostsCents),
           description:
             "Average stored monthly expense total across the selected profit-and-loss finance snapshots.",
-          footnote: `${formatNumber(periodCount)} matched period${periodCount === 1 ? "" : "s"} loaded from durable FinanceSnapshot storage.`,
+          footnote: `${formatNumber(periodCount)} matched month${periodCount === 1 ? "" : "s"} included in this report.`,
         },
         {
           title: "Average realized guest nights",
@@ -361,10 +369,13 @@ export async function buildFinancePricingSensitivityPageModel(input: {
     return buildUnavailablePricingSensitivityModel({
       filters,
       reportHref,
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       warnings,
-      loadError:
-        "Finance pricing sensitivity is temporarily unavailable. Try again shortly or use manager diagnostics to confirm the latest finance sync status.",
+      loadError: await buildFinanceSnapshotLoadErrorMessage({
+        member: input.member,
+        reportTitle: "This pricing report",
+        dataLabel: "monthly cost snapshots",
+      }),
     });
   }
 }
@@ -396,22 +407,22 @@ function buildPricingSensitivitySourceNotes() {
     {
       label: "Cost source",
       description:
-        "Monthly costs on this page come from stored `PROFIT_AND_LOSS_MONTHLY` FinanceSnapshot rows synced through the finance-only Xero boundary.",
+        "Monthly costs on this page come from finance profit and loss snapshots synced from Xero.",
     },
     {
       label: "Booking source",
       description:
-        "Guest nights and booked revenue come from Tokoroa Alpine Club realized booking metrics for the same monthly windows. Booked revenue uses Tokoroa Alpine Club booking totals, not payment-derived cash.",
+        "Guest nights and booked revenue come from TACBookings booking activity for the same monthly windows. Booked revenue is based on bookings, not payment cash.",
     },
     {
-      label: "Sensitivity assumptions",
+      label: "Scenario method",
       description:
-        "Required revenue per guest night is calculated as average monthly costs divided by implied guest nights at each declared occupancy assumption. Implied guest nights use the selected periods' average monthly capacity bed nights.",
+        "Required revenue per guest night is calculated from average monthly costs and the implied guest nights at each occupancy assumption.",
     },
     {
-      label: "Scope boundary",
+      label: "What is not included",
       description:
-        "This native pricing-sensitivity shell keeps costs distinct from payment cash, does not trigger live Xero reads or manual syncs, and does not add working-capital calculations, charts, or hidden legacy-dashboard formulas.",
+        "This page does not call Xero live, and it does not include cash-flow or working-capital analysis.",
     },
   ];
 }

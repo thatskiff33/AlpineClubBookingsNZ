@@ -7,6 +7,10 @@ import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
   listFinanceSnapshots,
 } from "@/lib/finance-sync-storage";
+import {
+  buildFinanceSnapshotLoadErrorMessage,
+  buildFinanceSnapshotMissingMessage,
+} from "@/lib/finance-report-availability";
 import { formatCents } from "@/lib/utils";
 
 const FINANCE_TIMEZONE = "Pacific/Auckland";
@@ -194,6 +198,7 @@ export async function buildFinanceCostsReportPageModel(input: {
     searchParams: input.searchParams,
   });
   const reportHref = buildFinanceCostsReportHref(filters);
+  const isManager = hasFinanceManagerAccess(input.member.financeAccessLevel);
 
   try {
     const snapshots = await listFinanceSnapshots({
@@ -210,10 +215,13 @@ export async function buildFinanceCostsReportPageModel(input: {
       return buildUnavailableCostsReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "No monthly finance costs snapshots are available yet. Run the finance sync and try again once the profit-and-loss dataset has landed.",
+        loadError: await buildFinanceSnapshotMissingMessage({
+          member: input.member,
+          reportTitle: "This costs report",
+          dataLabel: "monthly cost snapshots",
+        }),
       });
     }
 
@@ -227,10 +235,13 @@ export async function buildFinanceCostsReportPageModel(input: {
       return buildUnavailableCostsReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "Finance costs snapshots are temporarily unavailable. Try again shortly after the next finance sync completes.",
+        loadError: await buildFinanceSnapshotLoadErrorMessage({
+          member: input.member,
+          reportTitle: "This costs report",
+          dataLabel: "monthly cost snapshots",
+        }),
       });
     }
 
@@ -246,7 +257,7 @@ export async function buildFinanceCostsReportPageModel(input: {
 
     return {
       generatedOn: formatDateTime(new Date().toISOString()),
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       filters,
       reportHref,
       filterWarnings: warnings,
@@ -274,7 +285,7 @@ export async function buildFinanceCostsReportPageModel(input: {
           value: formatWholeNumber(lineItemRows.length),
           description:
             "Unique cost line items found across the selected finance snapshots.",
-          footnote: `${formatWholeNumber(parsedSnapshots.length)} period${parsedSnapshots.length === 1 ? "" : "s"} loaded from durable FinanceSnapshot storage.`,
+          footnote: `${formatWholeNumber(parsedSnapshots.length)} month${parsedSnapshots.length === 1 ? "" : "s"} included in this report.`,
         },
       ],
       monthlyRows: parsedSnapshots.map((snapshot) => ({
@@ -295,10 +306,13 @@ export async function buildFinanceCostsReportPageModel(input: {
     return buildUnavailableCostsReportModel({
       filters,
       reportHref,
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       warnings,
-      loadError:
-        "Finance costs snapshots are temporarily unavailable. Try again shortly or use manager diagnostics to confirm the latest finance sync status.",
+      loadError: await buildFinanceSnapshotLoadErrorMessage({
+        member: input.member,
+        reportTitle: "This costs report",
+        dataLabel: "monthly cost snapshots",
+      }),
     });
   }
 }
@@ -328,19 +342,19 @@ function buildUnavailableCostsReportModel(input: {
 function buildCostsSourceNotes() {
   return [
     {
-      label: "Finance snapshot source",
+      label: "Cost source",
       description:
-        "Costs on this page come from stored `PROFIT_AND_LOSS_MONTHLY` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from Tokoroa Alpine Club booking or payment data.",
+        "Costs on this page come from finance profit and loss snapshots synced from Xero. They do not come from TACBookings bookings or payments.",
     },
     {
-      label: "Durable read path",
+      label: "When figures update",
       description:
-        "The page reads durable monthly snapshots already stored in Postgres. It does not trigger a live Xero report call or a manual finance sync.",
+        "This page updates when the scheduled finance sync stores a new monthly snapshot. Opening the page does not call Xero live.",
     },
     {
-      label: "Scope boundary",
+      label: "What is not included",
       description:
-        "This report is cost-only. It keeps finance snapshot-backed expense figures distinct from Tokoroa Alpine Club booking revenue, payment-derived cash, balance-sheet positions, and pricing-sensitivity analysis.",
+        "This report focuses on costs only. Use the revenue, cash, balance sheet, or pricing reports for the rest of the finance picture.",
     },
   ];
 }
