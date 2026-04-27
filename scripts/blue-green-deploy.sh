@@ -213,6 +213,10 @@ env_key_is_true() {
   [ "$value" = "true" ]
 }
 
+working_tree_is_clean() {
+  [ -z "$(git status --short --untracked-files=normal)" ]
+}
+
 extract_url_host() {
   local url="$1"
   printf '%s' "$url" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*://([^/:?#]+).*$#\1#'
@@ -455,8 +459,8 @@ maybe_pull_latest() {
     return 1
   fi
 
-  if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "Deployment requires a clean working tree on main." >&2
+  if ! working_tree_is_clean; then
+    echo "Deployment requires a clean working tree on main, including no untracked files." >&2
     return 1
   fi
 
@@ -921,6 +925,37 @@ stop_if_running() {
   fi
 }
 
+remove_service_container_if_present() {
+  local service="$1"
+
+  if [ -n "$(docker compose ps -a -q "$service" 2>/dev/null || true)" ]; then
+    docker compose rm -fs "$service" >/dev/null
+  fi
+}
+
+cleanup_inactive_web_services() {
+  local service
+
+  for service in "$BLUE_SERVICE" "$GREEN_SERVICE"; do
+    if [ "$service" = "$TARGET_SERVICE" ]; then
+      continue
+    fi
+
+    if [ -n "$(docker compose ps -a -q "$service" 2>/dev/null || true)" ]; then
+      remove_service_container_if_present "$service"
+      info "Removed inactive web service container: ${service}"
+    fi
+  done
+}
+
+remove_compose_orphans() {
+  docker compose up -d --remove-orphans \
+    "$POSTGRES_SERVICE" \
+    "$CRON_SERVICE" \
+    "$TARGET_SERVICE" \
+    "$CADDY_SERVICE" >/dev/null
+}
+
 echo "============================================"
 echo "  TACBookings: Blue/Green Deploy Script"
 echo "============================================"
@@ -930,73 +965,73 @@ cd "$PROJECT_DIR"
 ACTIVE_SERVICE="$(get_active_service)"
 TARGET_SERVICE="$(choose_target_service "$ACTIVE_SERVICE")"
 
-step "1/18" "Refreshing code (if appropriate)"
+step "1/19" "Refreshing code (if appropriate)"
 maybe_pull_latest
 
-step "2/18" "Validating host deployment prerequisites"
+step "2/19" "Validating host deployment prerequisites"
 validate_host_contract
 info "Host has the required deployment commands."
 
-step "3/18" "Validating deployment environment contract"
+step "3/19" "Validating deployment environment contract"
 validate_env_contract
 info ".env contains the required production settings."
 
-step "4/18" "Validating repository deployment files"
+step "4/19" "Validating repository deployment files"
 validate_repo_contract
 validate_caddy_contract
 info "Docker, Prisma, and Caddy config files are present and valid."
 
-step "5/18" "Validating Docker Compose configuration"
+step "5/19" "Validating Docker Compose configuration"
 docker compose config -q
 info "docker compose config is valid."
 
-step "6/18" "Selecting target web service"
+step "6/19" "Selecting target web service"
 info "Current live upstream: ${ACTIVE_SERVICE}"
 info "Target web service: ${TARGET_SERVICE}"
 
-step "7/18" "Pruning stale Docker cache before build"
+step "7/19" "Pruning stale Docker cache before build"
 prune_stale_docker_assets "before build"
 
-step "8/18" "Pulling infrastructure images"
+step "8/19" "Pulling infrastructure images"
 docker compose pull "$POSTGRES_SERVICE" "$CADDY_SERVICE"
 
-step "9/18" "Building app, target web, and migration images"
+step "9/19" "Building app, target web, and migration images"
 build_images
 
-step "10/18" "Validating built runtime image contract"
+step "10/19" "Validating built runtime image contract"
 validate_runtime_image_contract
 info "Built app image contains the expected runtime artifacts."
 
-step "11/18" "Ensuring postgres is healthy"
+step "11/19" "Ensuring postgres is healthy"
 docker compose up -d "$POSTGRES_SERVICE"
 wait_for_health "$POSTGRES_SERVICE" "$HEALTH_TIMEOUT_SECONDS"
 verify_postgres_query
 info "Postgres is healthy and accepting queries."
 
-step "12/18" "Validating Prisma schema against committed migrations"
+step "12/19" "Validating Prisma schema against committed migrations"
 validate_prisma_schema_matches_migrations
 validate_pending_migrations_blue_green_safe
 info "Prisma schema matches the committed migration history."
 
-step "13/18" "Running Prisma migrations"
+step "13/19" "Running Prisma migrations"
 docker compose --profile "$MIGRATE_SERVICE" run --rm "$MIGRATE_SERVICE"
 verify_prisma_migration_status
 info "Prisma migration status reports the database is up to date."
 
-step "14/18" "Starting target web service"
+step "14/19" "Starting target web service"
 docker compose up -d --force-recreate "$TARGET_SERVICE"
 wait_for_health "$TARGET_SERVICE" "$HEALTH_TIMEOUT_SECONDS"
 verify_internal_health "$TARGET_SERVICE"
 info "Target web service is healthy before cutover."
 
-step "15/18" "Refreshing cron leader on the new release before cutover"
+step "15/19" "Refreshing cron leader on the new release before cutover"
 docker compose up -d --force-recreate "$CRON_SERVICE"
 wait_for_health "$CRON_SERVICE" "$HEALTH_TIMEOUT_SECONDS"
 verify_internal_health "$CRON_SERVICE"
 verify_cron_registration
 info "Cron leader is healthy and scheduled jobs are registered before cutover."
 
-step "16/18" "Switching Caddy upstream to target web service"
+step "16/19" "Switching Caddy upstream to target web service"
 docker compose up -d "$CADDY_SERVICE"
 write_active_upstream_file "$TARGET_SERVICE" "$CRON_SERVICE"
 reload_caddy
@@ -1007,15 +1042,14 @@ EXTERNAL_HEALTH_VERIFIED=1
 info "External and direct target readiness checks passed after cutover."
 drain_previous_connections "$BLUE_GREEN_DRAIN_SECONDS"
 
-step "17/18" "Stopping previous web service if appropriate"
-if [ "$ACTIVE_SERVICE" = "$BLUE_SERVICE" ] || [ "$ACTIVE_SERVICE" = "$GREEN_SERVICE" ]; then
-  stop_if_running "$ACTIVE_SERVICE"
-  info "Stopped previous web service: ${ACTIVE_SERVICE}"
-else
-  info "Previous live upstream was ${ACTIVE_SERVICE}; no old color service to stop."
-fi
+step "17/19" "Removing inactive web service containers"
+cleanup_inactive_web_services
 
-step "18/18" "Cleaning stale Docker cache after deploy"
+step "18/19" "Removing orphan containers"
+remove_compose_orphans
+info "Removed any orphaned Compose containers."
+
+step "19/19" "Cleaning stale Docker cache after deploy"
 prune_stale_docker_assets "after deploy"
 info "Blue/green deploy complete."
 

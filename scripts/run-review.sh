@@ -264,7 +264,7 @@ Audit deployment and operations:
 
 6. Health: Read src/app/api/health/route.ts. Does it check all critical dependencies?
 
-7. Deployment scripts: Read /home/ubuntu/clean-build-docker-tacbookings.sh and scripts/blue-green-deploy.sh. Are they robust? Do they handle failures?
+7. Deployment scripts: Read scripts/run-production-blue-green-deploy.sh and scripts/blue-green-deploy.sh. Are they robust? Do they handle failures?
 
 Report gaps and risks.
 EOF

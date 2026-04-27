@@ -22,7 +22,8 @@ Use a single release lead for this phase. Other agents may assist with read-only
 4. Deploy using the repo-standard entrypoint.
 
 ```bash
-/home/ubuntu/clean-build-docker-tacbookings.sh
+cd ~/TACBookings
+./scripts/run-production-blue-green-deploy.sh
 ```
 
 5. Run post-deploy verification.
