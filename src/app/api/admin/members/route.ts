@@ -155,6 +155,21 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  const inheritEmailEligibleFilter =
+    sp.get("inheritEmailEligible") === "true";
+  if (inheritEmailEligibleFilter) {
+    andConditions.push(
+      { ageTier: "ADULT" },
+      { parentMemberId: null },
+      { inheritEmailFromId: null },
+    );
+  }
+
+  const excludeId = sp.get("excludeId");
+  if (excludeId) {
+    andConditions.push({ id: { not: excludeId } });
+  }
+
   // Filter: role
   const roleFilter = sp.get("role");
   if (roleFilter && (roleFilter === "MEMBER" || roleFilter === "ADMIN")) {

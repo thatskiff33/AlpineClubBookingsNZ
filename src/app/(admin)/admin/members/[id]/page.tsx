@@ -28,6 +28,14 @@ interface XeroSearchResult {
   contactId: string; name: string; email: string | null; isLinked: boolean; linkedMemberName: string | null
 }
 
+interface EmailInheritanceSearchResult {
+  id: string
+  firstName: string
+  lastName: string
+  email: string
+  active?: boolean
+}
+
 interface MemberDetail {
   id: string; firstName: string; lastName: string; email: string
   phoneCountryCode: string | null; phoneAreaCode: string | null; phoneNumber: string | null
@@ -143,6 +151,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [editPostalSameAsPhysical, setEditPostalSameAsPhysical] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState("")
+  const [inheritEmailSearch, setInheritEmailSearch] = useState("")
+  const [inheritEmailSearchResults, setInheritEmailSearchResults] = useState<EmailInheritanceSearchResult[]>([])
+  const [inheritEmailSearchError, setInheritEmailSearchError] = useState("")
+  const [inheritEmailSearching, setInheritEmailSearching] = useState(false)
+  const [selectedInheritEmailSource, setSelectedInheritEmailSource] = useState<EmailInheritanceSearchResult | null>(null)
   const [dependentOpen, setDependentOpen] = useState(false)
   const [dependentForm, setDependentForm] = useState<DependentForm>({ firstName: "", lastName: "", email: "", dateOfBirth: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: NZ_COUNTRY_CODE, postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: NZ_COUNTRY_CODE })
   const [dependentPostalSameAsPhysical, setDependentPostalSameAsPhysical] = useState(false)
@@ -167,6 +180,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [xeroLinking, setXeroLinking] = useState(false)
   const [xeroPushing, setXeroPushing] = useState(false)
   const isAdultMember = member?.ageTier === "ADULT"
+  const memberId = member?.id
+  const memberCanLogin = member?.canLogin ?? false
 
   const fetchMember = async () => {
     try {
@@ -214,6 +229,78 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
   useEffect(() => { fetchMember(); fetchCredits() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!editOpen || !memberId || memberCanLogin) {
+      setInheritEmailSearchResults([])
+      setInheritEmailSearchError("")
+      setInheritEmailSearching(false)
+      return
+    }
+
+    const query = inheritEmailSearch.trim()
+    if (query.length < 2) {
+      setInheritEmailSearchResults([])
+      setInheritEmailSearchError("")
+      setInheritEmailSearching(false)
+      return
+    }
+
+    let cancelled = false
+    setInheritEmailSearching(true)
+    setInheritEmailSearchError("")
+
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          q: query,
+          pageSize: "8",
+          inheritEmailEligible: "true",
+          excludeId: memberId,
+        })
+        const res = await fetch(`/api/admin/members?${params.toString()}`)
+        const data = await res.json().catch(() => ({}))
+
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to search eligible adult members")
+        }
+
+        if (!cancelled) {
+          setInheritEmailSearchResults(
+            (data.members ?? [])
+              .map((candidate: {
+                id: string
+                firstName: string
+                lastName: string
+                email: string
+                active: boolean
+              }) => ({
+                id: candidate.id,
+                firstName: candidate.firstName,
+                lastName: candidate.lastName,
+                email: candidate.email,
+                active: candidate.active,
+              }))
+              .filter((candidate: EmailInheritanceSearchResult) => candidate.id !== selectedInheritEmailSource?.id)
+          )
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setInheritEmailSearchResults([])
+          setInheritEmailSearchError(error instanceof Error ? error.message : "Failed to search eligible adult members")
+        }
+      } finally {
+        if (!cancelled) {
+          setInheritEmailSearching(false)
+        }
+      }
+    }, 300)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [editOpen, inheritEmailSearch, memberCanLogin, memberId, selectedInheritEmailSource?.id])
+
   const openEditDialog = () => {
     if (!member) return
     setForm({
@@ -242,6 +329,15 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       postalPostalCode: member.postalPostalCode || "",
       postalCountry: withDefaultNzCountry(member.postalCountry),
     })
+    setSelectedInheritEmailSource(member.inheritEmailFrom ? {
+      id: member.inheritEmailFrom.id,
+      firstName: member.inheritEmailFrom.firstName,
+      lastName: member.inheritEmailFrom.lastName,
+      email: member.inheritEmailFrom.email,
+    } : null)
+    setInheritEmailSearch("")
+    setInheritEmailSearchResults([])
+    setInheritEmailSearchError("")
     setEditPostalSameAsPhysical(memberUsesSamePostalAddress({
       streetAddressLine1: member.streetAddressLine1,
       streetAddressLine2: member.streetAddressLine2,
@@ -350,6 +446,22 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
   const updateEditAddressFields = (patch: Partial<MemberAddressValues>) => {
     setForm((current) => ({ ...current, ...patch }))
+  }
+
+  const selectInheritEmailSource = (source: EmailInheritanceSearchResult) => {
+    setSelectedInheritEmailSource(source)
+    setForm((current) => ({ ...current, inheritEmailFromId: source.id }))
+    setInheritEmailSearch("")
+    setInheritEmailSearchResults([])
+    setInheritEmailSearchError("")
+  }
+
+  const clearInheritEmailSource = () => {
+    setSelectedInheritEmailSource(null)
+    setForm((current) => ({ ...current, inheritEmailFromId: null }))
+    setInheritEmailSearch("")
+    setInheritEmailSearchResults([])
+    setInheritEmailSearchError("")
   }
 
   const handleCreateDependent = async () => {
@@ -901,20 +1013,74 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             </div>
             {!member.canLogin && (
               <div className="space-y-2">
-                <Label htmlFor="edit-inheritEmailFromId">Inherit Email From (optional)</Label>
+                <Label htmlFor="edit-inheritEmailSearch">Notification Email Recipient (optional)</Label>
                 <p className="text-xs text-muted-foreground">
-                  Enter the member ID of an adult whose email this member should use for notifications.
-                  Leave blank to use their own email.
+                  Search for a primary adult member who should receive this member&apos;s notifications.
+                  Leave it blank to use this member&apos;s own email address instead.
                 </p>
-                <Input
-                  id="edit-inheritEmailFromId"
-                  value={form.inheritEmailFromId || ""}
-                  onChange={e => setForm(f => ({ ...f, inheritEmailFromId: e.target.value.trim() || null }))}
-                  placeholder="Adult member ID (leave blank for own email)"
-                />
-                {member.inheritEmailFrom && (
-                  <p className="text-xs text-green-700">Currently inheriting from: {member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} ({member.inheritEmailFrom.email})</p>
-                )}
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+                  {selectedInheritEmailSource ? (
+                    <div className="space-y-2">
+                      <div className="font-medium text-slate-900">
+                        Sending notifications to {selectedInheritEmailSource.firstName} {selectedInheritEmailSource.lastName}
+                      </div>
+                      <div className="text-xs text-slate-600">
+                        {selectedInheritEmailSource.email} · Member ID {selectedInheritEmailSource.id}
+                        {selectedInheritEmailSource.active === false ? " · Inactive" : ""}
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={clearInheritEmailSource}>
+                        Use this member&apos;s own email instead
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="font-medium text-slate-900">Using this member&apos;s own email</div>
+                      <div className="text-xs text-slate-600">{form.email || "No email set on this member"}</div>
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Input
+                    id="edit-inheritEmailSearch"
+                    value={inheritEmailSearch}
+                    onChange={e => setInheritEmailSearch(e.target.value)}
+                    placeholder={selectedInheritEmailSource ? "Search to replace the selected adult" : "Search adult members by name or email"}
+                  />
+                  {inheritEmailSearching ? (
+                    <p className="text-xs text-muted-foreground">Searching eligible adult members...</p>
+                  ) : inheritEmailSearchError ? (
+                    <p className="text-xs text-red-600">{inheritEmailSearchError}</p>
+                  ) : inheritEmailSearch.trim().length >= 2 ? (
+                    inheritEmailSearchResults.length > 0 ? (
+                      <div className="max-h-48 space-y-2 overflow-auto rounded-md border border-slate-200 bg-white p-2">
+                        {inheritEmailSearchResults.map((candidate) => (
+                          <button
+                            key={candidate.id}
+                            type="button"
+                            className="w-full rounded-md border border-slate-200 px-3 py-2 text-left text-sm hover:bg-slate-50"
+                            onClick={() => selectInheritEmailSource(candidate)}
+                          >
+                            <div className="font-medium text-slate-900">
+                              {candidate.firstName} {candidate.lastName}
+                            </div>
+                            <div className="text-xs text-slate-600">
+                              {candidate.email} · Member ID {candidate.id}
+                              {candidate.active === false ? " · Inactive" : ""}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        No eligible primary adult members matched &quot;{inheritEmailSearch.trim()}&quot;.
+                      </p>
+                    )
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Only primary adult members can be selected. Start typing at least 2 characters to search.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
             <MemberAddressFields

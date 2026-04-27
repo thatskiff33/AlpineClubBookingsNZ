@@ -337,6 +337,28 @@ describe("Phase 3: Admin Member Management", () => {
       expect(call.where?.AND).toEqual(expect.arrayContaining([{ ageTier: "INFANT" }]));
     });
 
+    it("filters to eligible email inheritance sources and excludes the current member", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(
+        new NextRequest(
+          "http://localhost/api/admin/members?q=alice&inheritEmailEligible=true&excludeId=child-1"
+        )
+      );
+
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(
+        expect.arrayContaining([
+          { ageTier: "ADULT" },
+          { parentMemberId: null },
+          { inheritEmailFromId: null },
+          { id: { not: "child-1" } },
+        ])
+      );
+    });
+
     it("combines text search with filters (AND logic)", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
