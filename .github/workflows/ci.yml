@@ -1,5 +1,11 @@
 name: CI
 
+# Residual risk accepted for the `npm audit --audit-level=high` gate:
+# - `next-auth@5.0.0-beta.31` / `@auth/core@0.41.2` still declare an optional
+#   `nodemailer@^7.0.7` peer while this repo validates `nodemailer@8.0.6`.
+# - `.npmrc` pins `legacy-peer-deps=true` until Auth.js expands that optional
+#   peer range. See `docs/PRODUCTION_DEPENDENCY_AUDIT.md` for the baseline.
+
 on:
   pull_request:
     branches:
@@ -16,6 +22,78 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+
+  codeql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          build-mode: none
+
+      - name: Analyze with CodeQL
+        uses: github/codeql-action/analyze@v3
+
+  gitleaks-full-repo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Scan repository history with gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_SUMMARY: "true"
+
+  gitleaks-pr-diff:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Scan pull request commit range with gitleaks
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            ghcr.io/gitleaks/gitleaks:v8.28.0 \
+            git /repo \
+            --log-opts="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
+            --exit-code=1 \
+            --redact
+
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -47,6 +125,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
       - name: Lint
         run: npm run lint
 
@@ -55,3 +136,48 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  docker-image-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs:
+      - verify
+    permissions:
+      contents: read
+    env:
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
+      NEXT_PUBLIC_CONTACT_EMAIL: bookings@example.com
+      NEXT_PUBLIC_ADDRESSFINDER_KEY: ci-addressfinder-key
+      NEXT_PUBLIC_SENTRY_DSN: ""
+      IMAGE_REF: tacbookings-ci:${{ github.sha }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}" \
+            --build-arg NEXT_PUBLIC_SENTRY_DSN="${NEXT_PUBLIC_SENTRY_DSN}" \
+            --build-arg NEXT_PUBLIC_CONTACT_EMAIL="${NEXT_PUBLIC_CONTACT_EMAIL}" \
+            --build-arg NEXT_PUBLIC_ADDRESSFINDER_KEY="${NEXT_PUBLIC_ADDRESSFINDER_KEY}" \
+            --tag "${IMAGE_REF}" \
+            .
+
+      - name: Fail on CRITICAL image vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          exit-code: "1"
+          severity: CRITICAL
+
+      - name: Warn on HIGH image vulnerabilities
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          exit-code: "1"
+          severity: HIGH
+          skip-setup-trivy: true
