@@ -67,7 +67,7 @@ rollback_traffic_if_needed() {
   cd "$PROJECT_DIR" || return 0
   warn "Restoring Caddy upstream to ${ACTIVE_SERVICE} after deployment failure."
   write_active_upstream_file "$ACTIVE_SERVICE" "$CRON_SERVICE"
-  docker compose exec -T "$CADDY_SERVICE" caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+  reload_caddy >/dev/null 2>&1 || true
 }
 
 fail() {
@@ -914,7 +914,24 @@ write_active_upstream_file() {
 }
 
 reload_caddy() {
-  docker compose exec -T "$CADDY_SERVICE" caddy reload --config /etc/caddy/Caddyfile >/dev/null
+  local attempts="${1:-10}"
+  local delay_seconds="${2:-1}"
+  local attempt=1
+
+  while [ "$attempt" -le "$attempts" ]; do
+    if docker compose exec -T "$CADDY_SERVICE" \
+      caddy reload --address 127.0.0.1:2019 --config /etc/caddy/Caddyfile >/dev/null; then
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$attempts" ]; then
+      sleep "$delay_seconds"
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  echo "Timed out waiting for the Caddy admin endpoint to accept reloads on 127.0.0.1:2019" >&2
+  return 1
 }
 
 stop_if_running() {
