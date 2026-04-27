@@ -990,6 +990,7 @@ create: vi.fn().mockResolvedValue({
       const res = await createMember(req);
       expect(res.status).toBe(201);
       expect(mockIsXeroConnected).not.toHaveBeenCalled();
+      expect(mockEnqueueXeroEntranceFeeInvoiceOperation).not.toHaveBeenCalled();
       const body = await res.json();
       expect(body.xeroContactId).toBeNull();
     });

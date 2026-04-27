@@ -48,6 +48,15 @@ interface XeroSearchResult {
   email: string | null
   isLinked: boolean
   linkedMemberName: string | null
+  matchReasons?: string[]
+  xeroLink?: string
+}
+
+interface PendingXeroCreateDecision {
+  memberId: string
+  memberName: string
+  createEntranceFeeInvoice: boolean
+  suggestedContacts: XeroSearchResult[]
 }
 
 interface MemberForm {
@@ -193,6 +202,11 @@ export default function MembersPage() {
   const [xeroSearchResults, setXeroSearchResults] = useState<XeroSearchResult[]>([])
   const [xeroSearchLoading, setXeroSearchLoading] = useState(false)
   const [selectedXeroContactId, setSelectedXeroContactId] = useState("")
+  const [xeroCreateEntranceFeeInvoice, setXeroCreateEntranceFeeInvoice] = useState(false)
+  const [pendingXeroCreateDecision, setPendingXeroCreateDecision] = useState<PendingXeroCreateDecision | null>(null)
+  const [pendingXeroDecisionContactId, setPendingXeroDecisionContactId] = useState("")
+  const [pendingXeroDecisionError, setPendingXeroDecisionError] = useState("")
+  const [pendingXeroDecisionLoading, setPendingXeroDecisionLoading] = useState(false)
 
   useEffect(() => { const t = setTimeout(() => { setDebouncedSearch(search); setPage(1) }, 300); return () => clearTimeout(t) }, [search])
 
@@ -294,6 +308,7 @@ export default function MembersPage() {
     setXeroSearchQuery("")
     setXeroSearchResults([])
     setSelectedXeroContactId("")
+    setXeroCreateEntranceFeeInvoice(false)
     setFormError("")
     setDialogOpen(true)
   }
@@ -336,18 +351,73 @@ export default function MembersPage() {
     } catch (err) { setFormError(err instanceof Error ? err.message : "Failed to link Xero contact") }
   }
 
-  const handleXeroPush = async (memberId: string) => {
+  const requestXeroPush = async (
+    memberId: string,
+    options?: { createEntranceFeeInvoice?: boolean; forceCreate?: boolean }
+  ) => {
+    const res = await fetch(`/api/admin/members/${memberId}/xero-push`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        createEntranceFeeInvoice: Boolean(options?.createEntranceFeeInvoice),
+        forceCreate: Boolean(options?.forceCreate),
+      }),
+    })
+    const data = await res.json().catch(() => ({}))
+
+    if (res.status === 409 && Array.isArray(data.suggestedContacts)) {
+      return {
+        status: "needsDecision" as const,
+        suggestedContacts: data.suggestedContacts as XeroSearchResult[],
+      }
+    }
+
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to create Xero contact")
+    }
+
+    return {
+      status: "created" as const,
+      data,
+    }
+  }
+
+  const handleXeroPush = async (memberId: string, memberName: string) => {
     setFormError("")
     try {
-      const res = await fetch(`/api/admin/members/${memberId}/xero-push`, { method: "POST" })
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to create Xero contact") }
-      const data = await res.json()
+      const result = await requestXeroPush(memberId, {
+        createEntranceFeeInvoice: xeroCreateEntranceFeeInvoice,
+      })
+
+      if (result.status === "needsDecision") {
+        setPendingXeroCreateDecision({
+          memberId,
+          memberName,
+          createEntranceFeeInvoice: xeroCreateEntranceFeeInvoice,
+          suggestedContacts: result.suggestedContacts,
+        })
+        setPendingXeroDecisionContactId(
+          result.suggestedContacts.find((contact) => !contact.isLinked)?.contactId ?? ""
+        )
+        setPendingXeroDecisionError("")
+        return
+      }
+
+      const data = result.data
       if (editingMember) {
         setEditingMember({ ...editingMember, xeroContactId: data.xeroContactId, xeroContactGroups: [] })
       }
       setXeroChoice("")
-      setSuccess("Xero contact created and linked")
+      setSuccess(
+        xeroCreateEntranceFeeInvoice && data.entranceFeeInvoiceQueued
+          ? "Xero contact created, linked, and entrance fee invoice queued"
+          : "Xero contact created and linked"
+      )
       setTimeout(() => setSuccess(""), 3000)
+      if (data.warning || (xeroCreateEntranceFeeInvoice && data.entranceFeeInvoiceMessage && !data.entranceFeeInvoiceQueued)) {
+        setError(data.warning || data.entranceFeeInvoiceMessage)
+        setTimeout(() => setError(""), 8000)
+      }
       fetchMembers()
     } catch (err) { setFormError(err instanceof Error ? err.message : "Failed to create Xero contact") }
   }
@@ -358,6 +428,7 @@ export default function MembersPage() {
     setXeroSearchQuery("")
     setXeroSearchResults([])
     setSelectedXeroContactId("")
+    setXeroCreateEntranceFeeInvoice(false)
     setForm({
       firstName: member.firstName,
       lastName: member.lastName,
@@ -389,6 +460,100 @@ export default function MembersPage() {
     })
     setFormError("")
     setDialogOpen(true)
+  }
+
+  const closePendingXeroCreateDecision = () => {
+    setPendingXeroCreateDecision(null)
+    setPendingXeroDecisionContactId("")
+    setPendingXeroDecisionError("")
+    setPendingXeroDecisionLoading(false)
+  }
+
+  const handlePendingXeroDecisionLink = async () => {
+    if (!pendingXeroCreateDecision || !pendingXeroDecisionContactId) return
+
+    setPendingXeroDecisionLoading(true)
+    setPendingXeroDecisionError("")
+    try {
+      const res = await fetch(`/api/admin/members/${pendingXeroCreateDecision.memberId}/xero-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ xeroContactId: pendingXeroDecisionContactId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to link Xero contact")
+      }
+
+      if (editingMember?.id === pendingXeroCreateDecision.memberId) {
+        setEditingMember({
+          ...editingMember,
+          xeroContactId: pendingXeroDecisionContactId,
+          xeroContactGroups: [],
+        })
+      }
+
+      closePendingXeroCreateDecision()
+      setXeroChoice("")
+      setSuccess(`Linked to Xero contact: ${data.contactName}`)
+      setTimeout(() => setSuccess(""), 3000)
+      fetchMembers()
+    } catch (err) {
+      setPendingXeroDecisionError(err instanceof Error ? err.message : "Failed to link Xero contact")
+    } finally {
+      setPendingXeroDecisionLoading(false)
+    }
+  }
+
+  const handlePendingXeroDecisionForceCreate = async () => {
+    if (!pendingXeroCreateDecision) return
+
+    setPendingXeroDecisionLoading(true)
+    setPendingXeroDecisionError("")
+    try {
+      const result = await requestXeroPush(pendingXeroCreateDecision.memberId, {
+        forceCreate: true,
+        createEntranceFeeInvoice: pendingXeroCreateDecision.createEntranceFeeInvoice,
+      })
+
+      if (result.status !== "created") {
+        throw new Error("Failed to create Xero contact")
+      }
+
+      if (editingMember?.id === pendingXeroCreateDecision.memberId) {
+        setEditingMember({
+          ...editingMember,
+          xeroContactId: result.data.xeroContactId,
+          xeroContactGroups: [],
+        })
+      }
+
+      const warning =
+        result.data.warning ||
+        (pendingXeroCreateDecision.createEntranceFeeInvoice &&
+        result.data.entranceFeeInvoiceMessage &&
+        !result.data.entranceFeeInvoiceQueued
+          ? result.data.entranceFeeInvoiceMessage
+          : undefined)
+
+      closePendingXeroCreateDecision()
+      setXeroChoice("")
+      setSuccess(
+        pendingXeroCreateDecision.createEntranceFeeInvoice && result.data.entranceFeeInvoiceQueued
+          ? "Xero contact created, linked, and entrance fee invoice queued"
+          : "Xero contact created and linked"
+      )
+      setTimeout(() => setSuccess(""), 3000)
+      if (warning) {
+        setError(warning)
+        setTimeout(() => setError(""), 8000)
+      }
+      fetchMembers()
+    } catch (err) {
+      setPendingXeroDecisionError(err instanceof Error ? err.message : "Failed to create Xero contact")
+    } finally {
+      setPendingXeroDecisionLoading(false)
+    }
   }
 
   const handleXeroSearch = async () => {
@@ -468,12 +633,38 @@ export default function MembersPage() {
             successMessage = "Member created and linked to Xero"
           }
         } else if (xeroChoice === "create") {
-          const pushRes = await fetch(`/api/admin/members/${data.id}/xero-push`, { method: "POST" })
-          if (!pushRes.ok) {
-            const pushData = await pushRes.json().catch(() => ({}))
-            warning = `Member created, but Xero contact creation failed: ${pushData.error || "Unknown error"}`
-          } else {
-            successMessage = "Member created and pushed to Xero"
+          try {
+            const pushResult = await requestXeroPush(data.id, {
+              createEntranceFeeInvoice: xeroCreateEntranceFeeInvoice,
+            })
+
+            if (pushResult.status === "needsDecision") {
+              setPendingXeroCreateDecision({
+                memberId: data.id,
+                memberName: `${data.firstName || form.firstName} ${data.lastName || form.lastName}`.trim(),
+                createEntranceFeeInvoice: xeroCreateEntranceFeeInvoice,
+                suggestedContacts: pushResult.suggestedContacts,
+              })
+              setPendingXeroDecisionContactId(
+                pushResult.suggestedContacts.find((contact) => !contact.isLinked)?.contactId ?? ""
+              )
+              setPendingXeroDecisionError("")
+              successMessage = "Member created locally. Review the suggested Xero matches before creating a new contact."
+            } else {
+              successMessage =
+                xeroCreateEntranceFeeInvoice && pushResult.data.entranceFeeInvoiceQueued
+                  ? "Member created, pushed to Xero, and entrance fee invoice queued"
+                  : "Member created and pushed to Xero"
+              warning =
+                pushResult.data.warning ||
+                (xeroCreateEntranceFeeInvoice &&
+                pushResult.data.entranceFeeInvoiceMessage &&
+                !pushResult.data.entranceFeeInvoiceQueued
+                  ? pushResult.data.entranceFeeInvoiceMessage
+                  : warning)
+            }
+          } catch (err) {
+            warning = `Member created, but Xero contact creation failed: ${err instanceof Error ? err.message : "Unknown error"}`
           }
         }
       }
@@ -927,6 +1118,7 @@ export default function MembersPage() {
                         setFormError("")
                         setSelectedXeroContactId("")
                         if (value !== "link") { setXeroSearchQuery(""); setXeroSearchResults([]) }
+                        if (value !== "create") { setXeroCreateEntranceFeeInvoice(false) }
                       }}
                     >
                       <SelectTrigger><SelectValue placeholder="Link or create a Xero contact..." /></SelectTrigger>
@@ -967,9 +1159,22 @@ export default function MembersPage() {
                     {xeroChoice === "create" && (
                       <div className="space-y-3">
                         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                          Creating a new Xero contact requires First Name, Last Name, Email, Phone, Postal Address, Physical Address, Date of Birth, and Joined Date. Save changes first, then create.
+                          Creating a new Xero contact requires First Name, Last Name, Email, Phone, Postal Address, Physical Address, Date of Birth, and Joined Date. Save changes first, then create. We&apos;ll check for similar Xero contacts before a brand-new contact is created.
                         </div>
-                        <Button type="button" size="sm" onClick={() => handleXeroPush(editingMember.id)} disabled={(() => { const m = getMissingFieldsForXeroCreate(form); return m.length > 0 })()}>
+                        <div className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            id="edit-xero-create-invoice"
+                            checked={xeroCreateEntranceFeeInvoice}
+                            onChange={e => setXeroCreateEntranceFeeInvoice(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 rounded border-gray-300"
+                          />
+                          <div>
+                            <Label htmlFor="edit-xero-create-invoice">Create membership entrance fee invoice after contact creation</Label>
+                            <p className="text-xs text-muted-foreground">Leave this unchecked if you only want to create and link the Xero contact for now.</p>
+                          </div>
+                        </div>
+                        <Button type="button" size="sm" onClick={() => handleXeroPush(editingMember.id, `${editingMember.firstName} ${editingMember.lastName}`)} disabled={(() => { const m = getMissingFieldsForXeroCreate(form); return m.length > 0 })()}>
                           Create Xero Contact
                         </Button>
                         {(() => { const m = getMissingFieldsForXeroCreate(form); return m.length > 0 ? <p className="text-xs text-red-600">Missing: {m.join(", ")}</p> : null })()}
@@ -993,6 +1198,9 @@ export default function MembersPage() {
                           if (nextChoice !== "link") {
                             setXeroSearchQuery("")
                             setXeroSearchResults([])
+                          }
+                          if (nextChoice !== "create") {
+                            setXeroCreateEntranceFeeInvoice(false)
                           }
                         }}
                       >
@@ -1041,8 +1249,23 @@ export default function MembersPage() {
                     )}
 
                     {xeroChoice === "create" && (
-                      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                        Creating a new Xero contact requires First Name, Last Name, Email, Phone, Postal Address, Physical Address, Date of Birth, and Joined Date.
+                      <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        <p>
+                          Creating a new Xero contact requires First Name, Last Name, Email, Phone, Postal Address, Physical Address, Date of Birth, and Joined Date. We&apos;ll check for similar Xero contacts before a brand-new contact is created.
+                        </p>
+                        <div className="flex items-start gap-2 text-slate-900">
+                          <input
+                            type="checkbox"
+                            id="create-xero-create-invoice"
+                            checked={xeroCreateEntranceFeeInvoice}
+                            onChange={e => setXeroCreateEntranceFeeInvoice(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 rounded border-gray-300"
+                          />
+                          <div>
+                            <Label htmlFor="create-xero-create-invoice">Create membership entrance fee invoice after contact creation</Label>
+                            <p className="text-xs text-amber-900/80">Leave this unchecked if you only want to create and link the Xero contact for now.</p>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </>
@@ -1087,6 +1310,82 @@ export default function MembersPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button>
             <Button onClick={handleSave} disabled={saving || (!editingMember && xeroConnected === null)}>
               {saving ? "Saving..." : editingMember ? "Save Changes" : "Create Member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(pendingXeroCreateDecision)}
+        onOpenChange={(open) => { if (!open) closePendingXeroCreateDecision() }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Review Similar Xero Contacts</DialogTitle>
+            <DialogDescription>
+              {pendingXeroCreateDecision
+                ? `We found existing Xero contacts that may match ${pendingXeroCreateDecision.memberName}. Link one of these if appropriate, or create a brand-new contact anyway.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {pendingXeroDecisionError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{pendingXeroDecisionError}</div>}
+          {pendingXeroCreateDecision && (
+            <div className="space-y-3">
+              <div className="max-h-[360px] overflow-y-auto space-y-2">
+                {pendingXeroCreateDecision.suggestedContacts.map((contact) => (
+                  <label
+                    key={contact.contactId}
+                    className={`flex items-start gap-3 rounded-md border p-3 ${
+                      contact.isLinked ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="pending-xero-contact"
+                      value={contact.contactId}
+                      checked={pendingXeroDecisionContactId === contact.contactId}
+                      onChange={() => setPendingXeroDecisionContactId(contact.contactId)}
+                      disabled={contact.isLinked}
+                      className="mt-1 h-4 w-4 border-gray-300"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-slate-900">{contact.name}</p>
+                        {contact.matchReasons && contact.matchReasons.map((reason) => (
+                          <Badge key={`${contact.contactId}-${reason}`} variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">
+                            {reason}
+                          </Badge>
+                        ))}
+                      </div>
+                      {contact.email && <p className="text-xs text-slate-500">{contact.email}</p>}
+                      {contact.isLinked && (
+                        <p className="text-xs text-amber-700">
+                          Already linked to {contact.linkedMemberName}
+                        </p>
+                      )}
+                      {contact.xeroLink && (
+                        <a href={contact.xeroLink} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline">
+                          View in Xero
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+              {pendingXeroCreateDecision.createEntranceFeeInvoice && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  If you choose <span className="font-medium">Create New Contact Anyway</span>, the membership entrance fee invoice will also be queued.
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={closePendingXeroCreateDecision} disabled={pendingXeroDecisionLoading}>Do This Later</Button>
+            <Button variant="outline" onClick={handlePendingXeroDecisionLink} disabled={pendingXeroDecisionLoading || !pendingXeroDecisionContactId}>
+              {pendingXeroDecisionLoading ? "Working..." : "Link Selected Contact"}
+            </Button>
+            <Button onClick={handlePendingXeroDecisionForceCreate} disabled={pendingXeroDecisionLoading}>
+              {pendingXeroDecisionLoading ? "Working..." : "Create New Contact Anyway"}
             </Button>
           </DialogFooter>
         </DialogContent>

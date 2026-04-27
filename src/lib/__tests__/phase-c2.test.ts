@@ -40,9 +40,13 @@ vi.mock("@/lib/session-guards", () => ({
 const mockGetAuthenticatedXeroClient = vi.fn();
 const mockWithXeroRetry = vi.fn();
 const mockCallXeroApi = vi.fn();
+const mockRefreshXeroContactCachesFromContact = vi.fn();
 const mockCreateXeroContactForMember = vi.fn();
+const mockFindPotentialXeroContactsForMember = vi.fn();
 const mockSyncContactsFromXero = vi.fn();
 const mockFindDuplicateContacts = vi.fn();
+const mockEnqueueXeroEntranceFeeInvoiceOperation = vi.fn();
+const mockProcessQueuedXeroOutboxOperations = vi.fn();
 class MockXeroContactValidationError extends Error {
   missingFields: string[];
 
@@ -56,10 +60,21 @@ vi.mock("@/lib/xero", () => ({
   getAuthenticatedXeroClient: () => mockGetAuthenticatedXeroClient(),
   withXeroRetry: (fn: () => unknown) => mockWithXeroRetry(fn),
   callXeroApi: (fn: () => unknown, _opts: unknown) => mockCallXeroApi(fn, _opts),
-  createXeroContactForMember: (id: string) => mockCreateXeroContactForMember(id),
+  refreshXeroContactCachesFromContact: (contact: unknown) =>
+    mockRefreshXeroContactCachesFromContact(contact),
+  createXeroContactForMember: (id: string, options?: unknown) =>
+    mockCreateXeroContactForMember(id, options),
+  findPotentialXeroContactsForMember: (id: string) => mockFindPotentialXeroContactsForMember(id),
   XeroContactValidationError: MockXeroContactValidationError,
   syncContactsFromXero: () => mockSyncContactsFromXero(),
   findDuplicateContacts: () => mockFindDuplicateContacts(),
+}));
+
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroEntranceFeeInvoiceOperation: (...args: unknown[]) =>
+    mockEnqueueXeroEntranceFeeInvoiceOperation(...args),
+  processQueuedXeroOutboxOperations: (...args: unknown[]) =>
+    mockProcessQueuedXeroOutboxOperations(...args),
 }));
 
 // ---------------------------------------------------------------------------
@@ -232,6 +247,17 @@ describe("#28: Xero Link API", () => {
     mockPrisma.member.update.mockResolvedValue({});
     mockUpsertXeroObjectLink.mockResolvedValue(undefined);
     mockLogAudit.mockResolvedValue(undefined);
+    mockRefreshXeroContactCachesFromContact.mockResolvedValue({
+      cachedContact: { contactId: "xc-1" },
+      groupMemberships: {
+        contactId: "xc-1",
+        observed: false,
+        contactGroupsSeen: 0,
+        membershipsAdded: 0,
+        membershipsRemoved: 0,
+        groupsTouched: 0,
+      },
+    });
 
     const { POST } = await import("@/app/api/admin/members/[id]/xero-link/route");
     const req = makeRequest("/api/admin/members/m1/xero-link", {
@@ -247,6 +273,10 @@ describe("#28: Xero Link API", () => {
     expect(mockPrisma.member.update).toHaveBeenCalledWith({
       where: { id: "m1" },
       data: { xeroContactId: "xc-1" },
+    });
+    expect(mockRefreshXeroContactCachesFromContact).toHaveBeenCalledWith({
+      contactID: "xc-1",
+      name: "John Smith",
     });
     expect(mockLogAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: "XERO_LINK",
@@ -298,6 +328,12 @@ describe("#28: Xero Link API", () => {
 describe("#28: Xero Push API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFindPotentialXeroContactsForMember.mockResolvedValue([]);
+    mockEnqueueXeroEntranceFeeInvoiceOperation.mockResolvedValue({
+      queueOperationId: null,
+      message: "not queued",
+    });
+    mockProcessQueuedXeroOutboxOperations.mockResolvedValue(undefined);
   });
 
   it("rejects non-admin users with 403", async () => {
@@ -343,7 +379,10 @@ describe("#28: Xero Push API", () => {
     const data = await res.json();
     expect(data.xeroContactId).toBe("xc-new-123");
     expect(data.xeroLink).toBe("https://go.xero.com/Contacts/View/xc-new-123");
-    expect(mockCreateXeroContactForMember).toHaveBeenCalledWith("m1");
+    expect(mockFindPotentialXeroContactsForMember).toHaveBeenCalledWith("m1");
+    expect(mockCreateXeroContactForMember).toHaveBeenCalledWith("m1", {
+      createdByMemberId: "a1",
+    });
   });
 
   it("returns 422 when required Xero fields are missing", async () => {
@@ -362,6 +401,68 @@ describe("#28: Xero Push API", () => {
     const data = await res.json();
     expect(data.error).toContain("Phone, Postal Address, Joined Date");
     expect(data.missingFields).toEqual(["Phone", "Postal Address", "Joined Date"]);
+  });
+
+  it("returns suggested contacts instead of creating when potential matches exist", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", xeroContactId: null,
+    });
+    mockFindPotentialXeroContactsForMember.mockResolvedValue([
+      {
+        contactId: "xc-existing",
+        name: "John Smith",
+        email: "john@test.com",
+        isLinked: false,
+        linkedMemberName: null,
+        matchReasons: ["Exact email match", "Exact name match"],
+        xeroLink: "https://go.xero.com/Contacts/View/xc-existing",
+      },
+    ]);
+
+    const { POST } = await import("@/app/api/admin/members/[id]/xero-push/route");
+    const req = makeRequest("/api/admin/members/m1/xero-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ createEntranceFeeInvoice: true }),
+    });
+    const res = await POST(req as any, { params: Promise.resolve({ id: "m1" }) });
+
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.suggestedContacts).toHaveLength(1);
+    expect(mockCreateXeroContactForMember).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroEntranceFeeInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("can force-create a new contact and queue the entrance invoice explicitly", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", xeroContactId: null,
+    });
+    mockCreateXeroContactForMember.mockResolvedValue("xc-new-123");
+    mockLogAudit.mockResolvedValue(undefined);
+    mockEnqueueXeroEntranceFeeInvoiceOperation.mockResolvedValue({
+      queueOperationId: "op-1",
+      message: "queued",
+    });
+
+    const { POST } = await import("@/app/api/admin/members/[id]/xero-push/route");
+    const req = makeRequest("/api/admin/members/m1/xero-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ forceCreate: true, createEntranceFeeInvoice: true }),
+    });
+    const res = await POST(req as any, { params: Promise.resolve({ id: "m1" }) });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.entranceFeeInvoiceQueued).toBe(true);
+    expect(data.entranceFeeInvoiceMessage).toBe("queued");
+    expect(mockFindPotentialXeroContactsForMember).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledWith("m1", {
+      createdByMemberId: "a1",
+    });
   });
 });
 

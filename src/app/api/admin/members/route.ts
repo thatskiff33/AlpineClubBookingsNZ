@@ -1,4 +1,4 @@
-import { after, NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { AGE_TIER_VALUES, ageTierEnum } from "@/lib/age-tier-schema";
 import { AgeTier } from "@prisma/client";
@@ -11,7 +11,6 @@ import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
-  isXeroConnected,
 } from "@/lib/xero";
 import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
@@ -21,10 +20,6 @@ import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
 import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
-import {
-  enqueueXeroEntranceFeeInvoiceOperation,
-  processQueuedXeroOutboxOperations,
-} from "@/lib/xero-operation-outbox";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
 import { issueActionToken } from "@/lib/action-tokens";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
@@ -75,16 +70,6 @@ const createMemberSchema = z.object({
 });
 
 const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
-
-function scheduleAfterResponse(task: () => Promise<void>) {
-  try {
-    after(task);
-  } catch {
-    queueMicrotask(() => {
-      void task();
-    });
-  }
-}
 
 /**
  * GET /api/admin/members
@@ -594,37 +579,6 @@ export async function POST(req: NextRequest) {
       return created;
     });
 
-    let entranceFeeWarning: string | undefined;
-    try {
-      const queuedEntranceFeeInvoice = await enqueueXeroEntranceFeeInvoiceOperation(
-        member.id,
-        {
-          createdByMemberId: session.user.id,
-        }
-      );
-
-      if (queuedEntranceFeeInvoice.queueOperationId && (await isXeroConnected())) {
-        scheduleAfterResponse(async () => {
-          try {
-            await processQueuedXeroOutboxOperations({ limit: 1 });
-          } catch (xeroErr) {
-            logger.error(
-              { err: xeroErr, memberId: member.id },
-              "Failed to kick Xero entrance fee outbox worker"
-            );
-          }
-        });
-      }
-    } catch (xeroErr) {
-      logger.error(
-        { err: xeroErr, memberId: member.id },
-        "Failed to queue entrance fee invoice"
-      );
-      entranceFeeWarning = `Member created but entrance fee invoice could not be queued: ${
-        xeroErr instanceof Error ? xeroErr.message : String(xeroErr)
-      }`;
-    }
-
     // Send invite email if requested
     let inviteWarning: string | undefined;
     if (data.sendInvite) {
@@ -641,7 +595,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const warnings = [entranceFeeWarning, inviteWarning].filter(Boolean);
+    const warnings = [inviteWarning].filter(Boolean);
     return NextResponse.json(
       { ...member, ...(warnings.length > 0 ? { warning: warnings.join("; ") } : {}) },
       { status: 201 },

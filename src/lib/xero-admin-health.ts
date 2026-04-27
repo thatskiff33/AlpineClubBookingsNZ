@@ -3,6 +3,7 @@ import { getXeroContactGroupMismatchSnapshot } from "@/lib/age-tier-xero-groups"
 import { prisma } from "@/lib/prisma";
 import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
+import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
 
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 
@@ -45,6 +46,10 @@ export interface XeroAdminHealthSnapshot {
     count: number;
   };
   contactGroupMismatches: {
+    count: number;
+    cacheReady: boolean;
+  };
+  contactLinkMismatches: {
     count: number;
     cacheReady: boolean;
   };
@@ -175,6 +180,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     latestMembershipCron,
     missingInvoices,
     contactGroupMismatches,
+    contactLinkMismatches,
     usageSummaryResult,
   ] = await Promise.all([
     prisma.member.count({
@@ -209,6 +215,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     }),
     getMissingXeroInvoiceBookings({ limit: 1 }),
     getXeroContactGroupMismatchSnapshot({ limit: 1 }),
+    getXeroContactLinkMismatchSnapshot({ limit: 1 }),
     getTodaysXeroUsageSummary()
       .then((summary) => ({
         status: summary.today.budgetStatus,
@@ -247,6 +254,10 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     contactGroupMismatches: {
       count: contactGroupMismatches.count,
       cacheReady: contactGroupMismatches.cacheReady,
+    },
+    contactLinkMismatches: {
+      count: contactLinkMismatches.count,
+      cacheReady: contactLinkMismatches.cacheReady,
     },
     apiBudget: usageSummaryResult,
   };
