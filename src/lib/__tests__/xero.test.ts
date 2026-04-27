@@ -70,8 +70,8 @@ describe("Token encryption", () => {
   it("throws on tampered ciphertext", () => {
     const encrypted = encryptToken("test_token")
     const parts = encrypted.split(":")
-    // Tamper with the ciphertext
-    parts[2] = "ff" + parts[2].slice(2)
+    // Flip the first ciphertext nibble so the payload is always modified.
+    parts[2] = `${parts[2][0] === "0" ? "1" : "0"}${parts[2].slice(1)}`
     expect(() => decryptToken(parts.join(":"))).toThrow()
   })
 
