@@ -91,7 +91,7 @@ function FinanceSection({
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg text-amber-950">
               <ShieldAlert className="h-5 w-5" />
-              Section unavailable
+              Data unavailable
             </CardTitle>
             <CardDescription className="text-amber-900">
               {section.error}
@@ -274,7 +274,7 @@ function FinanceManagerWorkspace({
         {workspace.configIssues.length > 0 ||
         workspace.tokenStorageIssues.length > 0 ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-sm leading-6 text-amber-950">
-            <p className="font-semibold">Finance Xero cutover blockers</p>
+            <p className="font-semibold">Setup issues to fix</p>
             {workspace.configIssues.length > 0 ? (
               <p>OAuth config: {workspace.configIssues.join(" ")}</p>
             ) : null}
@@ -359,14 +359,14 @@ export default async function FinancePage({
             tone: "success" as const,
             title: "Finance Xero connected",
             description:
-              "The finance-only Xero OAuth flow completed successfully. Confirm the manager status cards and sync diagnostics before final cutover.",
+              "The finance Xero connection completed successfully. Check the manager status cards before relying on the latest synced data.",
           }
         : params.xero === "disconnected"
           ? {
               tone: "success" as const,
               title: "Finance Xero disconnected",
               description:
-                "Stored finance-only Xero tokens were cleared. Reconnect this boundary before any live sync verification that depends on fresh Xero data.",
+                "The saved finance Xero connection was cleared. Reconnect it before running checks that depend on fresh Xero data.",
             }
           : null;
 
@@ -384,16 +384,15 @@ export default async function FinancePage({
         <Card>
           <CardHeader className="space-y-3">
             <Badge variant="outline" className="w-fit">
-              Native finance landing page
+              Finance overview
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Live finance state inside Tokoroa Alpine Club - Bookings
+                Finance summary and report access
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                This shell turns the landed finance sync diagnostics and booking
-                metrics boundaries into a single finance entry point for viewers
-                and managers without broadening into full reporting pages.
+                Use this page to check sync status, review booking activity,
+                and open the main finance reports.
               </CardDescription>
             </div>
           </CardHeader>
@@ -469,8 +468,8 @@ export default async function FinancePage({
                     Finance workspace actions
                   </CardTitle>
                   <CardDescription className="text-sm text-slate-600">
-                    Viewer-safe summaries stay on this page. Manager-only
-                    finance operations remain hidden from viewers.
+                    This page shows shared finance summaries. Manager-only
+                    connection tools stay hidden from viewers.
                   </CardDescription>
                 </div>
                 <Badge variant={model.sync.badgeVariant}>
@@ -480,8 +479,8 @@ export default async function FinancePage({
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                Finance viewer access does not expose manager-only diagnostics
-                or Xero connection actions here.
+                Viewer access does not include Xero setup tools or technical
+                diagnostics.
               </div>
 
               <Button asChild variant="ghost" className="w-full justify-between">
@@ -512,9 +511,8 @@ export default async function FinancePage({
               What each number represents
             </h2>
             <p className="text-sm leading-6 text-slate-600">
-              This landing page combines booking-derived and sync-derived
-              finance context. The source boundary for each section stays
-              explicit here so later reporting pages can build on it safely.
+              This page combines booking information with sync status. These
+              notes explain where each section gets its numbers.
             </p>
           </div>
         </div>

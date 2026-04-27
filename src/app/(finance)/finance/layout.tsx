@@ -35,9 +35,8 @@ export default async function FinanceLayout({
               Tokoroa Alpine Club finance workspace
             </h1>
             <p className="text-sm text-slate-600">
-              Live finance sync health and Tokoroa Alpine Club booking summaries now
-              sit behind the native finance route for approved viewers and
-              managers.
+              Review finance reports, booking performance, and sync status in
+              one place.
             </p>
           </div>
           <Badge variant={isManager ? "default" : "secondary"}>

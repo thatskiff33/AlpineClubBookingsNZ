@@ -59,12 +59,11 @@ function SummaryCards({
             Pricing sensitivity
           </p>
           <h2 className="text-2xl font-semibold text-slate-900">
-            Break-even pricing assumptions from landed finance seams
+            Break-even pricing assumptions
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            This page combines stored monthly cost snapshots with Tokoroa Alpine Club
-            realized booking metrics so finance viewers and managers can inspect
-            explicit pricing sensitivity assumptions inside Tokoroa Alpine Club - Bookings.
+            Compare stored monthly costs with realized booking demand to test
+            break-even pricing assumptions.
           </p>
         </div>
       </div>
@@ -287,8 +286,8 @@ export default async function FinancePricingSensitivityPage({
                   Pricing-sensitivity actions
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600">
-                  Use the supporting finance reports to cross-check the same
-                  source boundaries.
+                  Use the supporting reports to cross-check the same
+                  underlying finance data.
                 </CardDescription>
               </div>
               <Badge variant={model.isManager ? "secondary" : "outline"}>
@@ -361,8 +360,8 @@ export default async function FinancePricingSensitivityPage({
                       Source notes
                     </CardTitle>
                     <CardDescription className="text-sm leading-6 text-slate-600">
-                      Each sensitivity number stays tied to a declared source
-                      boundary and explicit non-goals.
+                      Each sensitivity number is paired with the source notes
+                      and assumptions behind it.
                     </CardDescription>
                   </div>
                 </div>
@@ -397,8 +396,8 @@ export default async function FinancePricingSensitivityPage({
                   </CardTitle>
                   <CardDescription className="text-sm leading-6 text-slate-600">
                     Each selected period compares stored monthly costs against
-                    the same period&apos;s realized Tokoroa Alpine Club guest nights,
-                    occupancy, and booked revenue rate.
+                    the same period&apos;s realized guest nights, occupancy,
+                    and booked revenue rate.
                   </CardDescription>
                 </div>
               </div>

@@ -56,9 +56,7 @@ function SummaryCards({
             Stored bank balance detail
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            Stored finance bank summary snapshots now surface closing bank
-            positions directly inside Tokoroa Alpine Club - Bookings for finance viewers and
-            managers.
+            Review closing bank balances from stored finance snapshots.
           </p>
         </div>
       </div>
@@ -180,22 +178,19 @@ export default async function FinanceCashPage({
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Stored bank balances from durable finance snapshots
+                Stored bank balances
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                This page turns the landed `BANK_BALANCES` finance snapshot
-                dataset into a native `/finance/cash` report with summary cards,
-                stored snapshot detail, and bank account balance comparisons for
-                the selected stored periods.
+                Review stored bank-balance snapshots with summary cards,
+                snapshot detail, and account comparisons.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Cash balances on this page come
-              from stored finance bank-balance snapshots synced through the
-              finance-only Xero boundary. No Tokoroa Alpine Club payment rows,
-              working-capital rollups, or live Xero reads are used here.
+              from stored finance bank-balance snapshots. Payment rows,
+              working-capital rollups, and live Xero calls are not used here.
             </div>
 
             <form action="/finance/cash" className="space-y-4">
@@ -238,11 +233,11 @@ export default async function FinanceCashPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-lg text-slate-900">
-              Report actions and source notes
+              Report notes
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
-              Cash stays explicitly finance-snapshot-backed here so it is not
-              conflated with Tokoroa Alpine Club payment-derived cash collections.
+              Cash figures on this page come only from stored finance
+              snapshots.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -251,10 +246,10 @@ export default async function FinanceCashPage({
                 <Link href="/api/finance/sync/status" target="_blank" rel="noreferrer">
                   <span className="text-left">
                     <span className="block text-sm font-medium">
-                      Open sync diagnostics JSON
+                      View sync diagnostics
                     </span>
                     <span className="block text-xs text-slate-500">
-                      Manager-only detail for the latest durable finance sync.
+                      Technical detail for the latest finance sync.
                     </span>
                   </span>
                   <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />

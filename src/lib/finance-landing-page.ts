@@ -189,19 +189,19 @@ export async function buildFinanceLandingPageModel(input: {
       {
         label: "Booking cards",
         description:
-          "These figures come from the booking system's Booking, BookingGuest, and Payment rows through the finance booking metrics boundary.",
+          "These figures come from booking, guest, and payment records in TACBookings.",
       },
       {
         label: "Sync health",
         description:
-          "These figures come from finance sync runs and cron observability. They indicate freshness and failures, not financial statement balances.",
+          "These figures come from finance sync runs and cron monitoring. They show freshness and failures, not accounting balances.",
       },
       ...(isManager
         ? [
             {
-              label: "Finance Xero boundary",
+              label: "Finance Xero connection",
               description:
-                "Manager operations use the separate finance-only Xero OAuth boundary. Connection state and configuration blockers stay separate from operational Xero.",
+                "Finance reporting uses its own Xero connection so it stays separate from the operational Xero setup.",
             },
           ]
         : []),
@@ -227,32 +227,32 @@ function mapManagerWorkspace(
     {
       kind: "link",
       href: "/api/finance/sync/status",
-      label: "Open sync diagnostics JSON",
+      label: "View sync diagnostics",
       description:
-        "Manager-only detail for the latest durable finance sync and recent failures.",
+        "Technical detail for the latest finance sync and recent failures.",
     },
     {
       kind: "link",
       href: "/api/finance/xero/status",
-      label: "Open finance Xero status JSON",
+      label: "View Xero connection details",
       description:
-        "Manager-only connection status for the separate finance Xero boundary.",
+        "Technical detail for the finance reporting Xero connection.",
     },
     {
       kind: "link",
       href: `/api/finance/bookings/metrics?${bookingMetricsQueryString}`,
-      label: "Open booking metrics JSON",
+      label: "View raw booking metrics",
       description:
-        "Viewer-safe raw booking metrics output for the same landing-page date windows.",
+        "Raw booking metrics for the same date ranges shown on this page.",
     },
   ];
 
   if (result.status === "rejected") {
     return {
       eyebrow: "Manager tools",
-      title: "Finance manager operations are temporarily unavailable",
+      title: "Manager tools are temporarily unavailable",
       description:
-        "The landing page could not load the finance Xero manager boundary right now.",
+        "The page could not load the finance Xero manager tools right now.",
       badgeLabel: "Unavailable",
       badgeVariant: "destructive",
       cards: [],
@@ -261,8 +261,7 @@ function mapManagerWorkspace(
       actions: fallbackActions,
       error: readErrorMessage({
         reason: result.reason,
-        fallback:
-          "Finance Xero manager operations are temporarily unavailable.",
+        fallback: "Finance Xero manager tools are temporarily unavailable.",
         logContext:
           "Failed to load finance Xero status for the landing page manager workspace",
       }),
@@ -275,7 +274,7 @@ function mapManagerWorkspace(
       eyebrow: "Manager tools",
       title: "Finance manager operations",
       description:
-        "Manager controls are only available to finance managers on the native landing page.",
+        "Connection and setup tools are only shown to finance managers.",
       badgeLabel: "Hidden",
       badgeVariant: "secondary",
       cards: [],
@@ -302,13 +301,13 @@ function mapManagerWorkspace(
           href: "/api/finance/xero/connect",
           label: "Reconnect finance Xero",
           description:
-            "Start the finance-only OAuth flow again if this boundary needs to be refreshed.",
+            "Start the Xero sign-in flow again if the finance connection needs refreshing.",
         },
         {
           kind: "disconnect",
           label: "Disconnect finance Xero",
           description:
-            "Clear the stored finance-only tokens and revoke them in Xero when possible.",
+            "Clear the saved finance tokens and revoke them in Xero when possible.",
         },
       ]
     : status.canConnect
@@ -318,7 +317,7 @@ function mapManagerWorkspace(
             href: "/api/finance/xero/connect",
             label: "Connect finance Xero",
             description:
-              "Complete the finance-only OAuth flow before live sync verification or fresh snapshot validation.",
+              "Sign in to Xero so finance sync can store fresh reporting data.",
           },
         ]
       : [];
@@ -327,10 +326,10 @@ function mapManagerWorkspace(
     eyebrow: "Manager tools",
     title: "Finance manager operations",
     description: status.connected
-      ? "The finance-only Xero boundary is connected from the native finance workspace."
+      ? "The finance Xero connection is ready to use."
       : status.canConnect
-        ? "This environment is ready for the finance-only Xero OAuth flow, but no finance tenant is connected yet."
-        : "The finance-only Xero boundary is blocked by runtime configuration and must be fixed before live cutover.",
+        ? "This environment is ready, but no finance Xero tenant is connected yet."
+        : "The finance Xero connection is blocked by missing or invalid setup.",
     badgeLabel,
     badgeVariant,
     cards: [
@@ -342,10 +341,10 @@ function mapManagerWorkspace(
             ? "Ready to connect"
             : "Blocked",
         description: status.connected
-          ? "Separate finance tokens are stored for the native reporting boundary."
+          ? "Finance reporting is connected to its own saved Xero login."
           : status.canConnect
-            ? "Connect the finance-only Xero tenant before rollout checks that depend on fresh snapshot sync."
-            : "Fix the runtime blockers below before the first finance Xero connect flow.",
+            ? "Connect the finance Xero tenant before relying on fresh synced finance data."
+            : "Fix the setup issues below before connecting finance Xero.",
         footnote: status.connected
           ? buildConnectionFootnote(status.tenantId, status.tokenExpiresAt)
           : "No finance Xero token record is stored yet.",
@@ -354,7 +353,7 @@ function mapManagerWorkspace(
         title: "OAuth config",
         value: status.oauthConfigured ? "Ready" : "Action required",
         description: status.oauthConfigured
-          ? "Client ID, client secret, and callback URL are configured for the finance-only OAuth app."
+          ? "The finance Xero app credentials and callback URL are configured."
           : "Finance OAuth settings are incomplete for this environment.",
         footnote: status.configIssues.length
           ? formatIssueList(status.configIssues)
@@ -364,8 +363,8 @@ function mapManagerWorkspace(
         title: "Token storage",
         value: status.tokenStorageConfigured ? "Ready" : "Action required",
         description: status.tokenStorageConfigured
-          ? "Encrypted finance token storage is configured separately from operational Xero."
-          : "Finance token encryption must be fixed before storing tokens from the connect flow.",
+          ? "Encrypted storage for finance Xero tokens is configured."
+          : "Finance token encryption must be fixed before saving tokens from Xero.",
         footnote: status.tokenStorageIssues.length
           ? formatIssueList(status.tokenStorageIssues)
           : "No finance token-storage issues detected.",
@@ -386,7 +385,7 @@ function mapSyncSection(
       eyebrow: "Finance sync",
       title: "Sync health is temporarily unavailable",
       description:
-        "The landing page could not load the finance sync diagnostics boundary right now.",
+        "The page could not load finance sync diagnostics right now.",
       badgeLabel: "Unavailable",
       badgeVariant: "destructive",
       cards: [],
@@ -407,7 +406,7 @@ function mapSyncSection(
       eyebrow: "Finance sync",
       title: "Waiting for the first durable finance sync",
       description:
-        "Finance access is live, but no durable finance sync run has completed yet.",
+        "Finance access is live, but no completed finance sync has been recorded yet.",
       badgeLabel: "Not yet synced",
       badgeVariant: "warning",
       cards: [
@@ -453,12 +452,12 @@ function mapSyncSection(
     title: "Finance data freshness",
     description:
       latestRun.status === "SUCCEEDED"
-        ? "The most recent durable finance sync completed successfully."
+        ? "The most recent finance sync completed successfully."
         : latestRun.status === "PARTIAL"
-          ? "The most recent durable finance sync completed with dataset failures."
+          ? "The most recent finance sync completed with some dataset failures."
           : latestRun.status === "RUNNING"
             ? "A finance sync is currently in progress."
-            : "The most recent durable finance sync failed and needs manager review.",
+            : "The most recent finance sync failed and needs manager review.",
     badgeLabel,
     badgeVariant,
     cards: [

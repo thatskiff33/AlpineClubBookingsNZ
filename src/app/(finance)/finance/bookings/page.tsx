@@ -258,10 +258,8 @@ export default async function FinanceBookingsPage({
                 Realized stays and forward booking pipeline
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                This page turns the landed Tokoroa Alpine Club finance booking metrics
-                boundary into a native `/finance/bookings` report with summary
-                cards, daily detail, and status breakdowns for realized and
-                forward windows.
+                Review realized stays, forward demand, and payment coverage
+                using booking data from TACBookings.
               </CardDescription>
             </div>
           </CardHeader>
@@ -365,12 +363,10 @@ export default async function FinanceBookingsPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-lg text-slate-900">
-              Report actions and source notes
+              Report notes
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
-              The same query powers the page and the viewer-safe raw JSON
-              endpoint so finance users can inspect or export the underlying
-              booking metrics boundary directly.
+              The same filters power both this page and the raw metrics export.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -378,10 +374,10 @@ export default async function FinanceBookingsPage({
               <Link href={model.rawMetricsHref} target="_blank" rel="noreferrer">
                 <span className="text-left">
                   <span className="block text-sm font-medium">
-                    Open raw booking metrics JSON
+                    View raw booking metrics
                   </span>
                   <span className="block text-xs text-slate-500">
-                    Viewer-safe output for the active report windows.
+                    Technical export for the active report windows.
                   </span>
                 </span>
                 <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />

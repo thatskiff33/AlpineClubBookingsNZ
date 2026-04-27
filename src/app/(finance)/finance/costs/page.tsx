@@ -57,9 +57,8 @@ function SummaryCards({
             Monthly finance snapshot cost detail
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            Stored monthly profit-and-loss snapshots now surface cost totals
-            and expense mix directly inside Tokoroa Alpine Club - Bookings for finance viewers and
-            managers.
+            Review cost totals and expense mix from stored monthly finance
+            snapshots.
           </p>
         </div>
       </div>
@@ -184,22 +183,19 @@ export default async function FinanceCostsPage({
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Monthly costs from durable finance snapshots
+                Monthly costs from stored finance snapshots
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                This page turns the landed profit-and-loss monthly finance
-                snapshot dataset into a native `/finance/costs` report with
-                summary cards, monthly detail, and expense line breakdowns for
-                the selected stored periods.
+                Review stored cost snapshots with summary cards, monthly
+                detail, and expense line breakdowns.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Cost totals on this page come from
-              stored finance snapshots synced through the finance-only Xero
-              boundary. No Tokoroa Alpine Club booking metrics, payment-derived cash,
-              or live Xero reads are used here.
+              stored finance snapshots. Booking metrics, payment cash, and
+              live Xero calls are not used here.
             </div>
 
             <form action="/finance/costs" className="space-y-4">
@@ -242,11 +238,11 @@ export default async function FinanceCostsPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-lg text-slate-900">
-              Report actions and source notes
+              Report notes
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
-              Costs stay explicitly finance-snapshot-backed here so they are not
-              conflated with Tokoroa Alpine Club booking, cash, or balance-sheet totals.
+              Cost figures on this page come only from stored finance
+              snapshots.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -255,10 +251,10 @@ export default async function FinanceCostsPage({
                 <Link href="/api/finance/sync/status" target="_blank" rel="noreferrer">
                   <span className="text-left">
                     <span className="block text-sm font-medium">
-                      Open sync diagnostics JSON
+                      View sync diagnostics
                     </span>
                     <span className="block text-xs text-slate-500">
-                      Manager-only detail for the latest durable finance sync.
+                      Technical detail for the latest finance sync.
                     </span>
                   </span>
                   <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />

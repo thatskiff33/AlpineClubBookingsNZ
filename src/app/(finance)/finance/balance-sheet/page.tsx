@@ -57,9 +57,8 @@ function SummaryCards({
             Stored balance-sheet detail
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            Stored finance balance-sheet snapshots now surface assets,
-            liabilities, and net asset positions directly inside Tokoroa Alpine Club - Bookings
-            for finance viewers and managers.
+            Review assets, liabilities, and net assets from stored
+            balance-sheet snapshots.
           </p>
         </div>
       </div>
@@ -189,22 +188,19 @@ export default async function FinanceBalanceSheetPage({
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Stored balance-sheet positions from durable finance snapshots
+                Stored balance-sheet positions
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                This page turns the landed `BALANCE_SHEET` finance snapshot
-                dataset into a native `/finance/balance-sheet` report with
-                summary cards, stored snapshot detail, and line-item
-                comparisons across the selected stored positions.
+                Review stored balance-sheet snapshots with summary cards,
+                snapshot detail, and line-item comparisons.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Balance-sheet figures on this page
-              come from stored finance snapshots synced through the finance-only
-              Xero boundary. No Tokoroa Alpine Club booking totals, payment-derived
-              cash summaries, or live Xero reads are used here.
+              come from stored finance snapshots. Booking totals, payment cash
+              summaries, and live Xero calls are not used here.
             </div>
 
             <form action="/finance/balance-sheet" className="space-y-4">
@@ -247,12 +243,11 @@ export default async function FinanceBalanceSheetPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-lg text-slate-900">
-              Report actions and source notes
+              Report notes
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
-              Balance-sheet figures stay explicitly finance-snapshot-backed here
-              so they are not conflated with Tokoroa Alpine Club operational booking,
-              payment, or cash-report totals.
+              Balance-sheet figures on this page come only from stored finance
+              snapshots.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -261,10 +256,10 @@ export default async function FinanceBalanceSheetPage({
                 <Link href="/api/finance/sync/status" target="_blank" rel="noreferrer">
                   <span className="text-left">
                     <span className="block text-sm font-medium">
-                      Open sync diagnostics JSON
+                      View sync diagnostics
                     </span>
                     <span className="block text-xs text-slate-500">
-                      Manager-only detail for the latest durable finance sync.
+                      Technical detail for the latest finance sync.
                     </span>
                   </span>
                   <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />

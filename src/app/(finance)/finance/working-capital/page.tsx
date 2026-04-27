@@ -64,9 +64,8 @@ function SummaryCards({
             Current-position detail from stored balance-sheet snapshots
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            This page derives current assets, current liabilities, working
-            capital, and current-assets coverage from stored finance
-            balance-sheet snapshots inside Tokoroa Alpine Club - Bookings.
+            Review current assets, current liabilities, working capital, and
+            current-ratio coverage from stored balance-sheet snapshots.
           </p>
         </div>
       </div>
@@ -177,21 +176,19 @@ export default async function FinanceWorkingCapitalPage({
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Current working-capital coverage from durable finance snapshots
+                Current working-capital coverage
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                This page turns the landed `BALANCE_SHEET` finance snapshot
-                dataset into a native `/finance/working-capital` report with
-                explicit current-section assumptions, summary cards, and stored
-                period comparisons.
+                Review stored balance-sheet snapshots with working-capital
+                summary cards and period comparisons.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Working-capital figures on this
-              page come from stored balance-sheet snapshots only. No Tokoroa Alpine Club
-              booking totals, payment-derived cash summaries, live Xero reads,
+              page come from stored balance-sheet snapshots only. Booking
+              totals, payment cash summaries, live Xero reads,
               or forecasting calculations are used here.
             </div>
 
@@ -240,8 +237,8 @@ export default async function FinanceWorkingCapitalPage({
                   Working-capital actions
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600">
-                  Cross-check current-position assumptions against the adjacent
-                  finance reports without mixing source ownership.
+                  Cross-check working-capital figures against the related
+                  balance-sheet and cash reports.
                 </CardDescription>
               </div>
               <Badge variant={model.isManager ? "secondary" : "outline"}>

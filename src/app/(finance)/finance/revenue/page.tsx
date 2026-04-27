@@ -57,9 +57,8 @@ function SummaryCards({
             Monthly finance snapshot detail
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            Stored monthly profit-and-loss snapshots now surface revenue totals
-            and line-item mix directly inside Tokoroa Alpine Club - Bookings for finance viewers
-            and managers.
+            Review revenue totals and line-item mix from the stored monthly
+            finance snapshots.
           </p>
         </div>
       </div>
@@ -182,22 +181,19 @@ export default async function FinanceRevenuePage({
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Monthly revenue from durable finance snapshots
+                Monthly revenue from stored finance snapshots
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                This page turns the landed profit-and-loss monthly finance
-                snapshot dataset into a native `/finance/revenue` report with
-                summary cards, monthly detail, and revenue line breakdowns for
-                the selected stored periods.
+                Review stored revenue snapshots with summary cards, monthly
+                detail, and revenue line breakdowns.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
               Generated {model.generatedOn}. Revenue totals on this page come
-              from stored finance snapshots synced through the finance-only
-              Xero boundary. No Tokoroa Alpine Club booking metrics or live Xero reads
-              are used here.
+              from stored finance snapshots. Booking metrics and live Xero
+              calls are not used here.
             </div>
 
             <form action="/finance/revenue" className="space-y-4">
@@ -240,11 +236,11 @@ export default async function FinanceRevenuePage({
         <Card>
           <CardHeader>
             <CardTitle className="text-lg text-slate-900">
-              Report actions and source notes
+              Report notes
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
-              Revenue stays explicitly finance-snapshot-backed here so it is not
-              conflated with Tokoroa Alpine Club booking totals or payment-derived cash.
+              Revenue figures on this page come only from stored finance
+              snapshots.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -253,10 +249,10 @@ export default async function FinanceRevenuePage({
                 <Link href="/api/finance/sync/status" target="_blank" rel="noreferrer">
                   <span className="text-left">
                     <span className="block text-sm font-medium">
-                      Open sync diagnostics JSON
+                      View sync diagnostics
                     </span>
                     <span className="block text-xs text-slate-500">
-                      Manager-only detail for the latest durable finance sync.
+                      Technical detail for the latest finance sync.
                     </span>
                   </span>
                   <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />
