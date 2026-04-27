@@ -5,6 +5,7 @@ PROJECT_DIR="${PROJECT_DIR:-$HOME/TACBookings}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-180}"
 PRUNE_UNTIL="${PRUNE_UNTIL:-12h}"
 FORCE_NO_CACHE="${FORCE_NO_CACHE:-0}"
+SKIP_APP_IMAGE_BUILD="${SKIP_APP_IMAGE_BUILD:-0}"
 BLUE_GREEN_DRAIN_SECONDS="${BLUE_GREEN_DRAIN_SECONDS:-30}"
 ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS="${ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS:-0}"
 BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
@@ -460,6 +461,19 @@ maybe_pull_latest() {
 }
 
 build_images() {
+  local cron_image_ref
+  local target_image_ref
+  local migrate_image_ref
+
+  if [ "$SKIP_APP_IMAGE_BUILD" = "1" ]; then
+    cron_image_ref="$(get_service_image_ref "$CRON_SERVICE")"
+    target_image_ref="$(get_service_image_ref "$TARGET_SERVICE")"
+    migrate_image_ref="$(get_service_image_ref "$MIGRATE_SERVICE")"
+    info "Skipping app image build because SKIP_APP_IMAGE_BUILD=1."
+    info "Reusing images: ${cron_image_ref}, ${target_image_ref}, ${migrate_image_ref}"
+    return 0
+  fi
+
   if [ "$FORCE_NO_CACHE" = "1" ]; then
     docker compose build --pull --no-cache "$CRON_SERVICE" "$TARGET_SERVICE" "$MIGRATE_SERVICE"
   else
@@ -804,6 +818,7 @@ verify_cron_registration() {
   local pattern
   local patterns=(
     "Scheduled pending booking confirmation"
+    "Scheduled daily finance sync"
     "Scheduled database backup"
     "Scheduled data pruning"
     "Scheduled draft cleanup"
@@ -812,7 +827,6 @@ verify_cron_registration() {
     "Scheduled capacity warnings"
     "Scheduled admin daily digest"
     "Scheduled email retry"
-    "Scheduled post-stay feedback requests"
     "Scheduled complete bookings"
     "Scheduled hut leader auto-assign"
     "Scheduled age-up check"
