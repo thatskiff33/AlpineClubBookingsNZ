@@ -181,6 +181,15 @@ describe("getFailedXeroOperationOverview", () => {
         localId: "payment_2",
         correlationKey: "payment:payment_2:refund-credit-note:2500:v1",
       }),
+      makeOperation({
+        id: "credit_failed_other_amount",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "payment_2",
+        correlationKey: "payment:payment_2:refund-credit-note:100:v1",
+        createdAt: new Date("2026-04-26T00:05:00.000Z"),
+      }),
     ];
 
     mocks.prisma.xeroSyncOperation.findMany.mockImplementation(async ({ where }: any) => {
@@ -204,8 +213,11 @@ describe("getFailedXeroOperationOverview", () => {
     const overview = await getFailedXeroOperationOverview();
 
     expect(overview.activeFailedCount).toBe(0);
-    expect(overview.legacyFailedCount).toBe(1);
+    expect(overview.legacyFailedCount).toBe(2);
     expect(overview.resolutions.get("credit_failed")).toMatchObject({
+      state: "REPAIRED",
+    });
+    expect(overview.resolutions.get("credit_failed_other_amount")).toMatchObject({
       state: "REPAIRED",
     });
   });

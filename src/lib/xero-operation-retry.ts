@@ -16,6 +16,7 @@ type RetryableOperation = Pick<
   | "requestPayload"
   | "responsePayload"
   | "xeroObjectId"
+  | "xeroObjectNumber"
 >;
 
 export class XeroOperationRetryError extends Error {
@@ -308,7 +309,7 @@ function parseRefundCreditNoteRepairInput(
 }
 
 async function repairRefundCreditNoteFollowUpActions(
-  operation: Pick<RetryableOperation, "id" | "localId" | "responsePayload">,
+  operation: Pick<RetryableOperation, "id" | "localId" | "responsePayload" | "xeroObjectNumber">,
   xero: typeof import("@/lib/xero"),
   repair: {
     creditNoteId: string;
@@ -347,12 +348,14 @@ async function repairRefundCreditNoteFollowUpActions(
     },
     xeroObjectType: "CREDIT_NOTE",
     xeroObjectId: repair.creditNoteId,
+    xeroObjectNumber: operation.xeroObjectNumber ?? null,
     extraLinks: [
       {
         localModel: "Payment",
         localId: operation.localId!,
         xeroObjectType: "CREDIT_NOTE",
         xeroObjectId: repair.creditNoteId,
+        xeroObjectNumber: operation.xeroObjectNumber ?? null,
         role: "REFUND_CREDIT_NOTE",
       },
     ],

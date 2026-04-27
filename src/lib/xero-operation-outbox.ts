@@ -4,7 +4,9 @@ import { prisma } from "@/lib/prisma";
 import {
   buildXeroIdempotencyKey,
   failXeroSyncOperation,
+  findCanonicalPaymentRefundCreditNote,
   startXeroSyncOperation,
+  upsertXeroObjectLink,
 } from "@/lib/xero-sync";
 import {
   buildEntranceFeeInvoiceIdempotencyKey,
@@ -473,25 +475,32 @@ export async function enqueueXeroRefundCreditNoteOperation(
     throw new Error(`Payment not found: ${paymentId}`);
   }
 
-  if (payment.xeroRefundCreditNoteId) {
+  if (refundAmountCents <= 0) {
     return {
       queueOperationId: null,
-      message: "Xero refund credit note already linked for this payment.",
+      message: "No additional Xero refund credit note is required for this payment.",
     };
   }
 
-  const existingLink = await prisma.xeroObjectLink.findFirst({
-    where: {
+  const canonicalLink = await findCanonicalPaymentRefundCreditNote(paymentId);
+  if (canonicalLink) {
+    if (payment.xeroRefundCreditNoteId !== canonicalLink.xeroObjectId) {
+      await prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          xeroRefundCreditNoteId: canonicalLink.xeroObjectId,
+        },
+      });
+    }
+    await upsertXeroObjectLink({
       localModel: "Payment",
       localId: paymentId,
       xeroObjectType: "CREDIT_NOTE",
+      xeroObjectId: canonicalLink.xeroObjectId,
+      xeroObjectNumber: canonicalLink.xeroObjectNumber,
       role: "REFUND_CREDIT_NOTE",
-      active: true,
-    },
-    select: { id: true },
-  });
+    });
 
-  if (existingLink) {
     return {
       queueOperationId: null,
       message: "Xero refund credit note already linked for this payment.",

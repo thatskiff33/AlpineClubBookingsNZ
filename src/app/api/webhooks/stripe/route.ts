@@ -517,7 +517,9 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     return;
   }
 
-  const refundedAmount = charge.amount_refunded;
+  const stripeRefundedAmount = charge.amount_refunded;
+  const refundedAmount = Math.max(payment.refundedAmountCents, stripeRefundedAmount);
+  const refundDeltaCents = Math.max(refundedAmount - payment.refundedAmountCents, 0);
   const isFullRefund = refundedAmount >= payment.amountCents;
 
   await prisma.payment.update({
@@ -528,29 +530,46 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
     },
   });
 
-  logger.info({ paymentId: payment.id, refundedAmount, isFullRefund }, "Refund processed for payment");
+  logger.info(
+    {
+      paymentId: payment.id,
+      refundedAmount,
+      refundDeltaCents,
+      previousRefundedAmountCents: payment.refundedAmountCents,
+      stripeRefundedAmount,
+      isFullRefund,
+    },
+    "Refund processed for payment"
+  );
 
-  // Queue the Xero refund credit note durably and try to kick the worker.
-  try {
-    const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
-      payment.id,
-      refundedAmount
-    );
-
-    if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
-      await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-      logger.info(
-        { paymentId: payment.id, queueOperationId: queuedCreditNote.queueOperationId },
-        "Xero refund credit note queued for payment"
+  if (refundDeltaCents > 0) {
+    // Queue only the newly-observed refund delta from Stripe. charge.amount_refunded is cumulative.
+    try {
+      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
+        payment.id,
+        refundDeltaCents
       );
+
+      if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
+        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+        logger.info(
+          { paymentId: payment.id, queueOperationId: queuedCreditNote.queueOperationId },
+          "Xero refund credit note queued for payment"
+        );
+      }
+    } catch (xeroErr) {
+      logger.error({ err: xeroErr, paymentId: payment.id }, "Failed to queue Xero credit note for payment");
+      notifyXeroSyncError({
+        errorType: "CREDIT_NOTE_CREATION",
+        operation: `Queue refund credit note for payment ${payment.id}`,
+        errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
+      }).catch(() => {});
     }
-  } catch (xeroErr) {
-    logger.error({ err: xeroErr, paymentId: payment.id }, "Failed to queue Xero credit note for payment");
-    notifyXeroSyncError({
-      errorType: "CREDIT_NOTE_CREATION",
-      operation: `Queue refund credit note for payment ${payment.id}`,
-      errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
-    }).catch(() => {});
+  } else {
+    logger.info(
+      { paymentId: payment.id, refundedAmount, stripeRefundedAmount },
+      "Stripe refund webhook did not increase the local refunded total; skipping Xero refund credit note queue"
+    );
   }
 }
 
