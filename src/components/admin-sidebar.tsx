@@ -58,7 +58,7 @@ const navSections: NavSection[] = [
       { href: "/admin/bookings", label: "Bookings", icon: BookOpen },
       { href: "/admin/waitlist", label: "Waitlist", icon: Clock },
       { href: "/admin/payments", label: "Payments", icon: CreditCard },
-      { href: "/admin/refund-requests", label: "Refund Appeals", icon: RotateCcw },
+      { href: "/admin/refund-requests", label: "Refunds & Credits", icon: RotateCcw },
       { href: "/admin/reports", label: "Reports", icon: BarChart2 },
     ],
   },
@@ -168,11 +168,35 @@ function usePendingRefundAppeals(): number {
   return count;
 }
 
+function usePendingCreditApprovals(): number {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/admin/credit-approvals?status=PENDING")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data)) {
+          setCount(data.length);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return count;
+}
+
 function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const pendingFamilyRequests = usePendingFamilyRequests();
   const pendingApplications = usePendingApplications();
   const pendingRefundAppeals = usePendingRefundAppeals();
+  const pendingCreditApprovals = usePendingCreditApprovals();
 
   // Map href -> badge count
   const badges: Record<string, number> = {};
@@ -182,8 +206,9 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
   if (pendingFamilyRequests > 0) {
     badges["/admin/family-groups"] = pendingFamilyRequests;
   }
-  if (pendingRefundAppeals > 0) {
-    badges["/admin/refund-requests"] = pendingRefundAppeals;
+  if (pendingRefundAppeals + pendingCreditApprovals > 0) {
+    badges["/admin/refund-requests"] =
+      pendingRefundAppeals + pendingCreditApprovals;
   }
 
   return (

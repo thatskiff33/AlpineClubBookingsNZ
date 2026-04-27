@@ -148,6 +148,7 @@ export async function GET(req: NextRequest) {
   if (q) {
     andConditions.push({
       OR: [
+        { id: { startsWith: q } },
         { firstName: { contains: q, mode: "insensitive" } },
         { lastName: { contains: q, mode: "insensitive" } },
         { email: { contains: q, mode: "insensitive" } },

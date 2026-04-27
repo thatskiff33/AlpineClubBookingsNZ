@@ -26,6 +26,51 @@ type AdminAdjustmentRequestRecord = Prisma.AdminCreditAdjustmentRequestGetPayloa
   select: typeof adminAdjustmentRequestSelect;
 }>;
 
+const adminAdjustmentRequestListSelect = {
+  id: true,
+  memberId: true,
+  amountCents: true,
+  description: true,
+  status: true,
+  requestedById: true,
+  reviewedById: true,
+  reviewedAt: true,
+  createdAt: true,
+  member: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+    },
+  },
+  requestedBy: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+    },
+  },
+  reviewedBy: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+    },
+  },
+  approvedCredit: {
+    select: {
+      id: true,
+      createdAt: true,
+    },
+  },
+} satisfies Prisma.AdminCreditAdjustmentRequestSelect;
+
+export type AdminAdjustmentRequestListItem =
+  Prisma.AdminCreditAdjustmentRequestGetPayload<{
+    select: typeof adminAdjustmentRequestListSelect;
+  }>;
+
 /**
  * Get a member's available credit balance (sum of all credit entries).
  * Positive entries = credit added, negative entries = credit used.
@@ -202,6 +247,24 @@ export async function getPendingAdminAdjustmentRequests(memberId: string) {
         select: { id: true, firstName: true, lastName: true },
       },
     },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+/**
+ * Get admin adjustment requests across all members for the shared review queue.
+ */
+export async function getAdminAdjustmentRequests(
+  status: AdminCreditAdjustmentRequestStatus | "ALL" = AdminCreditAdjustmentRequestStatus.PENDING
+): Promise<AdminAdjustmentRequestListItem[]> {
+  return prisma.adminCreditAdjustmentRequest.findMany({
+    where:
+      status === "ALL"
+        ? undefined
+        : {
+            status,
+          },
+    select: adminAdjustmentRequestListSelect,
     orderBy: { createdAt: "desc" },
   });
 }

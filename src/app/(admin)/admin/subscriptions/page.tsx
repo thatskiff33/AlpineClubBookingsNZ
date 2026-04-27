@@ -43,6 +43,7 @@ interface Subscription {
 }
 
 interface Summary { total: number; paid: number; unpaid: number; overdue: number; notInvoiced: number; }
+type MembershipSyncMode = "incremental" | "backfill";
 
 export default function SubscriptionsPage() {
   const [seasonYear, setSeasonYear] = useState(currentYear);
@@ -53,18 +54,31 @@ export default function SubscriptionsPage() {
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState<Summary>({ total: 0, paid: 0, unpaid: 0, overdue: 0, notInvoiced: 0 });
   const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
+  const [syncing, setSyncing] = useState<MembershipSyncMode | null>(null);
   const [syncMessage, setSyncMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  async function handleSync() {
-    if (!confirm(`Sync subscriptions for ${seasonYear}-${seasonYear + 1} from Xero? This may take a few minutes for large member lists.`)) return;
-    setSyncing(true);
+  async function handleSync(mode: MembershipSyncMode) {
+    const label =
+      mode === "incremental"
+        ? "Run the incremental Xero subscription refresh for this season?"
+        : "Run the repair backfill for linked members still showing Not Invoiced? This checks a broader stale-member set and may take longer.";
+    if (!confirm(label)) return;
+    setSyncing(mode);
     setSyncMessage(null);
     try {
-      const res = await fetch(`/api/admin/xero/sync-memberships?seasonYear=${seasonYear}`, { method: "POST" });
+      const res = await fetch(
+        `/api/admin/xero/sync-memberships?seasonYear=${seasonYear}&mode=${mode}`,
+        { method: "POST" }
+      );
       const data = await res.json();
       if (res.ok) {
-        setSyncMessage({ type: "success", text: `Synced ${data.checked} members (${data.updated} updated)` });
+        setSyncMessage({
+          type: "success",
+          text:
+            mode === "incremental"
+              ? `Incremental sync checked ${data.checked} members (${data.updated} updated)`
+              : `Backfill repair checked ${data.checked} members (${data.updated} updated)`,
+        });
         fetchData();
       } else {
         setSyncMessage({ type: "error", text: data.error || "Sync failed" });
@@ -72,7 +86,7 @@ export default function SubscriptionsPage() {
     } catch {
       setSyncMessage({ type: "error", text: "Sync failed — check Xero connection" });
     } finally {
-      setSyncing(false);
+      setSyncing(null);
     }
   }
 
@@ -124,14 +138,31 @@ export default function SubscriptionsPage() {
             </SelectContent>
           </Select>
         </div>
-        <Button variant="outline" onClick={handleSync} disabled={syncing}>
+        <Button
+          variant="outline"
+          onClick={() => handleSync("incremental")}
+          disabled={syncing !== null}
+        >
           <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
-          {syncing ? "Syncing..." : "Sync from Xero"}
+          {syncing === "incremental" ? "Syncing..." : "Incremental Sync"}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => handleSync("backfill")}
+          disabled={syncing !== null}
+        >
+          <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? "animate-spin" : ""}`} />
+          {syncing === "backfill" ? "Repairing..." : "Repair Stale Linked Members"}
         </Button>
       </div>
       <p className="text-xs text-amber-700">
         Only linked members are checked in Xero. Unlinked members stay Not
         Invoiced until a Xero contact is linked or created.
+      </p>
+      <p className="text-xs text-slate-500">
+        Incremental sync is the normal low-cost refresh. The repair action is a
+        manual backfill for linked members who may be stuck after historical
+        Xero invoices were created before the link existed.
       </p>
 
       {syncMessage && (
