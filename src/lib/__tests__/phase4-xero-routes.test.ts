@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
   getXeroContactGroupMismatchSnapshot: vi.fn(),
+  getXeroContactLinkMismatchSnapshot: vi.fn(),
   syncContactsFromXero: vi.fn(),
   importMembersFromXeroGroups: vi.fn(),
   logger: {
@@ -23,6 +24,9 @@ vi.mock("@/lib/session-guards", () => ({
 }));
 vi.mock("@/lib/age-tier-xero-groups", () => ({
   getXeroContactGroupMismatchSnapshot: mocks.getXeroContactGroupMismatchSnapshot,
+}));
+vi.mock("@/lib/xero-contact-link-mismatches", () => ({
+  getXeroContactLinkMismatchSnapshot: mocks.getXeroContactLinkMismatchSnapshot,
 }));
 vi.mock("@/lib/xero", () => ({
   syncContactsFromXero: mocks.syncContactsFromXero,
@@ -148,6 +152,36 @@ describe("Phase 4 Xero admin routes", () => {
     expect(res.status).toBe(200);
     expect(mocks.getXeroContactGroupMismatchSnapshot).toHaveBeenCalledWith({
       limit: 50,
+    });
+  });
+
+  it("returns the contact link mismatch snapshot", async () => {
+    mocks.getXeroContactLinkMismatchSnapshot.mockResolvedValue({
+      cacheReady: true,
+      lastRefreshedAt: "2026-04-26T00:00:00.000Z",
+      count: 1,
+      mismatches: [
+        {
+          memberId: "member_1",
+          memberName: "Jane Doe",
+          memberEmail: "jane@example.com",
+          active: true,
+          xeroContactId: "contact_1",
+          xeroContactName: "John Doe",
+          xeroContactEmail: "jane@example.com",
+          reasons: ["First name differs"],
+        },
+      ],
+    });
+
+    const { GET } = await import("@/app/api/admin/xero/contact-link-mismatches/route");
+    const res = await GET(
+      new NextRequest("http://localhost/api/admin/xero/contact-link-mismatches?limit=25")
+    );
+
+    expect(res.status).toBe(200);
+    expect(mocks.getXeroContactLinkMismatchSnapshot).toHaveBeenCalledWith({
+      limit: 25,
     });
   });
 });

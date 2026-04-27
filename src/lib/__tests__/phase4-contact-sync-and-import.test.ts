@@ -46,7 +46,9 @@ const mocks = vi.hoisted(() => {
         updateMany: vi.fn(),
       },
       member: {
+        findUnique: vi.fn(),
         findFirst: vi.fn(),
+        findMany: vi.fn(),
         update: vi.fn(),
         create: vi.fn(),
       },
@@ -141,6 +143,7 @@ vi.mock("xero-node", () => ({
 }));
 
 import {
+  findPotentialXeroContactsForMember,
   importMembersFromXeroGroups,
   syncContactsFromXero,
 } from "@/lib/xero";
@@ -172,6 +175,8 @@ describe("Phase 4 contact sync and cached import", () => {
       id: "member_new",
       email: "new@example.com",
     });
+    mocks.prisma.member.findUnique.mockResolvedValue(null);
+    mocks.prisma.member.findMany.mockResolvedValue([]);
     mocks.prisma.familyGroupMember.findFirst.mockResolvedValue(null);
     mocks.prisma.familyGroupMember.create.mockResolvedValue({});
     mocks.prisma.familyGroupMember.createMany.mockResolvedValue({});
@@ -400,6 +405,170 @@ describe("Phase 4 contact sync and cached import", () => {
         }),
       })
     );
+  });
+
+  it("does not auto-link a member when the email matches but the names differ", async () => {
+    mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue({
+      cursorDateTime: null,
+      lastSuccessfulSyncAt: new Date("2026-04-14T10:05:00.000Z"),
+      metadata: {},
+    });
+    mocks.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact_mismatch",
+            name: "John Smith",
+            firstName: "John",
+            lastName: "Smith",
+            emailAddress: "shared@example.com",
+          },
+        ],
+      },
+    });
+    mocks.prisma.member.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "member_1",
+        firstName: "Jane",
+        lastName: "Doe",
+        email: "shared@example.com",
+        active: true,
+        xeroContactId: null,
+        joinedDate: null,
+        phoneNumber: null,
+        streetAddressLine1: null,
+        postalAddressLine1: null,
+      });
+
+    const report = await syncContactsFromXero();
+
+    expect(report.updated).toEqual([]);
+    expect(report.skippedNameMismatch).toEqual([
+      {
+        memberId: "member_1",
+        memberName: "Jane Doe",
+        memberEmail: "shared@example.com",
+        xeroContactId: "contact_mismatch",
+        xeroContactName: "John Smith",
+        xeroContactEmail: "shared@example.com",
+        reasons: ["First name differs", "Last name differs"],
+      },
+    ]);
+    expect(mocks.prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("does not backfill an already-linked member when the linked contact name differs", async () => {
+    mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue({
+      cursorDateTime: null,
+      lastSuccessfulSyncAt: new Date("2026-04-14T10:05:00.000Z"),
+      metadata: {},
+    });
+    mocks.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact_linked_mismatch",
+            name: "John Smith",
+            firstName: "John",
+            lastName: "Smith",
+            emailAddress: "linked@example.com",
+            phones: [
+              {
+                phoneType: "MOBILE",
+                phoneCountryCode: "64",
+                phoneAreaCode: "27",
+                phoneNumber: "1234567",
+              },
+            ],
+            addresses: [
+              {
+                addressType: "STREET",
+                addressLine1: "1 Alpine Way",
+                city: "Wanaka",
+                region: "Otago",
+                postalCode: "9305",
+                country: "NZ",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mocks.prisma.member.findFirst.mockResolvedValueOnce({
+      id: "member_1",
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "linked@example.com",
+      active: true,
+      xeroContactId: "contact_linked_mismatch",
+      joinedDate: null,
+      phoneNumber: null,
+      streetAddressLine1: null,
+      postalAddressLine1: null,
+    });
+
+    const report = await syncContactsFromXero();
+
+    expect(report.updated).toEqual([]);
+    expect(report.skippedNameMismatch).toEqual([
+      {
+        memberId: "member_1",
+        memberName: "Jane Doe",
+        memberEmail: "linked@example.com",
+        xeroContactId: "contact_linked_mismatch",
+        xeroContactName: "John Smith",
+        xeroContactEmail: "linked@example.com",
+        reasons: ["First name differs", "Last name differs"],
+      },
+    ]);
+    expect(mocks.prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("finds potential Xero contacts even when accents or punctuation differ", async () => {
+    mocks.prisma.member.findUnique.mockResolvedValue({
+      id: "member_1",
+      firstName: "José",
+      lastName: "O'Connor-Smith",
+      email: "jose@example.com",
+    });
+    mocks.accountingApi.getContacts
+      .mockResolvedValueOnce({
+        body: {
+          contacts: [
+            {
+              contactID: "contact_1",
+              name: "Jose O Connor Smith",
+              emailAddress: "jose@example.com",
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        body: {
+          contacts: [
+            {
+              contactID: "contact_1",
+              name: "Jose O Connor Smith",
+              emailAddress: "jose@example.com",
+            },
+          ],
+        },
+      });
+
+    const matches = await findPotentialXeroContactsForMember("member_1");
+
+    expect(matches).toEqual([
+      {
+        contactId: "contact_1",
+        name: "Jose O Connor Smith",
+        email: "jose@example.com",
+        isLinked: false,
+        linkedMemberName: null,
+        matchReasons: ["Exact email match", "Exact name match"],
+        xeroLink: "https://xero.test/contacts/contact_1",
+      },
+    ]);
   });
 
   it("imports members from cached group memberships and cached contacts without live Xero fetches", async () => {

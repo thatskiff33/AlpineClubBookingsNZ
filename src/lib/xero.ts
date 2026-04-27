@@ -34,6 +34,10 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
+import {
+  getMemberXeroContactLinkMismatch,
+  type XeroContactLinkMismatchEntry,
+} from "@/lib/xero-contact-link-mismatches";
 
 // ---------------------------------------------------------------------------
 // Rate limit error
@@ -104,6 +108,16 @@ export interface CreateXeroModificationCreditNoteOptions
 export interface CreateXeroUnappliedCreditNoteOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;
+}
+
+export interface PotentialXeroContactMatch {
+  contactId: string;
+  name: string;
+  email: string | null;
+  isLinked: boolean;
+  linkedMemberName: string | null;
+  matchReasons: string[];
+  xeroLink: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +209,16 @@ interface CheckMembershipStatusOptions {
 }
 
 function normalizeXeroContactMatchValue(value: string | null | undefined): string {
-  return value?.trim().replace(/\s+/g, " ").toLowerCase() ?? "";
+  return (
+    value
+      ?.trim()
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim() ?? ""
+  );
 }
 
 function buildMemberFullName(member: {
@@ -221,6 +244,35 @@ function buildXeroContactDisplayName(contact: Pick<Contact, "name" | "firstName"
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function tokenizeXeroContactMatchValue(value: string | null | undefined): string[] {
+  return normalizeXeroContactMatchValue(value)
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function namesLookSimilarForPotentialMatch(
+  memberName: string,
+  contactName: string
+): boolean {
+  const memberTokens = [...new Set(tokenizeXeroContactMatchValue(memberName))];
+  const contactTokens = new Set(tokenizeXeroContactMatchValue(contactName));
+
+  if (memberTokens.length === 0 || contactTokens.size === 0) {
+    return false;
+  }
+
+  let matchedTokens = 0;
+  for (const token of memberTokens) {
+    if (contactTokens.has(token)) {
+      matchedTokens += 1;
+    }
+  }
+
+  const requiredMatches = Math.min(memberTokens.length, 2);
+  return matchedTokens >= requiredMatches;
 }
 
 function isDuplicateActiveXeroContactNameError(error: unknown): boolean {
@@ -1588,10 +1640,34 @@ export interface SyncReport {
   created: Array<{ name: string; email: string; xeroContactId: string; group?: string }>;
   updated: Array<{ name: string; memberId: string; xeroContactId: string; changes: string[] }>;
   skippedNoChanges: number;
+  skippedNameMismatch: Array<{
+    memberId: string;
+    memberName: string;
+    memberEmail: string;
+    xeroContactId: string;
+    xeroContactName: string;
+    xeroContactEmail: string | null;
+    reasons: string[];
+  }>;
   skippedNoEmail: Array<{ name: string; xeroContactId: string }>;
   skippedOther: Array<{ name: string; xeroContactId?: string; reason: string }>;
   errors: Array<{ name: string; xeroContactId?: string; error: string }>;
   total: number;
+}
+
+function addNameMismatchToSyncReport(
+  report: SyncReport,
+  mismatch: XeroContactLinkMismatchEntry
+) {
+  report.skippedNameMismatch.push({
+    memberId: mismatch.memberId,
+    memberName: mismatch.memberName,
+    memberEmail: mismatch.memberEmail,
+    xeroContactId: mismatch.xeroContactId,
+    xeroContactName: mismatch.xeroContactName,
+    xeroContactEmail: mismatch.xeroContactEmail,
+    reasons: mismatch.reasons,
+  });
 }
 
 export async function syncContactsFromXero(
@@ -1616,6 +1692,7 @@ export async function syncContactsFromXero(
     created: [],
     updated: [],
     skippedNoChanges: 0,
+    skippedNameMismatch: [],
     skippedNoEmail: [],
     skippedOther: [],
     errors: [],
@@ -1686,6 +1763,37 @@ export async function syncContactsFromXero(
         where: { xeroContactId: contact.contactID },
       });
       if (alreadyLinked) {
+        const mismatch = getMemberXeroContactLinkMismatch(
+          {
+            id: alreadyLinked.id,
+            firstName: alreadyLinked.firstName,
+            lastName: alreadyLinked.lastName,
+            email: alreadyLinked.email,
+            active: alreadyLinked.active,
+            xeroContactId: contact.contactID,
+          },
+          {
+            contactId: contact.contactID,
+            name: cachedContact.name,
+            firstName: cachedContact.firstName,
+            lastName: cachedContact.lastName,
+            emailAddress: cachedContact.emailAddress,
+          }
+        );
+
+        if (mismatch) {
+          addNameMismatchToSyncReport(report, mismatch);
+          logger.warn(
+            {
+              memberId: alreadyLinked.id,
+              xeroContactId: contact.contactID,
+              reasons: mismatch.reasons,
+            },
+            "Skipped Xero contact backfill because linked member and contact names differ"
+          );
+          continue;
+        }
+
         const changes: string[] = [];
         const updateData: Record<string, unknown> = {};
 
@@ -1787,6 +1895,37 @@ export async function syncContactsFromXero(
 
       const changes: string[] = [];
       const updateData: Record<string, unknown> = {};
+
+      const mismatch = getMemberXeroContactLinkMismatch(
+        {
+          id: member.id,
+          firstName: member.firstName,
+          lastName: member.lastName,
+          email: member.email,
+          active: member.active,
+          xeroContactId: contact.contactID,
+        },
+        {
+          contactId: contact.contactID,
+          name: cachedContact.name,
+          firstName: cachedContact.firstName,
+          lastName: cachedContact.lastName,
+          emailAddress: cachedContact.emailAddress,
+        }
+      );
+
+      if (mismatch) {
+        addNameMismatchToSyncReport(report, mismatch);
+        logger.warn(
+          {
+            memberId: member.id,
+            xeroContactId: contact.contactID,
+            reasons: mismatch.reasons,
+          },
+          "Skipped Xero contact auto-link because member and contact names differ"
+        );
+        continue;
+      }
 
       if (member.xeroContactId !== contact.contactID) {
         updateData.xeroContactId = contact.contactID;
@@ -6369,6 +6508,161 @@ export async function createXeroEntranceFeeInvoice(
 // ---------------------------------------------------------------------------
 // Duplicate Contact Detection
 // ---------------------------------------------------------------------------
+
+export async function findPotentialXeroContactsForMember(
+  memberId: string
+): Promise<PotentialXeroContactMatch[]> {
+  const member = await prisma.member.findUnique({
+    where: { id: memberId },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+    },
+  });
+
+  if (!member) {
+    throw new Error(`Member not found: ${memberId}`);
+  }
+
+  const memberFullName = buildMemberFullName(member);
+  const normalizedMemberName = normalizeXeroContactMatchValue(memberFullName);
+  const normalizedMemberEmail = member.email.trim().toLowerCase();
+
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const contactsById = new Map<string, Contact>();
+
+  if (normalizedMemberEmail) {
+    const emailResponse = await callXeroApi(
+      () =>
+        xero.accountingApi.getContacts(
+          tenantId,
+          undefined,
+          `EmailAddress="${member.email.replace(/"/g, "")}"`
+        ),
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "findPotentialXeroContactsForMember",
+        context: `findPotentialXeroContactsForMember searchByEmail(${member.email})`,
+      }
+    );
+
+    for (const contact of emailResponse.body.contacts ?? []) {
+      if (contact.contactID) {
+        contactsById.set(contact.contactID, contact);
+      }
+    }
+  }
+
+  if (memberFullName.length >= 2) {
+    const nameResponse = await callXeroApi(
+      () =>
+        xero.accountingApi.getContacts(
+          tenantId,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          1,
+          false,
+          true,
+          memberFullName.replace(/"/g, ""),
+          20
+        ),
+      {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "findPotentialXeroContactsForMember",
+        context: `findPotentialXeroContactsForMember searchByName(${memberFullName})`,
+      }
+    );
+
+    for (const contact of nameResponse.body.contacts ?? []) {
+      if (contact.contactID) {
+        contactsById.set(contact.contactID, contact);
+      }
+    }
+  }
+
+  const contactIds = [...contactsById.keys()];
+  if (contactIds.length === 0) {
+    return [];
+  }
+
+  const linkedMembers = await prisma.member.findMany({
+    where: {
+      xeroContactId: { in: contactIds },
+    },
+    select: {
+      xeroContactId: true,
+      firstName: true,
+      lastName: true,
+    },
+  });
+  const linkedMemberMap = new Map(
+    linkedMembers.map((linkedMember) => [
+      linkedMember.xeroContactId,
+      `${linkedMember.firstName} ${linkedMember.lastName}`,
+    ])
+  );
+
+  const matches = [...contactsById.values()]
+    .map((contact) => {
+      const contactName = buildXeroContactDisplayName(contact);
+      const normalizedContactName = normalizeXeroContactMatchValue(contactName);
+      const normalizedContactEmail = contact.emailAddress?.trim().toLowerCase() ?? "";
+      const matchReasons: string[] = [];
+
+      if (normalizedMemberEmail && normalizedContactEmail === normalizedMemberEmail) {
+        matchReasons.push("Exact email match");
+      }
+
+      if (normalizedMemberName && normalizedContactName === normalizedMemberName) {
+        matchReasons.push("Exact name match");
+      } else if (
+        memberFullName &&
+        contactName &&
+        namesLookSimilarForPotentialMatch(memberFullName, contactName)
+      ) {
+        matchReasons.push("Similar name match");
+      }
+
+      const linkedMemberName = linkedMemberMap.get(contact.contactID ?? "") ?? null;
+
+      return {
+        contactId: contact.contactID ?? "",
+        name: contactName,
+        email: contact.emailAddress?.trim() || null,
+        isLinked: Boolean(linkedMemberName),
+        linkedMemberName,
+        matchReasons,
+        xeroLink: buildXeroContactUrl(contact.contactID ?? ""),
+      };
+    })
+    .filter(
+      (match) =>
+        Boolean(match.contactId) &&
+        Boolean(match.name) &&
+        match.matchReasons.length > 0
+    );
+
+  const getMatchPriority = (match: PotentialXeroContactMatch) => {
+    if (match.matchReasons.includes("Exact email match")) return 3;
+    if (match.matchReasons.includes("Exact name match")) return 2;
+    return 1;
+  };
+
+  matches.sort((a, b) => {
+    const priorityDiff = getMatchPriority(b) - getMatchPriority(a);
+    if (priorityDiff !== 0) return priorityDiff;
+    if (a.isLinked !== b.isLinked) return Number(a.isLinked) - Number(b.isLinked);
+    return a.name.localeCompare(b.name);
+  });
+
+  return matches.slice(0, 10);
+}
 
 export interface DuplicateContact {
   contactID: string;

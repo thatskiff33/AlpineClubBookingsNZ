@@ -35,12 +35,24 @@ const {
   mockGetXeroContactIdsForGroup,
   mockGetAuthenticatedXeroClient,
   mockCallXeroApi,
+  mockRefreshXeroContactCachesFromContact,
 } = vi.hoisted(() => ({
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
   mockGetXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
   mockGetXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
   mockGetAuthenticatedXeroClient: vi.fn(),
   mockCallXeroApi: vi.fn(),
+  mockRefreshXeroContactCachesFromContact: vi.fn().mockResolvedValue({
+    cachedContact: { contactId: "cached-contact" },
+    groupMemberships: {
+      contactId: "cached-contact",
+      observed: false,
+      contactGroupsSeen: 0,
+      membershipsAdded: 0,
+      membershipsRemoved: 0,
+      groupsTouched: 0,
+    },
+  }),
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: mockIsXeroConnected,
@@ -48,6 +60,7 @@ vi.mock("@/lib/xero", () => ({
   getXeroContactIdsForGroup: mockGetXeroContactIdsForGroup,
   getAuthenticatedXeroClient: mockGetAuthenticatedXeroClient,
   callXeroApi: mockCallXeroApi,
+  refreshXeroContactCachesFromContact: mockRefreshXeroContactCachesFromContact,
   findOrCreateXeroContact: vi.fn(),
 }));
 
@@ -372,6 +385,9 @@ describe("Xero Member Management", () => {
         where: { id: "m1" },
         data: { xeroContactId: "new-xero-id" },
       });
+      expect(mockRefreshXeroContactCachesFromContact).toHaveBeenCalledWith(
+        { contactID: "new-xero-id", name: "Jane Doe" }
+      );
     });
 
     it("rejects linking to a contact already linked to another member", async () => {

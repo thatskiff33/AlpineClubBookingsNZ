@@ -1,21 +1,43 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
   createXeroContactForMember,
+  findPotentialXeroContactsForMember,
   XeroContactValidationError,
 } from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { buildXeroContactUrl } from "@/lib/xero-links";
+import { z } from "zod";
+import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
+import {
+  enqueueXeroEntranceFeeInvoiceOperation,
+  processQueuedXeroOutboxOperations,
+} from "@/lib/xero-operation-outbox";
+
+const pushSchema = z.object({
+  createEntranceFeeInvoice: z.boolean().optional().default(false),
+  forceCreate: z.boolean().optional().default(false),
+});
+
+function scheduleAfterResponse(task: () => Promise<void>) {
+  try {
+    after(task);
+  } catch {
+    queueMicrotask(() => {
+      void task();
+    });
+  }
+}
 
 /**
  * POST /api/admin/members/[id]/xero-push
  * Create a new Xero contact for this member and link them.
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
@@ -42,9 +64,77 @@ export async function POST(
   }
 
   try {
+    let body: unknown = {};
+    const rawBody = await req.text();
+    if (rawBody.trim()) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+      }
+    }
+
+    const parsed = pushSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
+
+    if (!parsed.data.forceCreate) {
+      const suggestedContacts = await findPotentialXeroContactsForMember(id);
+      if (suggestedContacts.length > 0) {
+        return NextResponse.json(
+          {
+            error:
+              "Potential matching Xero contacts already exist. Link one of those contacts or confirm that you want to create a new contact anyway.",
+            suggestedContacts,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     const xeroContactId = await createXeroContactForMember(id, {
       createdByMemberId: session.user.id,
     });
+
+    let entranceFeeInvoiceQueued = false;
+    let entranceFeeInvoiceMessage: string | undefined;
+    let warning: string | undefined;
+
+    if (parsed.data.createEntranceFeeInvoice) {
+      try {
+        const queuedEntranceFeeInvoice =
+          await enqueueXeroEntranceFeeInvoiceOperation(id, {
+            createdByMemberId: session.user.id,
+          });
+
+        entranceFeeInvoiceQueued = Boolean(
+          queuedEntranceFeeInvoice.queueOperationId
+        );
+        entranceFeeInvoiceMessage = queuedEntranceFeeInvoice.message;
+
+        if (queuedEntranceFeeInvoice.queueOperationId) {
+          scheduleAfterResponse(async () => {
+            try {
+              await processQueuedXeroOutboxOperations({ limit: 1 });
+            } catch (xeroErr) {
+              logger.error(
+                { err: xeroErr, memberId: id },
+                "Failed to kick Xero entrance fee outbox worker after contact creation"
+              );
+            }
+          });
+        }
+      } catch (xeroErr) {
+        logger.error(
+          { err: xeroErr, memberId: id },
+          "Failed to queue entrance fee invoice after contact creation"
+        );
+        warning = `Xero contact created, but entrance fee invoice could not be queued: ${
+          xeroErr instanceof Error ? xeroErr.message : String(xeroErr)
+        }`;
+      }
+    }
 
     await logAudit({
       action: "XERO_PUSH",
@@ -58,6 +148,9 @@ export async function POST(
     return NextResponse.json({
       xeroContactId,
       xeroLink: buildXeroContactUrl(xeroContactId),
+      entranceFeeInvoiceQueued,
+      entranceFeeInvoiceMessage,
+      ...(warning ? { warning } : {}),
     });
   } catch (err) {
     if (err instanceof XeroContactValidationError) {
@@ -70,7 +163,10 @@ export async function POST(
       );
     }
 
-    logger.error({ err, memberId: id }, "Error pushing member to Xero");
-    return NextResponse.json({ error: "Failed to create Xero contact" }, { status: 500 });
+    const xeroError = getXeroApiErrorInfo(err, "Failed to create Xero contact");
+    if (!xeroError.handled) {
+      logger.error({ err, memberId: id }, "Error pushing member to Xero");
+    }
+    return NextResponse.json({ error: xeroError.message }, { status: xeroError.status });
   }
 }

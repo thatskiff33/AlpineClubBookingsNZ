@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
+import {
+  callXeroApi,
+  getAuthenticatedXeroClient,
+  refreshXeroContactCachesFromContact,
+} from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import logger from "@/lib/logger";
@@ -81,6 +85,8 @@ export async function POST(
         { status: 409 }
       );
     }
+
+    await refreshXeroContactCachesFromContact(contact);
 
     await prisma.member.update({
       where: { id },

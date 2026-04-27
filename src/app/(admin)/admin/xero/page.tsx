@@ -53,6 +53,15 @@ interface SyncReport {
   created: Array<{ name: string; email: string; xeroContactId: string; group?: string }>
   updated: Array<{ name: string; memberId: string; xeroContactId: string; changes: string[] }>
   skippedNoChanges: number
+  skippedNameMismatch: Array<{
+    memberId: string
+    memberName: string
+    memberEmail: string
+    xeroContactId: string
+    xeroContactName: string
+    xeroContactEmail: string | null
+    reasons: string[]
+  }>
   skippedNoEmail: Array<{ name: string; xeroContactId: string }>
   skippedOther: Array<{ name: string; xeroContactId?: string; reason: string }>
   errors: Array<{ name: string; xeroContactId?: string; error: string }>
@@ -258,6 +267,10 @@ interface XeroHealthSnapshot {
     count: number
     cacheReady: boolean
   }
+  contactLinkMismatches: {
+    count: number
+    cacheReady: boolean
+  }
   apiBudget: {
     status: "healthy" | "warning" | "critical" | "exhausted" | "unknown"
     usagePercent: number | null
@@ -322,11 +335,30 @@ interface ContactGroupMismatchResponse {
   mismatches: ContactGroupMismatch[]
 }
 
+interface ContactLinkMismatch {
+  memberId: string
+  memberName: string
+  memberEmail: string
+  active: boolean
+  xeroContactId: string
+  xeroContactName: string
+  xeroContactEmail: string | null
+  reasons: string[]
+}
+
+interface ContactLinkMismatchResponse {
+  cacheReady: boolean
+  lastRefreshedAt: string | null
+  count: number
+  mismatches: ContactLinkMismatch[]
+}
+
 type MembershipSyncMode = "incremental" | "backfill"
 
 type SectionKey =
   | "health"
   | "contactGroupMismatches"
+  | "contactLinkMismatches"
   | "operations"
   | "inbound"
   | "contactSync"
@@ -339,6 +371,7 @@ const SECTION_STORAGE_KEY = "admin-xero-section-state-v1"
 const SECTION_DEFAULTS: Record<SectionKey, boolean> = {
   health: true,
   contactGroupMismatches: false,
+  contactLinkMismatches: false,
   operations: true,
   inbound: true,
   contactSync: true,
@@ -443,6 +476,27 @@ function SyncReportView({ report }: { report: SyncReport }) {
 
       <SyncReportSection title="Already Linked (No Changes)" count={report.skippedNoChanges}>
         <p className="text-xs text-slate-500 pt-1">{report.skippedNoChanges} contacts were already linked and had no data to update.</p>
+      </SyncReportSection>
+
+      <SyncReportSection title="Skipped — Name Mismatch" count={report.skippedNameMismatch.length} defaultOpen={true}>
+        {report.skippedNameMismatch.map((mismatch, i) => (
+          <div key={i} className="flex items-start justify-between gap-3 text-xs py-1 border-b last:border-0">
+            <div>
+              <a href={`/admin/members/${mismatch.memberId}`} className="text-blue-600 hover:underline font-medium">
+                {mismatch.memberName}
+              </a>
+              <p className="text-slate-500">{mismatch.memberEmail}</p>
+              <p className="text-slate-500">
+                Xero contact: {mismatch.xeroContactName}
+                {mismatch.xeroContactEmail ? ` (${mismatch.xeroContactEmail})` : ""}
+              </p>
+              <p className="text-amber-700">{mismatch.reasons.join(", ")}</p>
+            </div>
+            <a href={`https://go.xero.com/Contacts/View/${mismatch.xeroContactId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline shrink-0">
+              Xero ↗
+            </a>
+          </div>
+        ))}
       </SyncReportSection>
 
       <SyncReportSection title="Skipped — No Email" count={report.skippedNoEmail.length}>
@@ -604,10 +658,13 @@ export default function XeroPage() {
   const [loadingHealth, setLoadingHealth] = useState(false)
   const [contactGroupMismatches, setContactGroupMismatches] = useState<ContactGroupMismatchResponse | null>(null)
   const [loadingContactGroupMismatches, setLoadingContactGroupMismatches] = useState(false)
+  const [contactLinkMismatches, setContactLinkMismatches] = useState<ContactLinkMismatchResponse | null>(null)
+  const [loadingContactLinkMismatches, setLoadingContactLinkMismatches] = useState(false)
   const [missingInvoiceDetails, setMissingInvoiceDetails] = useState<MissingInvoicesResponse | null>(null)
   const [loadingMissingInvoices, setLoadingMissingInvoices] = useState(false)
   const [showMissingInvoices, setShowMissingInvoices] = useState(false)
   const [triggeringMissingInvoices, setTriggeringMissingInvoices] = useState(false)
+  const [unlinkingMismatchMemberId, setUnlinkingMismatchMemberId] = useState<string | null>(null)
   const [retryingAllFailed, setRetryingAllFailed] = useState(false)
   const [forceSyncType, setForceSyncType] = useState<"CONTACT" | "INVOICE" | "MEMBERSHIP">("CONTACT")
   const [forceSyncing, setForceSyncing] = useState(false)
@@ -729,6 +786,20 @@ export default function XeroPage() {
       setError("Failed to load Xero contact group mismatches")
     } finally {
       setLoadingContactGroupMismatches(false)
+    }
+  }, [])
+
+  const fetchContactLinkMismatches = useCallback(async () => {
+    setLoadingContactLinkMismatches(true)
+    try {
+      const res = await fetch("/api/admin/xero/contact-link-mismatches?limit=200")
+      if (!res.ok) throw new Error("Failed to fetch contact link mismatches")
+      const data = await res.json()
+      setContactLinkMismatches(data)
+    } catch {
+      setError("Failed to load Xero contact link mismatches")
+    } finally {
+      setLoadingContactLinkMismatches(false)
     }
   }, [])
 
@@ -955,6 +1026,7 @@ export default function XeroPage() {
     } else {
       setHealthSnapshot(null)
       setContactGroupMismatches(null)
+      setContactLinkMismatches(null)
       setMissingInvoiceDetails(null)
       setShowMissingInvoices(false)
     }
@@ -974,6 +1046,23 @@ export default function XeroPage() {
     fetchContactGroupMismatches,
     loadingContactGroupMismatches,
     sectionOpen.contactGroupMismatches,
+    status?.connected,
+  ])
+
+  useEffect(() => {
+    if (
+      status?.connected &&
+      sectionOpen.contactLinkMismatches &&
+      !contactLinkMismatches &&
+      !loadingContactLinkMismatches
+    ) {
+      void fetchContactLinkMismatches()
+    }
+  }, [
+    contactLinkMismatches,
+    fetchContactLinkMismatches,
+    loadingContactLinkMismatches,
+    sectionOpen.contactLinkMismatches,
     status?.connected,
   ])
 
@@ -1184,6 +1273,32 @@ export default function XeroPage() {
     }
   }
 
+  const handleUnlinkContactMismatch = async (memberId: string) => {
+    setUnlinkingMismatchMemberId(memberId)
+    setOperationMessage("")
+    setError("")
+    try {
+      const res = await fetch(`/api/admin/members/${memberId}/xero-unlink`, {
+        method: "POST",
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to unlink member from Xero")
+      }
+
+      setOperationMessage("Member unlinked from Xero. Open the member record to relink the correct contact.")
+      await Promise.all([
+        fetchHealth(),
+        fetchContactLinkMismatches(),
+        contactGroupMismatches ? fetchContactGroupMismatches() : Promise.resolve(),
+      ])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to unlink member from Xero")
+    } finally {
+      setUnlinkingMismatchMemberId(null)
+    }
+  }
+
   const handleForceSync = async () => {
     const selectedBooking = selectedForceSyncBooking
     const selectedMember = selectedForceSyncMember
@@ -1272,6 +1387,7 @@ export default function XeroPage() {
       setStatus({ connected: false, tenantId: null, tokenExpiresAt: null })
       setSyncResult(null)
       setHealthSnapshot(null)
+      setContactLinkMismatches(null)
       setMissingInvoiceDetails(null)
       setShowMissingInvoices(false)
     } catch {
@@ -1297,6 +1413,9 @@ export default function XeroPage() {
       setSyncResult(data)
       await loadContactGroups()
       await fetchHealth()
+      if (sectionOpen.contactLinkMismatches) {
+        await fetchContactLinkMismatches()
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Contact sync failed")
     } finally {
@@ -1675,7 +1794,7 @@ export default function XeroPage() {
               <p className="text-sm text-muted-foreground">Loading health snapshot...</p>
             ) : healthSnapshot ? (
               <div className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
                   <HealthStatCard
                     label="Unlinked members"
                     value={healthSnapshot.unlinkedMembers.count}
@@ -1750,6 +1869,33 @@ export default function XeroPage() {
                       </Badge>
                     }
                     onClick={() => scrollToSection("contactGroupMismatches")}
+                  />
+                  <HealthStatCard
+                    label="Link mismatches"
+                    value={healthSnapshot.contactLinkMismatches.count}
+                    subtitle={
+                      healthSnapshot.contactLinkMismatches.cacheReady
+                        ? "Linked members whose local name does not match the cached Xero contact name."
+                        : "Run contact sync before name mismatch checks can run."
+                    }
+                    badge={
+                      <Badge
+                        className={
+                          !healthSnapshot.contactLinkMismatches.cacheReady
+                            ? "bg-slate-600"
+                            : healthSnapshot.contactLinkMismatches.count > 0
+                              ? "bg-amber-500"
+                              : "bg-green-600"
+                        }
+                      >
+                        {!healthSnapshot.contactLinkMismatches.cacheReady
+                          ? "Cache needed"
+                          : healthSnapshot.contactLinkMismatches.count > 0
+                            ? "Review"
+                            : "Clear"}
+                      </Badge>
+                    }
+                    onClick={() => scrollToSection("contactLinkMismatches")}
                   />
                   <HealthStatCard
                     label="API budget"
@@ -1980,6 +2126,128 @@ export default function XeroPage() {
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">No mismatch audit has been loaded yet.</p>
+            )}
+          </SectionCard>
+
+          <SectionCard
+            id="xero-section-contactLinkMismatches"
+            title="Contact Link Mismatches"
+            description="Audit linked members whose local name differs from the cached Xero contact name."
+            open={sectionOpen.contactLinkMismatches}
+            onToggle={(nextOpen) => setSectionState("contactLinkMismatches", nextOpen)}
+            actions={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void fetchContactLinkMismatches()}
+                disabled={loadingContactLinkMismatches}
+              >
+                {loadingContactLinkMismatches ? "Refreshing..." : "Refresh"}
+              </Button>
+            }
+          >
+            {loadingContactLinkMismatches && !contactLinkMismatches ? (
+              <p className="text-sm text-muted-foreground">Loading contact link mismatches...</p>
+            ) : contactLinkMismatches ? (
+              <div className="space-y-4">
+                <div className="flex flex-col gap-3 rounded-lg border p-4 md:flex-row md:items-start md:justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-semibold">Member/contact name audit</h3>
+                      <Badge
+                        className={
+                          !contactLinkMismatches.cacheReady
+                            ? "bg-slate-600"
+                            : contactLinkMismatches.count > 0
+                              ? "bg-amber-500"
+                              : "bg-green-600"
+                        }
+                      >
+                        {!contactLinkMismatches.cacheReady
+                          ? "Cache needed"
+                          : `${contactLinkMismatches.count} mismatch${contactLinkMismatches.count === 1 ? "" : "es"}`}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Compares linked members against the cached Xero contact snapshot. Use this to unlink bad email-based matches, then relink the correct contact from the member record.
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {contactLinkMismatches.cacheReady && contactLinkMismatches.lastRefreshedAt
+                        ? `Contact cache last refreshed ${new Date(contactLinkMismatches.lastRefreshedAt).toLocaleString("en-NZ")}.`
+                        : "The shared Xero contact cache has not been refreshed yet."}
+                    </p>
+                  </div>
+                </div>
+
+                {!contactLinkMismatches.cacheReady ? (
+                  <p className="text-sm text-muted-foreground">
+                    Run contact sync before relying on this audit.
+                  </p>
+                ) : contactLinkMismatches.mismatches.length === 0 ? (
+                  <p className="text-sm text-green-700">
+                    No linked members are currently mismatched against the cached Xero contact names.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      Showing {contactLinkMismatches.mismatches.length} of {contactLinkMismatches.count} mismatch{contactLinkMismatches.count === 1 ? "" : "es"}.
+                    </p>
+                    {contactLinkMismatches.mismatches.map((mismatch) => (
+                      <div key={mismatch.memberId} className="rounded-md border p-3">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <a
+                                href={`/admin/members/${mismatch.memberId}`}
+                                className="text-sm font-medium text-blue-600 hover:underline"
+                              >
+                                {mismatch.memberName}
+                              </a>
+                              <Badge variant={mismatch.active ? "default" : "secondary"} className={mismatch.active ? "bg-green-600" : ""}>
+                                {mismatch.active ? "Active" : "Inactive"}
+                              </Badge>
+                            </div>
+                            <p className="text-sm text-muted-foreground">{mismatch.memberEmail}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Cached Xero contact: {mismatch.xeroContactName}
+                              {mismatch.xeroContactEmail ? ` (${mismatch.xeroContactEmail})` : ""}
+                            </p>
+                            <p className="text-xs text-amber-700">
+                              {mismatch.reasons.join(", ")}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <a
+                              href={`/admin/members/${mismatch.memberId}`}
+                              className="inline-flex"
+                            >
+                              <Button variant="outline" size="sm">Open Member</Button>
+                            </a>
+                            <a
+                              href={`https://go.xero.com/app/contacts/contact/${mismatch.xeroContactId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex"
+                            >
+                              <Button variant="outline" size="sm">Open in Xero</Button>
+                            </a>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleUnlinkContactMismatch(mismatch.memberId)}
+                              disabled={unlinkingMismatchMemberId === mismatch.memberId}
+                            >
+                              {unlinkingMismatchMemberId === mismatch.memberId ? "Unlinking..." : "Unlink"}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No contact link mismatch audit has been loaded yet.</p>
             )}
           </SectionCard>
 
