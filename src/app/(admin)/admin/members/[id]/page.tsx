@@ -28,6 +28,12 @@ interface XeroSearchResult {
   contactId: string; name: string; email: string | null; isLinked: boolean; linkedMemberName: string | null
 }
 
+interface AdminActor {
+  id: string
+  firstName: string
+  lastName: string
+}
+
 interface EmailInheritanceSearchResult {
   id: string
   firstName: string
@@ -66,8 +72,19 @@ interface CreditHistoryItem {
   type: "CANCELLATION_REFUND" | "ADMIN_ADJUSTMENT" | "BOOKING_APPLIED"
   description: string
   createdAt: string
+  requestedBy: AdminActor | null
+  approvedBy: AdminActor | null
+  approvalRequest: { createdAt: string; reviewedAt: string | null } | null
   sourceBooking: { id: string; checkIn: string; checkOut: string } | null
   appliedToBooking: { id: string; checkIn: string; checkOut: string } | null
+}
+
+interface PendingCreditAdjustmentItem {
+  id: string
+  amountCents: number
+  description: string
+  createdAt: string
+  requestedBy: AdminActor
 }
 
 interface EditForm {
@@ -91,6 +108,10 @@ const financeAccessBadgeClass: Record<FinanceAccessLevel, string> = {
   NONE: "bg-slate-100 text-slate-700 border-slate-200",
   VIEWER: "bg-amber-100 text-amber-800 border-amber-200",
   MANAGER: "bg-emerald-100 text-emerald-800 border-emerald-200",
+}
+
+function formatAdminName(admin: AdminActor | null | undefined) {
+  return admin ? `${admin.firstName} ${admin.lastName}` : "Unknown admin"
 }
 
 interface DependentForm extends MemberAddressValues {
@@ -164,13 +185,16 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   // Account credit state
   const [creditBalance, setCreditBalance] = useState<number>(0)
   const [creditHistory, setCreditHistory] = useState<CreditHistoryItem[]>([])
+  const [pendingAdjustmentRequests, setPendingAdjustmentRequests] = useState<PendingCreditAdjustmentItem[]>([])
   const [creditLoading, setCreditLoading] = useState(true)
   const [creditError, setCreditError] = useState("")
   const [showAdjustmentForm, setShowAdjustmentForm] = useState(false)
   const [adjustmentAmount, setAdjustmentAmount] = useState("")
   const [adjustmentDescription, setAdjustmentDescription] = useState("")
+  const [adjustmentIdempotencyKey, setAdjustmentIdempotencyKey] = useState<string | null>(null)
   const [adjustmentSaving, setAdjustmentSaving] = useState(false)
   const [adjustmentError, setAdjustmentError] = useState("")
+  const [reviewingAdjustmentId, setReviewingAdjustmentId] = useState<string | null>(null)
 
   // Xero link/push state
   const [xeroSearchOpen, setXeroSearchOpen] = useState(false)
@@ -201,6 +225,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       const data = await res.json()
       setCreditBalance(data.balanceCents)
       setCreditHistory(data.history)
+      setPendingAdjustmentRequests(data.pendingRequests ?? [])
     } catch { setCreditError("Failed to load credits") }
     finally { setCreditLoading(false) }
   }
@@ -209,22 +234,70 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     const cents = Math.round(parseFloat(adjustmentAmount) * 100)
     if (isNaN(cents) || cents === 0) { setAdjustmentError("Enter a non-zero amount"); return }
     if (!adjustmentDescription.trim()) { setAdjustmentError("Description is required"); return }
+    const idempotencyKey = adjustmentIdempotencyKey ?? crypto.randomUUID()
+    if (!adjustmentIdempotencyKey) {
+      setAdjustmentIdempotencyKey(idempotencyKey)
+    }
     setAdjustmentSaving(true); setAdjustmentError("")
     try {
       const res = await fetch(`/api/admin/members/${id}/credits`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amountCents: cents, description: adjustmentDescription.trim() }),
+        body: JSON.stringify({
+          amountCents: cents,
+          description: adjustmentDescription.trim(),
+          idempotencyKey,
+        }),
       })
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Failed to save adjustment") }
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { throw new Error(data.error || "Failed to save adjustment") }
       setShowAdjustmentForm(false)
       setAdjustmentAmount("")
       setAdjustmentDescription("")
-      setSuccess("Credit adjustment applied")
+      setAdjustmentIdempotencyKey(null)
+      setSuccess(data.message || "Credit adjustment submitted for approval")
       setTimeout(() => setSuccess(""), 3000)
       await fetchCredits()
     } catch (err) { setAdjustmentError(err instanceof Error ? err.message : "Failed to save adjustment") }
     finally { setAdjustmentSaving(false) }
+  }
+
+  const toggleAdjustmentForm = () => {
+    setAdjustmentError("")
+    setAdjustmentIdempotencyKey(
+      showAdjustmentForm ? null : crypto.randomUUID()
+    )
+    setShowAdjustmentForm((current) => !current)
+  }
+
+  const handleReviewAdjustmentRequest = async (
+    requestId: string,
+    decision: "APPROVE" | "REJECT"
+  ) => {
+    setReviewingAdjustmentId(requestId)
+    setAdjustmentError("")
+    try {
+      const res = await fetch(`/api/admin/members/${id}/credits/${requestId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || "Failed to review adjustment")
+      }
+
+      const data = await res.json()
+      setSuccess(data.message || "Adjustment reviewed")
+      setTimeout(() => setSuccess(""), 3000)
+      await fetchCredits()
+    } catch (err) {
+      setAdjustmentError(
+        err instanceof Error ? err.message : "Failed to review adjustment"
+      )
+    } finally {
+      setReviewingAdjustmentId(null)
+    }
   }
 
   useEffect(() => { fetchMember(); fetchCredits() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -781,10 +854,10 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           ))}</div>)}
       </CardContent></Card>
 
-      <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-base font-medium">Account Credit</CardTitle><div className="flex items-center gap-3"><span className={`text-lg font-semibold ${creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"}`}>{`$${(creditBalance / 100).toFixed(2)}`}</span><Button size="sm" variant="outline" onClick={() => { setShowAdjustmentForm(!showAdjustmentForm); setAdjustmentError("") }}>{showAdjustmentForm ? "Cancel" : "Add Adjustment"}</Button></div></CardHeader><CardContent>
+      <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-base font-medium">Account Credit</CardTitle><div className="flex items-center gap-3"><span className={`text-lg font-semibold ${creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"}`}>{`$${(creditBalance / 100).toFixed(2)}`}</span><Button size="sm" variant="outline" onClick={toggleAdjustmentForm}>{showAdjustmentForm ? "Cancel" : "Request Adjustment"}</Button></div></CardHeader><CardContent>
+        {adjustmentError && <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{adjustmentError}</div>}
         {showAdjustmentForm && (
           <div className="mb-4 p-4 border border-slate-200 rounded-md bg-slate-50 space-y-3">
-            {adjustmentError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{adjustmentError}</div>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="adj-amount">Amount ($)</Label>
@@ -796,19 +869,64 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 <Input id="adj-desc" placeholder="Reason for adjustment" value={adjustmentDescription} onChange={e => setAdjustmentDescription(e.target.value)} maxLength={500} />
               </div>
             </div>
-            <Button size="sm" onClick={handleAdjustmentSubmit} disabled={adjustmentSaving}>{adjustmentSaving ? "Saving..." : "Submit Adjustment"}</Button>
+            <p className="text-xs text-slate-500">A different admin must approve this request before the member&apos;s credit balance changes.</p>
+            <Button size="sm" onClick={handleAdjustmentSubmit} disabled={adjustmentSaving}>{adjustmentSaving ? "Saving..." : "Submit for Approval"}</Button>
           </div>
         )}
-        {creditLoading ? <p className="text-sm text-slate-500">Loading credit history...</p> : creditError ? <p className="text-sm text-red-600">{creditError}</p> : creditHistory.length === 0 ? <p className="text-sm text-slate-500">No credit transactions</p> : (
-          <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Booking Ref</TableHead></TableRow></TableHeader><TableBody>{creditHistory.map((item) => (
+        {creditLoading ? <p className="text-sm text-slate-500">Loading credit history...</p> : creditError ? <p className="text-sm text-red-600">{creditError}</p> : (
+          <>
+            {pendingAdjustmentRequests.length > 0 && (
+              <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-4">
+                <div className="mb-3">
+                  <p className="text-sm font-medium text-amber-900">Pending manual adjustments</p>
+                  <p className="text-xs text-amber-800">Each request needs approval from a different admin before it becomes account credit.</p>
+                </div>
+                <Table><TableHeader><TableRow><TableHead>Requested</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Requested By</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>{pendingAdjustmentRequests.map((item) => {
+                  const isOwnRequest = session?.user?.id === item.requestedBy.id
+                  const isReviewing = reviewingAdjustmentId === item.id
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell className="text-sm">{fmtDate(item.createdAt)}</TableCell>
+                      <TableCell className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}>{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
+                      <TableCell className="text-sm text-slate-600 max-w-[260px] truncate">{item.description}</TableCell>
+                      <TableCell className="text-sm">{formatAdminName(item.requestedBy)}</TableCell>
+                      <TableCell className="text-right">
+                        {isOwnRequest ? (
+                          <span className="text-xs text-amber-700">Needs another admin</span>
+                        ) : (
+                          <div className="flex items-center justify-end gap-2">
+                            <Button size="sm" variant="outline" disabled={isReviewing} onClick={() => handleReviewAdjustmentRequest(item.id, "APPROVE")}>{isReviewing ? "Working..." : "Approve"}</Button>
+                            <Button size="sm" variant="ghost" disabled={isReviewing} onClick={() => handleReviewAdjustmentRequest(item.id, "REJECT")}>Reject</Button>
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}</TableBody></Table>
+              </div>
+            )}
+            {creditHistory.length === 0 ? <p className="text-sm text-slate-500">No credit transactions</p> : (
+          <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Approval</TableHead><TableHead>Booking Ref</TableHead></TableRow></TableHeader><TableBody>{creditHistory.map((item) => (
             <TableRow key={item.id}>
               <TableCell className="text-sm">{fmtDate(item.createdAt)}</TableCell>
               <TableCell><Badge variant="secondary" className={item.type === "CANCELLATION_REFUND" ? "bg-orange-100 text-orange-800 border-orange-200" : item.type === "ADMIN_ADJUSTMENT" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-purple-100 text-purple-800 border-purple-200"}>{item.type.replace(/_/g, " ")}</Badge></TableCell>
               <TableCell className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}>{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
               <TableCell className="text-sm text-slate-600 max-w-[200px] truncate">{item.description}</TableCell>
+              <TableCell className="text-xs text-slate-600">
+                {item.type === "ADMIN_ADJUSTMENT" && (item.requestedBy || item.approvedBy) ? (
+                  <div className="space-y-1">
+                    {item.requestedBy && <p>Requested by {formatAdminName(item.requestedBy)}</p>}
+                    {item.approvedBy && <p>Approved by {formatAdminName(item.approvedBy)}{item.approvalRequest?.reviewedAt ? ` on ${fmtDate(item.approvalRequest.reviewedAt)}` : ""}</p>}
+                  </div>
+                ) : (
+                  <span className="text-slate-400">-</span>
+                )}
+              </TableCell>
               <TableCell className="text-sm">{item.sourceBooking ? <span className="text-blue-600">{fmtDate(item.sourceBooking.checkIn)} - {fmtDate(item.sourceBooking.checkOut)}</span> : item.appliedToBooking ? <span className="text-purple-600">{fmtDate(item.appliedToBooking.checkIn)} - {fmtDate(item.appliedToBooking.checkOut)}</span> : "-"}</TableCell>
             </TableRow>
           ))}</TableBody></Table>
+            )}
+          </>
         )}
       </CardContent></Card>
 
