@@ -406,25 +406,30 @@ Run it with:
 
 ```bash
 cd ~/TACBookings
-./scripts/blue-green-deploy.sh
+./scripts/run-production-blue-green-deploy.sh
 ```
 
 What the script does:
 
-1. Build the new image while the current app stays live.
-2. Start the inactive color service (`app_blue` or `app_green`) alongside the live one.
-3. Verify the target color with `/api/health/ready` before any traffic switch.
-4. Recreate `app` on the new release and verify cron registration before any traffic switch.
-5. Point Caddy at the target color as the primary upstream with `app` as the automatic fallback upstream.
-6. Verify the public domain still resolves to the target color, not just the fallback.
-7. Wait a short drain period so in-flight requests on the previous color can finish.
-8. Stop the previously live color service after the cutover succeeds.
+1. Fetch `origin/main` by default and resolve the exact commit that will be deployed.
+2. Archive that commit into a clean workspace under `~/tacbookings-deployments/` and copy in the local production `.env`.
+3. Reconstruct the live `deploy/caddy/tacbookings-active.caddy` state from the running Caddy bind mount, Caddy autosave config, or the currently running color service.
+4. Run the low-level `scripts/blue-green-deploy.sh` script from that clean workspace with the stable `tacbookings` Docker Compose project name.
+5. Build the new image while the current app stays live.
+6. Start the inactive color service (`app_blue` or `app_green`) alongside the live one.
+7. Verify the target color with `/api/health/ready` before any traffic switch.
+8. Recreate `app` on the new release and verify cron registration before any traffic switch.
+9. Point Caddy at the target color as the primary upstream with `app` as the automatic fallback upstream.
+10. Verify the public domain still resolves to the target color, not just the fallback.
+11. Wait a short drain period so in-flight requests on the previous color can finish.
+12. Stop the previously live color service after the cutover succeeds.
 
 Current constraints and rules:
 
 - `app` remains the cron leader and the Caddy fallback upstream after a successful blue/green deploy.
 - `app_blue` and `app_green` are web-only services with cron disabled.
 - Caddy switches traffic by reloading a managed upstream file under `deploy/caddy/`.
+- The repo-standard wrapper keeps the live Caddy bind mounts out of `/tmp` and seeds the managed upstream file from live state before each deploy so the low-level script does not guess the active color from a fresh checkout.
 - Caddy no longer depends on `app` health to start. Live traffic is modeled as `active color -> app fallback`.
 - `/api/health` stays public and DB-only. Blue/green health gates and container health checks use `/api/health/ready`, which also verifies runtime config and confirms whether the instance is a web slot or the cron leader.
 - The blue/green script waits `BLUE_GREEN_DRAIN_SECONDS` before it restarts or stops the previous service so in-flight requests can complete.
@@ -481,10 +486,18 @@ If you must override the guard, the deploy command must be intentionally noisy:
 ```bash
 ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1 \
 BLUE_GREEN_MIGRATION_OVERRIDE_REASON="explain the reviewed expand/contract plan" \
-./scripts/blue-green-deploy.sh
+./scripts/run-production-blue-green-deploy.sh
 ```
 
 That override only bypasses the regex guard. It does not prove compatibility, and it should not be used instead of a staged expand-contract rollout.
+
+If the app images are already present on the host and you want to reuse them without rebuilding:
+
+```bash
+SKIP_APP_IMAGE_BUILD=1 ./scripts/run-production-blue-green-deploy.sh
+```
+
+That flag is handled by the low-level `scripts/blue-green-deploy.sh` runner and fails fast if the expected `app`, target color, or `migrate` images are missing.
 
 ### Viewing Logs
 
