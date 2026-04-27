@@ -463,7 +463,7 @@ describe("finance working-capital report page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "No balance-sheet snapshots are available yet. Run the finance sync and try again once the balance-sheet dataset has landed.",
+      "The setup status for This working capital report could not be checked right now. Try again shortly.",
     );
     expect(model.summaryCards).toEqual([]);
     expect(model.periodRows).toEqual([]);
@@ -478,7 +478,7 @@ describe("finance working-capital report page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "Finance working-capital snapshots are temporarily unavailable. Try again shortly or use manager diagnostics to confirm the latest finance sync status.",
+      "This working capital report could not be loaded right now. Try again shortly.",
     );
     expect(model.periodRows).toEqual([]);
     expect(consoleErrorSpy).toHaveBeenCalled();

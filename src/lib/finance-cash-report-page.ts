@@ -7,6 +7,10 @@ import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
   listFinanceSnapshots,
 } from "@/lib/finance-sync-storage";
+import {
+  buildFinanceSnapshotLoadErrorMessage,
+  buildFinanceSnapshotMissingMessage,
+} from "@/lib/finance-report-availability";
 import { formatCents } from "@/lib/utils";
 
 const FINANCE_TIMEZONE = "Pacific/Auckland";
@@ -171,6 +175,7 @@ export async function buildFinanceCashReportPageModel(input: {
     searchParams: input.searchParams,
   });
   const reportHref = buildFinanceCashReportHref(filters);
+  const isManager = hasFinanceManagerAccess(input.member.financeAccessLevel);
 
   try {
     const snapshots = await listFinanceSnapshots({
@@ -187,10 +192,13 @@ export async function buildFinanceCashReportPageModel(input: {
       return buildUnavailableCashReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "No bank balance snapshots are available yet. Run the finance sync and try again once the bank summary dataset has landed.",
+        loadError: await buildFinanceSnapshotMissingMessage({
+          member: input.member,
+          reportTitle: "This cash report",
+          dataLabel: "cash balance snapshots",
+        }),
       });
     }
 
@@ -204,10 +212,13 @@ export async function buildFinanceCashReportPageModel(input: {
       return buildUnavailableCashReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "Finance cash snapshots are temporarily unavailable. Try again shortly after the next finance sync completes.",
+        loadError: await buildFinanceSnapshotLoadErrorMessage({
+          member: input.member,
+          reportTitle: "This cash report",
+          dataLabel: "cash balance snapshots",
+        }),
       });
     }
 
@@ -226,7 +237,7 @@ export async function buildFinanceCashReportPageModel(input: {
 
     return {
       generatedOn: formatDateTime(new Date().toISOString()),
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       filters,
       reportHref,
       filterWarnings: warnings,
@@ -279,10 +290,13 @@ export async function buildFinanceCashReportPageModel(input: {
     return buildUnavailableCashReportModel({
       filters,
       reportHref,
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       warnings,
-      loadError:
-        "Finance cash snapshots are temporarily unavailable. Try again shortly or use manager diagnostics to confirm the latest finance sync status.",
+      loadError: await buildFinanceSnapshotLoadErrorMessage({
+        member: input.member,
+        reportTitle: "This cash report",
+        dataLabel: "cash balance snapshots",
+      }),
     });
   }
 }
@@ -312,19 +326,19 @@ function buildUnavailableCashReportModel(input: {
 function buildCashSourceNotes() {
   return [
     {
-      label: "Finance snapshot source",
+      label: "Cash source",
       description:
-        "Cash balances on this page come from stored `BANK_BALANCES` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from Tokoroa Alpine Club booking or payment data.",
+        "Cash balances on this page come from finance bank balance snapshots synced from Xero. They are separate from TACBookings payment collections.",
     },
     {
-      label: "Stored bank positions only",
+      label: "What the total represents",
       description:
-        "The report reflects stored bank summary positions for the selected snapshots and keeps those figures distinct from Tokoroa Alpine Club payment-derived cash collections.",
+        "The total reflects bank balances captured in each synced snapshot. It is not a live bank feed and it does not equal booking cash collected in TACBookings.",
     },
     {
-      label: "Durable read path",
+      label: "When figures update",
       description:
-        "The page reads durable bank balance snapshots already stored in Postgres. It does not trigger a live Xero report call, manual sync mutation, or working-capital rollup.",
+        "This page updates when the scheduled finance sync stores a new bank balance snapshot. Opening the page does not call Xero live.",
     },
   ];
 }

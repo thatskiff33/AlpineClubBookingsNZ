@@ -453,7 +453,7 @@ describe("finance pricing sensitivity page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "No monthly finance costs snapshots are available yet. Run the finance sync and try again once the profit-and-loss dataset has landed."
+      "The setup status for This pricing report could not be checked right now. Try again shortly."
     );
     expect(model.summaryCards).toEqual([]);
     expect(model.periodRows).toEqual([]);

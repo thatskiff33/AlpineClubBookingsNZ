@@ -61,11 +61,10 @@ function SummaryCards({
             Working capital
           </p>
           <h2 className="text-2xl font-semibold text-slate-900">
-            Current-position detail from stored balance-sheet snapshots
+            Current-position detail
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            Review current assets, current liabilities, working capital, and
-            current-ratio coverage from stored balance-sheet snapshots.
+            Review current assets, current liabilities, working capital, and current-ratio coverage from synced balance sheet data.
           </p>
         </div>
       </div>
@@ -172,24 +171,20 @@ export default async function FinanceWorkingCapitalPage({
         <Card>
           <CardHeader className="space-y-3">
             <Badge variant="outline" className="w-fit">
-              Native working-capital report
+              Finance working capital report
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
                 Current working-capital coverage
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                Review stored balance-sheet snapshots with working-capital
-                summary cards and period comparisons.
+                Review working capital from synced balance sheet snapshots with summary cards and period comparisons.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Generated {model.generatedOn}. Working-capital figures on this
-              page come from stored balance-sheet snapshots only. Booking
-              totals, payment cash summaries, live Xero reads,
-              or forecasting calculations are used here.
+              Generated {model.generatedOn}. Working capital on this page comes from synced balance sheet snapshots. Booking totals and TACBookings payment collections are shown in separate reports.
             </div>
 
             <form action="/finance/working-capital" className="space-y-4">
@@ -234,11 +229,10 @@ export default async function FinanceWorkingCapitalPage({
             <div className="flex items-center justify-between gap-3">
               <div className="space-y-1">
                 <CardTitle className="text-lg text-slate-900">
-                  Working-capital actions
+                  Related reports
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600">
-                  Cross-check working-capital figures against the related
-                  balance-sheet and cash reports.
+                  Cross-check working capital against the related balance sheet and cash reports.
                 </CardDescription>
               </div>
               <Badge variant={model.isManager ? "secondary" : "outline"}>
@@ -258,8 +252,7 @@ export default async function FinanceWorkingCapitalPage({
                     Open balance-sheet report
                   </span>
                   <span className="block text-xs text-slate-500">
-                    Inspect the full stored balance-sheet positions behind these
-                    current-section totals.
+                    Inspect the full balance sheet positions behind these current-section totals.
                   </span>
                 </span>
                 <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />
@@ -277,8 +270,7 @@ export default async function FinanceWorkingCapitalPage({
                     Open cash report
                   </span>
                   <span className="block text-xs text-slate-500">
-                    Compare stored bank balances without conflating them with
-                    working-capital totals.
+                    Compare bank balances without conflating them with working-capital totals.
                   </span>
                 </span>
                 <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />

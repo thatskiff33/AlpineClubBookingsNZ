@@ -6,8 +6,7 @@ import {
 } from "@prisma/client";
 
 const {
-  mockCreateFinanceXeroClient,
-  mockLoadFinanceXeroTokens,
+  mockGetAuthenticatedFinanceXeroClient,
   mockCreateFinanceSyncRun,
   mockCompleteFinanceSyncRun,
   mockFailFinanceSyncRun,
@@ -16,8 +15,7 @@ const {
   MockXeroDailyLimitError,
   mockCallXeroApi,
 } = vi.hoisted(() => ({
-  mockCreateFinanceXeroClient: vi.fn(),
-  mockLoadFinanceXeroTokens: vi.fn(),
+  mockGetAuthenticatedFinanceXeroClient: vi.fn(),
   mockCreateFinanceSyncRun: vi.fn(),
   mockCompleteFinanceSyncRun: vi.fn(),
   mockFailFinanceSyncRun: vi.fn(),
@@ -36,11 +34,7 @@ const {
 }));
 
 vi.mock("@/lib/finance-xero", () => ({
-  createFinanceXeroClient: mockCreateFinanceXeroClient,
-}));
-
-vi.mock("@/lib/finance-xero-token-store", () => ({
-  loadFinanceXeroTokens: mockLoadFinanceXeroTokens,
+  getAuthenticatedFinanceXeroClient: mockGetAuthenticatedFinanceXeroClient,
 }));
 
 vi.mock("@/lib/finance-sync-storage", () => ({
@@ -88,43 +82,33 @@ describe("finance-sync-service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockLoadFinanceXeroTokens.mockResolvedValue({
-      id: "finance-token-1",
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      expiresAt: new Date("2026-04-20T00:00:00.000Z"),
-      tenantId: "tenant-123",
-    });
-
     mockCreateFinanceSyncRun.mockResolvedValue({ id: "run-1" });
     mockCompleteFinanceSyncRun.mockResolvedValue({ id: "run-1" });
     mockFailFinanceSyncRun.mockResolvedValue({ id: "run-1" });
     mockUpsertFinanceSnapshot.mockResolvedValue({ id: "snapshot-1" });
-    mockCreateFinanceXeroClient.mockReturnValue(createMockXeroClient());
+    mockGetAuthenticatedFinanceXeroClient.mockResolvedValue({
+      tenantId: "tenant-123",
+      tokenExpiresAt: new Date("2026-04-20T00:00:00.000Z"),
+      xero: createMockXeroClient(),
+    });
     mockCallXeroApi.mockImplementation(async (fn: () => unknown) => fn());
   });
 
-  it("creates a finance Xero sync connection from the finance-only token boundary", async () => {
+  it("creates a finance Xero sync connection from the authenticated finance Xero helper", async () => {
     const xeroClient = createMockXeroClient({ tenantId: "tenant-from-xero" });
-    mockLoadFinanceXeroTokens.mockResolvedValue({
-      id: "finance-token-1",
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      expiresAt: new Date("2026-04-20T00:00:00.000Z"),
-      tenantId: undefined,
+    mockGetAuthenticatedFinanceXeroClient.mockResolvedValue({
+      tenantId: "tenant-from-xero",
+      tokenExpiresAt: new Date("2026-04-20T00:00:00.000Z"),
+      xero: xeroClient,
     });
-    mockCreateFinanceXeroClient.mockReturnValue(xeroClient);
 
     const connection = await createFinanceXeroSyncConnection();
 
-    expect(xeroClient.initialize).toHaveBeenCalledTimes(1);
-    expect(xeroClient.setTokenSet).toHaveBeenCalledWith({
-      access_token: "access-token",
-      refresh_token: "refresh-token",
-      token_type: "Bearer",
+    expect(mockGetAuthenticatedFinanceXeroClient).toHaveBeenCalledTimes(1);
+    expect(connection).toMatchObject({
+      tenantId: "tenant-from-xero",
+      tokenExpiresAt: new Date("2026-04-20T00:00:00.000Z"),
     });
-    expect(xeroClient.updateTenants).toHaveBeenCalledTimes(1);
-    expect(connection.tenantId).toBe("tenant-from-xero");
   });
 
   it("runs finance datasets through the durable sync-run and snapshot storage helpers", async () => {
@@ -358,7 +342,11 @@ describe("finance-sync-service", () => {
         };
       }
     );
-    mockCreateFinanceXeroClient.mockReturnValue(xeroClient);
+    mockGetAuthenticatedFinanceXeroClient.mockResolvedValue({
+      tenantId: "tenant-123",
+      tokenExpiresAt: new Date("2026-04-20T00:00:00.000Z"),
+      xero: xeroClient,
+    });
 
     const result = await runFinanceSync({
       trigger: FinanceSyncRunTrigger.SCHEDULED,
@@ -498,7 +486,9 @@ describe("finance-sync-service", () => {
   });
 
   it("fails the run durably when the finance Xero connection cannot be established", async () => {
-    mockLoadFinanceXeroTokens.mockResolvedValue(null);
+    mockGetAuthenticatedFinanceXeroClient.mockRejectedValue(
+      new Error("Finance Xero is not connected")
+    );
 
     await expect(
       runFinanceSync({

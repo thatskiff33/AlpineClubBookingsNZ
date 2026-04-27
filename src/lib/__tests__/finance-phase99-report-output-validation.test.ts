@@ -699,7 +699,7 @@ describe("phase 99 finance report output validation", () => {
       {
         title: "Cost lines tracked",
         value: "3",
-        footnote: "2 periods loaded from durable FinanceSnapshot storage.",
+        footnote: "2 months included in this report.",
       },
     ]);
     expect(model.monthlyRows).toEqual([

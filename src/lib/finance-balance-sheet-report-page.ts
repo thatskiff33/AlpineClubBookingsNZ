@@ -7,6 +7,10 @@ import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
   listFinanceSnapshots,
 } from "@/lib/finance-sync-storage";
+import {
+  buildFinanceSnapshotLoadErrorMessage,
+  buildFinanceSnapshotMissingMessage,
+} from "@/lib/finance-report-availability";
 import { formatCents } from "@/lib/utils";
 
 const FINANCE_TIMEZONE = "Pacific/Auckland";
@@ -190,6 +194,7 @@ export async function buildFinanceBalanceSheetReportPageModel(input: {
     searchParams: input.searchParams,
   });
   const reportHref = buildFinanceBalanceSheetReportHref(filters);
+  const isManager = hasFinanceManagerAccess(input.member.financeAccessLevel);
 
   try {
     const snapshots = await listFinanceSnapshots({
@@ -208,10 +213,13 @@ export async function buildFinanceBalanceSheetReportPageModel(input: {
       return buildUnavailableBalanceSheetReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "No balance-sheet snapshots are available yet. Run the finance sync and try again once the balance-sheet dataset has landed.",
+        loadError: await buildFinanceSnapshotMissingMessage({
+          member: input.member,
+          reportTitle: "This balance sheet report",
+          dataLabel: "balance sheet snapshots",
+        }),
       });
     }
 
@@ -225,10 +233,13 @@ export async function buildFinanceBalanceSheetReportPageModel(input: {
       return buildUnavailableBalanceSheetReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "Finance balance-sheet snapshots are temporarily unavailable. Try again shortly after the next finance sync completes.",
+        loadError: await buildFinanceSnapshotLoadErrorMessage({
+          member: input.member,
+          reportTitle: "This balance sheet report",
+          dataLabel: "balance sheet snapshots",
+        }),
       });
     }
 
@@ -237,7 +248,7 @@ export async function buildFinanceBalanceSheetReportPageModel(input: {
 
     return {
       generatedOn: formatDateTime(new Date().toISOString()),
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       filters,
       reportHref,
       filterWarnings: warnings,
@@ -295,10 +306,13 @@ export async function buildFinanceBalanceSheetReportPageModel(input: {
     return buildUnavailableBalanceSheetReportModel({
       filters,
       reportHref,
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       warnings,
-      loadError:
-        "Finance balance-sheet snapshots are temporarily unavailable. Try again shortly or use manager diagnostics to confirm the latest finance sync status.",
+      loadError: await buildFinanceSnapshotLoadErrorMessage({
+        member: input.member,
+        reportTitle: "This balance sheet report",
+        dataLabel: "balance sheet snapshots",
+      }),
     });
   }
 }
@@ -328,19 +342,19 @@ function buildUnavailableBalanceSheetReportModel(input: {
 function buildBalanceSheetSourceNotes() {
   return [
     {
-      label: "Finance snapshot source",
+      label: "Balance sheet source",
       description:
-        "Balance-sheet figures on this page come from stored `BALANCE_SHEET` FinanceSnapshot rows synced through the finance-only Xero boundary. They are not derived from Tokoroa Alpine Club booking or payment data.",
+        "Balance sheet figures on this page come from finance balance sheet snapshots synced from Xero. They are separate from TACBookings booking and payment data.",
     },
     {
-      label: "Stored positions only",
+      label: "What the totals represent",
       description:
-        "The report reflects stored assets, liabilities, and equity positions for the selected snapshots and keeps those figures distinct from Tokoroa Alpine Club operational booking metrics, payment-derived cash summaries, and the native cash report.",
+        "The totals reflect assets, liabilities, and net assets captured in each synced snapshot. Use the cash report for bank balances and the bookings report for operating activity.",
     },
     {
-      label: "Durable read path",
+      label: "When figures update",
       description:
-        "The page reads durable balance-sheet snapshots already stored in Postgres. It does not trigger a live Xero report call, manual sync mutation, costs rollup, or working-capital calculation.",
+        "This page updates when the scheduled finance sync stores a new balance sheet snapshot. Opening the page does not call Xero live.",
     },
   ];
 }

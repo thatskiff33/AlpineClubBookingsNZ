@@ -291,6 +291,10 @@ validate_env_contract() {
   require_non_placeholder_env_key XERO_CLIENT_SECRET
   require_http_url_env_key XERO_REDIRECT_URI
   require_non_placeholder_env_key XERO_ENCRYPTION_KEY
+  require_non_placeholder_env_key FINANCE_XERO_CLIENT_ID
+  require_non_placeholder_env_key FINANCE_XERO_CLIENT_SECRET
+  require_http_url_env_key FINANCE_XERO_REDIRECT_URI
+  require_non_placeholder_env_key FINANCE_XERO_ENCRYPTION_KEY
   require_non_placeholder_env_key SMTP_HOST
   require_non_placeholder_env_key SMTP_PORT
   require_non_placeholder_env_key AWS_SES_ACCESS_KEY_ID
@@ -302,6 +306,7 @@ validate_env_contract() {
   domain="$(trim_whitespace "$(get_env_file_value DOMAIN)")"
   require_domain_matches_url NEXTAUTH_URL "$domain"
   require_domain_matches_url XERO_REDIRECT_URI "$domain"
+  require_domain_matches_url FINANCE_XERO_REDIRECT_URI "$domain"
 
   if env_key_is_true BACKUP_ENABLED false; then
     require_env_key BACKUP_CRON_SCHEDULE

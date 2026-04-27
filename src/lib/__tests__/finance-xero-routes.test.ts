@@ -92,6 +92,7 @@ describe("finance Xero routes", () => {
     mockFindUnique.mockResolvedValue(managerMember());
     mockGetFinanceXeroRouteStatus.mockResolvedValue({
       connected: false,
+      hasStoredTokens: false,
       tenantId: null,
       tokenExpiresAt: null,
       oauthConfigured: true,
@@ -114,6 +115,7 @@ describe("finance Xero routes", () => {
   it("returns finance status for a finance manager", async () => {
     mockGetFinanceXeroRouteStatus.mockResolvedValue({
       connected: true,
+      hasStoredTokens: true,
       tenantId: "finance-tenant-1",
       tokenExpiresAt: new Date("2026-04-20T00:00:00Z"),
       oauthConfigured: true,
@@ -174,6 +176,7 @@ describe("finance Xero routes", () => {
   it("returns config issues instead of redirecting when finance Xero is not ready", async () => {
     mockGetFinanceXeroRouteStatus.mockResolvedValue({
       connected: false,
+      hasStoredTokens: false,
       tenantId: null,
       tokenExpiresAt: null,
       oauthConfigured: false,

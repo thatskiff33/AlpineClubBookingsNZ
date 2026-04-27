@@ -46,6 +46,7 @@ type FailureSummaryOperation = Pick<
   | "responsePayload"
   | "status"
   | "xeroObjectId"
+  | "xeroObjectNumber"
   | "createdAt"
 >;
 
@@ -581,6 +582,7 @@ export async function buildXeroReconciliationReport(options?: {
         responsePayload: true,
         status: true,
         xeroObjectId: true,
+        xeroObjectNumber: true,
         createdAt: true,
       },
     }),

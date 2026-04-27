@@ -7,6 +7,10 @@ import {
   DEFAULT_FINANCE_SNAPSHOT_SCOPE,
   listFinanceSnapshots,
 } from "@/lib/finance-sync-storage";
+import {
+  buildFinanceSnapshotLoadErrorMessage,
+  buildFinanceSnapshotMissingMessage,
+} from "@/lib/finance-report-availability";
 import { formatCents } from "@/lib/utils";
 
 const FINANCE_TIMEZONE = "Pacific/Auckland";
@@ -174,6 +178,7 @@ export async function buildFinanceRevenueReportPageModel(input: {
     searchParams: input.searchParams,
   });
   const reportHref = buildFinanceRevenueReportHref(filters);
+  const isManager = hasFinanceManagerAccess(input.member.financeAccessLevel);
 
   try {
     const snapshots = await listFinanceSnapshots({
@@ -190,10 +195,13 @@ export async function buildFinanceRevenueReportPageModel(input: {
       return buildUnavailableRevenueReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "No monthly finance revenue snapshots are available yet. Run the finance sync and try again once the profit-and-loss dataset has landed.",
+        loadError: await buildFinanceSnapshotMissingMessage({
+          member: input.member,
+          reportTitle: "This revenue report",
+          dataLabel: "monthly revenue snapshots",
+        }),
       });
     }
 
@@ -207,10 +215,13 @@ export async function buildFinanceRevenueReportPageModel(input: {
       return buildUnavailableRevenueReportModel({
         filters,
         reportHref,
-        isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+        isManager,
         warnings,
-        loadError:
-          "Finance revenue snapshots are temporarily unavailable. Try again shortly after the next finance sync completes.",
+        loadError: await buildFinanceSnapshotLoadErrorMessage({
+          member: input.member,
+          reportTitle: "This revenue report",
+          dataLabel: "monthly revenue snapshots",
+        }),
       });
     }
 
@@ -226,7 +237,7 @@ export async function buildFinanceRevenueReportPageModel(input: {
 
     return {
       generatedOn: formatDateTime(new Date().toISOString()),
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       filters,
       reportHref,
       filterWarnings: warnings,
@@ -254,7 +265,7 @@ export async function buildFinanceRevenueReportPageModel(input: {
           value: formatWholeNumber(lineItemRows.length),
           description:
             "Unique income line items found across the selected finance snapshots.",
-          footnote: `${formatWholeNumber(parsedSnapshots.length)} period${parsedSnapshots.length === 1 ? "" : "s"} loaded from durable FinanceSnapshot storage.`,
+          footnote: `${formatWholeNumber(parsedSnapshots.length)} month${parsedSnapshots.length === 1 ? "" : "s"} included in this report.`,
         },
       ],
       monthlyRows: parsedSnapshots.map((snapshot) => ({
@@ -275,10 +286,13 @@ export async function buildFinanceRevenueReportPageModel(input: {
     return buildUnavailableRevenueReportModel({
       filters,
       reportHref,
-      isManager: hasFinanceManagerAccess(input.member.financeAccessLevel),
+      isManager,
       warnings,
-      loadError:
-        "Finance revenue snapshots are temporarily unavailable. Try again shortly or use manager diagnostics to confirm the latest finance sync status.",
+      loadError: await buildFinanceSnapshotLoadErrorMessage({
+        member: input.member,
+        reportTitle: "This revenue report",
+        dataLabel: "monthly revenue snapshots",
+      }),
     });
   }
 }
@@ -308,19 +322,19 @@ function buildUnavailableRevenueReportModel(input: {
 function buildRevenueSourceNotes() {
   return [
     {
-      label: "Finance snapshot source",
+      label: "Revenue source",
       description:
-        "Revenue on this page comes from stored `PROFIT_AND_LOSS_MONTHLY` FinanceSnapshot rows synced through the finance-only Xero boundary. It is not derived from Tokoroa Alpine Club booking metrics.",
+        "Revenue on this page comes from finance profit and loss snapshots synced from Xero. It is separate from TACBookings booking totals.",
     },
     {
-      label: "Durable read path",
+      label: "When figures update",
       description:
-        "The page reads durable monthly snapshots already stored in Postgres. It does not trigger a live Xero report call or a manual finance sync.",
+        "This page updates when the scheduled finance sync stores a new monthly snapshot. Opening the page does not call Xero live.",
     },
     {
-      label: "Scope boundary",
+      label: "What is not included",
       description:
-        "This report is revenue-only. It does not include Tokoroa Alpine Club booking occupancy, payment-derived cash, costs, balance-sheet figures, or manual sync controls.",
+        "This report focuses on revenue only. Use the bookings, costs, cash, or balance sheet reports for the rest of the finance picture.",
     },
   ];
 }

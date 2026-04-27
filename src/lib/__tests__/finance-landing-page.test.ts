@@ -258,6 +258,7 @@ function bookingMetrics() {
 
 function financeXeroRouteStatus(overrides?: Partial<{
   connected: boolean;
+  hasStoredTokens: boolean;
   tenantId: string | null;
   tokenExpiresAt: Date | null;
   oauthConfigured: boolean;
@@ -268,6 +269,7 @@ function financeXeroRouteStatus(overrides?: Partial<{
 }>) {
   return {
     connected: true,
+    hasStoredTokens: true,
     tenantId: "finance-tenant-1",
     tokenExpiresAt: new Date("2026-04-22T00:00:00.000Z"),
     oauthConfigured: true,
@@ -340,19 +342,12 @@ describe("finance landing page model", () => {
         kind: "disconnect",
         href: null,
       },
-      {
-        kind: "link",
-        href: "/api/finance/sync/status",
-      },
-      {
-        kind: "link",
-        href: "/api/finance/xero/status",
-      },
-      {
-        kind: "link",
-        href:
-          "/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-21&realizedCutoff=2026-04-21&forwardFrom=2026-04-22&forwardTo=2026-07-20&forwardAsOf=2026-04-21",
-      },
+    ]);
+    expect(
+      model.managerWorkspace?.technicalActions.map((action) => action.href ?? null)
+    ).toEqual([
+      "/api/finance/sync/status",
+      "/api/finance/xero/status",
     ]);
     expect(model.sync.badgeLabel).toBe("Healthy");
     expect(model.realized.cards[0]).toMatchObject({
@@ -382,6 +377,7 @@ describe("finance landing page model", () => {
     mockGetFinanceXeroRouteStatus.mockResolvedValue(
       financeXeroRouteStatus({
         connected: false,
+        hasStoredTokens: false,
         tenantId: null,
         tokenExpiresAt: null,
         oauthConfigured: false,
@@ -400,7 +396,7 @@ describe("finance landing page model", () => {
     });
 
     expect(model.managerWorkspace).toMatchObject({
-      badgeLabel: "Config required",
+      badgeLabel: "Setup required",
       badgeVariant: "destructive",
       configIssues: ["FINANCE_XERO_CLIENT_ID is required"],
       tokenStorageIssues: ["FINANCE_XERO_ENCRYPTION_KEY is required"],
@@ -424,7 +420,7 @@ describe("finance landing page model", () => {
 
     expect(model.sync.error).toBeUndefined();
     expect(model.sync.cards[0]).toMatchObject({
-      title: "Latest durable run",
+      title: "Latest sync run",
       value: "Succeeded",
     });
     expect(model.realized.error).toBe(
@@ -434,5 +430,24 @@ describe("finance landing page model", () => {
       "Finance booking metrics are temporarily unavailable."
     );
     expect(consoleErrorSpy).toHaveBeenCalled();
+  });
+
+  it("marks the sync section as stale when the latest successful sync is too old", async () => {
+    mockGetFinanceSyncDiagnosticsStatus.mockResolvedValue({
+      ...diagnosticsStatus(),
+      latestRun: {
+        ...diagnosticsStatus().latestRun!,
+        startedAt: "2026-04-18T00:00:00.000Z",
+        completedAt: "2026-04-18T00:02:00.000Z",
+      },
+    });
+
+    const model = await buildFinanceLandingPageModel({
+      member: financeViewer(),
+      today: parseDateOnly("2026-04-21"),
+    });
+
+    expect(model.sync.badgeLabel).toBe("Stale");
+    expect(model.sync.description).toContain("older than expected");
   });
 });

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   ArrowLeft,
-  ArrowUpRight,
   Database,
   Filter,
   ShieldAlert,
@@ -16,6 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { FinanceTechnicalDetails } from "@/components/finance/technical-details";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -54,11 +54,10 @@ function SummaryCards({
             Revenue report
           </p>
           <h2 className="text-2xl font-semibold text-slate-900">
-            Monthly finance snapshot detail
+            Monthly revenue detail
           </h2>
           <p className="text-sm leading-6 text-slate-600">
-            Review revenue totals and line-item mix from the stored monthly
-            finance snapshots.
+            Review revenue totals and line-item mix from synced monthly finance data.
           </p>
         </div>
       </div>
@@ -177,23 +176,20 @@ export default async function FinanceRevenuePage({
         <Card>
           <CardHeader className="space-y-3">
             <Badge variant="outline" className="w-fit">
-              Native revenue report
+              Finance revenue report
             </Badge>
             <div className="space-y-2">
               <CardTitle className="text-2xl text-slate-900">
-                Monthly revenue from stored finance snapshots
+                Monthly revenue
               </CardTitle>
               <CardDescription className="max-w-3xl text-sm leading-6 text-slate-600">
-                Review stored revenue snapshots with summary cards, monthly
-                detail, and revenue line breakdowns.
+                Review monthly revenue totals and line items from the synced finance dataset.
               </CardDescription>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Generated {model.generatedOn}. Revenue totals on this page come
-              from stored finance snapshots. Booking metrics and live Xero
-              calls are not used here.
+              Generated {model.generatedOn}. Revenue figures on this page come from synced finance snapshots and update after the finance sync runs.
             </div>
 
             <form action="/finance/revenue" className="space-y-4">
@@ -236,34 +232,25 @@ export default async function FinanceRevenuePage({
         <Card>
           <CardHeader>
             <CardTitle className="text-lg text-slate-900">
-              Report notes
+              About this report
             </CardTitle>
             <CardDescription className="text-sm text-slate-600">
-              Revenue figures on this page come only from stored finance
-              snapshots.
+              Revenue figures here come from the finance sync rather than live Xero calls.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {model.isManager ? (
-              <Button asChild variant="outline" className="w-full justify-between">
-                <Link href="/api/finance/sync/status" target="_blank" rel="noreferrer">
-                  <span className="text-left">
-                    <span className="block text-sm font-medium">
-                      View sync diagnostics
-                    </span>
-                    <span className="block text-xs text-slate-500">
-                      Technical detail for the latest finance sync.
-                    </span>
-                  </span>
-                  <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />
-                </Link>
-              </Button>
-            ) : (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                Finance viewer access does not expose manager-only finance sync
-                diagnostics here.
-              </div>
-            )}
+              <FinanceTechnicalDetails
+                actions={[
+                  {
+                    href: "/api/finance/sync/status",
+                    label: "Open sync diagnostics JSON",
+                    description:
+                      "Technical detail for the latest finance sync and recent failures.",
+                  },
+                ]}
+              />
+            ) : null}
 
             <Button asChild variant="ghost" className="w-full justify-between">
               <Link href="/finance">
@@ -348,9 +335,7 @@ export default async function FinanceRevenuePage({
                   Revenue line-item mix
                 </CardTitle>
                 <CardDescription className="text-sm text-slate-600">
-                  Line items stay grouped by the stored profit-and-loss snapshot
-                  labels so the page remains aligned with the finance reporting
-                  source.
+                  Line items stay grouped by the synced profit and loss labels so they line up with the source finance reports.
                 </CardDescription>
               </CardHeader>
               <CardContent>

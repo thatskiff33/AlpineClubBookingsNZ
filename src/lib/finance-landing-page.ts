@@ -18,6 +18,7 @@ import { formatCents } from "@/lib/utils";
 
 const FINANCE_TIMEZONE = "Pacific/Auckland";
 const FINANCE_LANDING_FORWARD_DAY_COUNT = 90;
+const FINANCE_SYNC_STALE_AFTER_MS = 36 * 60 * 60 * 1000;
 
 export interface FinanceLandingWindowSummary {
   label: string;
@@ -65,6 +66,7 @@ export interface FinanceLandingManagerWorkspace {
   configIssues: string[];
   tokenStorageIssues: string[];
   actions: FinanceLandingManagerAction[];
+  technicalActions: FinanceLandingManagerAction[];
   error?: string;
 }
 
@@ -152,15 +154,6 @@ export async function buildFinanceLandingPageModel(input: {
   const sync = mapSyncSection(syncResult);
   const realized = mapRealizedSection(windows.realized, bookingResult);
   const forward = mapForwardSection(windows.forward, bookingResult);
-  const queryString = new URLSearchParams({
-    realizedFrom: query.realized!.from,
-    realizedTo: query.realized!.to,
-    realizedCutoff: query.realized!.cutoffDate!,
-    forwardFrom: query.forward!.from,
-    forwardTo: query.forward!.to,
-    forwardAsOf: query.forward!.asOfDate!,
-  }).toString();
-
   return {
     generatedOn: formatDateTime(new Date().toISOString()),
     isManager,
@@ -210,8 +203,7 @@ export async function buildFinanceLandingPageModel(input: {
       ? mapManagerWorkspace(
           xeroResult as PromiseSettledResult<
             Awaited<ReturnType<typeof getFinanceXeroRouteStatus>> | null
-          >,
-          queryString
+          >
         )
       : null,
   };
@@ -220,37 +212,29 @@ export async function buildFinanceLandingPageModel(input: {
 function mapManagerWorkspace(
   result: PromiseSettledResult<
     Awaited<ReturnType<typeof getFinanceXeroRouteStatus>> | null
-  >,
-  bookingMetricsQueryString: string
+  >
 ): FinanceLandingManagerWorkspace {
-  const fallbackActions: FinanceLandingManagerAction[] = [
+  const technicalActions: FinanceLandingManagerAction[] = [
     {
       kind: "link",
       href: "/api/finance/sync/status",
-      label: "View sync diagnostics",
+      label: "Open sync diagnostics JSON",
       description:
         "Technical detail for the latest finance sync and recent failures.",
     },
     {
       kind: "link",
       href: "/api/finance/xero/status",
-      label: "View Xero connection details",
+      label: "Open Xero status JSON",
       description:
         "Technical detail for the finance reporting Xero connection.",
-    },
-    {
-      kind: "link",
-      href: `/api/finance/bookings/metrics?${bookingMetricsQueryString}`,
-      label: "View raw booking metrics",
-      description:
-        "Raw booking metrics for the same date ranges shown on this page.",
     },
   ];
 
   if (result.status === "rejected") {
     return {
-      eyebrow: "Manager tools",
-      title: "Manager tools are temporarily unavailable",
+      eyebrow: "Manager access",
+      title: "Connection & diagnostics are temporarily unavailable",
       description:
         "The page could not load the finance Xero manager tools right now.",
       badgeLabel: "Unavailable",
@@ -258,7 +242,8 @@ function mapManagerWorkspace(
       cards: [],
       configIssues: [],
       tokenStorageIssues: [],
-      actions: fallbackActions,
+      actions: [],
+      technicalActions,
       error: readErrorMessage({
         reason: result.reason,
         fallback: "Finance Xero manager tools are temporarily unavailable.",
@@ -271,8 +256,8 @@ function mapManagerWorkspace(
   const status = result.value;
   if (!status) {
     return {
-      eyebrow: "Manager tools",
-      title: "Finance manager operations",
+      eyebrow: "Manager access",
+      title: "Connection & diagnostics",
       description:
         "Connection and setup tools are only shown to finance managers.",
       badgeLabel: "Hidden",
@@ -281,19 +266,27 @@ function mapManagerWorkspace(
       configIssues: [],
       tokenStorageIssues: [],
       actions: [],
+      technicalActions: [],
     };
   }
 
+  const reconnectRequired = status.hasStoredTokens && !status.connected;
   const badgeVariant = status.connected
     ? "success"
-    : status.canConnect
+    : !status.canConnect
+      ? "destructive"
+      : reconnectRequired
+        ? "warning"
+        : status.canConnect
       ? "warning"
       : "destructive";
   const badgeLabel = status.connected
     ? "Connected"
-    : status.canConnect
-      ? "Ready to connect"
-      : "Config required";
+    : !status.canConnect
+      ? "Setup required"
+      : reconnectRequired
+        ? "Reconnect required"
+        : "Ready to connect";
   const connectionActions: FinanceLandingManagerAction[] = status.connected
     ? [
         {
@@ -310,7 +303,7 @@ function mapManagerWorkspace(
             "Clear the saved finance tokens and revoke them in Xero when possible.",
         },
       ]
-    : status.canConnect
+      : status.canConnect
       ? [
           {
             kind: "connect",
@@ -323,13 +316,15 @@ function mapManagerWorkspace(
       : [];
 
   return {
-    eyebrow: "Manager tools",
-    title: "Finance manager operations",
+    eyebrow: "Manager access",
+    title: "Connection & diagnostics",
     description: status.connected
-      ? "The finance Xero connection is ready to use."
-      : status.canConnect
-        ? "This environment is ready, but no finance Xero tenant is connected yet."
-        : "The finance Xero connection is blocked by missing or invalid setup.",
+      ? "Finance Xero is connected and ready for scheduled syncs."
+      : !status.canConnect
+        ? "This environment is missing required finance Xero setup."
+        : reconnectRequired
+          ? "A saved finance token needs to be reconnected before sync can run reliably."
+          : "This environment is ready, but finance Xero has not been connected yet.",
     badgeLabel,
     badgeVariant,
     cards: [
@@ -337,34 +332,40 @@ function mapManagerWorkspace(
         title: "Finance Xero",
         value: status.connected
           ? "Connected"
-          : status.canConnect
-            ? "Ready to connect"
-            : "Blocked",
+          : !status.canConnect
+            ? "Setup required"
+            : reconnectRequired
+              ? "Reconnect needed"
+              : "Not connected",
         description: status.connected
-          ? "Finance reporting is connected to its own saved Xero login."
-          : status.canConnect
-            ? "Connect the finance Xero tenant before relying on fresh synced finance data."
-            : "Fix the setup issues below before connecting finance Xero.",
+          ? "Finance reporting is connected to its own saved Xero organisation."
+          : !status.canConnect
+            ? "Finish the finance Xero setup before trying to connect."
+            : reconnectRequired
+              ? "Reconnect finance Xero so the saved connection has a valid organisation again."
+              : "Connect finance Xero before relying on synced finance data.",
         footnote: status.connected
           ? buildConnectionFootnote(status.tenantId, status.tokenExpiresAt)
-          : "No finance Xero token record is stored yet.",
+          : reconnectRequired
+            ? "A saved token exists, but the finance organisation is missing from the connection."
+            : "No finance Xero connection has been saved in this environment yet.",
       },
       {
-        title: "OAuth config",
+        title: "Finance app setup",
         value: status.oauthConfigured ? "Ready" : "Action required",
         description: status.oauthConfigured
-          ? "The finance Xero app credentials and callback URL are configured."
-          : "Finance OAuth settings are incomplete for this environment.",
+          ? "Finance Xero credentials and callback settings are configured."
+          : "Finance Xero credentials or callback settings still need to be fixed.",
         footnote: status.configIssues.length
           ? formatIssueList(status.configIssues)
-          : "No finance OAuth configuration issues detected.",
+          : "No finance app configuration issues detected.",
       },
       {
         title: "Token storage",
         value: status.tokenStorageConfigured ? "Ready" : "Action required",
         description: status.tokenStorageConfigured
           ? "Encrypted storage for finance Xero tokens is configured."
-          : "Finance token encryption must be fixed before saving tokens from Xero.",
+          : "Finance token encryption must be fixed before Xero tokens can be saved.",
         footnote: status.tokenStorageIssues.length
           ? formatIssueList(status.tokenStorageIssues)
           : "No finance token-storage issues detected.",
@@ -372,7 +373,8 @@ function mapManagerWorkspace(
     ],
     configIssues: status.configIssues,
     tokenStorageIssues: status.tokenStorageIssues,
-    actions: [...connectionActions, ...fallbackActions],
+    actions: connectionActions,
+    technicalActions,
   };
 }
 
@@ -404,9 +406,9 @@ function mapSyncSection(
     return {
       id: "sync-health",
       eyebrow: "Finance sync",
-      title: "Waiting for the first durable finance sync",
+      title: "Finance sync has not completed yet",
       description:
-        "Finance access is live, but no completed finance sync has been recorded yet.",
+        "No finance sync has completed in this environment yet.",
       badgeLabel: "Not yet synced",
       badgeVariant: "warning",
       cards: [
@@ -416,7 +418,7 @@ function mapSyncSection(
           description: `Configured for ${cron.timezone}.`,
         },
         {
-          title: "Latest cron run",
+          title: "Latest scheduled check",
           value: latestCron ? humanizeStatus(latestCron.status) : "No cron history",
           description: latestCron
             ? formatRunTimestamp(latestCron.completedAt ?? latestCron.startedAt, "Ran")
@@ -429,19 +431,26 @@ function mapSyncSection(
 
   const latestRunCompleted = latestRun.completedAt ?? latestRun.startedAt;
   const failedDatasets = latestRun.failedDatasetCount;
-  const badgeVariant =
-    latestRun.status === "SUCCEEDED"
+  const latestRunAgeMs = Date.now() - new Date(latestRunCompleted).getTime();
+  const isStale =
+    latestRun.status === "SUCCEEDED" &&
+    latestRun.completedAt !== null &&
+    latestRunAgeMs > FINANCE_SYNC_STALE_AFTER_MS;
+  const badgeVariant = isStale
+    ? "warning"
+    : latestRun.status === "SUCCEEDED"
       ? "success"
       : latestRun.status === "PARTIAL"
         ? "warning"
         : latestRun.status === "RUNNING"
           ? "secondary"
           : "destructive";
-  const badgeLabel =
-    latestRun.status === "SUCCEEDED"
+  const badgeLabel = isStale
+    ? "Stale"
+    : latestRun.status === "SUCCEEDED"
       ? "Healthy"
       : latestRun.status === "PARTIAL"
-        ? "Attention needed"
+        ? "Needs review"
         : latestRun.status === "RUNNING"
           ? "Running"
           : "Failed";
@@ -450,8 +459,9 @@ function mapSyncSection(
     id: "sync-health",
     eyebrow: "Finance sync",
     title: "Finance data freshness",
-    description:
-      latestRun.status === "SUCCEEDED"
+    description: isStale
+      ? "The last successful finance sync is older than expected and should be checked."
+      : latestRun.status === "SUCCEEDED"
         ? "The most recent finance sync completed successfully."
         : latestRun.status === "PARTIAL"
           ? "The most recent finance sync completed with some dataset failures."
@@ -462,13 +472,13 @@ function mapSyncSection(
     badgeVariant,
     cards: [
       {
-        title: "Latest durable run",
+        title: "Latest sync run",
         value: humanizeStatus(latestRun.status),
         description: formatRunTimestamp(latestRunCompleted, latestRun.completedAt ? "Completed" : "Started"),
-        footnote: latestRun.errorSummary ?? undefined,
+        footnote: latestRun.errorSummary ?? formatSyncFreshnessFootnote(isStale, latestRunCompleted),
       },
       {
-        title: "Snapshots persisted",
+        title: "Snapshots stored",
         value: formatWholeNumber(latestRun.snapshotCount),
         description: `${formatWholeNumber(latestRun.datasetCount)} datasets, ${formatWholeNumber(latestRun.totalRowCount)} rows.`,
         footnote:
@@ -477,7 +487,7 @@ function mapSyncSection(
             : `${formatWholeNumber(latestRun.successfulDatasetCount)} dataset${latestRun.successfulDatasetCount === 1 ? "" : "s"} completed successfully.`,
       },
       {
-        title: "Latest cron check",
+        title: "Latest scheduled check",
         value: latestCron ? humanizeStatus(latestCron.status) : "No cron history",
         description: latestCron
           ? formatRunTimestamp(latestCron.completedAt ?? latestCron.startedAt, "Ran")
@@ -641,6 +651,17 @@ function formatDateTime(value: string): string {
 
 function formatRunTimestamp(value: string, prefix: string): string {
   return `${prefix} ${formatDateTime(value)}.`;
+}
+
+function formatSyncFreshnessFootnote(isStale: boolean, completedAt: string): string {
+  const ageHours = Math.max(
+    Math.round((Date.now() - new Date(completedAt).getTime()) / (60 * 60 * 1000)),
+    0
+  );
+
+  return isStale
+    ? `Last successful sync completed about ${ageHours} hour${ageHours === 1 ? "" : "s"} ago.`
+    : `Last completed about ${ageHours} hour${ageHours === 1 ? "" : "s"} ago.`;
 }
 
 function humanizeStatus(status: string): string {
