@@ -14,7 +14,8 @@ Establish the current truth of the repo before broad audit work begins.
 - `package.json`
 - `.env.example`
 - `docker-compose.yml`, `Dockerfile`, `Caddyfile`
-- `/home/ubuntu/clean-build-docker-tacbookings.sh`
+- `scripts/run-production-blue-green-deploy.sh`
+- `scripts/blue-green-deploy.sh`
 
 ## Steps
 
@@ -63,5 +64,5 @@ git status --short
 rg --files docs src/app/api src/lib
 node -e "const p=require('./package.json'); console.log(p.scripts)"
 sed -n '1,240p' .env.example
-sed -n '1,260p' /home/ubuntu/clean-build-docker-tacbookings.sh
+sed -n '1,260p' scripts/run-production-blue-green-deploy.sh
 ```

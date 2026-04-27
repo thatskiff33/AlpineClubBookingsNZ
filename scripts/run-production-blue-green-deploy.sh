@@ -6,6 +6,8 @@ DEPLOY_REF="${DEPLOY_REF:-origin/main}"
 FETCH_LATEST="${FETCH_LATEST:-1}"
 DEPLOY_WORKSPACE_ROOT="${DEPLOY_WORKSPACE_ROOT:-$HOME/tacbookings-deployments}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$SOURCE_REPO" | tr '[:upper:]' '[:lower:]')}"
+SYNC_SOURCE_REPO_AFTER_DEPLOY="${SYNC_SOURCE_REPO_AFTER_DEPLOY:-1}"
+PRUNE_STALE_DEPLOY_WORKSPACES="${PRUNE_STALE_DEPLOY_WORKSPACES:-1}"
 
 ACTIVE_UPSTREAM_FILE_REL="deploy/caddy/tacbookings-active.caddy"
 CADDY_CONFIG_CONTAINER_PATH="/etc/caddy/Caddyfile"
@@ -56,6 +58,10 @@ env_flag_is_true() {
   esac
 }
 
+source_repo_is_clean() {
+  [ -z "$(git -C "$SOURCE_REPO" status --short --untracked-files=normal)" ]
+}
+
 write_active_upstream_file() {
   local primary_service="$1"
   local fallback_service="${2:-}"
@@ -102,6 +108,21 @@ create_workspace() {
   chmod 600 "$WORKSPACE/.env"
 }
 
+validate_source_repo_state() {
+  local branch
+
+  branch="$(git -C "$SOURCE_REPO" rev-parse --abbrev-ref HEAD)"
+  if [ "$branch" != "main" ]; then
+    echo "Source repository must be on main before deploy. Current branch: $branch" >&2
+    return 1
+  fi
+
+  if ! source_repo_is_clean; then
+    echo "Source repository must be clean on main before deploy, including no untracked files." >&2
+    return 1
+  fi
+}
+
 get_service_container_id() {
   local service="$1"
 
@@ -111,11 +132,9 @@ get_service_container_id() {
     ps -q "$service" 2>/dev/null || true
 }
 
-seed_active_upstream_from_live_bind_mount() {
+get_live_caddy_deploy_mount_source() {
   local caddy_cid
   local mount_source
-  local source_file
-  local destination
 
   caddy_cid="$(get_service_container_id "$CADDY_SERVICE")"
   if [ -z "$caddy_cid" ]; then
@@ -127,6 +146,21 @@ seed_active_upstream_from_live_bind_mount() {
       --format "{{range .Mounts}}{{if eq .Destination \"$CADDY_DEPLOY_CONTAINER_PATH\"}}{{println .Source}}{{end}}{{end}}"
   )"
   mount_source="${mount_source%$'\n'}"
+  if [ -z "$mount_source" ]; then
+    return 1
+  fi
+
+  printf '%s' "$mount_source"
+}
+
+seed_active_upstream_from_live_bind_mount() {
+  local mount_source
+  local source_file
+  local destination
+
+  if ! mount_source="$(get_live_caddy_deploy_mount_source)"; then
+    return 1
+  fi
   source_file="${mount_source}/${ACTIVE_UPSTREAM_FILE_REL##*/}"
   destination="$WORKSPACE/$ACTIVE_UPSTREAM_FILE_REL"
 
@@ -230,11 +264,68 @@ run_deploy() {
   )
 }
 
+sync_source_repo_to_deployed_commit() {
+  local current_ref
+
+  if ! env_flag_is_true "$SYNC_SOURCE_REPO_AFTER_DEPLOY"; then
+    info "Skipping source repository sync because SYNC_SOURCE_REPO_AFTER_DEPLOY=${SYNC_SOURCE_REPO_AFTER_DEPLOY}."
+    return 0
+  fi
+
+  validate_source_repo_state
+  current_ref="$(git -C "$SOURCE_REPO" rev-parse HEAD)"
+  if [ "$current_ref" = "$RESOLVED_REF" ]; then
+    info "Source repository is already at the deployed commit."
+    return 0
+  fi
+
+  git -C "$SOURCE_REPO" fetch --prune origin main
+  git -C "$SOURCE_REPO" merge --ff-only "$RESOLVED_REF"
+  info "Updated $SOURCE_REPO to deployed commit ${RESOLVED_REF}."
+}
+
+prune_stale_deploy_workspaces() {
+  local live_mount_source=""
+  local live_workspace=""
+  local candidate
+  local removed_any=0
+
+  if ! env_flag_is_true "$PRUNE_STALE_DEPLOY_WORKSPACES"; then
+    info "Skipping deploy workspace cleanup because PRUNE_STALE_DEPLOY_WORKSPACES=${PRUNE_STALE_DEPLOY_WORKSPACES}."
+    return 0
+  fi
+
+  if [ ! -d "$DEPLOY_WORKSPACE_ROOT" ]; then
+    return 0
+  fi
+
+  if ! live_mount_source="$(get_live_caddy_deploy_mount_source)"; then
+    warn "Unable to identify the live deploy workspace from Caddy. Preserving existing deploy workspaces."
+    return 0
+  fi
+  live_workspace="$(dirname "$(dirname "$live_mount_source")")"
+
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if [ "$candidate" = "$live_workspace" ] || [ "$candidate" = "$WORKSPACE" ]; then
+      continue
+    fi
+
+    rm -rf "$candidate"
+    info "Removed stale deploy workspace: $candidate"
+    removed_any=1
+  done < <(find "$DEPLOY_WORKSPACE_ROOT" -maxdepth 1 -mindepth 1 -type d -name "${COMPOSE_PROJECT_NAME}-*")
+
+  if [ "$removed_any" = "0" ]; then
+    info "No stale deploy workspaces to remove."
+  fi
+}
+
 echo "====================================================="
 echo "  TACBookings: Production Blue/Green Deploy Wrapper"
 echo "====================================================="
 
-step "1/6" "Validating host prerequisites"
+step "1/8" "Validating host prerequisites"
 require_command git
 require_command docker
 require_command tar
@@ -243,9 +334,12 @@ require_command cp
 require_command chmod
 require_command mkdir
 require_command basename
+require_command dirname
+require_command find
+require_command rm
 info "Required host commands are available."
 
-step "2/6" "Validating source repository"
+step "2/8" "Validating source repository"
 [ -d "$SOURCE_REPO" ] || {
   echo "Source repository not found: $SOURCE_REPO" >&2
   exit 1
@@ -259,19 +353,26 @@ git -C "$SOURCE_REPO" rev-parse --is-inside-work-tree >/dev/null
   echo "Source repository is missing docker-compose.yml" >&2
   exit 1
 }
+validate_source_repo_state
 info "Source repository contract looks valid."
 
-step "3/6" "Resolving deploy commit"
+step "3/8" "Resolving deploy commit"
 resolve_ref
 
-step "4/6" "Creating deployment workspace"
+step "4/8" "Creating deployment workspace"
 create_workspace
 
-step "5/6" "Preserving live Caddy upstream state"
+step "5/8" "Preserving live Caddy upstream state"
 seed_active_upstream_file
 
-step "6/6" "Executing blue/green deploy"
+step "6/8" "Executing blue/green deploy"
 run_deploy
+
+step "7/8" "Syncing source repository to the deployed commit"
+sync_source_repo_to_deployed_commit
+
+step "8/8" "Cleaning stale deploy workspaces"
+prune_stale_deploy_workspaces
 
 echo
 echo "Deploy workspace: $WORKSPACE"

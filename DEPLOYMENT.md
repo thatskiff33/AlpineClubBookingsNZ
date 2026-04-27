@@ -380,23 +380,14 @@ Options for getting members into the system:
 
 ### Deploying Updates
 
-```bash
-cd ~/TACBookings
-git pull origin main
-docker compose up -d --build
-# If the Prisma schema changed:
-docker compose exec app npx prisma migrate deploy
-```
-
-For the repo-standard full rebuild and verification flow, use:
+Use the single supported production deploy entrypoint:
 
 ```bash
 cd ~/TACBookings
-/home/ubuntu/clean-build-docker-tacbookings.sh
+./scripts/run-production-blue-green-deploy.sh
 ```
 
-This script is robust, but it is not zero-downtime. It tears down and recreates the live app stack during the rollout.
-It also rewrites the active Caddy upstream back to the single `app` service, so it is the fallback path when blue/green is not required.
+The wrapper fetches `origin/main`, deploys that exact commit from a clean workspace under `~/tacbookings-deployments/`, keeps the existing slot live until the new slot and cron leader pass readiness, fast-forwards `~/TACBookings` to the deployed commit when that checkout is clean on `main`, removes stale inactive web-slot containers, removes orphaned Compose containers, and prunes old deploy workspaces after success.
 
 ### Blue/Green Deployment Guidance
 
@@ -422,22 +413,26 @@ What the script does:
 9. Point Caddy at the target color as the primary upstream with `app` as the automatic fallback upstream.
 10. Verify the public domain still resolves to the target color, not just the fallback.
 11. Wait a short drain period so in-flight requests on the previous color can finish.
-12. Stop the previously live color service after the cutover succeeds.
+12. Remove inactive web-slot containers so only the target color remains after a successful cutover.
+13. Remove orphaned Compose containers from older service definitions.
+14. Fast-forward `~/TACBookings` to the deployed commit when that checkout is clean on `main`.
+15. Prune stale deploy workspaces under `~/tacbookings-deployments/` after Caddy is confirmed to be bind-mounting the new workspace.
 
 Current constraints and rules:
 
 - `app` remains the cron leader and the Caddy fallback upstream after a successful blue/green deploy.
 - `app_blue` and `app_green` are web-only services with cron disabled.
 - Caddy switches traffic by reloading a managed upstream file under `deploy/caddy/`.
-- The repo-standard wrapper keeps the live Caddy bind mounts out of `/tmp` and seeds the managed upstream file from live state before each deploy so the low-level script does not guess the active color from a fresh checkout.
+- The repo-standard wrapper requires a clean `~/TACBookings` checkout on `main`, keeps the live Caddy bind mounts out of `/tmp`, and seeds the managed upstream file from live state before each deploy so the low-level script does not guess the active color from a fresh checkout.
 - Caddy no longer depends on `app` health to start. Live traffic is modeled as `active color -> app fallback`.
 - `/api/health` stays public and DB-only. Blue/green health gates and container health checks use `/api/health/ready`, which also verifies runtime config and confirms whether the instance is a web slot or the cron leader.
 - The blue/green script waits `BLUE_GREEN_DRAIN_SECONDS` before it restarts or stops the previous service so in-flight requests can complete.
+- After a successful cutover, the non-target web-slot containers are removed so old code cannot keep running outside the active slot.
+- After a successful cutover, the wrapper fast-forwards the clean `~/TACBookings` checkout to the deployed commit and removes stale deploy workspaces that are no longer mounted by Caddy.
 - Postgres remains a shared dependency, not a blue/green service on this host.
 - The blue/green script scans pending Prisma migrations and blocks obviously breaking SQL unless both `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` and `BLUE_GREEN_MIGRATION_OVERRIDE_REASON="..."` are set deliberately.
 - The Prisma migration scan is heuristic only. A pass means "no obvious breaking SQL was detected", not "old and new code are definitely compatible".
 - Prisma migrations must be backward-compatible across the cutover. Use expand-contract schema changes so old and new app versions can overlap safely.
-- `/home/ubuntu/clean-build-docker-tacbookings.sh` still exists as the standard full rebuild path when zero-downtime is not required.
 
 ### Cutover Safety And Recovery Model
 
@@ -491,7 +486,7 @@ BLUE_GREEN_MIGRATION_OVERRIDE_REASON="explain the reviewed expand/contract plan"
 
 That override only bypasses the regex guard. It does not prove compatibility, and it should not be used instead of a staged expand-contract rollout.
 
-If the app images are already present on the host and you want to reuse them without rebuilding:
+If the app images are already present on the host and you intentionally want to reuse them without rebuilding:
 
 ```bash
 SKIP_APP_IMAGE_BUILD=1 ./scripts/run-production-blue-green-deploy.sh
