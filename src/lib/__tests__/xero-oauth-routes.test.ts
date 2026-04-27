@@ -52,7 +52,9 @@ describe("Xero OAuth admin routes", () => {
   });
 
   it("sets a scoped OAuth state cookie before redirecting to Xero", async () => {
-    const response = await connectXero(new Request("https://tokoroa.org.nz/api/admin/xero/connect"));
+    const response = await connectXero(
+      new Request("https://www.tokoroa.org.nz/api/admin/xero/connect")
+    );
 
     expect(response.status).toBe(307);
 
@@ -68,6 +70,7 @@ describe("Xero OAuth admin routes", () => {
     expect(setCookie).toContain("HttpOnly");
     expect(setCookie).toContain("SameSite=lax");
     expect(setCookie).toContain("Path=/api/admin/xero");
+    expect(setCookie).toContain("Domain=tokoroa.org.nz");
     expect(setCookie).toContain("Secure");
   });
 
@@ -93,6 +96,7 @@ describe("Xero OAuth admin routes", () => {
 
     const setCookie = response.headers.get("set-cookie");
     expect(setCookie).toContain("xero_oauth_state=");
+    expect(setCookie).toContain("Domain=tokoroa.org.nz");
     expect(setCookie).toContain("Max-Age=0");
     expect(setCookie).toContain("Path=/api/admin/xero");
   });
@@ -117,6 +121,7 @@ describe("Xero OAuth admin routes", () => {
 
     const setCookie = response.headers.get("set-cookie");
     expect(setCookie).toContain("xero_oauth_state=");
+    expect(setCookie).toContain("Domain=tokoroa.org.nz");
     expect(setCookie).toContain("Max-Age=0");
   });
 });

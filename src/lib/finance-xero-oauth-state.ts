@@ -1,5 +1,6 @@
 import {
   createXeroOAuthState,
+  getOAuthCookieDomain,
   isValidXeroOAuthState,
 } from "@/lib/xero-oauth-state";
 
@@ -24,6 +25,7 @@ export function getFinanceXeroOAuthStateCookieOptions(requestUrl?: string) {
     nextAuthUrl?.startsWith("https://") ||
     requestUrl?.startsWith("https://") ||
     process.env.NODE_ENV === "production";
+  const domain = getOAuthCookieDomain(requestUrl);
 
   return {
     httpOnly: true,
@@ -31,6 +33,7 @@ export function getFinanceXeroOAuthStateCookieOptions(requestUrl?: string) {
     sameSite: "lax" as const,
     maxAge: FINANCE_XERO_OAUTH_STATE_MAX_AGE_SECONDS,
     path: FINANCE_XERO_OAUTH_STATE_PATH,
+    ...(domain ? { domain } : {}),
   };
 }
 
