@@ -373,6 +373,34 @@ describe("finance landing page model", () => {
     expect(mockGetFinanceXeroRouteStatus).not.toHaveBeenCalled();
   });
 
+  it("shows a non-CTA badge label when finance Xero still needs first-time consent", async () => {
+    mockGetFinanceXeroRouteStatus.mockResolvedValue(
+      financeXeroRouteStatus({
+        connected: false,
+        hasStoredTokens: false,
+        tenantId: null,
+        tokenExpiresAt: null,
+      })
+    );
+
+    const model = await buildFinanceLandingPageModel({
+      member: financeManager(),
+      today: parseDateOnly("2026-04-21"),
+    });
+
+    expect(model.managerWorkspace).toMatchObject({
+      badgeLabel: "Connection needed",
+      badgeVariant: "warning",
+    });
+    expect(model.managerWorkspace?.actions).toMatchObject([
+      {
+        kind: "connect",
+        href: "/api/finance/xero/connect",
+        label: "Connect finance Xero",
+      },
+    ]);
+  });
+
   it("surfaces finance Xero configuration blockers for managers", async () => {
     mockGetFinanceXeroRouteStatus.mockResolvedValue(
       financeXeroRouteStatus({

@@ -286,7 +286,7 @@ function mapManagerWorkspace(
       ? "Setup required"
       : reconnectRequired
         ? "Reconnect required"
-        : "Ready to connect";
+        : "Connection needed";
   const connectionActions: FinanceLandingManagerAction[] = status.connected
     ? [
         {

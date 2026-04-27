@@ -235,7 +235,7 @@ function ManagerActionButton({
       variant={isConnectAction ? "default" : "outline"}
       className="w-full justify-between"
     >
-      <Link
+      <a
         href={action.href}
         target={action.kind === "link" ? "_blank" : undefined}
         rel={action.kind === "link" ? "noreferrer" : undefined}
@@ -251,7 +251,7 @@ function ManagerActionButton({
         ) : (
           <ArrowRight className="ml-3 h-4 w-4 shrink-0" />
         )}
-      </Link>
+      </a>
     </Button>
   );
 }
