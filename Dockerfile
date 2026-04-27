@@ -3,7 +3,7 @@ FROM node:20.20-alpine AS base
 # Install dependencies only when needed
 FROM base AS deps
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 COPY prisma ./prisma/
 COPY prisma.config.ts ./
 RUN --mount=type=cache,target=/root/.npm npm ci

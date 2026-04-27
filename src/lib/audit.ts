@@ -1,8 +1,8 @@
-import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { Prisma } from "@prisma/client";
 import logger from "@/lib/logger";
 
-type AuditLogParams = {
+export type AuditLogParams = {
   action: string;
   memberId?: string;
   targetId?: string;
@@ -10,12 +10,17 @@ type AuditLogParams = {
   ipAddress?: string;
 };
 
+type AuditLogClient = Prisma.TransactionClient | typeof prisma;
+
+/**
+ * Persist an audit record synchronously. Callers that need audit durability
+ * should await this and, when relevant, pass the current transaction client.
+ */
 export async function createAuditLog(
   params: AuditLogParams,
-  tx?: Prisma.TransactionClient
-) {
-  const db = tx ?? prisma;
-  return db.auditLog.create({ data: params });
+  db: AuditLogClient = prisma
+): Promise<void> {
+  await db.auditLog.create({ data: params });
 }
 
 /**
@@ -23,7 +28,7 @@ export async function createAuditLog(
  * Fire-and-forget: failures are logged but don't block the calling operation.
  */
 export function logAudit(params: AuditLogParams): void {
-  createAuditLog(params)
+  void createAuditLog(params)
     .catch((err) => {
       logger.error({ err }, "Failed to write audit log");
     });
