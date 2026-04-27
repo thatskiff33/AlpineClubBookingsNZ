@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups"
 import {
   formatRedactedJson,
   redactSensitiveText,
@@ -623,6 +624,7 @@ export default function XeroPage() {
   const [contactGroups, setContactGroups] = useState<ContactGroup[]>([])
   const [groupMappings, setGroupMappings] = useState<GroupMapping[]>([])
   const [loadingGroups, setLoadingGroups] = useState(false)
+  const [refreshingGroups, setRefreshingGroups] = useState(false)
   const [sendInvites, setSendInvites] = useState(false)
 
   // Duplicate detection state
@@ -832,6 +834,52 @@ export default function XeroPage() {
     }
   }, [])
 
+  const loadContactGroups = useCallback(
+    async (options?: {
+      refreshFromXero?: boolean
+      fallbackToRefreshIfEmpty?: boolean
+    }) => {
+      if (options?.refreshFromXero) {
+        setRefreshingGroups(true)
+      } else {
+        setLoadingGroups(true)
+      }
+      setError("")
+
+      try {
+        const result = await loadAdminXeroContactGroups({
+          refreshFromXero: options?.refreshFromXero,
+          fallbackToRefreshIfEmpty: options?.fallbackToRefreshIfEmpty,
+        })
+
+        setContactGroups(result.groups)
+        setGroupMappings((prev) =>
+          result.groups.map((group) => {
+            const existing = prev.find((mapping) => mapping.groupId === group.id)
+            return {
+              groupId: group.id,
+              groupName: group.name,
+              ageTier: existing?.ageTier ?? "SKIP",
+            }
+          })
+        )
+
+        await fetchHealth()
+        if (sectionOpen.contactGroupMismatches) {
+          await fetchContactGroupMismatches()
+        }
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to load Xero contact groups"
+        )
+      } finally {
+        setLoadingGroups(false)
+        setRefreshingGroups(false)
+      }
+    },
+    [fetchContactGroupMismatches, fetchHealth, sectionOpen.contactGroupMismatches]
+  )
+
   useEffect(() => {
     fetchStatus()
   }, [fetchStatus])
@@ -873,6 +921,15 @@ export default function XeroPage() {
       fetchAccountMappings()
     }
   }, [status?.connected, fetchAccountMappings])
+
+  useEffect(() => {
+    if (status?.connected) {
+      void loadContactGroups()
+    } else {
+      setContactGroups([])
+      setGroupMappings([])
+    }
+  }, [loadContactGroups, status?.connected])
 
   useEffect(() => {
     if (status?.connected) {
@@ -1238,6 +1295,7 @@ export default function XeroPage() {
       }
       const data = await res.json()
       setSyncResult(data)
+      await loadContactGroups()
       await fetchHealth()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Contact sync failed")
@@ -1267,33 +1325,7 @@ export default function XeroPage() {
   }
 
   const handleFetchGroups = async () => {
-    setLoadingGroups(true)
-    setError("")
-    try {
-      const res = await fetch("/api/admin/xero/contact-groups?refresh=1")
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error || "Failed to fetch groups")
-      }
-      const data = await res.json()
-      setContactGroups(data.groups)
-      // Initialize mappings with "SKIP" for all groups
-      setGroupMappings(
-        data.groups.map((g: ContactGroup) => ({
-          groupId: g.id,
-          groupName: g.name,
-          ageTier: "SKIP",
-        }))
-      )
-      await fetchHealth()
-      if (sectionOpen.contactGroupMismatches) {
-        await fetchContactGroupMismatches()
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch contact groups")
-    } finally {
-      setLoadingGroups(false)
-    }
+    await loadContactGroups({ fallbackToRefreshIfEmpty: true })
   }
 
   const handleImportMembers = async () => {
@@ -3210,10 +3242,22 @@ export default function XeroPage() {
 
               {contactGroups.length === 0 ? (
                 <Button onClick={handleFetchGroups} disabled={loadingGroups}>
-                  {loadingGroups ? "Refreshing Groups..." : "Refresh Contact Groups from Xero"}
+                  {loadingGroups ? "Loading Groups..." : "Load Contact Groups"}
                 </Button>
               ) : (
                 <>
+                  <div className="flex justify-end">
+                    <Button
+                      variant="outline"
+                      onClick={() => loadContactGroups({ refreshFromXero: true })}
+                      disabled={refreshingGroups}
+                    >
+                      {refreshingGroups
+                        ? "Refreshing Groups..."
+                        : "Refresh Contact Groups from Xero"}
+                    </Button>
+                  </div>
+
                   <div className="space-y-3">
                     {contactGroups.map((group) => {
                       const mapping = groupMappings.find((m) => m.groupId === group.id)
