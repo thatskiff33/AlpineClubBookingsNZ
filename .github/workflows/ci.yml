@@ -27,11 +27,34 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
 
+      - name: Probe GitHub Advanced Security support
+        id: dependency-review-support
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          status_code=$(curl -sS \
+            -o /tmp/dependency-review-support.json \
+            -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/code-scanning/default-setup")
+
+          if [ "${status_code}" = "200" ]; then
+            echo "supported=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "supported=false" >> "${GITHUB_OUTPUT}"
+          echo "::warning::Dependency review is unavailable because GitHub Advanced Security is not enabled for ${GITHUB_REPOSITORY}."
+          cat /tmp/dependency-review-support.json
+
       - name: Dependency review
+        if: steps.dependency-review-support.outputs.supported == 'true'
         uses: actions/dependency-review-action@v4
 
   codeql:
@@ -45,6 +68,29 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
+      - name: Probe code scanning availability
+        id: codeql-support
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          status_code=$(curl -sS \
+            -o /tmp/codeql-support.json \
+            -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/code-scanning/default-setup")
+
+          if [ "${status_code}" = "200" ]; then
+            echo "upload=always" >> "${GITHUB_OUTPUT}"
+            echo "artifact=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "upload=never" >> "${GITHUB_OUTPUT}"
+          echo "artifact=true" >> "${GITHUB_OUTPUT}"
+          echo "::warning::Code scanning is unavailable for ${GITHUB_REPOSITORY}; CodeQL SARIF will be uploaded as an artifact instead."
+          cat /tmp/codeql-support.json
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
@@ -53,12 +99,24 @@ jobs:
 
       - name: Analyze with CodeQL
         uses: github/codeql-action/analyze@v3
+        with:
+          output: sarif-results
+          upload: ${{ steps.codeql-support.outputs.upload }}
+
+      - name: Upload CodeQL SARIF artifact
+        if: steps.codeql-support.outputs.artifact == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-sarif-${{ github.run_id }}
+          path: sarif-results
+          if-no-files-found: error
 
   gitleaks-full-repo:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
