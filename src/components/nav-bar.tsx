@@ -64,11 +64,12 @@ export function NavBar({ user }: NavBarProps) {
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";
     if (href === "/dashboard") return pathname === "/dashboard";
+    if (href === "/admin/dashboard") return pathname.startsWith("/admin");
     return pathname.startsWith(href);
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-white shadow-sm">
+    <header className="sticky top-0 z-50 w-full border-b bg-white shadow-sm print:hidden">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Branding */}
         <Link
