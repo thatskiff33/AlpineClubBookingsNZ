@@ -1,8 +1,11 @@
 "use client";
 
+import type { AgeTier } from "@prisma/client";
 import { useState, useEffect, useCallback } from "react";
 import { format } from "date-fns";
 import { subscriptionStatusClass } from "@/lib/status-colors";
+import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups";
+import { getAgeTierLabel, useAgeTierOptions } from "@/lib/use-age-tier-options";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,15 +42,27 @@ interface Subscription {
   xeroInvoiceId: string | null;
   xeroInvoiceNumber: string | null;
   paidAt: string | null;
-  member: { firstName: string; lastName: string; email: string };
+  xeroContactGroupsLoaded: boolean;
+  xeroContactGroups: Array<{ id: string; name: string }>;
+  member: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    ageTier: AgeTier;
+    xeroContactId: string | null;
+  };
 }
 
 interface Summary { total: number; paid: number; unpaid: number; overdue: number; notInvoiced: number; }
+interface XeroContactGroup { id: string; name: string; contactCount: number; }
 type MembershipSyncMode = "incremental" | "backfill";
 
 export default function SubscriptionsPage() {
+  const ageTierOptions = useAgeTierOptions();
   const [seasonYear, setSeasonYear] = useState(currentYear);
   const [status, setStatus] = useState("all");
+  const [ageTier, setAgeTier] = useState<AgeTier | "all">("all");
+  const [xeroContactGroup, setXeroContactGroup] = useState("all");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(25);
   const [data, setData] = useState<Subscription[]>([]);
@@ -56,6 +71,8 @@ export default function SubscriptionsPage() {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState<MembershipSyncMode | null>(null);
   const [syncMessage, setSyncMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [xeroContactGroupsList, setXeroContactGroupsList] = useState<XeroContactGroup[]>([]);
+  const [xeroContactGroupsLoaded, setXeroContactGroupsLoaded] = useState(true);
 
   async function handleSync(mode: MembershipSyncMode) {
     const label =
@@ -90,19 +107,35 @@ export default function SubscriptionsPage() {
     }
   }
 
+  useEffect(() => {
+    loadAdminXeroContactGroups()
+      .then((result) => setXeroContactGroupsList(result.groups))
+      .catch(() => setXeroContactGroupsList([]));
+  }, []);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
-        seasonYear: String(seasonYear), status, page: String(page), pageSize: String(pageSize),
+        seasonYear: String(seasonYear),
+        status,
+        ageTier,
+        page: String(page),
+        pageSize: String(pageSize),
       });
+      if (xeroContactGroup !== "all") {
+        params.set("xeroContactGroup", xeroContactGroup);
+      }
       const res = await fetch(`/api/admin/subscriptions?${params}`);
       if (res.ok) {
         const json = await res.json();
-        setData(json.data); setTotal(json.total); setSummary(json.summary);
+        setData(json.data);
+        setTotal(json.total);
+        setSummary(json.summary);
+        setXeroContactGroupsLoaded(json.xeroContactGroupsLoaded !== false);
       }
     } finally { setLoading(false); }
-  }, [seasonYear, status, page, pageSize]);
+  }, [seasonYear, status, ageTier, xeroContactGroup, page, pageSize]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
   const totalPages = Math.ceil(total / pageSize);
@@ -138,6 +171,36 @@ export default function SubscriptionsPage() {
             </SelectContent>
           </Select>
         </div>
+        <div>
+          <label className="text-xs font-medium text-slate-500">Age Group</label>
+          <Select value={ageTier} onValueChange={(v) => { setAgeTier(v as AgeTier | "all"); setPage(1); }}>
+            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Age Groups</SelectItem>
+              {ageTierOptions.map((option) => (
+                <SelectItem key={option.tier} value={option.tier}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {xeroContactGroupsList.length > 0 && (
+          <div>
+            <label className="text-xs font-medium text-slate-500">Xero Contact Group</label>
+            <Select value={xeroContactGroup} onValueChange={(v) => { setXeroContactGroup(v); setPage(1); }}>
+              <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Xero Contact Groups</SelectItem>
+                {xeroContactGroupsList.map((group) => (
+                  <SelectItem key={group.id} value={group.id}>
+                    {group.name} ({group.contactCount})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <Button
           variant="outline"
           onClick={() => handleSync("incremental")}
@@ -164,6 +227,12 @@ export default function SubscriptionsPage() {
         manual backfill for linked members who may be stuck after historical
         Xero invoices were created before the link existed.
       </p>
+      {!xeroContactGroupsLoaded && (
+        <p className="text-xs text-slate-500">
+          Cached Xero contact groups have not been refreshed yet, so linked
+          members may appear without group badges.
+        </p>
+      )}
 
       {syncMessage && (
         <div className={`rounded-md p-3 text-sm ${syncMessage.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
@@ -182,18 +251,34 @@ export default function SubscriptionsPage() {
         <CardContent className="p-0">
           <Table>
             <TableHeader><TableRow>
-              <TableHead>Member</TableHead><TableHead>Email</TableHead><TableHead>Status</TableHead><TableHead>Xero Invoice</TableHead><TableHead>Paid Date</TableHead>
+              <TableHead>Member</TableHead><TableHead>Email</TableHead><TableHead>Age Group</TableHead><TableHead>Xero Contact Group</TableHead><TableHead>Status</TableHead><TableHead>Xero Invoice</TableHead><TableHead>Paid Date</TableHead>
             </TableRow></TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-8 text-slate-500">Loading...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-8 text-slate-500">Loading...</TableCell></TableRow>
               ) : data.length === 0 ? (
-                <TableRow><TableCell colSpan={5} className="text-center py-8 text-slate-500">No subscriptions found</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-8 text-slate-500">No subscriptions found</TableCell></TableRow>
               ) : (
                 data.map((sub) => (
                   <TableRow key={sub.id}>
                     <TableCell className="font-medium">{sub.member.lastName}, {sub.member.firstName}</TableCell>
                     <TableCell>{sub.member.email}</TableCell>
+                    <TableCell>{getAgeTierLabel(ageTierOptions, sub.member.ageTier)}</TableCell>
+                    <TableCell>
+                      {sub.xeroContactGroups.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {sub.xeroContactGroups.map((group) => (
+                            <Badge key={group.id} variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                              {group.name}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : sub.member.xeroContactId && !sub.xeroContactGroupsLoaded ? (
+                        <span className="text-xs text-slate-400">Cached groups not refreshed yet</span>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
                     <TableCell><Badge className={subscriptionStatusClass(sub.status)}>{sub.status.replace("_", " ")}</Badge></TableCell>
                     <TableCell>
                       {sub.xeroInvoiceId ? (

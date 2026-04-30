@@ -11,9 +11,29 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
-const mockRequireActiveSessionUser = vi.fn(async () => null);
+const {
+  mockRequireActiveSessionUser,
+  mockGetXeroContactGroupMemberships,
+  mockGetXeroContactIdsForGroup,
+} = vi.hoisted(() => ({
+  mockRequireActiveSessionUser: vi
+    .fn<(memberId: string) => Promise<Response | null>>()
+    .mockResolvedValue(null),
+  mockGetXeroContactGroupMemberships: vi
+    .fn<
+      (contactIds: string[]) => Promise<Record<string, Array<{ id: string; name: string }>>>
+    >()
+    .mockResolvedValue({}),
+  mockGetXeroContactIdsForGroup: vi
+    .fn<(groupId: string) => Promise<string[]>>()
+    .mockResolvedValue([]),
+}));
 vi.mock("@/lib/session-guards", () => ({
-  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+  requireActiveSessionUser: mockRequireActiveSessionUser,
+}));
+vi.mock("@/lib/xero", () => ({
+  getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
+  getXeroContactIdsForGroup: mockGetXeroContactIdsForGroup,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -36,6 +56,8 @@ describe("Admin Subscriptions API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.member.count).mockResolvedValue(1 as any);
+    mockGetXeroContactGroupMemberships.mockResolvedValue({});
+    mockGetXeroContactIdsForGroup.mockResolvedValue([]);
   });
 
   it("returns 401 for unauthenticated requests", async () => {
@@ -63,10 +85,19 @@ describe("Admin Subscriptions API", () => {
       {
         id: "sub1", memberId: "m1", seasonYear: 2026, status: "PAID",
         xeroInvoiceId: "inv-1", paidAt: new Date("2026-04-01"),
-        member: { firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
+        member: {
+          firstName: "Alice",
+          lastName: "Smith",
+          email: "alice@test.com",
+          ageTier: "ADULT",
+          xeroContactId: "xc-1",
+        },
       },
     ];
 
+    mockGetXeroContactGroupMemberships.mockResolvedValue({
+      "xc-1": [{ id: "cg-1", name: "Adult Members" }],
+    });
     vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue(mockData as any);
     vi.mocked(prisma.memberSubscription.count).mockResolvedValue(1);
     vi.mocked(prisma.memberSubscription.groupBy).mockResolvedValue([
@@ -88,6 +119,11 @@ describe("Admin Subscriptions API", () => {
     expect(body.summary.unpaid).toBe(3);
     expect(body.summary.overdue).toBe(1);
     expect(body.summary.total).toBe(9);
+    expect(body.data[0].member.ageTier).toBe("ADULT");
+    expect(body.data[0].xeroContactGroups).toEqual([
+      { id: "cg-1", name: "Adult Members" },
+    ]);
+    expect(body.xeroContactGroupsLoaded).toBe(true);
   });
 
   it("filters by status", async () => {
@@ -117,6 +153,32 @@ describe("Admin Subscriptions API", () => {
 
     expect(prisma.memberSubscription.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ skip: 20, take: 10 })
+    );
+  });
+
+  it("filters by age tier and xero contact group", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockGetXeroContactIdsForGroup.mockResolvedValue(["xc-1", "xc-2"]);
+    vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.memberSubscription.count).mockResolvedValue(0);
+    vi.mocked(prisma.memberSubscription.groupBy).mockResolvedValue([] as any);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/subscriptions?ageTier=YOUTH&xeroContactGroup=cg-youth"
+    );
+    await getSubscriptions(req);
+
+    expect(mockGetXeroContactIdsForGroup).toHaveBeenCalledWith("cg-youth");
+    expect(prisma.memberSubscription.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          seasonYear: 2026,
+          member: {
+            ageTier: "YOUTH",
+            xeroContactId: { in: ["xc-1", "xc-2"] },
+          },
+        },
+      })
     );
   });
 });
