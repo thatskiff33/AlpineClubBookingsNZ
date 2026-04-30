@@ -16,7 +16,7 @@ function isValidHexEncryptionKey(value: string): boolean {
   return /^[0-9a-fA-F]{64}$/.test(value);
 }
 
-const XERO_OAUTH_SCOPES = [
+const OPERATIONAL_XERO_OAUTH_SCOPES = [
   "openid",
   "profile",
   "email",
@@ -25,6 +25,11 @@ const XERO_OAUTH_SCOPES = [
   "accounting.payments",
   "accounting.settings.read",
   "offline_access",
+] as const;
+
+const FINANCE_XERO_OAUTH_SCOPES = [
+  ...OPERATIONAL_XERO_OAUTH_SCOPES,
+  "accounting.reports.read",
 ] as const;
 
 const DEFAULT_OPERATIONAL_XERO_REDIRECT_URI =
@@ -37,6 +42,7 @@ interface XeroClientConfigOptions {
   clientSecretEnv: string;
   redirectUriEnv: string;
   defaultRedirectUri: string;
+  scopes: readonly string[];
 }
 
 function buildXeroClientConfig({
@@ -44,12 +50,13 @@ function buildXeroClientConfig({
   clientSecretEnv,
   redirectUriEnv,
   defaultRedirectUri,
+  scopes,
 }: XeroClientConfigOptions) {
   return {
     clientId: readEnv(clientIdEnv) ?? "",
     clientSecret: readEnv(clientSecretEnv) ?? "",
     redirectUris: [readEnv(redirectUriEnv) ?? defaultRedirectUri],
-    scopes: [...XERO_OAUTH_SCOPES],
+    scopes: [...scopes],
   };
 }
 
@@ -59,6 +66,7 @@ export function getOperationalXeroConfig() {
     clientSecretEnv: "XERO_CLIENT_SECRET",
     redirectUriEnv: "XERO_REDIRECT_URI",
     defaultRedirectUri: DEFAULT_OPERATIONAL_XERO_REDIRECT_URI,
+    scopes: OPERATIONAL_XERO_OAUTH_SCOPES,
   });
 }
 
@@ -72,6 +80,7 @@ export function getFinanceXeroConfig() {
     clientSecretEnv: "FINANCE_XERO_CLIENT_SECRET",
     redirectUriEnv: "FINANCE_XERO_REDIRECT_URI",
     defaultRedirectUri: DEFAULT_FINANCE_XERO_REDIRECT_URI,
+    scopes: FINANCE_XERO_OAUTH_SCOPES,
   });
 }
 

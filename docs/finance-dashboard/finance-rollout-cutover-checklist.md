@@ -25,6 +25,8 @@ This document does not itself execute rollout, change access, or retire the lega
   - `FINANCE_XERO_REDIRECT_URI`
   - `FINANCE_XERO_ENCRYPTION_KEY`
 - `FINANCE_XERO_REDIRECT_URI` matches the live TACBookings finance callback path and production domain
+- The finance Xero OAuth app includes the finance reporting scope set:
+  `openid profile email accounting.contacts accounting.invoices accounting.payments accounting.settings.read accounting.reports.read offline_access`
 - Prisma migrations that create finance snapshot and finance token tables are deployed in the target environment
 - The daily finance sync cron remains registered and enabled in the deployed runtime
 - Finance sync diagnostics show a recent successful run with no unresolved repeated failures
