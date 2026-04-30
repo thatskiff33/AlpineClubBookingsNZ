@@ -30,6 +30,27 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
+const {
+  mockGetXeroContactGroupMemberships,
+  mockGetXeroContactIdsForGroup,
+  mockRequireActiveSessionUser,
+} = vi.hoisted(() => ({
+  mockGetXeroContactGroupMemberships: vi
+    .fn<
+      (contactIds: string[]) => Promise<Record<string, Array<{ id: string; name: string }>>>
+    >()
+    .mockResolvedValue({}),
+  mockGetXeroContactIdsForGroup: vi
+    .fn<(groupId: string) => Promise<string[]>>()
+    .mockResolvedValue([]),
+  mockRequireActiveSessionUser: vi
+    .fn<(memberId: string) => Promise<Response | null>>()
+    .mockResolvedValue(null),
+}));
+vi.mock("@/lib/xero", () => ({
+  getXeroContactGroupMemberships: mockGetXeroContactGroupMemberships,
+  getXeroContactIdsForGroup: mockGetXeroContactIdsForGroup,
+}));
 
 // ---------------------------------------------------------------------------
 // Mock auth
@@ -39,9 +60,8 @@ const mockAuth = vi.fn();
 vi.mock("@/lib/auth", () => ({
   auth: () => mockAuth(),
 }));
-const mockRequireActiveSessionUser = vi.fn(async () => null);
 vi.mock("@/lib/session-guards", () => ({
-  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
+  requireActiveSessionUser: mockRequireActiveSessionUser,
 }));
 
 // ---------------------------------------------------------------------------
@@ -203,10 +223,15 @@ describe("#27: Xero contact sync admin action", () => {
 describe("#32: Admin Subscriptions API includes Xero invoice number", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetXeroContactGroupMemberships.mockResolvedValue({});
+    mockGetXeroContactIdsForGroup.mockResolvedValue([]);
   });
 
   it("GET returns subscription data (Prisma includes xeroInvoiceNumber by default)", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mockGetXeroContactGroupMemberships.mockResolvedValue({
+      "xc-1": [{ id: "cg-1", name: "Adult Members" }],
+    });
     mockPrisma.memberSubscription.findMany.mockResolvedValue([
       {
         id: "sub-1",
@@ -216,7 +241,13 @@ describe("#32: Admin Subscriptions API includes Xero invoice number", () => {
         xeroInvoiceId: "xero-123",
         xeroInvoiceNumber: "INV-0042",
         paidAt: new Date(),
-        member: { firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
+        member: {
+          firstName: "Alice",
+          lastName: "Smith",
+          email: "alice@test.com",
+          ageTier: "ADULT",
+          xeroContactId: "xc-1",
+        },
       },
     ]);
     mockPrisma.memberSubscription.count.mockResolvedValue(1);
@@ -233,6 +264,9 @@ describe("#32: Admin Subscriptions API includes Xero invoice number", () => {
     expect(body.data).toHaveLength(1);
     expect(body.data[0].xeroInvoiceNumber).toBe("INV-0042");
     expect(body.data[0].xeroInvoiceId).toBe("xero-123");
+    expect(body.data[0].xeroContactGroups).toEqual([
+      { id: "cg-1", name: "Adult Members" },
+    ]);
   });
 });
 
@@ -241,7 +275,7 @@ describe("#32: Admin Subscriptions API includes Xero invoice number", () => {
 // ---------------------------------------------------------------------------
 
 describe("#32: Subscriptions Page has Xero invoice link", () => {
-  it("includes Xero link markup and invoice number field", async () => {
+  it("includes Xero link markup, invoice number field, and age/group filters", async () => {
     const fs = await import("fs");
     const path = await import("path");
     const content = fs.readFileSync(
@@ -250,6 +284,9 @@ describe("#32: Subscriptions Page has Xero invoice link", () => {
     );
     expect(content).toContain("go.xero.com/AccountsReceivable");
     expect(content).toContain("xeroInvoiceNumber");
+    expect(content).toContain("Age Group");
+    expect(content).toContain("Xero Contact Group");
+    expect(content).toContain("useAgeTierOptions");
     expect(content).toContain("ExternalLink");
   });
 });
