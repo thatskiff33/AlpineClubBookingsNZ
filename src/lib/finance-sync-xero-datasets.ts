@@ -376,6 +376,36 @@ function toDateOnlyString(value: Date | null): string | null {
   return value ? value.toISOString().slice(0, 10) : null;
 }
 
+function toOptionalText(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+
+  const text = String(value).trim();
+  return text ? text : null;
+}
+
+function toOptionalDateOnlyText(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : toDateOnlyString(value);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  return toOptionalText(value);
+}
+
 function getFinanceXeroErrorMessage(error: unknown): string | null {
   if (error instanceof Error) {
     return error.message;
@@ -644,20 +674,23 @@ function buildOpenInvoiceWhereClause(
   );
 }
 
-function compareNullableStrings(a: string | null, b: string | null): number {
-  if (a === b) {
+function compareNullableStrings(a: unknown, b: unknown): number {
+  const left = toOptionalText(a);
+  const right = toOptionalText(b);
+
+  if (left === right) {
     return 0;
   }
 
-  if (a === null) {
+  if (left === null) {
     return 1;
   }
 
-  if (b === null) {
+  if (right === null) {
     return -1;
   }
 
-  return a.localeCompare(b);
+  return left.localeCompare(right);
 }
 
 function getContactAccumulatorKey(invoice: Invoice): string {
@@ -804,13 +837,13 @@ function buildFinanceAgedInvoiceSnapshot(input: {
     const currency = getInvoiceCurrency(invoice);
     const contactKey = getContactAccumulatorKey(invoice);
     const invoicePayload: FinanceAgedInvoicePayload = {
-      invoiceId: invoice.invoiceID ?? null,
-      invoiceNumber: invoice.invoiceNumber ?? null,
-      reference: invoice.reference ?? null,
+      invoiceId: toOptionalText(invoice.invoiceID),
+      invoiceNumber: toOptionalText(invoice.invoiceNumber),
+      reference: toOptionalText(invoice.reference),
       status: invoice.status ? String(invoice.status) : null,
-      invoiceDate: invoice.date ?? null,
-      dueDate: invoice.dueDate ?? null,
-      expectedPaymentDate: invoice.expectedPaymentDate ?? null,
+      invoiceDate: toOptionalDateOnlyText(invoice.date),
+      dueDate: toOptionalDateOnlyText(invoice.dueDate),
+      expectedPaymentDate: toOptionalDateOnlyText(invoice.expectedPaymentDate),
       updatedDateUTC: toOptionalDate(invoice.updatedDateUTC)?.toISOString() ?? null,
       currency,
       currencyRate:
@@ -1021,13 +1054,13 @@ export function buildFinanceAccountsReceivableInvoicesSnapshot(input: {
     const dueDate = parseOptionalDateOnly(invoice.dueDate);
     const contactKey = getContactAccumulatorKey(invoice);
     const invoicePayload: FinanceAccountsReceivableInvoicePayload = {
-      invoiceId: invoice.invoiceID ?? null,
-      invoiceNumber: invoice.invoiceNumber ?? null,
-      reference: invoice.reference ?? null,
+      invoiceId: toOptionalText(invoice.invoiceID),
+      invoiceNumber: toOptionalText(invoice.invoiceNumber),
+      reference: toOptionalText(invoice.reference),
       status: invoice.status ? String(invoice.status) : null,
-      invoiceDate: invoice.date ?? null,
-      dueDate: invoice.dueDate ?? null,
-      expectedPaymentDate: invoice.expectedPaymentDate ?? null,
+      invoiceDate: toOptionalDateOnlyText(invoice.date),
+      dueDate: toOptionalDateOnlyText(invoice.dueDate),
+      expectedPaymentDate: toOptionalDateOnlyText(invoice.expectedPaymentDate),
       updatedDateUTC: toOptionalDate(invoice.updatedDateUTC)?.toISOString() ?? null,
       currency,
       currencyRate:
@@ -1207,13 +1240,13 @@ export function buildFinanceAccountsPayableInvoicesSnapshot(input: {
     const dueDate = parseOptionalDateOnly(invoice.dueDate);
     const contactKey = getContactAccumulatorKey(invoice);
     const invoicePayload: FinanceAccountsPayableInvoicePayload = {
-      invoiceId: invoice.invoiceID ?? null,
-      invoiceNumber: invoice.invoiceNumber ?? null,
-      reference: invoice.reference ?? null,
+      invoiceId: toOptionalText(invoice.invoiceID),
+      invoiceNumber: toOptionalText(invoice.invoiceNumber),
+      reference: toOptionalText(invoice.reference),
       status: invoice.status ? String(invoice.status) : null,
-      invoiceDate: invoice.date ?? null,
-      dueDate: invoice.dueDate ?? null,
-      plannedPaymentDate: invoice.plannedPaymentDate ?? null,
+      invoiceDate: toOptionalDateOnlyText(invoice.date),
+      dueDate: toOptionalDateOnlyText(invoice.dueDate),
+      plannedPaymentDate: toOptionalDateOnlyText(invoice.plannedPaymentDate),
       updatedDateUTC: toOptionalDate(invoice.updatedDateUTC)?.toISOString() ?? null,
       currency,
       currencyRate:
