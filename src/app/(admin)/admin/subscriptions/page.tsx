@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgeTier } from "@prisma/client";
+import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { format } from "date-fns";
 import { subscriptionStatusClass } from "@/lib/status-colors";
@@ -261,7 +262,14 @@ export default function SubscriptionsPage() {
               ) : (
                 data.map((sub) => (
                   <TableRow key={sub.id}>
-                    <TableCell className="font-medium">{sub.member.lastName}, {sub.member.firstName}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link
+                        href={`/admin/members/${sub.memberId}?edit=true`}
+                        className="text-blue-600 hover:underline"
+                      >
+                        {sub.member.lastName}, {sub.member.firstName}
+                      </Link>
+                    </TableCell>
                     <TableCell>{sub.member.email}</TableCell>
                     <TableCell>{getAgeTierLabel(ageTierOptions, sub.member.ageTier)}</TableCell>
                     <TableCell>
