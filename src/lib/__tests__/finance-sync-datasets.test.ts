@@ -347,6 +347,128 @@ describe("finance-sync-datasets", () => {
     });
   });
 
+  it("normalizes Date-backed receivable invoice fields before sorting and persistence", () => {
+    const asOfDate = new Date("2026-04-20T00:00:00.000Z");
+
+    const agedSnapshot = buildFinanceAgedReceivablesSnapshot({
+      asOfDate,
+      invoices: [
+        {
+          type: ACCREC,
+          invoiceID: "inv-2",
+          invoiceNumber: "INV-002",
+          dueDate: new Date("2026-04-18T00:00:00.000Z") as never,
+          date: new Date("2026-04-02T00:00:00.000Z") as never,
+          expectedPaymentDate: new Date("2026-04-22T00:00:00.000Z") as never,
+          amountDue: 50,
+          status: AUTHORISED,
+          currencyCode: NZD,
+          contact: {
+            contactID: "contact-1",
+            name: "Alice",
+            contactStatus: ACTIVE,
+          },
+        },
+        {
+          type: ACCREC,
+          invoiceID: "inv-1",
+          invoiceNumber: "INV-001",
+          dueDate: new Date("2026-04-10T00:00:00.000Z") as never,
+          date: new Date("2026-04-01T00:00:00.000Z") as never,
+          amountDue: 75,
+          status: AUTHORISED,
+          currencyCode: NZD,
+          contact: {
+            contactID: "contact-1",
+            name: "Alice",
+            contactStatus: ACTIVE,
+          },
+        },
+      ],
+    });
+
+    const receivableDetailSnapshot = buildFinanceAccountsReceivableInvoicesSnapshot({
+      asOfDate,
+      invoices: [
+        {
+          type: ACCREC,
+          invoiceID: "inv-2",
+          invoiceNumber: "INV-002",
+          dueDate: new Date("2026-04-18T00:00:00.000Z") as never,
+          date: new Date("2026-04-02T00:00:00.000Z") as never,
+          expectedPaymentDate: new Date("2026-04-22T00:00:00.000Z") as never,
+          amountDue: 50,
+          status: AUTHORISED,
+          currencyCode: NZD,
+          contact: {
+            contactID: "contact-1",
+            name: "Alice",
+            contactStatus: ACTIVE,
+          },
+        },
+        {
+          type: ACCREC,
+          invoiceID: "inv-1",
+          invoiceNumber: "INV-001",
+          dueDate: new Date("2026-04-10T00:00:00.000Z") as never,
+          date: new Date("2026-04-01T00:00:00.000Z") as never,
+          amountDue: 75,
+          status: AUTHORISED,
+          currencyCode: NZD,
+          contact: {
+            contactID: "contact-1",
+            name: "Alice",
+            contactStatus: ACTIVE,
+          },
+        },
+      ],
+    });
+
+    expect(agedSnapshot).toMatchObject({
+      payload: {
+        contacts: [
+          {
+            invoices: [
+              {
+                invoiceId: "inv-1",
+                invoiceDate: "2026-04-01",
+                dueDate: "2026-04-10",
+              },
+              {
+                invoiceId: "inv-2",
+                invoiceDate: "2026-04-02",
+                dueDate: "2026-04-18",
+                expectedPaymentDate: "2026-04-22",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(receivableDetailSnapshot).toMatchObject({
+      payload: {
+        contacts: [
+          {
+            invoices: [
+              {
+                invoiceId: "inv-1",
+                invoiceDate: "2026-04-01",
+                dueDate: "2026-04-10",
+              },
+              {
+                invoiceId: "inv-2",
+                invoiceDate: "2026-04-02",
+                dueDate: "2026-04-18",
+                expectedPaymentDate: "2026-04-22",
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
   it("maps open payable invoices into a currency-safe aged payables snapshot", () => {
     const snapshot = buildFinanceAgedPayablesSnapshot({
       asOfDate: new Date("2026-04-20T00:00:00.000Z"),
