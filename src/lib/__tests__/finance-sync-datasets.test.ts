@@ -1068,4 +1068,37 @@ describe("finance-sync-datasets", () => {
       })
     );
   });
+
+  it("rewrites insufficient-scope report failures into reconnect guidance", async () => {
+    const context = createFinanceSyncContext();
+    context.xero.accountingApi.getReportBankSummary.mockRejectedValue({
+      response: {
+        statusCode: 401,
+        headers: {
+          "www-authenticate": "insufficient_scope",
+        },
+      },
+      body: {
+        Detail: "AuthorizationUnsuccessful",
+      },
+    });
+
+    await expect(
+      syncFinanceBankBalancesSnapshot(context as never)
+    ).rejects.toThrow(
+      "Finance Xero is missing a required OAuth scope for getReportBankSummary. Add accounting.reports.read to the finance Xero app and reconnect finance Xero."
+    );
+
+    expect(mockRecordFinanceXeroApiUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "getReportBankSummary",
+        resourceType: "REPORT",
+        workflow: "daily-finance-sync",
+        success: false,
+        statusCode: 401,
+        errorMessage:
+          "Finance Xero is missing a required OAuth scope for getReportBankSummary. Add accounting.reports.read to the finance Xero app and reconnect finance Xero.",
+      })
+    );
+  });
 });

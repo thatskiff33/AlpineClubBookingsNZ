@@ -15,6 +15,11 @@ Use these env vars for finance Xero work only:
 - `FINANCE_XERO_REDIRECT_URI`
 - `FINANCE_XERO_ENCRYPTION_KEY`
 
+Finance Xero also requires its own OAuth app configuration:
+
+- Redirect URI: `https://yourdomain.co.nz/api/finance/xero/callback` in production
+- Scopes: `openid profile email accounting.contacts accounting.invoices accounting.payments accounting.settings.read accounting.reports.read offline_access`
+
 These names are intentionally separate from the operational Xero env vars:
 
 - `XERO_CLIENT_ID`

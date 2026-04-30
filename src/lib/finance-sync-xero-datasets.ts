@@ -395,6 +395,37 @@ function getFinanceXeroErrorMessage(error: unknown): string | null {
   return error ? String(error) : null;
 }
 
+function getFinanceXeroScopeErrorMessage(
+  error: unknown,
+  operation: string
+): string | null {
+  if (getXeroErrorStatusCode(error) !== 401) {
+    return null;
+  }
+
+  const wwwAuthenticate = getXeroErrorHeader(error, "www-authenticate")?.toLowerCase();
+  if (!wwwAuthenticate?.includes("insufficient_scope")) {
+    return null;
+  }
+
+  const requiredScope = operation.startsWith("getReport")
+    ? "accounting.reports.read"
+    : null;
+
+  return requiredScope
+    ? `Finance Xero is missing a required OAuth scope for ${operation}. Add ${requiredScope} to the finance Xero app and reconnect finance Xero.`
+    : `Finance Xero is missing a required OAuth scope for ${operation}. Update the finance Xero app scopes and reconnect finance Xero.`;
+}
+
+function normalizeFinanceXeroError(error: unknown, operation: string): unknown {
+  const scopeErrorMessage = getFinanceXeroScopeErrorMessage(error, operation);
+  if (!scopeErrorMessage) {
+    return error;
+  }
+
+  return new Error(scopeErrorMessage);
+}
+
 function getFinanceXeroRateLimitCategory(
   error: unknown
 ): FinanceXeroRateLimitCategory {
@@ -441,6 +472,8 @@ async function callFinanceXeroApi<T>(
 
     return result;
   } catch (error) {
+    const normalizedError = normalizeFinanceXeroError(error, options.operation);
+
     await recordFinanceXeroApiUsage({
       operation: options.operation,
       resourceType: options.resourceType,
@@ -450,10 +483,10 @@ async function callFinanceXeroApi<T>(
         observedRateLimitCategory ?? getFinanceXeroRateLimitCategory(error),
       statusCode: getXeroErrorStatusCode(error) ?? null,
       durationMs: Date.now() - startedAt,
-      errorMessage: getFinanceXeroErrorMessage(error),
+      errorMessage: getFinanceXeroErrorMessage(normalizedError),
     });
 
-    throw error;
+    throw normalizedError;
   }
 }
 

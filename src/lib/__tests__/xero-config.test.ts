@@ -30,6 +30,9 @@ describe("xero-config", () => {
       clientSecret: "operational-secret",
       redirectUris: ["https://example.com/api/admin/xero/callback"],
     });
+    expect(getOperationalXeroConfig().scopes).not.toContain(
+      "accounting.reports.read"
+    );
   });
 
   it("loads finance Xero config from finance-only env names", () => {
@@ -46,6 +49,7 @@ describe("xero-config", () => {
       clientSecret: "finance-secret",
       redirectUris: ["https://example.com/api/finance/xero/callback"],
     });
+    expect(getFinanceXeroConfig().scopes).toContain("accounting.reports.read");
   });
 
   it("does not fall back to operational Xero credentials for finance config", () => {

@@ -324,6 +324,11 @@ Stripe needs to notify your app when payments succeed, fail, or are refunded.
 3. Ensure the app has these scopes: `openid profile email accounting.transactions accounting.contacts offline_access`
 4. Save
 
+If you are also using the finance workspace with a separate finance Xero app, that app must use the finance callback path and include the finance reporting scope:
+
+- Redirect URI: `https://yourdomain.co.nz/api/finance/xero/callback`
+- Scopes: `openid profile email accounting.contacts accounting.invoices accounting.payments accounting.settings.read accounting.reports.read offline_access`
+
 ### 11b. Set Up Xero Webhook (Optional)
 
 Only needed if you want Xero to push updates to your app:
@@ -581,7 +586,8 @@ free -m                  # Memory
 
 ### Xero connection failing
 - Redirect URI must match **exactly**: `https://yourdomain.co.nz/api/admin/xero/callback`
-- App scopes must include: `openid profile email accounting.transactions accounting.contacts offline_access`
+- Operational app scopes must include: `openid profile email accounting.transactions accounting.contacts offline_access`
+- Finance app scopes must include: `openid profile email accounting.contacts accounting.invoices accounting.payments accounting.settings.read accounting.reports.read offline_access`
 - Check app logs: `docker compose logs app | grep -i xero`
 
 ### Database issues
