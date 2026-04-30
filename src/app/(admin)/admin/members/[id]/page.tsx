@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useState, use } from "react"
+import { useCallback, useEffect, useState, use } from "react"
 import { useSession } from "next-auth/react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { MemberAddressFields } from "@/components/member-address-fields"
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel"
 import { Button } from "@/components/ui/button"
@@ -100,7 +100,8 @@ interface PendingCreditAdjustmentItem {
 interface EditForm {
   firstName: string; lastName: string; email: string
   phoneCountryCode: string; phoneAreaCode: string; phoneNumber: string
-  dateOfBirth: string; role: "MEMBER" | "ADMIN"; financeAccessLevel: FinanceAccessLevel; active: boolean; forcePasswordChange: boolean
+  dateOfBirth: string; joinedDate: string
+  role: "MEMBER" | "ADMIN"; ageTier: string; financeAccessLevel: FinanceAccessLevel; active: boolean; canLogin: boolean; forcePasswordChange: boolean
   inheritEmailFromId: string | null
   streetAddressLine1: string; streetAddressLine2: string; streetCity: string
   streetRegion: string; streetPostalCode: string; streetCountry: string
@@ -171,6 +172,7 @@ function memberUsesSamePostalAddress(member: Pick<MemberDetail, keyof MemberAddr
 export default function MemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { data: session } = useSession()
   const [member, setMember] = useState<MemberDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -178,10 +180,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [success, setSuccess] = useState("")
   const [xeroError, setXeroError] = useState("")
   const [editOpen, setEditOpen] = useState(false)
-  const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", role: "MEMBER", financeAccessLevel: "NONE", active: true, forcePasswordChange: false, inheritEmailFromId: null, streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: "", postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: "" })
+  const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", joinedDate: "", role: "MEMBER", ageTier: "ADULT", financeAccessLevel: "NONE", active: true, canLogin: true, forcePasswordChange: false, inheritEmailFromId: null, streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: "", postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: "" })
   const [editPostalSameAsPhysical, setEditPostalSameAsPhysical] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState("")
+  const [hasHandledInitialEditParam, setHasHandledInitialEditParam] = useState(false)
   const [inheritEmailSearch, setInheritEmailSearch] = useState("")
   const [inheritEmailSearchResults, setInheritEmailSearchResults] = useState<EmailInheritanceSearchResult[]>([])
   const [inheritEmailSearchError, setInheritEmailSearchError] = useState("")
@@ -222,7 +225,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [xeroDecisionError, setXeroDecisionError] = useState("")
   const isAdultMember = member?.ageTier === "ADULT"
   const memberId = member?.id
-  const memberCanLogin = member?.canLogin ?? false
+  const shouldAutoOpenEdit = searchParams.get("edit") === "true"
 
   const fetchMember = async () => {
     try {
@@ -320,7 +323,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   useEffect(() => { fetchMember(); fetchCredits() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!editOpen || !memberId || memberCanLogin) {
+    setHasHandledInitialEditParam(false)
+  }, [id])
+
+  useEffect(() => {
+    if (!editOpen || !memberId || form.canLogin) {
       setInheritEmailSearchResults([])
       setInheritEmailSearchError("")
       setInheritEmailSearching(false)
@@ -389,9 +396,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       cancelled = true
       clearTimeout(timer)
     }
-  }, [editOpen, inheritEmailSearch, memberCanLogin, memberId, selectedInheritEmailSource?.id])
+  }, [editOpen, form.canLogin, inheritEmailSearch, memberId, selectedInheritEmailSource?.id])
 
-  const openEditDialog = () => {
+  const openEditDialog = useCallback(() => {
     if (!member) return
     setForm({
       firstName: member.firstName,
@@ -401,9 +408,12 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       phoneAreaCode: member.phoneAreaCode || "",
       phoneNumber: member.phoneNumber || "",
       dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "",
+      joinedDate: member.joinedDate ? new Date(member.joinedDate).toISOString().split("T")[0] : "",
       role: member.role,
+      ageTier: member.ageTier,
       financeAccessLevel: member.financeAccessLevel,
       active: member.active,
+      canLogin: member.canLogin,
       forcePasswordChange: member.forcePasswordChange,
       inheritEmailFromId: member.inheritEmailFromId,
       streetAddressLine1: member.streetAddressLine1 || "",
@@ -444,7 +454,21 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     } as Pick<MemberDetail, keyof MemberAddressValues>))
     setFormError("")
     setEditOpen(true)
-  }
+  }, [member])
+
+  useEffect(() => {
+    if (
+      hasHandledInitialEditParam ||
+      !shouldAutoOpenEdit ||
+      loading ||
+      !member
+    ) {
+      return
+    }
+
+    openEditDialog()
+    setHasHandledInitialEditParam(true)
+  }, [hasHandledInitialEditParam, loading, member, openEditDialog, shouldAutoOpenEdit])
 
   const openDependentDialog = () => {
     if (!member) return
@@ -504,9 +528,12 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           phoneAreaCode: form.phoneAreaCode || null,
           phoneNumber: form.phoneNumber || null,
           dateOfBirth: form.dateOfBirth || null,
+          joinedDate: form.joinedDate || null,
           role: form.role,
+          ageTier: form.ageTier,
           financeAccessLevel: form.financeAccessLevel,
           active: form.active,
+          canLogin: form.canLogin,
           forcePasswordChange: form.forcePasswordChange,
           inheritEmailFromId: form.inheritEmailFromId || null,
           streetAddressLine1: form.streetAddressLine1 || null,
@@ -1322,6 +1349,25 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           </DialogHeader>
           {formError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{formError}</div>}
           <div className="grid gap-4 py-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="edit-canLogin"
+                checked={form.canLogin}
+                onChange={e => setForm(f => ({
+                  ...f,
+                  canLogin: e.target.checked,
+                  financeAccessLevel: e.target.checked ? f.financeAccessLevel : "NONE",
+                }))}
+                className="h-4 w-4 rounded border-gray-300"
+                disabled={isSelf}
+              />
+              <Label htmlFor="edit-canLogin">Can Login</Label>
+              <p className="text-xs text-muted-foreground ml-2">
+                Adults who can sign in and make bookings. Uncheck for children or youth managed by family group.
+                {isSelf ? " You cannot disable login for your own admin account." : ""}
+              </p>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit-firstName">First Name *</Label>
@@ -1349,24 +1395,29 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               <Input id="edit-dateOfBirth" type="date" value={form.dateOfBirth} onChange={e => setForm(f => ({ ...f, dateOfBirth: e.target.value }))} />
               <p className="text-xs text-muted-foreground">Age tier is calculated automatically from date of birth.</p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-joinedDate">Joined Date</Label>
+              <Input id="edit-joinedDate" type="date" value={form.joinedDate} onChange={e => setForm(f => ({ ...f, joinedDate: e.target.value }))} />
+              <p className="text-xs text-muted-foreground">Used for finance and Xero-linked member history.</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
-              <Label>Role</Label>
-              <Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as "MEMBER" | "ADMIN" }))} disabled={isSelf}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="MEMBER">Member</SelectItem>
-                  <SelectItem value="ADMIN">Admin</SelectItem>
-                </SelectContent>
-              </Select>
-              {isSelf && <p className="text-xs text-muted-foreground">You cannot change your own role.</p>}
+                <Label>Role</Label>
+                <Select value={form.role} onValueChange={v => setForm(f => ({ ...f, role: v as "MEMBER" | "ADMIN" }))} disabled={isSelf}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="MEMBER">Member</SelectItem>
+                    <SelectItem value="ADMIN">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+                {isSelf && <p className="text-xs text-muted-foreground">You cannot change your own role.</p>}
               </div>
               <div className="space-y-2">
                 <Label>Finance Access</Label>
                 <Select
                   value={form.financeAccessLevel}
                   onValueChange={v => setForm(f => ({ ...f, financeAccessLevel: v as FinanceAccessLevel }))}
-                  disabled={!member.canLogin}
+                  disabled={!form.canLogin}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1375,7 +1426,19 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                     <SelectItem value="MANAGER">Finance Manager</SelectItem>
                   </SelectContent>
                 </Select>
-                {!member.canLogin && <p className="text-xs text-muted-foreground">Finance access only applies to login-enabled members.</p>}
+                {!form.canLogin && <p className="text-xs text-muted-foreground">Finance access only applies to login-enabled members.</p>}
+              </div>
+              <div className="space-y-2">
+                <Label>Age Tier</Label>
+                <Select value={form.ageTier} onValueChange={v => setForm(f => ({ ...f, ageTier: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="INFANT">Infant</SelectItem>
+                    <SelectItem value="CHILD">Child</SelectItem>
+                    <SelectItem value="YOUTH">Youth</SelectItem>
+                    <SelectItem value="ADULT">Adult</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1387,7 +1450,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               <input type="checkbox" id="edit-forcePasswordChange" checked={form.forcePasswordChange} onChange={e => setForm(f => ({ ...f, forcePasswordChange: e.target.checked }))} className="h-4 w-4 rounded border-gray-300" />
               <Label htmlFor="edit-forcePasswordChange">Force Password Change on Next Login</Label>
             </div>
-            {!member.canLogin && (
+            {!form.canLogin && (
               <div className="space-y-2">
                 <Label htmlFor="edit-inheritEmailSearch">Notification Email Recipient (optional)</Label>
                 <p className="text-xs text-muted-foreground">
