@@ -423,43 +423,7 @@ export default function MembersPage() {
   }
 
   const openEditDialog = (member: Member) => {
-    setEditingMember(member)
-    setXeroChoice("")
-    setXeroSearchQuery("")
-    setXeroSearchResults([])
-    setSelectedXeroContactId("")
-    setXeroCreateEntranceFeeInvoice(false)
-    setForm({
-      firstName: member.firstName,
-      lastName: member.lastName,
-      email: member.email,
-      phoneCountryCode: member.phoneCountryCode || "",
-      phoneAreaCode: member.phoneAreaCode || "",
-      phoneNumber: member.phoneNumber || "",
-      dateOfBirth: member.dateOfBirth ? new Date(member.dateOfBirth).toISOString().split("T")[0] : "",
-      role: member.role,
-      ageTier: member.ageTier,
-      financeAccessLevel: member.financeAccessLevel,
-      active: member.active,
-      sendInvite: false,
-      forcePasswordChange: member.forcePasswordChange,
-      joinedDate: member.joinedDate ? new Date(member.joinedDate).toISOString().split("T")[0] : "",
-      canLogin: member.canLogin,
-      streetAddressLine1: member.streetAddressLine1 || "",
-      streetAddressLine2: member.streetAddressLine2 || "",
-      streetCity: member.streetCity || "",
-      streetRegion: member.streetRegion || "",
-      streetPostalCode: member.streetPostalCode || "",
-      streetCountry: member.streetCountry || "",
-      postalAddressLine1: member.postalAddressLine1 || "",
-      postalAddressLine2: member.postalAddressLine2 || "",
-      postalCity: member.postalCity || "",
-      postalRegion: member.postalRegion || "",
-      postalPostalCode: member.postalPostalCode || "",
-      postalCountry: member.postalCountry || "",
-    })
-    setFormError("")
-    setDialogOpen(true)
+    router.push(`/admin/members/${member.id}?edit=true`)
   }
 
   const closePendingXeroCreateDecision = () => {
