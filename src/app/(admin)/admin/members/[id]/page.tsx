@@ -169,6 +169,21 @@ function memberUsesSamePostalAddress(member: Pick<MemberDetail, keyof MemberAddr
   })
 }
 
+function getMissingFieldsForXeroCreate(form: EditForm): string[] {
+  const missing: string[] = []
+
+  if (!form.firstName.trim()) missing.push("First Name")
+  if (!form.lastName.trim()) missing.push("Last Name")
+  if (!form.email.trim()) missing.push("Email")
+  if (!form.phoneCountryCode.trim() || !form.phoneAreaCode.trim() || !form.phoneNumber.trim()) missing.push("Phone")
+  if (!form.dateOfBirth) missing.push("Date of Birth")
+  if (!form.joinedDate) missing.push("Joined Date")
+  if (!form.streetAddressLine1.trim() || !form.streetCity.trim() || !form.streetRegion.trim() || !form.streetPostalCode.trim() || !form.streetCountry.trim()) missing.push("Physical Address")
+  if (!form.postalAddressLine1.trim() || !form.postalCity.trim() || !form.postalRegion.trim() || !form.postalPostalCode.trim() || !form.postalCountry.trim()) missing.push("Postal Address")
+
+  return missing
+}
+
 export default function MemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
@@ -214,7 +229,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [xeroSearchQuery, setXeroSearchQuery] = useState("")
   const [xeroSearchResults, setXeroSearchResults] = useState<XeroSearchResult[]>([])
   const [xeroSearching, setXeroSearching] = useState(false)
+  const [xeroChoice, setXeroChoice] = useState<"" | "change">("")
   const [xeroLinking, setXeroLinking] = useState(false)
+  const [selectedXeroContactId, setSelectedXeroContactId] = useState("")
   const [xeroUnlinking, setXeroUnlinking] = useState(false)
   const [xeroPushing, setXeroPushing] = useState(false)
   const [xeroCreateOpen, setXeroCreateOpen] = useState(false)
@@ -438,6 +455,12 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     setInheritEmailSearch("")
     setInheritEmailSearchResults([])
     setInheritEmailSearchError("")
+    setXeroChoice("")
+    setSelectedXeroContactId("")
+    setXeroSearchQuery("")
+    setXeroSearchResults([])
+    setXeroCreateEntranceFeeInvoice(false)
+    setXeroError("")
     setEditPostalSameAsPhysical(memberUsesSamePostalAddress({
       streetAddressLine1: member.streetAddressLine1,
       streetAddressLine2: member.streetAddressLine2,
@@ -673,6 +696,10 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         body: JSON.stringify({ xeroContactId }),
       })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Link failed") }
+      setXeroChoice("")
+      setSelectedXeroContactId("")
+      setXeroSearchQuery("")
+      setXeroSearchResults([])
       setXeroSearchOpen(false)
       setSuccess("Member linked to Xero contact")
       setTimeout(() => setSuccess(""), 3000)
@@ -687,6 +714,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     try {
       const res = await fetch(`/api/admin/members/${id}/xero-unlink`, { method: "POST" })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error || "Unlink failed") }
+      setXeroChoice("")
+      setSelectedXeroContactId("")
+      setXeroSearchQuery("")
+      setXeroSearchResults([])
+      setXeroCreateEntranceFeeInvoice(false)
       setSuccess("Member unlinked from Xero")
       setTimeout(() => setSuccess(""), 3000)
       setLoading(true)
@@ -730,6 +762,10 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     data: XeroPushResponse,
     createEntranceFeeInvoice: boolean
   ) => {
+    setXeroChoice("")
+    setSelectedXeroContactId("")
+    setXeroSearchQuery("")
+    setXeroSearchResults([])
     setXeroCreateOpen(false)
     setXeroCreateDecisionOpen(false)
     setXeroCreateDecisionResults([])
@@ -797,6 +833,10 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) {
         throw new Error(data.error || "Link failed")
       }
+      setXeroChoice("")
+      setSelectedXeroContactId("")
+      setXeroSearchQuery("")
+      setXeroSearchResults([])
       setXeroCreateDecisionOpen(false)
       setXeroCreateDecisionResults([])
       setXeroDecisionContactId("")
@@ -870,7 +910,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       </div>
 
       {success && <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">{success}</div>}
-      {xeroError && !xeroSearchOpen && <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{xeroError}</div>}
+      {xeroError && !xeroSearchOpen && !editOpen && !xeroCreateOpen && !xeroCreateDecisionOpen && (
+        <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{xeroError}</div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card><CardContent className="pt-6"><div className="flex items-center gap-3"><User className="h-8 w-8 text-slate-400" /><div><p className="text-xs text-slate-500 uppercase tracking-wide">Age Tier</p><p className="text-lg font-semibold">{member.ageTier.charAt(0) + member.ageTier.slice(1).toLowerCase()}</p>{member.dateOfBirth && <p className="text-xs text-slate-400">DOB: {fmtDate(member.dateOfBirth)}</p>}</div></div></CardContent></Card>
@@ -1400,6 +1442,158 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               <Input id="edit-joinedDate" type="date" value={form.joinedDate} onChange={e => setForm(f => ({ ...f, joinedDate: e.target.value }))} />
               <p className="text-xs text-muted-foreground">Used for finance and Xero-linked member history.</p>
             </div>
+            <fieldset className="space-y-3 rounded-md border border-slate-200 p-4">
+              <legend className="px-1 text-sm font-medium">Xero</legend>
+              <p className="text-sm text-slate-600">
+                Manage this member&apos;s linked Xero contact from the same editor.
+              </p>
+              {xeroError && (
+                <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+                  {xeroError}
+                </div>
+              )}
+              {member.xeroContactId ? (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary" className="bg-blue-50 text-blue-700 border-blue-200">
+                      Linked
+                    </Badge>
+                    <a
+                      href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-blue-600 hover:underline inline-flex items-center gap-1"
+                    >
+                      View in Xero
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
+                  {member.xeroContactGroups.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {member.xeroContactGroups.map((group) => (
+                        <Badge key={group.id} variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                          {group.name}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {member.xeroContactId && !member.xeroContactGroupsLoaded && (
+                    <p className="text-xs text-slate-500">
+                      Cached contact groups have not been refreshed yet.
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setXeroChoice(xeroChoice === "change" ? "" : "change")
+                        setSelectedXeroContactId("")
+                        setXeroSearchQuery("")
+                        setXeroSearchResults([])
+                        setXeroError("")
+                      }}
+                    >
+                      <Link2 className="h-4 w-4 mr-1" />
+                      {xeroChoice === "change" ? "Cancel Change" : "Change Link"}
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={handleXeroUnlink} disabled={xeroUnlinking}>
+                      {xeroUnlinking ? "Unlinking..." : "Unlink"}
+                    </Button>
+                  </div>
+                  {xeroChoice === "change" && (
+                    <div className="space-y-3 rounded-md border border-blue-200 bg-blue-50 p-3">
+                      <p className="text-sm text-blue-800">
+                        Search for a different Xero contact to link to this member. The current link will be replaced.
+                      </p>
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Search Xero by name or email"
+                          value={xeroSearchQuery}
+                          onChange={e => setXeroSearchQuery(e.target.value)}
+                          onKeyDown={e => e.key === "Enter" && handleXeroSearch()}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleXeroSearch}
+                          disabled={xeroSearching || xeroSearchQuery.trim().length < 2}
+                        >
+                          {xeroSearching ? "Searching..." : "Search"}
+                        </Button>
+                      </div>
+                      {xeroSearchResults.filter((contact) => !contact.isLinked).length > 0 && (
+                        <div className="space-y-2">
+                          <Label>Available Xero contacts</Label>
+                          <Select value={selectedXeroContactId || undefined} onValueChange={setSelectedXeroContactId}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select a Xero contact" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {xeroSearchResults
+                                .filter((contact) => !contact.isLinked)
+                                .map((contact) => (
+                                  <SelectItem key={contact.contactId} value={contact.contactId}>
+                                    {contact.name}{contact.email ? ` (${contact.email})` : ""}
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                      {selectedXeroContactId && (
+                        <Button type="button" size="sm" onClick={() => handleXeroLink(selectedXeroContactId)} disabled={xeroLinking}>
+                          {xeroLinking ? "Linking..." : "Link to Selected Contact"}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-600">This member is not linked to a Xero contact.</p>
+                  <p className="text-xs text-amber-700">
+                    Membership refresh skips unlinked members. Link or create a Xero contact before expecting subscription status to update automatically.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setXeroSearchOpen(true)
+                        setXeroSearchQuery("")
+                        setXeroSearchResults([])
+                        setXeroError("")
+                      }}
+                    >
+                      <Link2 className="h-4 w-4 mr-1" />
+                      Link to Xero
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setXeroCreateEntranceFeeInvoice(false)
+                        setXeroCreateOpen(true)
+                        setXeroError("")
+                      }}
+                      disabled={xeroPushing}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      {xeroPushing ? "Creating..." : "Create in Xero"}
+                    </Button>
+                  </div>
+                  {getMissingFieldsForXeroCreate(form).length > 0 && (
+                    <p className="text-xs text-slate-500">
+                      Missing for Xero creation: {getMissingFieldsForXeroCreate(form).join(", ")}
+                    </p>
+                  )}
+                </div>
+              )}
+            </fieldset>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>Role</Label>
