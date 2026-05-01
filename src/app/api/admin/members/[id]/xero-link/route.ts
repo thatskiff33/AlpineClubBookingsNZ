@@ -4,8 +4,10 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
   callXeroApi,
+  flushMemberSubscriptionHistory,
   getAuthenticatedXeroClient,
   refreshXeroContactCachesFromContact,
+  syncMemberSubscriptionHistoryForLinkedContact,
 } from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
@@ -13,6 +15,7 @@ import logger from "@/lib/logger";
 import { z } from "zod";
 import { buildXeroContactUrl } from "@/lib/xero-links";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
+import { getSeasonYear } from "@/lib/utils";
 
 const linkSchema = z.object({
   xeroContactId: z.string().min(1),
@@ -105,6 +108,49 @@ export async function POST(
       },
     });
 
+    const flushedSubscriptionHistory = await flushMemberSubscriptionHistory(id);
+    let warning: string | undefined;
+    try {
+      const seasonYearsToRefresh =
+        flushedSubscriptionHistory.seasonYears.length > 0
+          ? [
+              getSeasonYear(new Date()),
+              ...flushedSubscriptionHistory.seasonYears,
+            ]
+          : undefined;
+      const subscriptionSync =
+        await syncMemberSubscriptionHistoryForLinkedContact(id, {
+          seasonYears: seasonYearsToRefresh,
+          forceRefreshOnlineInvoiceUrl: true,
+        });
+
+      if (subscriptionSync.errors.length > 0) {
+        warning =
+          "Member linked, but subscription history refresh did not complete for every season. Run the Member Status Repair Backfill to retry.";
+        logger.warn(
+          {
+            memberId: id,
+            xeroContactId: parsed.data.xeroContactId,
+            seasonYears: subscriptionSync.seasonYears,
+            errors: subscriptionSync.errors,
+          },
+          "Subscription history refresh completed with errors after member relink"
+        );
+      }
+    } catch (historyError) {
+      warning =
+        "Member linked, but subscription history refresh did not complete. Run the Member Status Repair Backfill to retry.";
+      logger.warn(
+        {
+          err: historyError,
+          memberId: id,
+          xeroContactId: parsed.data.xeroContactId,
+          flushedSubscriptionHistory,
+        },
+        "Failed to refresh member subscription history after relink"
+      );
+    }
+
     await logAudit({
       action: "XERO_LINK",
       memberId: session.user.id,
@@ -118,6 +164,7 @@ export async function POST(
       xeroContactId: parsed.data.xeroContactId,
       contactName: contact.name,
       xeroLink: buildXeroContactUrl(parsed.data.xeroContactId),
+      ...(warning ? { warning } : {}),
     });
   } catch (err) {
     const xeroError = getXeroApiErrorInfo(err, "Failed to link to Xero contact");

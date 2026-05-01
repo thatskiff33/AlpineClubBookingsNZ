@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import {
   createXeroContactForMember,
   findPotentialXeroContactsForMember,
+  flushMemberSubscriptionHistory,
+  syncMemberSubscriptionHistoryForLinkedContact,
   XeroContactValidationError,
 } from "@/lib/xero";
 import { logAudit } from "@/lib/audit";
@@ -12,6 +14,7 @@ import logger from "@/lib/logger";
 import { buildXeroContactUrl } from "@/lib/xero-links";
 import { z } from "zod";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
+import { getSeasonYear } from "@/lib/utils";
 import {
   enqueueXeroEntranceFeeInvoiceOperation,
   processQueuedXeroOutboxOperations,
@@ -93,6 +96,7 @@ export async function POST(
       }
     }
 
+    const flushedSubscriptionHistory = await flushMemberSubscriptionHistory(id);
     const xeroContactId = await createXeroContactForMember(id, {
       createdByMemberId: session.user.id,
     });
@@ -100,6 +104,47 @@ export async function POST(
     let entranceFeeInvoiceQueued = false;
     let entranceFeeInvoiceMessage: string | undefined;
     let warning: string | undefined;
+
+    try {
+      const seasonYearsToRefresh =
+        flushedSubscriptionHistory.seasonYears.length > 0
+          ? [
+              getSeasonYear(new Date()),
+              ...flushedSubscriptionHistory.seasonYears,
+            ]
+          : undefined;
+      const subscriptionSync =
+        await syncMemberSubscriptionHistoryForLinkedContact(id, {
+          seasonYears: seasonYearsToRefresh,
+          forceRefreshOnlineInvoiceUrl: true,
+        });
+
+      if (subscriptionSync.errors.length > 0) {
+        warning =
+          "Xero contact created, but subscription history refresh did not complete for every season. Run the Member Status Repair Backfill to retry.";
+        logger.warn(
+          {
+            memberId: id,
+            xeroContactId,
+            seasonYears: subscriptionSync.seasonYears,
+            errors: subscriptionSync.errors,
+          },
+          "Subscription history refresh completed with errors after creating Xero contact"
+        );
+      }
+    } catch (historyErr) {
+      warning =
+        "Xero contact created, but subscription history refresh did not complete. Run the Member Status Repair Backfill to retry.";
+      logger.warn(
+        {
+          err: historyErr,
+          memberId: id,
+          xeroContactId,
+          flushedSubscriptionHistory,
+        },
+        "Failed to refresh member subscription history after creating Xero contact"
+      );
+    }
 
     if (parsed.data.createEntranceFeeInvoice) {
       try {
@@ -130,9 +175,10 @@ export async function POST(
           { err: xeroErr, memberId: id },
           "Failed to queue entrance fee invoice after contact creation"
         );
-        warning = `Xero contact created, but entrance fee invoice could not be queued: ${
+        const entranceFeeWarning = `Xero contact created, but entrance fee invoice could not be queued: ${
           xeroErr instanceof Error ? xeroErr.message : String(xeroErr)
         }`;
+        warning = warning ? `${warning} ${entranceFeeWarning}` : entranceFeeWarning;
       }
     }
 
