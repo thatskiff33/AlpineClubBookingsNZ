@@ -4,6 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { flushMemberSubscriptionHistory } from "@/lib/xero";
 import { deactivateXeroObjectLinks } from "@/lib/xero-sync";
 
 /**
@@ -44,6 +45,7 @@ export async function POST(
       where: { id },
       data: { xeroContactId: null },
     });
+    const flushedSubscriptionHistory = await flushMemberSubscriptionHistory(id);
     try {
       await deactivateXeroObjectLinks({
         localModel: "Member",
@@ -62,11 +64,20 @@ export async function POST(
     });
 
     logger.info(
-      { memberId: id, previousXeroContactId },
+      {
+        memberId: id,
+        previousXeroContactId,
+        deletedSubscriptionHistoryCount:
+          flushedSubscriptionHistory.deletedCount,
+      },
       "Unlinked member from Xero contact"
     );
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      clearedSubscriptionHistoryCount:
+        flushedSubscriptionHistory.deletedCount,
+    });
   } catch (err) {
     logger.error({ err, memberId: id }, "Error unlinking member from Xero contact");
     return NextResponse.json({ error: "Failed to unlink from Xero contact" }, { status: 500 });

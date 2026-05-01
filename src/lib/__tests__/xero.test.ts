@@ -239,7 +239,7 @@ describe("shouldBackfillMembershipStatus", () => {
     ).toBe(false)
   })
 
-  it("skips backfill when a subscription invoice is already linked", () => {
+  it("requests a backfill when the member was relinked after a paid row was cached", () => {
     expect(
       shouldBackfillMembershipStatus({
         memberUpdatedAt: new Date("2026-04-20T10:00:00Z"),
@@ -247,6 +247,19 @@ describe("shouldBackfillMembershipStatus", () => {
           status: "PAID",
           xeroInvoiceId: "inv-1",
           updatedAt: new Date("2026-04-20T09:00:00Z"),
+        },
+      })
+    ).toBe(true)
+  })
+
+  it("skips backfill when the cached row is already newer than the member update", () => {
+    expect(
+      shouldBackfillMembershipStatus({
+        memberUpdatedAt: new Date("2026-04-20T09:00:00Z"),
+        subscription: {
+          status: "PAID",
+          xeroInvoiceId: "inv-1",
+          updatedAt: new Date("2026-04-20T10:00:00Z"),
         },
       })
     ).toBe(false)

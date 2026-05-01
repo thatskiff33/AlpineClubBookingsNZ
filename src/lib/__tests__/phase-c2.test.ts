@@ -40,7 +40,9 @@ vi.mock("@/lib/session-guards", () => ({
 const mockGetAuthenticatedXeroClient = vi.fn();
 const mockWithXeroRetry = vi.fn();
 const mockCallXeroApi = vi.fn();
+const mockFlushMemberSubscriptionHistory = vi.fn();
 const mockRefreshXeroContactCachesFromContact = vi.fn();
+const mockSyncMemberSubscriptionHistoryForLinkedContact = vi.fn();
 const mockCreateXeroContactForMember = vi.fn();
 const mockFindPotentialXeroContactsForMember = vi.fn();
 const mockSyncContactsFromXero = vi.fn();
@@ -60,8 +62,14 @@ vi.mock("@/lib/xero", () => ({
   getAuthenticatedXeroClient: () => mockGetAuthenticatedXeroClient(),
   withXeroRetry: (fn: () => unknown) => mockWithXeroRetry(fn),
   callXeroApi: (fn: () => unknown, _opts: unknown) => mockCallXeroApi(fn, _opts),
+  flushMemberSubscriptionHistory: (memberId: string) =>
+    mockFlushMemberSubscriptionHistory(memberId),
   refreshXeroContactCachesFromContact: (contact: unknown) =>
     mockRefreshXeroContactCachesFromContact(contact),
+  syncMemberSubscriptionHistoryForLinkedContact: (
+    memberId: string,
+    options?: unknown
+  ) => mockSyncMemberSubscriptionHistoryForLinkedContact(memberId, options),
   createXeroContactForMember: (id: string, options?: unknown) =>
     mockCreateXeroContactForMember(id, options),
   findPotentialXeroContactsForMember: (id: string) => mockFindPotentialXeroContactsForMember(id),
@@ -110,6 +118,17 @@ function makeRequest(url: string, options?: RequestInit) {
 describe("#28: Xero Search Contacts API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFlushMemberSubscriptionHistory.mockResolvedValue({
+      seasonYears: [],
+      deletedCount: 0,
+      deactivatedLinkCount: 0,
+    });
+    mockSyncMemberSubscriptionHistoryForLinkedContact.mockResolvedValue({
+      seasonYears: [2026],
+      syncedCount: 1,
+      results: [{ seasonYear: 2026, status: "NOT_INVOICED" }],
+      errors: [],
+    });
   });
 
   it("rejects non-admin users with 403", async () => {
@@ -169,6 +188,17 @@ describe("#28: Xero Search Contacts API", () => {
 describe("#28: Xero Link API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFlushMemberSubscriptionHistory.mockResolvedValue({
+      seasonYears: [],
+      deletedCount: 0,
+      deactivatedLinkCount: 0,
+    });
+    mockSyncMemberSubscriptionHistoryForLinkedContact.mockResolvedValue({
+      seasonYears: [2026],
+      syncedCount: 1,
+      results: [{ seasonYear: 2026, status: "NOT_INVOICED" }],
+      errors: [],
+    });
   });
 
   it("rejects non-admin users with 403", async () => {
@@ -274,6 +304,15 @@ describe("#28: Xero Link API", () => {
       where: { id: "m1" },
       data: { xeroContactId: "xc-1" },
     });
+    expect(mockFlushMemberSubscriptionHistory).toHaveBeenCalledWith("m1");
+    expect(
+      mockSyncMemberSubscriptionHistoryForLinkedContact
+    ).toHaveBeenCalledWith(
+      "m1",
+      expect.objectContaining({
+        forceRefreshOnlineInvoiceUrl: true,
+      })
+    );
     expect(mockRefreshXeroContactCachesFromContact).toHaveBeenCalledWith({
       contactID: "xc-1",
       name: "John Smith",
@@ -328,6 +367,17 @@ describe("#28: Xero Link API", () => {
 describe("#28: Xero Push API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFlushMemberSubscriptionHistory.mockResolvedValue({
+      seasonYears: [],
+      deletedCount: 0,
+      deactivatedLinkCount: 0,
+    });
+    mockSyncMemberSubscriptionHistoryForLinkedContact.mockResolvedValue({
+      seasonYears: [2026],
+      syncedCount: 1,
+      results: [{ seasonYear: 2026, status: "NOT_INVOICED" }],
+      errors: [],
+    });
     mockFindPotentialXeroContactsForMember.mockResolvedValue([]);
     mockEnqueueXeroEntranceFeeInvoiceOperation.mockResolvedValue({
       queueOperationId: null,
@@ -379,10 +429,19 @@ describe("#28: Xero Push API", () => {
     const data = await res.json();
     expect(data.xeroContactId).toBe("xc-new-123");
     expect(data.xeroLink).toBe("https://go.xero.com/Contacts/View/xc-new-123");
+    expect(mockFlushMemberSubscriptionHistory).toHaveBeenCalledWith("m1");
     expect(mockFindPotentialXeroContactsForMember).toHaveBeenCalledWith("m1");
     expect(mockCreateXeroContactForMember).toHaveBeenCalledWith("m1", {
       createdByMemberId: "a1",
     });
+    expect(
+      mockSyncMemberSubscriptionHistoryForLinkedContact
+    ).toHaveBeenCalledWith(
+      "m1",
+      expect.objectContaining({
+        forceRefreshOnlineInvoiceUrl: true,
+      })
+    );
   });
 
   it("returns 422 when required Xero fields are missing", async () => {

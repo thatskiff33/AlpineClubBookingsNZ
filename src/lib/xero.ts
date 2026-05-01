@@ -3955,11 +3955,127 @@ export function shouldBackfillMembershipStatus(input: {
     return true;
   }
 
-  return (
-    input.subscription.status === "NOT_INVOICED" &&
-    !input.subscription.xeroInvoiceId &&
-    input.memberUpdatedAt.getTime() > input.subscription.updatedAt.getTime()
-  );
+  return input.memberUpdatedAt.getTime() > input.subscription.updatedAt.getTime();
+}
+
+export async function flushMemberSubscriptionHistory(memberId: string): Promise<{
+  seasonYears: number[];
+  deletedCount: number;
+  deactivatedLinkCount: number;
+}> {
+  return prisma.$transaction(async (tx) => {
+    const subscriptions = await tx.memberSubscription.findMany({
+      where: { memberId },
+      select: {
+        id: true,
+        seasonYear: true,
+      },
+    });
+
+    if (subscriptions.length === 0) {
+      return {
+        seasonYears: [],
+        deletedCount: 0,
+        deactivatedLinkCount: 0,
+      };
+    }
+
+    const subscriptionIds = subscriptions.map((subscription) => subscription.id);
+    const seasonYears = Array.from(
+      new Set(subscriptions.map((subscription) => subscription.seasonYear))
+    ).sort((left, right) => right - left);
+
+    const deactivatedLinks = await tx.xeroObjectLink.updateMany({
+      where: {
+        localModel: "MemberSubscription",
+        localId: { in: subscriptionIds },
+        active: true,
+      },
+      data: {
+        active: false,
+      },
+    });
+    const deletedSubscriptions = await tx.memberSubscription.deleteMany({
+      where: {
+        id: { in: subscriptionIds },
+      },
+    });
+
+    return {
+      seasonYears,
+      deletedCount: deletedSubscriptions.count,
+      deactivatedLinkCount: deactivatedLinks.count,
+    };
+  });
+}
+
+export async function syncMemberSubscriptionHistoryForLinkedContact(
+  memberId: string,
+  options?: {
+    seasonYears?: number[];
+    forceRefreshOnlineInvoiceUrl?: boolean;
+  }
+): Promise<{
+  seasonYears: number[];
+  syncedCount: number;
+  results: Array<{
+    seasonYear: number;
+    status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED";
+    xeroInvoiceId?: string;
+    paidAt?: Date;
+    xeroOnlineInvoiceUrl?: string | null;
+  }>;
+  errors: Array<{ seasonYear: number; error: string }>;
+}> {
+  const seasonYears = Array.from(
+    new Set(
+      (options?.seasonYears?.length
+        ? options.seasonYears
+        : [getSeasonYear(new Date())]
+      ).filter(
+        (seasonYear): seasonYear is number =>
+          Number.isInteger(seasonYear) && seasonYear >= 2020 && seasonYear <= 2040
+      )
+    )
+  ).sort((left, right) => right - left);
+
+  const results: Array<{
+    seasonYear: number;
+    status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED";
+    xeroInvoiceId?: string;
+    paidAt?: Date;
+    xeroOnlineInvoiceUrl?: string | null;
+  }> = [];
+  const errors: Array<{ seasonYear: number; error: string }> = [];
+
+  for (const seasonYear of seasonYears) {
+    try {
+      const result = await checkMembershipStatus(memberId, seasonYear, {
+        forceRefreshOnlineInvoiceUrl:
+          options?.forceRefreshOnlineInvoiceUrl ?? true,
+      });
+      results.push({
+        seasonYear,
+        ...result,
+      });
+    } catch (error) {
+      errors.push({
+        seasonYear,
+        error: parseXeroError(error),
+      });
+
+      if (error instanceof XeroDailyLimitError) {
+        break;
+      }
+    }
+  }
+
+  return {
+    seasonYears,
+    syncedCount: results.length,
+    results,
+    errors,
+  };
 }
 
 export async function checkMembershipStatus(
@@ -4358,18 +4474,6 @@ export async function refreshAllMembershipStatuses(
         where: {
           active: true,
           xeroContactId: { not: null },
-          OR: [
-            { subscriptions: { none: { seasonYear: year } } },
-            {
-              subscriptions: {
-                some: {
-                  seasonYear: year,
-                  status: "NOT_INVOICED",
-                  xeroInvoiceId: null,
-                },
-              },
-            },
-          ],
         },
         select: {
           id: true,

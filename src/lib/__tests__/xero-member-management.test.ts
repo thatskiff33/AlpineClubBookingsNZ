@@ -35,13 +35,20 @@ const {
   mockGetXeroContactIdsForGroup,
   mockGetAuthenticatedXeroClient,
   mockCallXeroApi,
+  mockFlushMemberSubscriptionHistory,
   mockRefreshXeroContactCachesFromContact,
+  mockSyncMemberSubscriptionHistoryForLinkedContact,
 } = vi.hoisted(() => ({
   mockIsXeroConnected: vi.fn().mockResolvedValue(false),
   mockGetXeroContactGroupMemberships: vi.fn().mockResolvedValue({}),
   mockGetXeroContactIdsForGroup: vi.fn().mockResolvedValue([]),
   mockGetAuthenticatedXeroClient: vi.fn(),
   mockCallXeroApi: vi.fn(),
+  mockFlushMemberSubscriptionHistory: vi.fn().mockResolvedValue({
+    seasonYears: [],
+    deletedCount: 0,
+    deactivatedLinkCount: 0,
+  }),
   mockRefreshXeroContactCachesFromContact: vi.fn().mockResolvedValue({
     cachedContact: { contactId: "cached-contact" },
     groupMemberships: {
@@ -53,6 +60,12 @@ const {
       groupsTouched: 0,
     },
   }),
+  mockSyncMemberSubscriptionHistoryForLinkedContact: vi.fn().mockResolvedValue({
+    seasonYears: [2026],
+    syncedCount: 1,
+    results: [{ seasonYear: 2026, status: "NOT_INVOICED" }],
+    errors: [],
+  }),
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: mockIsXeroConnected,
@@ -60,7 +73,10 @@ vi.mock("@/lib/xero", () => ({
   getXeroContactIdsForGroup: mockGetXeroContactIdsForGroup,
   getAuthenticatedXeroClient: mockGetAuthenticatedXeroClient,
   callXeroApi: mockCallXeroApi,
+  flushMemberSubscriptionHistory: mockFlushMemberSubscriptionHistory,
   refreshXeroContactCachesFromContact: mockRefreshXeroContactCachesFromContact,
+  syncMemberSubscriptionHistoryForLinkedContact:
+    mockSyncMemberSubscriptionHistoryForLinkedContact,
   findOrCreateXeroContact: vi.fn(),
 }));
 
@@ -93,6 +109,19 @@ describe("Xero Member Management", () => {
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
     mockGetXeroContactIdsForGroup.mockResolvedValue([]);
     mockCallXeroApi.mockReset();
+    mockFlushMemberSubscriptionHistory.mockReset();
+    mockFlushMemberSubscriptionHistory.mockResolvedValue({
+      seasonYears: [],
+      deletedCount: 0,
+      deactivatedLinkCount: 0,
+    });
+    mockSyncMemberSubscriptionHistoryForLinkedContact.mockReset();
+    mockSyncMemberSubscriptionHistoryForLinkedContact.mockResolvedValue({
+      seasonYears: [2026],
+      syncedCount: 1,
+      results: [{ seasonYear: 2026, status: "NOT_INVOICED" }],
+      errors: [],
+    });
     vi.mocked(prisma.member.count).mockResolvedValue(1);
     delete process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS;
   });
@@ -142,6 +171,7 @@ describe("Xero Member Management", () => {
         where: { id: "m1" },
         data: { xeroContactId: null },
       });
+      expect(mockFlushMemberSubscriptionHistory).toHaveBeenCalledWith("m1");
       expect(logAudit).toHaveBeenCalledWith(
         expect.objectContaining({
           action: "XERO_UNLINK",
@@ -385,6 +415,15 @@ describe("Xero Member Management", () => {
         where: { id: "m1" },
         data: { xeroContactId: "new-xero-id" },
       });
+      expect(mockFlushMemberSubscriptionHistory).toHaveBeenCalledWith("m1");
+      expect(
+        mockSyncMemberSubscriptionHistoryForLinkedContact
+      ).toHaveBeenCalledWith(
+        "m1",
+        expect.objectContaining({
+          forceRefreshOnlineInvoiceUrl: true,
+        })
+      );
       expect(mockRefreshXeroContactCachesFromContact).toHaveBeenCalledWith(
         { contactID: "new-xero-id", name: "Jane Doe" }
       );
