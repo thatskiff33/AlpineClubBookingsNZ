@@ -203,6 +203,11 @@ function ManagerActionButton({
   action: FinanceLandingManagerAction;
   disconnectAction: (formData: FormData) => Promise<void>;
 }) {
+  const isProminentAction = action.kind === "connect" || action.kind === "sync";
+  const descriptionClass = isProminentAction
+    ? "block text-xs text-primary-foreground/80"
+    : "block text-xs text-slate-500";
+
   if (action.kind === "disconnect") {
     return (
       <form action={disconnectAction}>
@@ -227,6 +232,20 @@ function ManagerActionButton({
     return null;
   }
 
+  if (action.kind === "sync") {
+    return (
+      <form action={action.href} method="post">
+        <Button type="submit" className="w-full justify-between">
+          <span className="text-left">
+            <span className="block text-sm font-medium">{action.label}</span>
+            <span className={descriptionClass}>{action.description}</span>
+          </span>
+          <ArrowRight className="ml-3 h-4 w-4 shrink-0" />
+        </Button>
+      </form>
+    );
+  }
+
   const isConnectAction = action.kind === "connect";
 
   return (
@@ -242,9 +261,7 @@ function ManagerActionButton({
       >
         <span className="text-left">
           <span className="block text-sm font-medium">{action.label}</span>
-          <span className="block text-xs text-slate-500">
-            {action.description}
-          </span>
+          <span className={descriptionClass}>{action.description}</span>
         </span>
         {action.kind === "link" ? (
           <ArrowUpRight className="ml-3 h-4 w-4 shrink-0" />
@@ -358,6 +375,8 @@ export default async function FinancePage({
   searchParams: Promise<{
     connected?: string;
     error?: string;
+    sync?: string;
+    syncError?: string;
     xero?: string;
   }>;
 }) {
@@ -413,8 +432,37 @@ export default async function FinancePage({
           tone: "success" as const,
           title: "Finance Xero connected",
           description:
-              "The finance Xero connection completed successfully. The next finance sync can now refresh Xero-backed reports.",
+              "The finance Xero connection completed successfully. You can run a sync now or wait for the daily schedule to refresh Xero-backed reports.",
         }
+      : params.sync === "completed"
+        ? {
+            tone: "success" as const,
+            title: "Finance sync complete",
+            description:
+              "Fresh finance snapshots were stored successfully. Finance reports can now load the latest synced Xero data.",
+          }
+      : params.sync === "partial"
+        ? {
+            tone: "warning" as const,
+            title: "Finance sync completed with issues",
+            description:
+              "Some finance datasets failed during the manual sync. Review the technical diagnostics below before relying on missing report data.",
+          }
+      : params.sync === "running"
+        ? {
+            tone: "warning" as const,
+            title: "Finance sync already running",
+            description:
+              "Another finance sync is still in progress. Wait a few minutes, then refresh the page or review the diagnostics below.",
+          }
+      : params.sync === "failed"
+        ? {
+            tone: "destructive" as const,
+            title: "Manual finance sync failed",
+            description:
+              params.syncError ??
+              "The manual finance sync could not complete. Check the diagnostics below and try again after fixing the issue.",
+          }
       : params.xero === "disconnected"
         ? {
             tone: "success" as const,

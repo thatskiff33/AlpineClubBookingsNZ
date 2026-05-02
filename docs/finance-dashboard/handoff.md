@@ -1,6 +1,6 @@
 # Finance Dashboard Handoff
 
-Last updated: 2026-04-27
+Last updated: 2026-05-02
 
 ## Current State
 
@@ -20,6 +20,7 @@ Last updated: 2026-04-27
 - Most recent published implementation PR: `#169`
 - Finance task currently in flight: none
 - Single `status: ready` finance task: none
+- Finance managers can now trigger a manual finance sync from `/finance` in addition to the daily scheduled sync
 - Operational Xero remains closed on `main`; `docs/XERO_HANDOFF.md` stays unchanged unless new evidence proves a new gap
 
 ## What Landed Through Finance Rollout Readiness Cleanup

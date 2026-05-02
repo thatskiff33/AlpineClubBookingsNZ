@@ -335,6 +335,10 @@ describe("finance landing page model", () => {
       }))
     ).toEqual([
       {
+        kind: "sync",
+        href: "/api/finance/sync/run",
+      },
+      {
         kind: "connect",
         href: "/api/finance/xero/connect",
       },
