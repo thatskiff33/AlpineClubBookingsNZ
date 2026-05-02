@@ -1338,11 +1338,25 @@ model AgeTierSetting {
   label                String // e.g. "Child (under 10)"
   xeroContactGroupId   String?
   xeroContactGroupName String?
+  xeroAcceptedContactGroups AgeTierXeroAcceptedContactGroup[]
   sortOrder            Int      @default(0)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
   @@index([sortOrder])
+}
+
+model AgeTierXeroAcceptedContactGroup {
+  id               String   @id @default(cuid())
+  ageTierSettingId String
+  groupId          String   @unique
+  groupName        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  ageTierSetting AgeTierSetting @relation(fields: [ageTierSettingId], references: [id], onDelete: Cascade)
+
+  @@index([ageTierSettingId])
 }
 
 // ---------------------------------------------------------------------------

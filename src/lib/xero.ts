@@ -13,7 +13,10 @@ import { prisma } from "./prisma";
 import { sendPasswordResetEmail } from "./email";
 import { issueActionToken } from "./action-tokens";
 import { AgeTier, CreditType, EntranceFeeCategory, Prisma } from "@prisma/client";
-import { getAgeTierXeroContactGroupMappings } from "@/lib/age-tier-xero-groups";
+import {
+  buildAgeTierXeroContactGroupConfigMap,
+  getAgeTierXeroContactGroupMappings,
+} from "@/lib/age-tier-xero-groups";
 import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
@@ -2408,7 +2411,8 @@ export async function syncManagedXeroContactGroupForMember(
   }
 
   const mappings = await getAgeTierXeroContactGroupMappings();
-  const expectedGroup = mappings.find((mapping) => mapping.tier === member.ageTier) ?? null;
+  const configByTier = buildAgeTierXeroContactGroupConfigMap(mappings);
+  const expectedConfig = configByTier.get(member.ageTier) ?? null;
   const managedGroupIds = Array.from(new Set(mappings.map((mapping) => mapping.groupId)));
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
@@ -2435,7 +2439,7 @@ export async function syncManagedXeroContactGroupForMember(
     managedGroupIds.includes(group.id)
   );
 
-  if (!expectedGroup) {
+  if (!expectedConfig || expectedConfig.acceptedGroups.length === 0) {
     await refreshXeroContactCachesFromContact(initialContact);
     return {
       memberId,
@@ -2448,20 +2452,25 @@ export async function syncManagedXeroContactGroupForMember(
     };
   }
 
-  const missingExpectedGroup = !currentManagedGroups.some(
-    (group) => group.id === expectedGroup.groupId
+  const acceptedGroupIds = new Set(
+    expectedConfig.acceptedGroups.map((group) => group.id)
+  );
+  const defaultGroup = expectedConfig.defaultGroup;
+  const hasAcceptedGroup = currentManagedGroups.some((group) =>
+    acceptedGroupIds.has(group.id)
   );
   const removedGroupIds = currentManagedGroups
-    .filter((group) => group.id !== expectedGroup.groupId)
+    .filter((group) => !acceptedGroupIds.has(group.id))
     .map((group) => group.id);
+  const groupToAdd = !hasAcceptedGroup ? defaultGroup : null;
 
-  if (!missingExpectedGroup && removedGroupIds.length === 0) {
+  if (!groupToAdd && removedGroupIds.length === 0) {
     await refreshXeroContactCachesFromContact(initialContact);
     return {
       memberId,
       xeroContactId: member.xeroContactId,
-      expectedGroupId: expectedGroup.groupId,
-      expectedGroupName: expectedGroup.groupName,
+      expectedGroupId: defaultGroup?.id ?? null,
+      expectedGroupName: defaultGroup?.name ?? null,
       addedGroupIds: [],
       removedGroupIds: [],
       skippedReason: null,
@@ -2473,10 +2482,8 @@ export async function syncManagedXeroContactGroupForMember(
     memberName: `${member.firstName} ${member.lastName}`,
     ageTier: member.ageTier,
     xeroContactId: member.xeroContactId,
-    expectedGroup: {
-      id: expectedGroup.groupId,
-      name: expectedGroup.groupName,
-    },
+    defaultGroup,
+    acceptedGroups: expectedConfig.acceptedGroups,
     currentManagedGroups: currentManagedGroups.map((group) => ({
       id: group.id,
       name: group.name,
@@ -2504,7 +2511,7 @@ export async function syncManagedXeroContactGroupForMember(
 
   const addedGroupIds: string[] = [];
   try {
-    if (missingExpectedGroup) {
+    if (groupToAdd) {
       const contacts: Contacts = {
         contacts: [{ contactID: member.xeroContactId }],
       };
@@ -2512,14 +2519,14 @@ export async function syncManagedXeroContactGroupForMember(
         "contact",
         member.xeroContactId,
         "contact-group-add",
-        expectedGroup.groupId,
+        groupToAdd.id,
         "v1"
       );
       await callXeroApi(
         () =>
           xero.accountingApi.createContactGroupContacts(
             tenantId,
-            expectedGroup.groupId,
+            groupToAdd.id,
             contacts,
             addIdempotencyKey
           ),
@@ -2527,10 +2534,10 @@ export async function syncManagedXeroContactGroupForMember(
           operation: "createContactGroupContacts",
           resourceType: "CONTACT_GROUP",
           workflow: "syncManagedXeroContactGroupForMember",
-          context: `createContactGroupContacts(${expectedGroup.groupId}, ${member.xeroContactId})`,
+          context: `createContactGroupContacts(${groupToAdd.id}, ${member.xeroContactId})`,
         }
       );
-      addedGroupIds.push(expectedGroup.groupId);
+      addedGroupIds.push(groupToAdd.id);
     }
 
     for (const groupId of removedGroupIds) {
@@ -2582,8 +2589,8 @@ export async function syncManagedXeroContactGroupForMember(
     return {
       memberId,
       xeroContactId: member.xeroContactId,
-      expectedGroupId: expectedGroup.groupId,
-      expectedGroupName: expectedGroup.groupName,
+      expectedGroupId: defaultGroup?.id ?? null,
+      expectedGroupName: defaultGroup?.name ?? null,
       addedGroupIds,
       removedGroupIds,
       skippedReason: null,

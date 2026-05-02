@@ -10,6 +10,22 @@ export interface AgeTierXeroContactGroupMapping {
   sortOrder: number;
   groupId: string;
   groupName: string | null;
+  isDefault: boolean;
+}
+
+export interface AgeTierXeroContactGroupConfig {
+  tier: AgeTier;
+  label: string;
+  sortOrder: number;
+  defaultGroup: {
+    id: string;
+    name: string | null;
+  } | null;
+  acceptedGroups: Array<{
+    id: string;
+    name: string | null;
+    isDefault: boolean;
+  }>;
 }
 
 export interface XeroContactGroupMismatchEntry {
@@ -18,10 +34,15 @@ export interface XeroContactGroupMismatchEntry {
   memberEmail: string;
   ageTier: AgeTier;
   xeroContactId: string;
-  expectedGroup: {
+  defaultGroup: {
     id: string;
     name: string | null;
-  };
+  } | null;
+  acceptedGroups: Array<{
+    id: string;
+    name: string | null;
+    isDefault: boolean;
+  }>;
   actualGroups: Array<{
     id: string;
     name: string;
@@ -42,15 +63,63 @@ export interface XeroContactGroupMismatchSnapshot {
   mismatches: XeroContactGroupMismatchEntry[];
 }
 
+export function buildAgeTierXeroContactGroupConfigs(
+  mappings: AgeTierXeroContactGroupMapping[]
+): AgeTierXeroContactGroupConfig[] {
+  const configs = new Map<AgeTier, AgeTierXeroContactGroupConfig>();
+
+  for (const mapping of mappings) {
+    const existing = configs.get(mapping.tier) ?? {
+      tier: mapping.tier,
+      label: mapping.label,
+      sortOrder: mapping.sortOrder,
+      defaultGroup: null,
+      acceptedGroups: [],
+    };
+
+    const group = {
+      id: mapping.groupId,
+      name: mapping.groupName,
+      isDefault: mapping.isDefault,
+    };
+
+    existing.acceptedGroups.push(group);
+    if (mapping.isDefault) {
+      existing.defaultGroup = {
+        id: mapping.groupId,
+        name: mapping.groupName,
+      };
+    }
+
+    configs.set(mapping.tier, existing);
+  }
+
+  return [...configs.values()]
+    .map((config) => ({
+      ...config,
+      acceptedGroups: config.acceptedGroups.sort((left, right) => {
+        if (left.isDefault !== right.isDefault) {
+          return left.isDefault ? -1 : 1;
+        }
+
+        return (left.name ?? left.id).localeCompare(right.name ?? right.id);
+      }),
+    }))
+    .sort((left, right) => left.sortOrder - right.sortOrder);
+}
+
+export function buildAgeTierXeroContactGroupConfigMap(
+  mappings: AgeTierXeroContactGroupMapping[]
+): Map<AgeTier, AgeTierXeroContactGroupConfig> {
+  return new Map(
+    buildAgeTierXeroContactGroupConfigs(mappings).map((config) => [config.tier, config] as const)
+  );
+}
+
 export async function getAgeTierXeroContactGroupMappings(): Promise<
   AgeTierXeroContactGroupMapping[]
 > {
   const rows = await prisma.ageTierSetting.findMany({
-    where: {
-      xeroContactGroupId: {
-        not: null,
-      },
-    },
     orderBy: {
       sortOrder: "asc",
     },
@@ -60,22 +129,43 @@ export async function getAgeTierXeroContactGroupMappings(): Promise<
       sortOrder: true,
       xeroContactGroupId: true,
       xeroContactGroupName: true,
+      xeroAcceptedContactGroups: {
+        orderBy: [{ groupName: "asc" }, { groupId: "asc" }],
+        select: {
+          groupId: true,
+          groupName: true,
+        },
+      },
     },
   });
 
-  return rows.flatMap((row) =>
-    row.xeroContactGroupId
-      ? [
-          {
-            tier: row.tier,
-            label: row.label,
-            sortOrder: row.sortOrder,
-            groupId: row.xeroContactGroupId,
-            groupName: row.xeroContactGroupName,
-          } satisfies AgeTierXeroContactGroupMapping,
-        ]
-      : []
-  );
+  return rows.flatMap((row) => {
+    const mappings: AgeTierXeroContactGroupMapping[] = [];
+
+    if (row.xeroContactGroupId) {
+      mappings.push({
+        tier: row.tier,
+        label: row.label,
+        sortOrder: row.sortOrder,
+        groupId: row.xeroContactGroupId,
+        groupName: row.xeroContactGroupName,
+        isDefault: true,
+      });
+    }
+
+    for (const group of row.xeroAcceptedContactGroups ?? []) {
+      mappings.push({
+        tier: row.tier,
+        label: row.label,
+        sortOrder: row.sortOrder,
+        groupId: group.groupId,
+        groupName: group.groupName,
+        isDefault: false,
+      });
+    }
+
+    return mappings;
+  });
 }
 
 export async function getXeroContactGroupMismatchSnapshot(options?: {
@@ -173,9 +263,7 @@ export async function getXeroContactGroupMismatchSnapshot(options?: {
     groupsByContactId.set(membership.contactId, existing);
   }
 
-  const mappingByTier = new Map(
-    configuredMappings.map((mapping) => [mapping.tier, mapping] as const)
-  );
+  const configByTier = buildAgeTierXeroContactGroupConfigMap(configuredMappings);
   const tierByManagedGroupId = new Map(
     configuredMappings.map((mapping) => [mapping.groupId, mapping.tier] as const)
   );
@@ -188,20 +276,23 @@ export async function getXeroContactGroupMismatchSnapshot(options?: {
       return [];
     }
 
-    const expectedGroup = mappingByTier.get(member.ageTier);
-    if (!expectedGroup) {
+    const expectedConfig = configByTier.get(member.ageTier);
+    if (!expectedConfig || expectedConfig.acceptedGroups.length === 0) {
       return [];
     }
 
     const actualGroups = groupsByContactId.get(member.xeroContactId) ?? [];
+    const acceptedGroupIds = new Set(
+      expectedConfig.acceptedGroups.map((group) => group.id)
+    );
     const unexpectedManagedGroups = actualGroups
-      .filter((group) => managedGroupIds.has(group.id) && group.id !== expectedGroup.groupId)
+      .filter((group) => managedGroupIds.has(group.id) && !acceptedGroupIds.has(group.id))
       .map((group) => ({
         ...group,
         tier: tierByManagedGroupId.get(group.id) ?? null,
       }));
     const missingExpectedGroup = !actualGroups.some(
-      (group) => group.id === expectedGroup.groupId
+      (group) => acceptedGroupIds.has(group.id)
     );
 
     if (!missingExpectedGroup && unexpectedManagedGroups.length === 0) {
@@ -215,10 +306,8 @@ export async function getXeroContactGroupMismatchSnapshot(options?: {
         memberEmail: member.email,
         ageTier: member.ageTier,
         xeroContactId: member.xeroContactId,
-        expectedGroup: {
-          id: expectedGroup.groupId,
-          name: expectedGroup.groupName,
-        },
+        defaultGroup: expectedConfig.defaultGroup,
+        acceptedGroups: expectedConfig.acceptedGroups,
         actualGroups,
         unexpectedManagedGroups,
         missingExpectedGroup,

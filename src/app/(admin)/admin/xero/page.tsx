@@ -303,6 +303,7 @@ interface ConfiguredAgeTierContactGroup {
   sortOrder: number
   groupId: string
   groupName: string | null
+  isDefault: boolean
 }
 
 interface ContactGroupMismatch {
@@ -311,10 +312,15 @@ interface ContactGroupMismatch {
   memberEmail: string
   ageTier: AgeTier
   xeroContactId: string
-  expectedGroup: {
+  defaultGroup: {
     id: string
     name: string | null
-  }
+  } | null
+  acceptedGroups: Array<{
+    id: string
+    name: string | null
+    isDefault: boolean
+  }>
   actualGroups: Array<{
     id: string
     name: string
@@ -2038,7 +2044,21 @@ export default function XeroPage() {
                     </div>
                     <p className="text-sm text-muted-foreground">
                       {contactGroupMismatches.configuredMappings.length > 0
-                        ? `Configured mappings: ${contactGroupMismatches.configuredMappings.map((mapping) => `${mapping.tier} → ${mapping.groupName ?? mapping.groupId}`).join(", ")}`
+                        ? `Configured mappings: ${Array.from(
+                            contactGroupMismatches.configuredMappings.reduce(
+                              (groups, mapping) => {
+                                const existing = groups.get(mapping.tier) ?? []
+                                existing.push(
+                                  `${mapping.groupName ?? mapping.groupId}${mapping.isDefault ? " (default)" : ""}`
+                                )
+                                groups.set(mapping.tier, existing)
+                                return groups
+                              },
+                              new Map<AgeTier, string[]>()
+                            )
+                          )
+                            .map(([tier, groups]) => `${tier} → ${groups.join(", ")}`)
+                            .join("; ")}`
                         : "No age-tier to Xero contact-group mappings are configured yet."}
                     </p>
                     <p className="text-xs text-muted-foreground">
@@ -2081,7 +2101,7 @@ export default function XeroPage() {
                               </a>
                               <Badge variant="outline">{mismatch.ageTier}</Badge>
                               {mismatch.missingExpectedGroup ? (
-                                <Badge className="bg-red-600">Missing expected group</Badge>
+                                <Badge className="bg-red-600">Missing accepted group</Badge>
                               ) : null}
                               {mismatch.unexpectedManagedGroups.length > 0 ? (
                                 <Badge className="bg-amber-500">
@@ -2091,8 +2111,18 @@ export default function XeroPage() {
                             </div>
                             <p className="text-sm text-muted-foreground">{mismatch.memberEmail}</p>
                             <p className="text-xs text-muted-foreground">
-                              Expected managed group: {mismatch.expectedGroup.name ?? mismatch.expectedGroup.id}
+                              Accepted managed groups:{" "}
+                              {mismatch.acceptedGroups
+                                .map((group) =>
+                                  `${group.name ?? group.id}${group.isDefault ? " (default)" : ""}`
+                                )
+                                .join(", ")}
                             </p>
+                            {mismatch.defaultGroup ? (
+                              <p className="text-xs text-muted-foreground">
+                                Default write group: {mismatch.defaultGroup.name ?? mismatch.defaultGroup.id}
+                              </p>
+                            ) : null}
                             <p className="text-xs text-muted-foreground">
                               Actual cached groups:{" "}
                               {mismatch.actualGroups.length > 0

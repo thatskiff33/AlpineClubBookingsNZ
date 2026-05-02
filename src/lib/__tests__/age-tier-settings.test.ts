@@ -203,10 +203,38 @@ describe("normalizeAgeTierSettings", () => {
 
   it("preserves custom 4-tier settings", () => {
     const customRows: AgeTierSettingData[] = [
-      { tier: "INFANT", minAge: 0, maxAge: 2, label: "Baby (0-2)", sortOrder: 0 },
-      { tier: "CHILD", minAge: 3, maxAge: 12, label: "Child (3-12)", sortOrder: 1 },
-      { tier: "YOUTH", minAge: 13, maxAge: 17, label: "Teen (13-17)", sortOrder: 2 },
-      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
+      {
+        tier: "INFANT",
+        minAge: 0,
+        maxAge: 2,
+        label: "Baby (0-2)",
+        xeroAcceptedContactGroups: [],
+        sortOrder: 0,
+      },
+      {
+        tier: "CHILD",
+        minAge: 3,
+        maxAge: 12,
+        label: "Child (3-12)",
+        xeroAcceptedContactGroups: [],
+        sortOrder: 1,
+      },
+      {
+        tier: "YOUTH",
+        minAge: 13,
+        maxAge: 17,
+        label: "Teen (13-17)",
+        xeroAcceptedContactGroups: [],
+        sortOrder: 2,
+      },
+      {
+        tier: "ADULT",
+        minAge: 18,
+        maxAge: null,
+        label: "Adult (18+)",
+        xeroAcceptedContactGroups: [],
+        sortOrder: 3,
+      },
     ];
 
     expect(normalizeAgeTierSettings(customRows)).toEqual(customRows);
