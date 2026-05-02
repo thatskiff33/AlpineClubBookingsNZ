@@ -618,18 +618,22 @@ function HealthStatCard({
   onClick?: () => void
 }) {
   const className =
-    "rounded-lg border p-4 text-left transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+    "flex h-full flex-col rounded-xl border bg-white p-4 text-left shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 
   const content = (
     <>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-          <div className="mt-2 text-2xl font-semibold">{value}</div>
+      <div className="flex flex-wrap items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
+          <div className="mt-2 break-words text-2xl font-semibold leading-tight">{value}</div>
         </div>
-        {badge}
+        {badge ? (
+          <div className="max-w-full shrink-0 [&>*]:max-w-full [&>*]:whitespace-normal [&>*]:text-center [&>*]:leading-4">
+            {badge}
+          </div>
+        ) : null}
       </div>
-      <p className="mt-3 text-xs text-muted-foreground">{subtitle}</p>
+      <p className="mt-4 text-sm leading-5 text-muted-foreground">{subtitle}</p>
     </>
   )
 
@@ -643,7 +647,7 @@ function HealthStatCard({
 
   if (onClick) {
     return (
-      <button type="button" onClick={onClick} className={className}>
+      <button type="button" onClick={onClick} className={`${className} w-full`}>
         {content}
       </button>
     )
@@ -1800,7 +1804,7 @@ export default function XeroPage() {
               <p className="text-sm text-muted-foreground">Loading health snapshot...</p>
             ) : healthSnapshot ? (
               <div className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                   <HealthStatCard
                     label="Unlinked members"
                     value={healthSnapshot.unlinkedMembers.count}
