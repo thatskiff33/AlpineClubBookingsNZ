@@ -50,7 +50,7 @@ export interface FinanceLandingSectionLink {
 }
 
 export interface FinanceLandingManagerAction {
-  kind: "link" | "connect" | "disconnect";
+  kind: "link" | "connect" | "disconnect" | "sync";
   href?: string;
   label: string;
   description: string;
@@ -290,6 +290,13 @@ function mapManagerWorkspace(
   const connectionActions: FinanceLandingManagerAction[] = status.connected
     ? [
         {
+          kind: "sync",
+          href: "/api/finance/sync/run",
+          label: "Run finance sync now",
+          description:
+            "Trigger a manager-started sync now instead of waiting for the next scheduled cycle.",
+        },
+        {
           kind: "connect",
           href: "/api/finance/xero/connect",
           label: "Reconnect finance Xero",
@@ -319,7 +326,7 @@ function mapManagerWorkspace(
     eyebrow: "Manager access",
     title: "Connection & diagnostics",
     description: status.connected
-      ? "Finance Xero is connected and ready for scheduled syncs."
+      ? "Finance Xero is connected and ready for scheduled or manual syncs."
       : !status.canConnect
         ? "This environment is missing required finance Xero setup."
         : reconnectRequired

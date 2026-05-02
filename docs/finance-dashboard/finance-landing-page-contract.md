@@ -2,7 +2,7 @@
 
 This document defines the native `/finance` landing page shell added for phase `#97`.
 
-It is intentionally small. The landing page surfaces live finance sync health and TACBookings booking summaries for finance viewers and managers, and it may expose finance-manager Xero connection controls and diagnostics deep links, but it does not implement report pages, charts, or manual sync controls.
+It is intentionally small. The landing page surfaces live finance sync health and TACBookings booking summaries for finance viewers and managers, and it may expose finance-manager Xero connection controls, a manual sync trigger, and diagnostics deep links, but it does not implement charts or report-specific data loaders.
 
 ## Boundary
 
@@ -38,7 +38,7 @@ The landing page uses New Zealand local dates (`Pacific/Auckland`) for its booki
 
 - finance viewers and finance managers can load `/finance`
 - viewers see the landing page summaries and section links
-- managers may see finance Xero connection state plus connect or disconnect controls for the already-landed finance-only OAuth boundary
+- managers may see finance Xero connection state plus connect, disconnect, and manual sync controls for the finance-only Xero boundary
 - manager-only diagnostics links and finance Xero controls must stay hidden from viewers
 
 ## Failure Handling
@@ -55,6 +55,5 @@ This landing page does not implement:
 
 - revenue, bookings, cash, or balance sheet report pages
 - charts
-- manual sync mutations
 - booking type schema changes
 - operational Xero behavior changes
