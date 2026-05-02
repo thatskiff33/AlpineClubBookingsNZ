@@ -778,6 +778,88 @@ describe("finance-sync-datasets", () => {
     });
   });
 
+  it("normalizes non-string receivable contact metadata before grouping and sorting", () => {
+    const asOfDate = new Date("2026-04-20T00:00:00.000Z");
+    const invoices = [
+      {
+        type: ACCREC,
+        invoiceID: "inv-1",
+        invoiceNumber: "INV-001",
+        dueDate: "2026-04-10",
+        date: "2026-04-01",
+        amountDue: 100,
+        status: AUTHORISED,
+        currencyCode: { toString: () => "NZD" } as never,
+        contact: {
+          contactID: 101 as never,
+          firstName: 42 as never,
+          lastName: "School" as never,
+          contactStatus: ACTIVE,
+        },
+      },
+      {
+        type: ACCREC,
+        invoiceID: "inv-2",
+        invoiceNumber: "INV-002",
+        dueDate: "2026-04-15",
+        date: "2026-04-03",
+        amountDue: 80,
+        status: AUTHORISED,
+        currencyCode: { toString: () => "AUD" } as never,
+        contact: {
+          contactID: 202 as never,
+          name: 303 as never,
+          contactStatus: ACTIVE,
+        },
+      },
+    ];
+
+    const agedSnapshot = buildFinanceAgedReceivablesSnapshot({
+      asOfDate,
+      invoices,
+    });
+    const receivableDetailSnapshot = buildFinanceAccountsReceivableInvoicesSnapshot({
+      asOfDate,
+      invoices,
+    });
+
+    expect(agedSnapshot).toMatchObject({
+      payload: {
+        currencies: ["AUD", "NZD"],
+        contacts: [
+          {
+            contactId: "101",
+            contactName: "42 School",
+            currency: "NZD",
+          },
+          {
+            contactId: "202",
+            contactName: "303",
+            currency: "AUD",
+          },
+        ],
+      },
+    });
+
+    expect(receivableDetailSnapshot).toMatchObject({
+      payload: {
+        currencies: ["AUD", "NZD"],
+        contacts: [
+          {
+            contactId: "101",
+            contactName: "42 School",
+            currency: "NZD",
+          },
+          {
+            contactId: "202",
+            contactName: "303",
+            currency: "AUD",
+          },
+        ],
+      },
+    });
+  });
+
   it("maps open payable invoices into an organisation-level accounts payable invoice snapshot", () => {
     const snapshot = buildFinanceAccountsPayableInvoicesSnapshot({
       asOfDate: new Date("2026-04-20T00:00:00.000Z"),

@@ -595,14 +595,14 @@ function addToAgedInvoiceTotals(
 }
 
 function getInvoiceContactName(invoice: Invoice): string | null {
-  const name = invoice.contact?.name?.trim();
+  const name = toOptionalText(invoice.contact?.name);
   if (name) {
     return name;
   }
 
   const fallback = [invoice.contact?.firstName, invoice.contact?.lastName]
-    .map((value) => value?.trim() ?? "")
-    .filter(Boolean)
+    .map((value) => toOptionalText(value))
+    .filter((value): value is string => value !== null)
     .join(" ")
     .trim();
 
@@ -610,7 +610,7 @@ function getInvoiceContactName(invoice: Invoice): string | null {
 }
 
 function getInvoiceCurrency(invoice: Invoice): string {
-  return invoice.currencyCode ? String(invoice.currencyCode) : "UNKNOWN";
+  return toOptionalText(invoice.currencyCode) ?? "UNKNOWN";
 }
 
 function getInvoiceAmountDue(invoice: Invoice): number {
@@ -694,11 +694,13 @@ function compareNullableStrings(a: unknown, b: unknown): number {
 }
 
 function getContactAccumulatorKey(invoice: Invoice): string {
-  const contactId = invoice.contact?.contactID?.trim() ?? "";
+  const contactId = toOptionalText(invoice.contact?.contactID) ?? "";
   const contactName = getInvoiceContactName(invoice) ?? "";
+  const invoiceId = toOptionalText(invoice.invoiceID) ?? "";
+  const invoiceNumber = toOptionalText(invoice.invoiceNumber) ?? "";
 
   return [
-    contactId || contactName || invoice.invoiceID || invoice.invoiceNumber || "unknown",
+    contactId || contactName || invoiceId || invoiceNumber || "unknown",
     getInvoiceCurrency(invoice),
   ].join("::");
 }
@@ -840,7 +842,7 @@ function buildFinanceAgedInvoiceSnapshot(input: {
       invoiceId: toOptionalText(invoice.invoiceID),
       invoiceNumber: toOptionalText(invoice.invoiceNumber),
       reference: toOptionalText(invoice.reference),
-      status: invoice.status ? String(invoice.status) : null,
+      status: toOptionalText(invoice.status),
       invoiceDate: toOptionalDateOnlyText(invoice.date),
       dueDate: toOptionalDateOnlyText(invoice.dueDate),
       expectedPaymentDate: toOptionalDateOnlyText(invoice.expectedPaymentDate),
@@ -861,11 +863,9 @@ function buildFinanceAgedInvoiceSnapshot(input: {
     const contactSummary =
       contacts.get(contactKey) ??
       {
-        contactId: invoice.contact?.contactID ?? null,
+        contactId: toOptionalText(invoice.contact?.contactID),
         contactName: getInvoiceContactName(invoice),
-        contactStatus: invoice.contact?.contactStatus
-          ? String(invoice.contact.contactStatus)
-          : null,
+        contactStatus: toOptionalText(invoice.contact?.contactStatus),
         currency,
         invoiceCount: 0,
         oldestDueDate: null,
@@ -962,7 +962,7 @@ function buildFinanceAgedInvoiceSnapshot(input: {
         totals: currency.totals,
       })
     )
-    .sort((left, right) => left.currency.localeCompare(right.currency));
+    .sort((left, right) => compareNullableStrings(left.currency, right.currency));
 
   const payload = {
     asOfDate: toDateOnlyString(input.asOfDate),
@@ -1057,7 +1057,7 @@ export function buildFinanceAccountsReceivableInvoicesSnapshot(input: {
       invoiceId: toOptionalText(invoice.invoiceID),
       invoiceNumber: toOptionalText(invoice.invoiceNumber),
       reference: toOptionalText(invoice.reference),
-      status: invoice.status ? String(invoice.status) : null,
+      status: toOptionalText(invoice.status),
       invoiceDate: toOptionalDateOnlyText(invoice.date),
       dueDate: toOptionalDateOnlyText(invoice.dueDate),
       expectedPaymentDate: toOptionalDateOnlyText(invoice.expectedPaymentDate),
@@ -1078,11 +1078,9 @@ export function buildFinanceAccountsReceivableInvoicesSnapshot(input: {
     const contactSummary =
       contacts.get(contactKey) ??
       {
-        contactId: invoice.contact?.contactID ?? null,
+        contactId: toOptionalText(invoice.contact?.contactID),
         contactName: getInvoiceContactName(invoice),
-        contactStatus: invoice.contact?.contactStatus
-          ? String(invoice.contact.contactStatus)
-          : null,
+        contactStatus: toOptionalText(invoice.contact?.contactStatus),
         currency,
         invoiceCount: 0,
         totalAmountDue: 0,
@@ -1179,7 +1177,7 @@ export function buildFinanceAccountsReceivableInvoicesSnapshot(input: {
         totalAmountDue: currency.totalAmountDue,
       })
     )
-    .sort((left, right) => left.currency.localeCompare(right.currency));
+    .sort((left, right) => compareNullableStrings(left.currency, right.currency));
 
   const payload = {
     asOfDate: toDateOnlyString(input.asOfDate),
@@ -1243,7 +1241,7 @@ export function buildFinanceAccountsPayableInvoicesSnapshot(input: {
       invoiceId: toOptionalText(invoice.invoiceID),
       invoiceNumber: toOptionalText(invoice.invoiceNumber),
       reference: toOptionalText(invoice.reference),
-      status: invoice.status ? String(invoice.status) : null,
+      status: toOptionalText(invoice.status),
       invoiceDate: toOptionalDateOnlyText(invoice.date),
       dueDate: toOptionalDateOnlyText(invoice.dueDate),
       plannedPaymentDate: toOptionalDateOnlyText(invoice.plannedPaymentDate),
@@ -1264,11 +1262,9 @@ export function buildFinanceAccountsPayableInvoicesSnapshot(input: {
     const contactSummary =
       contacts.get(contactKey) ??
       {
-        contactId: invoice.contact?.contactID ?? null,
+        contactId: toOptionalText(invoice.contact?.contactID),
         contactName: getInvoiceContactName(invoice),
-        contactStatus: invoice.contact?.contactStatus
-          ? String(invoice.contact.contactStatus)
-          : null,
+        contactStatus: toOptionalText(invoice.contact?.contactStatus),
         currency,
         invoiceCount: 0,
         totalAmountDue: 0,
@@ -1365,7 +1361,7 @@ export function buildFinanceAccountsPayableInvoicesSnapshot(input: {
         totalAmountDue: currency.totalAmountDue,
       })
     )
-    .sort((left, right) => left.currency.localeCompare(right.currency));
+    .sort((left, right) => compareNullableStrings(left.currency, right.currency));
 
   const payload = {
     asOfDate: toDateOnlyString(input.asOfDate),
