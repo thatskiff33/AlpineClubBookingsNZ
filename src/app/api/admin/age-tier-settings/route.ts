@@ -19,6 +19,10 @@ type AgeTierSettingInput = {
   label: string;
   xeroContactGroupId: string | null;
   xeroContactGroupName: string | null;
+  xeroAcceptedContactGroups: Array<{
+    groupId: string;
+    groupName: string | null;
+  }>;
   sortOrder: number;
 };
 
@@ -32,6 +36,14 @@ const putSchema = z.object({
         label: z.string().min(1).max(100),
         xeroContactGroupId: z.string().trim().min(1).max(100).nullable().optional(),
         xeroContactGroupName: z.string().trim().min(1).max(255).nullable().optional(),
+        xeroAcceptedContactGroups: z
+          .array(
+            z.object({
+              groupId: z.string().trim().min(1).max(100),
+              groupName: z.string().trim().min(1).max(255).nullable().optional(),
+            })
+          )
+          .optional(),
         sortOrder: z.number().int().min(0),
       })
     )
@@ -57,6 +69,13 @@ export async function GET() {
       label: true,
       xeroContactGroupId: true,
       xeroContactGroupName: true,
+      xeroAcceptedContactGroups: {
+        orderBy: [{ groupName: "asc" }, { groupId: "asc" }],
+        select: {
+          groupId: true,
+          groupName: true,
+        },
+      },
       sortOrder: true,
     },
   });
@@ -91,6 +110,17 @@ export async function PUT(request: NextRequest) {
       setting.xeroContactGroupId?.trim()
         ? setting.xeroContactGroupName?.trim() || null
         : null,
+    xeroAcceptedContactGroups: Array.from(
+      new Map(
+        (setting.xeroAcceptedContactGroups ?? []).map((group) => [
+          group.groupId.trim(),
+          {
+            groupId: group.groupId.trim(),
+            groupName: group.groupName?.trim() || null,
+          },
+        ])
+      ).values()
+    ).filter((group) => group.groupId.length > 0),
   }));
   const requiredTiers = new Set(AGE_TIER_DEFAULTS.map((setting) => setting.tier));
   const providedTiers = new Set(settings.map((setting) => setting.tier));
@@ -138,18 +168,70 @@ export async function PUT(request: NextRequest) {
     );
   }
 
-  const mappedGroupIds = settings
-    .map((setting) => setting.xeroContactGroupId)
-    .filter((groupId): groupId is string => Boolean(groupId));
-  if (new Set(mappedGroupIds).size !== mappedGroupIds.length) {
-    return NextResponse.json(
-      { error: "Each Xero contact group can only be mapped to one age tier." },
-      { status: 400 }
-    );
+  const assignedGroupIds = new Map<
+    string,
+    {
+      tier: AgeTier;
+      kind: "primary" | "accepted";
+    }
+  >();
+  for (const setting of settings) {
+    if (setting.xeroAcceptedContactGroups.length > 0 && !setting.xeroContactGroupId) {
+      return NextResponse.json(
+        {
+          error:
+            "Each age tier needs a primary Xero contact group before additional accepted groups can be added.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (setting.xeroContactGroupId) {
+      const existing = assignedGroupIds.get(setting.xeroContactGroupId);
+      if (existing) {
+        return NextResponse.json(
+          {
+            error: `Xero contact group ${setting.xeroContactGroupName ?? setting.xeroContactGroupId} is already assigned to ${existing.tier}. Each Xero contact group can only belong to one age tier.`,
+          },
+          { status: 400 }
+        );
+      }
+
+      assignedGroupIds.set(setting.xeroContactGroupId, {
+        tier: setting.tier,
+        kind: "primary",
+      });
+    }
+
+    for (const group of setting.xeroAcceptedContactGroups) {
+      if (group.groupId === setting.xeroContactGroupId) {
+        return NextResponse.json(
+          {
+            error:
+              "A primary Xero contact group cannot also be listed as an accepted additional group for the same age tier.",
+          },
+          { status: 400 }
+        );
+      }
+
+      const existing = assignedGroupIds.get(group.groupId);
+      if (existing) {
+        return NextResponse.json(
+          {
+            error: `Xero contact group ${group.groupName ?? group.groupId} is already assigned to ${existing.tier}. Each Xero contact group can only belong to one age tier.`,
+          },
+          { status: 400 }
+        );
+      }
+
+      assignedGroupIds.set(group.groupId, {
+        tier: setting.tier,
+        kind: "accepted",
+      });
+    }
   }
 
-  // Persist each tier
-  await Promise.all(
+  await prisma.$transaction(
     settings.map((s) =>
       prisma.ageTierSetting.upsert({
         where: { tier: s.tier },
@@ -160,6 +242,13 @@ export async function PUT(request: NextRequest) {
           xeroContactGroupId: s.xeroContactGroupId,
           xeroContactGroupName: s.xeroContactGroupName,
           sortOrder: s.sortOrder,
+          xeroAcceptedContactGroups: {
+            deleteMany: {},
+            create: s.xeroAcceptedContactGroups.map((group) => ({
+              groupId: group.groupId,
+              groupName: group.groupName,
+            })),
+          },
         },
         create: {
           tier: s.tier,
@@ -169,6 +258,12 @@ export async function PUT(request: NextRequest) {
           xeroContactGroupId: s.xeroContactGroupId,
           xeroContactGroupName: s.xeroContactGroupName,
           sortOrder: s.sortOrder,
+          xeroAcceptedContactGroups: {
+            create: s.xeroAcceptedContactGroups.map((group) => ({
+              groupId: group.groupId,
+              groupName: group.groupName,
+            })),
+          },
         },
       })
     )
@@ -192,6 +287,13 @@ export async function PUT(request: NextRequest) {
       label: true,
       xeroContactGroupId: true,
       xeroContactGroupName: true,
+      xeroAcceptedContactGroups: {
+        orderBy: [{ groupName: "asc" }, { groupId: "asc" }],
+        select: {
+          groupId: true,
+          groupName: true,
+        },
+      },
       sortOrder: true,
     },
   });

@@ -48,6 +48,24 @@ describe("age-tier Xero contact group mismatch snapshot", () => {
         sortOrder: 1,
         xeroContactGroupId: "group-child",
         xeroContactGroupName: "Child Members",
+        xeroAcceptedContactGroups: [],
+      },
+      {
+        tier: "ADULT",
+        label: "Adult",
+        sortOrder: 3,
+        xeroContactGroupId: "group-adult",
+        xeroContactGroupName: "Adult Members",
+        xeroAcceptedContactGroups: [
+          {
+            groupId: "group-admin",
+            groupName: "Admin Users",
+          },
+          {
+            groupId: "group-life",
+            groupName: "Life Members (Honorary)",
+          },
+        ],
       },
       {
         tier: "YOUTH",
@@ -55,6 +73,7 @@ describe("age-tier Xero contact group mismatch snapshot", () => {
         sortOrder: 2,
         xeroContactGroupId: "group-youth",
         xeroContactGroupName: "Youth Members",
+        xeroAcceptedContactGroups: [],
       },
     ] as any);
     vi.mocked(prisma.xeroSyncCursor.findUnique).mockResolvedValue({
@@ -77,6 +96,14 @@ describe("age-tier Xero contact group mismatch snapshot", () => {
         ageTier: "YOUTH",
         xeroContactId: "xc-youth",
       },
+      {
+        id: "m-admin",
+        firstName: "Alex",
+        lastName: "Admin",
+        email: "alex@example.com",
+        ageTier: "ADULT",
+        xeroContactId: "xc-admin",
+      },
     ] as any);
     vi.mocked(prisma.xeroContactGroupMembershipCache.findMany).mockResolvedValue([
       {
@@ -93,6 +120,13 @@ describe("age-tier Xero contact group mismatch snapshot", () => {
           name: "Youth Members",
         },
       },
+      {
+        contactId: "xc-admin",
+        contactGroupId: "group-admin",
+        group: {
+          name: "Admin Users",
+        },
+      },
     ] as any);
 
     const snapshot = await getXeroContactGroupMismatchSnapshot();
@@ -103,10 +137,17 @@ describe("age-tier Xero contact group mismatch snapshot", () => {
       expect.objectContaining({
         memberId: "m-child",
         ageTier: "CHILD",
-        expectedGroup: {
+        defaultGroup: {
           id: "group-child",
           name: "Child Members",
         },
+        acceptedGroups: [
+          {
+            id: "group-child",
+            name: "Child Members",
+            isDefault: true,
+          },
+        ],
         missingExpectedGroup: true,
         unexpectedManagedGroups: [
           {
