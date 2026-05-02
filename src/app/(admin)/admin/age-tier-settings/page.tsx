@@ -14,6 +14,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  applyPrimaryXeroContactGroupSelection,
+  buildAvailableAcceptedXeroContactGroups,
+} from "@/lib/age-tier-settings-xero-groups";
 
 type AgeTierRow = {
   tier: AgeTier;
@@ -162,24 +166,21 @@ export default function AgeTierSettingsPage() {
   }
 
   function updateXeroContactGroup(tier: AgeTier, groupId: string) {
+    const existingGroup = settings.find((setting) => setting.tier === tier);
     const selectedGroup =
       groupId === "__none__"
         ? null
-        : xeroGroups.find((group) => group.id === groupId) ?? null;
+        : xeroGroups.find((group) => group.id === groupId) ??
+          (existingGroup?.xeroContactGroupId === groupId
+            ? {
+                id: existingGroup.xeroContactGroupId,
+                name:
+                  existingGroup.xeroContactGroupName ?? existingGroup.xeroContactGroupId,
+              }
+            : null);
 
     setSettings((prev) =>
-      prev.map((setting) =>
-        setting.tier === tier
-          ? {
-              ...setting,
-              xeroContactGroupId: selectedGroup?.id ?? null,
-              xeroContactGroupName: selectedGroup?.name ?? null,
-              xeroAcceptedContactGroups: setting.xeroAcceptedContactGroups.filter(
-                (group) => group.groupId !== selectedGroup?.id
-              ),
-            }
-          : setting
-      )
+      applyPrimaryXeroContactGroupSelection(prev, tier, selectedGroup)
     );
     setSuccess(false);
     setError(null);
@@ -328,164 +329,156 @@ export default function AgeTierSettingsPage() {
             </Button>
           </div>
 
-          {sorted.map((setting) => (
-            <div
-              key={setting.tier}
-              className="grid grid-cols-1 items-end gap-4 border-b pb-4 last:border-0 last:pb-0 sm:grid-cols-4"
-            >
-              <div className="space-y-1">
-                <Label className="text-xs text-slate-500 uppercase tracking-wide">
-                  {setting.tier}
-                </Label>
-                <div className="space-y-1">
-                  <Label>Label</Label>
-                  <Input
-                    value={setting.label}
-                    onChange={(event) =>
-                      updateRow(setting.tier, "label", event.target.value)
-                    }
-                    disabled={!editing}
-                    className={!editing ? "bg-slate-50 text-slate-700" : ""}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label>Min Age (years)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={setting.minAge}
-                  onChange={(event) =>
-                    updateRow(
-                      setting.tier,
-                      "minAge",
-                      parseInt(event.target.value, 10)
-                    )
-                  }
-                  disabled={!editing}
-                  className={!editing ? "bg-slate-50 text-slate-700" : ""}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>Max Age (years)</Label>
-                <Input
-                  type="text"
-                  disabled
-                  value={
-                    lastTier && setting.tier === lastTier.tier
-                      ? "No limit"
-                      : String(
-                          (sorted.find((row) => row.sortOrder === setting.sortOrder + 1)
-                            ?.minAge ?? 0) - 1
-                        )
-                  }
-                  className="bg-slate-50 text-slate-500"
-                />
-                {!(lastTier && setting.tier === lastTier.tier) ? (
-                  <p className="text-xs text-slate-400">
-                    Auto-calculated from next tier&apos;s min age
-                  </p>
-                ) : null}
-              </div>
-              <div className="space-y-1">
-                <Label>Primary Xero Contact Group</Label>
-                <Select
-                  value={setting.xeroContactGroupId ?? "__none__"}
-                  onValueChange={(value) => updateXeroContactGroup(setting.tier, value)}
-                  disabled={!editing || loadingXeroGroups || refreshingXeroGroups}
-                >
-                  <SelectTrigger className={!editing ? "bg-slate-50 text-slate-700" : ""}>
-                    <SelectValue placeholder="Not mapped" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Not mapped</SelectItem>
-                    {setting.xeroContactGroupId &&
-                    !xeroGroups.some((group) => group.id === setting.xeroContactGroupId) ? (
-                      <SelectItem value={setting.xeroContactGroupId}>
-                        {setting.xeroContactGroupName ?? setting.xeroContactGroupId}
-                      </SelectItem>
-                    ) : null}
-                    {xeroGroups.map((group) => (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.name} ({group.contactCount})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-slate-400">
-                  Linked members without any accepted tier group will be added to this
-                  group by default.
-                </p>
-              </div>
-              <div className="space-y-2 sm:col-span-4">
-                <Label>Additional Accepted Xero Groups</Label>
-                <div className="rounded-md border bg-slate-50/70 p-3">
-                  {[
-                    ...setting.xeroAcceptedContactGroups.filter(
-                      (group) =>
-                        group.groupId !== setting.xeroContactGroupId &&
-                        !xeroGroups.some((candidate) => candidate.id === group.groupId)
-                    ).map((group) => ({
-                      id: group.groupId,
-                      name: group.groupName ?? group.groupId,
-                      contactCount: 0,
-                    })),
-                    ...xeroGroups.filter((group) => group.id !== setting.xeroContactGroupId),
-                  ].length === 0 ? (
-                    <p className="text-xs text-slate-500">
-                      No other cached Xero contact groups available.
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                      {[
-                        ...setting.xeroAcceptedContactGroups.filter(
-                          (group) =>
-                            group.groupId !== setting.xeroContactGroupId &&
-                            !xeroGroups.some((candidate) => candidate.id === group.groupId)
-                        ).map((group) => ({
-                          id: group.groupId,
-                          name: group.groupName ?? group.groupId,
-                          contactCount: 0,
-                        })),
-                        ...xeroGroups.filter((group) => group.id !== setting.xeroContactGroupId),
-                      ].map((group) => {
-                        const checked = setting.xeroAcceptedContactGroups.some(
-                          (candidate) => candidate.groupId === group.id
-                        );
+          {sorted.map((setting) => {
+            const availableAcceptedGroups = buildAvailableAcceptedXeroContactGroups(
+              settings,
+              setting.tier,
+              xeroGroups
+            );
 
-                        return (
-                          <label
-                            key={group.id}
-                            className="flex items-center gap-3 rounded-md border bg-white px-3 py-2 text-sm"
-                          >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={(nextChecked) =>
-                                toggleAcceptedXeroContactGroup(
-                                  setting.tier,
-                                  group.id,
-                                  nextChecked === true
-                                )
-                              }
-                              disabled={!editing || loadingXeroGroups || refreshingXeroGroups}
-                            />
-                            <span className="flex-1 text-slate-700">
-                              {group.name}
-                              {group.contactCount > 0 ? ` (${group.contactCount})` : ""}
-                            </span>
-                          </label>
-                        );
-                      })}
+            return (
+              <div
+                key={setting.tier}
+                className="grid grid-cols-1 items-end gap-4 border-b pb-4 last:border-0 last:pb-0 sm:grid-cols-4"
+              >
+                  <div className="space-y-1">
+                    <Label className="text-xs text-slate-500 uppercase tracking-wide">
+                      {setting.tier}
+                    </Label>
+                    <div className="space-y-1">
+                      <Label>Label</Label>
+                      <Input
+                        value={setting.label}
+                        onChange={(event) =>
+                          updateRow(setting.tier, "label", event.target.value)
+                        }
+                        disabled={!editing}
+                        className={!editing ? "bg-slate-50 text-slate-700" : ""}
+                      />
                     </div>
-                  )}
-                </div>
-                <p className="text-xs text-slate-400">
-                  Use this for special-purpose Xero groups such as Admin or Life Member
-                  groups that should still count as valid for the same booking tier.
-                </p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Min Age (years)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={setting.minAge}
+                      onChange={(event) =>
+                        updateRow(
+                          setting.tier,
+                          "minAge",
+                          parseInt(event.target.value, 10)
+                        )
+                      }
+                      disabled={!editing}
+                      className={!editing ? "bg-slate-50 text-slate-700" : ""}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Max Age (years)</Label>
+                    <Input
+                      type="text"
+                      disabled
+                      value={
+                        lastTier && setting.tier === lastTier.tier
+                          ? "No limit"
+                          : String(
+                              (sorted.find((row) => row.sortOrder === setting.sortOrder + 1)
+                                ?.minAge ?? 0) - 1
+                            )
+                      }
+                      className="bg-slate-50 text-slate-500"
+                    />
+                    {!(lastTier && setting.tier === lastTier.tier) ? (
+                      <p className="text-xs text-slate-400">
+                        Auto-calculated from next tier&apos;s min age
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Primary Xero Contact Group</Label>
+                    <Select
+                      value={setting.xeroContactGroupId ?? "__none__"}
+                      onValueChange={(value) => updateXeroContactGroup(setting.tier, value)}
+                      disabled={!editing || loadingXeroGroups || refreshingXeroGroups}
+                    >
+                      <SelectTrigger
+                        className={!editing ? "bg-slate-50 text-slate-700" : ""}
+                      >
+                        <SelectValue placeholder="Not mapped" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Not mapped</SelectItem>
+                        {setting.xeroContactGroupId &&
+                        !xeroGroups.some(
+                          (group) => group.id === setting.xeroContactGroupId
+                        ) ? (
+                          <SelectItem value={setting.xeroContactGroupId}>
+                            {setting.xeroContactGroupName ?? setting.xeroContactGroupId}
+                          </SelectItem>
+                        ) : null}
+                        {xeroGroups.map((group) => (
+                          <SelectItem key={group.id} value={group.id}>
+                            {group.name} ({group.contactCount})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-slate-400">
+                      Linked members without any accepted tier group will be added to this
+                      group by default.
+                    </p>
+                  </div>
+                  <div className="space-y-2 sm:col-span-4">
+                    <Label>Additional Accepted Xero Groups</Label>
+                    <div className="rounded-md border bg-slate-50/70 p-3">
+                      {availableAcceptedGroups.length === 0 ? (
+                        <p className="text-xs text-slate-500">
+                          No other eligible Xero contact groups available.
+                        </p>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                          {availableAcceptedGroups.map((group) => {
+                            const checked = setting.xeroAcceptedContactGroups.some(
+                              (candidate) => candidate.groupId === group.id
+                            );
+
+                            return (
+                              <label
+                                key={group.id}
+                                className="flex items-center gap-3 rounded-md border bg-white px-3 py-2 text-sm"
+                              >
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(nextChecked) =>
+                                    toggleAcceptedXeroContactGroup(
+                                      setting.tier,
+                                      group.id,
+                                      nextChecked === true
+                                    )
+                                  }
+                                  disabled={!editing || loadingXeroGroups || refreshingXeroGroups}
+                                />
+                                <span className="flex-1 text-slate-700">
+                                  {group.name}
+                                  {group.contactCount > 0
+                                    ? ` (${group.contactCount})`
+                                    : ""}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Use this for special-purpose Xero groups such as Admin or Life Member
+                      groups that should still count as valid for the same booking tier.
+                    </p>
+                  </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {error ? (
             <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
