@@ -8,6 +8,12 @@ tokoroa.org.nz, www.tokoroa.org.nz {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://js.stripe.com https://api.addressfinder.io; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io https://api.addressfinder.io; frame-src https://js.stripe.com https://hooks.stripe.com; base-uri 'self'; form-action 'self'"
 	}
+	handle /finance-legacy* {
+		forward_auth app:3000 {
+			uri /api/finance/legacy-dashboard/auth
+		}
+		reverse_proxy 172.26.3.200:8501
+	}
 	import /etc/caddy/deploy/tacbookings-active.caddy
 }
 
@@ -26,5 +32,5 @@ dashboard.tokoroa.org.nz {
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 	}
-	reverse_proxy 172.26.3.200:8501
+	redir * https://tokoroa.org.nz/finance-legacy{uri} permanent
 }
