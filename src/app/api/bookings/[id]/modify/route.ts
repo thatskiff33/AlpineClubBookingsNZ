@@ -497,6 +497,16 @@ export async function PUT(
       const hasSucceededPayment =
         ["CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
+      const hasIssuedXeroInvoice =
+        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        !!booking.payment?.xeroInvoiceId;
+      const xeroNetAmountCents = hasIssuedXeroInvoice
+        ? priceDiffCents + changeFeeCents
+        : 0;
+      const xeroRefundAmountCents =
+        xeroNetAmountCents < 0 ? Math.abs(xeroNetAmountCents) : 0;
+      const xeroAdditionalAmountCents =
+        xeroNetAmountCents > 0 ? xeroNetAmountCents : 0;
 
       if (hasSucceededPayment && booking.payment) {
         if (priceDiffCents < 0) {
@@ -528,6 +538,8 @@ export async function PUT(
             data: { changeFeeCents: { increment: changeFeeCents } },
           });
         }
+      } else if (xeroAdditionalAmountCents > 0) {
+        additionalAmountCents = xeroAdditionalAmountCents;
       }
 
       // --- Update hasNonMembers and nonMemberHoldUntil ---
@@ -626,6 +638,9 @@ export async function PUT(
         oldCheckOut: booking.checkOut,
         oldGuestCount: booking.guests.length,
         hasSucceededPayment,
+        hasIssuedXeroInvoice,
+        xeroRefundAmountCents,
+        xeroAdditionalAmountCents,
         paymentId: booking.payment?.id ?? null,
         paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
         memberEmail: booking.member.email,
@@ -701,7 +716,7 @@ export async function PUT(
     });
 
     // Xero integration
-    if (result.additionalAmountCents > 0 || result.changeFeeCents > 0) {
+    if (result.xeroAdditionalAmountCents > 0) {
       void enqueueXeroSupplementaryInvoiceOperation(
         {
           bookingId,
@@ -721,11 +736,11 @@ export async function PUT(
         .catch((err) =>
           logger.error({ err, bookingId }, "Failed to queue Xero supplementary invoice for batch modification")
         );
-    } else if (result.refundAmountCents > 0) {
+    } else if (result.xeroRefundAmountCents > 0) {
       void enqueueXeroModificationCreditNoteOperation(
         {
           bookingId,
-          refundAmountCents: result.refundAmountCents,
+          refundAmountCents: result.xeroRefundAmountCents,
           bookingModificationId: result.bookingModificationId,
         },
         {

@@ -64,15 +64,6 @@ export function getPaymentDisplayStatus({
   const { accountCreditCents, refundToOriginalMethodCents } =
     getCancellationSettlementBreakdown(refundedAmountCents, credits);
 
-  if (paymentStatus === "PROCESSING") {
-    return {
-      label: "Awaiting Payment Confirmation",
-      toneStatus: "PROCESSING",
-      detail:
-        "Charge attempt created and waiting on Stripe confirmation or cardholder authentication.",
-    };
-  }
-
   if (paymentStatus === "REFUNDED" || paymentStatus === "PARTIALLY_REFUNDED") {
     if (accountCreditCents > 0 && refundToOriginalMethodCents > 0) {
       return {
@@ -121,12 +112,25 @@ export function getPaymentDisplayStatus({
 
   if (
     bookingStatus === "CANCELLED" &&
-    (paymentStatus === "PENDING" || paymentStatus === "FAILED")
+    (
+      paymentStatus === "PENDING" ||
+      paymentStatus === "FAILED" ||
+      paymentStatus === "PROCESSING"
+    )
   ) {
     return {
       label: "Cancelled Before Payment",
       toneStatus: paymentStatus,
       detail: "No successful original payment was captured for this booking.",
+    };
+  }
+
+  if (paymentStatus === "PROCESSING") {
+    return {
+      label: "Awaiting Payment Confirmation",
+      toneStatus: "PROCESSING",
+      detail:
+        "Charge attempt created and waiting on Stripe confirmation or cardholder authentication.",
     };
   }
 

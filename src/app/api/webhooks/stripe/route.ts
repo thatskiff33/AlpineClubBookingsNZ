@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { constructWebhookEvent } from "@/lib/stripe";
+import { constructWebhookEvent, processRefund } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
 import { isXeroConnected } from "@/lib/xero";
 import {
@@ -192,6 +192,22 @@ async function handlePaymentIntentSucceeded(
       logger.warn({ paymentIntentId: paymentIntent.id, bookingId }, "No payment record found for PaymentIntent");
       return;
     }
+  }
+
+  const bookingRecord = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      member: true,
+      payment: true,
+    },
+  });
+
+  if (bookingRecord?.status === "CANCELLED") {
+    await handleCancelledBookingPaymentSucceeded(
+      bookingRecord,
+      paymentIntent
+    );
+    return;
   }
 
   // Validate webhook amount matches expected booking amount
@@ -604,4 +620,107 @@ async function alertPaymentAmountMismatch(
       "Failed to send admin alert for payment amount mismatch"
     );
   }
+}
+
+async function handleCancelledBookingPaymentSucceeded(
+  booking: {
+    id: string;
+    checkIn: Date;
+    checkOut: Date;
+    member: {
+      firstName: string;
+      lastName: string;
+    };
+    payment: {
+      id: string;
+      xeroInvoiceId: string | null;
+    } | null;
+  },
+  paymentIntent: Stripe.PaymentIntent
+) {
+  if (!booking.payment) {
+    logger.error(
+      { bookingId: booking.id, paymentIntentId: paymentIntent.id },
+      "Cancelled booking received a successful Stripe payment without a local payment record"
+    );
+    return;
+  }
+
+  const paymentMethodId =
+    typeof paymentIntent.payment_method === "string"
+      ? paymentIntent.payment_method
+      : paymentIntent.payment_method?.id ?? null;
+
+  await prisma.payment.update({
+    where: { id: booking.payment.id },
+    data: {
+      stripePaymentIntentId: paymentIntent.id,
+      stripePaymentMethodId: paymentMethodId,
+      amountCents: paymentIntent.amount,
+      status: "SUCCEEDED",
+    },
+  });
+
+  const refund = await processRefund({
+    paymentIntentId: paymentIntent.id,
+    amountCents: paymentIntent.amount,
+    metadata: {
+      bookingId: booking.id,
+      reason: "cancelled_booking_late_capture",
+    },
+    idempotencyKey: `late_cancel_refund_${booking.id}_${paymentIntent.id}`,
+  });
+
+  await prisma.payment.update({
+    where: { id: booking.payment.id },
+    data: {
+      refundedAmountCents: paymentIntent.amount,
+      status: "REFUNDED",
+    },
+  });
+
+  logAudit({
+    action: "booking.payment.refunded_after_cancellation",
+    targetId: booking.id,
+    details: JSON.stringify({
+      paymentIntentId: paymentIntent.id,
+      refundId: refund.id,
+      amountCents: paymentIntent.amount,
+    }),
+  });
+
+  sendAdminPaymentFailureAlert({
+    memberName: `${booking.member.firstName} ${booking.member.lastName}`,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+    amountCents: paymentIntent.amount,
+    errorMessage:
+      "Stripe captured payment after the booking had already been cancelled. TAC Bookings auto-refunded the payment and skipped Xero invoice creation.",
+    paymentIntentId: paymentIntent.id,
+  }).catch((err) =>
+    logger.error({ err, bookingId: booking.id }, "Failed to send late-capture cancellation alert")
+  );
+
+  if (booking.payment.xeroInvoiceId) {
+    try {
+      const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
+        booking.payment.id,
+        paymentIntent.amount
+      );
+
+      if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
+        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+      }
+    } catch (xeroErr) {
+      logger.error(
+        { err: xeroErr, bookingId: booking.id, paymentId: booking.payment.id },
+        "Failed to queue Xero refund credit note after late cancelled-booking capture"
+      );
+    }
+  }
+
+  logger.warn(
+    { bookingId: booking.id, paymentIntentId: paymentIntent.id, refundId: refund.id },
+    "Automatically refunded payment that succeeded after booking cancellation"
+  );
 }

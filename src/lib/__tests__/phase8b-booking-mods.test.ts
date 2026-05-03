@@ -120,7 +120,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       { id: "g1", bookingId: "bk1", firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: "m1", priceCents: 5000 },
       { id: "g2", bookingId: "bk1", firstName: "Bob", lastName: "Smith", ageTier: "ADULT", isMember: true, memberId: null, priceCents: 5000 },
     ],
-    payment: { id: "p1", bookingId: "bk1", amountCents: 10000, status: "SUCCEEDED", stripePaymentIntentId: "pi_123", refundedAmountCents: 0, changeFeeCents: 0 },
+    payment: { id: "p1", bookingId: "bk1", amountCents: 10000, status: "SUCCEEDED", stripePaymentIntentId: "pi_123", xeroInvoiceId: "inv_primary", refundedAmountCents: 0, changeFeeCents: 0 },
     member: { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
     promoRedemption: null,
     ...overrides,

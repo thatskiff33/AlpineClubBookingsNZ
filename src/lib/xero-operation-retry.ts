@@ -384,10 +384,7 @@ function parseModificationCreditNoteRepairInput(
     creditNoteId: operation.xeroObjectId,
     invoiceId,
     amountCents,
-    allocationRole:
-      operation.localModel === "BookingModification"
-        ? "MODIFICATION_CREDIT_NOTE_ALLOCATION"
-        : "CREDIT_NOTE_ALLOCATION",
+    allocationRole: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
   };
 }
 

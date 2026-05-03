@@ -231,6 +231,11 @@ export async function DELETE(
       const hasSucceededPayment =
         ["CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
+      const hasIssuedXeroInvoice =
+        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        !!booking.payment?.xeroInvoiceId;
+      const xeroRefundAmountCents =
+        hasIssuedXeroInvoice && priceDiffCents < 0 ? Math.abs(priceDiffCents) : 0;
 
       if (hasSucceededPayment && priceDiffCents < 0 && booking.payment) {
         refundAmountCents = Math.abs(priceDiffCents);
@@ -316,6 +321,7 @@ export async function DELETE(
         removedGuest: guestToRemove,
         priceDiffCents,
         refundAmountCents,
+        xeroRefundAmountCents,
         pendingRefundPaymentIntentId,
         promoRemoved,
         choreWarnings,
@@ -358,11 +364,11 @@ export async function DELETE(
     });
 
     // XER-01: Xero credit note for price decrease (fire-and-forget)
-    if (result.refundAmountCents > 0) {
+    if (result.xeroRefundAmountCents > 0) {
       void enqueueXeroModificationCreditNoteOperation(
         {
           bookingId,
-          refundAmountCents: result.refundAmountCents,
+          refundAmountCents: result.xeroRefundAmountCents,
           bookingModificationId: result.bookingModificationId,
         },
         {
