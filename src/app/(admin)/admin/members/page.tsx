@@ -12,7 +12,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Users, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, X, Download, Upload, ChevronLeft, ChevronRight } from "lucide-react"
+import { Users, ExternalLink, ArrowUpDown, ArrowUp, ArrowDown, X, Download, Upload, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react"
+import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups"
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite"
 import {
   ADMIN_PASSWORD_RESET_EXPIRY_OPTIONS,
@@ -195,6 +196,7 @@ export default function MembersPage() {
     autoLoadContactGroups: false,
     liveMemberGroupLookups: false,
   })
+  const [refreshingXeroGroups, setRefreshingXeroGroups] = useState(false)
   const [xeroContactGroupsList, setXeroContactGroupsList] = useState<XeroContactGroup[]>([])
   const [xeroChoice, setXeroChoice] = useState<"" | "link" | "create" | "change">("")
   const [xeroUnlinking, setXeroUnlinking] = useState(false)
@@ -266,6 +268,29 @@ export default function MembersPage() {
   }, [debouncedSearch, page, pageSize, sortBy, sortDir, filters])
 
   useEffect(() => { fetchMembers() }, [fetchMembers])
+
+  const handleRefreshXeroGroups = useCallback(async () => {
+    if (!xeroConnected) return
+
+    setRefreshingXeroGroups(true)
+    setError("")
+    setSuccess("")
+    try {
+      const result = await loadAdminXeroContactGroups({ refreshFromXero: true })
+      setXeroContactGroupsList(result.groups)
+      await fetchMembers()
+      setSuccess(
+        result.groups.length > 0
+          ? "Refreshed Xero contact groups"
+          : "Refreshed Xero contact groups. No active groups were returned."
+      )
+      setTimeout(() => setSuccess(""), 3000)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh Xero contact groups")
+    } finally {
+      setRefreshingXeroGroups(false)
+    }
+  }, [fetchMembers, xeroConnected])
 
   const toggleSort = (col: string) => { if (sortBy === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortBy(col); setSortDir("asc") }; setPage(1) }
   const SortIcon = ({ col }: { col: string }) => { if (sortBy !== col) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-40" />; return sortDir === "asc" ? <ArrowUp className="h-3 w-3 ml-1" /> : <ArrowDown className="h-3 w-3 ml-1" /> }
@@ -791,13 +816,21 @@ export default function MembersPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div><h1 className="text-2xl font-bold text-slate-900">Members</h1><p className="mt-1 text-sm text-slate-500">{total} member{total !== 1 ? "s" : ""}{debouncedSearch ? ` matching \"${debouncedSearch}\"` : " total"}</p></div>
-        <div className="flex gap-2"><a href={buildExportUrl()}><Button variant="outline" size="sm"><Download className="h-4 w-4 mr-1" />Export CSV</Button></a><Button variant="outline" size="sm" onClick={() => { setImportRows([]); setImportResult(null); setImportDialogOpen(true) }}><Upload className="h-4 w-4 mr-1" />Import CSV</Button><Button onClick={openCreateDialog}>Add Member</Button></div>
+        <div className="flex gap-2">
+          {xeroConnected && (
+            <Button variant="outline" size="sm" onClick={handleRefreshXeroGroups} disabled={refreshingXeroGroups}>
+              <RefreshCw className={`h-4 w-4 mr-1 ${refreshingXeroGroups ? "animate-spin" : ""}`} />
+              {refreshingXeroGroups ? "Refreshing Xero Groups..." : "Refresh Xero Groups"}
+            </Button>
+          )}
+          <a href={buildExportUrl()}><Button variant="outline" size="sm"><Download className="h-4 w-4 mr-1" />Export CSV</Button></a><Button variant="outline" size="sm" onClick={() => { setImportRows([]); setImportResult(null); setImportDialogOpen(true) }}><Upload className="h-4 w-4 mr-1" />Import CSV</Button><Button onClick={openCreateDialog}>Add Member</Button>
+        </div>
       </div>
       {error && <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{error}<button onClick={() => setError("")} className="ml-2 underline">Dismiss</button></div>}
       {success && <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">{success}</div>}
       {xeroConnected && !xeroFeatures.liveMemberGroupLookups && (
         <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-          Xero group lookups are disabled by default. Member pages stay local-only until groups are refreshed explicitly from the Xero admin tools.
+          Xero group filters are disabled by default. Use Refresh Xero Groups to populate the cached Xero badges shown in this page.
         </div>
       )}
       <div className="flex flex-wrap gap-3 items-end">

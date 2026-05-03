@@ -155,8 +155,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(body.pageSize).toBe(100);
     });
 
-    it("includes Xero contact groups for linked members when Xero is connected", async () => {
-      process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS = "true";
+    it("includes cached Xero contact groups for linked members after refresh", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       mockGetXeroContactGroupMemberships.mockResolvedValue({
@@ -208,7 +207,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(mockGetXeroContactGroupMemberships).toHaveBeenCalledWith(["xc-1"]);
     });
 
-    it("returns linked members without live Xero group enrichment by default", async () => {
+    it("keeps the placeholder when the cached Xero groups have not been refreshed yet", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       vi.mocked(prisma.member.findMany).mockResolvedValue([
@@ -253,7 +252,7 @@ describe("Phase 3: Admin Member Management", () => {
 
       expect(body.members[0].xeroContactGroups).toEqual([]);
       expect(body.members[0].xeroContactGroupsLoaded).toBe(false);
-      expect(mockGetXeroContactGroupMemberships).not.toHaveBeenCalled();
+      expect(mockGetXeroContactGroupMemberships).toHaveBeenCalledWith(["xc-1"]);
     });
   });
 
@@ -787,8 +786,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(res.status).toBe(404);
     });
 
-    it("returns member with booking history, stats, and audit logs", async () => {
-      process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS = "true";
+    it("returns member with booking history, stats, and cached Xero groups", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       mockGetXeroContactGroupMemberships.mockResolvedValue({
@@ -836,7 +834,7 @@ describe("Phase 3: Admin Member Management", () => {
       expect(body.xeroContactGroupsLoaded).toBe(true);
     });
 
-    it("returns member detail without live Xero group enrichment by default", async () => {
+    it("returns member detail with the placeholder when cached Xero groups are not ready", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockIsXeroConnected.mockResolvedValue(true);
       vi.mocked(prisma.member.findUnique).mockResolvedValue({
@@ -862,7 +860,7 @@ describe("Phase 3: Admin Member Management", () => {
 
       expect(body.xeroContactGroups).toEqual([]);
       expect(body.xeroContactGroupsLoaded).toBe(false);
-      expect(mockGetXeroContactGroupMemberships).not.toHaveBeenCalled();
+      expect(mockGetXeroContactGroupMemberships).toHaveBeenCalledWith(["xc1"]);
     });
   });
 

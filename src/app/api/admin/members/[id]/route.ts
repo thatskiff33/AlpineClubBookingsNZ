@@ -23,7 +23,6 @@ import {
   POSTAL_ADDRESS_FIELDS,
 } from "@/lib/member-address";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
-import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -197,7 +196,7 @@ export async function GET(
 
   let xeroContactGroups: Array<{ id: string; name: string }> = [];
   let xeroContactGroupsLoaded = !member.xeroContactId;
-  if (member.xeroContactId && isXeroLiveMemberGroupLookupsEnabled()) {
+  if (member.xeroContactId) {
     try {
       const memberships = await getXeroContactGroupMemberships([
         member.xeroContactId,

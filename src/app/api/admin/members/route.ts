@@ -310,7 +310,7 @@ export async function GET(req: NextRequest) {
     .filter(Boolean) as string[];
   let xeroContactGroupsLoaded = linkedContactIds.length === 0;
 
-  if (liveMemberGroupLookupsEnabled && linkedContactIds.length > 0) {
+  if (linkedContactIds.length > 0) {
     try {
       xeroContactGroups = await getXeroContactGroupMemberships(linkedContactIds);
       xeroContactGroupsLoaded = linkedContactIds.every((contactId) =>
