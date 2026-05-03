@@ -304,6 +304,7 @@ validate_env_contract() {
   require_non_placeholder_env_key AWS_SES_ACCESS_KEY_ID
   require_non_placeholder_env_key AWS_SES_SECRET_ACCESS_KEY
   require_non_placeholder_env_key EMAIL_FROM
+  require_non_placeholder_env_key LEGACY_DASHBOARD_EXPORT_TOKEN
   require_boolean_env_key BACKUP_ENABLED false
   require_positive_integer_env_key BACKUP_RETENTION_DAYS 7
 
