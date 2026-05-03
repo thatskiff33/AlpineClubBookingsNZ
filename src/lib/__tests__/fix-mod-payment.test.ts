@@ -172,6 +172,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       status: "SUCCEEDED",
       stripePaymentIntentId: "pi_original",
       stripeCustomerId: "cus_123",
+      xeroInvoiceId: "inv_primary",
       refundedAmountCents: 0,
       changeFeeCents: 0,
       additionalPaymentIntentId: null,
@@ -463,6 +464,113 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     expect(data.additionalAmountCents).toBe(0);
     expect(data.additionalPaymentClientSecret).toBeNull();
     expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("queues a supplementary Xero invoice for invoice-backed unpaid bookings without creating a new PI", async () => {
+    const booking = makeBooking({
+      payment: {
+        id: "p1",
+        bookingId: "bk1",
+        amountCents: 10000,
+        status: "PROCESSING",
+        stripePaymentIntentId: "pi_original",
+        stripeCustomerId: "cus_123",
+        refundedAmountCents: 0,
+        changeFeeCents: 0,
+        additionalPaymentIntentId: null,
+        additionalAmountCents: 0,
+        additionalPaymentStatus: null,
+        xeroInvoiceId: "inv_primary",
+      },
+    });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 15000,
+      guests: [{ priceCents: 15000, perNightCents: [7500, 7500] }],
+    } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-08-05", checkOut: "2026-08-08" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.additionalAmountCents).toBe(5000);
+    expect(data.additionalPaymentClientSecret).toBeNull();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        priceDiffCents: 5000,
+        changeFeeCents: 0,
+        bookingModificationId: "mod1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
+    );
+  });
+
+  it("queues a Xero credit note for invoice-backed unpaid decreases without refunding Stripe", async () => {
+    const booking = makeBooking({
+      payment: {
+        id: "p1",
+        bookingId: "bk1",
+        amountCents: 10000,
+        status: "PROCESSING",
+        stripePaymentIntentId: "pi_original",
+        stripeCustomerId: "cus_123",
+        refundedAmountCents: 0,
+        changeFeeCents: 0,
+        additionalPaymentIntentId: null,
+        additionalAmountCents: 0,
+        additionalPaymentStatus: null,
+        xeroInvoiceId: "inv_primary",
+      },
+    });
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 7000,
+      guests: [{ priceCents: 7000, perNightCents: [3500] }],
+    } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkOut: "2026-08-02" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.refundAmountCents).toBe(0);
+    expect(mockedProcessRefund).not.toHaveBeenCalled();
+    expect(mockedCreatePaymentIntent).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        refundAmountCents: 3000,
+        bookingModificationId: "mod1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
+    );
   });
 });
 

@@ -9,6 +9,7 @@ import {
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
 import {
+  allocateCreditNoteToInvoice,
   buildEntranceFeeInvoiceIdempotencyKey,
   createXeroCreditNote,
   createXeroCreditNoteForModification,
@@ -27,6 +28,7 @@ const XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE = "REFUND_CREDIT_NOTE";
 const XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE = "ACCOUNT_CREDIT_NOTE";
 const XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE = "SUPPLEMENTARY_INVOICE";
 const XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE = "MODIFICATION_CREDIT_NOTE";
+const XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE = "CREDIT_NOTE_ALLOCATION";
 
 interface QueuedEntranceFeeOutboxPayload {
   queueType: typeof XERO_OUTBOX_ENTRANCE_FEE_TYPE;
@@ -65,13 +67,22 @@ interface QueuedModificationCreditNoteOutboxPayload {
   bookingModificationId?: string;
 }
 
+interface QueuedCreditNoteAllocationOutboxPayload {
+  queueType: typeof XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE;
+  creditNoteId: string;
+  invoiceId: string;
+  amountCents: number;
+  role?: string;
+}
+
 type QueuedOutboxPayload =
   | QueuedEntranceFeeOutboxPayload
   | QueuedBookingInvoiceOutboxPayload
   | QueuedRefundCreditNoteOutboxPayload
   | QueuedAccountCreditNoteOutboxPayload
   | QueuedSupplementaryInvoiceOutboxPayload
-  | QueuedModificationCreditNoteOutboxPayload;
+  | QueuedModificationCreditNoteOutboxPayload
+  | QueuedCreditNoteAllocationOutboxPayload;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -185,6 +196,24 @@ function readQueuedOutboxPayload(value: unknown): QueuedOutboxPayload | null {
     };
   }
 
+  if (queueType === XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE) {
+    const creditNoteId = readString(payload.creditNoteId);
+    const invoiceId = readString(payload.invoiceId);
+    const amountCents = readNumber(payload.amountCents);
+
+    if (!creditNoteId || !invoiceId || amountCents === null) {
+      return null;
+    }
+
+    return {
+      queueType,
+      creditNoteId,
+      invoiceId,
+      amountCents,
+      role: readString(payload.role) ?? undefined,
+    };
+  }
+
   if (queueType !== XERO_OUTBOX_ENTRANCE_FEE_TYPE) {
     return null;
   }
@@ -221,7 +250,8 @@ function readQueueType(value: unknown): string | null {
 async function claimQueuedOutboxOperation(
   operationId: string,
   expectedOperation: {
-    entityType: "INVOICE" | "CREDIT_NOTE";
+    entityType: "INVOICE" | "CREDIT_NOTE" | "ALLOCATION";
+    operationType: "CREATE" | "ALLOCATE";
     localModels: ReadonlyArray<"Member" | "Payment" | "Booking" | "BookingModification">;
   }
 ) {
@@ -231,7 +261,7 @@ async function claimQueuedOutboxOperation(
       status: "PENDING",
       direction: "OUTBOUND",
       entityType: expectedOperation.entityType,
-      operationType: "CREATE",
+      operationType: expectedOperation.operationType,
       localModel: {
         in: [...expectedOperation.localModels],
       },
@@ -902,6 +932,111 @@ export async function enqueueXeroModificationCreditNoteOperation(
   };
 }
 
+export async function enqueueXeroCreditNoteAllocationOperation(
+  params: {
+    localModel: "Payment" | "Booking" | "BookingModification";
+    localId: string;
+    creditNoteId: string;
+    invoiceId: string;
+    amountCents: number;
+    role?: string;
+  },
+  options?: { createdByMemberId?: string }
+) {
+  const {
+    localModel,
+    localId,
+    creditNoteId,
+    invoiceId,
+    amountCents,
+    role,
+  } = params;
+
+  if (amountCents <= 0) {
+    return {
+      queueOperationId: null,
+      message: "No Xero credit-note allocation is required for this repair.",
+    };
+  }
+
+  const existingLink = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel,
+      localId,
+      xeroObjectType: "ALLOCATION",
+      role: role ?? "CREDIT_NOTE_ALLOCATION",
+      active: true,
+    },
+    select: { id: true },
+  });
+
+  if (existingLink) {
+    return {
+      queueOperationId: null,
+      message: "Xero credit-note allocation already linked for this record.",
+    };
+  }
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "credit-note",
+    creditNoteId,
+    "invoice",
+    invoiceId,
+    "allocation",
+    amountCents,
+    role ?? "CREDIT_NOTE_ALLOCATION",
+    "v1"
+  );
+
+  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey,
+      direction: "OUTBOUND",
+      entityType: "ALLOCATION",
+      operationType: "ALLOCATE",
+      localModel,
+      localId,
+      status: {
+        in: ["PENDING", "RUNNING"],
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  if (existingQueuedOperation) {
+    return {
+      queueOperationId: existingQueuedOperation.id,
+      message: "Xero credit-note allocation is already queued for background processing.",
+    };
+  }
+
+  const queuedOperation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "ALLOCATION",
+    operationType: "ALLOCATE",
+    localModel,
+    localId,
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
+      creditNoteId,
+      invoiceId,
+      amountCents,
+      role: role ?? null,
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  return {
+    queueOperationId: queuedOperation.id,
+    message: "Xero credit-note allocation queued for background processing.",
+  };
+}
+
 export interface ProcessQueuedXeroOutboxOperationsResult {
   found: number;
   processed: number;
@@ -928,7 +1063,6 @@ export async function processQueuedXeroOutboxOperations(options?: {
     where: {
       status: "PENDING",
       direction: "OUTBOUND",
-      operationType: "CREATE",
       OR: [
         {
           requestPayload: {
@@ -966,6 +1100,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
             equals: XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
           },
         },
+        {
+          requestPayload: {
+            path: ["queueType"],
+            equals: XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
+          },
+        },
       ],
     },
     orderBy: {
@@ -986,11 +1126,18 @@ export async function processQueuedXeroOutboxOperations(options?: {
     const payload = readQueuedOutboxPayload(queuedOperation.requestPayload);
     const queueType = readQueueType(queuedOperation.requestPayload);
     const expectedOperation =
-      queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE
-      || queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE
-      || queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE
+      queueType === XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE
+        ? {
+            entityType: "ALLOCATION" as const,
+            operationType: "ALLOCATE" as const,
+            localModels: ["Payment", "Booking", "BookingModification"] as const,
+          }
+        : queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE
+          || queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE
+          || queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE
         ? {
             entityType: "CREDIT_NOTE" as const,
+            operationType: "CREATE" as const,
             localModels:
               queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE
                 ? (["Booking", "BookingModification"] as const)
@@ -998,6 +1145,7 @@ export async function processQueuedXeroOutboxOperations(options?: {
           }
         : {
             entityType: "INVOICE" as const,
+            operationType: "CREATE" as const,
             localModels:
               queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE
                 ? (["Payment"] as const)
@@ -1074,6 +1222,23 @@ export async function processQueuedXeroOutboxOperations(options?: {
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
         });
+      } else if (
+        payload?.queueType === XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE &&
+        queuedOperation.localModel &&
+        queuedOperation.localId
+      ) {
+        await allocateCreditNoteToInvoice(
+          payload.creditNoteId,
+          payload.invoiceId,
+          payload.amountCents,
+          {
+            localModel: queuedOperation.localModel,
+            localId: queuedOperation.localId,
+            role: payload.role,
+            createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+            syncOperationId: queuedOperation.id,
+          }
+        );
       } else {
         throw new Error("Queued Xero outbox payload is incomplete.");
       }

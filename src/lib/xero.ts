@@ -5816,6 +5816,7 @@ export async function allocateCreditNoteToInvoice(
     localId?: string;
     role?: string;
     createdByMemberId?: string;
+    syncOperationId?: string;
   }
 ): Promise<void> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
@@ -5828,21 +5829,34 @@ export async function allocateCreditNoteToInvoice(
     amountCents,
     "v1"
   );
-  const operation = await startXeroSyncOperation({
-    direction: "OUTBOUND",
-    entityType: "ALLOCATION",
-    operationType: "ALLOCATE",
-    localModel: options?.localModel,
-    localId: options?.localId,
-    idempotencyKey,
-    correlationKey: idempotencyKey,
-    requestPayload: {
-      creditNoteId,
-      invoiceId,
-      amountCents,
-    },
-    createdByMemberId: options?.createdByMemberId ?? null,
-  });
+  let operationId = options?.syncOperationId ?? null;
+  const requestPayload = {
+    creditNoteId,
+    invoiceId,
+    amountCents,
+  };
+
+  if (operationId) {
+    await prisma.xeroSyncOperation.update({
+      where: { id: operationId },
+      data: {
+        requestPayload: sanitizeForJson(requestPayload),
+      },
+    });
+  } else {
+    const operation = await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "ALLOCATION",
+      operationType: "ALLOCATE",
+      localModel: options?.localModel,
+      localId: options?.localId,
+      idempotencyKey,
+      correlationKey: idempotencyKey,
+      requestPayload,
+      createdByMemberId: options?.createdByMemberId ?? null,
+    });
+    operationId = operation.id;
+  }
 
   try {
     const response = await callXeroApi(
@@ -5870,7 +5884,7 @@ export async function allocateCreditNoteToInvoice(
       }
     );
 
-    await completeXeroSyncOperation(operation.id, {
+    await completeXeroSyncOperation(operationId!, {
       responsePayload: response.body,
       xeroObjectType: "ALLOCATION",
       xeroObjectId: buildSyntheticAllocationId(creditNoteId, invoiceId, amountCents),
@@ -5900,7 +5914,7 @@ export async function allocateCreditNoteToInvoice(
       "Allocated Xero credit note against invoice"
     );
   } catch (error) {
-    await failXeroSyncOperation(operation.id, error);
+    await failXeroSyncOperation(operationId!, error);
     throw error;
   }
 }

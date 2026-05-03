@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { processRefund } from "./stripe";
+import { cancelPaymentIntentIfCancellable, processRefund } from "./stripe";
 import { isXeroConnected } from "./xero";
 import {
   calculateRefundAmount,
@@ -12,6 +12,7 @@ import { createCancellationCredit, restoreCreditFromBooking } from "./member-cre
 import { processWaitlistForDates } from "./waitlist";
 import {
   enqueueXeroAccountCreditNoteOperation,
+  enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "./xero-operation-outbox";
@@ -158,17 +159,97 @@ export async function cancelBooking(
 
   // Handle CONFIRMED/PAID bookings without successful payment
   if (!booking.payment || booking.payment.status !== "SUCCEEDED") {
-    await prisma.booking.update({
-      where: { id: bookingId },
-      data: { status: "CANCELLED" },
-    });
+    const paymentUpdateData: {
+      status: "FAILED";
+      additionalPaymentStatus?: string;
+    } = {
+      status: "FAILED",
+    };
+
+    if (
+      booking.payment?.additionalPaymentStatus &&
+      booking.payment.additionalPaymentStatus !== "SUCCEEDED"
+    ) {
+      paymentUpdateData.additionalPaymentStatus = "FAILED";
+    }
+
+    if (booking.payment) {
+      await prisma.$transaction([
+        prisma.payment.update({
+          where: { id: booking.payment.id },
+          data: paymentUpdateData,
+        }),
+        prisma.booking.update({
+          where: { id: bookingId },
+          data: { status: "CANCELLED" },
+        }),
+      ]);
+    } else {
+      await prisma.booking.update({
+        where: { id: bookingId },
+        data: { status: "CANCELLED" },
+      });
+    }
     await cleanupPromoRedemption(bookingId);
+
+    if (booking.payment?.stripePaymentIntentId) {
+      void cancelPaymentIntentIfCancellable(booking.payment.stripePaymentIntentId).catch(
+        (err) =>
+          logger.error(
+            { err, bookingId, paymentIntentId: booking.payment?.stripePaymentIntentId },
+            "Failed to cancel in-flight Stripe PaymentIntent for cancelled booking"
+          )
+      );
+    }
+
+    const xeroClearingAmountCents = booking.payment?.xeroInvoiceId
+      ? Math.max(
+          booking.payment.amountCents - booking.payment.refundedAmountCents,
+          booking.finalPriceCents + booking.payment.changeFeeCents
+        )
+      : 0;
+
+    if (booking.payment?.id && xeroClearingAmountCents > 0) {
+      try {
+        const queuedCreditNote = await enqueueXeroModificationCreditNoteOperation(
+          {
+            bookingId,
+            refundAmountCents: xeroClearingAmountCents,
+          },
+          {
+            createdByMemberId: sessionUserId,
+          }
+        );
+
+        if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
+          void kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 }).catch((xeroErr) => {
+            logger.error(
+              { err: xeroErr, bookingId, paymentId: booking.payment?.id },
+              "Failed to kick Xero invoice-clearing credit note outbox worker"
+            );
+          });
+        }
+      } catch (xeroErr) {
+        logger.error(
+          {
+            err: xeroErr,
+            bookingId,
+            paymentId: booking.payment.id,
+            xeroClearingAmountCents,
+          },
+          "Failed to queue Xero invoice-clearing credit note for cancelled unpaid booking"
+        );
+      }
+    }
 
     logAudit({
       action: "booking.cancel",
       memberId: sessionUserId,
       targetId: bookingId,
-      details: "Confirmed booking cancelled, no payment to refund",
+      details:
+        xeroClearingAmountCents > 0
+          ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${xeroClearingAmountCents} cents to clear the outstanding invoice`
+          : "Confirmed booking cancelled, no payment to refund",
       ipAddress,
     });
 
@@ -191,7 +272,10 @@ export async function cancelBooking(
         refundAmountCents: 0,
         refundPercentage: 0,
         refundMethod: "card",
-        message: "Booking cancelled. No refund applicable.",
+        message:
+          xeroClearingAmountCents > 0
+            ? "Booking cancelled. Any outstanding Xero invoice balance is being cleared."
+            : "Booking cancelled. No refund applicable.",
       },
     };
   }

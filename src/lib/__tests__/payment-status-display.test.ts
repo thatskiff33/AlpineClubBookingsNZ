@@ -79,6 +79,16 @@ describe("getPaymentDisplayStatus", () => {
     expect(result.detail).toContain("Stripe confirmation");
   });
 
+  it("treats cancelled processing payments as cancelled before payment", () => {
+    const result = getPaymentDisplayStatus({
+      bookingStatus: "CANCELLED",
+      paymentStatus: "PROCESSING",
+      refundedAmountCents: 0,
+    });
+
+    expect(result.label).toBe("Cancelled Before Payment");
+  });
+
   it("distinguishes cancelled bookings that kept the original payment", () => {
     const result = getPaymentDisplayStatus({
       bookingStatus: "CANCELLED",

@@ -16,7 +16,9 @@ const mocks = vi.hoisted(() => ({
   processWaitlistForDates: vi.fn(),
   isXeroConnected: vi.fn(),
   enqueueXeroAccountCreditNoteOperation: vi.fn(),
+  enqueueXeroModificationCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
+  cancelPaymentIntentIfCancellable: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -67,12 +69,15 @@ vi.mock("@/lib/xero", () => ({
 
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroAccountCreditNoteOperation: mocks.enqueueXeroAccountCreditNoteOperation,
+  enqueueXeroModificationCreditNoteOperation:
+    mocks.enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: mocks.kickQueuedXeroOutboxOperationsIfConnected,
 }));
 
 vi.mock("@/lib/stripe", () => ({
   processRefund: vi.fn(),
+  cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntentIfCancellable,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -137,6 +142,10 @@ describe("cancelBooking credit refunds", () => {
       queueOperationId: "op_account_credit_1",
       message: "queued",
     });
+    mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({
+      queueOperationId: "op_mod_credit_1",
+      message: "queued",
+    });
     mocks.kickQueuedXeroOutboxOperationsIfConnected.mockResolvedValue({
       found: 1,
       processed: 1,
@@ -144,6 +153,7 @@ describe("cancelBooking credit refunds", () => {
       failed: 0,
       skipped: 0,
     });
+    mocks.cancelPaymentIntentIfCancellable.mockResolvedValue(null);
   });
 
   it("creates the local credit first, then queues the Xero account-credit note", async () => {
@@ -185,5 +195,67 @@ describe("cancelBooking credit refunds", () => {
     ).toBeLessThan(
       mocks.enqueueXeroAccountCreditNoteOperation.mock.invocationCallOrder[0]
     );
+  });
+
+  it("marks unpaid cancelled bookings as failed and clears the Xero invoice with a credit note", async () => {
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_2",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_2",
+        bookingId: "booking_2",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "PROCESSING",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_2",
+        xeroInvoiceId: "inv_2",
+        additionalPaymentStatus: null,
+      },
+    });
+
+    const result = await cancelBooking(
+      "booking_2",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    expect(result).toEqual({
+      status: 200,
+      data: expect.objectContaining({
+        success: true,
+        refundAmountCents: 0,
+      }),
+    });
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "payment_2" },
+      data: { status: "FAILED" },
+    });
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "booking_2",
+        refundAmountCents: 10000,
+      },
+      {
+        createdByMemberId: "member_1",
+      }
+    );
+    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_2");
+    expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({
+      limit: 1,
+    });
   });
 });

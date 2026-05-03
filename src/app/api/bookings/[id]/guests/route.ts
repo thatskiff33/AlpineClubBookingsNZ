@@ -338,8 +338,11 @@ export async function POST(
       const hasSucceededPayment =
         ["CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
+      const hasIssuedXeroInvoice =
+        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        !!booking.payment?.xeroInvoiceId;
 
-      if (hasSucceededPayment && priceDiffCents > 0) {
+      if ((hasSucceededPayment || hasIssuedXeroInvoice) && priceDiffCents > 0) {
         additionalAmountCents = priceDiffCents;
       }
 
@@ -393,6 +396,7 @@ export async function POST(
         promoRemoved,
         oldGuestCount: booking.guests.length,
         hasSucceededPayment,
+        hasIssuedXeroInvoice,
         paymentId: booking.payment?.id ?? null,
         paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
         memberEmail: booking.member.email,
@@ -459,7 +463,7 @@ export async function POST(
     });
 
     // XER-01: Xero supplementary invoice for price increase (fire-and-forget)
-    if (result.additionalAmountCents > 0) {
+    if (result.hasIssuedXeroInvoice && result.priceDiffCents > 0) {
       void enqueueXeroSupplementaryInvoiceOperation(
         {
           bookingId,

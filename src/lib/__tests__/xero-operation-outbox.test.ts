@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   upsertXeroObjectLink: vi.fn(),
   getEntranceFeeContext: vi.fn(),
   createUnappliedXeroCreditNote: vi.fn(),
+  allocateCreditNoteToInvoice: vi.fn(),
   createXeroCreditNote: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
   createXeroEntranceFeeInvoice: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock("@/lib/xero-sync", () => ({
 }));
 
 vi.mock("@/lib/xero", () => ({
+  allocateCreditNoteToInvoice: mocks.allocateCreditNoteToInvoice,
   buildEntranceFeeInvoiceIdempotencyKey: (
     memberId: string,
     category: string,
@@ -80,6 +82,7 @@ vi.mock("@/lib/xero", () => ({
 import {
   enqueueXeroAccountCreditNoteOperation,
   enqueueXeroBookingInvoiceOperation,
+  enqueueXeroCreditNoteAllocationOperation,
   enqueueXeroEntranceFeeInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
@@ -465,6 +468,59 @@ describe("enqueueXeroModificationCreditNoteOperation", () => {
   });
 });
 
+describe("enqueueXeroCreditNoteAllocationOperation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirstLink.mockResolvedValue(null);
+    mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_allocation_1" });
+  });
+
+  it("creates a pending Xero sync operation for credit-note allocations", async () => {
+    await expect(
+      enqueueXeroCreditNoteAllocationOperation(
+        {
+          localModel: "BookingModification",
+          localId: "mod_1",
+          creditNoteId: "cn_1",
+          invoiceId: "inv_1",
+          amountCents: 3200,
+          role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+        },
+        {
+          createdByMemberId: "admin_1",
+        }
+      )
+    ).resolves.toEqual({
+      queueOperationId: "op_allocation_1",
+      message: "Xero credit-note allocation queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "OUTBOUND",
+        entityType: "ALLOCATION",
+        operationType: "ALLOCATE",
+        localModel: "BookingModification",
+        localId: "mod_1",
+        status: "PENDING",
+        idempotencyKey:
+          "credit-note:cn_1:invoice:inv_1:allocation:3200:MODIFICATION_CREDIT_NOTE_ALLOCATION:v1",
+        correlationKey:
+          "credit-note:cn_1:invoice:inv_1:allocation:3200:MODIFICATION_CREDIT_NOTE_ALLOCATION:v1",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "CREDIT_NOTE_ALLOCATION",
+          creditNoteId: "cn_1",
+          invoiceId: "inv_1",
+          amountCents: 3200,
+          role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+        },
+      })
+    );
+  });
+});
+
 describe("processQueuedXeroOutboxOperations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -663,6 +719,46 @@ describe("processQueuedXeroOutboxOperations", () => {
       createdByMemberId: "admin_1",
       syncOperationId: "op_mod_credit_note_1",
     });
+  });
+
+  it("claims and processes queued credit-note allocation operations", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_allocation_1",
+        localId: "mod_1",
+        localModel: "BookingModification",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "CREDIT_NOTE_ALLOCATION",
+          creditNoteId: "cn_1",
+          invoiceId: "inv_1",
+          amountCents: 3200,
+          role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+        },
+      },
+    ]);
+    mocks.allocateCreditNoteToInvoice.mockResolvedValue(undefined);
+
+    await expect(processQueuedXeroOutboxOperations({ limit: 5 })).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.allocateCreditNoteToInvoice).toHaveBeenCalledWith(
+      "cn_1",
+      "inv_1",
+      3200,
+      {
+        localModel: "BookingModification",
+        localId: "mod_1",
+        role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+        createdByMemberId: "admin_1",
+        syncOperationId: "op_allocation_1",
+      }
+    );
   });
 
   it("fails malformed queued payloads", async () => {
