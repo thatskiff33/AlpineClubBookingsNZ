@@ -1460,7 +1460,7 @@ function classifyBookingContext(
               "The booking was cancelled before payment succeeded, but the original Xero invoice still needs a clearing credit note.",
             safeToAutoApply: true,
             details: {
-              paymentId: payment.id,
+              paymentId: payment?.id ?? null,
               invoiceId: primaryInvoice.objectId,
               clearingAmountCents,
             },
@@ -2091,7 +2091,8 @@ async function applyActionsForPass(
 
       try {
         await applyQueuedAction(action, deps);
-        if (action.status !== "failed" && action.status !== "manual_review") {
+        const updatedStatus = action.status as XeroBookingRepairActionStatus;
+        if (updatedStatus !== "failed" && updatedStatus !== "manual_review") {
           hasStateChanges = true;
         }
       } catch (error) {
