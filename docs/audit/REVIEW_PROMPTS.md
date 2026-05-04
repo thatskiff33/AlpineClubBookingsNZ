@@ -25,12 +25,20 @@
 **Estimated effort:** 2 days
 **Pre-condition:** P0 CI-gates PR merged.
 
+**Handoff status (2026-05-04):**
+- Local/static verification is already completed and posted on issue `#196`.
+- Findings already filed: `#236` and `#237`.
+- The remaining work is now production/staging validation plus audit bookkeeping. The next agent should continue from that state, not restart P1 from scratch.
+
 **Prompt to paste into a fresh Claude Code session:**
 
 ```
-You are Claude Code working on Phase 1 of the TACBookings production re-review. Epic #194; this phase is issue #196.
+You are Claude Code continuing Phase 1 of the TACBookings production re-review. Epic #194; this phase is issue #196. This is a handoff continuation, not a fresh-start rerun.
 
 Read first:
+- gh issue view 196 --comments
+- gh issue view 236
+- gh issue view 237
 - gh issue view 196
 - gh issue view 194
 - ~/.claude/plans/gleaming-crafting-elephant.md (P1 section)
@@ -40,30 +48,29 @@ Read first:
 
 Live-system safety rules: read-only against repo and live DB. No fixes. File findings as separate issues. See epic #194 body for full rules.
 
-This phase has TWO independent threads. Run them in either order.
+Handoff state from the prior agent:
+- Completed locally:
+  - re-verified `src/lib/auth.ts`, `src/lib/finance-auth.ts`, `src/lib/finance-api-auth.ts`, `src/lib/lodge-auth.ts`, `src/lib/kiosk-access.ts`
+  - re-verified hashed-token code paths in `src/lib/action-tokens.ts`, `src/lib/guest-chore-token.ts`, `src/app/api/auth/{forgot-password,reset-password,verify-email,confirm-email-change}/route.ts`
+  - inspected local schema plus local Postgres columns for `PasswordResetToken`, `EmailVerificationToken`, `EmailChangeToken`, and `GuestChoreToken`; local DB shows `tokenHash` only
+  - inventory of unauthenticated/public routes was posted to issue `#196`
+- Targeted tests already passed locally:
+  - `src/lib/__tests__/auth-session-refresh.test.ts`
+  - `src/lib/__tests__/finance-auth.test.ts`
+  - `src/lib/__tests__/password-reset-routes.test.ts`
+  - `src/lib/__tests__/phase8-hut-leader-kiosk.test.ts`
+  - `src/lib/__tests__/phase7c.test.ts`
+  - `src/lib/__tests__/phase7d.test.ts`
+  - total result posted: 90 tests passed across those suites
+- Findings already filed from the local review:
+  - `#236` — hut leader PIN rotation does not revoke active kiosk sessions
+  - `#237` — finance API auth omits the `LODGE` exclusion already enforced by finance page guards
 
-THREAD A — Citation re-verification (mechanical).
+Do not spend time re-running the completed local/static verification unless you need to resolve a contradiction or verify a fix. Focus on the remaining evidence gaps below.
 
-The initial exploration cited specific lines as ROBUST. Open each file and read the cited lines plus 30 lines of surrounding context. For each citation, write one of three verdicts:
-- CONFIRMED — the code does what the citation claims; no concerns
-- CONFIRMED-WITH-NOTE — works but a smaller concern surfaces (file MEDIUM/LOW finding)
-- CONTRADICTED — the citation is wrong or the code has changed (file HIGH finding)
+This continuation phase has THREE remaining threads.
 
-Citations to verify:
-- src/lib/auth.ts:150-152, 180-188 — password rotation invalidates tokens via passwordChangedAt > sessionIssuedAt
-- src/lib/auth.ts:147 — JWT callback role refresh
-- src/lib/finance-auth.ts:44-84 — requireFinanceViewer / requireFinanceManager
-- src/lib/finance-api-auth.ts:24-96 — error response shape
-- src/lib/lodge-auth.ts:18-98 — multi-mode lodge access
-- src/lib/kiosk-access.ts:20-59 — tier-based PIN gate
-
-Then run additional sweeps:
-- Session-guard sweep: grep every src/app/api/**/route.ts for `auth()` or a role helper. Build a markdown table (Route, Auth check found?, Role gate found?, Public-by-design?). Anything authenticated-by-design but missing a check is a HIGH finding. Anything public-by-design must appear in the parent epic's allowlist (currently `/api/webhooks/*`, `/api/cron/*`, `/api/health`).
-- Stale JWT after role change: re-test the scenario from issue #173. Demote a test admin to MEMBER mid-session (modify role directly in shadow DB, NOT prod). Issue an admin-only API call from the session. Expected: next request re-evaluates and returns 403. If it doesn't, file critical finding.
-- Lodge date-scoping: probe src/lib/lodge-date-scoping.ts and the kiosk endpoints. Try a request with date X but a body referencing date Y — server must reject. File finding if it accepts.
-- Kiosk PIN session brute-force: read src/lib/lodge-pin-session.ts. Confirm rate-limit / lockout. Simulate 100 wrong PINs in a tight loop against staging. Expected: lockout after threshold. Document threshold.
-
-THREAD B — Hashed-token migration validation (the highest-stakes item in this phase).
+THREAD A — Hashed-token migration validation against LIVE read-only data (highest priority).
 
 Context: docs/HASHED_TOKEN_MIGRATION.md describes a migration applied to LIVE production data on 2026-04-26. Password reset, email verification, email change, and guest bearer tokens were converted from plaintext storage to SHA-256 hash-at-rest. The original prior-audit work did NOT validate this migration because it didn't exist yet at that time. Your job is to produce evidence — not "looked OK" — that the migration succeeded.
 
@@ -90,7 +97,24 @@ Attach a markdown report of the queries and results to issue #196 as a comment t
 If validation succeeds — file no finding; record the success in the issue comment with the queries used.
 If any anomaly — file a finding with severity matching impact (critical if plaintext tokens leaked or active reset links broken; high if columns left over; medium if minor cleanup).
 
-After both threads complete, do the standard finding-filing protocol (see issue #194 body for the gh issue create command), update the Findings Index in epic #194 and the Findings section in issue #196.
+THREAD B — Runtime-only non-prod auth drills.
+
+The prior agent completed the repo/static side. What remains here must be demonstrated against a real running non-prod environment:
+- Stale JWT after role change: re-test the scenario from issue `#173`. Demote a test admin to `MEMBER` mid-session (modify role directly in shadow DB, NOT prod). Issue an admin-only API call from the existing session. Expected: next request re-evaluates and returns `403`. If it does not, file a critical finding.
+- Lodge date-scoping: exercise the kiosk endpoints with date `X` in the URL and mismatched guest / assignment data from date `Y`. Expected: server rejects the request. If it accepts, file a finding.
+- Kiosk PIN brute-force: confirm the non-prod runtime behavior, not just the unit tests. Simulate wrong PIN attempts against staging or the agreed non-prod equivalent. Expected: runtime rate-limit / lockout after threshold. Document the observed threshold and response shape.
+
+THREAD C — Bookkeeping, issue state, and closeout.
+
+Once THREAD A and THREAD B are done:
+- Update the Findings Index in epic `#194` to include `#236` and `#237` if they are not already listed there.
+- Update issue `#196` body with a Findings section listing `#236` and `#237` if that section is still missing.
+- Post a concise completion comment on `#196` summarizing:
+  - hashed-token migration validation PASS/FAIL
+  - stale-JWT runtime result
+  - lodge date-scoping runtime result
+  - kiosk PIN brute-force runtime result
+  - all findings filed during P1
 
 Phase exit criteria (issue #196 lists them; double-check):
 - All 6 citations have a verdict
