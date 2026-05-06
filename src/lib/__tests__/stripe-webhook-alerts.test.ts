@@ -272,6 +272,41 @@ describe("Stripe webhook Xero alerting", () => {
     );
   });
 
+  it("marks canceled additional payment intents as failed when Stripe sends payment_intent.canceled", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_canceled_additional",
+      type: "payment_intent.canceled",
+      data: {
+        object: {
+          id: "pi_additional_canceled",
+          amount: 2500,
+          cancellation_reason: "requested_by_customer",
+          metadata: {
+            bookingId: "booking-4",
+            type: "modification_additional",
+          },
+        },
+      },
+    } as any);
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockPaymentUpdate).toHaveBeenCalledWith({
+      where: { bookingId: "booking-4" },
+      data: { additionalPaymentStatus: "FAILED" },
+    });
+    expect(mockLogAudit).toHaveBeenCalledWith({
+      action: "booking.modification.payment.canceled",
+      targetId: "booking-4",
+      details: JSON.stringify({
+        paymentIntentId: "pi_additional_canceled",
+        amountCents: 2500,
+        cancellationReason: "requested_by_customer",
+      }),
+    });
+  });
+
   it("does not queue a new Xero refund credit note when Stripe repeats the same cumulative refund total", async () => {
     mockConstructWebhookEvent.mockReturnValue({
       id: "evt_refund_repeat",

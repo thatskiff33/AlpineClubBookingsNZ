@@ -159,6 +159,15 @@ export async function cancelBooking(
 
   // Handle CONFIRMED/PAID bookings without successful payment
   if (!booking.payment || booking.payment.status !== "SUCCEEDED") {
+    if (booking.payment) {
+      await cancelOutstandingPaymentIntents({
+        primaryPaymentIntentId: booking.payment.stripePaymentIntentId,
+        additionalPaymentIntentId: booking.payment.additionalPaymentIntentId,
+        cancelPrimary: true,
+        cancelAdditional: hasOutstandingAdditionalPaymentIntent(booking.payment),
+      });
+    }
+
     const paymentUpdateData: {
       status: "FAILED";
       additionalPaymentStatus?: string;
@@ -166,10 +175,7 @@ export async function cancelBooking(
       status: "FAILED",
     };
 
-    if (
-      booking.payment?.additionalPaymentStatus &&
-      booking.payment.additionalPaymentStatus !== "SUCCEEDED"
-    ) {
+    if (hasOutstandingAdditionalPaymentIntent(booking.payment)) {
       paymentUpdateData.additionalPaymentStatus = "FAILED";
     }
 
@@ -191,16 +197,6 @@ export async function cancelBooking(
       });
     }
     await cleanupPromoRedemption(bookingId);
-
-    if (booking.payment?.stripePaymentIntentId) {
-      void cancelPaymentIntentIfCancellable(booking.payment.stripePaymentIntentId).catch(
-        (err) =>
-          logger.error(
-            { err, bookingId, paymentIntentId: booking.payment?.stripePaymentIntentId },
-            "Failed to cancel in-flight Stripe PaymentIntent for cancelled booking"
-          )
-      );
-    }
 
     const xeroClearingAmountCents = booking.payment?.xeroInvoiceId
       ? Math.max(
@@ -306,6 +302,16 @@ export async function cancelBooking(
     policy,
     refundMethod
   );
+  const shouldFailAdditionalPayment = hasOutstandingAdditionalPaymentIntent(booking.payment);
+
+  if (shouldFailAdditionalPayment) {
+    await cancelOutstandingPaymentIntents({
+      primaryPaymentIntentId: null,
+      additionalPaymentIntentId: booking.payment.additionalPaymentIntentId,
+      cancelPrimary: false,
+      cancelAdditional: true,
+    });
+  }
 
   // Process refund based on method
   if (refundAmountCents > 0 && refundMethod === "credit") {
@@ -325,6 +331,9 @@ export async function cancelBooking(
         data: {
           refundedAmountCents: newRefundedTotal,
           status: newStatus,
+          ...(shouldFailAdditionalPayment
+            ? { additionalPaymentStatus: "FAILED" }
+            : {}),
         },
       }),
       prisma.booking.update({
@@ -430,6 +439,9 @@ export async function cancelBooking(
         data: {
           refundedAmountCents: newRefundedTotal,
           status: newStatus,
+          ...(shouldFailAdditionalPayment
+            ? { additionalPaymentStatus: "FAILED" }
+            : {}),
         },
       }),
       prisma.booking.update({
@@ -503,10 +515,23 @@ export async function cancelBooking(
   }
 
   // No refund (0% policy or no payment intent)
-  await prisma.booking.update({
-    where: { id: bookingId },
-    data: { status: "CANCELLED" },
-  });
+  if (shouldFailAdditionalPayment) {
+    await prisma.$transaction([
+      prisma.payment.update({
+        where: { bookingId: booking.id },
+        data: { additionalPaymentStatus: "FAILED" },
+      }),
+      prisma.booking.update({
+        where: { id: bookingId },
+        data: { status: "CANCELLED" },
+      }),
+    ]);
+  } else {
+    await prisma.booking.update({
+      where: { id: bookingId },
+      data: { status: "CANCELLED" },
+    });
+  }
   await cleanupPromoRedemption(bookingId);
 
   logAudit({
@@ -542,6 +567,56 @@ export async function cancelBooking(
         "Booking cancelled. No refund applicable per cancellation policy.",
     },
   };
+}
+
+function hasOutstandingAdditionalPaymentIntent(
+  payment:
+    | {
+        additionalPaymentIntentId?: string | null;
+        additionalPaymentStatus?: string | null;
+      }
+    | null
+    | undefined
+) {
+  return Boolean(
+    payment?.additionalPaymentIntentId &&
+      payment.additionalPaymentStatus !== "SUCCEEDED" &&
+      payment.additionalPaymentStatus !== "FAILED"
+  );
+}
+
+async function cancelOutstandingPaymentIntents({
+  primaryPaymentIntentId,
+  additionalPaymentIntentId,
+  cancelPrimary,
+  cancelAdditional,
+}: {
+  primaryPaymentIntentId?: string | null;
+  additionalPaymentIntentId?: string | null;
+  cancelPrimary: boolean;
+  cancelAdditional: boolean;
+}) {
+  const paymentIntentIds = new Set<string>();
+
+  if (cancelPrimary && primaryPaymentIntentId) {
+    paymentIntentIds.add(primaryPaymentIntentId);
+  }
+
+  if (cancelAdditional && additionalPaymentIntentId) {
+    paymentIntentIds.add(additionalPaymentIntentId);
+  }
+
+  for (const paymentIntentId of paymentIntentIds) {
+    try {
+      await cancelPaymentIntentIfCancellable(paymentIntentId);
+    } catch (err) {
+      logger.error(
+        { err, paymentIntentId },
+        "Failed to cancel Stripe PaymentIntent for cancelled booking"
+      );
+      throw err;
+    }
+  }
 }
 
 /**

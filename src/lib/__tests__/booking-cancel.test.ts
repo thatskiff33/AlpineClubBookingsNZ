@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   enqueueXeroModificationCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   cancelPaymentIntentIfCancellable: vi.fn(),
+  processRefund: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -76,7 +77,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 }));
 
 vi.mock("@/lib/stripe", () => ({
-  processRefund: vi.fn(),
+  processRefund: mocks.processRefund,
   cancelPaymentIntentIfCancellable: mocks.cancelPaymentIntentIfCancellable,
 }));
 
@@ -256,6 +257,110 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_2");
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({
       limit: 1,
+    });
+  });
+
+  it("waits for Stripe cancellation before finalising an unpaid booking cancellation", async () => {
+    let releaseCancellation: (() => void) | null = null;
+
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_3",
+      memberId: "member_1",
+      status: "CONFIRMED",
+      finalPriceCents: 10000,
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_3",
+        bookingId: "booking_3",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "PROCESSING",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_3",
+        xeroInvoiceId: null,
+        additionalPaymentIntentId: null,
+        additionalPaymentStatus: null,
+      },
+    });
+    mocks.cancelPaymentIntentIfCancellable.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseCancellation = () => resolve(null);
+        })
+    );
+
+    const resultPromise = cancelBooking(
+      "booking_3",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "card"
+    );
+
+    await Promise.resolve();
+    expect(mocks.paymentUpdate).not.toHaveBeenCalled();
+    expect(releaseCancellation).not.toBeNull();
+
+    releaseCancellation?.();
+    await resultPromise;
+
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "payment_3" },
+      data: { status: "FAILED" },
+    });
+  });
+
+  it("cancels outstanding additional payment intents and marks them failed on credit refunds", async () => {
+    mocks.bookingFindUnique.mockResolvedValueOnce({
+      id: "booking_4",
+      memberId: "member_1",
+      status: "PAID",
+      checkIn: new Date("2026-07-10"),
+      checkOut: new Date("2026-07-12"),
+      member: {
+        id: "member_1",
+        email: "member@example.com",
+        firstName: "Alice",
+      },
+      payment: {
+        id: "payment_4",
+        bookingId: "booking_4",
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        changeFeeCents: 0,
+        creditAppliedCents: 0,
+        stripePaymentIntentId: "pi_4",
+        additionalPaymentIntentId: "pi_4_additional",
+        additionalPaymentStatus: "PENDING",
+      },
+    });
+
+    await cancelBooking(
+      "booking_4",
+      "member_1",
+      "MEMBER",
+      "127.0.0.1",
+      "credit"
+    );
+
+    expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith(
+      "pi_4_additional"
+    );
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { bookingId: "booking_4" },
+      data: {
+        refundedAmountCents: 5000,
+        status: "PARTIALLY_REFUNDED",
+        additionalPaymentStatus: "FAILED",
+      },
     });
   });
 });
