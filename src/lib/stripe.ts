@@ -214,7 +214,9 @@ export async function cancelPaymentIntentIfCancellable(
     return null;
   }
 
-  return stripe.paymentIntents.cancel(paymentIntentId);
+  return stripe.paymentIntents.cancel(paymentIntentId, {
+    cancellation_reason: "requested_by_customer",
+  });
 }
 
 /**

@@ -8,6 +8,7 @@ const mockPaymentIntentsCreate = vi.fn();
 const mockSetupIntentsCreate = vi.fn();
 const mockRefundsCreate = vi.fn();
 const mockPaymentIntentsRetrieve = vi.fn();
+const mockPaymentIntentsCancel = vi.fn();
 const mockSetupIntentsRetrieve = vi.fn();
 const mockCustomersCreate = vi.fn();
 const mockCustomersList = vi.fn();
@@ -19,6 +20,7 @@ vi.mock("stripe", () => {
       paymentIntents: {
         create: mockPaymentIntentsCreate,
         retrieve: mockPaymentIntentsRetrieve,
+        cancel: mockPaymentIntentsCancel,
       },
       setupIntents: {
         create: mockSetupIntentsCreate,
@@ -46,6 +48,7 @@ const {
   findOrCreateCustomer,
   processRefund,
   getPaymentIntent,
+  cancelPaymentIntentIfCancellable,
   getSetupIntent,
   constructWebhookEvent,
 } = await import("../stripe");
@@ -247,6 +250,41 @@ describe("Stripe library", () => {
       const result = await getPaymentIntent("pi_test_123");
       expect(mockPaymentIntentsRetrieve).toHaveBeenCalledWith("pi_test_123");
       expect(result.id).toBe("pi_test_123");
+    });
+  });
+
+  describe("cancelPaymentIntentIfCancellable", () => {
+    it("cancels intents that are still open with a customer-requested reason", async () => {
+      mockPaymentIntentsRetrieve.mockResolvedValue({
+        id: "pi_open",
+        status: "requires_payment_method",
+      });
+      mockPaymentIntentsCancel.mockResolvedValue({
+        id: "pi_open",
+        status: "canceled",
+      });
+
+      const result = await cancelPaymentIntentIfCancellable("pi_open");
+
+      expect(mockPaymentIntentsCancel).toHaveBeenCalledWith("pi_open", {
+        cancellation_reason: "requested_by_customer",
+      });
+      expect(result).toEqual({
+        id: "pi_open",
+        status: "canceled",
+      });
+    });
+
+    it("does not cancel intents that are already terminal", async () => {
+      mockPaymentIntentsRetrieve.mockResolvedValue({
+        id: "pi_done",
+        status: "succeeded",
+      });
+
+      const result = await cancelPaymentIntentIfCancellable("pi_done");
+
+      expect(mockPaymentIntentsCancel).not.toHaveBeenCalled();
+      expect(result).toBeNull();
     });
   });
 

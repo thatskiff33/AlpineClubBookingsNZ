@@ -89,6 +89,12 @@ export async function POST(request: NextRequest) {
         );
         break;
 
+      case "payment_intent.canceled":
+        await handlePaymentIntentCanceled(
+          event.data.object as Stripe.PaymentIntent
+        );
+        break;
+
       case "setup_intent.succeeded":
         await handleSetupIntentSucceeded(
           event.data.object as Stripe.SetupIntent
@@ -350,6 +356,49 @@ async function handlePaymentIntentFailed(
   } catch (err) {
     logger.error({ err, bookingId }, "Error fetching booking for payment failure alert");
   }
+}
+
+async function handlePaymentIntentCanceled(
+  paymentIntent: Stripe.PaymentIntent
+) {
+  const bookingId = paymentIntent.metadata?.bookingId;
+  if (!bookingId) return;
+
+  const isAdditionalPayment =
+    paymentIntent.metadata?.type === "modification_additional";
+  const cancellationReason =
+    paymentIntent.cancellation_reason || "requested_by_customer";
+
+  await prisma.payment
+    .update({
+      where: { bookingId },
+      data: isAdditionalPayment
+        ? { additionalPaymentStatus: "FAILED" }
+        : { status: "FAILED" },
+    })
+    .catch(() => {
+      logger.warn(
+        { paymentIntentId: paymentIntent.id, bookingId, isAdditionalPayment },
+        "Could not update payment for canceled intent"
+      );
+    });
+
+  logAudit({
+    action: isAdditionalPayment
+      ? "booking.modification.payment.canceled"
+      : "booking.payment.canceled",
+    targetId: bookingId,
+    details: JSON.stringify({
+      paymentIntentId: paymentIntent.id,
+      amountCents: paymentIntent.amount,
+      cancellationReason,
+    }),
+  });
+
+  logger.info(
+    { bookingId, paymentIntentId: paymentIntent.id },
+    "Payment intent canceled for booking"
+  );
 }
 
 /**
