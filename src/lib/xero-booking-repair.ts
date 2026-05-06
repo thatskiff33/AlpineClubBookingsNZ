@@ -1,8 +1,12 @@
-import { CreditType, Prisma } from "@prisma/client";
+import {
+  CreditType,
+  PaymentStatus,
+  PaymentTransactionKind,
+  Prisma,
+} from "@prisma/client";
 import {
   cancelPaymentIntentIfCancellable,
   getPaymentIntent,
-  processRefund,
 } from "@/lib/stripe";
 import {
   enqueueXeroAccountCreditNoteOperation,
@@ -26,6 +30,10 @@ import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { upsertXeroObjectLink } from "@/lib/xero-sync";
 import { isXeroConnected } from "@/lib/xero";
+import {
+  markPaymentIntentTransactionFailed,
+  refundPaymentTransactions,
+} from "@/lib/payment-transactions";
 
 const STUCK_OPERATION_MS = 30 * 60 * 1000;
 const MAX_APPLY_PASSES = 3;
@@ -193,6 +201,24 @@ const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
       additionalPaymentStatus: true,
       xeroRefundCreditNoteId: true,
       creditAppliedCents: true,
+      transactions: {
+        orderBy: {
+          createdAt: "asc",
+        },
+        select: {
+          id: true,
+          paymentId: true,
+          kind: true,
+          stripePaymentIntentId: true,
+          amountCents: true,
+          refundedAmountCents: true,
+          status: true,
+          paymentMethodId: true,
+          reason: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
       createdAt: true,
       updatedAt: true,
     },
@@ -230,6 +256,172 @@ type BookingRepairRecord = Prisma.BookingGetPayload<{
 }>;
 
 type BookingModificationRecord = BookingRepairRecord["modifications"][number];
+type BookingPaymentRecord = NonNullable<BookingRepairRecord["payment"]>;
+
+interface RepairPaymentTransaction {
+  kind: PaymentTransactionKind;
+  stripePaymentIntentId: string;
+  amountCents: number;
+  refundedAmountCents: number;
+  status: PaymentStatus;
+  createdAt: Date;
+}
+
+const CAPTURED_REPAIR_PAYMENT_STATUSES = new Set<PaymentStatus>([
+  PaymentStatus.SUCCEEDED,
+  PaymentStatus.PARTIALLY_REFUNDED,
+  PaymentStatus.REFUNDED,
+]);
+
+const CANCELLABLE_REPAIR_PAYMENT_STATUSES = new Set<PaymentStatus>([
+  PaymentStatus.PENDING,
+  PaymentStatus.PROCESSING,
+]);
+
+function isCapturedRepairPaymentStatus(status: PaymentStatus) {
+  return CAPTURED_REPAIR_PAYMENT_STATUSES.has(status);
+}
+
+function mapLegacyAdditionalPaymentStatus(
+  status: string | null | undefined
+): PaymentStatus {
+  switch (status) {
+    case "FAILED":
+      return PaymentStatus.FAILED;
+    case "SUCCEEDED":
+      return PaymentStatus.SUCCEEDED;
+    case "PROCESSING":
+      return PaymentStatus.PROCESSING;
+    case "PENDING":
+    default:
+      return PaymentStatus.PENDING;
+  }
+}
+
+function applyLegacyRefundStatus(
+  baseStatus: PaymentStatus,
+  amountCents: number,
+  refundedAmountCents: number
+) {
+  if (amountCents > 0 && refundedAmountCents >= amountCents) {
+    return PaymentStatus.REFUNDED;
+  }
+
+  if (refundedAmountCents > 0) {
+    return PaymentStatus.PARTIALLY_REFUNDED;
+  }
+
+  return baseStatus;
+}
+
+function buildRepairPaymentTransactions(
+  payment: BookingPaymentRecord | null | undefined
+): RepairPaymentTransaction[] {
+  if (!payment) {
+    return [];
+  }
+
+  const ledgerTransactions = (payment.transactions ?? []).map(
+    (transaction): RepairPaymentTransaction => ({
+      kind: transaction.kind,
+      stripePaymentIntentId: transaction.stripePaymentIntentId,
+      amountCents: transaction.amountCents,
+      refundedAmountCents: transaction.refundedAmountCents,
+      status: transaction.status,
+      createdAt: transaction.createdAt,
+    })
+  );
+
+  if (ledgerTransactions.length > 0) {
+    return ledgerTransactions;
+  }
+
+  const legacyTransactions: RepairPaymentTransaction[] = [];
+  const additionalStatus = mapLegacyAdditionalPaymentStatus(
+    payment.additionalPaymentStatus
+  );
+  const additionalCapturedAmountCents =
+    payment.additionalPaymentIntentId &&
+    additionalStatus === PaymentStatus.SUCCEEDED
+      ? payment.additionalAmountCents
+      : 0;
+  const primaryAmountCents = payment.stripePaymentIntentId
+    ? Math.max(payment.amountCents - additionalCapturedAmountCents, 0)
+    : payment.amountCents;
+  const additionalRefundedAmountCents =
+    payment.additionalPaymentIntentId &&
+    additionalStatus === PaymentStatus.SUCCEEDED
+      ? Math.min(
+          Math.max(payment.refundedAmountCents - primaryAmountCents, 0),
+          payment.additionalAmountCents
+        )
+      : 0;
+  const primaryRefundedAmountCents = payment.stripePaymentIntentId
+    ? Math.min(
+        Math.max(payment.refundedAmountCents - additionalRefundedAmountCents, 0),
+        primaryAmountCents
+      )
+    : 0;
+
+  if (payment.stripePaymentIntentId) {
+    legacyTransactions.push({
+      kind: PaymentTransactionKind.PRIMARY,
+      stripePaymentIntentId: payment.stripePaymentIntentId,
+      amountCents: primaryAmountCents,
+      refundedAmountCents: primaryRefundedAmountCents,
+      status: applyLegacyRefundStatus(
+        payment.status,
+        primaryAmountCents,
+        primaryRefundedAmountCents
+      ),
+      createdAt: payment.createdAt,
+    });
+  }
+
+  if (payment.additionalPaymentIntentId) {
+    legacyTransactions.push({
+      kind: PaymentTransactionKind.ADDITIONAL,
+      stripePaymentIntentId: payment.additionalPaymentIntentId,
+      amountCents: payment.additionalAmountCents,
+      refundedAmountCents: additionalRefundedAmountCents,
+      status: applyLegacyRefundStatus(
+        additionalStatus,
+        payment.additionalAmountCents,
+        additionalRefundedAmountCents
+      ),
+      createdAt:
+        payment.updatedAt.getTime() >= payment.createdAt.getTime()
+          ? payment.updatedAt
+          : payment.createdAt,
+    });
+  }
+
+  return legacyTransactions;
+}
+
+function getOutstandingRepairTransactions(
+  payment: BookingPaymentRecord | null | undefined
+) {
+  return buildRepairPaymentTransactions(payment).filter((transaction) =>
+    CANCELLABLE_REPAIR_PAYMENT_STATUSES.has(transaction.status)
+  );
+}
+
+function getCapturedRepairTransactions(
+  payment: BookingPaymentRecord | null | undefined
+) {
+  return buildRepairPaymentTransactions(payment).filter((transaction) =>
+    isCapturedRepairPaymentStatus(transaction.status)
+  );
+}
+
+function getOutstandingCapturedRefundAmountCents(
+  payment: BookingPaymentRecord | null | undefined
+) {
+  return getCapturedRepairTransactions(payment).reduce((sum, transaction) => {
+    return sum + Math.max(transaction.amountCents - transaction.refundedAmountCents, 0);
+  }, 0);
+}
 
 const xeroObjectLinkSelect = Prisma.validator<Prisma.XeroObjectLinkSelect>()({
   id: true,
@@ -295,7 +487,8 @@ type RepairDependencies = {
   isXeroConnected: typeof isXeroConnected;
   cancelPaymentIntentIfCancellable: typeof cancelPaymentIntentIfCancellable;
   getPaymentIntent: typeof getPaymentIntent;
-  processRefund: typeof processRefund;
+  markPaymentIntentTransactionFailed: typeof markPaymentIntentTransactionFailed;
+  refundPaymentTransactions: typeof refundPaymentTransactions;
 };
 
 const defaultDependencies: RepairDependencies = {
@@ -313,7 +506,8 @@ const defaultDependencies: RepairDependencies = {
   isXeroConnected,
   cancelPaymentIntentIfCancellable,
   getPaymentIntent,
-  processRefund,
+  markPaymentIntentTransactionFailed,
+  refundPaymentTransactions,
 };
 
 interface ResolvedLocalObject {
@@ -888,6 +1082,10 @@ function classifyBookingContext(
   const findings: MutableFinding[] = [];
   const actionMap = new Map<string, BookingXeroRepairAction>();
   const payment = booking.payment;
+  const capturedPaymentTransactions = getCapturedRepairTransactions(payment);
+  const outstandingPaymentTransactions = getOutstandingRepairTransactions(payment);
+  const outstandingCapturedRefundAmountCents =
+    getOutstandingCapturedRefundAmountCents(payment);
   const paymentLinks = context.paymentLinks;
   const paymentOperations = context.paymentOperations;
   const bookingLinks = context.bookingLinks;
@@ -1405,7 +1603,12 @@ function classifyBookingContext(
     });
   }
 
-  if (booking.status === "CANCELLED" && payment?.status !== "SUCCEEDED" && primaryInvoice) {
+  if (
+    booking.status === "CANCELLED" &&
+    payment &&
+    capturedPaymentTransactions.length === 0 &&
+    primaryInvoice
+  ) {
     const clearingAmountCents = getUnpaidCancellationClearingAmountCents(booking);
     if (clearingAmountCents > 0) {
       const cancellationCreditNote = resolveObjectFromCandidates({
@@ -1539,31 +1742,44 @@ function classifyBookingContext(
   if (
     booking.status === "CANCELLED" &&
     payment &&
-    (payment.status === "PENDING" || payment.status === "PROCESSING")
+    outstandingPaymentTransactions.length > 0
   ) {
+    const outstandingPaymentIntentIds = [
+      ...new Set(
+        outstandingPaymentTransactions.map(
+          (transaction) => transaction.stripePaymentIntentId
+        )
+      ),
+    ];
     const action = addAction(actionMap, {
       key: `cancel-inflight-payment:${booking.id}:${payment.id}`,
       bookingId: booking.id,
       type: "REPAIR_CANCELLED_IN_FLIGHT_PAYMENT",
       description:
-        "Verify and cancel any in-flight Stripe payment intent, then mark the cancelled booking payment as failed if it never captured.",
+        "Verify and cancel any in-flight Stripe payment intents, then mark only those uncaptured local transactions as failed.",
       safeToAutoApply: true,
       payload: {
         bookingId: booking.id,
         paymentId: payment.id,
-        stripePaymentIntentId: payment.stripePaymentIntentId,
+        paymentIntentIds: outstandingPaymentIntentIds,
       },
     });
     addFinding(findings, {
       code: "CANCELLED_IN_FLIGHT_PAYMENT",
       severity: "critical",
       summary:
-        "The booking is cancelled, but its payment still shows as PENDING or PROCESSING.",
+        "The booking is cancelled, but one or more Stripe payment intents are still pending or processing.",
       safeToAutoApply: true,
       details: {
         paymentId: payment.id,
-        paymentStatus: payment.status,
-        paymentIntentId: payment.stripePaymentIntentId,
+        paymentIntentIds: outstandingPaymentIntentIds,
+        outstandingTransactions: outstandingPaymentTransactions.map((transaction) => ({
+          kind: transaction.kind,
+          paymentIntentId: transaction.stripePaymentIntentId,
+          status: transaction.status,
+          amountCents: transaction.amountCents,
+          refundedAmountCents: transaction.refundedAmountCents,
+        })),
       },
       actionKeys: [action.key],
     });
@@ -1572,10 +1788,12 @@ function classifyBookingContext(
   if (
     booking.status === "CANCELLED" &&
     payment &&
-    payment.status === "SUCCEEDED" &&
-    payment.refundedAmountCents < payment.amountCents
+    outstandingCapturedRefundAmountCents > 0
   ) {
-    const refundAmountCents = payment.amountCents - payment.refundedAmountCents;
+    const lateCaptureTransactions = capturedPaymentTransactions.filter(
+      (transaction) => transaction.amountCents > transaction.refundedAmountCents
+    );
+    const refundAmountCents = outstandingCapturedRefundAmountCents;
     const action = addAction(actionMap, {
       key: `late-capture-refund:${booking.id}:${payment.id}:${refundAmountCents}`,
       bookingId: booking.id,
@@ -1586,7 +1804,6 @@ function classifyBookingContext(
       payload: {
         bookingId: booking.id,
         paymentId: payment.id,
-        stripePaymentIntentId: payment.stripePaymentIntentId,
         refundAmountCents,
         invoiceId: primaryInvoice?.objectId ?? null,
       },
@@ -1599,6 +1816,9 @@ function classifyBookingContext(
       safeToAutoApply: true,
       details: {
         paymentId: payment.id,
+        paymentIntentIds: lateCaptureTransactions.map(
+          (transaction) => transaction.stripePaymentIntentId
+        ),
         refundAmountCents,
         invoiceId: primaryInvoice?.objectId ?? null,
       },
@@ -1858,18 +2078,36 @@ async function applyLinkRepair(
   action.resultMessage = `Backfilled ${String(action.payload.role)} link for ${String(action.payload.localModel)} ${String(action.payload.localId)}.`;
 }
 
+function getPaymentIntentIdsFromActionPayload(action: BookingXeroRepairAction) {
+  const paymentIntentIds = new Set<string>();
+
+  if (Array.isArray(action.payload.paymentIntentIds)) {
+    for (const paymentIntentId of action.payload.paymentIntentIds) {
+      if (typeof paymentIntentId === "string" && paymentIntentId.trim()) {
+        paymentIntentIds.add(paymentIntentId);
+      }
+    }
+  }
+
+  if (
+    typeof action.payload.stripePaymentIntentId === "string" &&
+    action.payload.stripePaymentIntentId.trim()
+  ) {
+    paymentIntentIds.add(action.payload.stripePaymentIntentId);
+  }
+
+  return [...paymentIntentIds];
+}
+
 async function applyCancelledInFlightPaymentRepair(
   action: BookingXeroRepairAction,
   deps: RepairDependencies
 ) {
   const paymentId = String(action.payload.paymentId);
   const bookingId = String(action.payload.bookingId);
-  const paymentIntentId =
-    typeof action.payload.stripePaymentIntentId === "string"
-      ? action.payload.stripePaymentIntentId
-      : null;
+  const paymentIntentIds = getPaymentIntentIdsFromActionPayload(action);
 
-  if (!paymentIntentId) {
+  if (paymentIntentIds.length === 0) {
     await deps.prisma.payment.update({
       where: { id: paymentId },
       data: {
@@ -1883,38 +2121,50 @@ async function applyCancelledInFlightPaymentRepair(
     return;
   }
 
-  const cancelledIntent = await deps.cancelPaymentIntentIfCancellable(paymentIntentId);
-  const latestIntent = cancelledIntent ?? (await deps.getPaymentIntent(paymentIntentId));
-
-  if (latestIntent.status === "succeeded") {
-    action.status = "failed";
-    action.resultMessage =
-      "Stripe reports the payment intent as succeeded. Re-run the repair so late-capture refund handling can apply.";
-    return;
-  }
-
   const terminalFailureStatuses = new Set([
     "canceled",
     "requires_payment_method",
     "requires_confirmation",
   ]);
+  const terminalFailures: string[] = [];
+  const succeededIntents: string[] = [];
+  const nonTerminalIntents: string[] = [];
 
-  if (!terminalFailureStatuses.has(latestIntent.status)) {
+  for (const paymentIntentId of paymentIntentIds) {
+    const cancelledIntent = await deps.cancelPaymentIntentIfCancellable(paymentIntentId);
+    const latestIntent = cancelledIntent ?? (await deps.getPaymentIntent(paymentIntentId));
+
+    if (latestIntent.status === "succeeded") {
+      succeededIntents.push(paymentIntentId);
+      continue;
+    }
+
+    if (!terminalFailureStatuses.has(latestIntent.status)) {
+      nonTerminalIntents.push(`${paymentIntentId}:${latestIntent.status}`);
+      continue;
+    }
+
+    terminalFailures.push(paymentIntentId);
+  }
+
+  if (succeededIntents.length > 0) {
     action.status = "failed";
-    action.resultMessage = `Stripe payment intent ${paymentIntentId} is still ${latestIntent.status}. Manual review is required.`;
+    action.resultMessage = `Stripe reports ${succeededIntents.join(", ")} as succeeded. Re-run the repair so late-capture refund handling can apply.`;
     return;
   }
 
-  await deps.prisma.payment.update({
-    where: { id: paymentId },
-    data: {
-      status: "FAILED",
-      additionalPaymentStatus: "FAILED",
-    },
-  });
+  if (nonTerminalIntents.length > 0) {
+    action.status = "failed";
+    action.resultMessage = `Stripe payment intents are still non-terminal: ${nonTerminalIntents.join(", ")}. Manual review is required.`;
+    return;
+  }
+
+  for (const paymentIntentId of terminalFailures) {
+    await deps.markPaymentIntentTransactionFailed({ paymentIntentId });
+  }
 
   action.status = "applied";
-  action.resultMessage = `Cancelled Stripe payment intent ${paymentIntentId} and marked payment ${paymentId} as failed for booking ${bookingId}.`;
+  action.resultMessage = `Cancelled ${terminalFailures.length} Stripe payment intent(s) and marked their local transactions failed for cancelled booking ${bookingId}.`;
 }
 
 async function applyLateCaptureRefundRepair(
@@ -1922,10 +2172,6 @@ async function applyLateCaptureRefundRepair(
   deps: RepairDependencies
 ) {
   const paymentId = String(action.payload.paymentId);
-  const paymentIntentId =
-    typeof action.payload.stripePaymentIntentId === "string"
-      ? action.payload.stripePaymentIntentId
-      : null;
   const refundAmountCents = Number(action.payload.refundAmountCents);
   const bookingId = String(action.payload.bookingId);
   const invoiceId =
@@ -1933,40 +2179,32 @@ async function applyLateCaptureRefundRepair(
       ? action.payload.invoiceId
       : null;
 
-  if (!paymentIntentId || !Number.isFinite(refundAmountCents) || refundAmountCents <= 0) {
+  if (!Number.isFinite(refundAmountCents) || refundAmountCents <= 0) {
     action.status = "failed";
     action.resultMessage = "Late-capture repair payload is incomplete.";
     return;
   }
 
-  const refund = await deps.processRefund({
-    paymentIntentId,
+  const refundResult = await deps.refundPaymentTransactions({
+    paymentId,
     amountCents: refundAmountCents,
+    reason: "requested_by_customer",
     metadata: {
       bookingId,
       reason: "cancelled_booking_late_capture_repair",
     },
-    idempotencyKey: `late_cancel_refund_repair_${bookingId}_${paymentIntentId}_${refundAmountCents}`,
-  });
-
-  await deps.prisma.payment.update({
-    where: { id: paymentId },
-    data: {
-      refundedAmountCents: {
-        increment: refundAmountCents,
-      },
-      status: "REFUNDED",
-    },
+    idempotencyKeyPrefix: `late_cancel_refund_repair_${bookingId}`,
   });
 
   if (invoiceId) {
     await deps.enqueueXeroRefundCreditNoteOperation(paymentId, refundAmountCents);
   }
 
+  const refundIds = refundResult.refunds.map((refund) => refund.refundId).filter(Boolean);
   action.status = invoiceId ? "queued" : "applied";
   action.resultMessage = invoiceId
-    ? `Refunded Stripe payment ${paymentIntentId} (${refund.id}) and queued the matching Xero refund credit note.`
-    : `Refunded Stripe payment ${paymentIntentId} (${refund.id}). No Xero invoice was linked, so no refund credit note was queued.`;
+    ? `Refunded ${refundResult.refunds.length} Stripe payment intent(s) (${refundIds.join(", ")}) and queued the matching Xero refund credit note.`
+    : `Refunded ${refundResult.refunds.length} Stripe payment intent(s) (${refundIds.join(", ")}). No Xero invoice was linked, so no refund credit note was queued.`;
 }
 
 async function applyQueuedAction(

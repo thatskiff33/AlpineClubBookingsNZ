@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { constructWebhookEvent, processRefund } from "@/lib/stripe";
+import { constructWebhookEvent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
 import { isXeroConnected } from "@/lib/xero";
 import {
@@ -14,6 +14,23 @@ import { notifyXeroSyncError } from "@/lib/xero-error-alert";
 import Stripe from "stripe";
 import logger from "@/lib/logger";
 import { logAudit } from "@/lib/audit";
+import {
+  findPaymentTransactionByIntentId,
+  markPaymentIntentTransactionFailed,
+  markPaymentIntentTransactionSucceeded,
+  refundPaymentTransactions,
+  syncRefundedAmountFromStripe,
+  upsertPaymentIntentTransaction,
+} from "@/lib/payment-transactions";
+import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+
+function isCapturedAdditionalPaymentTransaction(status: PaymentStatus) {
+  return (
+    status === PaymentStatus.SUCCEEDED ||
+    status === PaymentStatus.PARTIALLY_REFUNDED ||
+    status === PaymentStatus.REFUNDED
+  );
+}
 
 /**
  * Stripe webhook handler.
@@ -107,6 +124,12 @@ export async function POST(request: NextRequest) {
         );
         break;
 
+      case "setup_intent.canceled":
+        await handleSetupIntentCanceled(
+          event.data.object as Stripe.SetupIntent
+        );
+        break;
+
       case "charge.refunded":
         await handleChargeRefunded(event.data.object as Stripe.Charge);
         break;
@@ -184,20 +207,16 @@ async function handlePaymentIntentSucceeded(
     return;
   }
 
-  const payment = await prisma.payment.findUnique({
-    where: { stripePaymentIntentId: paymentIntent.id },
+  const paymentTransaction = await findPaymentTransactionByIntentId({
+    paymentIntentId: paymentIntent.id,
   });
 
-  if (!payment) {
-    // Try to find by bookingId as fallback
-    const paymentByBooking = await prisma.payment.findUnique({
-      where: { bookingId },
-    });
-
-    if (!paymentByBooking) {
-      logger.warn({ paymentIntentId: paymentIntent.id, bookingId }, "No payment record found for PaymentIntent");
-      return;
-    }
+  if (!paymentTransaction || paymentTransaction.kind !== PaymentTransactionKind.PRIMARY) {
+    logger.warn(
+      { paymentIntentId: paymentIntent.id, bookingId },
+      "No primary payment transaction found for PaymentIntent"
+    );
+    return;
   }
 
   const bookingRecord = await prisma.booking.findUnique({
@@ -217,12 +236,11 @@ async function handlePaymentIntentSucceeded(
   }
 
   // Validate webhook amount matches expected booking amount
-  const existingPayment = payment ?? await prisma.payment.findUnique({ where: { bookingId } });
-  if (existingPayment && existingPayment.amountCents !== paymentIntent.amount) {
+  if (paymentTransaction.amountCents !== paymentIntent.amount) {
     logger.error(
       {
         bookingId,
-        expectedCents: existingPayment.amountCents,
+        expectedCents: paymentTransaction.amountCents,
         receivedCents: paymentIntent.amount,
         paymentIntentId: paymentIntent.id,
       },
@@ -231,7 +249,7 @@ async function handlePaymentIntentSucceeded(
     await alertPaymentAmountMismatch(
       bookingId,
       paymentIntent.id,
-      existingPayment.amountCents,
+      paymentTransaction.amountCents,
       paymentIntent.amount,
       "Primary booking payment"
     );
@@ -299,33 +317,31 @@ async function handlePaymentIntentFailed(
   paymentIntent: Stripe.PaymentIntent
 ) {
   const bookingId = paymentIntent.metadata?.bookingId;
-  if (!bookingId) return;
+  const paymentTransaction = await findPaymentTransactionByIntentId({
+    paymentIntentId: paymentIntent.id,
+  });
+  if (!paymentTransaction) {
+    logger.warn(
+      { paymentIntentId: paymentIntent.id, bookingId },
+      "Could not find payment transaction for failed intent"
+    );
+    return;
+  }
 
   const isAdditionalPayment =
-    paymentIntent.metadata?.type === "modification_additional";
+    paymentTransaction.kind === PaymentTransactionKind.ADDITIONAL;
   const failureMessage =
     paymentIntent.last_payment_error?.message || "Unknown payment error";
 
-  await prisma.payment
-    .update({
-      where: { bookingId },
-      data: isAdditionalPayment
-        ? { additionalPaymentStatus: "FAILED" }
-        : { status: "FAILED" },
-    })
-    .catch(() => {
-      // Payment record may not exist yet
-      logger.warn(
-        { paymentIntentId: paymentIntent.id, bookingId, isAdditionalPayment },
-        "Could not update payment for failed intent"
-      );
-    });
+  await markPaymentIntentTransactionFailed({
+    paymentIntentId: paymentIntent.id,
+  });
 
   logAudit({
     action: isAdditionalPayment
       ? "booking.modification.payment.failed"
       : "booking.payment.failed",
-    targetId: bookingId,
+    targetId: bookingId ?? undefined,
     details: JSON.stringify({
       paymentIntentId: paymentIntent.id,
       amountCents: paymentIntent.amount,
@@ -362,32 +378,31 @@ async function handlePaymentIntentCanceled(
   paymentIntent: Stripe.PaymentIntent
 ) {
   const bookingId = paymentIntent.metadata?.bookingId;
-  if (!bookingId) return;
+  const paymentTransaction = await findPaymentTransactionByIntentId({
+    paymentIntentId: paymentIntent.id,
+  });
+  if (!paymentTransaction) {
+    logger.warn(
+      { paymentIntentId: paymentIntent.id, bookingId },
+      "Could not find payment transaction for canceled intent"
+    );
+    return;
+  }
 
   const isAdditionalPayment =
-    paymentIntent.metadata?.type === "modification_additional";
+    paymentTransaction.kind === PaymentTransactionKind.ADDITIONAL;
   const cancellationReason =
     paymentIntent.cancellation_reason || "requested_by_customer";
 
-  await prisma.payment
-    .update({
-      where: { bookingId },
-      data: isAdditionalPayment
-        ? { additionalPaymentStatus: "FAILED" }
-        : { status: "FAILED" },
-    })
-    .catch(() => {
-      logger.warn(
-        { paymentIntentId: paymentIntent.id, bookingId, isAdditionalPayment },
-        "Could not update payment for canceled intent"
-      );
-    });
+  await markPaymentIntentTransactionFailed({
+    paymentIntentId: paymentIntent.id,
+  });
 
   logAudit({
     action: isAdditionalPayment
       ? "booking.modification.payment.canceled"
       : "booking.payment.canceled",
-    targetId: bookingId,
+    targetId: bookingId ?? undefined,
     details: JSON.stringify({
       paymentIntentId: paymentIntent.id,
       amountCents: paymentIntent.amount,
@@ -409,70 +424,28 @@ async function handleAdditionalModificationPaymentSucceeded(
   paymentIntent: Stripe.PaymentIntent,
   bookingId: string
 ) {
-  const payment = await prisma.payment.findUnique({
-    where: { additionalPaymentIntentId: paymentIntent.id },
+  const paymentTransaction = await findPaymentTransactionByIntentId({
+    paymentIntentId: paymentIntent.id,
   });
-
-  if (!payment) {
-    // Fallback: look up by bookingId and verify the PI matches
-    const paymentByBooking = await prisma.payment.findUnique({
-      where: { bookingId },
-    });
-    if (!paymentByBooking || paymentByBooking.additionalPaymentIntentId !== paymentIntent.id) {
-      logger.warn(
-        { paymentIntentId: paymentIntent.id, bookingId },
-        "No payment record found for additional modification PaymentIntent"
-      );
-      return;
-    }
-
-    if (paymentByBooking.additionalPaymentStatus === "SUCCEEDED") {
-      logger.info({ paymentIntentId: paymentIntent.id, bookingId }, "Additional modification payment already recorded");
-      return;
-    }
-
-    if (paymentByBooking.additionalAmountCents !== paymentIntent.amount) {
-      logger.error(
-        {
-          bookingId,
-          paymentIntentId: paymentIntent.id,
-          expectedCents: paymentByBooking.additionalAmountCents,
-          receivedCents: paymentIntent.amount,
-        },
-        "Stripe webhook additional payment amount mismatch - refusing to auto-apply payment"
-      );
-      await alertPaymentAmountMismatch(
-        bookingId,
-        paymentIntent.id,
-        paymentByBooking.additionalAmountCents,
-        paymentIntent.amount,
-        "Booking modification payment"
-      );
-      throw new Error(`Stripe modification payment amount mismatch for booking ${bookingId}`);
-    }
-
-    await prisma.payment.update({
-      where: { id: paymentByBooking.id },
-      data: {
-        additionalPaymentStatus: "SUCCEEDED",
-        amountCents: paymentByBooking.amountCents + paymentByBooking.additionalAmountCents,
-      },
-    });
-    logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Additional modification payment confirmed via webhook (fallback)");
+  if (!paymentTransaction || paymentTransaction.kind !== PaymentTransactionKind.ADDITIONAL) {
+    logger.warn(
+      { paymentIntentId: paymentIntent.id, bookingId },
+      "No payment transaction found for additional modification PaymentIntent"
+    );
     return;
   }
 
-  if (payment.additionalPaymentStatus === "SUCCEEDED") {
+  if (isCapturedAdditionalPaymentTransaction(paymentTransaction.status)) {
     logger.info({ paymentIntentId: paymentIntent.id, bookingId }, "Additional modification payment already recorded");
     return;
   }
 
-  if (payment.additionalAmountCents !== paymentIntent.amount) {
+  if (paymentTransaction.amountCents !== paymentIntent.amount) {
     logger.error(
       {
         bookingId,
         paymentIntentId: paymentIntent.id,
-        expectedCents: payment.additionalAmountCents,
+        expectedCents: paymentTransaction.amountCents,
         receivedCents: paymentIntent.amount,
       },
       "Stripe webhook additional payment amount mismatch - refusing to auto-apply payment"
@@ -480,23 +453,24 @@ async function handleAdditionalModificationPaymentSucceeded(
     await alertPaymentAmountMismatch(
       bookingId,
       paymentIntent.id,
-      payment.additionalAmountCents,
+      paymentTransaction.amountCents,
       paymentIntent.amount,
       "Booking modification payment"
     );
     throw new Error(`Stripe modification payment amount mismatch for booking ${bookingId}`);
   }
 
-  await prisma.payment.update({
-    where: { id: payment.id },
-    data: {
-      additionalPaymentStatus: "SUCCEEDED",
-      amountCents: payment.amountCents + payment.additionalAmountCents,
-    },
+  await markPaymentIntentTransactionSucceeded({
+    paymentIntentId: paymentIntent.id,
+    amountCents: paymentIntent.amount,
+    paymentMethodId:
+      typeof paymentIntent.payment_method === "string"
+        ? paymentIntent.payment_method
+        : paymentIntent.payment_method?.id ?? null,
   });
 
   logger.info(
-    { bookingId, paymentIntentId: paymentIntent.id, additionalAmountCents: payment.additionalAmountCents },
+    { bookingId, paymentIntentId: paymentIntent.id, additionalAmountCents: paymentTransaction.amountCents },
     "Additional modification payment confirmed via webhook"
   );
 }
@@ -562,6 +536,30 @@ async function handleSetupIntentFailed(
   }
 }
 
+async function handleSetupIntentCanceled(
+  setupIntent: Stripe.SetupIntent
+) {
+  const bookingId = setupIntent.metadata?.bookingId;
+  if (!bookingId) {
+    return;
+  }
+
+  await prisma.payment.updateMany({
+    where: {
+      bookingId,
+      stripeSetupIntentId: setupIntent.id,
+    },
+    data: {
+      stripeSetupIntentId: null,
+    },
+  });
+
+  logger.info(
+    { bookingId, setupIntentId: setupIntent.id },
+    "SetupIntent canceled for booking"
+  );
+}
+
 /**
  * Handle charge refund events (from Stripe dashboard or API refunds).
  */
@@ -573,66 +571,61 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
 
   if (!paymentIntentId) return;
 
-  const payment = await prisma.payment.findUnique({
-    where: { stripePaymentIntentId: paymentIntentId },
+  const refundSync = await syncRefundedAmountFromStripe({
+    paymentIntentId,
+    refundedAmountCents: charge.amount_refunded,
   });
 
-  if (!payment) {
+  if (!refundSync?.payment) {
     logger.warn({ paymentIntentId }, "No payment record found for refunded charge");
     return;
   }
 
-  const stripeRefundedAmount = charge.amount_refunded;
-  const refundedAmount = Math.max(payment.refundedAmountCents, stripeRefundedAmount);
-  const refundDeltaCents = Math.max(refundedAmount - payment.refundedAmountCents, 0);
-  const isFullRefund = refundedAmount >= payment.amountCents;
-
-  await prisma.payment.update({
-    where: { id: payment.id },
-    data: {
-      refundedAmountCents: refundedAmount,
-      status: isFullRefund ? "REFUNDED" : "PARTIALLY_REFUNDED",
-    },
-  });
-
   logger.info(
     {
-      paymentId: payment.id,
-      refundedAmount,
-      refundDeltaCents,
-      previousRefundedAmountCents: payment.refundedAmountCents,
-      stripeRefundedAmount,
-      isFullRefund,
+      paymentId: refundSync.paymentId,
+      refundedAmount: refundSync.payment.refundedAmountCents,
+      refundDeltaCents: refundSync.refundDeltaCents,
+      stripeRefundedAmount: charge.amount_refunded,
+      isFullRefund:
+        refundSync.payment.refundedAmountCents >= refundSync.payment.amountCents,
     },
     "Refund processed for payment"
   );
 
-  if (refundDeltaCents > 0) {
+  if (refundSync.refundDeltaCents > 0) {
     // Queue only the newly-observed refund delta from Stripe. charge.amount_refunded is cumulative.
     try {
       const queuedCreditNote = await enqueueXeroRefundCreditNoteOperation(
-        payment.id,
-        refundDeltaCents
+        refundSync.paymentId,
+        refundSync.refundDeltaCents
       );
 
       if (queuedCreditNote.queueOperationId && (await isXeroConnected())) {
         await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
         logger.info(
-          { paymentId: payment.id, queueOperationId: queuedCreditNote.queueOperationId },
+          {
+            paymentId: refundSync.paymentId,
+            queueOperationId: queuedCreditNote.queueOperationId,
+          },
           "Xero refund credit note queued for payment"
         );
       }
     } catch (xeroErr) {
-      logger.error({ err: xeroErr, paymentId: payment.id }, "Failed to queue Xero credit note for payment");
+      logger.error({ err: xeroErr, paymentId: refundSync.paymentId }, "Failed to queue Xero credit note for payment");
       notifyXeroSyncError({
         errorType: "CREDIT_NOTE_CREATION",
-        operation: `Queue refund credit note for payment ${payment.id}`,
+        operation: `Queue refund credit note for payment ${refundSync.paymentId}`,
         errorMessage: xeroErr instanceof Error ? xeroErr.message : String(xeroErr),
       }).catch(() => {});
     }
   } else {
     logger.info(
-      { paymentId: payment.id, refundedAmount, stripeRefundedAmount },
+      {
+        paymentId: refundSync.paymentId,
+        refundedAmount: refundSync.payment.refundedAmountCents,
+        stripeRefundedAmount: charge.amount_refunded,
+      },
       "Stripe refund webhook did not increase the local refunded total; skipping Xero refund credit note queue"
     );
   }
@@ -700,40 +693,33 @@ async function handleCancelledBookingPaymentSucceeded(
       ? paymentIntent.payment_method
       : paymentIntent.payment_method?.id ?? null;
 
-  await prisma.payment.update({
-    where: { id: booking.payment.id },
-    data: {
-      stripePaymentIntentId: paymentIntent.id,
-      stripePaymentMethodId: paymentMethodId,
-      amountCents: paymentIntent.amount,
-      status: "SUCCEEDED",
-    },
+  await upsertPaymentIntentTransaction({
+    paymentId: booking.payment.id,
+    kind: PaymentTransactionKind.PRIMARY,
+    paymentIntentId: paymentIntent.id,
+    amountCents: paymentIntent.amount,
+    status: PaymentStatus.SUCCEEDED,
+    paymentMethodId,
+    reason: "cancelled_booking_late_capture",
   });
 
-  const refund = await processRefund({
-    paymentIntentId: paymentIntent.id,
+  const refundResult = await refundPaymentTransactions({
+    paymentId: booking.payment.id,
     amountCents: paymentIntent.amount,
     metadata: {
       bookingId: booking.id,
       reason: "cancelled_booking_late_capture",
     },
-    idempotencyKey: `late_cancel_refund_${booking.id}_${paymentIntent.id}`,
+    idempotencyKeyPrefix: `late_cancel_refund_${booking.id}_${paymentIntent.id}`,
   });
-
-  await prisma.payment.update({
-    where: { id: booking.payment.id },
-    data: {
-      refundedAmountCents: paymentIntent.amount,
-      status: "REFUNDED",
-    },
-  });
+  const refundId = refundResult.refunds[0]?.refundId;
 
   logAudit({
     action: "booking.payment.refunded_after_cancellation",
     targetId: booking.id,
     details: JSON.stringify({
       paymentIntentId: paymentIntent.id,
-      refundId: refund.id,
+      refundId,
       amountCents: paymentIntent.amount,
     }),
   });
@@ -769,7 +755,7 @@ async function handleCancelledBookingPaymentSucceeded(
   }
 
   logger.warn(
-    { bookingId: booking.id, paymentIntentId: paymentIntent.id, refundId: refund.id },
+    { bookingId: booking.id, paymentIntentId: paymentIntent.id, refundId },
     "Automatically refunded payment that succeeded after booking cancellation"
   );
 }

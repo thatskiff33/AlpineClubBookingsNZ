@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { AgeTier } from "@prisma/client";
+import { PaymentStatus, PaymentTransactionKind, type AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
@@ -34,6 +34,7 @@ import {
   ADULT_SUPERVISION_REVIEW_REASON,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
+import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -432,16 +433,14 @@ export async function POST(
           idempotencyKey: `mod_guest_${bookingId}_${Date.now()}`,
         });
 
-        await prisma.payment.update({
-          where: { id: result.paymentId },
-          data: {
-            additionalPaymentIntentId: pi.id,
-            additionalAmountCents: result.additionalAmountCents,
-            additionalPaymentStatus: "PENDING",
-            ...(customerId && !result.paymentCustomerId
-              ? { stripeCustomerId: customerId }
-              : {}),
-          },
+        await upsertPaymentIntentTransaction({
+          paymentId: result.paymentId,
+          kind: PaymentTransactionKind.ADDITIONAL,
+          paymentIntentId: pi.id,
+          amountCents: result.additionalAmountCents,
+          status: PaymentStatus.PENDING,
+          reason: "guest_add_price_increase",
+          stripeCustomerId: customerId,
         });
 
         additionalPaymentClientSecret = pi.client_secret ?? undefined;

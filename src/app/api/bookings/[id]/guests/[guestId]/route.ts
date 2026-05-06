@@ -11,7 +11,6 @@ import {
   getMemberFreeNightsUsed,
   validatePromoCodeRules,
 } from "@/lib/promo";
-import { processRefund } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import {
@@ -24,6 +23,7 @@ import {
   ADULT_SUPERVISION_REVIEW_REASON,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
+import { refundPaymentTransactions } from "@/lib/payment-transactions";
 
 export async function DELETE(
   request: NextRequest,
@@ -227,7 +227,6 @@ export async function DELETE(
 
       // Handle refund for price decrease (Stripe call deferred to after tx)
       let refundAmountCents = 0;
-      let pendingRefundPaymentIntentId: string | null = null;
       const hasSucceededPayment =
         ["CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
@@ -239,19 +238,6 @@ export async function DELETE(
 
       if (hasSucceededPayment && priceDiffCents < 0 && booking.payment) {
         refundAmountCents = Math.abs(priceDiffCents);
-        pendingRefundPaymentIntentId = booking.payment.stripePaymentIntentId;
-        if (pendingRefundPaymentIntentId && refundAmountCents > 0) {
-          // Pre-update payment record with expected refund state
-          const newRefundedTotal =
-            booking.payment.refundedAmountCents + refundAmountCents;
-          await tx.payment.update({
-            where: { id: booking.payment.id },
-            data: {
-              refundedAmountCents: newRefundedTotal,
-              status: "PARTIALLY_REFUNDED",
-            },
-          });
-        }
       }
 
       // Update hasNonMembers
@@ -322,7 +308,7 @@ export async function DELETE(
         priceDiffCents,
         refundAmountCents,
         xeroRefundAmountCents,
-        pendingRefundPaymentIntentId,
+        paymentId: booking.payment?.id ?? null,
         promoRemoved,
         choreWarnings,
         oldGuestCount: booking.guests.length,
@@ -332,17 +318,15 @@ export async function DELETE(
 
     // Process Stripe refund outside transaction (avoids holding advisory lock during API call)
     let stripeRefundId: string | undefined;
-    if (result.refundAmountCents > 0 && result.pendingRefundPaymentIntentId) {
+    if (result.refundAmountCents > 0 && result.paymentId) {
       try {
-        const refund = await processRefund({
-          paymentIntentId: result.pendingRefundPaymentIntentId,
+        const refundResult = await refundPaymentTransactions({
+          paymentId: result.paymentId,
           amountCents: result.refundAmountCents,
-          metadata: {
-            bookingId,
-            reason: "guest_removed_price_decrease",
-          },
+          metadata: { bookingId, reason: "guest_removed_price_decrease" },
+          idempotencyKeyPrefix: `guest_remove_refund_${bookingId}`,
         });
-        stripeRefundId = refund.id;
+        stripeRefundId = refundResult.refunds[0]?.refundId;
       } catch (refundErr) {
         logger.error({ err: refundErr, bookingId, amount: result.refundAmountCents },
           "Stripe refund failed after guest removal - requires manual reconciliation");

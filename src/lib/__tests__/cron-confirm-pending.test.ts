@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_fake");
 
 const mockChargePaymentMethod = vi.fn();
+const mockMarkBookingPaymentSucceeded = vi.fn();
+const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({
   queueOperationId: "op_1",
   message: "queued",
@@ -23,6 +25,20 @@ vi.mock("../xero-operation-outbox", () => ({
     mockEnqueueXeroBookingInvoiceOperation(...args),
   kickQueuedXeroOutboxOperationsIfConnected: (...args: unknown[]) =>
     mockKickQueuedXeroOutboxOperationsIfConnected(...args),
+}));
+
+vi.mock("../payment-reconciliation", () => ({
+  markBookingPaymentSucceeded: (...args: unknown[]) =>
+    mockMarkBookingPaymentSucceeded(...args),
+}));
+
+vi.mock("../payment-transactions", () => ({
+  upsertPaymentIntentTransaction: (...args: unknown[]) =>
+    mockUpsertPaymentIntentTransaction(...args),
+}));
+
+vi.mock("../waitlist", () => ({
+  processWaitlistForDates: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock email
@@ -141,10 +157,19 @@ describe("Cron: Confirm Pending Bookings", () => {
       skipped: 0,
     });
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
-    mockPrismaTransaction.mockImplementation(async (actions: unknown[]) => {
-      // Execute all Prisma actions in the transaction array
-      return Promise.all(actions as Promise<unknown>[]);
+    mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
+      if (typeof arg === "function") {
+        return arg({
+          booking: {
+            update: (...args: unknown[]) => mockBookingUpdate(...args),
+          },
+        });
+      }
+
+      return Promise.all(arg as Promise<unknown>[]);
     });
+    mockMarkBookingPaymentSucceeded.mockResolvedValue(undefined);
+    mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
   });
 
   it("confirms a booking when capacity is available and payment succeeds", async () => {
@@ -290,12 +315,17 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(result.confirmedBookingIds).toHaveLength(0);
     expect(result.failedBookingIds).toHaveLength(0);
 
-    expect(mockPaymentUpdate).toHaveBeenCalledWith({
-      where: { bookingId: "b1" },
-      data: {
-        stripePaymentIntentId: "pi_auto_1",
+    expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay_b1",
+        paymentIntentId: "pi_auto_1",
+        amountCents: 10000,
         status: "PROCESSING",
-      },
+      })
+    );
+    expect(mockBookingUpdate).toHaveBeenCalledWith({
+      where: { id: "b1" },
+      data: { status: "PENDING" },
     });
   });
 
@@ -395,7 +425,9 @@ describe("Cron: Confirm Pending Bookings", () => {
       status: "succeeded",
       amount: 10000,
     });
-    mockPaymentUpdate.mockRejectedValue(new Error("Payment update failed"));
+    mockMarkBookingPaymentSucceeded.mockRejectedValueOnce(
+      new Error("Payment update failed")
+    );
 
     const result = await confirmPendingBookings();
 

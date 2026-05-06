@@ -13,6 +13,9 @@ import {
 } from "./email";
 import { processWaitlistForDates } from "./waitlist";
 import logger from "@/lib/logger";
+import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 
 export interface CronConfirmResult {
   confirmedBookingIds: string[];
@@ -187,13 +190,14 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
       if (paymentIntent.status === "succeeded") {
         paymentSucceeded = true;
-        await prisma.payment.update({
-          where: { bookingId: booking.id },
-          data: {
-            stripePaymentIntentId: paymentIntent.id,
-            status: "SUCCEEDED",
-            amountCents: paymentIntent.amount,
-          },
+        await markBookingPaymentSucceeded({
+          bookingId: booking.id,
+          paymentIntentId: paymentIntent.id,
+          amountCents: paymentIntent.amount,
+          paymentMethodId:
+            typeof paymentIntent.payment_method === "string"
+              ? paymentIntent.payment_method
+              : paymentIntent.payment_method?.id ?? null,
         });
 
         result.confirmedBookingIds.push(booking.id);
@@ -229,19 +233,26 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         }
       } else {
         // Payment is processing (requires_action, etc.) - revert to PENDING for webhook to handle
-        await prisma.$transaction([
-          prisma.payment.update({
-            where: { bookingId: booking.id },
-            data: {
-              stripePaymentIntentId: paymentIntent.id,
-              status: "PROCESSING",
-            },
-          }),
-          prisma.booking.update({
+        await prisma.$transaction(async (tx) => {
+          await upsertPaymentIntentTransaction({
+            paymentId: booking.payment!.id,
+            kind: PaymentTransactionKind.PRIMARY,
+            paymentIntentId: paymentIntent.id,
+            amountCents: paymentIntent.amount,
+            status: PaymentStatus.PROCESSING,
+            paymentMethodId:
+              typeof paymentIntent.payment_method === "string"
+                ? paymentIntent.payment_method
+                : paymentIntent.payment_method?.id ?? null,
+            reason: "pending_hold_auto_charge",
+            store: tx,
+          });
+
+          await tx.booking.update({
             where: { id: booking.id },
             data: { status: BookingStatus.PENDING },
-          }),
-        ]);
+          });
+        });
 
         // Will be resolved by Stripe webhook
         logger.info({ bookingId: booking.id, paymentStatus: paymentIntent.status, job: "confirmPendingBookings" }, "Booking payment processing");

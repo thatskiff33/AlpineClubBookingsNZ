@@ -6,6 +6,7 @@ import { CreateSetupIntentSchema } from "@/types/payments";
 import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { requiresSavedPaymentMethod } from "@/lib/booking-payment-flow";
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,15 +52,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // SetupIntent is for pending bookings with non-member guests
-    if (booking.status !== "PENDING") {
-      return NextResponse.json(
-        { error: "SetupIntent is only for pending bookings" },
-        { status: 400 }
-      );
-    }
-
-    if (!booking.hasNonMembers) {
+    if (
+      !requiresSavedPaymentMethod({
+        status: booking.status,
+        hasNonMembers: booking.hasNonMembers,
+      })
+    ) {
       return NextResponse.json(
         { error: "SetupIntent is only needed for bookings with non-member guests" },
         { status: 400 }

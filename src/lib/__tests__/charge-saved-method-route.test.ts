@@ -14,6 +14,7 @@ const {
   mockBookingUpdate,
   mockPaymentUpdate,
   mockPrismaTransaction,
+  mockMarkBookingPaymentSucceeded,
 } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
   mockRequireActiveSessionUser: vi.fn().mockResolvedValue(null),
@@ -36,6 +37,7 @@ const {
   mockBookingUpdate: vi.fn(),
   mockPaymentUpdate: vi.fn(),
   mockPrismaTransaction: vi.fn(),
+  mockMarkBookingPaymentSucceeded: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -63,6 +65,11 @@ vi.mock("@/lib/email", () => ({
 
 vi.mock("@/lib/audit", () => ({
   logAudit: (...args: unknown[]) => mockLogAudit(...args),
+}));
+
+vi.mock("@/lib/payment-reconciliation", () => ({
+  markBookingPaymentSucceeded: (...args: unknown[]) =>
+    mockMarkBookingPaymentSucceeded(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -111,17 +118,27 @@ describe("POST /api/payments/charge-saved-method", () => {
       },
     });
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
-    mockPaymentUpdate.mockResolvedValue({});
-    mockBookingUpdate.mockResolvedValue({});
-    mockPrismaTransaction.mockImplementation(async (actions: unknown[]) =>
-      Promise.all(actions as Promise<unknown>[])
-    );
+  mockPaymentUpdate.mockResolvedValue({});
+  mockBookingUpdate.mockResolvedValue({});
+    mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
+      if (typeof arg === "function") {
+        return arg({
+          booking: {
+            update: (...args: unknown[]) => mockBookingUpdate(...args),
+          },
+        });
+      }
+
+      return Promise.all(arg as Promise<unknown>[]);
+    });
+    mockMarkBookingPaymentSucceeded.mockResolvedValue(undefined);
   });
 
   it("marks the booking PAID immediately when the off-session charge succeeds", async () => {
     mockChargePaymentMethod.mockResolvedValue({
       id: "pi_success_1",
       status: "succeeded",
+      amount: 12500,
     });
 
     const request = new NextRequest("http://localhost/api/payments/charge-saved-method", {
@@ -139,16 +156,11 @@ describe("POST /api/payments/charge-saved-method", () => {
       status: "succeeded",
     });
 
-    expect(mockPaymentUpdate).toHaveBeenCalledWith({
-      where: { bookingId: "booking-1" },
-      data: {
-        stripePaymentIntentId: "pi_success_1",
-        status: "SUCCEEDED",
-      },
-    });
-    expect(mockBookingUpdate).toHaveBeenCalledWith({
-      where: { id: "booking-1" },
-      data: { status: "PAID" },
+    expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      paymentIntentId: "pi_success_1",
+      amountCents: 12500,
+      paymentMethodId: null,
     });
   });
 
@@ -156,8 +168,9 @@ describe("POST /api/payments/charge-saved-method", () => {
     mockChargePaymentMethod.mockResolvedValue({
       id: "pi_success_2",
       status: "succeeded",
+      amount: 12500,
     });
-    mockPaymentUpdate.mockRejectedValue(new Error("Payment update failed"));
+    mockMarkBookingPaymentSucceeded.mockRejectedValue(new Error("Payment update failed"));
 
     const request = new NextRequest("http://localhost/api/payments/charge-saved-method", {
       method: "POST",
@@ -181,6 +194,7 @@ describe("POST /api/payments/charge-saved-method", () => {
     mockChargePaymentMethod.mockResolvedValue({
       id: "pi_success_3",
       status: "succeeded",
+      amount: 12500,
     });
     mockEnqueueXeroBookingInvoiceOperation.mockRejectedValue(new Error("Xero down"));
 

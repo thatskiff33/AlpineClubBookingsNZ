@@ -6,6 +6,10 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
+import {
+  findPaymentTransactionByIntentId,
+  markPaymentIntentTransactionSucceeded,
+} from "@/lib/payment-transactions";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -64,12 +68,21 @@ export async function POST(
       );
     }
 
-    if (payment.additionalPaymentStatus === "SUCCEEDED") {
-      // Already confirmed - idempotent
+    const paymentTransaction = await findPaymentTransactionByIntentId({
+      paymentIntentId,
+    });
+    if (!paymentTransaction) {
+      return NextResponse.json({ error: "Payment transaction not found" }, { status: 404 });
+    }
+
+    if (
+      paymentTransaction.status === "SUCCEEDED" ||
+      paymentTransaction.status === "PARTIALLY_REFUNDED" ||
+      paymentTransaction.status === "REFUNDED"
+    ) {
       return NextResponse.json({ success: true });
     }
 
-    // Verify with Stripe that the PaymentIntent actually succeeded
     const pi = await getPaymentIntent(paymentIntentId);
     if (pi.status !== "succeeded") {
       return NextResponse.json(
@@ -78,19 +91,20 @@ export async function POST(
       );
     }
 
-    if (pi.amount !== payment.additionalAmountCents) {
+    if (pi.amount !== paymentTransaction.amountCents) {
       return NextResponse.json(
         { error: "Payment amount does not match booking modification" },
         { status: 400 }
       );
     }
 
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: {
-        additionalPaymentStatus: "SUCCEEDED",
-        amountCents: payment.amountCents + payment.additionalAmountCents,
-      },
+    await markPaymentIntentTransactionSucceeded({
+      paymentIntentId: pi.id,
+      amountCents: pi.amount,
+      paymentMethodId:
+        typeof pi.payment_method === "string"
+          ? pi.payment_method
+          : pi.payment_method?.id ?? null,
     });
 
     logAudit({
@@ -99,13 +113,13 @@ export async function POST(
       targetId: bookingId,
       details: JSON.stringify({
         paymentIntentId,
-        additionalAmountCents: payment.additionalAmountCents,
+        additionalAmountCents: paymentTransaction.amountCents,
       }),
       ipAddress,
     });
 
     logger.info(
-      { bookingId, paymentIntentId, additionalAmountCents: payment.additionalAmountCents },
+      { bookingId, paymentIntentId, additionalAmountCents: paymentTransaction.amountCents },
       "Modification additional payment confirmed"
     );
 

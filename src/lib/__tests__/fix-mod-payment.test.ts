@@ -32,6 +32,11 @@ const mockProcessedWebhookFindUnique = vi.fn();
 const mockMemberCount = vi.fn();
 const mockMemberFindUnique = vi.fn();
 const mockAuditCreate = vi.fn();
+const mockUpsertPaymentIntentTransaction = vi.fn();
+const mockRefundPaymentTransactions = vi.fn();
+const mockFindPaymentTransactionByIntentId = vi.fn();
+const mockMarkPaymentIntentTransactionSucceeded = vi.fn();
+const mockMarkPaymentIntentTransactionFailed = vi.fn();
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking", message: "queued" });
 const mockEnqueueXeroRefundCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_refund", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
@@ -123,6 +128,20 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 vi.mock("@/lib/webhook-log", () => ({ recordWebhookLog: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock("@/lib/payment-transactions", () => ({
+  upsertPaymentIntentTransaction: (...args: unknown[]) =>
+    mockUpsertPaymentIntentTransaction(...args),
+  refundPaymentTransactions: (...args: unknown[]) =>
+    mockRefundPaymentTransactions(...args),
+  findPaymentTransactionByIntentId: (...args: unknown[]) =>
+    mockFindPaymentTransactionByIntentId(...args),
+  markPaymentIntentTransactionSucceeded: (...args: unknown[]) =>
+    mockMarkPaymentIntentTransactionSucceeded(...args),
+  markPaymentIntentTransactionFailed: (...args: unknown[]) =>
+    mockMarkPaymentIntentTransactionFailed(...args),
+  syncRefundedAmountFromStripe: vi.fn(),
 }));
 
 // Chore cleanup mock
@@ -219,6 +238,23 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
   };
 }
 
+beforeEach(() => {
+  mockUpsertPaymentIntentTransaction.mockResolvedValue({});
+  mockRefundPaymentTransactions.mockResolvedValue({
+    refunds: [{ refundId: "re_test_1", paymentIntentId: "pi_original", amountCents: 1000 }],
+  });
+  mockFindPaymentTransactionByIntentId.mockResolvedValue({
+    id: "ptx_1",
+    paymentId: "p1",
+    kind: "ADDITIONAL",
+    amountCents: 3000,
+    status: "PENDING",
+    createdAt: new Date(),
+  });
+  mockMarkPaymentIntentTransactionSucceeded.mockResolvedValue({});
+  mockMarkPaymentIntentTransactionFailed.mockResolvedValue({});
+});
+
 // ============================================================================
 // modify-dates: price increase creates additional PaymentIntent
 // ============================================================================
@@ -279,15 +315,12 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       })
     );
 
-    // Verify payment record was updated with PI details
-    expect(mockPaymentUpdate).toHaveBeenCalledWith(
+    expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "p1" },
-        data: expect.objectContaining({
-          additionalPaymentIntentId: "pi_additional",
-          additionalAmountCents: 5000,
-          additionalPaymentStatus: "PENDING",
-        }),
+        paymentId: "p1",
+        paymentIntentId: "pi_additional",
+        amountCents: 5000,
+        status: "PENDING",
       })
     );
 
@@ -381,7 +414,6 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
       guests: [{ priceCents: 7000, perNightCents: [3500] }],
     } as any);
     mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
-    mockedProcessRefund.mockResolvedValue({ id: "re_refund123" } as any);
     mockPaymentUpdate.mockResolvedValue({});
     mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
 
@@ -398,9 +430,9 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
     expect(data.additionalPaymentClientSecret).toBeNull();
 
     // Refund was processed
-    expect(mockedProcessRefund).toHaveBeenCalledWith(
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
       expect.objectContaining({
-        paymentIntentId: "pi_original",
+        paymentId: "p1",
         amountCents: 3000,
       })
     );
@@ -636,13 +668,12 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
       })
     );
 
-    expect(mockPaymentUpdate).toHaveBeenCalledWith(
+    expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          additionalPaymentIntentId: "pi_guest_extra",
-          additionalAmountCents: 10000,
-          additionalPaymentStatus: "PENDING",
-        }),
+        paymentId: "p1",
+        paymentIntentId: "pi_guest_extra",
+        amountCents: 10000,
+        status: "PENDING",
       })
     );
 
@@ -684,15 +715,6 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
   });
 
   it("updates additionalPaymentStatus and amountCents when additional PI succeeds", async () => {
-    const payment = {
-      id: "p1",
-      bookingId: "bk1",
-      amountCents: 10000,
-      additionalPaymentIntentId: "pi_additional",
-      additionalAmountCents: 3000,
-      additionalPaymentStatus: "PENDING",
-    };
-
     mockedConstructWebhookEvent.mockReturnValue({
       id: "evt_test",
       type: "payment_intent.succeeded",
@@ -709,8 +731,14 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
     mockProcessedWebhookFindUnique.mockResolvedValue(null);
     mockProcessedWebhookCreate.mockResolvedValue({});
     mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 0 });
-    mockPaymentFindUnique.mockResolvedValueOnce(payment); // findUnique by additionalPaymentIntentId
-    mockPaymentUpdate.mockResolvedValue({});
+    mockFindPaymentTransactionByIntentId.mockResolvedValueOnce({
+      id: "ptx_1",
+      paymentId: "p1",
+      kind: "ADDITIONAL",
+      amountCents: 3000,
+      status: "PENDING",
+      createdAt: new Date(),
+    });
 
     const req = makeWebhookRequest();
     const res = await POST(req);
@@ -719,27 +747,15 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
     expect(res.status).toBe(200);
     expect(data.received).toBe(true);
 
-    expect(mockPaymentUpdate).toHaveBeenCalledWith(
+    expect(mockMarkPaymentIntentTransactionSucceeded).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "p1" },
-        data: expect.objectContaining({
-          additionalPaymentStatus: "SUCCEEDED",
-          amountCents: 13000, // 10000 + 3000
-        }),
+        paymentIntentId: "pi_additional",
+        amountCents: 3000,
       })
     );
   });
 
   it("is idempotent: skips already-SUCCEEDED additional payment", async () => {
-    const payment = {
-      id: "p1",
-      bookingId: "bk1",
-      amountCents: 13000,
-      additionalPaymentIntentId: "pi_additional",
-      additionalAmountCents: 3000,
-      additionalPaymentStatus: "SUCCEEDED",
-    };
-
     mockedConstructWebhookEvent.mockReturnValue({
       id: "evt_test2",
       type: "payment_intent.succeeded",
@@ -756,15 +772,20 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
     mockProcessedWebhookFindUnique.mockResolvedValue(null);
     mockProcessedWebhookCreate.mockResolvedValue({});
     mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 0 });
-    mockPaymentFindUnique.mockResolvedValueOnce(payment);
-    mockPaymentUpdate.mockResolvedValue({});
+    mockFindPaymentTransactionByIntentId.mockResolvedValueOnce({
+      id: "ptx_1",
+      paymentId: "p1",
+      kind: "ADDITIONAL",
+      amountCents: 3000,
+      status: "SUCCEEDED",
+      createdAt: new Date(),
+    });
 
     const req = makeWebhookRequest();
     const res = await POST(req);
 
     expect(res.status).toBe(200);
-    // Payment update should NOT have been called (already succeeded)
-    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+    expect(mockMarkPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
   });
 
   it("does not update payment when additional PI amount mismatches", async () => {
@@ -783,13 +804,13 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
 
     mockProcessedWebhookCreate.mockResolvedValue({});
     mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 1 });
-    mockPaymentFindUnique.mockResolvedValueOnce({
-      id: "p1",
-      bookingId: "bk1",
-      amountCents: 10000,
-      additionalPaymentIntentId: "pi_additional",
-      additionalAmountCents: 3000,
-      additionalPaymentStatus: "PENDING",
+    mockFindPaymentTransactionByIntentId.mockResolvedValueOnce({
+      id: "ptx_1",
+      paymentId: "p1",
+      kind: "ADDITIONAL",
+      amountCents: 3000,
+      status: "PENDING",
+      createdAt: new Date(),
     });
     mockBookingFindUnique.mockResolvedValue({
       id: "bk1",
@@ -802,7 +823,7 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
     const res = await POST(req);
 
     expect(res.status).toBe(500);
-    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+    expect(mockMarkPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
     expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith({
       where: { eventId: "evt_mismatch", source: "stripe" },
     });
@@ -830,7 +851,7 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
 
     expect(res.status).toBe(200);
     expect(data.received).toBe(true);
-    expect(mockPaymentFindUnique).not.toHaveBeenCalled();
+    expect(mockFindPaymentTransactionByIntentId).not.toHaveBeenCalled();
     expect(mockProcessedWebhookDeleteMany).not.toHaveBeenCalled();
   });
 });
@@ -896,8 +917,19 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
       amountCents: 10000,
       booking: { memberId: "m1" },
     });
-    mockedGetPaymentIntent.mockResolvedValue({ status: "succeeded", amount: 3000 } as any);
-    mockPaymentUpdate.mockResolvedValue({});
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "ptx_1",
+      paymentId: "p1",
+      kind: "ADDITIONAL",
+      amountCents: 3000,
+      status: "PENDING",
+      createdAt: new Date(),
+    });
+    mockedGetPaymentIntent.mockResolvedValue({
+      id: "pi_additional",
+      status: "succeeded",
+      amount: 3000,
+    } as any);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/confirm-modification-payment", {
       method: "POST",
@@ -909,13 +941,10 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
 
-    expect(mockPaymentUpdate).toHaveBeenCalledWith(
+    expect(mockMarkPaymentIntentTransactionSucceeded).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "p1" },
-        data: expect.objectContaining({
-          additionalPaymentStatus: "SUCCEEDED",
-          amountCents: 13000,
-        }),
+        paymentIntentId: "pi_additional",
+        amountCents: 3000,
       })
     );
   });
@@ -929,6 +958,14 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
       additionalAmountCents: 3000,
       amountCents: 10000,
       booking: { memberId: "m1" },
+    });
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "ptx_1",
+      paymentId: "p1",
+      kind: "ADDITIONAL",
+      amountCents: 3000,
+      status: "PENDING",
+      createdAt: new Date(),
     });
     mockedGetPaymentIntent.mockResolvedValue({ status: "requires_action" } as any);
 
@@ -950,6 +987,14 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
       amountCents: 10000,
       booking: { memberId: "m1" },
     });
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "ptx_1",
+      paymentId: "p1",
+      kind: "ADDITIONAL",
+      amountCents: 3000,
+      status: "PENDING",
+      createdAt: new Date(),
+    });
     mockedGetPaymentIntent.mockResolvedValue({ status: "succeeded", amount: 2500 } as any);
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/confirm-modification-payment", {
@@ -958,7 +1003,7 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
     });
     const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(400);
-    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+    expect(mockMarkPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
   });
 
   it("returns 403 for deactivated members", async () => {
@@ -989,6 +1034,14 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
       amountCents: 13000,
       booking: { memberId: "m1" },
     });
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "ptx_1",
+      paymentId: "p1",
+      kind: "ADDITIONAL",
+      amountCents: 3000,
+      status: "SUCCEEDED",
+      createdAt: new Date(),
+    });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/confirm-modification-payment", {
       method: "POST",
@@ -1001,7 +1054,7 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
     expect(data.success).toBe(true);
     // Should not call Stripe or update DB again
     expect(mockedGetPaymentIntent).not.toHaveBeenCalled();
-    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+    expect(mockMarkPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
   });
 });
 
