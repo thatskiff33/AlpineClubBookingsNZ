@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   markBookingPaymentSucceeded: vi.fn(),
   markBookingSetupIntentSucceeded: vi.fn(),
   logAudit: vi.fn(),
+  upsertPaymentIntentTransaction: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -38,6 +39,10 @@ vi.mock("@/lib/stripe", () => ({
 vi.mock("@/lib/payment-reconciliation", () => ({
   markBookingPaymentSucceeded: mocks.markBookingPaymentSucceeded,
   markBookingSetupIntentSucceeded: mocks.markBookingSetupIntentSucceeded,
+}));
+
+vi.mock("@/lib/payment-transactions", () => ({
+  upsertPaymentIntentTransaction: mocks.upsertPaymentIntentTransaction,
 }));
 
 vi.mock("@/lib/audit", () => ({

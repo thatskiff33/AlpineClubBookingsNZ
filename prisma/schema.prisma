@@ -98,6 +98,11 @@ enum PaymentStatus {
   PARTIALLY_REFUNDED
 }
 
+enum PaymentTransactionKind {
+  PRIMARY
+  ADDITIONAL
+}
+
 enum PromoCodeType {
   PERCENTAGE
   FIXED_AMOUNT
@@ -499,11 +504,32 @@ model Payment {
   updatedAt                 DateTime      @updatedAt
 
   // Relations
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  booking      Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  transactions PaymentTransaction[]
 
   @@index([bookingId])
   @@index([stripePaymentIntentId])
   @@index([additionalPaymentIntentId])
+  @@index([status, createdAt])
+}
+
+model PaymentTransaction {
+  id                  String                 @id @default(cuid())
+  paymentId           String
+  kind                PaymentTransactionKind
+  stripePaymentIntentId String               @unique
+  amountCents         Int
+  refundedAmountCents Int                    @default(0)
+  status              PaymentStatus          @default(PENDING)
+  paymentMethodId     String?
+  reason              String?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId, createdAt])
+  @@index([paymentId, kind, createdAt])
   @@index([status, createdAt])
 }
 

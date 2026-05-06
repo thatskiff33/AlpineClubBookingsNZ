@@ -12,6 +12,9 @@ import { z } from "zod";
 import logger from "@/lib/logger";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
+import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -90,6 +93,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    const savedPayment = booking.payment;
 
     // Atomically claim the booking to prevent double-charge with cron
     const claimed = await prisma.booking.updateMany({
@@ -119,19 +123,15 @@ export async function POST(request: NextRequest) {
     // Update payment record and revert booking status if payment not yet succeeded
     if (paymentIntent.status === "succeeded") {
       paymentSucceeded = true;
-      await prisma.$transaction([
-        prisma.payment.update({
-          where: { bookingId: booking.id },
-          data: {
-            stripePaymentIntentId: paymentIntent.id,
-            status: "SUCCEEDED",
-          },
-        }),
-        prisma.booking.update({
-          where: { id: booking.id },
-          data: { status: "PAID" },
-        }),
-      ]);
+      await markBookingPaymentSucceeded({
+        bookingId: booking.id,
+        paymentIntentId: paymentIntent.id,
+        amountCents: paymentIntent.amount,
+        paymentMethodId:
+          typeof paymentIntent.payment_method === "string"
+            ? paymentIntent.payment_method
+            : paymentIntent.payment_method?.id ?? null,
+      });
 
       logAudit({
         action: "booking.payment.confirmed",
@@ -148,19 +148,26 @@ export async function POST(request: NextRequest) {
       });
     } else {
       // Payment requires additional action (e.g. 3D Secure/SCA) — revert to PENDING
-      await prisma.$transaction([
-        prisma.payment.update({
-          where: { bookingId: booking.id },
-          data: {
-            stripePaymentIntentId: paymentIntent.id,
-            status: "PROCESSING",
-          },
-        }),
-        prisma.booking.update({
+      await prisma.$transaction(async (tx) => {
+        await upsertPaymentIntentTransaction({
+          paymentId: savedPayment.id,
+          kind: PaymentTransactionKind.PRIMARY,
+          paymentIntentId: paymentIntent.id,
+          amountCents: paymentIntent.amount,
+          status: PaymentStatus.PROCESSING,
+          paymentMethodId:
+            typeof paymentIntent.payment_method === "string"
+              ? paymentIntent.payment_method
+              : paymentIntent.payment_method?.id ?? null,
+          reason: "pending_saved_method_charge",
+          store: tx,
+        });
+
+        await tx.booking.update({
           where: { id: booking.id },
           data: { status: "PENDING" },
-        }),
-      ]);
+        });
+      });
       claimedBookingId = null; // Already reverted
       // Alert admins so they can contact the member to complete payment manually
       logger.warn(

@@ -18,7 +18,7 @@ import {
   getMemberFreeNightsUsed,
   validatePromoCodeRules,
 } from "@/lib/promo";
-import { processRefund, createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
+import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { cleanupChoreAssignmentsForDateChange } from "@/lib/chore-cleanup";
@@ -31,6 +31,11 @@ import { processWaitlistForDates } from "@/lib/waitlist";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
+import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import {
+  refundPaymentTransactions,
+  upsertPaymentIntentTransaction,
+} from "@/lib/payment-transactions";
 
 const modifyDatesSchema = z
   .object({
@@ -306,12 +311,9 @@ export async function PUT(
 
       // Capture refund/charge info for Stripe calls after transaction commits
       // (avoids holding advisory lock during external API calls)
-      let stripePaymentIntentId: string | null = null;
       let pendingRefundAmountCents = 0;
 
       if (hasSucceededPayment && booking.payment) {
-        stripePaymentIntentId = booking.payment.stripePaymentIntentId;
-
         // Net the price difference against any change fee:
         // e.g. price drops $20 but $15 change fee → net refund $5
         // e.g. price drops $10 but $15 change fee → net charge $5
@@ -321,19 +323,6 @@ export async function PUT(
           // Net effect is a refund (price decrease exceeds change fee)
           refundAmountCents = Math.abs(netAmountCents);
           pendingRefundAmountCents = refundAmountCents;
-
-          if (stripePaymentIntentId && refundAmountCents > 0) {
-            // Pre-update payment record with expected refund state
-            const newRefundedTotal =
-              booking.payment.refundedAmountCents + refundAmountCents;
-            await tx.payment.update({
-              where: { id: booking.payment.id },
-              data: {
-                refundedAmountCents: newRefundedTotal,
-                status: "PARTIALLY_REFUNDED",
-              },
-            });
-          }
         } else if (netAmountCents > 0) {
           // Net effect is a charge (price increase and/or change fee exceeds any decrease)
           additionalAmountCents = netAmountCents;
@@ -448,7 +437,6 @@ export async function PUT(
         refundAmountCents,
         additionalAmountCents,
         pendingRefundAmountCents,
-        stripePaymentIntentId,
         promoRemoved,
         choreWarnings,
         oldCheckIn,
@@ -468,19 +456,16 @@ export async function PUT(
 
     // Process Stripe refund outside transaction (avoids holding advisory lock during API call)
     let stripeRefundId: string | undefined;
-    if (result.pendingRefundAmountCents > 0 && result.stripePaymentIntentId) {
+    if (result.pendingRefundAmountCents > 0 && result.paymentId) {
       try {
-        const refund = await processRefund({
-          paymentIntentId: result.stripePaymentIntentId,
+        const refundResult = await refundPaymentTransactions({
+          paymentId: result.paymentId,
           amountCents: result.pendingRefundAmountCents,
-          metadata: {
-            bookingId,
-            reason: "date_change_price_decrease",
-          },
+          metadata: { bookingId, reason: "date_change_price_decrease" },
+          idempotencyKeyPrefix: `mod_dates_refund_${bookingId}`,
         });
-        stripeRefundId = refund.id;
+        stripeRefundId = refundResult.refunds[0]?.refundId;
       } catch (refundErr) {
-        // DB already updated with expected refund state; log error for manual reconciliation
         logger.error({ err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
           "Stripe refund failed after date change - requires manual reconciliation");
       }
@@ -511,16 +496,14 @@ export async function PUT(
           idempotencyKey: `mod_dates_${bookingId}_${Date.now()}`,
         });
 
-        await prisma.payment.update({
-          where: { id: result.paymentId },
-          data: {
-            additionalPaymentIntentId: pi.id,
-            additionalAmountCents: result.additionalAmountCents,
-            additionalPaymentStatus: "PENDING",
-            ...(customerId && !result.paymentCustomerId
-              ? { stripeCustomerId: customerId }
-              : {}),
-          },
+        await upsertPaymentIntentTransaction({
+          paymentId: result.paymentId,
+          kind: PaymentTransactionKind.ADDITIONAL,
+          paymentIntentId: pi.id,
+          amountCents: result.additionalAmountCents,
+          status: PaymentStatus.PENDING,
+          reason: "date_change_price_increase",
+          stripeCustomerId: customerId,
         });
 
         additionalPaymentClientSecret = pi.client_secret ?? undefined;

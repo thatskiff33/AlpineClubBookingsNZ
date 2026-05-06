@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { AgeTier } from "@prisma/client";
+import { PaymentStatus, PaymentTransactionKind, type AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
@@ -19,7 +19,7 @@ import {
   validatePromoCodeRules,
   redeemPromoCode,
 } from "@/lib/promo";
-import { processRefund, createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
+import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { cleanupChoreAssignmentsForDateChange } from "@/lib/chore-cleanup";
@@ -46,6 +46,10 @@ import {
   canModifyBookingStatus,
   usesActiveBookingLifecycle,
 } from "@/lib/booking-modify-permissions";
+import {
+  refundPaymentTransactions,
+  upsertPaymentIntentTransaction,
+} from "@/lib/payment-transactions";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -492,7 +496,7 @@ export async function PUT(
       // --- Handle Stripe payment adjustments ---
       let refundAmountCents = 0;
       let additionalAmountCents = 0;
-      let stripeRefundId: string | undefined;
+      let pendingRefundAmountCents = 0;
 
       const hasSucceededPayment =
         ["CONFIRMED", "PAID"].includes(booking.status) &&
@@ -511,23 +515,7 @@ export async function PUT(
       if (hasSucceededPayment && booking.payment) {
         if (priceDiffCents < 0) {
           refundAmountCents = Math.abs(priceDiffCents);
-          if (booking.payment.stripePaymentIntentId && refundAmountCents > 0) {
-            const refund = await processRefund({
-              paymentIntentId: booking.payment.stripePaymentIntentId,
-              amountCents: refundAmountCents,
-              metadata: { bookingId: booking.id, reason: "batch_modification" },
-            });
-            stripeRefundId = refund.id;
-
-            const newRefundedTotal = booking.payment.refundedAmountCents + refundAmountCents;
-            await tx.payment.update({
-              where: { id: booking.payment.id },
-              data: {
-                refundedAmountCents: newRefundedTotal,
-                status: "PARTIALLY_REFUNDED",
-              },
-            });
-          }
+          pendingRefundAmountCents = refundAmountCents;
         } else if (priceDiffCents > 0 || changeFeeCents > 0) {
           additionalAmountCents = Math.max(priceDiffCents, 0) + changeFeeCents;
         }
@@ -629,7 +617,7 @@ export async function PUT(
         changeFeeCents,
         refundAmountCents,
         additionalAmountCents,
-        stripeRefundId,
+        pendingRefundAmountCents,
         promoRemoved,
         promoChanged,
         choreWarnings,
@@ -649,6 +637,24 @@ export async function PUT(
         bookingModificationId: bookingModification.id,
       };
     });
+
+    let stripeRefundId: string | undefined;
+    if (result.pendingRefundAmountCents > 0 && result.paymentId) {
+      try {
+        const refundResult = await refundPaymentTransactions({
+          paymentId: result.paymentId,
+          amountCents: result.pendingRefundAmountCents,
+          metadata: { bookingId, reason: "batch_modification" },
+          idempotencyKeyPrefix: `mod_batch_refund_${bookingId}`,
+        });
+        stripeRefundId = refundResult.refunds[0]?.refundId;
+      } catch (refundErr) {
+        logger.error(
+          { err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
+          "Stripe refund failed after batch modification - requires manual reconciliation"
+        );
+      }
+    }
 
     // --- Post-transaction side effects (fire-and-forget) ---
 
@@ -676,16 +682,14 @@ export async function PUT(
           idempotencyKey: `mod_batch_${bookingId}_${Date.now()}`,
         });
 
-        await prisma.payment.update({
-          where: { id: result.paymentId },
-          data: {
-            additionalPaymentIntentId: pi.id,
-            additionalAmountCents: result.additionalAmountCents,
-            additionalPaymentStatus: "PENDING",
-            ...(customerId && !result.paymentCustomerId
-              ? { stripeCustomerId: customerId }
-              : {}),
-          },
+        await upsertPaymentIntentTransaction({
+          paymentId: result.paymentId,
+          kind: PaymentTransactionKind.ADDITIONAL,
+          paymentIntentId: pi.id,
+          amountCents: result.additionalAmountCents,
+          status: PaymentStatus.PENDING,
+          reason: "batch_modify_price_increase",
+          stripeCustomerId: customerId,
         });
 
         additionalPaymentClientSecret = pi.client_secret ?? undefined;
@@ -789,7 +793,7 @@ export async function PUT(
       refundAmountCents: result.refundAmountCents,
       additionalAmountCents: result.additionalAmountCents,
       additionalPaymentClientSecret: additionalPaymentClientSecret ?? null,
-      stripeRefundId: result.stripeRefundId,
+      stripeRefundId: stripeRefundId ?? null,
       promoRemoved: result.promoRemoved,
       promoChanged: result.promoChanged,
       choreWarnings: result.choreWarnings,

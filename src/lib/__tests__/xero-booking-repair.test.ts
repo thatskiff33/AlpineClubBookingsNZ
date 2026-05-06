@@ -35,6 +35,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       additionalPaymentStatus: null,
       xeroRefundCreditNoteId: null,
       creditAppliedCents: 0,
+      transactions: [],
       createdAt: new Date("2026-05-01T00:00:00Z"),
       updatedAt: new Date("2026-05-01T00:00:00Z"),
     },
@@ -42,6 +43,75 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     creditsFromCancellation: [],
     ...overrides,
   };
+}
+
+function isCapturedTransactionStatus(status: string) {
+  return ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(status);
+}
+
+function mapAdditionalSummaryStatus(status: string | null | undefined) {
+  if (!status) {
+    return null;
+  }
+
+  if (status === "FAILED") {
+    return "FAILED";
+  }
+
+  if (isCapturedTransactionStatus(status)) {
+    return "SUCCEEDED";
+  }
+
+  return "PENDING";
+}
+
+function recomputePaymentSummary(payment: any) {
+  const transactions = [...(payment.transactions ?? [])].sort(
+    (left, right) =>
+      new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
+  );
+
+  if (transactions.length === 0) {
+    return;
+  }
+
+  const capturedAmountCents = transactions.reduce((sum, transaction) => {
+    return sum + (isCapturedTransactionStatus(transaction.status) ? transaction.amountCents : 0);
+  }, 0);
+  const refundedAmountCents = transactions.reduce(
+    (sum, transaction) => sum + (transaction.refundedAmountCents ?? 0),
+    0
+  );
+  const latestPrimary = [...transactions]
+    .reverse()
+    .find((transaction) => transaction.kind === "PRIMARY");
+  const latestAdditional = [...transactions]
+    .reverse()
+    .find((transaction) => transaction.kind === "ADDITIONAL");
+
+  payment.refundedAmountCents = refundedAmountCents;
+  payment.amountCents = capturedAmountCents > 0 ? capturedAmountCents : payment.amountCents;
+
+  if (capturedAmountCents > 0) {
+    if (refundedAmountCents >= capturedAmountCents) {
+      payment.status = "REFUNDED";
+    } else if (refundedAmountCents > 0) {
+      payment.status = "PARTIALLY_REFUNDED";
+    } else {
+      payment.status = "SUCCEEDED";
+    }
+  } else if (latestPrimary) {
+    payment.status = latestPrimary.status;
+  }
+
+  payment.stripePaymentIntentId = latestPrimary?.stripePaymentIntentId ?? null;
+  payment.stripePaymentMethodId =
+    latestPrimary?.paymentMethodId ?? payment.stripePaymentMethodId;
+  payment.additionalPaymentIntentId = latestAdditional?.stripePaymentIntentId ?? null;
+  payment.additionalAmountCents = latestAdditional?.amountCents ?? 0;
+  payment.additionalPaymentStatus = mapAdditionalSummaryStatus(
+    latestAdditional?.status ?? null
+  );
 }
 
 function createDependencies(state: {
@@ -72,6 +142,99 @@ function createDependencies(state: {
       message: "queued",
     };
   });
+
+  const markPaymentIntentTransactionFailed = vi.fn().mockImplementation(
+    async ({ paymentIntentId }: { paymentIntentId: string }) => {
+      const booking = state.bookings.find((item) =>
+        item.payment?.transactions?.some(
+          (transaction: any) =>
+            transaction.stripePaymentIntentId === paymentIntentId
+        )
+      );
+      const transaction = booking?.payment?.transactions?.find(
+        (item: any) => item.stripePaymentIntentId === paymentIntentId
+      );
+
+      if (!transaction || isCapturedTransactionStatus(transaction.status)) {
+        return booking?.payment ?? null;
+      }
+
+      transaction.status = "FAILED";
+      recomputePaymentSummary(booking.payment);
+      return booking.payment;
+    }
+  );
+
+  const refundPaymentTransactions = vi.fn().mockImplementation(
+    async ({
+      paymentId,
+      amountCents,
+    }: {
+      paymentId: string;
+      amountCents: number;
+    }) => {
+      const booking = state.bookings.find((item) => item.payment?.id === paymentId);
+      if (!booking?.payment) {
+        throw new Error("Payment not found");
+      }
+
+      let remainingAmountCents = amountCents;
+      const refunds: Array<{
+        paymentIntentId: string;
+        refundId: string;
+        amountCents: number;
+      }> = [];
+      const refundableTransactions = [...(booking.payment.transactions ?? [])]
+        .filter((transaction: any) => isCapturedTransactionStatus(transaction.status))
+        .filter(
+          (transaction: any) =>
+            transaction.amountCents - transaction.refundedAmountCents > 0
+        )
+        .sort(
+          (left: any, right: any) =>
+            new Date(right.createdAt).getTime() -
+            new Date(left.createdAt).getTime()
+        );
+
+      for (const transaction of refundableTransactions) {
+        if (remainingAmountCents <= 0) {
+          break;
+        }
+
+        const refundableAmountCents =
+          transaction.amountCents - transaction.refundedAmountCents;
+        const refundAmountForTransaction = Math.min(
+          remainingAmountCents,
+          refundableAmountCents
+        );
+
+        transaction.refundedAmountCents += refundAmountForTransaction;
+        if (transaction.refundedAmountCents >= transaction.amountCents) {
+          transaction.status = "REFUNDED";
+        } else if (transaction.refundedAmountCents > 0) {
+          transaction.status = "PARTIALLY_REFUNDED";
+        }
+
+        refunds.push({
+          paymentIntentId: transaction.stripePaymentIntentId,
+          refundId: `re_${transaction.stripePaymentIntentId}`,
+          amountCents: refundAmountForTransaction,
+        });
+        remainingAmountCents -= refundAmountForTransaction;
+      }
+
+      if (remainingAmountCents > 0) {
+        throw new Error("Refund amount exceeds captured Stripe payments");
+      }
+
+      recomputePaymentSummary(booking.payment);
+
+      return {
+        refunds,
+        totalRefundedAmountCents: amountCents,
+      };
+    }
+  );
 
   return {
     prisma: {
@@ -152,7 +315,8 @@ function createDependencies(state: {
     isXeroConnected: vi.fn().mockResolvedValue(false),
     cancelPaymentIntentIfCancellable: vi.fn().mockResolvedValue(null),
     getPaymentIntent: vi.fn().mockResolvedValue({ status: "canceled" }),
-    processRefund: vi.fn().mockResolvedValue({ id: "re_123" }),
+    markPaymentIntentTransactionFailed,
+    refundPaymentTransactions,
   };
 }
 
@@ -328,5 +492,204 @@ describe("runBookingXeroRepair", () => {
 
     expect(secondRun.summary.bookingsWithFindings).toBe(0);
     expect(deps.enqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies cancelled bookings using per-intent transaction state instead of aggregate payment status", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        amountCents: 10000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        additionalPaymentIntentId: "pi_additional_pending",
+        additionalAmountCents: 3000,
+        additionalPaymentStatus: "PENDING",
+        transactions: [
+          {
+            id: "txn_primary",
+            paymentId: "payment_1",
+            kind: "PRIMARY",
+            stripePaymentIntentId: "pi_primary_captured",
+            amountCents: 10000,
+            refundedAmountCents: 0,
+            status: "SUCCEEDED",
+            paymentMethodId: "pm_123",
+            reason: null,
+            createdAt: new Date("2026-05-01T00:00:00Z"),
+            updatedAt: new Date("2026-05-01T00:00:00Z"),
+          },
+          {
+            id: "txn_additional",
+            paymentId: "payment_1",
+            kind: "ADDITIONAL",
+            stripePaymentIntentId: "pi_additional_pending",
+            amountCents: 3000,
+            refundedAmountCents: 0,
+            status: "PENDING",
+            paymentMethodId: null,
+            reason: "date_change",
+            createdAt: new Date("2026-05-02T00:00:00Z"),
+            updatedAt: new Date("2026-05-02T00:00:00Z"),
+          },
+        ],
+      },
+    });
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).toContain(
+      "CANCELLED_IN_FLIGHT_PAYMENT"
+    );
+    expect(bookingReport.findings.map((finding) => finding.code)).toContain(
+      "LATE_CAPTURE_AFTER_CANCELLATION"
+    );
+    expect(bookingReport.findings.map((finding) => finding.code)).not.toContain(
+      "CANCELLED_BOOKING_OPEN_INVOICE"
+    );
+
+    const inFlightAction = bookingReport.actions.find(
+      (action) => action.type === "REPAIR_CANCELLED_IN_FLIGHT_PAYMENT"
+    );
+    expect(inFlightAction?.payload).toMatchObject({
+      paymentIntentIds: ["pi_additional_pending"],
+    });
+
+    const lateCaptureAction = bookingReport.actions.find(
+      (action) => action.type === "AUTO_REFUND_LATE_CAPTURED_PAYMENT"
+    );
+    expect(lateCaptureAction?.payload).toMatchObject({
+      paymentId: "payment_1",
+      refundAmountCents: 10000,
+    });
+  });
+
+  it("marks only the outstanding cancelled transaction failed during apply mode", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        amountCents: 10000,
+        refundedAmountCents: 10000,
+        status: "REFUNDED",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        additionalPaymentIntentId: "pi_additional_pending",
+        additionalAmountCents: 3000,
+        additionalPaymentStatus: "PENDING",
+        transactions: [
+          {
+            id: "txn_primary",
+            paymentId: "payment_1",
+            kind: "PRIMARY",
+            stripePaymentIntentId: "pi_primary_refunded",
+            amountCents: 10000,
+            refundedAmountCents: 10000,
+            status: "REFUNDED",
+            paymentMethodId: "pm_123",
+            reason: null,
+            createdAt: new Date("2026-05-01T00:00:00Z"),
+            updatedAt: new Date("2026-05-01T00:00:00Z"),
+          },
+          {
+            id: "txn_additional",
+            paymentId: "payment_1",
+            kind: "ADDITIONAL",
+            stripePaymentIntentId: "pi_additional_pending",
+            amountCents: 3000,
+            refundedAmountCents: 0,
+            status: "PENDING",
+            paymentMethodId: null,
+            reason: "guest_add",
+            createdAt: new Date("2026-05-02T00:00:00Z"),
+            updatedAt: new Date("2026-05-02T00:00:00Z"),
+          },
+        ],
+      },
+    });
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(deps.markPaymentIntentTransactionFailed).toHaveBeenCalledWith({
+      paymentIntentId: "pi_additional_pending",
+    });
+    expect(booking.payment.status).toBe("REFUNDED");
+    expect(booking.payment.additionalPaymentStatus).toBe("FAILED");
+    expect(report.summary.bookingsWithFindings).toBe(0);
+  });
+
+  it("refunds cancelled late captures through the shared multi-intent refund helper", async () => {
+    const booking = makeBooking({
+      status: "CANCELLED",
+      payment: {
+        ...makeBooking().payment,
+        amountCents: 13000,
+        refundedAmountCents: 0,
+        status: "SUCCEEDED",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        additionalPaymentIntentId: "pi_additional_captured",
+        additionalAmountCents: 3000,
+        additionalPaymentStatus: "SUCCEEDED",
+        transactions: [
+          {
+            id: "txn_primary",
+            paymentId: "payment_1",
+            kind: "PRIMARY",
+            stripePaymentIntentId: "pi_primary_captured",
+            amountCents: 10000,
+            refundedAmountCents: 0,
+            status: "SUCCEEDED",
+            paymentMethodId: "pm_123",
+            reason: null,
+            createdAt: new Date("2026-05-01T00:00:00Z"),
+            updatedAt: new Date("2026-05-01T00:00:00Z"),
+          },
+          {
+            id: "txn_additional",
+            paymentId: "payment_1",
+            kind: "ADDITIONAL",
+            stripePaymentIntentId: "pi_additional_captured",
+            amountCents: 3000,
+            refundedAmountCents: 0,
+            status: "SUCCEEDED",
+            paymentMethodId: null,
+            reason: "date_change",
+            createdAt: new Date("2026-05-02T00:00:00Z"),
+            updatedAt: new Date("2026-05-02T00:00:00Z"),
+          },
+        ],
+      },
+    });
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair({
+      apply: true,
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    expect(deps.refundPaymentTransactions).toHaveBeenCalledWith({
+      paymentId: "payment_1",
+      amountCents: 13000,
+      reason: "requested_by_customer",
+      metadata: {
+        bookingId: "booking_1",
+        reason: "cancelled_booking_late_capture_repair",
+      },
+      idempotencyKeyPrefix: "late_cancel_refund_repair_booking_1",
+    });
+    expect(booking.payment.status).toBe("REFUNDED");
+    expect(report.summary.bookingsWithFindings).toBe(0);
   });
 });

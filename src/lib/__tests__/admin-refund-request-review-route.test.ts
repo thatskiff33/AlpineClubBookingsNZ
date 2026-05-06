@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   paymentUpdate: vi.fn(),
   transaction: vi.fn(),
   processRefund: vi.fn(),
+  refundPaymentTransactions: vi.fn(),
   isXeroConnected: vi.fn(),
   enqueueXeroRefundCreditNoteOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     refundRequest: {
       findUnique: mocks.refundRequestFindUnique,
+      updateMany: mocks.refundRequestUpdateMany,
     },
     $transaction: mocks.transaction,
   },
@@ -70,6 +72,10 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+vi.mock("@/lib/payment-transactions", () => ({
+  refundPaymentTransactions: mocks.refundPaymentTransactions,
+}));
+
 import { PUT } from "@/app/api/admin/refund-requests/[id]/route";
 
 describe("PUT /api/admin/refund-requests/[id]", () => {
@@ -81,6 +87,9 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.processRefund.mockResolvedValue({ id: "re_1" });
+    mocks.refundPaymentTransactions.mockResolvedValue({
+      refunds: [{ refundId: "re_1", paymentIntentId: "pi_1", amountCents: 2500 }],
+    });
     mocks.isXeroConnected.mockResolvedValue(true);
     mocks.enqueueXeroRefundCreditNoteOperation.mockResolvedValue({
       queueOperationId: "op_credit_note_1",
@@ -167,15 +176,15 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(mocks.processRefund).toHaveBeenCalledWith({
-      paymentIntentId: "pi_1",
+    expect(mocks.refundPaymentTransactions).toHaveBeenCalledWith({
+      paymentId: "payment_1",
       amountCents: 2500,
       metadata: {
         bookingId: "booking_1",
         reason: "refund_appeal_approved",
         refundRequestId: "refund_1",
       },
-      idempotencyKey: "refund-request-refund_1",
+      idempotencyKeyPrefix: "refund_request_refund_1",
     });
     expect(mocks.enqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
       "payment_1",

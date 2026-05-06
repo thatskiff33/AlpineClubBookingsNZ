@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 
 export async function markBookingPaymentSucceeded({
   bookingId,
@@ -12,14 +14,24 @@ export async function markBookingPaymentSucceeded({
   paymentMethodId: string | null;
 }) {
   await prisma.$transaction(async (tx) => {
-    await tx.payment.update({
+    const payment = await tx.payment.upsert({
       where: { bookingId },
-      data: {
-        stripePaymentIntentId: paymentIntentId,
-        stripePaymentMethodId: paymentMethodId,
-        status: "SUCCEEDED",
+      create: {
+        bookingId,
         amountCents,
+        status: PaymentStatus.PENDING,
       },
+      update: {},
+    });
+
+    await upsertPaymentIntentTransaction({
+      paymentId: payment.id,
+      kind: PaymentTransactionKind.PRIMARY,
+      paymentIntentId,
+      amountCents,
+      status: PaymentStatus.SUCCEEDED,
+      paymentMethodId,
+      store: tx,
     });
 
     await tx.booking.updateMany({

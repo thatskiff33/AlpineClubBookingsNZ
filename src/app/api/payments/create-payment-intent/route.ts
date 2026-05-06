@@ -8,6 +8,9 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { sendAdminNewBookingAlert } from "@/lib/email";
 import logger from "@/lib/logger";
 import { BookingStatus } from "@prisma/client";
+import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
+import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
+import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 
 export async function POST(request: NextRequest) {
   try {
@@ -53,6 +56,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    if (
+      !canCreateImmediatePaymentIntent({
+        status: booking.status,
+        hasNonMembers: booking.hasNonMembers,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "This booking must stay in the saved-card flow until the non-member hold window expires",
+        },
+        { status: 400 }
+      );
+    }
+
     // Reuse or reconcile an existing PaymentIntent before creating a new one.
     if (booking.payment?.stripePaymentIntentId) {
       const existingIntent = await getPaymentIntent(booking.payment.stripePaymentIntentId);
@@ -84,7 +102,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Only allow PaymentIntent for bookings that should be immediately confirmed
     if (
       booking.status !== "PENDING" &&
       booking.status !== "CONFIRMED" &&
@@ -185,21 +202,27 @@ export async function POST(request: NextRequest) {
       idempotencyKey: `pi_${booking.id}_${booking.payment?.stripePaymentIntentId ?? "initial"}`,
     });
 
-    // Create or update Payment record
-    await prisma.payment.upsert({
+    const payment = await prisma.payment.upsert({
       where: { bookingId: booking.id },
       create: {
         bookingId: booking.id,
         amountCents: booking.finalPriceCents,
-        stripePaymentIntentId: paymentIntent.id,
         stripeCustomerId: customer.id,
-        status: "PROCESSING",
+        status: PaymentStatus.PENDING,
       },
       update: {
-        stripePaymentIntentId: paymentIntent.id,
         stripeCustomerId: customer.id,
-        status: "PROCESSING",
       },
+    });
+
+    await upsertPaymentIntentTransaction({
+      paymentId: payment.id,
+      kind: PaymentTransactionKind.PRIMARY,
+      paymentIntentId: paymentIntent.id,
+      amountCents: booking.finalPriceCents,
+      status: PaymentStatus.PROCESSING,
+      reason: "primary_booking_payment",
+      stripeCustomerId: customer.id,
     });
 
     return NextResponse.json({

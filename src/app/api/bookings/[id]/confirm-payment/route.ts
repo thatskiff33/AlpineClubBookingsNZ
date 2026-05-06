@@ -7,6 +7,7 @@ import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
+import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 
 const schema = z.object({
   paymentIntentId: z.string().min(1),
@@ -49,6 +50,7 @@ export async function POST(
             memberId: true,
             finalPriceCents: true,
             status: true,
+            hasNonMembers: true,
           },
         },
       },
@@ -68,6 +70,21 @@ export async function POST(
     if (payment.stripePaymentIntentId !== paymentIntentId) {
       return NextResponse.json(
         { error: "PaymentIntent does not match booking" },
+        { status: 400 }
+      );
+    }
+
+    if (
+      !canCreateImmediatePaymentIntent({
+        status: payment.booking.status,
+        hasNonMembers: payment.booking.hasNonMembers,
+      })
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "This booking cannot be confirmed through the immediate-charge flow while it is still pending non-member review",
+        },
         { status: 400 }
       );
     }

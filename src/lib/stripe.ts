@@ -229,6 +229,28 @@ export async function getSetupIntent(
 }
 
 /**
+ * Best-effort cancellation of an in-flight SetupIntent when a pending booking
+ * is cancelled or otherwise leaves the saved-card flow.
+ */
+export async function cancelSetupIntentIfCancellable(
+  setupIntentId: string
+): Promise<Stripe.SetupIntent | null> {
+  const setupIntent = await getSetupIntent(setupIntentId);
+  const cancellableStatuses = new Set([
+    "requires_payment_method",
+    "requires_confirmation",
+    "requires_action",
+    "processing",
+  ]);
+
+  if (!cancellableStatuses.has(setupIntent.status)) {
+    return null;
+  }
+
+  return stripe.setupIntents.cancel(setupIntentId);
+}
+
+/**
  * Construct and verify a Stripe webhook event.
  */
 export function constructWebhookEvent(

@@ -4,7 +4,6 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
-import { processRefund } from "@/lib/stripe";
 import { isXeroConnected } from "@/lib/xero";
 import {
   enqueueXeroRefundCreditNoteOperation,
@@ -14,6 +13,7 @@ import { sendEmail } from "@/lib/email";
 import { refundRequestResolvedTemplate } from "@/lib/email-templates";
 import logger from "@/lib/logger";
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
+import { refundPaymentTransactions } from "@/lib/payment-transactions";
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
@@ -91,80 +91,44 @@ export async function PUT(
       );
     }
 
-    // Process Stripe refund
-    if (payment.stripePaymentIntentId) {
-      try {
-        await processRefund({
-          paymentIntentId: payment.stripePaymentIntentId,
-          amountCents: approvedAmountCents,
-          metadata: {
-            bookingId: booking.id,
-            reason: "refund_appeal_approved",
-            refundRequestId: id,
-          },
-          idempotencyKey: `refund-request-${id}`,
-        });
-      } catch (err) {
-        logger.error({ err, refundRequestId: id }, "Failed to process Stripe refund for appeal");
-        return NextResponse.json(
-          { error: "Failed to process Stripe refund" },
-          { status: 500 }
-        );
-      }
+    try {
+      await refundPaymentTransactions({
+        paymentId: payment.id,
+        amountCents: approvedAmountCents,
+        metadata: {
+          bookingId: booking.id,
+          reason: "refund_appeal_approved",
+          refundRequestId: id,
+        },
+        idempotencyKeyPrefix: `refund_request_${id}`,
+      });
+    } catch (err) {
+      logger.error({ err, refundRequestId: id }, "Failed to process Stripe refund for appeal");
+      return NextResponse.json(
+        { error: "Failed to process Stripe refund" },
+        { status: 500 }
+      );
     }
 
     try {
-      await prisma.$transaction(async (tx) => {
-        const claim = await tx.refundRequest.updateMany({
-          where: { id, status: "PENDING" },
-          data: {
-            status: "APPROVED",
-            adminNotes,
-            approvedAmountCents,
-            reviewedBy: session.user.id,
-            reviewedAt: new Date(),
-          },
-        });
-
-        if (claim.count !== 1) {
-          throw new Error("REFUND_REQUEST_ALREADY_REVIEWED");
-        }
-
-        const currentPayment = await tx.payment.findUnique({
-          where: { id: payment.id },
-          select: { amountCents: true, refundedAmountCents: true },
-        });
-
-        if (!currentPayment) {
-          throw new Error("PAYMENT_NOT_FOUND");
-        }
-
-        const newRefundedTotal =
-          currentPayment.refundedAmountCents + approvedAmountCents;
-        const newPaymentStatus =
-          newRefundedTotal >= currentPayment.amountCents
-            ? "REFUNDED"
-            : "PARTIALLY_REFUNDED";
-
-        await tx.payment.update({
-          where: { id: payment.id },
-          data: {
-            refundedAmountCents: newRefundedTotal,
-            status: newPaymentStatus,
-          },
-        });
+      const claim = await prisma.refundRequest.updateMany({
+        where: { id, status: "PENDING" },
+        data: {
+          status: "APPROVED",
+          adminNotes,
+          approvedAmountCents,
+          reviewedBy: session.user.id,
+          reviewedAt: new Date(),
+        },
       });
-    } catch (err) {
-      if (
-        err instanceof Error &&
-        err.message === "REFUND_REQUEST_ALREADY_REVIEWED"
-      ) {
+
+      if (claim.count !== 1) {
         return NextResponse.json(
           { error: "This refund request has already been reviewed" },
           { status: 409 }
         );
       }
-
+    } catch (err) {
       throw err;
     }
 

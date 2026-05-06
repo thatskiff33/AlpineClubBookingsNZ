@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
   cancelPaymentIntentIfCancellable: vi.fn(),
   processRefund: vi.fn(),
+  applyLocalRefundAllocation: vi.fn(),
+  markPaymentIntentTransactionFailed: vi.fn(),
+  refundPaymentTransactions: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -90,6 +93,12 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
+vi.mock("@/lib/payment-transactions", () => ({
+  applyLocalRefundAllocation: mocks.applyLocalRefundAllocation,
+  markPaymentIntentTransactionFailed: mocks.markPaymentIntentTransactionFailed,
+  refundPaymentTransactions: mocks.refundPaymentTransactions,
+}));
+
 import { cancelBooking } from "@/lib/booking-cancel";
 
 describe("cancelBooking credit refunds", () => {
@@ -155,6 +164,11 @@ describe("cancelBooking credit refunds", () => {
       skipped: 0,
     });
     mocks.cancelPaymentIntentIfCancellable.mockResolvedValue(null);
+    mocks.applyLocalRefundAllocation.mockResolvedValue(undefined);
+    mocks.markPaymentIntentTransactionFailed.mockResolvedValue(undefined);
+    mocks.refundPaymentTransactions.mockResolvedValue({
+      refunds: [{ refundId: "re_1", paymentIntentId: "pi_1", amountCents: 5000 }],
+    });
   });
 
   it("creates the local credit first, then queues the Xero account-credit note", async () => {
@@ -181,6 +195,10 @@ describe("cancelBooking credit refunds", () => {
       5000,
       "booking_1"
     );
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
+      paymentId: "payment_1",
+      amountCents: 5000,
+    });
     expect(mocks.enqueueXeroAccountCreditNoteOperation).toHaveBeenCalledWith(
       "payment_1",
       5000,
@@ -255,6 +273,9 @@ describe("cancelBooking credit refunds", () => {
       }
     );
     expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith("pi_2");
+    expect(mocks.markPaymentIntentTransactionFailed).toHaveBeenCalledWith({
+      paymentIntentId: "pi_2",
+    });
     expect(mocks.kickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({
       limit: 1,
     });
@@ -315,6 +336,9 @@ describe("cancelBooking credit refunds", () => {
       where: { id: "payment_3" },
       data: { status: "FAILED" },
     });
+    expect(mocks.markPaymentIntentTransactionFailed).toHaveBeenCalledWith({
+      paymentIntentId: "pi_3",
+    });
   });
 
   it("cancels outstanding additional payment intents and marks them failed on credit refunds", async () => {
@@ -354,13 +378,12 @@ describe("cancelBooking credit refunds", () => {
     expect(mocks.cancelPaymentIntentIfCancellable).toHaveBeenCalledWith(
       "pi_4_additional"
     );
-    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
-      where: { bookingId: "booking_4" },
-      data: {
-        refundedAmountCents: 5000,
-        status: "PARTIALLY_REFUNDED",
-        additionalPaymentStatus: "FAILED",
-      },
+    expect(mocks.markPaymentIntentTransactionFailed).toHaveBeenCalledWith({
+      paymentIntentId: "pi_4_additional",
+    });
+    expect(mocks.applyLocalRefundAllocation).toHaveBeenCalledWith({
+      paymentId: "payment_4",
+      amountCents: 5000,
     });
   });
 });

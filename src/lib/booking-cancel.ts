@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { cancelPaymentIntentIfCancellable, processRefund } from "./stripe";
+import { cancelPaymentIntentIfCancellable, cancelSetupIntentIfCancellable } from "./stripe";
 import { isXeroConnected } from "./xero";
 import {
   calculateRefundAmount,
@@ -17,6 +17,11 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "./xero-operation-outbox";
 import logger from "@/lib/logger";
+import {
+  applyLocalRefundAllocation,
+  markPaymentIntentTransactionFailed,
+  refundPaymentTransactions,
+} from "@/lib/payment-transactions";
 
 export interface CancelBookingResult {
   success: boolean;
@@ -119,9 +124,29 @@ export async function cancelBooking(
 
   // Handle PENDING bookings (no payment taken yet)
   if (booking.status === "PENDING") {
-    await prisma.booking.update({
-      where: { id: bookingId },
-      data: { status: "CANCELLED" },
+    if (booking.payment?.stripeSetupIntentId) {
+      try {
+        await cancelSetupIntentIfCancellable(booking.payment.stripeSetupIntentId);
+      } catch (err) {
+        logger.error(
+          { err, bookingId, setupIntentId: booking.payment.stripeSetupIntentId },
+          "Failed to cancel Stripe SetupIntent for cancelled pending booking"
+        );
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (booking.payment) {
+        await tx.payment.update({
+          where: { id: booking.payment.id },
+          data: { stripeSetupIntentId: null },
+        });
+      }
+
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: { status: "CANCELLED" },
+      });
     });
     await cleanupPromoRedemption(bookingId);
 
@@ -311,6 +336,12 @@ export async function cancelBooking(
       cancelPrimary: false,
       cancelAdditional: true,
     });
+
+    if (booking.payment.additionalPaymentIntentId) {
+      await markPaymentIntentTransactionFailed({
+        paymentIntentId: booking.payment.additionalPaymentIntentId,
+      });
+    }
   }
 
   // Process refund based on method
@@ -318,29 +349,14 @@ export async function cancelBooking(
     // ── Credit path: skip Stripe, create MemberCredit record ──────────
     const paymentId = booking.payment.id;
 
-    const newRefundedTotal =
-      booking.payment.refundedAmountCents + refundAmountCents;
-    const newStatus =
-      newRefundedTotal >= booking.payment.amountCents
-        ? "REFUNDED"
-        : "PARTIALLY_REFUNDED";
-
-    await prisma.$transaction([
-      prisma.payment.update({
-        where: { bookingId: booking.id },
-        data: {
-          refundedAmountCents: newRefundedTotal,
-          status: newStatus,
-          ...(shouldFailAdditionalPayment
-            ? { additionalPaymentStatus: "FAILED" }
-            : {}),
-        },
-      }),
-      prisma.booking.update({
-        where: { id: bookingId },
-        data: { status: "CANCELLED" },
-      }),
-    ]);
+    await applyLocalRefundAllocation({
+      paymentId,
+      amountCents: refundAmountCents,
+    });
+    await prisma.booking.update({
+      where: { id: bookingId },
+      data: { status: "CANCELLED" },
+    });
 
     // Create the local credit ledger entry immediately, then queue the
     // Xero-side open credit note as background work.
@@ -414,41 +430,22 @@ export async function cancelBooking(
   }
 
   // ── Card path: Stripe refund (existing flow) ──────────────────────
-  if (refundAmountCents > 0 && booking.payment.stripePaymentIntentId) {
+  if (refundAmountCents > 0) {
     const paymentId = booking.payment.id;
-    const refund = await processRefund({
-      paymentIntentId: booking.payment.stripePaymentIntentId,
+    const refundResult = await refundPaymentTransactions({
+      paymentId,
       amountCents: refundAmountCents,
       metadata: {
         bookingId: booking.id,
         reason: "cancellation",
         refundPercentage: refundPercentage.toString(),
       },
+      idempotencyKeyPrefix: `booking_cancel_refund_${booking.id}`,
     });
-
-    const newRefundedTotal =
-      booking.payment.refundedAmountCents + refundAmountCents;
-    const newStatus =
-      newRefundedTotal >= booking.payment.amountCents
-        ? "REFUNDED"
-        : "PARTIALLY_REFUNDED";
-
-    await prisma.$transaction([
-      prisma.payment.update({
-        where: { bookingId: booking.id },
-        data: {
-          refundedAmountCents: newRefundedTotal,
-          status: newStatus,
-          ...(shouldFailAdditionalPayment
-            ? { additionalPaymentStatus: "FAILED" }
-            : {}),
-        },
-      }),
-      prisma.booking.update({
-        where: { id: bookingId },
-        data: { status: "CANCELLED" },
-      }),
-    ]);
+    await prisma.booking.update({
+      where: { id: bookingId },
+      data: { status: "CANCELLED" },
+    });
 
     // Queue the Xero credit note durably (allocated against the original invoice).
     try {
@@ -508,7 +505,7 @@ export async function cancelBooking(
         refundPercentage,
         refundMethod: "card",
         creditRestoredCents: creditRestoredCents || undefined,
-        stripeRefundId: refund.id,
+        stripeRefundId: refundResult.refunds[0]?.refundId,
         message: `Booking cancelled. ${refundPercentage}% refund of $${(refundAmountCents / 100).toFixed(2)} processed.`,
       },
     };
@@ -609,6 +606,7 @@ async function cancelOutstandingPaymentIntents({
   for (const paymentIntentId of paymentIntentIds) {
     try {
       await cancelPaymentIntentIfCancellable(paymentIntentId);
+      await markPaymentIntentTransactionFailed({ paymentIntentId });
     } catch (err) {
       logger.error(
         { err, paymentIntentId },
