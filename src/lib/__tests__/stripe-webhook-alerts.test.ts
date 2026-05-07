@@ -20,6 +20,14 @@ const {
   mockSendAdminPaymentFailureAlert,
   mockSendSetupIntentFailedEmail,
   mockLogAudit,
+  mockFindPaymentTransactionByIntentId,
+  mockMarkPaymentIntentTransactionFailed,
+  mockMarkPaymentIntentTransactionSucceeded,
+  mockRefundPaymentTransactions,
+  mockSyncRefundedAmountFromStripe,
+  mockUpsertPaymentIntentTransaction,
+  mockMarkBookingPaymentSucceeded,
+  mockMarkBookingSetupIntentSucceeded,
 } = vi.hoisted(() => ({
   mockConstructWebhookEvent: vi.fn(),
   mockProcessedWebhookCreate: vi.fn(),
@@ -51,10 +59,41 @@ const {
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
   mockSendSetupIntentFailedEmail: vi.fn().mockResolvedValue(undefined),
   mockLogAudit: vi.fn(),
+  mockFindPaymentTransactionByIntentId: vi.fn(),
+  mockMarkPaymentIntentTransactionFailed: vi.fn().mockResolvedValue(undefined),
+  mockMarkPaymentIntentTransactionSucceeded: vi.fn().mockResolvedValue(undefined),
+  mockRefundPaymentTransactions: vi.fn().mockResolvedValue({
+    refunds: [],
+    totalRefundedAmountCents: 0,
+  }),
+  mockSyncRefundedAmountFromStripe: vi.fn().mockResolvedValue(null),
+  mockUpsertPaymentIntentTransaction: vi.fn().mockResolvedValue(undefined),
+  mockMarkBookingPaymentSucceeded: vi.fn().mockResolvedValue(undefined),
+  mockMarkBookingSetupIntentSucceeded: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/stripe", () => ({
   constructWebhookEvent: (...args: unknown[]) => mockConstructWebhookEvent(...args),
+}));
+vi.mock("@/lib/payment-reconciliation", () => ({
+  markBookingPaymentSucceeded: (...args: unknown[]) =>
+    mockMarkBookingPaymentSucceeded(...args),
+  markBookingSetupIntentSucceeded: (...args: unknown[]) =>
+    mockMarkBookingSetupIntentSucceeded(...args),
+}));
+vi.mock("@/lib/payment-transactions", () => ({
+  findPaymentTransactionByIntentId: (...args: unknown[]) =>
+    mockFindPaymentTransactionByIntentId(...args),
+  markPaymentIntentTransactionFailed: (...args: unknown[]) =>
+    mockMarkPaymentIntentTransactionFailed(...args),
+  markPaymentIntentTransactionSucceeded: (...args: unknown[]) =>
+    mockMarkPaymentIntentTransactionSucceeded(...args),
+  refundPaymentTransactions: (...args: unknown[]) =>
+    mockRefundPaymentTransactions(...args),
+  syncRefundedAmountFromStripe: (...args: unknown[]) =>
+    mockSyncRefundedAmountFromStripe(...args),
+  upsertPaymentIntentTransaction: (...args: unknown[]) =>
+    mockUpsertPaymentIntentTransaction(...args),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -125,6 +164,17 @@ describe("Stripe webhook Xero alerting", () => {
     mockProcessedWebhookDeleteMany.mockResolvedValue({ count: 0 });
     mockPaymentUpdate.mockResolvedValue({});
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
+    mockFindPaymentTransactionByIntentId.mockResolvedValue(null);
+    mockMarkPaymentIntentTransactionFailed.mockResolvedValue(undefined);
+    mockMarkPaymentIntentTransactionSucceeded.mockResolvedValue(undefined);
+    mockRefundPaymentTransactions.mockResolvedValue({
+      refunds: [],
+      totalRefundedAmountCents: 0,
+    });
+    mockSyncRefundedAmountFromStripe.mockResolvedValue(null);
+    mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
+    mockMarkBookingPaymentSucceeded.mockResolvedValue(undefined);
+    mockMarkBookingSetupIntentSucceeded.mockResolvedValue(undefined);
     mockTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         payment: {
@@ -160,13 +210,17 @@ describe("Stripe webhook Xero alerting", () => {
       },
     } as any);
 
-    mockPaymentFindUnique.mockResolvedValue({
-      id: "payment-1",
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "txn-1",
+      paymentId: "payment-1",
       bookingId: "booking-1",
+      kind: "PRIMARY",
       amountCents: 5000,
+      status: "PENDING",
     });
     mockBookingFindUnique.mockResolvedValue({
       id: "booking-1",
+      status: "CONFIRMED",
       checkIn: new Date("2026-07-01"),
       checkOut: new Date("2026-07-03"),
       finalPriceCents: 5000,
@@ -180,6 +234,12 @@ describe("Stripe webhook Xero alerting", () => {
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(200);
+    expect(mockMarkBookingPaymentSucceeded).toHaveBeenCalledWith({
+      bookingId: "booking-1",
+      paymentIntentId: "pi_primary",
+      amountCents: 5000,
+      paymentMethodId: "pm_123",
+    });
     expect(mockNotifyXeroSyncError).toHaveBeenCalledWith({
       errorType: "INVOICE_CREATION",
       operation: "Queue invoice for booking booking-1",
@@ -206,10 +266,14 @@ describe("Stripe webhook Xero alerting", () => {
       },
     } as any);
 
-    mockPaymentFindUnique.mockResolvedValue({
-      id: "payment-2",
-      amountCents: 5000,
-      refundedAmountCents: 0,
+    mockSyncRefundedAmountFromStripe.mockResolvedValue({
+      paymentId: "payment-2",
+      refundDeltaCents: 5000,
+      payment: {
+        id: "payment-2",
+        amountCents: 5000,
+        refundedAmountCents: 5000,
+      },
     });
     mockIsXeroConnected.mockResolvedValue(true);
     mockEnqueueXeroRefundCreditNoteOperation.mockRejectedValue(
@@ -219,12 +283,9 @@ describe("Stripe webhook Xero alerting", () => {
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(200);
-    expect(mockPaymentUpdate).toHaveBeenCalledWith({
-      where: { id: "payment-2" },
-      data: {
-        refundedAmountCents: 5000,
-        status: "REFUNDED",
-      },
+    expect(mockSyncRefundedAmountFromStripe).toHaveBeenCalledWith({
+      paymentIntentId: "pi_refund",
+      refundedAmountCents: 5000,
     });
     expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
       "payment-2",
@@ -249,22 +310,23 @@ describe("Stripe webhook Xero alerting", () => {
       },
     } as any);
 
-    mockPaymentFindUnique.mockResolvedValue({
-      id: "payment-3",
-      amountCents: 5000,
-      refundedAmountCents: 1200,
+    mockSyncRefundedAmountFromStripe.mockResolvedValue({
+      paymentId: "payment-3",
+      refundDeltaCents: 3800,
+      payment: {
+        id: "payment-3",
+        amountCents: 5000,
+        refundedAmountCents: 5000,
+      },
     });
     mockIsXeroConnected.mockResolvedValue(false);
 
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(200);
-    expect(mockPaymentUpdate).toHaveBeenCalledWith({
-      where: { id: "payment-3" },
-      data: {
-        refundedAmountCents: 5000,
-        status: "REFUNDED",
-      },
+    expect(mockSyncRefundedAmountFromStripe).toHaveBeenCalledWith({
+      paymentIntentId: "pi_refund_delta",
+      refundedAmountCents: 5000,
     });
     expect(mockEnqueueXeroRefundCreditNoteOperation).toHaveBeenCalledWith(
       "payment-3",
@@ -289,12 +351,19 @@ describe("Stripe webhook Xero alerting", () => {
       },
     } as any);
 
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "txn-4",
+      paymentId: "payment-4",
+      kind: "ADDITIONAL",
+      amountCents: 2500,
+      status: "PENDING",
+    });
+
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(200);
-    expect(mockPaymentUpdate).toHaveBeenCalledWith({
-      where: { bookingId: "booking-4" },
-      data: { additionalPaymentStatus: "FAILED" },
+    expect(mockMarkPaymentIntentTransactionFailed).toHaveBeenCalledWith({
+      paymentIntentId: "pi_additional_canceled",
     });
     expect(mockLogAudit).toHaveBeenCalledWith({
       action: "booking.modification.payment.canceled",
@@ -330,7 +399,7 @@ describe("Stripe webhook Xero alerting", () => {
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(200);
-    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+    expect(mockMarkPaymentIntentTransactionFailed).not.toHaveBeenCalled();
     expect(mockLogAudit).not.toHaveBeenCalled();
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
@@ -356,7 +425,7 @@ describe("Stripe webhook Xero alerting", () => {
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(200);
-    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+    expect(mockMarkPaymentIntentTransactionFailed).not.toHaveBeenCalled();
     expect(mockLogAudit).not.toHaveBeenCalled();
   });
 
@@ -372,21 +441,22 @@ describe("Stripe webhook Xero alerting", () => {
       },
     } as any);
 
-    mockPaymentFindUnique.mockResolvedValue({
-      id: "payment-4",
-      amountCents: 5000,
-      refundedAmountCents: 5000,
+    mockSyncRefundedAmountFromStripe.mockResolvedValue({
+      paymentId: "payment-4",
+      refundDeltaCents: 0,
+      payment: {
+        id: "payment-4",
+        amountCents: 5000,
+        refundedAmountCents: 5000,
+      },
     });
 
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(200);
-    expect(mockPaymentUpdate).toHaveBeenCalledWith({
-      where: { id: "payment-4" },
-      data: {
-        refundedAmountCents: 5000,
-        status: "REFUNDED",
-      },
+    expect(mockSyncRefundedAmountFromStripe).toHaveBeenCalledWith({
+      paymentIntentId: "pi_refund_repeat",
+      refundedAmountCents: 5000,
     });
     expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });

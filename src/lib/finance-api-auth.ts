@@ -34,6 +34,16 @@ async function requireFinanceApiAccess(input: {
     };
   }
 
+  if (session.user.role === "LODGE") {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: input.missingAccessMessage },
+        { status: 403 }
+      ),
+    };
+  }
+
   const member = await loadFinanceAccessMember(session.user.id);
 
   if (!member) {

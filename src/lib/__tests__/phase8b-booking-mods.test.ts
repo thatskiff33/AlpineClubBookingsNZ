@@ -11,6 +11,8 @@ const mockDelete = vi.fn();
 const mockDeleteMany = vi.fn();
 const mockFindMany = vi.fn();
 const mockMemberCount = vi.fn();
+const mockRefundPaymentTransactions = vi.fn();
+const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
@@ -72,6 +74,12 @@ vi.mock("@/lib/promo", () => ({
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/stripe", () => ({ processRefund: vi.fn() }));
+vi.mock("@/lib/payment-transactions", () => ({
+  refundPaymentTransactions: (...args: unknown[]) =>
+    mockRefundPaymentTransactions(...args),
+  upsertPaymentIntentTransaction: (...args: unknown[]) =>
+    mockUpsertPaymentIntentTransaction(...args),
+}));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendBookingModifiedEmail: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
@@ -198,6 +206,11 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
       email: "alice@test.com",
       firstName: "Alice",
     } as any);
+    mockRefundPaymentTransactions.mockResolvedValue({
+      refunds: [],
+      totalRefundedAmountCents: 0,
+    });
+    mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
     const mod = await import("@/app/api/bookings/[id]/modify-dates/route");
     PUT = mod.PUT;
   });
@@ -358,7 +371,16 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     mockedDaysUntilDate.mockReturnValue(30);
     mockedLoadPolicy.mockResolvedValue([]);
     mockedGetHoldDays.mockResolvedValue(7);
-    mockedProcessRefund.mockResolvedValue({ id: "re_123" } as any);
+    mockRefundPaymentTransactions.mockResolvedValue({
+      refunds: [
+        {
+          paymentIntentId: "pi_123",
+          refundId: "re_123",
+          amountCents: 5000,
+        },
+      ],
+      totalRefundedAmountCents: 5000,
+    });
     mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
@@ -370,7 +392,7 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     const body = await res.json();
     expect(body.refundAmountCents).toBe(5000);
     expect(body.stripeRefundId).toBe("re_123");
-    expect(mockedProcessRefund).toHaveBeenCalledOnce();
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledOnce();
   });
 
   it("calculates change fee when check-in moves to lenient tier", async () => {
@@ -596,6 +618,11 @@ describe("POST /api/bookings/[id]/guests", () => {
       email: "alice@test.com",
       firstName: "Alice",
     } as any);
+    mockRefundPaymentTransactions.mockResolvedValue({
+      refunds: [],
+      totalRefundedAmountCents: 0,
+    });
+    mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
     const mod = await import("@/app/api/bookings/[id]/guests/route");
     POST = mod.POST;
   });
@@ -843,6 +870,11 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       email: "alice@test.com",
       firstName: "Alice",
     } as any);
+    mockRefundPaymentTransactions.mockResolvedValue({
+      refunds: [],
+      totalRefundedAmountCents: 0,
+    });
+    mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
     const mod = await import("@/app/api/bookings/[id]/guests/[guestId]/route");
     DELETE = mod.DELETE;
   });
@@ -921,7 +953,16 @@ describe("DELETE /api/bookings/[id]/guests/[guestId]", () => {
       guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }],
       totalPriceCents: 5000,
     });
-    mockedProcessRefund.mockResolvedValue({ id: "re_456" } as any);
+    mockRefundPaymentTransactions.mockResolvedValue({
+      refunds: [
+        {
+          paymentIntentId: "pi_123",
+          refundId: "re_456",
+          amountCents: 5000,
+        },
+      ],
+      totalRefundedAmountCents: 5000,
+    });
     mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests/g2", { method: "DELETE" });

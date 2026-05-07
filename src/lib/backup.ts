@@ -20,6 +20,7 @@ import logger from "@/lib/logger";
 const BACKUP_DIR = "/tmp/tacbookings-backups";
 const DEFAULT_RETENTION_DAYS = 7;
 const S3_BACKUP_PREFIX = "tacbookings_s3backup";
+const MIN_BACKUP_SIZE_BYTES = 128;
 
 export interface BackupResult {
   success: boolean;
@@ -83,6 +84,10 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
     if (stats.size === 0) {
       unlinkSync(filepath);
       return { success: false, error: "Backup file is empty" };
+    }
+    if (stats.size < MIN_BACKUP_SIZE_BYTES) {
+      unlinkSync(filepath);
+      return { success: false, error: "Backup file is suspiciously small" };
     }
 
     let uploadedToS3 = false;

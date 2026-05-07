@@ -10,6 +10,8 @@ const mockFindOrCreateCustomer = vi.fn();
 const mockCheckCapacity = vi.fn();
 const mockCalculateBookingPrice = vi.fn();
 const mockAuth = vi.fn();
+const mockRefundPaymentTransactions = vi.fn();
+const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
@@ -63,6 +65,12 @@ vi.mock("@/lib/stripe", () => ({
   processRefund: vi.fn(),
   createPaymentIntent: mockCreatePaymentIntent,
   findOrCreateCustomer: mockFindOrCreateCustomer,
+}));
+vi.mock("@/lib/payment-transactions", () => ({
+  refundPaymentTransactions: (...args: unknown[]) =>
+    mockRefundPaymentTransactions(...args),
+  upsertPaymentIntentTransaction: (...args: unknown[]) =>
+    mockUpsertPaymentIntentTransaction(...args),
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -162,6 +170,7 @@ function makeBooking() {
       amountCents: 5000,
       status: "SUCCEEDED",
       stripePaymentIntentId: "pi_original",
+      xeroInvoiceId: "inv_primary",
       stripeCustomerId: null,
       refundedAmountCents: 0,
       changeFeeCents: 0,
@@ -262,6 +271,11 @@ describe("PUT /api/bookings/[id]/modify", () => {
       id: "pi_batch",
       client_secret: "pi_batch_secret",
     });
+    mockRefundPaymentTransactions.mockResolvedValue({
+      refunds: [],
+      totalRefundedAmountCents: 0,
+    });
+    mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
   });
 
   it("creates an additional PaymentIntent when a paid booking increases in price", async () => {
@@ -333,15 +347,14 @@ describe("PUT /api/bookings/[id]/modify", () => {
       })
     );
 
-    expect(mockPaymentUpdate).toHaveBeenCalledWith({
-      where: { id: "pay_1" },
-      data: {
-        additionalPaymentIntentId: "pi_batch",
-        additionalAmountCents: 10000,
-        additionalPaymentStatus: "PENDING",
+    expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay_1",
+        paymentIntentId: "pi_batch",
+        amountCents: 10000,
         stripeCustomerId: "cus_new",
-      },
-    });
+      })
+    );
 
     await Promise.resolve();
     expect(mockEnqueueXeroSupplementaryInvoiceOperation).toHaveBeenCalledWith(

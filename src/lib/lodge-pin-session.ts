@@ -17,6 +17,7 @@ interface PinSessionPayload {
   assignmentId: string;
   memberId: string;
   exp: number;
+  pinVersion?: string;
 }
 
 interface PinFailureEntry {
@@ -46,6 +47,12 @@ function encodePayload(payload: PinSessionPayload): string {
   return `${payloadPart}.${signPayload(payloadPart)}`;
 }
 
+function derivePinSessionVersion(pinHash: string) {
+  return createHmac("sha256", getPinSessionSecret())
+    .update(pinHash)
+    .digest("base64url");
+}
+
 function decodePayload(rawValue: string): PinSessionPayload | null {
   const [payloadPart, signaturePart] = rawValue.split(".");
   if (!payloadPart || !signaturePart) {
@@ -71,7 +78,8 @@ function decodePayload(rawValue: string): PinSessionPayload | null {
     if (
       typeof payload.assignmentId !== "string" ||
       typeof payload.memberId !== "string" ||
-      typeof payload.exp !== "number"
+      typeof payload.exp !== "number" ||
+      (payload.pinVersion !== undefined && typeof payload.pinVersion !== "string")
     ) {
       return null;
     }
@@ -160,6 +168,14 @@ export async function findActiveHutLeaderAssignmentByPin(
 }
 
 export function createLodgePinSession(assignmentId: string, memberId: string) {
+  return createLodgePinSessionWithVersion(assignmentId, memberId);
+}
+
+export function createLodgePinSessionWithVersion(
+  assignmentId: string,
+  memberId: string,
+  pinHash?: string | null
+) {
   const expiresAt = new Date(
     Date.now() + HUT_LEADER_PIN_SESSION_MAX_AGE_SECONDS * 1000
   );
@@ -169,6 +185,7 @@ export function createLodgePinSession(assignmentId: string, memberId: string) {
       assignmentId,
       memberId,
       exp: Math.floor(expiresAt.getTime() / 1000),
+      pinVersion: pinHash ? derivePinSessionVersion(pinHash) : undefined,
     }),
     expiresAt,
     maxAge: HUT_LEADER_PIN_SESSION_MAX_AGE_SECONDS,
@@ -208,6 +225,13 @@ export async function getActiveLodgePinSessionForDate(
     assignment.memberId !== payload.memberId ||
     !assignment.member.active ||
     !assignment.hutLeaderPin
+  ) {
+    return null;
+  }
+
+  if (
+    !payload.pinVersion ||
+    payload.pinVersion !== derivePinSessionVersion(assignment.hutLeaderPin)
   ) {
     return null;
   }

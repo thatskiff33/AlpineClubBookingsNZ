@@ -25,12 +25,15 @@ function sliceFrom(source: string, startMarker: string, endMarker?: string) {
 }
 
 describe("review finding source/schema contracts", () => {
-  it("does not leave guest chore completion as an unauthenticated public mutation", () => {
+  it("keeps guest chore completion token-authenticated, rate-limited, and schema-validated", () => {
     const source = readRepoFile("src/app/api/chores/[token]/route.ts");
     const putBlock = sliceFrom(source, "export async function PUT");
 
     expect(putBlock).not.toContain("Public endpoint");
-    expect(putBlock).toContain("auth(");
+    expect(putBlock).not.toContain("auth(");
+    expect(putBlock).toContain("applyRateLimit");
+    expect(putBlock).toContain("validateGuestChoreToken");
+    expect(putBlock).toContain("guestChoreMutationSchema.safeParse");
   });
 
   it("wraps waitlist booking creation in a transaction instead of standalone Prisma writes", () => {

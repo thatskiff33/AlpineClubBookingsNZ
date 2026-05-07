@@ -77,6 +77,15 @@ export async function GET(request: NextRequest) {
   });
 
   if (!parsed.success) {
+    const qErrors = parsed.error.flatten().fieldErrors.q;
+
+    if (qErrors?.length) {
+      return NextResponse.json(
+        { error: "Search query must be at least 2 characters" },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
       { error: "Invalid query parameters", details: parsed.error.flatten() },
       { status: 400 }

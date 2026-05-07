@@ -2,8 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
+const mockPrismaTransaction = vi.fn();
+const mockTxMemberFindUnique = vi.fn();
+
 vi.mock("../prisma", () => ({
   prisma: {
+    $transaction: (...args: unknown[]) => mockPrismaTransaction(...args),
     member: {
       findMany: vi.fn(),
       update: vi.fn(),
@@ -46,6 +50,19 @@ const mockedSendEmail = vi.mocked(sendAgeUpInvitationEmail);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrismaTransaction.mockImplementation(
+    async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        member: {
+          findUnique: mockTxMemberFindUnique,
+          update: mockedUpdate,
+        },
+        passwordResetToken: {
+          create: mockedCreateToken,
+        },
+      })
+  );
+  mockTxMemberFindUnique.mockResolvedValue({ canLogin: false });
 });
 
 // Helper: create a date of birth for a given age at season start (April 1 2026)

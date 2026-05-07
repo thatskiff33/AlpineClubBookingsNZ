@@ -80,6 +80,11 @@ const mockRequireActiveSessionUser = vi.fn(async () => null);
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
 }));
+const mockUpsertPaymentIntentTransaction = vi.fn();
+vi.mock("@/lib/payment-transactions", () => ({
+  upsertPaymentIntentTransaction: (...args: unknown[]) =>
+    mockUpsertPaymentIntentTransaction(...args),
+}));
 
 vi.mock("@/lib/cancellation", () => ({
   getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
@@ -230,6 +235,8 @@ beforeEach(() => {
   mockTx.booking.update.mockResolvedValue({});
   mockTx.payment.create.mockResolvedValue({});
   mockTx.season.findMany.mockResolvedValue([]);
+  mockPrisma.payment.upsert.mockResolvedValue({ id: "payment-1" });
+  mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
 });
 
 // ─── Issue 7: Draft Booking Creation ─────────────────────────────────────────
@@ -263,7 +270,7 @@ describe("Issue 7: Draft Booking Creation", () => {
     );
   });
 
-  it("draft booking stays behind the global advisory-lock transaction", async () => {
+  it("draft booking bypasses the capacity-lock transaction", async () => {
     mockAuth.mockResolvedValue(memberSession());
 
     mockPrisma.booking.create.mockResolvedValue({
@@ -278,8 +285,8 @@ describe("Issue 7: Draft Booking Creation", () => {
     const res = await createBooking(makeBookingBody({ draft: true }));
     expect(res.status).toBe(201);
 
-    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockTx.$executeRaw).not.toHaveBeenCalled();
   });
 
   it("draft booking does NOT call sendBookingConfirmedEmail or admin alert", async () => {
@@ -372,11 +379,14 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
       memberId: "member-1",
       status: "DRAFT",
       finalPriceCents: 10000,
+      hasNonMembers: false,
+      requiresAdminReview: false,
+      adminReviewReason: null,
       member: { id: "member-1", email: "test@example.com", firstName: "Alice", lastName: "Smith" },
       payment: null,
     };
     mockPrisma.booking.findUnique.mockResolvedValue(draftBooking);
-    mockPrisma.payment.upsert.mockResolvedValue({});
+    mockPrisma.payment.upsert.mockResolvedValue({ id: "payment-1" });
 
     // Mock the $transaction for capacity check + status transition
     mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockTx) => Promise<unknown>) => {
@@ -404,6 +414,12 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
     expect(mockTx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: "CONFIRMED" }),
+      })
+    );
+    expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "payment-1",
+        paymentIntentId: "pi_test",
       })
     );
   });

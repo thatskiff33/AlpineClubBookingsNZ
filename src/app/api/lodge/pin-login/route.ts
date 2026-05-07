@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   HUT_LEADER_PIN_SESSION_COOKIE,
   clearLodgePinFailures,
-  createLodgePinSession,
+  createLodgePinSessionWithVersion,
   findActiveHutLeaderAssignmentByPin,
   getLodgePinLockout,
   recordLodgePinFailure,
@@ -75,7 +75,11 @@ export async function POST(req: NextRequest) {
 
   clearLodgePinFailures(ip);
 
-  const session = createLodgePinSession(assignment.id, assignment.memberId);
+  const session = createLodgePinSessionWithVersion(
+    assignment.id,
+    assignment.memberId,
+    assignment.hutLeaderPin
+  );
   const response = NextResponse.json({
     success: true,
     tier: "hut-leader",

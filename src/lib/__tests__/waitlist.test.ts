@@ -77,6 +77,19 @@ vi.mock("@/lib/logger", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPrismaTransaction.mockReset();
+  mockBookingFindUnique.mockReset();
+  mockBookingFindMany.mockReset();
+  mockBookingCount.mockReset();
+  mockBookingUpdate.mockReset();
+  mockBookingUpdateMany.mockReset();
+  mockBookingCreate.mockReset();
+  mockExecuteRaw.mockReset();
+  mockTx.booking.findMany.mockReset();
+  mockTx.booking.findUnique.mockReset();
+  mockTx.booking.update.mockReset();
+  mockTx.booking.count.mockReset();
+  mockExecuteRaw.mockResolvedValue(undefined);
   // Default: transaction runs the callback with mockTx
   mockPrismaTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx));
 });
@@ -354,33 +367,23 @@ describe("expireStaleOffers", () => {
   it("reverts expired offers to WAITLISTED", async () => {
     const { expireStaleOffers } = await import("@/lib/waitlist");
 
-    // Mock: find stale offers
-    mockBookingFindMany.mockResolvedValueOnce([
-      {
-        id: "booking1",
-        checkIn: new Date("2026-07-01"),
-        checkOut: new Date("2026-07-03"),
-        member: { email: "test@test.com", firstName: "John" },
-      },
-    ]);
-    mockBookingUpdate.mockResolvedValue({});
-
-    // Mock for getWaitlistPosition call (inside expireStaleOffers)
-    mockBookingFindUnique.mockResolvedValue({
-      checkIn: new Date("2026-07-01"),
-      checkOut: new Date("2026-07-03"),
-      createdAt: new Date("2026-04-01"),
-      status: "WAITLISTED",
-    });
-    mockBookingCount.mockResolvedValue(0);
-
-    // Mock for processWaitlistForDates (re-offer attempt)
-    mockTx.booking.findMany.mockResolvedValue([]);
+    mockTx.booking.findMany
+      .mockResolvedValueOnce([
+        {
+          id: "booking1",
+          checkIn: new Date("2026-07-01"),
+          checkOut: new Date("2026-07-03"),
+          createdAt: new Date("2026-04-01"),
+          member: { email: "test@test.com", firstName: "John" },
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    mockTx.booking.update.mockResolvedValue({});
 
     const result = await expireStaleOffers();
 
     expect(result.expiredCount).toBe(1);
-    expect(mockBookingUpdate).toHaveBeenCalledWith(
+    expect(mockTx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "booking1" },
         data: expect.objectContaining({ status: "WAITLISTED" }),
@@ -391,7 +394,7 @@ describe("expireStaleOffers", () => {
   it("does nothing when no stale offers exist", async () => {
     const { expireStaleOffers } = await import("@/lib/waitlist");
 
-    mockBookingFindMany.mockResolvedValueOnce([]);
+    mockTx.booking.findMany.mockResolvedValueOnce([]);
 
     const result = await expireStaleOffers();
 
@@ -403,38 +406,27 @@ describe("expireStaleOffers", () => {
     const { expireStaleOffers } = await import("@/lib/waitlist");
     const { checkCapacity } = await import("@/lib/capacity");
 
-    // One stale WAITLIST_OFFERED booking
-    mockBookingFindMany.mockResolvedValueOnce([
-      {
-        id: "expired-offer-1",
-        checkIn: new Date("2026-08-01"),
-        checkOut: new Date("2026-08-03"),
-        member: { email: "alice@test.com", firstName: "Alice" },
-      },
-    ]);
-
-    // Revert update succeeds
-    mockBookingUpdate.mockResolvedValue({});
-
-    // getWaitlistPosition internals
-    mockBookingFindUnique.mockResolvedValue({
-      checkIn: new Date("2026-08-01"),
-      checkOut: new Date("2026-08-03"),
-      createdAt: new Date("2026-05-01"),
-      status: "WAITLISTED",
-    });
-    mockBookingCount.mockResolvedValue(0);
-
-    // processWaitlistForDates finds a candidate but lodge is full → no offer
-    mockTx.booking.findMany.mockResolvedValue([
-      {
-        id: "next-candidate",
-        checkIn: new Date("2026-08-01"),
-        checkOut: new Date("2026-08-03"),
-        guests: [{ id: "g1" }, { id: "g2" }],
-        member: { id: "m2", email: "bob@test.com", firstName: "Bob", lastName: "Jones" },
-      },
-    ]);
+    mockTx.booking.findMany
+      .mockResolvedValueOnce([
+        {
+          id: "expired-offer-1",
+          checkIn: new Date("2026-08-01"),
+          checkOut: new Date("2026-08-03"),
+          createdAt: new Date("2026-05-01"),
+          member: { email: "alice@test.com", firstName: "Alice" },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "next-candidate",
+          checkIn: new Date("2026-08-01"),
+          checkOut: new Date("2026-08-03"),
+          createdAt: new Date("2026-05-02"),
+          guests: [{ id: "g1" }, { id: "g2" }],
+          member: { id: "m2", email: "bob@test.com", firstName: "Bob", lastName: "Jones" },
+        },
+      ]);
+    mockTx.booking.update.mockResolvedValue({});
     vi.mocked(checkCapacity).mockResolvedValue({
       available: false,
       minAvailable: 0,
@@ -444,10 +436,8 @@ describe("expireStaleOffers", () => {
     const result = await expireStaleOffers();
 
     expect(result.expiredCount).toBe(1);
-    expect(result.reofferedCount).toBe(0); // no capacity → no new offer
-
-    // The expired booking was correctly reverted to WAITLISTED
-    expect(mockBookingUpdate).toHaveBeenCalledWith(
+    expect(result.reofferedCount).toBe(0);
+    expect(mockTx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "expired-offer-1" },
         data: expect.objectContaining({ status: "WAITLISTED" }),
@@ -555,12 +545,11 @@ describe("processWaitlistCron", () => {
   it("auto-cancels past-date waitlisted bookings", async () => {
     const { processWaitlistCron } = await import("@/lib/cron-waitlist");
 
-    // Mock expireStaleOffers (from waitlist.ts)
-    mockBookingFindMany.mockResolvedValueOnce([]); // no stale offers
-
-    // Mock past-date waitlisted bookings
+    mockTx.booking.findMany.mockResolvedValueOnce([]);
     mockBookingFindMany.mockResolvedValueOnce([
-      { id: "old1" },
+      {
+        id: "old1",
+      },
       { id: "old2" },
     ]);
     mockBookingUpdateMany.mockResolvedValue({ count: 2 });

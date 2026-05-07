@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateGuestChoreToken } from "@/lib/guest-chore-token";
 import logger from "@/lib/logger";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { requireActiveSessionUser } from "@/lib/session-guards";
 
 const guestChoreMutationSchema = z.object({
   assignmentId: z.string().min(1),
@@ -44,7 +42,7 @@ export async function GET(
 
 /**
  * PUT /api/chores/[token]
- * Public endpoint. Marks a chore assignment as completed via guest link.
+ * Token-authenticated public endpoint. Marks a chore assignment via guest link.
  */
 export async function PUT(
   req: NextRequest,
@@ -53,16 +51,6 @@ export async function PUT(
   const rateLimited = applyRateLimit(rateLimiters.guestChoreToken, req);
   if (rateLimited) {
     return rateLimited;
-  }
-
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
-  }
-
-  const inactiveResponse = await requireActiveSessionUser(session.user.id);
-  if (inactiveResponse) {
-    return inactiveResponse;
   }
 
   const { token } = await params;

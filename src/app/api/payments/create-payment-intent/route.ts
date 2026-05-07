@@ -57,6 +57,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (
+      booking.status !== "PENDING" &&
+      booking.status !== "CONFIRMED" &&
+      booking.status !== "DRAFT"
+    ) {
+      return NextResponse.json(
+        { error: "Booking is not in a payable state" },
+        { status: 400 }
+      );
+    }
+
+    if (
       !canCreateImmediatePaymentIntent({
         status: booking.status,
         hasNonMembers: booking.hasNonMembers,
@@ -100,17 +111,6 @@ export async function POST(request: NextRequest) {
           paymentIntentId: existingIntent.id,
         });
       }
-    }
-
-    if (
-      booking.status !== "PENDING" &&
-      booking.status !== "CONFIRMED" &&
-      booking.status !== "DRAFT"
-    ) {
-      return NextResponse.json(
-        { error: "Booking is not in a payable state" },
-        { status: 400 }
-      );
     }
 
     // For DRAFT bookings: check capacity and transition to CONFIRMED before charging
