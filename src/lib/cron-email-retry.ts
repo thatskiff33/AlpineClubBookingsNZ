@@ -22,6 +22,8 @@ const transporter = nodemailer.createTransport({
  * Queries EmailLog for FAILED records with attempts < 3 and re-sends.
  * Token-bearing templates are intentionally excluded because their HTML bodies
  * are not retained in EmailLog.
+ * SES/SNS bounce and complaint feedback marks undeliverable messages as
+ * BOUNCED, so they are excluded from retry recovery.
  * Runs every 30 minutes.
  */
 export async function retryFailedEmails(): Promise<{ retried: number; succeeded: number; failed: number }> {

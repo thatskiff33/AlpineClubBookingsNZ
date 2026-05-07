@@ -56,6 +56,10 @@ import { EMAIL_FROM, formatEmailFromAddress } from "./email-sender";
 import { htmlToPlainText } from "./email-text";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import {
+  EMAIL_CHANGE_TTL_MS,
+  EMAIL_VERIFICATION_TTL_MS,
+} from "@/lib/verification-tokens";
 
 type EmailAttachment = {
   filename: string;
@@ -419,11 +423,12 @@ export async function sendWelcomeEmail(email: string, firstName: string) {
 export async function sendVerificationEmail(email: string, firstName: string, token: string) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const verifyUrl = `${baseUrl}/verify-email?token=${token}`;
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
 
   await sendEmail({
     to: email,
     subject: "Verify your email — Tokoroa Alpine Club - Bookings",
-    html: emailVerificationTemplate(firstName, verifyUrl),
+    html: emailVerificationTemplate(firstName, verifyUrl, expiresAt),
     templateName: "email-verification",
   });
 }
@@ -516,13 +521,104 @@ export async function sendAdminMembershipApplicationPendingEmail(data: {
 export async function sendEmailChangeVerification(newEmail: string, token: string) {
   const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
   const verifyUrl = `${baseUrl}/confirm-email-change?token=${token}`;
+  const expiresAt = new Date(Date.now() + EMAIL_CHANGE_TTL_MS);
 
   await sendEmail({
     to: newEmail,
     subject: "Confirm your new email — Tokoroa Alpine Club - Bookings",
-    html: emailChangeVerificationTemplate(newEmail, verifyUrl),
+    html: emailChangeVerificationTemplate(newEmail, verifyUrl, expiresAt),
     templateName: "email-change-verification",
   });
+}
+
+type SesSnsNotification = {
+  Type?: string;
+  Message?: string;
+  notificationType?: string;
+  bounce?: {
+    bouncedRecipients?: Array<{ emailAddress?: string }>;
+  };
+  complaint?: {
+    complainedRecipients?: Array<{ emailAddress?: string }>;
+  };
+  mail?: {
+    destination?: string[];
+    messageId?: string;
+  };
+};
+
+function parseSesSnsNotification(payload: unknown): SesSnsNotification | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const envelope = payload as SesSnsNotification;
+  if (typeof envelope.Message === "string") {
+    try {
+      return parseSesSnsNotification(JSON.parse(envelope.Message));
+    } catch {
+      return null;
+    }
+  }
+
+  return envelope;
+}
+
+function getSesFeedbackRecipients(
+  notification: SesSnsNotification,
+  kind: "bounce" | "complaint"
+) {
+  const recipients =
+    kind === "bounce"
+      ? notification.bounce?.bouncedRecipients?.map(
+          (entry) => entry.emailAddress
+        )
+      : notification.complaint?.complainedRecipients?.map(
+          (entry) => entry.emailAddress
+        );
+
+  return (recipients ?? notification.mail?.destination ?? []).filter(
+    (email): email is string => Boolean(email)
+  );
+}
+
+export async function ingestSesSnsEmailFeedback(payload: unknown) {
+  const notification = parseSesSnsNotification(payload);
+  const notificationType = notification?.notificationType?.toLowerCase();
+  if (notificationType !== "bounce" && notificationType !== "complaint") {
+    return { handled: false as const };
+  }
+
+  const recipients = getSesFeedbackRecipients(notification, notificationType);
+  if (recipients.length === 0) {
+    return { handled: false as const };
+  }
+
+  await prisma.emailLog.updateMany({
+    where: {
+      to: { in: recipients },
+      status: { in: ["QUEUED", "SENT", "FAILED"] },
+    },
+    data: {
+      status: "BOUNCED",
+      errorMessage: `SES ${notificationType} received via SNS`,
+    },
+  });
+
+  logger.warn(
+    {
+      sesNotificationType: notificationType,
+      sesMessageId: notification.mail?.messageId ?? null,
+      recipients,
+    },
+    "Processed SES/SNS email delivery feedback"
+  );
+
+  return {
+    handled: true as const,
+    notificationType,
+    recipients,
+  };
 }
 
 export async function sendEmailChangeNotification(oldEmail: string, newEmail: string) {

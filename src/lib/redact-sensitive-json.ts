@@ -9,6 +9,7 @@ const SENSITIVE_JSON_KEYS = new Set([
   "clientsecret",
   "apikey",
   "password",
+  "stripetoken",
 ]);
 
 function normalizeJsonKey(key: string) {
@@ -45,7 +46,7 @@ export function redactSensitiveText(value: string): string {
 
   return value
     .replace(
-      /("?(?:authorization|cookie|set-cookie|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|api[_-]?key|password)"?\s*:\s*")([^"]*)"/gi,
+      /("?(?:authorization|cookie|set-cookie|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|api[_-]?key|password|stripe[_-]?token)"?\s*:\s*")([^"]*)"/gi,
       `$1${REDACTED_SECRET}"`
     )
     .replace(/\bBearer\s+[A-Za-z0-9\-._~+/]+=*\b/gi, `Bearer ${REDACTED_SECRET}`);

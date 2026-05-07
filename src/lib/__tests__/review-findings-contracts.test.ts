@@ -1,0 +1,237 @@
+import { readFileSync } from "fs";
+import path from "path";
+import { describe, expect, it } from "vitest";
+
+function readRepoFile(relativePath: string) {
+  return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
+}
+
+function sliceFrom(source: string, startMarker: string, endMarker?: string) {
+  const start = source.indexOf(startMarker);
+  if (start === -1) {
+    throw new Error(`Could not find marker: ${startMarker}`);
+  }
+
+  if (!endMarker) {
+    return source.slice(start);
+  }
+
+  const end = source.indexOf(endMarker, start);
+  if (end === -1) {
+    throw new Error(`Could not find end marker: ${endMarker}`);
+  }
+
+  return source.slice(start, end);
+}
+
+describe("review finding source/schema contracts", () => {
+  it("does not leave guest chore completion as an unauthenticated public mutation", () => {
+    const source = readRepoFile("src/app/api/chores/[token]/route.ts");
+    const putBlock = sliceFrom(source, "export async function PUT");
+
+    expect(putBlock).not.toContain("Public endpoint");
+    expect(putBlock).toContain("auth(");
+  });
+
+  it("wraps waitlist booking creation in a transaction instead of standalone Prisma writes", () => {
+    const source = readRepoFile("src/app/api/bookings/route.ts");
+    const createWaitlistedBookingBlock = sliceFrom(
+      source,
+      "async function createWaitlistedBooking",
+      "return NextResponse.json(newBooking, { status: 201 });"
+    );
+
+    expect(createWaitlistedBookingBlock).toContain("prisma.$transaction");
+    expect(createWaitlistedBookingBlock).toContain("pg_advisory_xact_lock(1)");
+  });
+
+  it("wraps age-up membership upgrades and token issuance in a transaction", () => {
+    const source = readRepoFile("src/lib/cron-age-up.ts");
+
+    expect(source).toContain("prisma.$transaction");
+  });
+
+  it("uses stable booking-modification idempotency keys instead of Date.now()", () => {
+    const modifyRoute = readRepoFile("src/app/api/bookings/[id]/modify/route.ts");
+    const modifyDatesRoute = readRepoFile(
+      "src/app/api/bookings/[id]/modify-dates/route.ts"
+    );
+    const guestsRoute = readRepoFile("src/app/api/bookings/[id]/guests/route.ts");
+
+    expect(modifyRoute).not.toContain("Date.now()");
+    expect(modifyDatesRoute).not.toContain("Date.now()");
+    expect(guestsRoute).not.toContain("Date.now()");
+  });
+
+  it("persists executed Stripe refunds as first-class records instead of only cumulative totals", () => {
+    const schema = readRepoFile("prisma/schema.prisma");
+
+    expect(schema).toMatch(/model\s+(?!RefundRequest\b)\w*Refund\w*\s*\{/);
+    expect(schema).toMatch(/stripeRefundId|refundId/);
+  });
+
+  it("does not rely on regex tag stripping in the booking notes route", () => {
+    const source = readRepoFile("src/app/api/bookings/[id]/notes/route.ts");
+
+    expect(source).not.toContain("function stripHtmlTags");
+    expect(source).not.toContain("/<[^>]*>/g");
+  });
+
+  it("renders NZ-local expiry timestamps in email verification and email-change templates", () => {
+    const source = readRepoFile("src/lib/email-templates.ts");
+    const verificationTemplateBlock = sliceFrom(
+      source,
+      "export function emailVerificationTemplate",
+      "export function nominationRequestTemplate"
+    );
+    const emailChangeTemplateBlock = sliceFrom(
+      source,
+      "export function emailChangeVerificationTemplate",
+      "export function emailChangeNotificationTemplate"
+    );
+
+    expect(verificationTemplateBlock).toContain("formatNZDateTime");
+    expect(verificationTemplateBlock).not.toContain("This link expires in 24 hours");
+    expect(emailChangeTemplateBlock).toContain("formatNZDateTime");
+    expect(emailChangeTemplateBlock).not.toContain("This link expires in 1 hour");
+  });
+
+  it("surfaces email-change outcome query state on the profile page", () => {
+    const source = readRepoFile("src/app/(authenticated)/profile/page.tsx");
+
+    expect(source).toContain("emailChangeError");
+    expect(source).toContain("emailChanged");
+  });
+
+  it("validates booking-cancel and guest-chore mutations with explicit schemas", () => {
+    const cancelRoute = readRepoFile("src/app/api/bookings/[id]/cancel/route.ts");
+    const guestChoreRoute = readRepoFile("src/app/api/chores/[token]/route.ts");
+    const schemaPattern = /z\.(object|enum|string|number)|safeParse\(|\.parse\(/;
+
+    expect(cancelRoute).toMatch(schemaPattern);
+    expect(guestChoreRoute).toMatch(schemaPattern);
+    expect(cancelRoute).not.toContain('default to "card"');
+  });
+
+  it("rate-limits public token-bearing verification and guest-chore routes", () => {
+    const verifyEmailRoute = readRepoFile("src/app/api/auth/verify-email/route.ts");
+    const confirmEmailChangeRoute = readRepoFile(
+      "src/app/api/auth/confirm-email-change/route.ts"
+    );
+    const guestChoreRoute = readRepoFile("src/app/api/chores/[token]/route.ts");
+
+    expect(verifyEmailRoute).toContain("applyRateLimit");
+    expect(confirmEmailChangeRoute).toContain("applyRateLimit");
+    expect(guestChoreRoute).toContain("applyRateLimit");
+  });
+
+  it("uses schemas for the remaining manual query and search parsing routes", () => {
+    const schemaPattern = /z\.(object|enum|string|number)|safeParse\(|\.parse\(/;
+    const routes = [
+      "src/app/api/availability/route.ts",
+      "src/app/api/availability/check/route.ts",
+      "src/app/api/booking-policies/check/route.ts",
+      "src/app/api/admin/bookings/search/route.ts",
+      "src/app/api/admin/xero/search-contacts/route.ts",
+      "src/app/api/admin/xero/sync-memberships/route.ts",
+    ];
+
+    for (const route of routes) {
+      expect(readRepoFile(route)).toMatch(schemaPattern);
+    }
+  });
+
+  it("adds the missing foreign-key indexes for Booking.createdById and FamilyGroupJoinRequest.linkedMemberId", () => {
+    const schema = readRepoFile("prisma/schema.prisma");
+    const bookingBlock = sliceFrom(schema, "model Booking {", "model Payment {");
+    const familyGroupJoinRequestBlock = sliceFrom(
+      schema,
+      "model FamilyGroupJoinRequest {",
+      "model NotificationPreference {"
+    );
+
+    expect(bookingBlock).toContain("@@index([createdById])");
+    expect(familyGroupJoinRequestBlock).toContain("@@index([linkedMemberId])");
+  });
+
+  it("keeps financial-history relations from cascading deletes off Member and Booking", () => {
+    const schema = readRepoFile("prisma/schema.prisma");
+
+    expect(schema).not.toContain(
+      'booking      Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)'
+    );
+    expect(schema).not.toContain(
+      'member           Member                        @relation(fields: [memberId], references: [id], onDelete: Cascade)'
+    );
+    expect(schema).not.toContain(
+      'member         Member        @relation("AdminCreditAdjustmentTarget", fields: [memberId], references: [id], onDelete: Cascade)'
+    );
+    expect(schema).not.toContain(
+      'booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)'
+    );
+    expect(schema).not.toContain(
+      'member  Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)'
+    );
+  });
+
+  it("serializes stale waitlist-offer expiry and re-offer selection behind a transaction", () => {
+    const source = readRepoFile("src/lib/waitlist.ts");
+    const expireStaleOffersBlock = sliceFrom(
+      source,
+      "export async function expireStaleOffers",
+      "/**\n * Recalculate and update waitlistPosition"
+    );
+
+    expect(expireStaleOffersBlock).toContain("prisma.$transaction");
+    expect(expireStaleOffersBlock).toContain("pg_advisory_xact_lock");
+  });
+
+  it("adds rotation-aware metadata for finance Xero token encryption", () => {
+    const schema = readRepoFile("prisma/schema.prisma");
+    const tokenStore = readRepoFile("src/lib/finance-xero-token-store.ts");
+
+    expect(`${schema}\n${tokenStore}`).toMatch(
+      /keyVersion|keyId|encryptionKeyVersion/
+    );
+    expect(tokenStore).toMatch(
+      /previousKey|oldKey|candidateKeys|decryptWith|fallback/i
+    );
+  });
+
+  it("adds SES bounce and complaint ingestion instead of retry-only email recovery", () => {
+    const emailCronSource = readRepoFile("src/lib/cron-email-retry.ts");
+    const emailSource = readRepoFile("src/lib/email.ts");
+    const emailSenderSource = readRepoFile("src/lib/email-sender.ts");
+    const combined = `${emailCronSource}\n${emailSource}\n${emailSenderSource}`;
+
+    expect(combined).toMatch(/bounce|complaint/i);
+    expect(combined).toMatch(/sns|ses/i);
+  });
+
+  it("wires logger and Sentry through shared token scrubbing", () => {
+    const loggerSource = readRepoFile("src/lib/logger.ts");
+    const sentryServer = readRepoFile("sentry.server.config.ts");
+    const sentryEdge = readRepoFile("sentry.edge.config.ts");
+
+    expect(loggerSource).toMatch(/redact:|redactSensitiveJson|serializers:/);
+    expect(sentryServer).toMatch(
+      /redactSensitiveJson|stripeToken|stripe_token|access_token|refresh_token/
+    );
+    expect(sentryEdge).toMatch(
+      /redactSensitiveJson|stripeToken|stripe_token|access_token|refresh_token/
+    );
+  });
+
+  it("keeps the active Caddy upstream file consistent if reload fails", () => {
+    const source = readRepoFile("scripts/blue-green-deploy.sh");
+    const cutoverBlock = sliceFrom(source, 'step "16/19"', 'step "17/19"');
+    const writeIndex = cutoverBlock.indexOf("write_active_upstream_file");
+    const reloadIndex = cutoverBlock.indexOf("reload_caddy");
+    const hasExplicitRestorePath =
+      /restore.*upstream|previous.*upstream|original.*upstream/i.test(source);
+
+    expect(writeIndex).toBeGreaterThan(-1);
+    expect(reloadIndex).toBeGreaterThan(-1);
+    expect(reloadIndex < writeIndex || hasExplicitRestorePath).toBe(true);
+  });
+});

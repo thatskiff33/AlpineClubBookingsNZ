@@ -1,15 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { hashActionToken } from "@/lib/action-tokens";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+
+const verifyEmailQuerySchema = z.object({
+  token: z.string().min(1),
+});
 
 export async function GET(request: NextRequest) {
-  const baseUrl = process.env.NEXTAUTH_URL || request.url;
-  const token = request.nextUrl.searchParams.get("token");
+  const rateLimited = applyRateLimit(rateLimiters.verificationToken, request);
+  if (rateLimited) {
+    return rateLimited;
+  }
 
-  if (!token) {
+  const baseUrl = process.env.NEXTAUTH_URL || request.url;
+  const parsed = verifyEmailQuerySchema.safeParse({
+    token: request.nextUrl.searchParams.get("token"),
+  });
+
+  if (!parsed.success) {
     return NextResponse.redirect(new URL("/login?verifyError=missing", baseUrl));
   }
+  const { token } = parsed.data;
 
   try {
     const record = await prisma.emailVerificationToken.findUnique({

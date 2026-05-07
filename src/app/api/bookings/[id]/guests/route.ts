@@ -323,7 +323,7 @@ export async function POST(
       if (addingNonMembers && !booking.hasNonMembers) {
         const holdDays = await getNonMemberHoldDays(booking.checkIn);
         const daysUntilCheckIn = Math.ceil(
-          (new Date(booking.checkIn).getTime() - Date.now()) /
+          (new Date(booking.checkIn).getTime() - new Date().getTime()) /
             (1000 * 60 * 60 * 24)
         );
         if (daysUntilCheckIn > holdDays && booking.status === "PENDING") {
@@ -430,7 +430,7 @@ export async function POST(
             type: "modification_additional",
             reason: "guest_add_price_increase",
           },
-          idempotencyKey: `mod_guest_${bookingId}_${Date.now()}`,
+          idempotencyKey: `mod_guest_${bookingId}_${result.bookingModificationId}`,
         });
 
         await upsertPaymentIntentTransaction({

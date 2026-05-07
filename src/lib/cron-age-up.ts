@@ -89,26 +89,40 @@ export async function checkAgeUpMembers(): Promise<{
         continue;
       }
 
-      // Update member: set canLogin=true, ageTier=ADULT
-      await prisma.member.update({
-        where: { id: member.id },
-        data: {
-          canLogin: true,
-          ageTier: "ADULT",
-        },
-      });
+      const upgradeResult = await prisma.$transaction(async (tx) => {
+        const currentMember = await tx.member.findUnique({
+          where: { id: member.id },
+          select: { canLogin: true },
+        });
+        if (!currentMember || currentMember.canLogin) {
+          return null;
+        }
 
-      // Create password reset token (7-day expiry for age-up — generous window)
-      const { token, tokenHash } = issueActionToken();
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        await tx.member.update({
+          where: { id: member.id },
+          data: {
+            canLogin: true,
+            ageTier: "ADULT",
+          },
+        });
 
-      await prisma.passwordResetToken.create({
-        data: {
-          tokenHash,
-          memberId: member.id,
-          expiresAt,
-        },
+        const { token, tokenHash } = issueActionToken();
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+        await tx.passwordResetToken.create({
+          data: {
+            tokenHash,
+            memberId: member.id,
+            expiresAt,
+          },
+        });
+
+        return { token };
       });
+      if (!upgradeResult) {
+        skipped++;
+        continue;
+      }
 
       // Resolve effective email (may be inherited from parent)
       let recipientEmail = member.email;
@@ -121,7 +135,7 @@ export async function checkAgeUpMembers(): Promise<{
       await sendAgeUpInvitationEmail(
         recipientEmail,
         member.firstName,
-        token
+        upgradeResult.token
       );
 
       upgraded++;

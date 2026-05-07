@@ -22,9 +22,19 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { subscriptionStatusClass } from "@/lib/status-colors";
 
-export default async function ProfilePage() {
+export default async function ProfilePage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    emailChangeError?: string;
+    emailChanged?: string;
+  }>;
+}) {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
+  const params = await searchParams;
+  const emailChangeError = params.emailChangeError;
+  const emailChanged = params.emailChanged === "true";
 
   const currentSeasonYear = getSeasonYear(new Date());
 
@@ -94,6 +104,26 @@ export default async function ProfilePage() {
           Manage your account details
         </p>
       </div>
+
+      {emailChanged ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          Your email address has been updated successfully.
+        </div>
+      ) : null}
+
+      {emailChangeError ? (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          {emailChangeError === "missing"
+            ? "The email change link was incomplete."
+            : emailChangeError === "invalid"
+              ? "That email change link is invalid."
+              : emailChangeError === "expired"
+                ? "That email change link has expired."
+                : emailChangeError === "taken"
+                  ? "That email address is already in use."
+                  : "The email change could not be completed."}
+        </div>
+      ) : null}
 
       {/* Account info */}
       <Card>

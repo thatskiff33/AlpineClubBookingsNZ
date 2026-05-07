@@ -359,14 +359,18 @@ export function creditAppliedToBookingTemplate(
   `);
 }
 
-export function emailVerificationTemplate(firstName: string, verifyUrl: string): string {
+export function emailVerificationTemplate(
+  firstName: string,
+  verifyUrl: string,
+  expiresAt: Date
+): string {
   const name = escapeHtml(firstName);
   return layout(`
     ${heading("Verify Your Email")}
     ${paragraph("Hi " + name + ", thanks for creating your Tokoroa Alpine Club booking account!")}
     ${paragraph("Please verify your email address by clicking the button below.")}
     ${button("Verify Email", verifyUrl)}
-    ${muted("This link expires in 24 hours. If you did not create this account, please ignore this email.")}
+    ${muted("This link expires on " + escapeHtml(formatNZDateTime(expiresAt)) + ". If you did not create this account, please ignore this email.")}
   `);
 }
 
@@ -398,13 +402,17 @@ export function nominationRequestTemplate(params: {
   `);
 }
 
-export function emailChangeVerificationTemplate(newEmail: string, verifyUrl: string): string {
+export function emailChangeVerificationTemplate(
+  newEmail: string,
+  verifyUrl: string,
+  expiresAt: Date
+): string {
   return layout(`
     ${heading("Confirm Your New Email")}
     ${paragraph("You requested to change the email address on your Tokoroa Alpine Club account to <strong>" + escapeHtml(newEmail) + "</strong>.")}
     ${paragraph("Click the button below to confirm this change.")}
     ${button("Confirm Email Change", verifyUrl)}
-    ${muted("This link expires in 1 hour. If you did not request this change, please ignore this email.")}
+    ${muted("This link expires on " + escapeHtml(formatNZDateTime(expiresAt)) + ". If you did not request this change, please ignore this email.")}
   `);
 }
 

@@ -5,6 +5,11 @@ import { callXeroApi, getAuthenticatedXeroClient } from "@/lib/xero";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import { z } from "zod";
+
+const xeroContactSearchQuerySchema = z.object({
+  q: z.string().trim().min(2),
+});
 
 /**
  * GET /api/admin/xero/search-contacts?q=searchterm
@@ -20,10 +25,16 @@ export async function GET(request: NextRequest) {
     return inactiveResponse;
   }
 
-  const q = request.nextUrl.searchParams.get("q")?.trim();
-  if (!q || q.length < 2) {
-    return NextResponse.json({ error: "Search query must be at least 2 characters" }, { status: 400 });
+  const parsed = xeroContactSearchQuerySchema.safeParse({
+    q: request.nextUrl.searchParams.get("q"),
+  });
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: parsed.error.flatten() },
+      { status: 400 }
+    );
   }
+  const { q } = parsed.data;
 
   try {
     const { xero, tenantId } = await getAuthenticatedXeroClient();

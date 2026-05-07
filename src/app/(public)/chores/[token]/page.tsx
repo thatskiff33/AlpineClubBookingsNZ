@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { CheckCircle2, Circle, AlertTriangle, Mountain } from "lucide-react";
 
@@ -25,31 +25,33 @@ export default function GuestChorePage() {
   const { token } = useParams<{ token: string }>();
   const [data, setData] = useState<GuestChoreData | null>(null);
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/chores/${token}`);
-      if (!res.ok) {
-        const err = await res.json();
-        setError(err.error || "Invalid or expired link");
-        return;
-      }
-      setData(await res.json());
-    } catch {
-      setError("Failed to load chore data");
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
-
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    const fetchData = async () => {
+      try {
+        const res = await fetch(`/api/chores/${token}`);
+        if (!res.ok) {
+          const err = await res.json();
+          setError(err.error || "Invalid or expired link");
+          return;
+        }
+        setData(await res.json());
+      } catch {
+        setError("Failed to load chore data");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void fetchData();
+  }, [token]);
 
   async function toggleChore(assignmentId: string, currentStatus: string) {
     setToggling(assignmentId);
+    setActionError("");
     try {
       const action = currentStatus === "COMPLETED" ? "uncomplete" : "complete";
       const res = await fetch(`/api/chores/${token}`, {
@@ -58,8 +60,20 @@ export default function GuestChorePage() {
         body: JSON.stringify({ assignmentId, action }),
       });
       if (res.ok) {
-        fetchData();
+        const refreshed = await fetch(`/api/chores/${token}`);
+        if (refreshed.ok) {
+          setData(await refreshed.json());
+        }
+        return;
       }
+
+      const payload = await res.json().catch(() => null);
+      setActionError(
+        payload?.error ||
+          "Chore updates now require an authenticated lodge or member session."
+      );
+    } catch {
+      setActionError("Failed to update chore status");
     } finally {
       setToggling(null);
     }
@@ -166,8 +180,15 @@ export default function GuestChorePage() {
           })
         )}
 
+        {actionError ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {actionError}
+          </div>
+        ) : null}
+
         <p className="text-xs text-slate-400 text-center mt-8">
-          Tap a chore to mark it as done. This link expires after 48 hours.
+          This link expires after 48 hours. Chore completion updates require an
+          authenticated lodge or member session.
         </p>
       </main>
     </div>

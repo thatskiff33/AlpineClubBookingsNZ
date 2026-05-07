@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkCapacity } from "@/lib/capacity";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { z } from "zod";
+
+const availabilityCheckQuerySchema = z.object({
+  checkIn: z.string().date(),
+  checkOut: z.string().date(),
+});
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -13,16 +19,20 @@ export async function GET(request: NextRequest) {
     return inactiveResponse;
   }
 
-  const { searchParams } = new URL(request.url);
-  const checkInStr = searchParams.get("checkIn");
-  const checkOutStr = searchParams.get("checkOut");
+  const parsed = availabilityCheckQuerySchema.safeParse({
+    checkIn: request.nextUrl.searchParams.get("checkIn"),
+    checkOut: request.nextUrl.searchParams.get("checkOut"),
+  });
 
-  if (!checkInStr || !checkOutStr) {
-    return NextResponse.json({ error: "checkIn and checkOut are required" }, { status: 400 });
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: parsed.error.flatten() },
+      { status: 400 }
+    );
   }
 
-  const checkIn = new Date(checkInStr);
-  const checkOut = new Date(checkOutStr);
+  const checkIn = new Date(parsed.data.checkIn);
+  const checkOut = new Date(parsed.data.checkOut);
 
   if (isNaN(checkIn.getTime()) || isNaN(checkOut.getTime())) {
     return NextResponse.json({ error: "Invalid dates" }, { status: 400 });

@@ -59,6 +59,19 @@ function memberWithoutFinanceAccess() {
   };
 }
 
+function lodgeViewerMember() {
+  return {
+    id: "finance-lodge-1",
+    email: "lodge@example.com",
+    firstName: "Lodge",
+    lastName: "Session",
+    role: "LODGE",
+    financeAccessLevel: "VIEWER",
+    active: true,
+    forcePasswordChange: false,
+  };
+}
+
 describe("finance booking metrics route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -171,6 +184,23 @@ describe("finance booking metrics route", () => {
 
   it("rejects members without finance viewer access", async () => {
     mockFindUnique.mockResolvedValue(memberWithoutFinanceAccess());
+
+    const response = await getFinanceBookingMetricsRoute(
+      new NextRequest(
+        "https://tokoroa.org.nz/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10"
+      )
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "Finance viewer access required",
+    });
+    expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
+  });
+
+  it("rejects LODGE sessions even when the member row has finance viewer access", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "finance-lodge-1", role: "LODGE" } });
+    mockFindUnique.mockResolvedValue(lodgeViewerMember());
 
     const response = await getFinanceBookingMetricsRoute(
       new NextRequest(

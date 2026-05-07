@@ -22,7 +22,6 @@ import {
 } from "@/lib/promo";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { sendBookingPendingEmail, sendBookingConfirmedEmail, sendAdminNewBookingAlert, sendWaitlistConfirmationEmail } from "@/lib/email";
-import { getWaitlistPosition } from "@/lib/waitlist";
 import {
   enqueueXeroBookingInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -993,54 +992,68 @@ async function createWaitlistedBooking(params: {
     ? ADULT_SUPERVISION_REVIEW_REASON
     : null;
 
-  const newBooking = await prisma.booking.create({
-    data: {
-      memberId: effectiveMemberId,
-      checkIn,
-      checkOut,
-      status: BookingStatus.WAITLISTED,
-      totalPriceCents: price.totalPriceCents,
-      discountCents,
-      finalPriceCents,
-      hasNonMembers,
-      nonMemberHoldUntil: null,
-      notes: notes || null,
-      expectedArrivalTime: expectedArrivalTime || null,
-      createdById: isOnBehalf ? sessionUserId : null,
-      requiresAdminReview,
-      adminReviewReason,
-      guests: {
-        create: guests.map((g, i) => ({
-          firstName: g.firstName,
-          lastName: g.lastName,
-          ageTier: g.ageTier as AgeTier,
-          isMember: g.isMember,
-          memberId: g.memberId || null,
-          priceCents: price.guests[i].priceCents,
-        })),
+  const { newBooking, position } = await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
+
+    const createdBooking = await tx.booking.create({
+      data: {
+        memberId: effectiveMemberId,
+        checkIn,
+        checkOut,
+        status: BookingStatus.WAITLISTED,
+        totalPriceCents: price.totalPriceCents,
+        discountCents,
+        finalPriceCents,
+        hasNonMembers,
+        nonMemberHoldUntil: null,
+        notes: notes || null,
+        expectedArrivalTime: expectedArrivalTime || null,
+        createdById: isOnBehalf ? sessionUserId : null,
+        requiresAdminReview,
+        adminReviewReason,
+        guests: {
+          create: guests.map((g, i) => ({
+            firstName: g.firstName,
+            lastName: g.lastName,
+            ageTier: g.ageTier as AgeTier,
+            isMember: g.isMember,
+            memberId: g.memberId || null,
+            priceCents: price.guests[i].priceCents,
+          })),
+        },
       },
-    },
-    include: { guests: true },
-  });
+      include: { guests: true },
+    });
 
-  if (promoCodeRecord && discountCents > 0) {
-    await redeemPromoCode(
-      prisma,
-      promoCodeRecord.id,
-      newBooking.id,
-      effectiveMemberId,
-      discountCents,
-      promoFreeNightsUsed || undefined
-    );
-  }
+    if (promoCodeRecord && discountCents > 0) {
+      await redeemPromoCode(
+        tx,
+        promoCodeRecord.id,
+        createdBooking.id,
+        effectiveMemberId,
+        discountCents,
+        promoFreeNightsUsed || undefined
+      );
+    }
 
-  // Calculate and save waitlist position
-  const position = await getWaitlistPosition(newBooking.id);
-  await prisma.booking.update({
-    where: { id: newBooking.id },
-    data: { waitlistPosition: position },
+    const waitlistPosition =
+      (await tx.booking.count({
+        where: {
+          status: BookingStatus.WAITLISTED,
+          checkIn: { lt: createdBooking.checkOut },
+          checkOut: { gt: createdBooking.checkIn },
+          createdAt: { lt: createdBooking.createdAt },
+        },
+      })) + 1;
+
+    const updatedBooking = await tx.booking.update({
+      where: { id: createdBooking.id },
+      data: { waitlistPosition },
+      include: { guests: true },
+    });
+
+    return { newBooking: updatedBooking, position: waitlistPosition };
   });
-  newBooking.waitlistPosition = position;
 
   // Send emails (fire-and-forget)
   const member = await prisma.member.findUnique({ where: { id: effectiveMemberId } });

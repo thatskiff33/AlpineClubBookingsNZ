@@ -152,4 +152,22 @@ describe("backup", () => {
     expect(mkdirSyncMock).not.toHaveBeenCalled();
     expect(unlinkSyncMock).not.toHaveBeenCalled();
   });
+
+  it("fails closed when pg_dump produces a suspiciously tiny gzip artifact", async () => {
+    process.env = {
+      ...originalEnv,
+      BACKUP_ENABLED: "true",
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
+    };
+
+    execSyncMock.mockReturnValue(Buffer.from(""));
+    statSyncMock.mockReturnValue({ size: 20, mtimeMs: Date.now() } as never);
+
+    await expect(runDatabaseBackup()).resolves.toEqual({
+      success: false,
+      error: "Backup file is suspiciously small",
+    });
+
+    expect(unlinkSyncMock).toHaveBeenCalledTimes(1);
+  });
 });

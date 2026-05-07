@@ -263,7 +263,7 @@ describe("Issue 7: Draft Booking Creation", () => {
     );
   });
 
-  it("draft booking does NOT go through capacity transaction", async () => {
+  it("draft booking stays behind the global advisory-lock transaction", async () => {
     mockAuth.mockResolvedValue(memberSession());
 
     mockPrisma.booking.create.mockResolvedValue({
@@ -278,8 +278,8 @@ describe("Issue 7: Draft Booking Creation", () => {
     const res = await createBooking(makeBookingBody({ draft: true }));
     expect(res.status).toBe(201);
 
-    // The $transaction (capacity check) must NOT have been called for a draft
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it("draft booking does NOT call sendBookingConfirmedEmail or admin alert", async () => {

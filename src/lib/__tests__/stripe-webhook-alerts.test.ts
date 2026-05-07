@@ -307,6 +307,59 @@ describe("Stripe webhook Xero alerting", () => {
     });
   });
 
+  it("ignores stale failed intents when no current payment transaction matches the webhook intent", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_failed_stale",
+      type: "payment_intent.payment_failed",
+      data: {
+        object: {
+          id: "pi_stale_failed",
+          amount: 2500,
+          metadata: {
+            bookingId: "booking-5",
+          },
+          last_payment_error: {
+            message: "Card declined",
+          },
+        },
+      },
+    } as any);
+
+    mockPaymentFindUnique.mockResolvedValue(null);
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+    expect(mockLogAudit).not.toHaveBeenCalled();
+    expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale canceled intents when no current payment transaction matches the webhook intent", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_canceled_stale",
+      type: "payment_intent.canceled",
+      data: {
+        object: {
+          id: "pi_stale_canceled",
+          amount: 2500,
+          cancellation_reason: "abandoned",
+          metadata: {
+            bookingId: "booking-6",
+          },
+        },
+      },
+    } as any);
+
+    mockPaymentFindUnique.mockResolvedValue(null);
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+    expect(mockLogAudit).not.toHaveBeenCalled();
+  });
+
   it("does not queue a new Xero refund credit note when Stripe repeats the same cumulative refund total", async () => {
     mockConstructWebhookEvent.mockReturnValue({
       id: "evt_refund_repeat",

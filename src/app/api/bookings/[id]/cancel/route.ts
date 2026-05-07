@@ -4,6 +4,11 @@ import { cancelBooking } from "@/lib/booking-cancel";
 import { getClientIp } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { z } from "zod";
+
+const cancelBookingMutationSchema = z.object({
+  refundMethod: z.enum(["card", "credit"]).optional(),
+});
 
 export async function POST(
   request: NextRequest,
@@ -21,15 +26,19 @@ export async function POST(
       return inactiveResponse;
     }
 
-    // Parse optional refundMethod from request body
     let refundMethod: "card" | "credit" = "card";
     try {
       const body = await request.json();
-      if (body.refundMethod === "credit") {
-        refundMethod = "credit";
+      const parsed = cancelBookingMutationSchema.safeParse(body);
+      if (!parsed.success) {
+        return NextResponse.json(
+          { error: "Invalid input", details: parsed.error.flatten() },
+          { status: 400 }
+        );
       }
+      refundMethod = parsed.data.refundMethod ?? "card";
     } catch {
-      // No body or invalid JSON — default to "card"
+      refundMethod = "card";
     }
 
     const result = await cancelBooking(

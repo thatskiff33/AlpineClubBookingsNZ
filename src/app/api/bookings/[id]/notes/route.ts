@@ -1,18 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { htmlToPlainText } from "@/lib/email-text";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-
-function stripHtmlTags(str: string): string {
-  return str.replace(/<[^>]*>/g, "");
-}
 
 const notesSchema = z.object({
   notes: z
     .string()
     .max(500, "Notes must be 500 characters or fewer")
-    .transform((val) => stripHtmlTags(val).trim()),
+    .transform((val) => htmlToPlainText(val).trim()),
 });
 
 export async function PUT(

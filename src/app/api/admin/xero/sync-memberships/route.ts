@@ -3,6 +3,14 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { refreshAllMembershipStatuses } from "@/lib/xero";
 import logger from "@/lib/logger";
+import { z } from "zod";
+
+const syncMembershipsQuerySchema = z.object({
+  seasonYear: z
+    .union([z.coerce.number().int().min(2020).max(2040), z.literal("")])
+    .optional(),
+  mode: z.enum(["incremental", "backfill"]).default("incremental"),
+});
 
 /**
  * POST /api/admin/xero/sync-memberships
@@ -25,16 +33,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const seasonYearParam = request.nextUrl.searchParams.get("seasonYear");
-  const seasonYear = seasonYearParam ? parseInt(seasonYearParam, 10) : undefined;
-  if (seasonYear !== undefined && (isNaN(seasonYear) || seasonYear < 2020 || seasonYear > 2040)) {
-    return NextResponse.json({ error: "Invalid seasonYear" }, { status: 400 });
+  const parsed = syncMembershipsQuerySchema.safeParse({
+    seasonYear: request.nextUrl.searchParams.get("seasonYear") ?? undefined,
+    mode: request.nextUrl.searchParams.get("mode") ?? undefined,
+  });
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: parsed.error.flatten() },
+      { status: 400 }
+    );
   }
-  const modeParam = request.nextUrl.searchParams.get("mode");
-  const mode = modeParam ?? "incremental";
-  if (mode !== "incremental" && mode !== "backfill") {
-    return NextResponse.json({ error: "Invalid mode" }, { status: 400 });
-  }
+  const seasonYear =
+    parsed.data.seasonYear === "" ? undefined : parsed.data.seasonYear;
+  const mode = parsed.data.mode;
 
   try {
     const result = await refreshAllMembershipStatuses(seasonYear, {

@@ -447,6 +447,7 @@ model Booking {
   refundRequests          RefundRequest[]
 
   @@index([memberId])
+  @@index([createdById])
   @@index([checkIn, checkOut])
   @@index([status])
   @@index([memberId, status])
@@ -504,8 +505,9 @@ model Payment {
   updatedAt                 DateTime      @updatedAt
 
   // Relations
-  booking      Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  booking      Booking              @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   transactions PaymentTransaction[]
+  refunds      PaymentRefund[]
 
   @@index([bookingId])
   @@index([stripePaymentIntentId])
@@ -514,23 +516,40 @@ model Payment {
 }
 
 model PaymentTransaction {
-  id                  String                 @id @default(cuid())
-  paymentId           String
-  kind                PaymentTransactionKind
-  stripePaymentIntentId String               @unique
-  amountCents         Int
-  refundedAmountCents Int                    @default(0)
-  status              PaymentStatus          @default(PENDING)
-  paymentMethodId     String?
-  reason              String?
-  createdAt           DateTime               @default(now())
-  updatedAt           DateTime               @updatedAt
+  id                    String                 @id @default(cuid())
+  paymentId             String
+  kind                  PaymentTransactionKind
+  stripePaymentIntentId String                 @unique
+  amountCents           Int
+  refundedAmountCents   Int                    @default(0)
+  status                PaymentStatus          @default(PENDING)
+  paymentMethodId       String?
+  reason                String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
 
-  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  payment Payment         @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  refunds PaymentRefund[]
 
   @@index([paymentId, createdAt])
   @@index([paymentId, kind, createdAt])
   @@index([status, createdAt])
+}
+
+model PaymentRefund {
+  id                   String   @id @default(cuid())
+  paymentId            String
+  paymentTransactionId String?
+  stripeRefundId       String   @unique
+  amountCents          Int
+  reason               String?
+  createdAt            DateTime @default(now())
+
+  payment            Payment             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([paymentId, createdAt])
+  @@index([paymentTransactionId])
 }
 
 // ---------------------------------------------------------------------------
@@ -732,13 +751,14 @@ model XeroToken {
 // ---------------------------------------------------------------------------
 
 model FinanceXeroToken {
-  id           String   @id @default(cuid())
-  accessToken  String
-  refreshToken String
-  expiresAt    DateTime
-  tenantId     String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  accessToken          String
+  refreshToken         String
+  expiresAt            DateTime
+  encryptionKeyVersion Int      @default(1)
+  tenantId             String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,7 +1124,7 @@ model BookingModification {
   changeFeeCents   Int      @default(0) // late-notice fee charged
   createdAt        DateTime @default(now())
 
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
 
   @@index([bookingId])
   @@index([memberId])
@@ -1141,37 +1161,6 @@ model EmailLog {
   @@index([createdAt])
   @@index([status, attempts])
   @@index([templateName, status, createdAt])
-}
-
-// ---------------------------------------------------------------------------
-// Notification Preferences (N-08)
-// ---------------------------------------------------------------------------
-
-model NotificationPreference {
-  id                      String   @id @default(cuid())
-  memberId                String   @unique
-  bookingConfirmation     Boolean  @default(true)
-  bookingReminder         Boolean  @default(true)
-  bookingBumped           Boolean  @default(true)
-  bookingCancelled        Boolean  @default(true)
-  bookingWaitlist         Boolean  @default(true)
-  choreRoster             Boolean  @default(true)
-  marketingEmails         Boolean  @default(false)
-  adminNewBooking         Boolean  @default(true)
-  adminPaymentFailure     Boolean  @default(true)
-  adminPendingDeadline    Boolean  @default(true)
-  adminBookingBumped      Boolean  @default(true)
-  adminXeroSyncError      Boolean  @default(true)
-  adminCapacityWarning    Boolean  @default(true)
-  adminDailyDigest        Boolean  @default(true)
-  adminWaitlistOffer      Boolean  @default(true)
-  adminFamilyGroupRequest Boolean  @default(true)
-  adminRefundRequest      Boolean  @default(true)
-  adminIssueReport        Boolean  @default(true)
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
-
-  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 }
 
 model IssueReport {
@@ -1305,8 +1294,40 @@ model FamilyGroupJoinRequest {
   @@index([familyGroupId])
   @@index([requesterId])
   @@index([invitedMemberId])
+  @@index([linkedMemberId])
   @@index([status])
   @@index([type])
+}
+
+// ---------------------------------------------------------------------------
+// Notification Preferences (N-08)
+// ---------------------------------------------------------------------------
+
+model NotificationPreference {
+  id                      String   @id @default(cuid())
+  memberId                String   @unique
+  bookingConfirmation     Boolean  @default(true)
+  bookingReminder         Boolean  @default(true)
+  bookingBumped           Boolean  @default(true)
+  bookingCancelled        Boolean  @default(true)
+  bookingWaitlist         Boolean  @default(true)
+  choreRoster             Boolean  @default(true)
+  marketingEmails         Boolean  @default(false)
+  adminNewBooking         Boolean  @default(true)
+  adminPaymentFailure     Boolean  @default(true)
+  adminPendingDeadline    Boolean  @default(true)
+  adminBookingBumped      Boolean  @default(true)
+  adminXeroSyncError      Boolean  @default(true)
+  adminCapacityWarning    Boolean  @default(true)
+  adminDailyDigest        Boolean  @default(true)
+  adminWaitlistOffer      Boolean  @default(true)
+  adminFamilyGroupRequest Boolean  @default(true)
+  adminRefundRequest      Boolean  @default(true)
+  adminIssueReport        Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  member Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
 }
 
 // ---------------------------------------------------------------------------
@@ -1357,17 +1378,17 @@ model XeroItemCodeMapping {
 // ---------------------------------------------------------------------------
 
 model AgeTierSetting {
-  id                   String   @id @default(cuid())
-  tier                 AgeTier  @unique
-  minAge               Int
-  maxAge               Int? // null for ADULT (no upper limit)
-  label                String // e.g. "Child (under 10)"
-  xeroContactGroupId   String?
-  xeroContactGroupName String?
+  id                        String                            @id @default(cuid())
+  tier                      AgeTier                           @unique
+  minAge                    Int
+  maxAge                    Int? // null for ADULT (no upper limit)
+  label                     String // e.g. "Child (under 10)"
+  xeroContactGroupId        String?
+  xeroContactGroupName      String?
   xeroAcceptedContactGroups AgeTierXeroAcceptedContactGroup[]
-  sortOrder            Int      @default(0)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  sortOrder                 Int                               @default(0)
+  createdAt                 DateTime                          @default(now())
+  updatedAt                 DateTime                          @updatedAt
 
   @@index([sortOrder])
 }
@@ -1431,7 +1452,7 @@ model MemberCredit {
   xeroCreditNoteId   String? // Linked Xero credit note ID
   createdAt          DateTime   @default(now())
 
-  member           Member                        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  member           Member                        @relation(fields: [memberId], references: [id], onDelete: Restrict)
   requestedBy      Member?                       @relation("RequestedAdminCredits", fields: [requestedById], references: [id], onDelete: SetNull)
   approvedBy       Member?                       @relation("ApprovedAdminCredits", fields: [approvedById], references: [id], onDelete: SetNull)
   approvalRequest  AdminCreditAdjustmentRequest? @relation("ApprovedAdminCreditAdjustment", fields: [approvalRequestId], references: [id], onDelete: SetNull)
@@ -1458,7 +1479,7 @@ model AdminCreditAdjustmentRequest {
   createdAt      DateTime                           @default(now())
   updatedAt      DateTime                           @updatedAt
 
-  member         Member        @relation("AdminCreditAdjustmentTarget", fields: [memberId], references: [id], onDelete: Cascade)
+  member         Member        @relation("AdminCreditAdjustmentTarget", fields: [memberId], references: [id], onDelete: Restrict)
   requestedBy    Member        @relation("AdminCreditAdjustmentRequestsRequested", fields: [requestedById], references: [id])
   reviewedBy     Member?       @relation("AdminCreditAdjustmentRequestsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
   approvedCredit MemberCredit? @relation("ApprovedAdminCreditAdjustment")
@@ -1506,8 +1527,8 @@ model RefundRequest {
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
 
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  member  Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  member  Member  @relation(fields: [memberId], references: [id], onDelete: Restrict)
 
   @@index([bookingId])
   @@index([memberId])

@@ -291,37 +291,64 @@ export async function expireStaleOffers(): Promise<{
   expiredCount: number;
   reofferedCount: number;
 }> {
-  const staleOffers = await prisma.booking.findMany({
-    where: {
-      status: BookingStatus.WAITLIST_OFFERED,
-      waitlistOfferExpiresAt: { lt: new Date() },
-    },
-    include: {
-      member: { select: { email: true, firstName: true } },
-    },
+  const { staleOffers, affectedRanges } = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
+
+    const offers = await tx.booking.findMany({
+      where: {
+        status: BookingStatus.WAITLIST_OFFERED,
+        waitlistOfferExpiresAt: { lt: new Date() },
+      },
+      include: {
+        member: { select: { email: true, firstName: true } },
+      },
+    });
+
+    for (const offer of offers) {
+      await tx.booking.update({
+        where: { id: offer.id },
+        data: {
+          status: BookingStatus.WAITLISTED,
+          waitlistOfferedAt: null,
+          waitlistOfferExpiresAt: null,
+        },
+      });
+    }
+
+    return {
+      staleOffers: offers.map((offer) => ({
+        ...offer,
+        newPosition:
+          offers.filter(
+            (entry) =>
+              entry.checkIn < offer.checkOut &&
+              entry.checkOut > offer.checkIn &&
+              entry.createdAt < offer.createdAt
+          ).length + 1,
+      })),
+      affectedRanges: Array.from(
+        new Map(
+          offers.map((offer) => [
+            `${offer.checkIn.toISOString()}_${offer.checkOut.toISOString()}`,
+            {
+              checkIn: offer.checkIn,
+              checkOut: offer.checkOut,
+            },
+          ])
+        ).values()
+      ),
+    };
   });
 
   let reofferedCount = 0;
 
   for (const offer of staleOffers) {
-    await prisma.booking.update({
-      where: { id: offer.id },
-      data: {
-        status: BookingStatus.WAITLISTED,
-        waitlistOfferedAt: null,
-        waitlistOfferExpiresAt: null,
-      },
-    });
-
-    // Calculate new position for the expired member
-    const newPosition = await getWaitlistPosition(offer.id);
-
     sendWaitlistOfferExpiredEmail(
       offer.member.email,
       offer.member.firstName,
       offer.checkIn,
       offer.checkOut,
-      newPosition
+      offer.newPosition
     ).catch((err) => logger.error({ err }, "Failed to send waitlist offer expired email"));
 
     logAudit({
@@ -329,13 +356,10 @@ export async function expireStaleOffers(): Promise<{
       targetId: offer.id,
       details: `Waitlist offer expired, reverted to WAITLISTED`,
     });
+  }
 
-    // Try to offer to next candidate for these dates
-    const { offeredBookingId } = await processWaitlistForDates({
-      checkIn: offer.checkIn,
-      checkOut: offer.checkOut,
-    });
-
+  for (const range of affectedRanges) {
+    const { offeredBookingId } = await processWaitlistForDates(range);
     if (offeredBookingId) {
       reofferedCount++;
     }

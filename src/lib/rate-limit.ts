@@ -174,6 +174,10 @@ export const rateLimiters = {
   resendVerification: { id: "resend-verification", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Request email change: 3 per hour */
   requestEmailChange: { id: "request-email-change", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Token-bearing verification links: 10 hits per 15 minutes */
+  verificationToken: { id: "verification-token", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
+  /** Guest chore token routes: 20 hits per 15 minutes */
+  guestChoreToken: { id: "guest-chore-token", limit: 20, windowSeconds: 15 * 60 } as RateLimitConfig,
   /** Family group join request: 3 per hour */
   familyGroupJoinRequest: { id: "family-group-join-request", limit: 3, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Personal data export: 5 per day */
