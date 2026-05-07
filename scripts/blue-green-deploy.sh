@@ -914,6 +914,12 @@ write_active_upstream_file() {
   mv "$temp_file" "$destination"
 }
 
+restore_previous_upstream_file() {
+  local previous_upstream_contents="$1"
+  local destination="$PROJECT_DIR/$ACTIVE_UPSTREAM_FILE_REL"
+  printf '%s\n' "$previous_upstream_contents" >"$destination"
+}
+
 reload_caddy() {
   local attempts="${1:-10}"
   local delay_seconds="${2:-1}"
@@ -1051,8 +1057,14 @@ info "Cron leader is healthy and scheduled jobs are registered before cutover."
 
 step "16/19" "Switching Caddy upstream to target web service"
 docker compose up -d "$CADDY_SERVICE"
+PREVIOUS_UPSTREAM_CONTENTS="$(cat "$PROJECT_DIR/$ACTIVE_UPSTREAM_FILE_REL" 2>/dev/null || true)"
 write_active_upstream_file "$TARGET_SERVICE" "$CRON_SERVICE"
-reload_caddy
+if ! reload_caddy; then
+  restore_previous_upstream_file "$PREVIOUS_UPSTREAM_CONTENTS"
+  reload_caddy >/dev/null 2>&1 || true
+  echo "Failed to reload Caddy after writing the target upstream." >&2
+  exit 1
+fi
 SWITCHED_TRAFFIC=1
 verify_external_health "$TARGET_SERVICE"
 verify_internal_health "$TARGET_SERVICE"

@@ -3,6 +3,12 @@ import { auth } from "@/lib/auth";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { z } from "zod";
+
+const adminBookingSearchQuerySchema = z.object({
+  q: z.string().trim().min(2),
+  limit: z.coerce.number().int().min(1).max(20).default(8),
+});
 
 function getInvoiceSyncEligibility(booking: {
   status: string;
@@ -65,18 +71,19 @@ export async function GET(request: NextRequest) {
     return inactiveResponse;
   }
 
-  const q = request.nextUrl.searchParams.get("q")?.trim();
-  if (!q || q.length < 2) {
+  const parsed = adminBookingSearchQuerySchema.safeParse({
+    q: request.nextUrl.searchParams.get("q"),
+    limit: request.nextUrl.searchParams.get("limit") ?? "8",
+  });
+
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "Search query must be at least 2 characters" },
+      { error: "Invalid query parameters", details: parsed.error.flatten() },
       { status: 400 }
     );
   }
 
-  const limit = Math.min(
-    20,
-    Math.max(1, parseInt(request.nextUrl.searchParams.get("limit") || "8", 10) || 8)
-  );
+  const { q, limit } = parsed.data;
 
   try {
     const bookings = await prisma.booking.findMany({

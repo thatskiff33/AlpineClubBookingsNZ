@@ -1,16 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateGuestChoreToken } from "@/lib/guest-chore-token";
 import logger from "@/lib/logger";
+import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { requireActiveSessionUser } from "@/lib/session-guards";
+
+const guestChoreMutationSchema = z.object({
+  assignmentId: z.string().min(1),
+  action: z.enum(["complete", "uncomplete"]),
+});
 
 /**
  * GET /api/chores/[token]
  * Public endpoint. Validates guest chore token and returns assignments.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
+  const rateLimited = applyRateLimit(rateLimiters.guestChoreToken, req);
+  if (rateLimited) {
+    return rateLimited;
+  }
+
   const { token } = await params;
 
   const result = await validateGuestChoreToken(token);
@@ -36,6 +50,21 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
+  const rateLimited = applyRateLimit(rateLimiters.guestChoreToken, req);
+  if (rateLimited) {
+    return rateLimited;
+  }
+
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
+  }
+
   const { token } = await params;
 
   const result = await validateGuestChoreToken(token);
@@ -53,13 +82,15 @@ export async function PUT(
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { assignmentId, action } = body as { assignmentId?: string; action?: string };
-  if (!assignmentId || !action || !["complete", "uncomplete"].includes(action)) {
+  const parsed = guestChoreMutationSchema.safeParse(body);
+  if (!parsed.success) {
     return NextResponse.json(
-      { error: "Invalid input. Required: assignmentId, action (complete|uncomplete)" },
+      { error: "Invalid input", details: parsed.error.flatten() },
       { status: 400 }
     );
   }
+
+  const { assignmentId, action } = parsed.data;
 
   // Verify this assignment belongs to this guest
   const validIds = result.assignments.map((a) => a.id);

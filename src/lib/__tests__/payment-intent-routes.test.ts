@@ -211,6 +211,39 @@ describe("payment intent routes", () => {
     expect(mockStripeCreateSetupIntent).not.toHaveBeenCalled();
   });
 
+  it("rejects immediate payment intents for pending non-member hold bookings", async () => {
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PENDING",
+      hasNonMembers: true,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      guests: [{ id: "guest-1", isMember: false }],
+      payment: null,
+    });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createPaymentIntentRoute(req);
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error:
+        "This booking must stay in the saved-card flow until the non-member hold window expires",
+    });
+    expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
   it("confirms a successful payment immediately for the booking page", async () => {
     mockPrisma.payment.findUnique.mockResolvedValue({
       id: "payment-1",

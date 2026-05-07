@@ -5,6 +5,12 @@ import { eachDayOfInterval, subDays } from "date-fns";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
+import { z } from "zod";
+
+const availabilityQuerySchema = z.object({
+  year: z.coerce.number().int().min(2000).max(2100),
+  month: z.coerce.number().int().min(0).max(11),
+});
 
 export async function GET(request: NextRequest) {
   const rateLimited = applyRateLimit(rateLimiters.bookingQuery, request);
@@ -19,13 +25,18 @@ export async function GET(request: NextRequest) {
     return inactiveResponse;
   }
 
-  const { searchParams } = new URL(request.url);
-  const year = parseInt(searchParams.get("year") || "");
-  const month = parseInt(searchParams.get("month") || "");
+  const parsed = availabilityQuerySchema.safeParse({
+    year: request.nextUrl.searchParams.get("year"),
+    month: request.nextUrl.searchParams.get("month"),
+  });
 
-  if (isNaN(year) || isNaN(month)) {
-    return NextResponse.json({ error: "year and month are required" }, { status: 400 });
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: parsed.error.flatten() },
+      { status: 400 }
+    );
   }
+  const { year, month } = parsed.data;
 
   const startDate = new Date(year, month, 1);
   const endDate = new Date(year, month + 1, 1);

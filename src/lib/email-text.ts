@@ -25,11 +25,24 @@ function anchorToText(_match: string, href: string, label: string): string {
   return `${strippedLabel}: ${cleanHref}`;
 }
 
+function stripDangerousHtmlBlocks(html: string, tagName: "script" | "style") {
+  const blockPattern = new RegExp(
+    `<${tagName}\\b[^>]*>[\\s\\S]*?<\\/${tagName}\\s*>`,
+    "gi"
+  );
+  const danglingTagPattern = new RegExp(`<\\/?${tagName}\\b`, "gi");
+
+  return html.replace(blockPattern, " ").replace(danglingTagPattern, " ");
+}
+
 export function htmlToPlainText(html: string): string {
+  const sanitizedHtml = stripDangerousHtmlBlocks(
+    stripDangerousHtmlBlocks(html, "style"),
+    "script"
+  );
+
   return decodeHtmlEntities(
-    html
-      .replace(/<style[\s\S]*?<\/style>/gi, "")
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
+    sanitizedHtml
       .replace(/<a\s+[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, anchorToText)
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/t[dh]>\s*<t[dh][^>]*>/gi, " | ")

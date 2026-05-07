@@ -44,6 +44,32 @@ describe("redact-sensitive-json", () => {
     );
   });
 
+  it("redacts stripe token fields in structured payloads", () => {
+    expect(
+      redactSensitiveJson({
+        payment: {
+          stripeToken: "st_123",
+          stripe_token: "st_456",
+        },
+      })
+    ).toEqual({
+      payment: {
+        stripeToken: "[REDACTED]",
+        stripe_token: "[REDACTED]",
+      },
+    });
+  });
+
+  it("redacts stripe token fields in JSON-shaped text", () => {
+    expect(
+      redactSensitiveText(
+        '500: {"payment":{"stripeToken":"st_123","stripe_token":"st_456"}}'
+      )
+    ).toBe(
+      '500: {"payment":{"stripeToken":"[REDACTED]","stripe_token":"[REDACTED]"}}'
+    );
+  });
+
   it("formats redacted JSON for display", () => {
     expect(
       formatRedactedJson({

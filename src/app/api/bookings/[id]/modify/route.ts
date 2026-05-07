@@ -539,7 +539,7 @@ export async function PUT(
       if (!skipBookingLifecycleRules && hasNonMembers) {
         const holdDays = await getNonMemberHoldDays(newCheckIn);
         const daysUntilNewCheckIn = Math.ceil(
-          (newCheckIn.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+          (newCheckIn.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
         );
 
         if (daysUntilNewCheckIn <= holdDays) {
@@ -679,7 +679,7 @@ export async function PUT(
             type: "modification_additional",
             reason: "batch_modify_price_increase",
           },
-          idempotencyKey: `mod_batch_${bookingId}_${Date.now()}`,
+          idempotencyKey: `mod_batch_${bookingId}_${result.bookingModificationId}`,
         });
 
         await upsertPaymentIntentTransaction({

@@ -4,6 +4,8 @@ import { _testStore } from "../rate-limit";
 import {
   _testLodgePinFailureStore,
   clearLodgePinFailures,
+  createLodgePinSession,
+  getActiveLodgePinSessionForDate,
   getLodgePinLockout,
   recordLodgePinFailure,
 } from "../lodge-pin-session";
@@ -236,6 +238,31 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
     clearLodgePinFailures("10.0.0.3");
     expect(getLodgePinLockout("10.0.0.3").locked).toBe(false);
+  });
+
+  it("invalidates an existing hut leader cookie after the underlying PIN is rotated", async () => {
+    const issuedSession = createLodgePinSession("assign-1", "member-1");
+    mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
+      id: "assign-1",
+      memberId: "member-1",
+      startDate: new Date("2026-04-13T00:00:00.000Z"),
+      endDate: new Date("2026-04-16T00:00:00.000Z"),
+      hutLeaderPin: await bcrypt.hash("654321", 12),
+      member: {
+        id: "member-1",
+        active: true,
+        firstName: "Alice",
+        lastName: "Smith",
+        email: "alice@example.com",
+      },
+    });
+
+    const session = await getActiveLodgePinSessionForDate(
+      new Date("2026-04-14T00:00:00.000Z"),
+      issuedSession.value
+    );
+
+    expect(session).toBeNull();
   });
 
   it("shows hut leader PIN access on the lodge tier instead of the staying-guest tier", async () => {
