@@ -1,9 +1,43 @@
+import type { AgeTier } from "@prisma/client";
 import { prisma } from "./prisma";
 import { computeAge, getSeasonStartDate } from "./age-tier";
 import { getSeasonYear } from "./utils";
 import { sendAgeUpInvitationEmail } from "./email";
 import logger from "./logger";
 import { issueActionToken } from "./action-tokens";
+
+type AgeUpUpgradeResult = {
+  token: string;
+  tokenHash: string;
+  previousAgeTier: AgeTier;
+};
+
+async function rollbackAgeUpUpgrade(
+  memberId: string,
+  upgrade: Pick<AgeUpUpgradeResult, "tokenHash" | "previousAgeTier">
+) {
+  await prisma.$transaction(async (tx) => {
+    await tx.passwordResetToken.deleteMany({
+      where: {
+        memberId,
+        tokenHash: upgrade.tokenHash,
+        used: false,
+      },
+    });
+
+    await tx.member.updateMany({
+      where: {
+        id: memberId,
+        canLogin: true,
+        ageTier: "ADULT",
+      },
+      data: {
+        canLogin: false,
+        ageTier: upgrade.previousAgeTier,
+      },
+    });
+  });
+}
 
 /**
  * Daily cron: detect members who have turned 18 (at the season reference date)
@@ -19,6 +53,7 @@ import { issueActionToken } from "./action-tokens";
  *  1. Update ageTier → ADULT, canLogin → true
  *  2. Create a password reset token (so they can set a password)
  *  3. Send age-up invitation email
+ *  4. Roll back the upgrade/token if email delivery fails so the next run can retry
  *
  * Idempotency: members who already have canLogin=true are excluded.
  * EmailLog deduplication: we check for a prior "age-up-invitation" email to
@@ -64,6 +99,8 @@ export async function checkAgeUpMembers(): Promise<{
   let failed = 0;
 
   for (const member of candidates) {
+    let upgradeResult: AgeUpUpgradeResult | null = null;
+
     try {
       // Double-check age (belt-and-suspenders with the DB query)
       if (!member.dateOfBirth) {
@@ -89,10 +126,10 @@ export async function checkAgeUpMembers(): Promise<{
         continue;
       }
 
-      const upgradeResult = await prisma.$transaction(async (tx) => {
+      upgradeResult = await prisma.$transaction(async (tx) => {
         const currentMember = await tx.member.findUnique({
           where: { id: member.id },
-          select: { canLogin: true },
+          select: { canLogin: true, ageTier: true },
         });
         if (!currentMember || currentMember.canLogin) {
           return null;
@@ -117,7 +154,11 @@ export async function checkAgeUpMembers(): Promise<{
           },
         });
 
-        return { token };
+        return {
+          token,
+          tokenHash,
+          previousAgeTier: currentMember.ageTier,
+        };
       });
       if (!upgradeResult) {
         skipped++;
@@ -137,6 +178,7 @@ export async function checkAgeUpMembers(): Promise<{
         member.firstName,
         upgradeResult.token
       );
+      upgradeResult = null;
 
       upgraded++;
       logger.info(
@@ -144,6 +186,17 @@ export async function checkAgeUpMembers(): Promise<{
         "Age-up: member upgraded to ADULT with login"
       );
     } catch (err) {
+      if (upgradeResult) {
+        try {
+          await rollbackAgeUpUpgrade(member.id, upgradeResult);
+        } catch (rollbackErr) {
+          logger.error(
+            { err: rollbackErr, memberId: member.id },
+            "Age-up: failed to roll back member upgrade after email failure"
+          );
+        }
+      }
+
       failed++;
       logger.error(
         { err, memberId: member.id },
