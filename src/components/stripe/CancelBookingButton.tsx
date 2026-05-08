@@ -29,6 +29,8 @@ export default function CancelBookingButton({
     try {
       const response = await fetch(`/api/bookings/${bookingId}/cancel`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refundMethod: "card" }),
       });
 
       const data = await response.json();

@@ -5,11 +5,54 @@ import Stripe from "stripe";
 
 type PaymentStore = Prisma.TransactionClient | typeof prisma;
 
+type StripeReference = string | { id?: string | null } | null | undefined;
+
+type StripeRefundLedgerInput = {
+  id: string;
+  amount: number;
+  currency?: string | null;
+  status?: string | null;
+  reason?: string | null;
+  created?: number | null;
+  charge?: StripeReference;
+  payment_intent?: StripeReference;
+};
+
 const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
   PaymentStatus.SUCCEEDED,
   PaymentStatus.PARTIALLY_REFUNDED,
   PaymentStatus.REFUNDED,
 ]);
+
+const EXCLUDED_LEDGER_REFUND_STATUSES = ["failed", "canceled"];
+
+function stripeReferenceId(reference: StripeReference) {
+  if (!reference) {
+    return null;
+  }
+
+  if (typeof reference === "string") {
+    return reference;
+  }
+
+  return reference.id ?? null;
+}
+
+function stripeCreatedAtToDate(created: number | null | undefined) {
+  if (!created) {
+    return null;
+  }
+
+  return new Date(created * 1000);
+}
+
+function normalizeRefundCurrency(currency: string | null | undefined) {
+  return (currency ?? "nzd").toLowerCase();
+}
+
+function normalizeRefundStatus(status: string | null | undefined) {
+  return status ?? "unknown";
+}
 
 function isCapturedTransactionStatus(status: PaymentStatus) {
   return CAPTURED_TRANSACTION_STATUSES.has(status);
@@ -319,6 +362,73 @@ export async function findPaymentTransactionByIntentId({
   return transaction;
 }
 
+export async function recordStripeRefundLedgerEntry({
+  paymentId,
+  paymentTransactionId,
+  refund,
+  fallbackChargeId,
+  fallbackPaymentIntentId,
+  store = prisma,
+}: {
+  paymentId: string;
+  paymentTransactionId?: string | null;
+  refund: StripeRefundLedgerInput;
+  fallbackChargeId?: string | null;
+  fallbackPaymentIntentId?: string | null;
+  store?: PaymentStore;
+}) {
+  const stripeChargeId = stripeReferenceId(refund.charge) ?? fallbackChargeId ?? null;
+  const stripePaymentIntentId =
+    stripeReferenceId(refund.payment_intent) ?? fallbackPaymentIntentId ?? null;
+  const stripeCreatedAt = stripeCreatedAtToDate(refund.created);
+  const existingRefund = await store.paymentRefund.findUnique({
+    where: { stripeRefundId: refund.id },
+    select: { id: true },
+  });
+  const data = {
+    paymentId,
+    paymentTransactionId: paymentTransactionId ?? null,
+    stripeChargeId,
+    stripePaymentIntentId,
+    amountCents: refund.amount,
+    currency: normalizeRefundCurrency(refund.currency),
+    status: normalizeRefundStatus(refund.status),
+    reason: refund.reason ?? null,
+    stripeCreatedAt,
+  };
+
+  await store.paymentRefund.upsert({
+    where: { stripeRefundId: refund.id },
+    create: {
+      ...data,
+      stripeRefundId: refund.id,
+    },
+    update: data,
+  });
+
+  return {
+    created: !existingRefund,
+    amountCents: refund.amount,
+  };
+}
+
+async function sumRecordedRefundsForTransaction(
+  store: PaymentStore,
+  paymentTransactionId: string
+) {
+  const recordedRefunds = await store.paymentRefund.aggregate({
+    where: {
+      paymentTransactionId,
+      status: {
+        notIn: EXCLUDED_LEDGER_REFUND_STATUSES,
+      },
+    },
+    _sum: { amountCents: true },
+  });
+
+  return recordedRefunds._sum.amountCents ?? 0;
+}
+
 export async function upsertPaymentIntentTransaction({
   paymentId,
   kind,
@@ -489,6 +599,92 @@ export async function syncRefundedAmountFromStripe({
   };
 }
 
+export async function syncRefundsFromStripeCharge({
+  paymentIntentId,
+  stripeChargeId,
+  refundedAmountCents,
+  refunds,
+  store = prisma,
+}: {
+  paymentIntentId: string;
+  stripeChargeId: string;
+  refundedAmountCents: number;
+  refunds: StripeRefundLedgerInput[];
+  store?: PaymentStore;
+}) {
+  const transaction = await findPaymentTransactionByIntentId({
+    paymentIntentId,
+    store,
+  });
+  if (!transaction) {
+    return null;
+  }
+
+  const paymentBeforeUpdate = await store.payment.findUnique({
+    where: { id: transaction.paymentId },
+    select: { refundedAmountCents: true },
+  });
+
+  let createdRefundsCount = 0;
+  let createdRefundAmountCents = 0;
+  for (const refund of refunds) {
+    const recordedRefund = await recordStripeRefundLedgerEntry({
+      paymentId: transaction.paymentId,
+      paymentTransactionId: transaction.id,
+      refund,
+      fallbackChargeId: stripeChargeId,
+      fallbackPaymentIntentId: paymentIntentId,
+      store,
+    });
+
+    if (recordedRefund.created) {
+      createdRefundsCount += 1;
+      createdRefundAmountCents += recordedRefund.amountCents;
+    }
+  }
+
+  const ledgerRefundedAmountCents = await sumRecordedRefundsForTransaction(
+    store,
+    transaction.id
+  );
+  const nextRefundedAmountCents = Math.max(
+    transaction.refundedAmountCents,
+    refundedAmountCents,
+    ledgerRefundedAmountCents
+  );
+
+  await store.paymentTransaction.update({
+    where: { id: transaction.id },
+    data: {
+      refundedAmountCents: nextRefundedAmountCents,
+      status: applyRefundStatus(
+        PaymentStatus.SUCCEEDED,
+        transaction.amountCents,
+        nextRefundedAmountCents
+      ),
+    },
+  });
+
+  const payment = await reconcilePaymentAggregates({
+    paymentId: transaction.paymentId,
+    store,
+  });
+
+  return {
+    payment,
+    refundDeltaCents: Math.max(
+      (payment?.refundedAmountCents ?? 0) -
+        (paymentBeforeUpdate?.refundedAmountCents ?? 0),
+      0
+    ),
+    paymentId: transaction.paymentId,
+    transactionId: transaction.id,
+    createdRefundsCount,
+    createdRefundAmountCents,
+    ledgerRefundedAmountCents,
+  };
+}
+
 export async function refundPaymentTransactions({
   paymentId,
   amountCents,
@@ -555,6 +751,14 @@ export async function refundPaymentTransactions({
         : undefined,
     });
 
+    await recordStripeRefundLedgerEntry({
+      paymentId,
+      paymentTransactionId: transaction.id,
+      refund,
+      fallbackPaymentIntentId: transaction.stripePaymentIntentId,
+      store,
+    });
+
     const nextRefundedAmountCents =
       transaction.refundedAmountCents + refundAmountForTransaction;
     await store.paymentTransaction.update({
@@ -573,7 +777,7 @@ export async function refundPaymentTransactions({
     refunds.push({
       paymentIntentId: transaction.stripePaymentIntentId,
       refundId: refund.id,
-      amountCents: refundAmountForTransaction,
+      amountCents: refund.amount,
     });
     remainingAmountCents -= refundAmountForTransaction;
   }

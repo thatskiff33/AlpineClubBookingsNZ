@@ -183,6 +183,42 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     );
   });
 
+  it("forces finance access to NONE when updating a LODGE member", async () => {
+    const lodgeMember = {
+      ...baseMember,
+      id: "lodge-1",
+      role: "LODGE",
+      financeAccessLevel: "VIEWER",
+    };
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(lodgeMember as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...lodgeMember,
+      firstName: "Lodge",
+      financeAccessLevel: "NONE",
+      xeroContactId: null,
+    } as any);
+
+    const res = await updateMember(
+      makePutRequest("lodge-1", {
+        firstName: "Lodge",
+        financeAccessLevel: "MANAGER",
+      }),
+      { params: Promise.resolve({ id: "lodge-1" }) }
+    );
+
+    expect(res.status).toBe(200);
+    expect(prisma.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "lodge-1" },
+        data: expect.objectContaining({
+          firstName: "Lodge",
+          financeAccessLevel: "NONE",
+        }),
+      })
+    );
+  });
+
   it("sets forcePasswordChange to true", async () => {
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);

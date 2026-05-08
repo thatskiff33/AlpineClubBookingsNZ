@@ -185,6 +185,17 @@ export async function processRefund({
   return stripe.refunds.create(params);
 }
 
+export async function listRefundsForCharge(chargeId: string): Promise<Stripe.Refund[]> {
+  const refunds: Stripe.Refund[] = [];
+  const list = stripe.refunds.list({ charge: chargeId, limit: 100 });
+
+  for await (const refund of list) {
+    refunds.push(refund);
+  }
+
+  return refunds;
+}
+
 /**
  * Retrieve a PaymentIntent by ID.
  */

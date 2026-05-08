@@ -85,9 +85,19 @@ describe("review finding source/schema contracts", () => {
 
   it("persists executed Stripe refunds as first-class records instead of only cumulative totals", () => {
     const schema = readRepoFile("prisma/schema.prisma");
+    const paymentTransactions = readRepoFile("src/lib/payment-transactions.ts");
+    const stripeWebhook = readRepoFile("src/app/api/webhooks/stripe/route.ts");
 
     expect(schema).toMatch(/model\s+(?!RefundRequest\b)\w*Refund\w*\s*\{/);
-    expect(schema).toMatch(/stripeRefundId|refundId/);
+    expect(schema).toContain("stripeRefundId");
+    expect(schema).toContain("stripeChargeId");
+    expect(schema).toContain("stripePaymentIntentId");
+    expect(schema).toContain("currency");
+    expect(schema).toContain("status");
+    expect(paymentTransactions).toContain("paymentRefund.upsert");
+    expect(paymentTransactions).toContain("recordStripeRefundLedgerEntry");
+    expect(stripeWebhook).toContain("listRefundsForCharge");
+    expect(stripeWebhook).toContain("syncRefundsFromStripeCharge");
   });
 
   it("does not rely on regex tag stripping in the booking notes route", () => {

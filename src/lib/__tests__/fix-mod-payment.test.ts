@@ -104,6 +104,7 @@ vi.mock("@/lib/stripe", () => ({
   findOrCreateCustomer: vi.fn(),
   getPaymentIntent: vi.fn(),
   constructWebhookEvent: vi.fn(),
+  listRefundsForCharge: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({
@@ -141,7 +142,7 @@ vi.mock("@/lib/payment-transactions", () => ({
     mockMarkPaymentIntentTransactionSucceeded(...args),
   markPaymentIntentTransactionFailed: (...args: unknown[]) =>
     mockMarkPaymentIntentTransactionFailed(...args),
-  syncRefundedAmountFromStripe: vi.fn(),
+  syncRefundsFromStripeCharge: vi.fn(),
 }));
 
 // Chore cleanup mock

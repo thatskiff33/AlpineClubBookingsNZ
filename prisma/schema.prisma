@@ -537,19 +537,29 @@ model PaymentTransaction {
 }
 
 model PaymentRefund {
-  id                   String   @id @default(cuid())
-  paymentId            String
-  paymentTransactionId String?
-  stripeRefundId       String   @unique
-  amountCents          Int
-  reason               String?
-  createdAt            DateTime @default(now())
+  id                     String   @id @default(cuid())
+  paymentId              String
+  paymentTransactionId   String?
+  stripeRefundId         String   @unique
+  stripeChargeId         String?
+  stripePaymentIntentId  String?
+  amountCents            Int
+  currency               String   @default("nzd")
+  status                 String   @default("succeeded")
+  reason                 String?
+  xeroRefundCreditNoteId String?
+  stripeCreatedAt        DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   payment            Payment             @relation(fields: [paymentId], references: [id], onDelete: Restrict)
   paymentTransaction PaymentTransaction? @relation(fields: [paymentTransactionId], references: [id], onDelete: SetNull)
 
   @@index([paymentId, createdAt])
   @@index([paymentTransactionId])
+  @@index([stripeChargeId])
+  @@index([stripePaymentIntentId])
+  @@index([status, createdAt])
 }
 
 // ---------------------------------------------------------------------------
