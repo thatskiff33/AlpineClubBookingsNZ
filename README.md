@@ -63,6 +63,16 @@ docker compose ps
 
 The production Compose model includes `app` as the cron leader and warm fallback, `app_blue` / `app_green` as web-only blue/green slots, `postgres`, `caddy`, and a `migrate` profile service.
 
+For accessibility or release-review checks, use the non-production staging target:
+
+```bash
+cp .env.staging.example .env.staging
+docker compose --env-file .env.staging -p tacbookings-staging \
+  -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app
+```
+
+See `docs/STAGING_ACCESSIBILITY.md` for the staging URL, auth path, and Lighthouse workflow.
+
 ## Deployment
 
 Production deploys use the blue/green wrapper documented in `DEPLOYMENT.md`:
@@ -77,6 +87,7 @@ Do not deploy production by running a plain `docker compose up -d --build` on th
 
 - `DEPLOYMENT.md` - Lightsail, Caddy, Docker Compose, blue/green deploy, and recovery
 - `docs/ARCHITECTURE.md` - system architecture, core data model, integrations, cron, deployment
+- `docs/STAGING_ACCESSIBILITY.md` - non-production staging target and accessibility verification workflow
 - `docs/CI_SECURITY_GATES.md` - CI security controls and GHAS risk acceptance
 - `docs/PRODUCTION_DEPENDENCY_AUDIT.md` - dependency audit state and accepted Auth.js/Nodemailer peer mismatch
 - `docs/HASHED_TOKEN_MIGRATION.md` - token hash-at-rest migration

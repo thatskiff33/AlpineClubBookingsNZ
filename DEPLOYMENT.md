@@ -386,6 +386,24 @@ Options for getting members into the system:
 
 ## Ongoing Operations
 
+### Staging And Accessibility Verification
+
+Do not run Lighthouse, DAST, or broad browser automation against production unless an incident plan explicitly calls for it. Use the committed non-production target in `docker-compose.staging.yml` and the operator runbook in `docs/STAGING_ACCESSIBILITY.md`.
+
+Default local staging:
+
+```bash
+cp .env.staging.example .env.staging
+docker compose --env-file .env.staging -p tacbookings-staging \
+  -f docker-compose.yml -f docker-compose.staging.yml \
+  up -d --build postgres app
+```
+
+Default origin: `http://localhost:3001`
+Auth path: `/login`
+
+For a shared staging host, set `NEXTAUTH_URL` in `.env.staging` to the exact non-production origin and record that origin in the linked review issue before running accessibility checks.
+
 ### Deploying Updates
 
 Use the single supported production deploy entrypoint:

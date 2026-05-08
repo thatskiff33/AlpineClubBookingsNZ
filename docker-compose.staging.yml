@@ -1,0 +1,33 @@
+# Staging/accessibility override for non-production verification.
+#
+# Usage:
+#   cp .env.staging.example .env.staging
+#   docker compose --env-file .env.staging -p tacbookings-staging \
+#     -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app
+#
+# This target intentionally starts only Postgres and one web app by default. It
+# disables cron and backup work so Lighthouse, accessibility, and smoke tests can
+# run against a non-production app without sending scheduled email, Stripe, or
+# Xero work.
+
+services:
+  postgres:
+    ports:
+      - "${STAGING_POSTGRES_PORT:-5433}:5432"
+
+  app:
+    ports:
+      - "${STAGING_HTTP_PORT:-3001}:3000"
+    environment:
+      APP_RUNTIME_ROLE: staging
+      CRON_ENABLED: "false"
+      BACKUP_ENABLED: "false"
+
+  app_blue:
+    profiles: ["production-bluegreen"]
+
+  app_green:
+    profiles: ["production-bluegreen"]
+
+  caddy:
+    profiles: ["production-caddy"]
