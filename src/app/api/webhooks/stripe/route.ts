@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { constructWebhookEvent } from "@/lib/stripe";
+import { constructWebhookEvent, listRefundsForCharge } from "@/lib/stripe";
 import { markBookingPaymentSucceeded, markBookingSetupIntentSucceeded } from "@/lib/payment-reconciliation";
 import { isXeroConnected } from "@/lib/xero";
 import {
@@ -19,7 +19,7 @@ import {
   markPaymentIntentTransactionFailed,
   markPaymentIntentTransactionSucceeded,
   refundPaymentTransactions,
-  syncRefundedAmountFromStripe,
+  syncRefundsFromStripeCharge,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
@@ -571,9 +571,17 @@ async function handleChargeRefunded(charge: Stripe.Charge) {
 
   if (!paymentIntentId) return;
 
-  const refundSync = await syncRefundedAmountFromStripe({
+  const stripeRefunds = await listRefundsForCharge(charge.id);
+  const refunds =
+    stripeRefunds.length > 0
+      ? stripeRefunds
+      : charge.refunds?.data ?? [];
+
+  const refundSync = await syncRefundsFromStripeCharge({
     paymentIntentId,
+    stripeChargeId: charge.id,
     refundedAmountCents: charge.amount_refunded,
+    refunds,
   });
 
   if (!refundSync?.payment) {

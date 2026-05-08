@@ -44,6 +44,7 @@ export async function GET() {
         firstName: "Lodge",
         lastName: "Kiosk",
         role: "LODGE",
+        financeAccessLevel: "NONE",
         ageTier: "ADULT",
         emailVerified: true,
         forcePasswordChange: true,
@@ -141,6 +142,8 @@ export async function PUT(request: NextRequest) {
   if (changes.length === 0) {
     return NextResponse.json({ error: "No changes provided" }, { status: 400 });
   }
+
+  updateData.financeAccessLevel = "NONE";
 
   const updated = await prisma.member.update({
     where: { id: lodge.id },

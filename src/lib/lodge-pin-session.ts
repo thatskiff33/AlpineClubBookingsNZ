@@ -92,6 +92,7 @@ function decodePayload(rawValue: string): PinSessionPayload | null {
       assignmentId: payload.assignmentId,
       memberId: payload.memberId,
       exp: payload.exp,
+      pinVersion: payload.pinVersion,
     };
   } catch {
     return null;

@@ -341,7 +341,10 @@ export async function PUT(
     if (data[f] !== undefined) updateData[f] = data[f]?.trim() || null;
   }
   if (data.role !== undefined) updateData.role = data.role;
-  if (data.financeAccessLevel !== undefined) {
+  const effectiveRole = data.role ?? existing.role;
+  if (effectiveRole === "LODGE") {
+    updateData.financeAccessLevel = "NONE";
+  } else if (data.financeAccessLevel !== undefined) {
     updateData.financeAccessLevel = data.financeAccessLevel;
   }
   if (data.active !== undefined) updateData.active = data.active;

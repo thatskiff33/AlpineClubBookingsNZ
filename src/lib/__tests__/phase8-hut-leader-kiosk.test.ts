@@ -4,7 +4,7 @@ import { _testStore } from "../rate-limit";
 import {
   _testLodgePinFailureStore,
   clearLodgePinFailures,
-  createLodgePinSession,
+  createLodgePinSessionWithVersion,
   getActiveLodgePinSessionForDate,
   getLodgePinLockout,
   recordLodgePinFailure,
@@ -240,14 +240,86 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(getLodgePinLockout("10.0.0.3").locked).toBe(false);
   });
 
-  it("invalidates an existing hut leader cookie after the underlying PIN is rotated", async () => {
-    const issuedSession = createLodgePinSession("assign-1", "member-1");
+  it("accepts a versioned hut leader cookie when the assignment PIN has not changed", async () => {
+    const currentPinHash = await bcrypt.hash("123456", 12);
+    const issuedSession = createLodgePinSessionWithVersion(
+      "assign-1",
+      "member-1",
+      currentPinHash
+    );
+
     mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
       id: "assign-1",
       memberId: "member-1",
       startDate: new Date("2026-04-13T00:00:00.000Z"),
       endDate: new Date("2026-04-16T00:00:00.000Z"),
-      hutLeaderPin: await bcrypt.hash("654321", 12),
+      hutLeaderPin: currentPinHash,
+      member: {
+        id: "member-1",
+        active: true,
+        firstName: "Alice",
+        lastName: "Smith",
+        email: "alice@example.com",
+      },
+    });
+
+    const session = await getActiveLodgePinSessionForDate(
+      new Date("2026-04-14T00:00:00.000Z"),
+      issuedSession.value
+    );
+
+    expect(session).toMatchObject({
+      assignmentId: "assign-1",
+      memberId: "member-1",
+    });
+  });
+
+  it("invalidates an existing hut leader cookie after the underlying PIN is rotated", async () => {
+    const originalPinHash = await bcrypt.hash("123456", 12);
+    const rotatedPinHash = await bcrypt.hash("654321", 12);
+    const issuedSession = createLodgePinSessionWithVersion(
+      "assign-1",
+      "member-1",
+      originalPinHash
+    );
+
+    mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
+      id: "assign-1",
+      memberId: "member-1",
+      startDate: new Date("2026-04-13T00:00:00.000Z"),
+      endDate: new Date("2026-04-16T00:00:00.000Z"),
+      hutLeaderPin: rotatedPinHash,
+      member: {
+        id: "member-1",
+        active: true,
+        firstName: "Alice",
+        lastName: "Smith",
+        email: "alice@example.com",
+      },
+    });
+
+    const session = await getActiveLodgePinSessionForDate(
+      new Date("2026-04-14T00:00:00.000Z"),
+      issuedSession.value
+    );
+
+    expect(session).toBeNull();
+  });
+
+  it("invalidates an existing hut leader cookie after PIN access is revoked", async () => {
+    const currentPinHash = await bcrypt.hash("123456", 12);
+    const issuedSession = createLodgePinSessionWithVersion(
+      "assign-1",
+      "member-1",
+      currentPinHash
+    );
+
+    mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
+      id: "assign-1",
+      memberId: "member-1",
+      startDate: new Date("2026-04-13T00:00:00.000Z"),
+      endDate: new Date("2026-04-16T00:00:00.000Z"),
+      hutLeaderPin: null,
       member: {
         id: "member-1",
         active: true,

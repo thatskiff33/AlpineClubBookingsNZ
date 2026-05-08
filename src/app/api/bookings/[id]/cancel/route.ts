@@ -6,8 +6,12 @@ import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
 
+const cancelBookingParamsSchema = z.object({
+  id: z.string().min(1),
+});
+
 const cancelBookingMutationSchema = z.object({
-  refundMethod: z.enum(["card", "credit"]).optional(),
+  refundMethod: z.enum(["card", "credit"]),
 });
 
 export async function POST(
@@ -15,7 +19,14 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params;
+    const parsedParams = cancelBookingParamsSchema.safeParse(await params);
+    if (!parsedParams.success) {
+      return NextResponse.json(
+        { error: "Invalid input", details: parsedParams.error.flatten() },
+        { status: 400 }
+      );
+    }
+
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
@@ -26,27 +37,33 @@ export async function POST(
       return inactiveResponse;
     }
 
-    let refundMethod: "card" | "credit" = "card";
+    let body: unknown;
     try {
-      const body = await request.json();
-      const parsed = cancelBookingMutationSchema.safeParse(body);
-      if (!parsed.success) {
-        return NextResponse.json(
-          { error: "Invalid input", details: parsed.error.flatten() },
-          { status: 400 }
-        );
-      }
-      refundMethod = parsed.data.refundMethod ?? "card";
+      body = await request.json();
     } catch {
-      refundMethod = "card";
+      return NextResponse.json(
+        {
+          error: "Invalid JSON",
+          details: { body: ["Request body must be valid JSON"] },
+        },
+        { status: 400 }
+      );
+    }
+
+    const parsed = cancelBookingMutationSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid input", details: parsed.error.flatten() },
+        { status: 400 }
+      );
     }
 
     const result = await cancelBooking(
-      id,
+      parsedParams.data.id,
       session.user.id,
       session.user.role,
       getClientIp(request),
-      refundMethod
+      parsed.data.refundMethod
     );
 
     if (result.status === 200) {
