@@ -1,14 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { validateGuestChoreToken } from "@/lib/guest-chore-token";
-import logger from "@/lib/logger";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-
-const guestChoreMutationSchema = z.object({
-  assignmentId: z.string().min(1),
-  action: z.enum(["complete", "uncomplete"]),
-});
 
 /**
  * GET /api/chores/[token]
@@ -42,80 +34,12 @@ export async function GET(
 
 /**
  * PUT /api/chores/[token]
- * Token-authenticated public endpoint. Marks a chore assignment via guest link.
+ * Guest chore links are read-only. Chore completion must use the authenticated
+ * lodge roster endpoint, backed by revocable session or PIN state.
  */
-export async function PUT(
-  req: NextRequest,
-  { params }: { params: Promise<{ token: string }> }
-) {
-  const rateLimited = applyRateLimit(rateLimiters.guestChoreToken, req);
-  if (rateLimited) {
-    return rateLimited;
-  }
-
-  const { token } = await params;
-
-  const result = await validateGuestChoreToken(token);
-  if (!result) {
-    return NextResponse.json(
-      { error: "Invalid or expired token" },
-      { status: 404 }
-    );
-  }
-
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const parsed = guestChoreMutationSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid input", details: parsed.error.flatten() },
-      { status: 400 }
-    );
-  }
-
-  const { assignmentId, action } = parsed.data;
-
-  // Verify this assignment belongs to this guest
-  const validIds = result.assignments.map((a) => a.id);
-  if (!validIds.includes(assignmentId)) {
-    return NextResponse.json(
-      { error: "Assignment not found for this guest" },
-      { status: 403 }
-    );
-  }
-
-  try {
-    if (action === "complete") {
-      await prisma.choreAssignment.update({
-        where: { id: assignmentId },
-        data: {
-          status: "COMPLETED",
-          completedAt: new Date(),
-          completedVia: "GUEST_LINK",
-        },
-      });
-    } else {
-      await prisma.choreAssignment.update({
-        where: { id: assignmentId },
-        data: {
-          status: "CONFIRMED",
-          completedAt: null,
-          completedVia: null,
-        },
-      });
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    logger.error({ err }, "Error updating chore via guest link");
-    return NextResponse.json(
-      { error: "Failed to update assignment" },
-      { status: 500 }
-    );
-  }
+export async function PUT() {
+  return NextResponse.json(
+    { error: "Guest chore links are read-only. Use the lodge roster to update chore completion." },
+    { status: 405, headers: { Allow: "GET" } }
+  );
 }

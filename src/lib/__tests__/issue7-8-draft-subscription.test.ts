@@ -9,6 +9,7 @@ import { NextRequest } from "next/server";
 const mockTx = {
   $executeRaw: vi.fn().mockResolvedValue(undefined),
   $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+  $queryRaw: vi.fn().mockResolvedValue([]),
   booking: {
     findMany: vi.fn(),
     findUnique: vi.fn(),
@@ -22,8 +23,9 @@ const mockTx = {
     upsert: vi.fn(),
   },
   season: { findMany: vi.fn() },
-  promoRedemption: { count: vi.fn(), create: vi.fn() },
+  promoRedemption: { count: vi.fn(), create: vi.fn(), aggregate: vi.fn() },
   promoCode: { findUnique: vi.fn(), update: vi.fn() },
+  promoCodeAssignment: { findMany: vi.fn() },
   member: { findUnique: vi.fn() },
   memberSubscription: { findFirst: vi.fn() },
 };
@@ -114,6 +116,10 @@ vi.mock("@/lib/bumping", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   redeemPromoCode: vi.fn(),
+  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({
+    discountCents: 0,
+    freeNightsUsed: 0,
+  }),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 
@@ -224,6 +230,7 @@ beforeEach(() => {
 
   // Default transaction sub-calls
   mockTx.$executeRaw.mockResolvedValue(undefined);
+  mockTx.$queryRaw.mockResolvedValue([]);
   mockTx.booking.findMany.mockResolvedValue([]);
   mockTx.booking.create.mockResolvedValue({
     id: "booking-1",
@@ -235,6 +242,8 @@ beforeEach(() => {
   mockTx.booking.update.mockResolvedValue({});
   mockTx.payment.create.mockResolvedValue({});
   mockTx.season.findMany.mockResolvedValue([]);
+  mockTx.promoRedemption.aggregate.mockResolvedValue({ _sum: { freeNightsUsed: 0 } });
+  mockTx.promoCodeAssignment.findMany.mockResolvedValue([]);
   mockPrisma.payment.upsert.mockResolvedValue({ id: "payment-1" });
   mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
 });
@@ -253,7 +262,7 @@ describe("Issue 7: Draft Booking Creation", () => {
       draftExpiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000),
       guests: [{ id: "g1" }],
     };
-    mockPrisma.booking.create.mockResolvedValue(draftBooking);
+    mockTx.booking.create.mockResolvedValue(draftBooking);
 
     const res = await createBooking(makeBookingBody({ draft: true }));
     expect(res.status).toBe(201);
@@ -263,17 +272,17 @@ describe("Issue 7: Draft Booking Creation", () => {
     expect(data.draftExpiresAt).toBeDefined();
 
     // Verify booking was created with DRAFT status
-    expect(mockPrisma.booking.create).toHaveBeenCalledWith(
+    expect(mockTx.booking.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: "DRAFT" }),
       })
     );
   });
 
-  it("draft booking bypasses the capacity-lock transaction", async () => {
+  it("creates draft bookings inside the advisory-lock transaction", async () => {
     mockAuth.mockResolvedValue(memberSession());
 
-    mockPrisma.booking.create.mockResolvedValue({
+    mockTx.booking.create.mockResolvedValue({
       id: "draft-1",
       status: "DRAFT",
       finalPriceCents: 10000,
@@ -285,15 +294,17 @@ describe("Issue 7: Draft Booking Creation", () => {
     const res = await createBooking(makeBookingBody({ draft: true }));
     expect(res.status).toBe(201);
 
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
-    expect(mockTx.$executeRaw).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).toHaveBeenCalled();
+    expect(mockTx.$executeRaw).toHaveBeenCalled();
+    expect(mockTx.booking.create).toHaveBeenCalled();
+    expect(mockPrisma.booking.create).not.toHaveBeenCalled();
   });
 
   it("draft booking does NOT call sendBookingConfirmedEmail or admin alert", async () => {
     const { sendBookingConfirmedEmail, sendAdminNewBookingAlert } = await import("@/lib/email");
     mockAuth.mockResolvedValue(memberSession());
 
-    mockPrisma.booking.create.mockResolvedValue({
+    mockTx.booking.create.mockResolvedValue({
       id: "draft-1",
       status: "DRAFT",
       finalPriceCents: 10000,
@@ -506,9 +517,9 @@ describe("Issue 10: Subscription check on booking creation", () => {
       draftExpiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000),
       guests: [{ id: "g1" }],
     };
-    mockPrisma.booking.create.mockResolvedValue(draftBooking);
+    mockTx.booking.create.mockResolvedValue(draftBooking);
 
-    // Admin must use forMemberId to book on behalf (use draft to skip capacity tx)
+    // Admin must use forMemberId to book on behalf.
     const res = await createBooking(makeBookingBody({ forMemberId: "target-member-1", draft: true }));
     // Admin should get through — subscription check skipped
     expect(res.status).toBe(201);
@@ -553,7 +564,7 @@ describe("Issue 7: Draft expiry cleanup logic", () => {
     mockAuth.mockResolvedValue(memberSession());
 
     let capturedData: Record<string, unknown> | null = null;
-    mockPrisma.booking.create.mockImplementation(async (args: { data: Record<string, unknown> }) => {
+    mockTx.booking.create.mockImplementation(async (args: { data: Record<string, unknown> }) => {
       capturedData = args.data;
       return {
         id: "draft-1",

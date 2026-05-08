@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const { mockAuth, mockFindUnique } = vi.hoisted(() => ({
@@ -39,9 +39,14 @@ function viewerMember() {
 
 describe("finance legacy dashboard auth route", () => {
   beforeEach(() => {
+    vi.stubEnv("NEXTAUTH_URL", "https://tokoroa.org.nz");
     vi.clearAllMocks();
     mockAuth.mockResolvedValue(viewerSession());
     mockFindUnique.mockResolvedValue(viewerMember());
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("returns 204 for finance viewers", async () => {

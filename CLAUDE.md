@@ -3,16 +3,17 @@
 ## How to Run
 
 ```bash
-npm install
+npm ci
 npx prisma generate
 npm test              # run all tests
 npm run build         # must succeed before any PR
 npm run dev           # development server
 
 # Docker deployment:
-docker compose up -d --build
-docker compose build migrate       # rebuild migrate image (has its own build block)
-docker compose run --rm migrate    # run database migrations
+./scripts/run-production-blue-green-deploy.sh  # supported production deploy path
+docker compose up -d --build                   # local full-stack rebuild
+docker compose build migrate                   # rebuild migrate image (has its own build block)
+docker compose run --rm migrate                # run database migrations
 
 # Seed database (requires running PostgreSQL):
 npx prisma migrate dev --name initial
@@ -21,7 +22,7 @@ npm run db:seed
 
 **Seed account:** support@tokoroa.org.nz / admin123 (password change required on first login)
 
-**Note:** nodemailer pinned to v7 for next-auth peer dep compatibility
+**Note:** nodemailer is currently on v8. Auth.js/next-auth still declares an optional `nodemailer@^7` peer range, so `npm ls nodemailer next-auth` reports a known peer-range mismatch. The app uses credentials auth only; mail is sent through app-owned Nodemailer transports. See `docs/PRODUCTION_DEPENDENCY_AUDIT.md`.
 
 ## Context
 
@@ -39,7 +40,7 @@ All build phases complete (9-phase improvement sprint + 12 delivery phases + pos
 
 | Layer | Choice | Rationale |
 |-------|--------|-----------|
-| **Framework** | Next.js 15 (App Router) | Full-stack TypeScript monolith |
+| **Framework** | Next.js 16 (App Router) | Full-stack TypeScript monolith |
 | **Language** | TypeScript | Type safety |
 | **Database** | PostgreSQL 16 | Robust relational DB |
 | **ORM** | Prisma 6 | Type-safe DB access, declarative schema, auto migrations |
@@ -48,7 +49,7 @@ All build phases complete (9-phase improvement sprint + 12 delivery phases + pos
 | **Payments** | Stripe (PaymentIntents + SetupIntents) | Industry standard |
 | **Accounting** | Xero API via `xero-node` SDK | Full bidirectional sync |
 | **Email** | AWS SES via `nodemailer` | Transactional emails |
-| **Deployment** | Docker Compose on Lightsail | Single `docker compose up` |
+| **Deployment** | Docker Compose on Lightsail | Blue/green web deploy with cron-leader fallback |
 | **Reverse Proxy** | Caddy 2 | Automatic HTTPS via Let's Encrypt |
 | **Scheduled Jobs** | `node-cron` in `instrumentation.ts` | No external scheduler needed at this scale |
 

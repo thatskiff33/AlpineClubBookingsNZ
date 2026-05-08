@@ -260,153 +260,179 @@ export async function POST(request: NextRequest) {
 
   // Issue 7: Draft booking — skip capacity, payment, Xero, emails
   if (draft) {
-    const draftExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
+    try {
+      const newBooking = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-    // Fetch seasons for pricing
-    const seasons = await prisma.season.findMany({
-      where: {
-        active: true,
-        startDate: { lte: checkOut },
-        endDate: { gte: checkIn },
-      },
-      include: { rates: true },
-    });
+        const draftExpiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
 
-    const seasonData: SeasonRateData[] = seasons.map((s) => ({
-      seasonId: s.id,
-      startDate: s.startDate,
-      endDate: s.endDate,
-      type: s.type,
-      rates: s.rates.map((r) => ({
-        ageTier: r.ageTier,
-        isMember: r.isMember,
-        pricePerNightCents: r.pricePerNightCents,
-      })),
-    }));
+        // Fetch seasons for pricing
+        const seasons = await tx.season.findMany({
+          where: {
+            active: true,
+            startDate: { lte: checkOut },
+            endDate: { gte: checkIn },
+          },
+          include: { rates: true },
+        });
 
-    const guestInputs = guests.map((g) => ({
-      ageTier: g.ageTier,
-      isMember: g.isMember,
-    }));
+        const seasonData: SeasonRateData[] = seasons.map((s) => ({
+          seasonId: s.id,
+          startDate: s.startDate,
+          endDate: s.endDate,
+          type: s.type,
+          rates: s.rates.map((r) => ({
+            ageTier: r.ageTier,
+            isMember: r.isMember,
+            pricePerNightCents: r.pricePerNightCents,
+          })),
+        }));
 
-    const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData, groupDiscount);
+        const guestInputs = guests.map((g) => ({
+          ageTier: g.ageTier,
+          isMember: g.isMember,
+        }));
 
-    let discountCents = 0;
-    let promoFreeNightsUsed = 0;
-    let promoCodeRecord: { id: string; type: string; valueCents: number | null; percentOff: number | null; freeNights: number | null } | null = null;
+        const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData, groupDiscount);
 
-    if (promoCodeStr) {
-      const normalizedCode = promoCodeStr.toUpperCase().trim();
-      const promoCode = await prisma.promoCode.findUnique({
-        where: { code: normalizedCode },
-        include: { assignments: { select: { memberId: true } } },
+        let discountCents = 0;
+        let promoFreeNightsUsed = 0;
+        let promoCodeRecord: { id: string; type: PromoCodeType; valueCents: number | null; percentOff: number | null; freeNights: number | null } | null = null;
+
+        if (promoCodeStr) {
+          const normalizedCode = promoCodeStr.toUpperCase().trim();
+          const lockedRows = await tx.$queryRaw<Array<{ id: string; active: boolean; validFrom: Date | null; validUntil: Date | null; maxRedemptions: number | null; currentRedemptions: number; membersOnly: boolean; singleUse: boolean; type: PromoCodeType; valueCents: number | null; percentOff: number | null; freeNights: number | null; code: string }>>`
+            SELECT * FROM "PromoCode" WHERE "code" = ${normalizedCode} FOR UPDATE
+          `;
+          const promoCode = lockedRows.length > 0 ? lockedRows[0] : null;
+
+          let memberRedemptionCount = 0;
+          if (promoCode?.singleUse) {
+            memberRedemptionCount = await tx.promoRedemption.count({
+              where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
+            });
+          }
+
+          let memberFreeNightsUsed = 0;
+          if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights) {
+            const result = await tx.promoRedemption.aggregate({
+              where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
+              _sum: { freeNightsUsed: true },
+            });
+            memberFreeNightsUsed = result._sum.freeNightsUsed ?? 0;
+          }
+
+          let assignedMemberIds: string[] | null = null;
+          if (promoCode) {
+            const assignments = await tx.promoCodeAssignment.findMany({
+              where: { promoCodeId: promoCode.id },
+              select: { memberId: true },
+            });
+            if (assignments.length > 0) {
+              assignedMemberIds = assignments.map((a) => a.memberId);
+            }
+          }
+
+          const validationError = validatePromoCodeRules(
+            promoCode,
+            { memberId: effectiveMemberId, bookingCheckIn: checkIn },
+            new Date(),
+            memberRedemptionCount,
+            assignedMemberIds,
+            memberFreeNightsUsed
+          );
+          if (validationError) {
+            throw new Error(validationError);
+          }
+
+          const remainingFreeNights = promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights
+            ? promoCode.freeNights - memberFreeNightsUsed
+            : undefined;
+          const guestNightRates = guests.map((guest, index) => ({
+            memberId: guest.memberId ?? null,
+            perNightRates: price.guests[index].perNightCents,
+          }));
+          const promoResult = calculatePromoDiscountForGuestRates(
+            {
+              type: promoCode!.type,
+              valueCents: promoCode!.valueCents,
+              percentOff: promoCode!.percentOff,
+              freeNights: promoCode!.freeNights,
+            },
+            price.totalPriceCents,
+            effectiveMemberId,
+            guestNightRates,
+            assignedMemberIds,
+            undefined,
+            remainingFreeNights
+          );
+          discountCents = promoResult.discountCents;
+          promoFreeNightsUsed = promoResult.freeNightsUsed;
+          promoCodeRecord = promoCode!;
+        }
+
+        const finalPriceCents = price.totalPriceCents - discountCents;
+        const hasNonMembers = guests.some((g) => !g.isMember);
+
+        const createdBooking = await tx.booking.create({
+          data: {
+            memberId: effectiveMemberId,
+            checkIn,
+            checkOut,
+            status: BookingStatus.DRAFT,
+            totalPriceCents: price.totalPriceCents,
+            discountCents,
+            finalPriceCents,
+            hasNonMembers,
+            nonMemberHoldUntil: null,
+            draftExpiresAt,
+            notes: notes || null,
+            expectedArrivalTime: expectedArrivalTime || null,
+            createdById: isOnBehalf ? session.user.id : null,
+            requiresAdminReview,
+            adminReviewReason,
+            guests: {
+              create: guests.map((g, i) => ({
+                firstName: g.firstName,
+                lastName: g.lastName,
+                ageTier: g.ageTier,
+                isMember: g.isMember,
+                memberId: g.memberId || null,
+                priceCents: price.guests[i].priceCents,
+              })),
+            },
+          },
+          include: { guests: true },
+        });
+
+        if (promoCodeRecord && discountCents > 0) {
+          await redeemPromoCode(
+            tx,
+            promoCodeRecord.id,
+            createdBooking.id,
+            effectiveMemberId,
+            discountCents,
+            promoFreeNightsUsed || undefined
+          );
+        }
+
+        return createdBooking;
       });
-      let memberRedemptionCount = 0;
-      if (promoCode?.singleUse) {
-        memberRedemptionCount = await prisma.promoRedemption.count({
-          where: { promoCodeId: promoCode.id, memberId: effectiveMemberId },
+
+      if (isOnBehalf) {
+        logAudit({
+          action: "booking.created_on_behalf",
+          memberId: session.user.id,
+          targetId: newBooking.id,
+          details: `Admin created draft booking on behalf of member ${effectiveMemberId}`,
         });
       }
-      // Get cumulative free nights used for FREE_NIGHTS promos
-      let memberFreeNightsUsed = 0;
-      if (promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights) {
-        memberFreeNightsUsed = await getMemberFreeNightsUsed(promoCode.id, effectiveMemberId);
-      }
-      const assignedMemberIds = promoCode?.assignments?.length
-        ? promoCode.assignments.map((a) => a.memberId)
-        : null;
-      const validationError = validatePromoCodeRules(
-        promoCode,
-        { memberId: effectiveMemberId, bookingCheckIn: checkIn },
-        new Date(),
-        memberRedemptionCount,
-        assignedMemberIds,
-        memberFreeNightsUsed
-      );
-      if (validationError) {
-        return NextResponse.json({ error: validationError }, { status: 400 });
-      }
-      const remainingFreeNights = promoCode?.type === "FREE_NIGHTS" && promoCode.freeNights
-        ? promoCode.freeNights - memberFreeNightsUsed
-        : undefined;
-      const guestNightRates = guests.map((guest, index) => ({
-        memberId: guest.memberId ?? null,
-        perNightRates: price.guests[index].perNightCents,
-      }));
-      const promoResult = calculatePromoDiscountForGuestRates(
-        {
-          type: promoCode!.type,
-          valueCents: promoCode!.valueCents,
-          percentOff: promoCode!.percentOff,
-          freeNights: promoCode!.freeNights,
-        },
-        price.totalPriceCents,
-        effectiveMemberId,
-        guestNightRates,
-        assignedMemberIds,
-        undefined,
-        remainingFreeNights
-      );
-      discountCents = promoResult.discountCents;
-      promoFreeNightsUsed = promoResult.freeNightsUsed;
-      promoCodeRecord = promoCode!;
+
+      return NextResponse.json(newBooking, { status: 201 });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to create draft booking";
+      return NextResponse.json({ error: message }, { status: 400 });
     }
-
-    const finalPriceCents = price.totalPriceCents - discountCents;
-    const hasNonMembers = guests.some((g) => !g.isMember);
-
-    const newBooking = await prisma.booking.create({
-      data: {
-        memberId: effectiveMemberId,
-        checkIn,
-        checkOut,
-        status: BookingStatus.DRAFT,
-        totalPriceCents: price.totalPriceCents,
-        discountCents,
-        finalPriceCents,
-        hasNonMembers,
-        nonMemberHoldUntil: null,
-        draftExpiresAt,
-        notes: notes || null,
-        expectedArrivalTime: expectedArrivalTime || null,
-        createdById: isOnBehalf ? session.user.id : null,
-        requiresAdminReview,
-        adminReviewReason,
-        guests: {
-          create: guests.map((g, i) => ({
-            firstName: g.firstName,
-            lastName: g.lastName,
-            ageTier: g.ageTier,
-            isMember: g.isMember,
-            memberId: g.memberId || null,
-            priceCents: price.guests[i].priceCents,
-          })),
-        },
-      },
-      include: { guests: true },
-    });
-
-    if (promoCodeRecord && discountCents > 0) {
-      await redeemPromoCode(
-        prisma,
-        promoCodeRecord.id,
-        newBooking.id,
-        effectiveMemberId,
-        discountCents,
-        promoFreeNightsUsed || undefined
-      );
-    }
-
-    if (isOnBehalf) {
-      logAudit({
-        action: "booking.created_on_behalf",
-        memberId: session.user.id,
-        targetId: newBooking.id,
-        details: `Admin created draft booking on behalf of member ${effectiveMemberId}`,
-      });
-    }
-
-    return NextResponse.json(newBooking, { status: 201 });
   }
 
   const hasNonMembers = guests.some((g) => !g.isMember);

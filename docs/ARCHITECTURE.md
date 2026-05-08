@@ -58,7 +58,8 @@ age-tier-settings, audit-log, booking-policies, bookings, chores, committee, com
 | `nomination.ts` | Membership nomination workflow |
 | `booking-policies.ts` | Minimum stay + booking rules |
 | `booking-cancel.ts` | Shared cancellation service |
-| `xero.ts` + `xero-*.ts` | Xero OAuth2, sync, reconciliation, cache |
+| `xero.ts` + `xero-*.ts` | Operational Xero OAuth2, sync, reconciliation, cache |
+| `finance-*.ts` | Finance access, finance Xero boundary, snapshots, sync, and report models |
 | `stripe.ts` | Stripe client + helpers |
 | `email.ts` / `email-templates.ts` | AWS SES transactional emails |
 | `audit.ts` | Audit logging helper |
@@ -194,6 +195,9 @@ id, bookingId, description, category, resolvedAt
 **Xero-related tables:**
 `XeroToken`, `XeroAccountMapping`, `XeroItemCodeMapping`, `XeroObjectLink`, `XeroAdminCache`, `XeroContactCache`, `XeroContactGroupCache`, `XeroContactGroupMembershipCache`, `XeroSyncCursor`, `XeroSyncOperation`, `XeroInboundEvent`, `XeroApiUsageDaily`, `XeroApiUsageEvent`
 
+**Finance-related tables:**
+`FinanceXeroToken`, `FinanceSyncRun`, `FinanceSnapshot`, `FinanceXeroApiUsageDaily`, `FinanceXeroApiUsageEvent`; finance access is controlled by `Member.financeAccessLevel` (`NONE`, `VIEWER`, `MANAGER`).
+
 **Infrastructure/Ops tables:**
 `AuditLog`, `CronJobRun`, `EmailLog`, `NotificationPreference`, `WebhookLog`, `ProcessedWebhookEvent`, `PasswordResetToken`, `EmailVerificationToken`, `EmailChangeToken`, `DeletionRequest`, `BookingDefaults`, `BookingPeriod`, `AgeTierSetting`, `CancellationPolicy`
 
@@ -275,6 +279,19 @@ Concurrency guardrail:
 - 4 permission tiers: VIEW_ONLY, GUEST, HUT_LEADER, ADMIN
 - Features: arrival display, expected arrival times, chore updates, issue reporting
 
+### 11. Finance Dashboard
+- Finance routes live under `/finance` and require explicit finance access through `Member.financeAccessLevel`; `ADMIN` alone does not grant finance visibility.
+- `VIEWER` can read the landed finance workspace and reports. `MANAGER` can use manager-only finance actions such as Xero connection and manual sync controls.
+- Finance Xero uses a separate OAuth app, token table, encryption key, tenant linkage, usage metering, and callback path from the operational Xero integration.
+- Daily finance sync writes durable `FinanceSnapshot` rows for reporting datasets such as profit and loss, bank balances, and balance sheet data. Native booking reports use TACBookings booking/payment data directly.
+- Finance report pages read stored snapshots or first-party booking data; normal report navigation does not make live Xero API calls.
+- The legacy finance dashboard remains a fallback path until the rollout, freeze, and retirement runbooks in `docs/finance-dashboard/` are completed.
+
+### 12. Token Storage
+- Password reset, email verification, email change, and guest chore bearer tokens are stored as SHA-256 hashes in `tokenHash` columns.
+- Incoming raw token values are hashed before lookup, so plaintext bearer tokens are not stored in the database after migration.
+- Membership nomination tokens currently remain in their own `NominationToken` workflow and are not part of the hashed action-token migration documented in `docs/HASHED_TOKEN_MIGRATION.md`.
+
 ---
 
 ## Cron Job Schedule
@@ -350,13 +367,14 @@ Concurrency guardrail:
 
 **Blue/green guidance:** The blue/green path keeps Postgres shared, runs cron only on `app`, and keeps `app_blue` / `app_green` web-only by setting `CRON_ENABLED=false` on the color services. Caddy routes to the active color first and `app` second using readiness checks on `/api/health/ready`. During cutover, the previous color is kept running until the public domain verifies against the target color and the drain period ends. After a successful cutover, the non-target web-slot containers are removed so old code cannot continue running outside the active slot. Prisma changes must follow an expand-contract pattern so old and new app versions can overlap safely during cutover. The migration SQL scan in `scripts/blue-green-deploy.sh` is heuristic only and requires explicit operator review even when it passes. The low-level runner also supports `SKIP_APP_IMAGE_BUILD=1` when operators intentionally want to reuse existing app images.
 
-**Backups:** Lightsail snapshots + daily pg_dump to S3 (env vars: `BACKUP_S3_BUCKET`, `BACKUP_S3_KEY_ID`, `BACKUP_S3_SECRET`, `BACKUP_SCHEDULE`).
+**Backups:** Lightsail snapshots + daily pg_dump to S3 (env vars: `BACKUP_ENABLED`, `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY`, `BACKUP_RETENTION_DAYS`, `BACKUP_CRON_SCHEDULE`).
 
 **Environment variables:** See `.env.example` for full list. Key vars:
-- `DATABASE_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`
+- `DATABASE_URL`, `AUTH_SECRET`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
 - `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_ENCRYPTION_KEY`
-- `EMAIL_SERVER_*` (AWS SES SMTP), `EMAIL_FROM`
+- `FINANCE_XERO_CLIENT_ID`, `FINANCE_XERO_CLIENT_SECRET`, `FINANCE_XERO_REDIRECT_URI`, `FINANCE_XERO_ENCRYPTION_KEY`
+- `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`
 - `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_AUTH_TOKEN`
 
 **Stripe:** Live keys in production (since 2026-04-08). Use test mode for development.

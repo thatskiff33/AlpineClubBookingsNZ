@@ -1,14 +1,27 @@
 # Finance Dashboard Integration
 
-This directory is the durable source of truth for integrating the finance dashboard into `TACBookings`.
+This directory is the durable source of truth for operating and extending the native finance dashboard inside `TACBookings`.
 
-Use these documents for all future finance sessions. Chat history is not the source of truth.
+Use these documents for production rollout, support handoff, and future finance development. Chat history is not the source of truth.
+
+## Non-Developer Handoff
+
+For rollout or support work that does not involve code changes, start here:
+
+1. Use `/finance` as the native finance workspace once named-user rollout begins.
+2. Confirm the approved users and access levels before changing finance access. `VIEWER` can read reports; `MANAGER` can connect finance Xero and trigger sync actions.
+3. Follow `finance-rollout-cutover-checklist.md` before named-user rollout.
+4. During rollout, record evidence in `finance-post-cutover-evidence-template.md`.
+5. Keep the legacy dashboard available as fallback until `finance-legacy-freeze-monitoring-runbook.md` reaches `freeze eligible`.
+6. Use `finance-legacy-retirement-runbook.md` only after freeze eligibility is recorded.
+
+For technical implementation work, use `agent-runbook.md` and `handoff.md`.
 
 ## Current Baseline
 
 - Phase 1 finance access-boundary implementation landed separately in task `#101` via PR `#102`.
 - Operational Xero follow-up is currently closed on `main`; see `docs/XERO_HANDOFF.md` before reopening any Xero-adjacent scope.
-- Task `#103` restores the repo-side finance planning scaffold, workflow docs, and finance-specific templates only.
+- The native finance workspace, finance-only Xero boundary, snapshot storage, sync, reports, rollout checklist, freeze monitoring runbook, and retirement runbook are present on `main`.
 
 ## Objective
 

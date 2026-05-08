@@ -654,7 +654,7 @@ model ChoreAssignment {
   date            DateTime    @db.Date
   status          ChoreStatus @default(SUGGESTED)
   completedAt     DateTime?
-  completedVia    String? // "KIOSK", "ADMIN", or "GUEST_LINK"
+  completedVia    String? // "KIOSK", "ADMIN", or legacy "GUEST_LINK"
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 

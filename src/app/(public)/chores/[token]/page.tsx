@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { CheckCircle2, Circle, AlertTriangle, Mountain } from "lucide-react";
+import { CheckCircle2, Circle, AlertTriangle, Mountain, Lock } from "lucide-react";
 
 interface Assignment {
   id: string;
@@ -25,9 +25,7 @@ export default function GuestChorePage() {
   const { token } = useParams<{ token: string }>();
   const [data, setData] = useState<GuestChoreData | null>(null);
   const [error, setError] = useState("");
-  const [actionError, setActionError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [toggling, setToggling] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -48,36 +46,6 @@ export default function GuestChorePage() {
 
     void fetchData();
   }, [token]);
-
-  async function toggleChore(assignmentId: string, currentStatus: string) {
-    setToggling(assignmentId);
-    setActionError("");
-    try {
-      const action = currentStatus === "COMPLETED" ? "uncomplete" : "complete";
-      const res = await fetch(`/api/chores/${token}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignmentId, action }),
-      });
-      if (res.ok) {
-        const refreshed = await fetch(`/api/chores/${token}`);
-        if (refreshed.ok) {
-          setData(await refreshed.json());
-        }
-        return;
-      }
-
-      const payload = await res.json().catch(() => null);
-      setActionError(
-        payload?.error ||
-          "Chore updates now require an authenticated lodge or member session."
-      );
-    } catch {
-      setActionError("Failed to update chore status");
-    } finally {
-      setToggling(null);
-    }
-  }
 
   if (loading) {
     return (
@@ -150,15 +118,13 @@ export default function GuestChorePage() {
                 {chores
                   .sort((a, b) => a.choreSortOrder - b.choreSortOrder)
                   .map((a) => (
-                    <button
+                    <div
                       key={a.id}
                       className={`w-full text-left flex items-center gap-3 p-4 rounded-lg border transition-colors ${
                         a.status === "COMPLETED"
                           ? "bg-green-50 border-green-200"
-                          : "bg-white border-slate-200 hover:bg-slate-50"
-                      } ${toggling === a.id ? "opacity-50" : ""}`}
-                      onClick={() => toggleChore(a.id, a.status)}
-                      disabled={toggling === a.id}
+                          : "bg-white border-slate-200"
+                      }`}
                     >
                       {a.status === "COMPLETED" ? (
                         <CheckCircle2 className="h-6 w-6 text-green-600 shrink-0" />
@@ -173,22 +139,20 @@ export default function GuestChorePage() {
                           <div className="text-sm text-slate-500">{a.choreDescription}</div>
                         )}
                       </div>
-                    </button>
+                    </div>
                   ))}
               </div>
             );
           })
         )}
 
-        {actionError ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            {actionError}
-          </div>
-        ) : null}
+        <div className="flex gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+          <span>Chore completion updates require an authenticated lodge or member session.</span>
+        </div>
 
         <p className="text-xs text-slate-400 text-center mt-8">
-          This link expires after 48 hours. Chore completion updates require an
-          authenticated lodge or member session.
+          This link expires after 48 hours.
         </p>
       </main>
     </div>

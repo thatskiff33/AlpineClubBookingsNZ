@@ -764,52 +764,7 @@ describe("F10: Per-Guest Email Link for Chore Access", () => {
   });
 
   describe("PUT /api/chores/[token]", () => {
-    it("returns 404 for invalid token", async () => {
-      mockPrisma.guestChoreToken.findUnique.mockResolvedValue(null);
-
-      const { PUT } = await import("@/app/api/chores/[token]/route");
-      const req = new Request("http://localhost", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignmentId: "ca1", action: "complete" }),
-      });
-      const res = await PUT(req as any, makeTokenParams("invalid"));
-      expect(res.status).toBe(404);
-    });
-
-    it("completes a valid assignment via guest link", async () => {
-      const futureDate = new Date();
-      futureDate.setDate(futureDate.getDate() + 1);
-
-      mockPrisma.guestChoreToken.findUnique.mockResolvedValue({
-        id: "t1",
-        token: "test-token-abc",
-        date: new Date("2026-07-15"),
-        expiresAt: futureDate,
-        bookingGuest: {
-          id: "g1",
-          firstName: "Alice",
-          lastName: "Smith",
-          choreAssignments: [
-            {
-              id: "ca1",
-              date: new Date("2026-07-15"),
-              status: "CONFIRMED",
-              completedAt: null,
-              completedVia: null,
-              choreTemplate: {
-                name: "Firewood",
-                description: null,
-                timeOfDay: "ANYTIME",
-                sortOrder: 7,
-              },
-            },
-          ],
-        },
-      });
-
-      mockPrisma.choreAssignment.update.mockResolvedValue({});
-
+    it("keeps guest chore token links read-only", async () => {
       const { PUT } = await import("@/app/api/chores/[token]/route");
       const req = new Request("http://localhost", {
         method: "PUT",
@@ -817,136 +772,13 @@ describe("F10: Per-Guest Email Link for Chore Access", () => {
         body: JSON.stringify({ assignmentId: "ca1", action: "complete" }),
       });
       const res = await PUT(req as any, makeTokenParams());
-      expect(res.status).toBe(200);
+      const data = await res.json();
 
-      expect(mockPrisma.choreAssignment.update).toHaveBeenCalledWith({
-        where: { id: "ca1" },
-        data: {
-          status: "COMPLETED",
-          completedAt: expect.any(Date),
-          completedVia: "GUEST_LINK",
-        },
-      });
-    });
-
-    it("uncompletes a valid assignment via guest link", async () => {
-      const futureDate = new Date();
-      futureDate.setDate(futureDate.getDate() + 1);
-
-      mockPrisma.guestChoreToken.findUnique.mockResolvedValue({
-        id: "t1",
-        token: "test-token-abc",
-        date: new Date("2026-07-15"),
-        expiresAt: futureDate,
-        bookingGuest: {
-          id: "g1",
-          firstName: "Alice",
-          lastName: "Smith",
-          choreAssignments: [
-            {
-              id: "ca1",
-              date: new Date("2026-07-15"),
-              status: "COMPLETED",
-              completedAt: new Date(),
-              completedVia: "GUEST_LINK",
-              choreTemplate: {
-                name: "Firewood",
-                description: null,
-                timeOfDay: "ANYTIME",
-                sortOrder: 7,
-              },
-            },
-          ],
-        },
-      });
-
-      mockPrisma.choreAssignment.update.mockResolvedValue({});
-
-      const { PUT } = await import("@/app/api/chores/[token]/route");
-      const req = new Request("http://localhost", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignmentId: "ca1", action: "uncomplete" }),
-      });
-      const res = await PUT(req as any, makeTokenParams());
-      expect(res.status).toBe(200);
-
-      expect(mockPrisma.choreAssignment.update).toHaveBeenCalledWith({
-        where: { id: "ca1" },
-        data: {
-          status: "CONFIRMED",
-          completedAt: null,
-          completedVia: null,
-        },
-      });
-    });
-
-    it("rejects assignment not belonging to this guest", async () => {
-      const futureDate = new Date();
-      futureDate.setDate(futureDate.getDate() + 1);
-
-      mockPrisma.guestChoreToken.findUnique.mockResolvedValue({
-        id: "t1",
-        token: "test-token-abc",
-        date: new Date("2026-07-15"),
-        expiresAt: futureDate,
-        bookingGuest: {
-          id: "g1",
-          firstName: "Alice",
-          lastName: "Smith",
-          choreAssignments: [
-            {
-              id: "ca1",
-              date: new Date("2026-07-15"),
-              status: "CONFIRMED",
-              completedAt: null,
-              completedVia: null,
-              choreTemplate: {
-                name: "Firewood",
-                description: null,
-                timeOfDay: "ANYTIME",
-                sortOrder: 7,
-              },
-            },
-          ],
-        },
-      });
-
-      const { PUT } = await import("@/app/api/chores/[token]/route");
-      const req = new Request("http://localhost", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignmentId: "ca-OTHER", action: "complete" }),
-      });
-      const res = await PUT(req as any, makeTokenParams());
-      expect(res.status).toBe(403);
-    });
-
-    it("rejects invalid action", async () => {
-      const futureDate = new Date();
-      futureDate.setDate(futureDate.getDate() + 1);
-
-      mockPrisma.guestChoreToken.findUnique.mockResolvedValue({
-        id: "t1",
-        token: "test-token-abc",
-        date: new Date("2026-07-15"),
-        expiresAt: futureDate,
-        bookingGuest: {
-          id: "g1",
-          firstName: "Alice",
-          lastName: "Smith",
-          choreAssignments: [],
-        },
-      });
-
-      const { PUT } = await import("@/app/api/chores/[token]/route");
-      const req = new Request("http://localhost", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignmentId: "ca1", action: "delete" }),
-      });
-      const res = await PUT(req as any, makeTokenParams());
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(405);
+      expect(res.headers.get("Allow")).toBe("GET");
+      expect(data.error).toContain("read-only");
+      expect(mockPrisma.guestChoreToken.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.choreAssignment.update).not.toHaveBeenCalled();
     });
   });
 
