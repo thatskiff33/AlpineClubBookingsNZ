@@ -47,3 +47,6 @@ next-env.d.ts
 # review fix runner logs
 review-fixes.log
 /logs/review-fixes/
+
+# generated accessibility evidence
+/reports/lighthouse/

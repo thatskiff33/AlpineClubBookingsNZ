@@ -1,0 +1,56 @@
+name: Staging Accessibility Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Temporary staging URL override. Leave blank to use the staging environment variable."
+        required: false
+        type: string
+      paths:
+        description: "Comma-separated paths to check. Leave blank to use defaults."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-accessibility-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  lighthouse:
+    name: Lighthouse accessibility baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: staging
+      url: ${{ inputs.base_url || vars.STAGING_APP_URL }}
+    env:
+      STAGING_APP_URL: ${{ inputs.base_url || vars.STAGING_APP_URL }}
+      STAGING_A11Y_PATHS: ${{ inputs.paths || vars.STAGING_A11Y_PATHS || '/,/login,/register,/forgot-password,/faq,/contact' }}
+      STAGING_A11Y_OUT_DIR: reports/lighthouse/staging
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run staging Lighthouse checks
+        run: npm run review:staging:a11y
+
+      - name: Upload Lighthouse reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-lighthouse-${{ github.run_id }}
+          path: reports/lighthouse/staging/
+          if-no-files-found: error

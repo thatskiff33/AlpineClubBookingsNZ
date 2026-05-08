@@ -86,6 +86,7 @@ Do not deploy production by running a plain `docker compose up -d --build` on th
 ## Key Documentation
 
 - `DEPLOYMENT.md` - Lightsail, Caddy, Docker Compose, blue/green deploy, and recovery
+- `docs/STAGING_ACCESSIBILITY_RUNBOOK.md` - staging target, auth path, and Lighthouse/print accessibility evidence flow
 - `docs/ARCHITECTURE.md` - system architecture, core data model, integrations, cron, deployment
 - `docs/STAGING_ACCESSIBILITY.md` - non-production staging target and accessibility verification workflow
 - `docs/CI_SECURITY_GATES.md` - CI security controls and GHAS risk acceptance
