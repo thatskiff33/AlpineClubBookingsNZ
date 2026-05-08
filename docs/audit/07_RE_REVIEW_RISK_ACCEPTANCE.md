@@ -4,9 +4,9 @@ This is a draft companion to `07_RE_REVIEW_2026_04.md`. It records the acceptanc
 
 ## Current State
 
-- Critical findings: no acceptance allowed
-- High findings: no approved acceptances recorded yet
-- Medium findings: no linked follow-up task issues recorded yet
+- Critical findings: 2 open; no acceptance allowed
+- High findings: 17 open; merged remediation PRs `#266` and `#267` exist, but no approved acceptances are recorded yet
+- Medium findings: 9 open; no linked follow-up task issues are recorded yet
 - Low findings: none tracked
 
 ## Proposed Acceptance Rules
@@ -40,6 +40,7 @@ This is a draft companion to `07_RE_REVIEW_2026_04.md`. It records the acceptanc
 | [#258](https://github.com/thatskiff33/TACBookings/issues/258) | Revisit before the next auth/email template rollout |
 | [#259](https://github.com/thatskiff33/TACBookings/issues/259) | Revisit before the next formal accessibility gate or release sign-off |
 | [#261](https://github.com/thatskiff33/TACBookings/issues/261) | Revisit before the next blue-green deploy cutover after any Caddy/deploy-script change |
+| [#265](https://github.com/thatskiff33/TACBookings/issues/265) | Revisit before any finance booking-metrics export or reporting path is widened beyond bounded date-window aggregation |
 
 ## Proposed High-Finding Review Window
 
