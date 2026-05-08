@@ -5,19 +5,11 @@ import {
   parseSnsWebhookEnvelope,
   verifySnsWebhookMessage,
 } from "@/lib/ses-sns";
+import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { recordWebhookLog } from "@/lib/webhook-log";
 import logger from "@/lib/logger";
 
 export const runtime = "nodejs";
-
-function isPrismaUniqueError(error: unknown) {
-  return (
-    Boolean(error) &&
-    typeof error === "object" &&
-    "code" in error &&
-    error.code === "P2002"
-  );
-}
 
 async function recordSesWebhookLog({
   eventType,
@@ -123,7 +115,7 @@ export async function POST(request: NextRequest) {
       });
       claimedEvent = true;
     } catch (err) {
-      if (isPrismaUniqueError(err)) {
+      if (isPrismaUniqueConstraintError(err)) {
         return NextResponse.json({ received: true, duplicate: true });
       }
       throw err;
