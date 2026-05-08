@@ -34,3 +34,7 @@ dashboard.tokoroa.org.nz {
 	}
 	redir * https://tokoroa.org.nz/finance-legacy{uri} permanent
 }
+
+xero-mcp.tokoroa.org.nz {
+	reverse_proxy xero-mcp-auth:8080
+}
