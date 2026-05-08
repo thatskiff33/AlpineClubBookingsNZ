@@ -4,6 +4,7 @@ import { getFinanceXeroEncryptionKey } from "@/lib/xero-config";
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
+const AUTH_TAG_LENGTH = 16;
 
 export interface FinanceXeroTokenData {
   accessToken: string;
@@ -83,7 +84,12 @@ function decryptWithFinanceKey(encrypted: string, key: Buffer): string {
   const iv = Buffer.from(parts[0], "hex");
   const authTag = Buffer.from(parts[1], "hex");
   const ciphertext = parts[2];
-  const decipher = createDecipheriv(ENCRYPTION_ALGORITHM, key, iv);
+  if (authTag.length !== AUTH_TAG_LENGTH) {
+    throw new Error("Invalid encrypted token authentication tag length");
+  }
+  const decipher = createDecipheriv(ENCRYPTION_ALGORITHM, key, iv, {
+    authTagLength: AUTH_TAG_LENGTH,
+  });
   decipher.setAuthTag(authTag);
 
   let decrypted = decipher.update(ciphertext, "hex", "utf8");
@@ -121,7 +127,9 @@ function decryptFinanceXeroTokenWithFallback(
 export function encryptFinanceXeroToken(plaintext: string): string {
   const key = getFinanceEncryptionKey();
   const iv = randomBytes(IV_LENGTH);
-  const cipher = createCipheriv(ENCRYPTION_ALGORITHM, key, iv);
+  const cipher = createCipheriv(ENCRYPTION_ALGORITHM, key, iv, {
+    authTagLength: AUTH_TAG_LENGTH,
+  });
   let encrypted = cipher.update(plaintext, "utf8", "hex");
   encrypted += cipher.final("hex");
   const authTag = cipher.getAuthTag();

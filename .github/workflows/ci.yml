@@ -27,89 +27,55 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Probe GitHub Advanced Security support
-        id: dependency-review-support
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          status_code=$(curl -sS \
-            -o /tmp/dependency-review-support.json \
-            -w "%{http_code}" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/code-scanning/default-setup")
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
 
-          if [ "${status_code}" = "200" ]; then
-            echo "supported=true" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
+      - name: Audit dependency graph
+        run: npm audit --audit-level=high --package-lock-only
 
-          echo "supported=false" >> "${GITHUB_OUTPUT}"
-          echo "::warning::Dependency review is unavailable because GitHub Advanced Security is not enabled for ${GITHUB_REPOSITORY}."
-          cat /tmp/dependency-review-support.json
-
-      - name: Dependency review
-        if: steps.dependency-review-support.outputs.supported == 'true'
-        uses: actions/dependency-review-action@v4
-
-  codeql:
+  static-analysis:
+    name: Static analysis gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      actions: read
       contents: read
-      security-events: write
+    env:
+      SEMGREP_IMAGE: semgrep/semgrep:1.161.0
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Probe code scanning availability
-        id: codeql-support
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Semgrep static analysis
         run: |
-          status_code=$(curl -sS \
-            -o /tmp/codeql-support.json \
-            -w "%{http_code}" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/code-scanning/default-setup")
+          docker run --rm \
+            -v "$PWD:/src" \
+            -w /src \
+            "${SEMGREP_IMAGE}" \
+            semgrep scan \
+              --config p/nextjs \
+              --config p/typescript \
+              --config p/javascript \
+              --config p/react \
+              --error \
+              --metrics=off \
+              --exclude node_modules \
+              --exclude .next \
+              --sarif-output semgrep-results.sarif
 
-          if [ "${status_code}" = "200" ]; then
-            echo "upload=always" >> "${GITHUB_OUTPUT}"
-            echo "artifact=false" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          echo "upload=never" >> "${GITHUB_OUTPUT}"
-          echo "artifact=true" >> "${GITHUB_OUTPUT}"
-          echo "::warning::Code scanning is unavailable for ${GITHUB_REPOSITORY}; CodeQL SARIF will be uploaded as an artifact instead."
-          cat /tmp/codeql-support.json
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: javascript-typescript
-          build-mode: none
-
-      - name: Analyze with CodeQL
-        uses: github/codeql-action/analyze@v3
-        with:
-          output: sarif-results
-          upload: ${{ steps.codeql-support.outputs.upload }}
-
-      - name: Upload CodeQL SARIF artifact
-        if: steps.codeql-support.outputs.artifact == 'true'
+      - name: Upload Semgrep SARIF artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: codeql-sarif-${{ github.run_id }}
-          path: sarif-results
-          if-no-files-found: error
+          name: semgrep-sarif-${{ github.run_id }}
+          path: semgrep-results.sarif
+          if-no-files-found: ignore
 
   gitleaks-full-repo:
     runs-on: ubuntu-latest

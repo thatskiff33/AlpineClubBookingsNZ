@@ -77,6 +77,7 @@ Do not deploy production by running a plain `docker compose up -d --build` on th
 
 - `DEPLOYMENT.md` - Lightsail, Caddy, Docker Compose, blue/green deploy, and recovery
 - `docs/ARCHITECTURE.md` - system architecture, core data model, integrations, cron, deployment
+- `docs/CI_SECURITY_GATES.md` - CI security controls and GHAS risk acceptance
 - `docs/PRODUCTION_DEPENDENCY_AUDIT.md` - dependency audit state and accepted Auth.js/Nodemailer peer mismatch
 - `docs/HASHED_TOKEN_MIGRATION.md` - token hash-at-rest migration
 - `docs/finance-dashboard/README.md` - finance dashboard operator and agent handoff
