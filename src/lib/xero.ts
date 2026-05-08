@@ -129,6 +129,7 @@ export interface PotentialXeroContactMatch {
 
 const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
+const AUTH_TAG_LENGTH = 16;
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 const CONTACT_SYNC_CURSOR_RESOURCE = "CONTACT_SYNC";
 const CONTACT_GROUP_CACHE_CURSOR_RESOURCE = "CONTACT_GROUP_CACHE";
@@ -318,7 +319,9 @@ function getEncryptionKey(): Buffer {
 export function encryptToken(plaintext: string): string {
   const key = getEncryptionKey();
   const iv = randomBytes(IV_LENGTH);
-  const cipher = createCipheriv(ENCRYPTION_ALGORITHM, key, iv);
+  const cipher = createCipheriv(ENCRYPTION_ALGORITHM, key, iv, {
+    authTagLength: AUTH_TAG_LENGTH,
+  });
   let encrypted = cipher.update(plaintext, "utf8", "hex");
   encrypted += cipher.final("hex");
   const authTag = cipher.getAuthTag();
@@ -335,7 +338,12 @@ export function decryptToken(encrypted: string): string {
   const iv = Buffer.from(parts[0], "hex");
   const authTag = Buffer.from(parts[1], "hex");
   const ciphertext = parts[2];
-  const decipher = createDecipheriv(ENCRYPTION_ALGORITHM, key, iv);
+  if (authTag.length !== AUTH_TAG_LENGTH) {
+    throw new Error("Invalid encrypted token authentication tag length");
+  }
+  const decipher = createDecipheriv(ENCRYPTION_ALGORITHM, key, iv, {
+    authTagLength: AUTH_TAG_LENGTH,
+  });
   decipher.setAuthTag(authTag);
   let decrypted = decipher.update(ciphertext, "hex", "utf8");
   decrypted += decipher.final("utf8");

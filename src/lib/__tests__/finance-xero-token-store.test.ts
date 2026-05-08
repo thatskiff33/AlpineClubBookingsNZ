@@ -52,6 +52,19 @@ describe("finance-xero-token-store", () => {
     expect(decryptFinanceXeroToken(encrypted)).toBe("finance-access-token");
   });
 
+  it("rejects finance tokens with truncated authentication tags", () => {
+    process.env.FINANCE_XERO_ENCRYPTION_KEY =
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    const encrypted = encryptFinanceXeroToken("finance-access-token");
+    const parts = encrypted.split(":");
+    parts[1] = parts[1].slice(0, -2);
+
+    expect(() => decryptFinanceXeroToken(parts.join(":"))).toThrow(
+      "authentication tag length"
+    );
+  });
+
   it("does not fall back to the operational encryption key", () => {
     process.env.XERO_ENCRYPTION_KEY =
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

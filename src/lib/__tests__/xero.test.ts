@@ -75,6 +75,13 @@ describe("Token encryption", () => {
     expect(() => decryptToken(parts.join(":"))).toThrow()
   })
 
+  it("throws on a truncated authentication tag", () => {
+    const encrypted = encryptToken("test_token")
+    const parts = encrypted.split(":")
+    parts[1] = parts[1].slice(0, -2)
+    expect(() => decryptToken(parts.join(":"))).toThrow("authentication tag length")
+  })
+
   it("throws on invalid format", () => {
     expect(() => decryptToken("invalid")).toThrow("Invalid encrypted token format")
   })
