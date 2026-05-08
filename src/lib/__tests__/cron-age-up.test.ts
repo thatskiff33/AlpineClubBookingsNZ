@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockPrismaTransaction = vi.fn();
 const mockTxMemberFindUnique = vi.fn();
+const mockTxMemberUpdateMany = vi.fn();
+const mockTxTokenDeleteMany = vi.fn();
 
 vi.mock("../prisma", () => ({
   prisma: {
@@ -56,13 +58,17 @@ beforeEach(() => {
         member: {
           findUnique: mockTxMemberFindUnique,
           update: mockedUpdate,
+          updateMany: mockTxMemberUpdateMany,
         },
         passwordResetToken: {
           create: mockedCreateToken,
+          deleteMany: mockTxTokenDeleteMany,
         },
       })
   );
-  mockTxMemberFindUnique.mockResolvedValue({ canLogin: false });
+  mockTxMemberFindUnique.mockResolvedValue({ canLogin: false, ageTier: "YOUTH" });
+  mockTxMemberUpdateMany.mockResolvedValue({ count: 1 });
+  mockTxTokenDeleteMany.mockResolvedValue({ count: 1 });
 });
 
 // Helper: create a date of birth for a given age at season start (April 1 2026)
@@ -221,6 +227,49 @@ describe("checkAgeUpMembers", () => {
 
     expect(result.failed).toBe(1);
     expect(result.upgraded).toBe(0);
+  });
+
+  it("should roll back the member upgrade and setup token when email delivery fails", async () => {
+    const member = {
+      id: "m-email-fail",
+      email: "email-fail@example.com",
+      firstName: "Failure",
+      lastName: "Retry",
+      dateOfBirth: dobForAge(18),
+      inheritEmailFromId: null,
+      inheritEmailFrom: null,
+    };
+
+    mockedFindMany.mockResolvedValue([member] as any);
+    mockedEmailLogFind.mockResolvedValue(null);
+    mockedUpdate.mockResolvedValue({} as any);
+    mockedCreateToken.mockResolvedValue({} as any);
+    mockedSendEmail.mockRejectedValue(new Error("SMTP down"));
+
+    const result = await checkAgeUpMembers();
+
+    expect(result.processed).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.upgraded).toBe(0);
+    expect(mockPrismaTransaction).toHaveBeenCalledTimes(2);
+    expect(mockTxTokenDeleteMany).toHaveBeenCalledWith({
+      where: {
+        memberId: "m-email-fail",
+        tokenHash: expect.any(String),
+        used: false,
+      },
+    });
+    expect(mockTxMemberUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "m-email-fail",
+        canLogin: true,
+        ageTier: "ADULT",
+      },
+      data: {
+        canLogin: false,
+        ageTier: "YOUTH",
+      },
+    });
   });
 
   it("should process multiple members independently", async () => {
