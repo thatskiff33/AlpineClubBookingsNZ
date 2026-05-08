@@ -20,6 +20,7 @@ vi.mock("@/lib/prisma", () => ({
 
 import {
   getXeroContactLinkMismatchSnapshot,
+  getXeroContactNameOrderRepair,
   namesAppearToMatchMemberAndContact,
 } from "@/lib/xero-contact-link-mismatches";
 
@@ -62,6 +63,62 @@ describe("xero contact link mismatches", () => {
         }
       )
     ).toBe(true);
+  });
+
+  it("suggests a Xero name repair for reversed first and last names", () => {
+    expect(
+      getXeroContactNameOrderRepair(
+        {
+          firstName: "TestFirst",
+          lastName: "TestLast",
+        },
+        {
+          name: "TestLast, TestFirst",
+          firstName: "TestLast",
+          lastName: "TestFirst",
+        }
+      )
+    ).toEqual({
+      name: "TestFirst TestLast",
+      firstName: "TestFirst",
+      lastName: "TestLast",
+    });
+  });
+
+  it("suggests a Xero name repair for reversed display names without structured names", () => {
+    expect(
+      getXeroContactNameOrderRepair(
+        {
+          firstName: "TestFirst",
+          lastName: "TestLast",
+        },
+        {
+          name: "TestLast TestFirst",
+          firstName: null,
+          lastName: null,
+        }
+      )
+    ).toEqual({
+      name: "TestFirst TestLast",
+      firstName: "TestFirst",
+      lastName: "TestLast",
+    });
+  });
+
+  it("does not repair from a reversed display name when structured names are unrelated", () => {
+    expect(
+      getXeroContactNameOrderRepair(
+        {
+          firstName: "TestFirst",
+          lastName: "TestLast",
+        },
+        {
+          name: "TestLast, TestFirst",
+          firstName: "John",
+          lastName: "Smith",
+        }
+      )
+    ).toBeNull();
   });
 
   it("does not infer a match from freeform display-name tokens", () => {
