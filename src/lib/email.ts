@@ -584,7 +584,10 @@ function getSesFeedbackRecipients(
 
 export async function ingestSesSnsEmailFeedback(payload: unknown) {
   const notification = parseSesSnsNotification(payload);
-  const notificationType = notification?.notificationType?.toLowerCase();
+  if (!notification) {
+    return { handled: false as const };
+  }
+  const notificationType = notification.notificationType?.toLowerCase();
   if (notificationType !== "bounce" && notificationType !== "complaint") {
     return { handled: false as const };
   }
