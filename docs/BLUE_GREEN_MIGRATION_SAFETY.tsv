@@ -1,0 +1,7 @@
+# migration_name	phase	previous_expand_release	old_code_compatible	lock_impact_plan
+# phase must be expand, contract, or metadata-only.
+# previous_expand_release is required for destructive contract migrations; use n/a otherwise.
+# old_code_compatible must be yes for any migration with breaking SQL matched by the deploy guard.
+20260507000000_add_payment_transactions	expand	n/a	yes	Adds PaymentTransaction plus indexes/FK references to Payment; run during the normal deploy window, verify no long payment transactions before migrate, and let the deploy guard stop on lock timeout/failure.
+20260509020000_add_payment_refunds_and_schema_drift_fixes	expand	n/a	yes	Drops and recreates FK constraints on Booking, Payment, MemberCredit, RefundRequest, and related finance tables without removing columns; run during low traffic, check for long write transactions first, and roll back before traffic cutover if migrate fails.
+20260509090000_enrich_payment_refund_ledger	expand	n/a	yes	Adds nullable/default PaymentRefund ledger columns, reads Payment and PaymentTransaction for a bounded backfill, then creates indexes; run during low traffic and verify payment writes are quiet before migrate.

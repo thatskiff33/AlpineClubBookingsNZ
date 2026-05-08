@@ -108,6 +108,26 @@ describe("PUT /api/bookings/[id]/notes", () => {
     expect(body.notes).toBe("hello world");
   });
 
+  it("does not decode entity-encoded script tags in notes", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CONFIRMED" } as never);
+    mockedBooking.update.mockResolvedValue({ id: "b1", notes: "Intro &lt;script&gt;alert(1)&lt;/script&gt; Outro" } as never);
+
+    const res = await putNotes(
+      makeRequest("b1", { notes: "Intro &lt;script&gt;alert(1)&lt;/script&gt; Outro" }),
+      makeParams("b1")
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockedBooking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          notes: "Intro &lt;script&gt;alert(1)&lt;/script&gt; Outro",
+        },
+      })
+    );
+  });
+
   it("successfully updates notes for booking owner", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
     mockedBooking.findUnique.mockResolvedValue({ memberId: "m1", status: "CONFIRMED" } as never);

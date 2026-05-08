@@ -4,6 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { getDetailedHealthReport } from "@/lib/health-check";
 import { prisma } from "@/lib/prisma";
 import { getWebhookStats } from "@/lib/webhook-log";
+import { getEmailDeliverabilityTelemetry } from "@/lib/email-suppression";
 import logger from "@/lib/logger";
 
 /**
@@ -44,8 +45,11 @@ export async function GET() {
       }
     }
 
-    // Webhook stats (last 24h)
-    const webhookStats = await getWebhookStats(24);
+    // Webhook stats and SES suppression telemetry
+    const [webhookStats, emailDeliverability] = await Promise.all([
+      getWebhookStats(24),
+      getEmailDeliverabilityTelemetry(),
+    ]);
 
     // Recent webhook logs (last 10)
     const recentWebhooks = await prisma.webhookLog.findMany({
@@ -75,6 +79,7 @@ export async function GET() {
       cronJobs: cronByJob,
       webhookStats,
       recentWebhooks,
+      emailDeliverability,
       systemInfo,
     });
   } catch (err) {

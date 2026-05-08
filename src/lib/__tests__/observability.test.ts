@@ -10,6 +10,10 @@ vi.mock("@/lib/prisma", () => ({
       deleteMany: vi.fn(),
       findMany: vi.fn(),
     },
+    emailSuppression: {
+      count: vi.fn(),
+      findMany: vi.fn(),
+    },
     cronJobRun: {
       findMany: vi.fn(),
     },
@@ -324,6 +328,8 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.cronJobRun.findMany).mockResolvedValue([]);
     vi.mocked(prisma.webhookLog.groupBy).mockResolvedValue([] as any);
     vi.mocked(prisma.webhookLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
+    vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
       httpStatus: 200,
       report: {
@@ -347,6 +353,15 @@ describe("OBS-07: GET /api/admin/health", () => {
     expect(data.health).toBeDefined();
     expect(data.cronJobs).toBeDefined();
     expect(data.webhookStats).toBeDefined();
+    expect(data.emailDeliverability).toEqual({
+      summary: {
+        activeCount: 0,
+        bounceCount: 0,
+        complaintCount: 0,
+        eventsLast24h: 0,
+      },
+      suppressions: [],
+    });
     expect(data.systemInfo).toBeDefined();
     expect(data.systemInfo.nodeVersion).toBeTruthy();
     expect(data.systemInfo.memoryMb).toBeDefined();
@@ -373,6 +388,8 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.cronJobRun.findMany).mockResolvedValue(runs);
     vi.mocked(prisma.webhookLog.groupBy).mockResolvedValue([] as any);
     vi.mocked(prisma.webhookLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
+    vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
       httpStatus: 200,
       report: {

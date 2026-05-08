@@ -9,6 +9,7 @@ SKIP_APP_IMAGE_BUILD="${SKIP_APP_IMAGE_BUILD:-0}"
 BLUE_GREEN_DRAIN_SECONDS="${BLUE_GREEN_DRAIN_SECONDS:-30}"
 ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS="${ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS:-0}"
 BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
+MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv}"
 
 POSTGRES_SERVICE="postgres"
 CRON_SERVICE="app"
@@ -356,6 +357,16 @@ validate_repo_contract() {
     echo "Prisma migrations directory not found at prisma/migrations" >&2
     return 1
   }
+
+  [ -x scripts/validate-blue-green-migrations.sh ] || {
+    echo "Blue/green migration safety validator not found or not executable at scripts/validate-blue-green-migrations.sh" >&2
+    return 1
+  }
+
+  [ -f "$MIGRATION_SAFETY_LEDGER" ] || {
+    echo "Blue/green migration safety ledger not found at $MIGRATION_SAFETY_LEDGER" >&2
+    return 1
+  }
 }
 
 validate_caddy_contract() {
@@ -659,51 +670,18 @@ list_pending_migration_sql_files() {
 }
 
 validate_pending_migrations_blue_green_safe() {
-  local pending_sql
-  local breaking_matches
-  local found_breaking=0
-  local pending_count=0
+  local pending_sql_files=()
 
-  if [ "$ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS" = "1" ]; then
-    if [ -z "$(trim_whitespace "$BLUE_GREEN_MIGRATION_OVERRIDE_REASON")" ]; then
-      echo "BLUE_GREEN_MIGRATION_OVERRIDE_REASON is required when ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1." >&2
-      return 1
-    fi
-
-    warn "Bypassing the heuristic blue/green migration guard because ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1."
-    warn "Override reason: ${BLUE_GREEN_MIGRATION_OVERRIDE_REASON}"
-    warn "This override does not prove old-code/new-schema compatibility. Use it only after an explicit expand/contract review."
+  mapfile -t pending_sql_files < <(list_pending_migration_sql_files)
+  if [ "${#pending_sql_files[@]}" -eq 0 ]; then
+    info "No pending Prisma migrations detected."
     return 0
   fi
 
-  while IFS= read -r pending_sql; do
-    [ -n "$pending_sql" ] || continue
-    pending_count=$((pending_count + 1))
-    breaking_matches="$(
-      grep -Ein \
-        '(^|[^A-Z_])(DROP TABLE|DROP COLUMN|DROP TYPE|DROP CONSTRAINT|ALTER TABLE .* RENAME|RENAME COLUMN|ALTER COLUMN .* TYPE|ALTER COLUMN .* SET NOT NULL)' \
-        "$pending_sql" || true
-    )"
-    if [ -n "$breaking_matches" ]; then
-      found_breaking=1
-      printf 'Potentially blue/green-incompatible migration detected: %s\n' "$pending_sql" >&2
-      printf '%s\n' "$breaking_matches" >&2
-      echo >&2
-    fi
-  done < <(list_pending_migration_sql_files)
-
-  if [ "$found_breaking" = "1" ]; then
-    echo "Pending migrations contain potentially breaking SQL for blue/green rollout." >&2
-    echo "Use an expand-contract migration sequence, or rerun with ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1 only after explicit review." >&2
-    return 1
-  fi
-
-  if [ "$pending_count" -gt 0 ]; then
-    info "Heuristic scan found ${pending_count} pending migration(s) with no obvious breaking SQL."
-    warn "This scan is not proof of blue/green safety. Operators still need an explicit expand/contract compatibility review."
-  else
-    info "No pending Prisma migrations detected."
-  fi
+  ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS="$ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS" \
+    BLUE_GREEN_MIGRATION_OVERRIDE_REASON="$BLUE_GREEN_MIGRATION_OVERRIDE_REASON" \
+    MIGRATION_SAFETY_LEDGER="$MIGRATION_SAFETY_LEDGER" \
+    ./scripts/validate-blue-green-migrations.sh "${pending_sql_files[@]}"
 }
 
 assert_readiness_payload_healthy() {
