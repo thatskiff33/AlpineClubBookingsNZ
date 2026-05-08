@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MILLISECONDS_PER_DAY = 86_400_000;
+export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
 
 export const FINANCE_REALIZED_BOOKING_STATUSES = [
   BookingStatus.CONFIRMED,
@@ -317,6 +318,13 @@ function normalizeDateWindow(
     throw new Error(`${prefix}.to must be on or after ${prefix}.from`);
   }
 
+  const dayCount = getFinanceBookingMetricsWindowDayCount(input.from, input.to);
+  if (dayCount > MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS) {
+    throw new Error(
+      `${prefix} window cannot exceed ${MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS} days`
+    );
+  }
+
   return {
     from: input.from,
     to: input.to,
@@ -350,6 +358,20 @@ function differenceInUtcDays(start: Date, end: Date): number {
     Math.round((end.getTime() - start.getTime()) / MILLISECONDS_PER_DAY),
     0
   );
+}
+
+export function getFinanceBookingMetricsWindowDayCount(
+  from: string,
+  to: string
+): number {
+  const fromDate = parseIsoDate(from, "from");
+  const toDate = parseIsoDate(to, "to");
+
+  if (fromDate.getTime() > toDate.getTime()) {
+    throw new Error("to must be on or after from");
+  }
+
+  return differenceInUtcDays(fromDate, addUtcDays(toDate, 1));
 }
 
 function toIsoDate(value: Date): string {

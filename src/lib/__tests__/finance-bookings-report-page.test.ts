@@ -7,6 +7,13 @@ const { mockGetFinanceBookingMetrics } = vi.hoisted(() => ({
 
 vi.mock("@/lib/finance-booking-metrics", () => ({
   getFinanceBookingMetrics: mockGetFinanceBookingMetrics,
+  getFinanceBookingMetricsWindowDayCount: (from: string, to: string) =>
+    Math.round(
+      (new Date(`${to}T00:00:00.000Z`).getTime() -
+        new Date(`${from}T00:00:00.000Z`).getTime()) /
+        86_400_000
+    ) + 1,
+  MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS: 366,
 }));
 
 vi.mock("@/lib/finance-auth", () => ({
@@ -339,6 +346,26 @@ describe("finance bookings report page model", () => {
     expect(resolved.warnings).toEqual([
       "Realized filters were incomplete. Showing the default month-to-date window.",
       "Forward as-of date was invalid. Using today's New Zealand date instead.",
+    ]);
+  });
+
+  it("falls back oversized booking metric windows", () => {
+    const resolved = resolveFinanceBookingsReportFilters({
+      today: parseDateOnly("2026-04-21"),
+      searchParams: {
+        realizedFrom: "2020-01-01",
+        realizedTo: "2026-12-31",
+        forwardFrom: "2026-05-01",
+        forwardTo: "2030-05-01",
+      },
+    });
+
+    expect(resolved.filters).toEqual(buildDefaultFinanceBookingsReportFilters(
+      parseDateOnly("2026-04-21")
+    ));
+    expect(resolved.warnings).toEqual([
+      "Realized filters cannot exceed 366 days. Showing the default month-to-date window.",
+      "Forward filters cannot exceed 366 days. Showing the default next-90-days window.",
     ]);
   });
 

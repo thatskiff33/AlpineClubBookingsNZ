@@ -1,9 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireFinanceViewerApiAccess } from "@/lib/finance-api-auth";
-import { getFinanceBookingMetrics } from "@/lib/finance-booking-metrics";
+import {
+  getFinanceBookingMetrics,
+  getFinanceBookingMetricsWindowDayCount,
+  MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS,
+} from "@/lib/finance-booking-metrics";
 
 const isoDateParam = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+function validateWindowSpan(
+  input: {
+    from?: string;
+    to?: string;
+  },
+  path: "realized" | "forward",
+  context: z.RefinementCtx
+) {
+  if (!input.from || !input.to) {
+    return;
+  }
+
+  try {
+    const dayCount = getFinanceBookingMetricsWindowDayCount(
+      input.from,
+      input.to
+    );
+    if (dayCount > MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [path],
+        message: `${path} window cannot exceed ${MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS} days`,
+      });
+    }
+  } catch (error) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: [path],
+      message: error instanceof Error ? error.message : "Invalid date window",
+    });
+  }
+}
 
 const financeBookingMetricsQuerySchema = z
   .object({
@@ -39,6 +76,17 @@ const financeBookingMetricsQuerySchema = z
           "Provide realizedFrom/realizedTo, forwardFrom/forwardTo, or both",
       });
     }
+
+    validateWindowSpan(
+      { from: value.realizedFrom, to: value.realizedTo },
+      "realized",
+      context
+    );
+    validateWindowSpan(
+      { from: value.forwardFrom, to: value.forwardTo },
+      "forward",
+      context
+    );
   });
 
 export async function GET(request: NextRequest) {

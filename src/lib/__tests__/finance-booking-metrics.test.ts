@@ -396,4 +396,16 @@ describe("finance-booking-metrics", () => {
     );
     expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
   });
+
+  it("rejects booking metric windows over one year before querying bookings", async () => {
+    await expect(
+      getFinanceBookingMetrics({
+        realized: {
+          from: "2020-01-01",
+          to: "2026-12-31",
+        },
+      })
+    ).rejects.toThrow("realized window cannot exceed 366 days");
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
+  });
 });

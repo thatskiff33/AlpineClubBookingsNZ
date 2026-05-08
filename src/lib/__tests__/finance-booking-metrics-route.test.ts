@@ -25,6 +25,13 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/finance-booking-metrics", () => ({
   getFinanceBookingMetrics: mockGetFinanceBookingMetrics,
+  getFinanceBookingMetricsWindowDayCount: (from: string, to: string) =>
+    Math.round(
+      (new Date(`${to}T00:00:00.000Z`).getTime() -
+        new Date(`${from}T00:00:00.000Z`).getTime()) /
+        86_400_000
+    ) + 1,
+  MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS: 366,
 }));
 
 import { GET as getFinanceBookingMetricsRoute } from "@/app/api/finance/bookings/metrics/route";
@@ -219,6 +226,21 @@ describe("finance booking metrics route", () => {
     const response = await getFinanceBookingMetricsRoute(
       new NextRequest(
         "https://tokoroa.org.nz/api/finance/bookings/metrics?realizedFrom=2026-04-01"
+      )
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error:
+        "Invalid finance booking metrics query. Use paired realizedFrom/realizedTo and/or forwardFrom/forwardTo dates in YYYY-MM-DD format.",
+    });
+    expect(mockGetFinanceBookingMetrics).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when a requested metrics window is too large", async () => {
+    const response = await getFinanceBookingMetricsRoute(
+      new NextRequest(
+        "https://tokoroa.org.nz/api/finance/bookings/metrics?realizedFrom=2020-01-01&realizedTo=2026-12-31"
       )
     );
 

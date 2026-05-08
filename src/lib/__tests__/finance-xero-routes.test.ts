@@ -53,6 +53,7 @@ import { GET as connectFinanceXero } from "@/app/api/finance/xero/connect/route"
 import { POST as disconnectFinanceXeroRoute } from "@/app/api/finance/xero/disconnect/route";
 import { GET as getFinanceXeroStatus } from "@/app/api/finance/xero/status/route";
 import { GET as handleFinanceXeroConnectCallback } from "@/app/api/finance/xero/callback/route";
+import { createFinanceXeroOAuthState } from "@/lib/finance-xero-oauth-state";
 
 function managerSession() {
   return { user: { id: "finance-manager-1", role: "ADMIN" } };
@@ -88,6 +89,7 @@ describe("finance Xero routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("NEXTAUTH_URL", "https://tokoroa.org.nz");
+    vi.stubEnv("AUTH_SECRET", "test-finance-oauth-secret");
     mockAuth.mockResolvedValue(managerSession());
     mockFindUnique.mockResolvedValue(managerMember());
     mockGetFinanceXeroRouteStatus.mockResolvedValue({
@@ -162,7 +164,7 @@ describe("finance Xero routes", () => {
     expect(location).toBeTruthy();
 
     const state = new URL(location!).searchParams.get("state");
-    expect(state).toMatch(/^[a-f0-9]{64}$/);
+    expect(state).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     expect(mockGetFinanceXeroConsentUrl).toHaveBeenCalledWith(state);
 
     const setCookie = response.headers.get("set-cookie");
@@ -221,7 +223,7 @@ describe("finance Xero routes", () => {
   });
 
   it("accepts the finance callback only when the OAuth state matches the cookie", async () => {
-    const state = "b".repeat(64);
+    const state = createFinanceXeroOAuthState("finance-manager-1");
     const request = new NextRequest(
       `http://internal:3000/api/finance/xero/callback?code=test-code&state=${state}`,
       {
@@ -247,6 +249,26 @@ describe("finance Xero routes", () => {
     expect(setCookie).toContain("Domain=tokoroa.org.nz");
     expect(setCookie).toContain("Max-Age=0");
     expect(setCookie).toContain("Path=/api/finance/xero");
+  });
+
+  it("rejects a finance callback state created by a different manager", async () => {
+    const state = createFinanceXeroOAuthState("other-finance-manager");
+    const request = new NextRequest(
+      `http://internal:3000/api/finance/xero/callback?code=test-code&state=${state}`,
+      {
+        headers: {
+          cookie: `finance_xero_oauth_state=${state}`,
+        },
+      }
+    );
+
+    const response = await handleFinanceXeroConnectCallback(request);
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://tokoroa.org.nz/finance?error=Invalid%20finance%20Xero%20OAuth%20state.%20Please%20reconnect%20from%20the%20finance%20page."
+    );
+    expect(mockHandleFinanceXeroCallback).not.toHaveBeenCalled();
   });
 
   it("rejects the finance callback when the OAuth state is missing or mismatched", async () => {

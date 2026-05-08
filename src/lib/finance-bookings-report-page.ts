@@ -2,6 +2,8 @@ import {
   type FinanceBookingPipelineDailyMetric,
   type FinanceBookingMetricsResult,
   getFinanceBookingMetrics,
+  getFinanceBookingMetricsWindowDayCount,
+  MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS,
 } from "@/lib/finance-booking-metrics";
 import {
   type FinanceAccessMember,
@@ -17,6 +19,13 @@ type FinanceBookingsReportSearchParams = Record<
   string,
   string | string[] | undefined
 >;
+
+function isFinanceBookingMetricsWindowTooLarge(from: string, to: string) {
+  return (
+    getFinanceBookingMetricsWindowDayCount(from, to) >
+    MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS
+  );
+}
 
 export interface FinanceBookingsReportFilters {
   realizedFrom: string;
@@ -151,6 +160,15 @@ export function resolveFinanceBookingsReportFilters(input: {
       warnings.push(
         "Realized filters must end on or after the start date. Showing the default month-to-date window."
       );
+    } else if (
+      isFinanceBookingMetricsWindowTooLarge(
+        realizedParams.from,
+        realizedParams.to
+      )
+    ) {
+      warnings.push(
+        `Realized filters cannot exceed ${MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS} days. Showing the default month-to-date window.`
+      );
     } else {
       filters.realizedFrom = realizedParams.from;
       filters.realizedTo = realizedParams.to;
@@ -186,6 +204,15 @@ export function resolveFinanceBookingsReportFilters(input: {
     ) {
       warnings.push(
         "Forward filters must end on or after the start date. Showing the default next-90-days window."
+      );
+    } else if (
+      isFinanceBookingMetricsWindowTooLarge(
+        forwardParams.from,
+        forwardParams.to
+      )
+    ) {
+      warnings.push(
+        `Forward filters cannot exceed ${MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS} days. Showing the default next-90-days window.`
       );
     } else {
       filters.forwardFrom = forwardParams.from;

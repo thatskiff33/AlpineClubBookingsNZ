@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireFinanceViewerApiAccess } from "@/lib/finance-api-auth";
 import { getLegacyDashboardBookingExport } from "@/lib/finance-legacy-dashboard-export";
 
 const DEFAULT_HISTORY_START_DATE = "2020-04-01";
@@ -31,6 +32,12 @@ function getCurrentIsoDate() {
 }
 
 export async function GET(request: NextRequest) {
+  const authResult = await requireFinanceViewerApiAccess();
+
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   const expectedToken = readLegacyDashboardExportToken();
 
   if (!expectedToken) {

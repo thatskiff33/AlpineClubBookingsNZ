@@ -22,7 +22,13 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    if (!isValidFinanceXeroOAuthState(cookieState, requestState)) {
+    if (
+      !isValidFinanceXeroOAuthState(
+        cookieState,
+        requestState,
+        authResult.member.id
+      )
+    ) {
       throw new Error(
         "Invalid finance Xero OAuth state. Please reconnect from the finance page."
       );

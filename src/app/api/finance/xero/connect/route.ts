@@ -31,7 +31,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const state = createFinanceXeroOAuthState();
+    const state = createFinanceXeroOAuthState(authResult.member.id);
     const consentUrl = await getFinanceXeroConsentUrl(state);
     const response = NextResponse.redirect(consentUrl);
     response.cookies.set(
