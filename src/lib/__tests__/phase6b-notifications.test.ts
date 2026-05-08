@@ -13,6 +13,14 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
     },
+    emailSuppression: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({}),
+      count: vi.fn().mockResolvedValue(0),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     member: {
       findMany: vi.fn().mockResolvedValue([]),
     },

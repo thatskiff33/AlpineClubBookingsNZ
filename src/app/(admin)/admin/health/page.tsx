@@ -43,6 +43,20 @@ interface WebhookLogEntry {
   createdAt: string;
 }
 
+interface EmailSuppressionEntry {
+  id: string;
+  email: string;
+  reason: "BOUNCE" | "COMPLAINT";
+  eventCount: number;
+  suppressedAt: string | null;
+  lastEventAt: string;
+  lastEventType: string;
+  lastBounceType: string | null;
+  lastBounceSubType: string | null;
+  lastComplaintFeedbackType: string | null;
+  lastSesMessageId: string | null;
+}
+
 interface HealthData {
   health: {
     status: string;
@@ -59,6 +73,15 @@ interface HealthData {
   cronJobs: Record<string, CronRun[]>;
   webhookStats: Record<string, { success: number; failure: number; total: number }>;
   recentWebhooks: WebhookLogEntry[];
+  emailDeliverability: {
+    summary: {
+      activeCount: number;
+      bounceCount: number;
+      complaintCount: number;
+      eventsLast24h: number;
+    };
+    suppressions: EmailSuppressionEntry[];
+  };
   systemInfo: {
     version: string;
     nodeVersion: string;
@@ -81,6 +104,8 @@ function StatusBadge({ status }: { status: string }) {
     unhealthy: "bg-red-100 text-red-800",
     FAILURE: "bg-red-100 text-red-800",
     failure: "bg-red-100 text-red-800",
+    BOUNCE: "bg-red-100 text-red-800",
+    COMPLAINT: "bg-red-100 text-red-800",
     unknown: "bg-gray-100 text-gray-800",
   };
 
@@ -149,6 +174,7 @@ export default function AdminHealthPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [clearingSuppressionId, setClearingSuppressionId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -164,6 +190,30 @@ export default function AdminHealthPage() {
       setLoading(false);
     }
   }, []);
+
+  const clearSuppression = useCallback(
+    async (id: string, email: string) => {
+      if (!window.confirm(`Clear email suppression for ${email}?`)) {
+        return;
+      }
+
+      setClearingSuppressionId(id);
+      try {
+        const res = await fetch(`/api/admin/email-suppressions/${id}/clear`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: "Reviewed from admin health dashboard" }),
+        });
+        if (!res.ok) throw new Error("Failed to clear suppression");
+        await fetchData();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unknown error");
+      } finally {
+        setClearingSuppressionId(null);
+      }
+    },
+    [fetchData]
+  );
 
   useEffect(() => {
     fetchData();
@@ -198,7 +248,14 @@ export default function AdminHealthPage() {
 
   if (!data) return null;
 
-  const { health, cronJobs, webhookStats, recentWebhooks, systemInfo } = data;
+  const {
+    health,
+    cronJobs,
+    webhookStats,
+    recentWebhooks,
+    emailDeliverability,
+    systemInfo,
+  } = data;
   const checkEntries = Object.entries(health.checks) as [string, HealthCheck][];
   const checkIcons: Record<string, typeof Database> = {
     db: Database,
@@ -267,6 +324,85 @@ export default function AdminHealthPage() {
             );
           })}
         </div>
+      </div>
+
+      {/* Email Deliverability */}
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+          <Mail className="h-5 w-5" />
+          Email Deliverability
+        </h2>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Active suppressions</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {emailDeliverability.summary.activeCount}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Bounces</p>
+            <p className="text-2xl font-bold text-red-600">
+              {emailDeliverability.summary.bounceCount}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Complaints</p>
+            <p className="text-2xl font-bold text-red-600">
+              {emailDeliverability.summary.complaintCount}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Events 24h</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {emailDeliverability.summary.eventsLast24h}
+            </p>
+          </div>
+        </div>
+
+        {emailDeliverability.suppressions.length === 0 ? (
+          <div className="bg-white border rounded-lg p-4 text-slate-500">
+            No active recipient suppressions.
+          </div>
+        ) : (
+          <div className="bg-white border rounded-lg overflow-x-auto">
+            <div className="min-w-[760px]">
+              <div className="grid grid-cols-[minmax(0,1.7fr)_100px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-b">
+                <span>Recipient</span>
+                <span>Reason</span>
+                <span>Events</span>
+                <span>Last event</span>
+                <span className="text-right">Action</span>
+              </div>
+              <div className="divide-y">
+                {emailDeliverability.suppressions.map((suppression) => (
+                  <div
+                    key={suppression.id}
+                    className="grid grid-cols-[minmax(0,1.7fr)_100px_90px_140px_88px] gap-3 px-4 py-3 text-sm items-center"
+                  >
+                    <span className="font-medium text-slate-900 truncate">
+                      {suppression.email}
+                    </span>
+                    <StatusBadge status={suppression.reason} />
+                    <span className="text-slate-600">{suppression.eventCount}</span>
+                    <span className="text-slate-500">
+                      {formatDate(suppression.lastEventAt)}
+                    </span>
+                    <button
+                      onClick={() =>
+                        clearSuppression(suppression.id, suppression.email)
+                      }
+                      disabled={clearingSuppressionId === suppression.id}
+                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
+                    >
+                      <CheckCircle className="h-3.5 w-3.5" />
+                      Clear
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* System Info */}

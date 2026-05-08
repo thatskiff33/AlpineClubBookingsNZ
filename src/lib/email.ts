@@ -60,6 +60,12 @@ import {
   EMAIL_CHANGE_TTL_MS,
   EMAIL_VERIFICATION_TTL_MS,
 } from "@/lib/verification-tokens";
+import {
+  getActiveEmailSuppression,
+  normalizeEmailAddress,
+  recordSesEmailFeedback,
+  type SesEmailFeedbackEvent,
+} from "@/lib/email-suppression";
 
 type EmailAttachment = {
   filename: string;
@@ -119,6 +125,7 @@ export async function sendEmail({
 }) {
   const persistHtmlBody = shouldPersistEmailHtml(templateName);
   const plainTextBody = text || htmlToPlainText(html);
+  const normalizedRecipient = normalizeEmailAddress(to);
 
   // Create EmailLog record (fire-and-forget logging won't break email delivery)
   let emailLogId: string | null = null;
@@ -136,6 +143,44 @@ export async function sendEmail({
     emailLogId = log.id;
   } catch (err) {
     logger.error({ err }, "Failed to create EmailLog record");
+  }
+
+  const activeSuppression = await getActiveEmailSuppression(normalizedRecipient).catch(
+    (err) => {
+      logger.error(
+        { err, to: normalizedRecipient, templateName },
+        "Failed to check email suppression state"
+      );
+      return null;
+    }
+  );
+
+  if (activeSuppression) {
+    if (emailLogId) {
+      try {
+        await prisma.emailLog.update({
+          where: { id: emailLogId },
+          data: {
+            status: "BOUNCED",
+            htmlBody: null,
+            errorMessage: `Email suppressed after SES ${activeSuppression.reason.toLowerCase()} feedback`,
+          },
+        });
+      } catch (err) {
+        logger.error({ err, to: normalizedRecipient }, "Failed to update suppressed email log");
+      }
+    }
+
+    logger.warn(
+      {
+        to: normalizedRecipient,
+        templateName,
+        emailSuppressionId: activeSuppression.id,
+        reason: activeSuppression.reason,
+      },
+      "Skipped email to suppressed recipient"
+    );
+    return;
   }
 
   if (process.env.NODE_ENV === "development") {
@@ -536,9 +581,12 @@ type SesSnsNotification = {
   Message?: string;
   notificationType?: string;
   bounce?: {
+    bounceType?: string;
+    bounceSubType?: string;
     bouncedRecipients?: Array<{ emailAddress?: string }>;
   };
   complaint?: {
+    complaintFeedbackType?: string;
     complainedRecipients?: Array<{ emailAddress?: string }>;
   };
   mail?: {
@@ -596,10 +644,12 @@ export async function ingestSesSnsEmailFeedback(payload: unknown) {
   if (recipients.length === 0) {
     return { handled: false as const };
   }
+  const normalizedRecipients = recipients.map(normalizeEmailAddress);
+  const logRecipients = Array.from(new Set([...recipients, ...normalizedRecipients]));
 
   await prisma.emailLog.updateMany({
     where: {
-      to: { in: recipients },
+      to: { in: logRecipients },
       status: { in: ["QUEUED", "SENT", "FAILED"] },
     },
     data: {
@@ -608,11 +658,28 @@ export async function ingestSesSnsEmailFeedback(payload: unknown) {
     },
   });
 
+  const suppressionResult = await recordSesEmailFeedback(
+    normalizedRecipients.map(
+      (email): SesEmailFeedbackEvent => ({
+        email,
+        reason: notificationType === "complaint" ? "COMPLAINT" : "BOUNCE",
+        eventType: notificationType,
+        sesMessageId: notification.mail?.messageId ?? null,
+        bounceType: notification.bounce?.bounceType ?? null,
+        bounceSubType: notification.bounce?.bounceSubType ?? null,
+        complaintFeedbackType:
+          notification.complaint?.complaintFeedbackType ?? null,
+      })
+    )
+  );
+
   logger.warn(
     {
       sesNotificationType: notificationType,
       sesMessageId: notification.mail?.messageId ?? null,
-      recipients,
+      recipients: normalizedRecipients,
+      suppressionsProcessed: suppressionResult.processed,
+      suppressionsActive: suppressionResult.suppressed,
     },
     "Processed SES/SNS email delivery feedback"
   );
@@ -620,7 +687,9 @@ export async function ingestSesSnsEmailFeedback(payload: unknown) {
   return {
     handled: true as const,
     notificationType,
-    recipients,
+    recipients: normalizedRecipients,
+    suppressionsProcessed: suppressionResult.processed,
+    suppressionsActive: suppressionResult.suppressed,
   };
 }
 

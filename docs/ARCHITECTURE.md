@@ -62,6 +62,7 @@ age-tier-settings, audit-log, booking-policies, bookings, chores, committee, com
 | `finance-*.ts` | Finance access, finance Xero boundary, snapshots, sync, and report models |
 | `stripe.ts` | Stripe client + helpers |
 | `email.ts` / `email-templates.ts` | AWS SES transactional emails |
+| `email-suppression.ts` / `/api/webhooks/ses-sns` | SES bounce/complaint feedback and recipient suppression |
 | `audit.ts` | Audit logging helper |
 | `backup.ts` | Automated pg_dump to S3 |
 | `rate-limit.ts` | In-memory rate limiter |
@@ -365,7 +366,7 @@ Concurrency guardrail:
 
 **Current deploy behavior:** `scripts/run-production-blue-green-deploy.sh` is the single supported production entrypoint. It snapshots the resolved `origin/main` commit into a clean workspace under `~/tacbookings-deployments/`, copies the production `.env`, preserves the live Caddy upstream state, invokes the low-level `scripts/blue-green-deploy.sh` runner there, then fast-forwards the clean `~/TACBookings` checkout to the deployed commit and prunes stale deploy workspaces after success.
 
-**Blue/green guidance:** The blue/green path keeps Postgres shared, runs cron only on `app`, and keeps `app_blue` / `app_green` web-only by setting `CRON_ENABLED=false` on the color services. Caddy routes to the active color first and `app` second using readiness checks on `/api/health/ready`. During cutover, the previous color is kept running until the public domain verifies against the target color and the drain period ends. After a successful cutover, the non-target web-slot containers are removed so old code cannot continue running outside the active slot. Prisma changes must follow an expand-contract pattern so old and new app versions can overlap safely during cutover. The migration SQL scan in `scripts/blue-green-deploy.sh` is heuristic only and requires explicit operator review even when it passes. The low-level runner also supports `SKIP_APP_IMAGE_BUILD=1` when operators intentionally want to reuse existing app images.
+**Blue/green guidance:** The blue/green path keeps Postgres shared, runs cron only on `app`, and keeps `app_blue` / `app_green` web-only by setting `CRON_ENABLED=false` on the color services. Caddy routes to the active color first and `app` second using readiness checks on `/api/health/ready`. During cutover, the previous color is kept running until the public domain verifies against the target color and the drain period ends. After a successful cutover, the non-target web-slot containers are removed so old code cannot continue running outside the active slot. Prisma changes must follow the expand-contract policy in `docs/BLUE_GREEN_MIGRATION_POLICY.md` so old and new app versions can overlap safely during cutover. The deploy runner validates pending migration SQL against `docs/BLUE_GREEN_MIGRATION_SAFETY.tsv`; hot-table migrations require a documented lock-impact plan, and potentially breaking migrations also require explicit operator acknowledgement through `ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS=1` plus `BLUE_GREEN_MIGRATION_OVERRIDE_REASON`. The low-level runner also supports `SKIP_APP_IMAGE_BUILD=1` when operators intentionally want to reuse existing app images.
 
 **Backups:** Lightsail snapshots + daily pg_dump to S3 (env vars: `BACKUP_ENABLED`, `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY`, `BACKUP_RETENTION_DAYS`, `BACKUP_CRON_SCHEDULE`).
 
@@ -374,7 +375,7 @@ Concurrency guardrail:
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
 - `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_ENCRYPTION_KEY`
 - `FINANCE_XERO_CLIENT_ID`, `FINANCE_XERO_CLIENT_SECRET`, `FINANCE_XERO_REDIRECT_URI`, `FINANCE_XERO_ENCRYPTION_KEY`
-- `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`
+- `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY`, `SES_SNS_TOPIC_ARN`, `EMAIL_FROM`
 - `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_AUTH_TOKEN`
 
 **Stripe:** Live keys in production (since 2026-04-08). Use test mode for development.

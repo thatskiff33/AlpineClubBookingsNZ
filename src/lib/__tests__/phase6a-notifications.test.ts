@@ -16,7 +16,16 @@ const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
     emailLog: {
       create: vi.fn().mockResolvedValue({ id: "log-1" }),
       update: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       findFirst: vi.fn().mockResolvedValue(null),
+    },
+    emailSuppression: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({}),
+      update: vi.fn().mockResolvedValue({}),
+      count: vi.fn().mockResolvedValue(0),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     member: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -55,6 +64,11 @@ describe("N-10: EmailLog tracking", () => {
     vi.resetModules();
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
+    mockPrisma.emailLog.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.emailSuppression.findFirst.mockResolvedValue(null);
+    mockPrisma.emailSuppression.findUnique.mockResolvedValue(null);
+    mockPrisma.emailSuppression.create.mockResolvedValue({});
+    mockPrisma.emailSuppression.update.mockResolvedValue({});
     mockTransporter.sendMail.mockResolvedValue({ messageId: "msg-123" });
   });
 
@@ -214,6 +228,89 @@ describe("N-10: EmailLog tracking", () => {
     (process.env as Record<string, string>).NODE_ENV =origEnv;
   });
 
+  it("skips SMTP delivery for actively suppressed recipients", async () => {
+    const origEnv = process.env.NODE_ENV;
+    (process.env as Record<string, string>).NODE_ENV = "production";
+    mockPrisma.emailSuppression.findFirst.mockResolvedValue({
+      id: "sup-1",
+      email: "test@example.com",
+      reason: "COMPLAINT",
+      eventCount: 1,
+      suppressedAt: new Date(),
+      lastEventAt: new Date(),
+      lastEventType: "complaint",
+      lastBounceType: null,
+      lastBounceSubType: null,
+      lastComplaintFeedbackType: "abuse",
+      lastSesMessageId: "ses-message-1",
+    });
+
+    const { sendEmail } = await import("../email");
+
+    await sendEmail({
+      to: "Test@Example.com",
+      subject: "Test",
+      html: "<p>Test</p>",
+      templateName: "test-template",
+    });
+
+    expect(mockTransporter.sendMail).not.toHaveBeenCalled();
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        to: "Test@Example.com",
+        status: "QUEUED",
+      }),
+    });
+    expect(mockPrisma.emailLog.update).toHaveBeenCalledWith({
+      where: { id: "log-1" },
+      data: expect.objectContaining({
+        status: "BOUNCED",
+        htmlBody: null,
+        errorMessage: expect.stringContaining("suppressed"),
+      }),
+    });
+
+    (process.env as Record<string, string>).NODE_ENV = origEnv;
+  });
+
+  it("records SES complaint feedback as durable recipient suppression", async () => {
+    mockPrisma.emailSuppression.create.mockResolvedValue({
+      id: "sup-1",
+      email: "member@example.com",
+    });
+
+    const { ingestSesSnsEmailFeedback } = await import("../email");
+    const result = await ingestSesSnsEmailFeedback({
+      notificationType: "Complaint",
+      mail: { messageId: "ses-message-1", destination: ["member@example.com"] },
+      complaint: {
+        complaintFeedbackType: "abuse",
+        complainedRecipients: [{ emailAddress: "Member@Example.com" }],
+      },
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      notificationType: "complaint",
+      recipients: ["member@example.com"],
+      suppressionsProcessed: 1,
+    });
+    expect(mockPrisma.emailLog.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        to: { in: ["Member@Example.com", "member@example.com"] },
+      }),
+      data: expect.objectContaining({ status: "BOUNCED" }),
+    });
+    expect(mockPrisma.emailSuppression.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        email: "member@example.com",
+        reason: "COMPLAINT",
+        suppressedAt: expect.any(Date),
+        lastComplaintFeedbackType: "abuse",
+      }),
+    });
+  });
+
   it("preserves the original send error if EmailLog FAILED update also fails", async () => {
     const origEnv = process.env.NODE_ENV;
     (process.env as Record<string, string>).NODE_ENV ="production";
@@ -329,6 +426,7 @@ describe("N-10: EmailLog tracking", () => {
       description: "Line 1\nLine 2",
       screenshot: null,
     });
+    await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
 

@@ -1151,6 +1151,11 @@ enum EmailLogStatus {
   BOUNCED
 }
 
+enum EmailSuppressionReason {
+  BOUNCE
+  COMPLAINT
+}
+
 model EmailLog {
   id            String         @id @default(cuid())
   to            String
@@ -1171,6 +1176,30 @@ model EmailLog {
   @@index([createdAt])
   @@index([status, attempts])
   @@index([templateName, status, createdAt])
+}
+
+model EmailSuppression {
+  id                        String                 @id @default(cuid())
+  email                     String                 @unique
+  reason                    EmailSuppressionReason
+  eventCount                Int                    @default(1)
+  suppressedAt              DateTime?
+  lastEventAt               DateTime               @default(now())
+  lastEventType             String
+  lastBounceType            String?
+  lastBounceSubType         String?
+  lastComplaintFeedbackType String?
+  lastSesMessageId          String?
+  clearedAt                 DateTime?
+  clearedById               String?
+  clearReason               String?
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @updatedAt
+
+  @@index([suppressedAt])
+  @@index([clearedAt])
+  @@index([reason, suppressedAt])
+  @@index([lastEventAt])
 }
 
 model IssueReport {

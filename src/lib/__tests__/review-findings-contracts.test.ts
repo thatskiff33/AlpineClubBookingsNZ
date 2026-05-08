@@ -1,5 +1,7 @@
-import { readFileSync } from "fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import path from "path";
+import { spawnSync } from "child_process";
 import { describe, expect, it } from "vitest";
 
 function readRepoFile(relativePath: string) {
@@ -22,6 +24,35 @@ function sliceFrom(source: string, startMarker: string, endMarker?: string) {
   }
 
   return source.slice(start, end);
+}
+
+function createTempMigration(sql: string, ledger: string) {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "tac-migration-safety-"));
+  const migrationDir = path.join(tempDir, "20990101000000_test_migration");
+  const migrationPath = path.join(migrationDir, "migration.sql");
+  const ledgerPath = path.join(tempDir, "safety.tsv");
+
+  mkdirSync(migrationDir, { recursive: true });
+  writeFileSync(migrationPath, sql);
+  writeFileSync(ledgerPath, ledger);
+
+  return { tempDir, migrationPath, ledgerPath };
+}
+
+function runMigrationSafetyValidator(
+  migrationPath: string,
+  ledgerPath: string,
+  env: Record<string, string> = {}
+) {
+  return spawnSync("bash", ["scripts/validate-blue-green-migrations.sh", migrationPath], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      MIGRATION_SAFETY_LEDGER: ledgerPath,
+      ...env,
+    },
+    encoding: "utf8",
+  });
 }
 
 describe("review finding source/schema contracts", () => {
@@ -233,10 +264,17 @@ describe("review finding source/schema contracts", () => {
     const emailCronSource = readRepoFile("src/lib/cron-email-retry.ts");
     const emailSource = readRepoFile("src/lib/email.ts");
     const emailSenderSource = readRepoFile("src/lib/email-sender.ts");
-    const combined = `${emailCronSource}\n${emailSource}\n${emailSenderSource}`;
+    const suppressionSource = readRepoFile("src/lib/email-suppression.ts");
+    const snsRoute = readRepoFile("src/app/api/webhooks/ses-sns/route.ts");
+    const sesSnsVerifier = readRepoFile("src/lib/ses-sns.ts");
+    const schema = readRepoFile("prisma/schema.prisma");
+    const combined = `${emailCronSource}\n${emailSource}\n${emailSenderSource}\n${suppressionSource}\n${snsRoute}\n${sesSnsVerifier}`;
 
     expect(combined).toMatch(/bounce|complaint/i);
     expect(combined).toMatch(/sns|ses/i);
+    expect(combined).toContain("verifySnsWebhookMessage");
+    expect(combined).toContain("getActiveEmailSuppression");
+    expect(schema).toContain("model EmailSuppression");
   });
 
   it("wires logger and Sentry through shared token scrubbing", () => {
@@ -264,5 +302,90 @@ describe("review finding source/schema contracts", () => {
     expect(writeIndex).toBeGreaterThan(-1);
     expect(reloadIndex).toBeGreaterThan(-1);
     expect(reloadIndex < writeIndex || hasExplicitRestorePath).toBe(true);
+  });
+
+  it("gates blue/green migrations with an explicit safety ledger", () => {
+    const source = readRepoFile("scripts/blue-green-deploy.sh");
+    const validator = readRepoFile("scripts/validate-blue-green-migrations.sh");
+    const ledger = readRepoFile("docs/BLUE_GREEN_MIGRATION_SAFETY.tsv");
+
+    expect(source).toContain("MIGRATION_SAFETY_LEDGER");
+    expect(source).toContain("validate-blue-green-migrations.sh");
+    expect(validator).toContain("HOT_TABLE_SQL_REGEX");
+    expect(validator).toContain("lock impact plan");
+    expect(ledger).toContain("old_code_compatible");
+  });
+
+  it("requires lock-impact documentation for hot-table migrations", () => {
+    const fixture = createTempMigration(
+      'ALTER TABLE "Payment" ADD COLUMN "processorReference" TEXT;\n',
+      "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan\n"
+    );
+
+    try {
+      const result = runMigrationSafetyValidator(
+        fixture.migrationPath,
+        fixture.ledgerPath
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("missing");
+      expect(result.stderr).toContain("blue/green migration safety review");
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("allows documented hot-table expand migrations without breaking-SQL override", () => {
+    const fixture = createTempMigration(
+      'ALTER TABLE "Payment" ADD COLUMN "processorReference" TEXT;\n',
+      [
+        "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan",
+        "20990101000000_test_migration\texpand\tn/a\tyes\tAdds a nullable Payment column; run during low traffic and verify no long payment writes.",
+      ].join("\n")
+    );
+
+    try {
+      const result = runMigrationSafetyValidator(
+        fixture.migrationPath,
+        fixture.ledgerPath
+      );
+
+      expect(result.status).toBe(0);
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("requires operator acknowledgement for documented destructive contract migrations", () => {
+    const fixture = createTempMigration(
+      'ALTER TABLE "Member" DROP COLUMN "legacyPhone";\n',
+      [
+        "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan",
+        "20990101000000_test_migration\tcontract\t20261201000000_member_phone_expand\tyes\tDrops a retired Member column after all runtime callers moved to structured phone fields.",
+      ].join("\n")
+    );
+
+    try {
+      const blocked = runMigrationSafetyValidator(
+        fixture.migrationPath,
+        fixture.ledgerPath
+      );
+      const allowed = runMigrationSafetyValidator(
+        fixture.migrationPath,
+        fixture.ledgerPath,
+        {
+          ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+          BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+            "contract phase verified against previous deployed runtime",
+        }
+      );
+
+      expect(blocked.status).not.toBe(0);
+      expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+      expect(allowed.status).toBe(0);
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
+    }
   });
 });
