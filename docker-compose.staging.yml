@@ -1,14 +1,17 @@
 # Staging/accessibility override for non-production verification.
 #
-# Usage:
+# Local app-only usage:
 #   cp .env.staging.example .env.staging
 #   docker compose --env-file .env.staging -p tacbookings-staging \
 #     -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app
 #
-# This target intentionally starts only Postgres and one web app by default. It
-# disables cron and backup work so Lighthouse, accessibility, and smoke tests can
-# run against a non-production app without sending scheduled email, Stripe, or
-# Xero work.
+# Hosted Caddy-backed usage:
+#   docker compose --env-file .env.staging -p tacbookings-staging \
+#     -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app caddy
+#
+# This target keeps scheduled work disabled by default so Lighthouse,
+# accessibility, and smoke tests can run against a non-production app without
+# sending scheduled email, Stripe, or Xero work.
 
 services:
   postgres:
@@ -22,6 +25,7 @@ services:
       APP_RUNTIME_ROLE: staging
       CRON_ENABLED: "false"
       BACKUP_ENABLED: "false"
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3001}
 
   app_blue:
     profiles: ["production-bluegreen"]
@@ -31,3 +35,10 @@ services:
 
   caddy:
     profiles: ["production-caddy"]
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      STAGING_CADDY_SITE: ${STAGING_CADDY_SITE:-http://localhost}
+    volumes:
+      - ./Caddyfile.staging:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config

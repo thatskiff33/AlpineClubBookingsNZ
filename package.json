@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "review:staging:a11y": "bash scripts/run-staging-accessibility-checks.sh",
     "db:generate": "prisma generate",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:migrate": "npx prisma migrate deploy",

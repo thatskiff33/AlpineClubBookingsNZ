@@ -34,6 +34,8 @@ TACBookings/
 │       └── ...                    # Feature components
 ├── docs/                          # Reference documentation
 ├── docker-compose.yml
+├── docker-compose.staging.yml       # Staging override for a non-production verification target
+├── Caddyfile.staging                # Staging reverse proxy config
 ├── Dockerfile
 ├── Caddyfile
 ├── .env.example
@@ -358,6 +360,8 @@ Concurrency guardrail:
 **Instance:** 4 GB RAM, 2 vCPUs, 80 GB SSD, Ubuntu 24.04 LTS.
 
 **Docker Compose services:** `caddy` (reverse proxy, auto HTTPS), `app` (cron leader and warm fallback upstream), `app_blue` / `app_green` (blue/green web slots), `postgres` (PostgreSQL 16 on port 5432), `migrate` (Prisma migration runner).
+
+**Staging target:** Non-production verification uses `docker-compose.staging.yml`, `Caddyfile.staging`, `.env.staging.example`, and the runbook in `docs/STAGING_ACCESSIBILITY_RUNBOOK.md`. The canonical staging origin is `https://staging.tokoroa.org.nz`, with `/login` as the auth path and `/api/health/ready` as the readiness endpoint. Keep GitHub environment `staging` variable `STAGING_APP_URL` aligned with `NEXTAUTH_URL` before running accessibility checks.
 
 **Deploy process:**
 ```bash

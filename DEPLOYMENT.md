@@ -245,6 +245,17 @@ Common causes: missing `.env` values, or `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` / 
 docker compose up -d --build
 ```
 
+### Staging Verification Target
+
+Use `docs/STAGING_ACCESSIBILITY_RUNBOOK.md` for the non-production staging target required by accessibility and print-contrast review work. The committed staging entrypoints are:
+
+- `.env.staging.example` for the staging-only environment contract
+- `docker-compose.staging.yml` for the production-style staging Compose override
+- `Caddyfile.staging` for the staging reverse proxy
+- `.github/workflows/staging-accessibility.yml` for manual Lighthouse evidence capture through GitHub environment `staging`
+
+The canonical staging URL is `https://staging.tokoroa.org.nz`, the auth path is `/login`, and `NEXTAUTH_URL`, `XERO_REDIRECT_URI`, and `FINANCE_XERO_REDIRECT_URI` must stay aligned to that origin.
+
 ---
 
 ## Step 8: Run Database Setup and Seed
