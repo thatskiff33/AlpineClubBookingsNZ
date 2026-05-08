@@ -39,6 +39,7 @@ import {
 } from "@/lib/xero-sync";
 import {
   getMemberXeroContactLinkMismatch,
+  getXeroContactNameOrderRepair,
   type XeroContactLinkMismatchEntry,
 } from "@/lib/xero-contact-link-mismatches";
 
@@ -1681,6 +1682,104 @@ function addNameMismatchToSyncReport(
   });
 }
 
+async function repairXeroContactNameOrderIfNeeded(input: {
+  xero: XeroClient;
+  tenantId: string;
+  contact: Contact;
+  cachedContact: CachedXeroContact;
+  member: { id: string; firstName: string; lastName: string };
+}): Promise<string | null> {
+  const repair = getXeroContactNameOrderRepair(input.member, {
+    name: input.cachedContact.name,
+    firstName: input.cachedContact.firstName,
+    lastName: input.cachedContact.lastName,
+  });
+
+  if (!repair) {
+    return null;
+  }
+
+  const contactId = input.cachedContact.contactId;
+  const contactUpdate: Contact = {
+    contactID: contactId,
+    name: repair.name,
+    firstName: repair.firstName,
+    lastName: repair.lastName,
+  };
+  const payload = { contacts: [contactUpdate] };
+  const payloadHash = buildXeroPayloadHash(payload);
+  const idempotencyKey = buildXeroIdempotencyKey(
+    "contact",
+    contactId,
+    "repair-name-order",
+    payloadHash,
+    "v1"
+  );
+  const operation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CONTACT",
+    operationType: "UPDATE",
+    localModel: "Member",
+    localId: input.member.id,
+    idempotencyKey,
+    correlationKey: idempotencyKey,
+    requestPayload: payload,
+  });
+
+  try {
+    const response = await callXeroApi(
+      () =>
+        input.xero.accountingApi.updateContact(
+          input.tenantId,
+          contactId,
+          payload,
+          idempotencyKey
+        ),
+      {
+        operation: "updateContact",
+        resourceType: "CONTACT",
+        workflow: "syncContactsFromXero",
+        context: `repairContactNameOrder(${contactId})`,
+      }
+    );
+    const completedContactId =
+      response.body.contacts?.[0]?.contactID ?? contactId;
+
+    await completeXeroSyncOperation(operation.id, {
+      responsePayload: response.body,
+      xeroObjectType: "CONTACT",
+      xeroObjectId: completedContactId,
+      xeroObjectUrl: buildXeroContactUrl(completedContactId),
+      extraLinks: [
+        {
+          localModel: "Member",
+          localId: input.member.id,
+          xeroObjectType: "CONTACT",
+          xeroObjectId: completedContactId,
+          xeroObjectUrl: buildXeroContactUrl(completedContactId),
+          role: "CONTACT",
+        },
+      ],
+    });
+
+    await refreshXeroContactCachesFromContact(
+      {
+        ...input.contact,
+        contactID: completedContactId,
+        name: repair.name,
+        firstName: repair.firstName,
+        lastName: repair.lastName,
+      },
+      new Date()
+    );
+
+    return repair.name;
+  } catch (error) {
+    await failXeroSyncOperation(operation.id, error);
+    throw error;
+  }
+}
+
 export async function syncContactsFromXero(
   options: SyncContactsFromXeroOptions = {}
 ): Promise<SyncReport> {
@@ -1774,6 +1873,8 @@ export async function syncContactsFromXero(
         where: { xeroContactId: contact.contactID },
       });
       if (alreadyLinked) {
+        const changes: string[] = [];
+        const updateData: Record<string, unknown> = {};
         const mismatch = getMemberXeroContactLinkMismatch(
           {
             id: alreadyLinked.id,
@@ -1805,8 +1906,16 @@ export async function syncContactsFromXero(
           continue;
         }
 
-        const changes: string[] = [];
-        const updateData: Record<string, unknown> = {};
+        const repairedContactName = await repairXeroContactNameOrderIfNeeded({
+          xero,
+          tenantId,
+          contact,
+          cachedContact,
+          member: alreadyLinked,
+        });
+        if (repairedContactName) {
+          changes.push(`Xero contact name set to ${repairedContactName}`);
+        }
 
         if (!alreadyLinked.joinedDate && options.backfillJoinedDates) {
           const invoiceDate = await getContactFirstInvoiceDate(
@@ -1863,11 +1972,15 @@ export async function syncContactsFromXero(
           changes.push("Postal address set from Xero");
         }
 
-        if (Object.keys(updateData).length > 0) {
+        const hasMemberUpdates = Object.keys(updateData).length > 0;
+        if (hasMemberUpdates) {
           await prisma.member.update({
             where: { id: alreadyLinked.id },
             data: updateData,
           });
+        }
+
+        if (changes.length > 0) {
           report.updated.push({
             name: `${alreadyLinked.firstName} ${alreadyLinked.lastName}`,
             memberId: alreadyLinked.id,
@@ -1938,6 +2051,17 @@ export async function syncContactsFromXero(
         continue;
       }
 
+      const repairedContactName = await repairXeroContactNameOrderIfNeeded({
+        xero,
+        tenantId,
+        contact,
+        cachedContact,
+        member,
+      });
+      if (repairedContactName) {
+        changes.push(`Xero contact name set to ${repairedContactName}`);
+      }
+
       if (member.xeroContactId !== contact.contactID) {
         updateData.xeroContactId = contact.contactID;
         changes.push("Linked to Xero contact");
@@ -1992,11 +2116,15 @@ export async function syncContactsFromXero(
         changes.push("Postal address set from Xero");
       }
 
-      if (Object.keys(updateData).length > 0) {
+      const hasMemberUpdates = Object.keys(updateData).length > 0;
+      if (hasMemberUpdates) {
         await prisma.member.update({
           where: { id: member.id },
           data: updateData,
         });
+      }
+
+      if (changes.length > 0) {
         report.updated.push({
           name: `${member.firstName} ${member.lastName}`,
           memberId: member.id,

@@ -38,6 +38,12 @@ export interface XeroContactLinkMismatchSnapshot {
   mismatches: XeroContactLinkMismatchEntry[];
 }
 
+export interface XeroContactNameOrderRepair {
+  name: string;
+  firstName: string;
+  lastName: string;
+}
+
 function normalizeComparableName(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
@@ -142,6 +148,55 @@ function getContactDisplayName(contact: XeroContactNameCandidate): string {
   return displayName || contact.contactId;
 }
 
+export function getXeroContactNameOrderRepair(
+  member: Pick<MemberNameCandidate, "firstName" | "lastName">,
+  contact: Pick<XeroContactNameCandidate, "name" | "firstName" | "lastName">
+): XeroContactNameOrderRepair | null {
+  const memberFirst = member.firstName.trim();
+  const memberLast = member.lastName.trim();
+  const memberFirstName = normalizeComparableName(memberFirst);
+  const memberLastName = normalizeComparableName(memberLast);
+
+  if (!memberFirstName || !memberLastName) {
+    return null;
+  }
+
+  const desiredComparable = joinComparableNameParts(memberFirstName, memberLastName);
+  const reversedComparable = joinComparableNameParts(memberLastName, memberFirstName);
+  const contactFirstName = normalizeComparableName(contact.firstName);
+  const contactLastName = normalizeComparableName(contact.lastName);
+  const contactDisplayName = normalizeComparableName(contact.name);
+  const structuredNameHasBothParts = Boolean(contactFirstName && contactLastName);
+  const structuredNameMatches =
+    contactFirstName === memberFirstName && contactLastName === memberLastName;
+  const structuredNameIsReversed =
+    contactFirstName === memberLastName && contactLastName === memberFirstName;
+  const displayNameIsReversed = Boolean(
+    contactDisplayName && contactDisplayName === reversedComparable
+  );
+  const displayNameNeedsRepair = Boolean(
+    contactDisplayName &&
+      contactDisplayName !== desiredComparable &&
+      displayNameIsReversed
+  );
+
+  if (
+    !structuredNameIsReversed &&
+    !(
+      displayNameNeedsRepair &&
+      (!structuredNameHasBothParts || structuredNameMatches)
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    name: `${memberFirst} ${memberLast}`,
+    firstName: memberFirst,
+    lastName: memberLast,
+  };
+}
+
 export function getMemberXeroContactLinkMismatch(
   member: MemberNameCandidate,
   contact: XeroContactNameCandidate
@@ -153,7 +208,10 @@ export function getMemberXeroContactLinkMismatch(
   const memberNames = getMemberComparableNames(member);
   const contactNames = getContactComparableNames(contact);
 
-  if (comparableNamesIntersect(memberNames.variants, contactNames.candidates)) {
+  if (
+    comparableNamesIntersect(memberNames.variants, contactNames.candidates) ||
+    getXeroContactNameOrderRepair(member, contact)
+  ) {
     return null;
   }
 
@@ -200,16 +258,18 @@ export function namesAppearToMatchMemberAndContact(
     "name" | "firstName" | "lastName" | "emailAddress"
   >
 ): boolean {
+  const contactCandidate = {
+    contactId: member.xeroContactId ?? "candidate-contact",
+    name: contact.name ?? null,
+    firstName: contact.firstName ?? null,
+    lastName: contact.lastName ?? null,
+    emailAddress: contact.emailAddress ?? null,
+  };
+
   return comparableNamesIntersect(
     getMemberComparableNames(member).variants,
-    getContactComparableNames({
-      contactId: member.xeroContactId ?? "candidate-contact",
-      name: contact.name ?? null,
-      firstName: contact.firstName ?? null,
-      lastName: contact.lastName ?? null,
-      emailAddress: contact.emailAddress ?? null,
-    }).candidates
-  );
+    getContactComparableNames(contactCandidate).candidates
+  ) || Boolean(getXeroContactNameOrderRepair(member, contactCandidate));
 }
 
 export async function getXeroContactLinkMismatchSnapshot(options?: {

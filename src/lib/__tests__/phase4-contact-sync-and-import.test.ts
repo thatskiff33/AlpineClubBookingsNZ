@@ -18,10 +18,15 @@ const mocks = vi.hoisted(() => {
   const accountingApi = {
     getContacts: vi.fn(),
     getInvoices: vi.fn(),
+    updateContact: vi.fn(),
   };
 
   return {
     accountingApi,
+    buildXeroIdempotencyKey: vi.fn((...parts: unknown[]) => parts.join(":")),
+    buildXeroPayloadHash: vi.fn(() => "payload-hash"),
+    completeXeroSyncOperation: vi.fn(),
+    failXeroSyncOperation: vi.fn(),
     prisma: {
       xeroToken: {
         findFirst: vi.fn(),
@@ -69,6 +74,9 @@ const mocks = vi.hoisted(() => {
       $transaction: vi.fn(),
     },
     recordXeroApiUsage: vi.fn(),
+    sanitizeForJson: vi.fn((value: unknown) => value),
+    startXeroSyncOperation: vi.fn(),
+    upsertXeroObjectLink: vi.fn(),
     logger: {
       error: vi.fn(),
       info: vi.fn(),
@@ -107,13 +115,13 @@ vi.mock("@/lib/xero-links", () => ({
   buildXeroInvoiceUrl: vi.fn((id: string) => `https://xero.test/invoices/${id}`),
 }));
 vi.mock("@/lib/xero-sync", () => ({
-  buildXeroIdempotencyKey: vi.fn(),
-  buildXeroPayloadHash: vi.fn(),
-  completeXeroSyncOperation: vi.fn(),
-  failXeroSyncOperation: vi.fn(),
-  sanitizeForJson: vi.fn((value: unknown) => value),
-  startXeroSyncOperation: vi.fn(),
-  upsertXeroObjectLink: vi.fn(),
+  buildXeroIdempotencyKey: mocks.buildXeroIdempotencyKey,
+  buildXeroPayloadHash: mocks.buildXeroPayloadHash,
+  completeXeroSyncOperation: mocks.completeXeroSyncOperation,
+  failXeroSyncOperation: mocks.failXeroSyncOperation,
+  sanitizeForJson: mocks.sanitizeForJson,
+  startXeroSyncOperation: mocks.startXeroSyncOperation,
+  upsertXeroObjectLink: mocks.upsertXeroObjectLink,
 }));
 vi.mock("bcryptjs", () => ({
   hash: vi.fn().mockResolvedValue("placeholder-hash"),
@@ -186,6 +194,12 @@ describe("Phase 4 contact sync and cached import", () => {
         callback(mocks.prisma)
     );
     mocks.recordXeroApiUsage.mockResolvedValue(undefined);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_1" });
+    mocks.completeXeroSyncOperation.mockResolvedValue(undefined);
+    mocks.failXeroSyncOperation.mockResolvedValue(undefined);
+    mocks.accountingApi.updateContact.mockResolvedValue({
+      body: { contacts: [{ contactID: "contact_1" }] },
+    });
   });
 
   it("uses the contact sync cursor and skips first-invoice lookups in the default sync path", async () => {
@@ -403,6 +417,77 @@ describe("Phase 4 contact sync and cached import", () => {
         update: expect.objectContaining({
           lastSuccessfulSyncAt: expect.any(Date),
         }),
+      })
+    );
+  });
+
+  it("repairs a linked Xero contact when first and last names are reversed", async () => {
+    mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue({
+      cursorDateTime: null,
+      lastSuccessfulSyncAt: new Date("2026-04-14T10:05:00.000Z"),
+      metadata: {},
+    });
+    mocks.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact_1",
+            name: "TestLast, TestFirst",
+            firstName: "TestLast",
+            lastName: "TestFirst",
+            emailAddress: "reversed-name@example.com",
+          },
+        ],
+      },
+    });
+    mocks.accountingApi.updateContact.mockResolvedValue({
+      body: { contacts: [{ contactID: "contact_1" }] },
+    });
+    mocks.prisma.member.findFirst.mockResolvedValueOnce({
+      id: "member_1",
+      firstName: "TestFirst",
+      lastName: "TestLast",
+      email: "reversed-name@example.com",
+      active: true,
+      xeroContactId: "contact_1",
+      joinedDate: null,
+      phoneNumber: null,
+      streetAddressLine1: null,
+      postalAddressLine1: null,
+    });
+
+    const report = await syncContactsFromXero();
+
+    expect(report.skippedNameMismatch).toEqual([]);
+    expect(report.updated).toEqual([
+      {
+        name: "TestFirst TestLast",
+        memberId: "member_1",
+        xeroContactId: "contact_1",
+        changes: ["Xero contact name set to TestFirst TestLast"],
+      },
+    ]);
+    expect(mocks.accountingApi.updateContact).toHaveBeenCalledWith(
+      "tenant_1",
+      "contact_1",
+      {
+        contacts: [
+          expect.objectContaining({
+            contactID: "contact_1",
+            name: "TestFirst TestLast",
+            firstName: "TestFirst",
+            lastName: "TestLast",
+          }),
+        ],
+      },
+      "contact:contact_1:repair-name-order:payload-hash:v1"
+    );
+    expect(mocks.prisma.member.update).not.toHaveBeenCalled();
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_1",
+      expect.objectContaining({
+        xeroObjectType: "CONTACT",
+        xeroObjectId: "contact_1",
       })
     );
   });
