@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
       const existingIntent = await getPaymentIntent(booking.payment.stripePaymentIntentId);
 
       if (existingIntent.status === "succeeded") {
-        if (booking.payment.status !== "SUCCEEDED" || booking.status !== "PAID") {
+        if (booking.payment.status !== "SUCCEEDED") {
           await markBookingPaymentSucceeded({
             bookingId: booking.id,
             paymentIntentId: existingIntent.id,
