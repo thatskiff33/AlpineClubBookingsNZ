@@ -204,6 +204,7 @@ BACKUP_S3_ACCESS_KEY_ID=<s3-iam-access-key>
 BACKUP_S3_SECRET_ACCESS_KEY=<s3-iam-secret-key>
 BACKUP_RETENTION_DAYS=7
 BACKUP_CRON_SCHEDULE=0 3 * * *
+BACKUP_RESTORE_VALIDATION_URL=postgresql://tac:<password>@postgres:5432/tacbookings_restore
 ```
 
 > **Important:** Replace every `<...>` with real values. `STRIPE_WEBHOOK_SECRET` and `XERO_WEBHOOK_KEY` are created in later steps — use a placeholder for now.
@@ -517,10 +518,18 @@ Automated backups run daily at 3 AM. For a manual backup:
 docker compose exec postgres pg_dump -U tac tacbookings | gzip > ~/backup-$(date +%Y%m%d).sql.gz
 ```
 
+The automated backup job sanitizes Prisma-only `DATABASE_URL` query parameters before calling `pg_dump`, fails if `pg_dump` exits non-zero, rejects suspiciously small gzip files, uploads to S3, then reads the S3 object back with the configured backup credentials. If `BACKUP_RESTORE_VALIDATION_URL` is set, it must point at a disposable shadow database; the job resets that database, restores the uploaded readback object when S3 is enabled, and verifies non-zero `Member`, `Booking`, and `Payment` counts before reporting success.
+
 ### Restoring a Backup
 
 ```bash
 gunzip -c backup-20260403.sql.gz | docker compose exec -T postgres psql -U tac tacbookings
+```
+
+After any manual restore drill, run smoke counts against the restored database:
+
+```bash
+docker compose exec postgres psql -U tac tacbookings -c 'SELECT (SELECT count(*) FROM "Member") AS members, (SELECT count(*) FROM "Booking") AS bookings, (SELECT count(*) FROM "Payment") AS payments;'
 ```
 
 ### Restarting Services
