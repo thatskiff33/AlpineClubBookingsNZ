@@ -25,15 +25,32 @@ function sliceFrom(source: string, startMarker: string, endMarker?: string) {
 }
 
 describe("review finding source/schema contracts", () => {
-  it("keeps guest chore completion token-authenticated, rate-limited, and schema-validated", () => {
+  it("keeps guest chore token links read-only", () => {
     const source = readRepoFile("src/app/api/chores/[token]/route.ts");
     const putBlock = sliceFrom(source, "export async function PUT");
 
     expect(putBlock).not.toContain("Public endpoint");
     expect(putBlock).not.toContain("auth(");
-    expect(putBlock).toContain("applyRateLimit");
-    expect(putBlock).toContain("validateGuestChoreToken");
-    expect(putBlock).toContain("guestChoreMutationSchema.safeParse");
+    expect(putBlock).not.toContain("validateGuestChoreToken");
+    expect(putBlock).not.toContain("choreAssignment.update");
+    expect(putBlock).toContain("status: 405");
+    expect(putBlock).toContain('Allow: "GET"');
+  });
+
+  it("wraps draft booking creation in the advisory-lock transaction", () => {
+    const source = readRepoFile("src/app/api/bookings/route.ts");
+    const draftBlock = sliceFrom(
+      source,
+      "if (draft) {",
+      "const allMembers = !hasNonMembers;"
+    );
+
+    expect(draftBlock).toContain("prisma.$transaction");
+    expect(draftBlock).toContain("pg_advisory_xact_lock(1)");
+    expect(draftBlock).toContain("tx.booking.create");
+    expect(draftBlock).toMatch(/redeemPromoCode\(\s*tx,/);
+    expect(draftBlock).not.toContain("prisma.booking.create");
+    expect(draftBlock).not.toMatch(/redeemPromoCode\(\s*prisma,/);
   });
 
   it("wraps waitlist booking creation in a transaction instead of standalone Prisma writes", () => {
@@ -106,13 +123,14 @@ describe("review finding source/schema contracts", () => {
     expect(source).toContain("emailChanged");
   });
 
-  it("validates booking-cancel and guest-chore mutations with explicit schemas", () => {
+  it("validates booking-cancel mutations and removes guest-chore token mutations", () => {
     const cancelRoute = readRepoFile("src/app/api/bookings/[id]/cancel/route.ts");
     const guestChoreRoute = readRepoFile("src/app/api/chores/[token]/route.ts");
     const schemaPattern = /z\.(object|enum|string|number)|safeParse\(|\.parse\(/;
 
     expect(cancelRoute).toMatch(schemaPattern);
-    expect(guestChoreRoute).toMatch(schemaPattern);
+    expect(guestChoreRoute).not.toContain("guestChoreMutationSchema");
+    expect(guestChoreRoute).not.toContain("choreAssignment.update");
     expect(cancelRoute).not.toContain('default to "card"');
   });
 

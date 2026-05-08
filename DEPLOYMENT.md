@@ -215,7 +215,8 @@ BACKUP_CRON_SCHEDULE=0 3 * * *
 ```bash
 cd ~/TACBookings
 
-# Build and start all 3 services (first build takes 3-5 minutes)
+# First-time bootstrap: build and start Postgres, app cron leader, blue/green web slots, and Caddy.
+# For routine production updates after bootstrap, use ./scripts/run-production-blue-green-deploy.sh instead.
 docker compose up -d --build
 
 # Watch logs to verify everything starts cleanly
@@ -229,7 +230,7 @@ Verify all services are healthy:
 docker compose ps
 ```
 
-You should see `postgres`, `app`, and `caddy` all showing "healthy" or "running".
+You should see `postgres`, `app`, `app_blue`, `app_green`, and `caddy` showing "healthy" or "running". The `app` service is the cron leader and fallback upstream; `app_blue` and `app_green` are web-only blue/green slots with cron disabled.
 
 **If the app container fails to start**, check logs:
 
@@ -264,10 +265,11 @@ The seed creates a default admin account:
 
 > **Change this password immediately** after first login (Step 9).
 
-For future schema changes, use migrations instead:
+For future schema changes, use migrations instead. The dedicated `migrate` profile service uses the builder image and should be used when you want migrations isolated from the running app process:
 
 ```bash
 docker compose exec app npx prisma migrate deploy
+docker compose run --rm migrate
 ```
 
 ---

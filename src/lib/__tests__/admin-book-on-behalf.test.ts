@@ -8,13 +8,15 @@ vi.mock("@/lib/prisma", () => ({
     booking: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
     season: { findMany: vi.fn() },
     promoCode: { findUnique: vi.fn() },
-    promoRedemption: { count: vi.fn() },
+    promoCodeAssignment: { findMany: vi.fn() },
+    promoRedemption: { count: vi.fn(), aggregate: vi.fn() },
     familyGroupMember: { findMany: vi.fn() },
     memberSubscription: { findFirst: vi.fn() },
     payment: { create: vi.fn() },
     groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -56,6 +58,10 @@ vi.mock("@/lib/bumping", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   redeemPromoCode: vi.fn().mockResolvedValue(undefined),
+  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({
+    discountCents: 0,
+    freeNightsUsed: 0,
+  }),
   getMemberFreeNightsUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock("@/lib/pricing", () => ({
@@ -119,6 +125,15 @@ const baseBookingPayload = {
 describe("Admin Book on Behalf", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (mockedPrisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+      async (fn: (tx: typeof mockedPrisma) => Promise<unknown>) => fn(mockedPrisma)
+    );
+    (mockedPrisma.$executeRaw as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockedPrisma.$queryRaw as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.promoRedemption.aggregate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      _sum: { freeNightsUsed: 0 },
+    });
+    (mockedPrisma.promoCodeAssignment.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   });
 
   it("rejects admin booking without forMemberId (must book on behalf)", async () => {
@@ -269,6 +284,15 @@ describe("Admin Book on Behalf", () => {
 describe("Create booking guest normalization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (mockedPrisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+      async (fn: (tx: typeof mockedPrisma) => Promise<unknown>) => fn(mockedPrisma)
+    );
+    (mockedPrisma.$executeRaw as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockedPrisma.$queryRaw as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.promoRedemption.aggregate as ReturnType<typeof vi.fn>).mockResolvedValue({
+      _sum: { freeNightsUsed: 0 },
+    });
+    (mockedPrisma.promoCodeAssignment.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   });
 
   it("forces manually typed guests to non-member pricing on create", async () => {

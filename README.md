@@ -1,36 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# TACBookings
 
-## Getting Started
+TACBookings is the Tokoroa Alpine Club booking and membership platform. It is a Next.js 16 App Router application with PostgreSQL, Prisma, NextAuth/Auth.js credentials sessions, Stripe payments, Xero integration, AWS SES email, finance reporting, and Docker Compose deployment for the production Lightsail host.
 
-First, run the development server:
+## Requirements
+
+- Node.js 20.9 or newer
+- npm
+- Docker and Docker Compose for local PostgreSQL and production-style builds
+
+## Fresh Clone Setup
+
+```bash
+git clone https://github.com/thatskiff33/TACBookings.git
+cd TACBookings
+cp .env.example .env
+npm ci
+npx prisma generate
+```
+
+Edit `.env` before running the app. For local development, the minimum values are `DATABASE_URL`, `NEXTAUTH_SECRET`, `AUTH_SECRET`, `CRON_SECRET`, and any integration keys required for the feature you are testing. The default `.env.example` database URL targets PostgreSQL on `localhost:5432`.
+
+Start PostgreSQL, apply migrations, and seed local data:
+
+```bash
+docker compose up -d postgres
+npm run db:migrate
+npm run db:seed
+```
+
+Run the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`. The seed account is `support@tokoroa.org.nz` / `admin123`; change the password immediately in any shared or persistent environment.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Daily Commands
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm test          # Vitest unit and route coverage
+npm run lint     # ESLint
+npm run build    # Prisma generate + Next production build
+npm audit --audit-level=high
+```
 
-## Learn More
+## Docker
 
-To learn more about Next.js, take a look at the following resources:
+Build the production image locally:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+docker build -t tacbookings:local .
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Run the full Compose stack for production-style testing:
 
-## Deploy on Vercel
+```bash
+docker compose up -d --build
+docker compose run --rm migrate
+docker compose ps
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The production Compose model includes `app` as the cron leader and warm fallback, `app_blue` / `app_green` as web-only blue/green slots, `postgres`, `caddy`, and a `migrate` profile service.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Deployment
+
+Production deploys use the blue/green wrapper documented in `DEPLOYMENT.md`:
+
+```bash
+./scripts/run-production-blue-green-deploy.sh
+```
+
+Do not deploy production by running a plain `docker compose up -d --build` on the live host unless you are intentionally bypassing the blue/green process for an incident response.
+
+## Key Documentation
+
+- `DEPLOYMENT.md` - Lightsail, Caddy, Docker Compose, blue/green deploy, and recovery
+- `docs/ARCHITECTURE.md` - system architecture, core data model, integrations, cron, deployment
+- `docs/PRODUCTION_DEPENDENCY_AUDIT.md` - dependency audit state and accepted Auth.js/Nodemailer peer mismatch
+- `docs/HASHED_TOKEN_MIGRATION.md` - token hash-at-rest migration
+- `docs/finance-dashboard/README.md` - finance dashboard operator and agent handoff
