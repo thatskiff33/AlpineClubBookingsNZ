@@ -7,7 +7,10 @@ import { sendMemberSetupInviteEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { issueActionToken } from "@/lib/action-tokens";
-import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
+import {
+  MEMBER_SETUP_INVITE_TTL_DAYS,
+  getMemberSetupInviteExpiryDate,
+} from "@/lib/member-setup-invite";
 
 const sendSetupInviteSchema = z.object({
   memberIds: z.array(z.string()).min(1, "At least one member ID is required").max(100),
@@ -119,7 +122,12 @@ export async function POST(req: NextRequest) {
               action: "member.setup-invite-sent",
               memberId: adminId,
               targetId: member.id,
-              details: `Admin sent account setup invite to ${member.firstName} ${member.lastName} (${member.email})`,
+              details: JSON.stringify({
+                recipientEmail: member.email,
+                recipientName: `${member.firstName} ${member.lastName}`,
+                kind: "invite",
+                expiryLabel: `${MEMBER_SETUP_INVITE_TTL_DAYS} days`,
+              }),
             });
 
             sent++;

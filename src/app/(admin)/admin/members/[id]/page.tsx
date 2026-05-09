@@ -67,13 +67,35 @@ interface MemberDetail {
   familyGroups: { id: string; name: string | null }[]
   subscriptions: Array<{ id: string; seasonYear: number; status: string; xeroInvoiceId: string | null; paidAt: string | null }>
   bookings: Array<{ id: string; checkIn: string; checkOut: string; status: string; finalPriceCents: number; _count: { guests: number } }>
-  auditLogs: Array<{ id: string; action: string; details: string | null; createdAt: string }>
+  auditLogs: AuditLogEntry[]
   stats: { totalBookings: number; totalSpendCents: number; lastStay: string | null }
   dependents: Array<{ id: string; firstName: string; lastName: string; ageTier: string; active: boolean; dateOfBirth: string | null; canLogin: boolean }>
   streetAddressLine1: string | null; streetAddressLine2: string | null; streetCity: string | null
   streetRegion: string | null; streetPostalCode: string | null; streetCountry: string | null
   postalAddressLine1: string | null; postalAddressLine2: string | null; postalCity: string | null
   postalRegion: string | null; postalPostalCode: string | null; postalCountry: string | null
+}
+
+interface AuditActor {
+  id: string
+  firstName: string
+  lastName: string
+  email: string
+}
+
+interface AuditLogEntry {
+  id: string
+  action: string
+  details: string | null
+  createdAt: string
+  actor: AuditActor | null
+}
+
+interface InviteAuditDetails {
+  recipientEmail?: string
+  recipientName?: string
+  kind?: "invite" | "reset"
+  expiryLabel?: string
 }
 
 interface CreditHistoryItem {
@@ -123,6 +145,43 @@ const financeAccessBadgeClass: Record<FinanceAccessLevel, string> = {
 
 function formatAdminName(admin: AdminActor | null | undefined) {
   return admin ? `${admin.firstName} ${admin.lastName}` : "Unknown admin"
+}
+
+export function parseInviteAuditDetails(details: string | null): InviteAuditDetails | null {
+  if (!details) return null
+
+  try {
+    const parsed = JSON.parse(details) as InviteAuditDetails
+    if (typeof parsed !== "object" || parsed === null) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+export function getAuditActorDisplayName(actor: AuditActor | null | undefined) {
+  if (!actor) return "System"
+
+  const fullName = `${actor.firstName} ${actor.lastName}`.trim()
+  return fullName || actor.email || "System"
+}
+
+export function formatMemberAuditLogSummary(
+  log: AuditLogEntry,
+  formattedTimestamp: string
+) {
+  const parsedDetails = parseInviteAuditDetails(log.details)
+  const actorName = getAuditActorDisplayName(log.actor)
+
+  if (log.action === "member.setup-invite-sent" && parsedDetails?.recipientEmail) {
+    return `Invited via email to ${parsedDetails.recipientEmail} on ${formattedTimestamp} by ${actorName}`
+  }
+
+  if (log.action === "member.password-reset-sent" && parsedDetails?.recipientEmail) {
+    return `Password reset sent to ${parsedDetails.recipientEmail} on ${formattedTimestamp} by ${actorName}`
+  }
+
+  return log.action
 }
 
 interface DependentForm extends MemberAddressValues {
@@ -863,6 +922,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
   const fmt = (cents: number) => new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100)
   const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })
+  const fmtDateTime = (d: string) => new Date(d).toLocaleString("en-NZ", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })
 
   return (
     <div className="space-y-6">
@@ -1059,9 +1119,22 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
       <Card><CardHeader><CardTitle className="text-base font-medium">Audit Log</CardTitle></CardHeader><CardContent>
         {member.auditLogs.length === 0 ? <p className="text-sm text-slate-500">No audit records</p> : (
-          <div className="space-y-3">{member.auditLogs.map((log) => (
-            <div key={log.id} className="flex items-start justify-between border-b border-slate-100 pb-2 last:border-0"><div><p className="text-sm font-medium text-slate-700">{log.action}</p>{log.details && <p className="text-xs text-slate-500 mt-0.5">{log.details}</p>}</div><span className="text-xs text-slate-400 whitespace-nowrap ml-4">{fmtDate(log.createdAt)}</span></div>
-          ))}</div>)}
+          <div className="space-y-3">{member.auditLogs.map((log) => {
+            const timestamp = fmtDateTime(log.createdAt)
+            const structuredDetails = parseInviteAuditDetails(log.details)
+            const isInviteAudit = log.action === "member.setup-invite-sent" || log.action === "member.password-reset-sent"
+
+            return (
+              <div key={log.id} className="flex items-start justify-between border-b border-slate-100 pb-2 last:border-0">
+                <div>
+                  <p className="text-sm font-medium text-slate-700">{formatMemberAuditLogSummary(log, timestamp)}</p>
+                  {(!isInviteAudit || !structuredDetails) && <p className="text-xs text-slate-500 mt-0.5">By {getAuditActorDisplayName(log.actor)}</p>}
+                  {log.details && (!isInviteAudit || !structuredDetails) && <p className="text-xs text-slate-500 mt-0.5">{log.details}</p>}
+                </div>
+                <span className="text-xs text-slate-400 whitespace-nowrap ml-4">{timestamp}</span>
+              </div>
+            )
+          })}</div>)}
       </CardContent></Card>
 
       <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-base font-medium">Account Credit</CardTitle><div className="flex items-center gap-3"><span className={`text-lg font-semibold ${creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"}`}>{`$${(creditBalance / 100).toFixed(2)}`}</span><Button size="sm" variant="outline" onClick={toggleAdjustmentForm}>{showAdjustmentForm ? "Cancel" : "Request Adjustment"}</Button></div></CardHeader><CardContent>

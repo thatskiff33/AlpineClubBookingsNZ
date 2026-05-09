@@ -126,7 +126,12 @@ export async function POST(req: NextRequest) {
               action: "member.password-reset-sent",
               memberId: adminId,
               targetId: member.id,
-              details: `Admin sent ${expiryLabel} password reset to ${member.firstName} ${member.lastName} (${member.email})`,
+              details: JSON.stringify({
+                recipientEmail: member.email,
+                recipientName: `${member.firstName} ${member.lastName}`,
+                kind: "reset",
+                expiryLabel,
+              }),
             });
 
             sent++;
