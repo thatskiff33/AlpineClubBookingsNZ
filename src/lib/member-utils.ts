@@ -1,5 +1,3 @@
-import { prisma } from "./prisma";
-
 /**
  * Minimum member data needed to resolve the effective email address.
  * Include `inheritEmailFrom` in your Prisma select to avoid an extra DB lookup.
@@ -38,6 +36,7 @@ export async function getEffectiveEmail(
   }
 
   // Fallback: DB lookup
+  const { prisma } = await import("@/lib/prisma");
   const source = await prisma.member.findUnique({
     where: { id: member.inheritEmailFromId },
     select: { email: true },
