@@ -194,6 +194,28 @@ export async function GET(
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
+  const actorIds = Array.from(
+    new Set(
+      auditLogs
+        .map((log) => log.memberId)
+        .filter((memberId): memberId is string => Boolean(memberId))
+    )
+  );
+  const auditActors =
+    actorIds.length > 0
+      ? await prisma.member.findMany({
+          where: { id: { in: actorIds } },
+          select: { id: true, firstName: true, lastName: true, email: true },
+        })
+      : [];
+  const auditActorById = new Map(
+    auditActors.map((actor) => [actor.id, actor])
+  );
+  const auditLogsWithActors = auditLogs.map((log) => ({
+    ...log,
+    actor: log.memberId ? auditActorById.get(log.memberId) ?? null : null,
+  }));
+
   let xeroContactGroups: Array<{ id: string; name: string }> = [];
   let xeroContactGroupsLoaded = !member.xeroContactId;
   if (member.xeroContactId) {
@@ -225,7 +247,7 @@ export async function GET(
     })),
     familyGroupMemberships: undefined,
     bookings,
-    auditLogs,
+    auditLogs: auditLogsWithActors,
     xeroContactGroups,
     xeroContactGroupsLoaded,
     stats: {

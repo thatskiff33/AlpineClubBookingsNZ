@@ -291,6 +291,11 @@ export async function GET(req: NextRequest) {
       select: { status: true, seasonYear: true, xeroInvoiceId: true },
       take: 1,
     },
+    passwordResetTokens: {
+      orderBy: { createdAt: "desc" as const },
+      take: 1,
+      select: { expiresAt: true, used: true },
+    },
   };
 
   const [members, total] = await Promise.all([
@@ -324,24 +329,39 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const membersWithSub = members.map((m) => ({
-    ...m,
-    subscriptionStatus: m.subscriptions[0]?.status ?? null,
-    subscriptionXeroInvoiceId: m.subscriptions[0]?.xeroInvoiceId ?? null,
-    familyGroups: m.familyGroupMemberships.map((fg) => ({
-      id: fg.familyGroup.id,
-      name: fg.familyGroup.name,
-    })),
-    subscriptions: undefined,
-    familyGroupMemberships: undefined,
-    passwordChangedAt: undefined,
-    lastLoginAt: undefined,
-    xeroContactGroupsLoaded,
-    xeroContactGroups: m.xeroContactId
-      ? xeroContactGroups[m.xeroContactId] ?? []
-      : [],
-    hasCompletedAccountSetup: hasMemberCompletedAccountSetup(m),
-  }));
+  const now = new Date();
+  const membersWithSub = members.map((m) => {
+    const hasCompletedAccountSetup = hasMemberCompletedAccountSetup(m);
+    const latestToken = m.passwordResetTokens?.[0];
+    const pendingInviteExpiresAt =
+      !hasCompletedAccountSetup &&
+      latestToken &&
+      !latestToken.used &&
+      latestToken.expiresAt > now
+        ? latestToken.expiresAt
+        : null;
+
+    return {
+      ...m,
+      subscriptionStatus: m.subscriptions[0]?.status ?? null,
+      subscriptionXeroInvoiceId: m.subscriptions[0]?.xeroInvoiceId ?? null,
+      familyGroups: m.familyGroupMemberships.map((fg) => ({
+        id: fg.familyGroup.id,
+        name: fg.familyGroup.name,
+      })),
+      subscriptions: undefined,
+      familyGroupMemberships: undefined,
+      passwordResetTokens: undefined,
+      passwordChangedAt: undefined,
+      lastLoginAt: undefined,
+      xeroContactGroupsLoaded,
+      xeroContactGroups: m.xeroContactId
+        ? xeroContactGroups[m.xeroContactId] ?? []
+        : [],
+      hasCompletedAccountSetup,
+      pendingInviteExpiresAt,
+    };
+  });
 
   return NextResponse.json({
     members: membersWithSub,
