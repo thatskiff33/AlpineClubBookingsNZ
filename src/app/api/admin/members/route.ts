@@ -156,6 +156,15 @@ export async function GET(req: NextRequest) {
     andConditions.push({ id: { not: excludeId } });
   }
 
+  const dependentLinkEligibleFor = sp.get("dependentLinkEligibleFor");
+  if (dependentLinkEligibleFor) {
+    andConditions.push(
+      { id: { not: dependentLinkEligibleFor } },
+      { parentMemberId: null },
+      { dependents: { none: {} } },
+    );
+  }
+
   // Filter: role
   const roleFilter = sp.get("role");
   if (roleFilter && (roleFilter === "MEMBER" || roleFilter === "ADMIN")) {

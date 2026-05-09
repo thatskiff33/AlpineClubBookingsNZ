@@ -1,16 +1,18 @@
 import { prisma } from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 type InheritanceValidationResult =
   | { ok: true }
   | { ok: false; status: 404 | 422; error: string };
 
+type EmailInheritanceClient = Prisma.TransactionClient | typeof prisma;
+
 export async function validateInheritEmailSource(input: {
   inheritEmailFromId: string;
   memberId?: string;
-  db?: Prisma.TransactionClient | typeof prisma;
-}): Promise<InheritanceValidationResult> {
-  const db = input.db ?? prisma;
+  db?: EmailInheritanceClient;
+}, dbOverride?: EmailInheritanceClient): Promise<InheritanceValidationResult> {
+  const db = dbOverride ?? input.db ?? prisma;
   const inheritEmailFrom = await db.member.findUnique({
     where: { id: input.inheritEmailFromId },
     select: {

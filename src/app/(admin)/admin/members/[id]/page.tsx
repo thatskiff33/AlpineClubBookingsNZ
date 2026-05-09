@@ -14,6 +14,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Accordion,
   AccordionContent,
@@ -217,6 +219,23 @@ interface DependentForm extends MemberAddressValues {
   phoneNumber: string
 }
 
+type DependentDialogMode = "create" | "link"
+
+interface LinkDependentSearchResult {
+  id: string
+  firstName: string
+  lastName: string
+  email: string
+  ageTier: string
+  active: boolean
+  canLogin: boolean
+  dateOfBirth: string | null
+}
+
+function shouldDefaultLinkSideEffects(ageTier: string) {
+  return ageTier !== "ADULT"
+}
+
 function memberUsesSamePostalAddress(member: Pick<MemberDetail, keyof MemberAddressValues>) {
   const postalHasValues = [
     member.postalAddressLine1,
@@ -292,6 +311,14 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [dependentPostalSameAsPhysical, setDependentPostalSameAsPhysical] = useState(false)
   const [dependentSaving, setDependentSaving] = useState(false)
   const [dependentFormError, setDependentFormError] = useState("")
+  const [dependentMode, setDependentMode] = useState<DependentDialogMode>("create")
+  const [linkDependentSearch, setLinkDependentSearch] = useState("")
+  const [linkDependentSearchResults, setLinkDependentSearchResults] = useState<LinkDependentSearchResult[]>([])
+  const [linkDependentSearching, setLinkDependentSearching] = useState(false)
+  const [selectedLinkDependent, setSelectedLinkDependent] = useState<LinkDependentSearchResult | null>(null)
+  const [linkDependentInheritEmail, setLinkDependentInheritEmail] = useState(false)
+  const [linkDependentDisableLogin, setLinkDependentDisableLogin] = useState(false)
+  const [linkDependentFamilyGroupIds, setLinkDependentFamilyGroupIds] = useState<string[]>([])
   const [familyGroupEditorId, setFamilyGroupEditorId] = useState<string | null>(null)
   // Account credit state
   const [creditBalance, setCreditBalance] = useState<number>(0)
@@ -530,6 +557,71 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     }
   }, [editOpen, form.canLogin, inheritEmailSearch, memberId, selectedInheritEmailSource?.id])
 
+  useEffect(() => {
+    if (!dependentOpen || dependentMode !== "link" || !memberId) {
+      setLinkDependentSearchResults([])
+      setLinkDependentSearching(false)
+      return
+    }
+
+    const query = linkDependentSearch.trim()
+    if (query.length < 2) {
+      setLinkDependentSearchResults([])
+      setLinkDependentSearching(false)
+      return
+    }
+
+    let cancelled = false
+    setLinkDependentSearching(true)
+
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          q: query,
+          pageSize: "8",
+          dependentLinkEligibleFor: memberId,
+        })
+        const res = await fetch(`/api/admin/members?${params.toString()}`)
+        const data = await res.json().catch(() => ({}))
+
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to search members")
+        }
+
+        if (!cancelled) {
+          setLinkDependentSearchResults(
+            (data.members ?? [])
+              .map((candidate: LinkDependentSearchResult) => ({
+                id: candidate.id,
+                firstName: candidate.firstName,
+                lastName: candidate.lastName,
+                email: candidate.email,
+                ageTier: candidate.ageTier,
+                active: candidate.active,
+                canLogin: candidate.canLogin,
+                dateOfBirth: candidate.dateOfBirth,
+              }))
+              .filter((candidate: LinkDependentSearchResult) => candidate.id !== selectedLinkDependent?.id)
+          )
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLinkDependentSearchResults([])
+          setDependentFormError(error instanceof Error ? error.message : "Failed to search members")
+        }
+      } finally {
+        if (!cancelled) {
+          setLinkDependentSearching(false)
+        }
+      }
+    }, 300)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [dependentMode, dependentOpen, linkDependentSearch, memberId, selectedLinkDependent?.id])
+
   const openEditDialog = useCallback(() => {
     if (!member) return
     setForm({
@@ -649,6 +741,14 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       postalCountry: member.postalCountry,
     } as Pick<MemberDetail, keyof MemberAddressValues>))
     setDependentFormError("")
+    setDependentMode("create")
+    setLinkDependentSearch("")
+    setLinkDependentSearchResults([])
+    setLinkDependentSearching(false)
+    setSelectedLinkDependent(null)
+    setLinkDependentInheritEmail(false)
+    setLinkDependentDisableLogin(false)
+    setLinkDependentFamilyGroupIds(member.familyGroups.map((group) => group.id))
     setDependentOpen(true)
   }
 
@@ -740,7 +840,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           phoneAreaCode: dependentForm.phoneAreaCode || null,
           phoneNumber: dependentForm.phoneNumber || null,
           role: "MEMBER",
-          ageTier: "CHILD",
           active: true,
           canLogin: false,
           parentMemberId: member.id,
@@ -774,6 +873,70 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       await fetchMember()
     } catch (err) {
       setDependentFormError(err instanceof Error ? err.message : "Failed to create dependent")
+    } finally {
+      setDependentSaving(false)
+    }
+  }
+
+  const selectLinkDependent = (candidate: LinkDependentSearchResult) => {
+    const defaultSideEffects = shouldDefaultLinkSideEffects(candidate.ageTier)
+    setSelectedLinkDependent(candidate)
+    setLinkDependentInheritEmail(defaultSideEffects)
+    setLinkDependentDisableLogin(defaultSideEffects)
+    setLinkDependentFamilyGroupIds(member?.familyGroups.map((group) => group.id) ?? [])
+    setLinkDependentSearch("")
+    setLinkDependentSearchResults([])
+    setDependentFormError("")
+  }
+
+  const clearLinkDependent = () => {
+    setSelectedLinkDependent(null)
+    setLinkDependentInheritEmail(false)
+    setLinkDependentDisableLogin(false)
+    setLinkDependentFamilyGroupIds(member?.familyGroups.map((group) => group.id) ?? [])
+    setLinkDependentSearch("")
+    setLinkDependentSearchResults([])
+    setDependentFormError("")
+  }
+
+  const toggleLinkFamilyGroup = (familyGroupId: string, checked: boolean) => {
+    setLinkDependentFamilyGroupIds((current) =>
+      checked
+        ? Array.from(new Set([...current, familyGroupId]))
+        : current.filter((id) => id !== familyGroupId)
+    )
+  }
+
+  const handleLinkDependent = async () => {
+    if (!member || !selectedLinkDependent) return
+
+    setDependentSaving(true)
+    setDependentFormError("")
+
+    try {
+      const res = await fetch(`/api/admin/members/${member.id}/dependents/link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberId: selectedLinkDependent.id,
+          inheritEmail: linkDependentInheritEmail,
+          disableLogin: linkDependentDisableLogin,
+          addToFamilyGroupIds: linkDependentFamilyGroupIds,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to link dependent")
+      }
+
+      setDependentOpen(false)
+      setSuccess("Dependent linked successfully")
+      setTimeout(() => setSuccess(""), 3000)
+      setLoading(true)
+      await fetchMember()
+    } catch (err) {
+      setDependentFormError(err instanceof Error ? err.message : "Failed to link dependent")
     } finally {
       setDependentSaving(false)
     }
@@ -1477,79 +1640,219 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           <DialogHeader>
             <DialogTitle>Add Dependent</DialogTitle>
             <DialogDescription>
-              Create a dependent managed under {member.firstName} {member.lastName}. Phone and address default from the parent and can be adjusted before saving.
+              Create a new dependent or link an existing member under {member.firstName} {member.lastName}.
             </DialogDescription>
           </DialogHeader>
           {dependentFormError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{dependentFormError}</div>}
-          <div className="grid gap-4 py-2">
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-              This dependent will be created as a non-login member and inherit notifications from the parent email.
-            </div>
+          <Tabs
+            value={dependentMode}
+            onValueChange={(value) => {
+              setDependentMode(value as DependentDialogMode)
+              setDependentFormError("")
+            }}
+          >
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="create">Create new</TabsTrigger>
+              <TabsTrigger value="link">Link existing</TabsTrigger>
+            </TabsList>
+            <TabsContent value="create" className="mt-4">
+              <div className="grid gap-4 py-2">
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                  This dependent will be created as a non-login member and inherit notifications from the parent email.
+                </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="dependent-firstName">First Name *</Label>
-                <Input
-                  id="dependent-firstName"
-                  value={dependentForm.firstName}
-                  onChange={e => setDependentForm(f => ({ ...f, firstName: e.target.value }))}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="dependent-firstName">First Name *</Label>
+                    <Input
+                      id="dependent-firstName"
+                      value={dependentForm.firstName}
+                      onChange={e => setDependentForm(f => ({ ...f, firstName: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="dependent-lastName">Last Name *</Label>
+                    <Input
+                      id="dependent-lastName"
+                      value={dependentForm.lastName}
+                      onChange={e => setDependentForm(f => ({ ...f, lastName: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="dependent-email">Email *</Label>
+                  <Input
+                    id="dependent-email"
+                    type="email"
+                    value={dependentForm.email}
+                    onChange={e => setDependentForm(f => ({ ...f, email: e.target.value }))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    This can match the parent email. Delivery will still be controlled by the inherited-email settings.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="dependent-dateOfBirth">Date of Birth *</Label>
+                  <Input
+                    id="dependent-dateOfBirth"
+                    type="date"
+                    value={dependentForm.dateOfBirth}
+                    onChange={e => setDependentForm(f => ({ ...f, dateOfBirth: e.target.value }))}
+                  />
+                  <p className="text-xs text-muted-foreground">Age tier will be calculated from date of birth.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Phone</Label>
+                  <div className="flex gap-2">
+                    <Input className="w-20" placeholder="64" value={dependentForm.phoneCountryCode} onChange={e => setDependentForm(f => ({ ...f, phoneCountryCode: e.target.value }))} maxLength={5} aria-label="Country code" />
+                    <Input className="w-20" placeholder="27" value={dependentForm.phoneAreaCode} onChange={e => setDependentForm(f => ({ ...f, phoneAreaCode: e.target.value }))} maxLength={5} aria-label="Area code" />
+                    <Input className="flex-1" placeholder="123 4567" value={dependentForm.phoneNumber} onChange={e => setDependentForm(f => ({ ...f, phoneNumber: e.target.value }))} maxLength={15} aria-label="Phone number" />
+                  </div>
+                </div>
+
+                <MemberAddressFields
+                  idPrefix="dependent"
+                  onSameAsPhysicalChange={setDependentPostalSameAsPhysical}
+                  onValuesChange={updateDependentAddressFields}
+                  sameAsPhysical={dependentPostalSameAsPhysical}
+                  values={dependentForm}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="dependent-lastName">Last Name *</Label>
-                <Input
-                  id="dependent-lastName"
-                  value={dependentForm.lastName}
-                  onChange={e => setDependentForm(f => ({ ...f, lastName: e.target.value }))}
-                />
+            </TabsContent>
+            <TabsContent value="link" className="mt-4">
+              <div className="space-y-4 py-2">
+                <div className="space-y-2">
+                  <Label htmlFor="link-dependent-search">Member search</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                    <Input
+                      id="link-dependent-search"
+                      value={linkDependentSearch}
+                      onChange={(e) => {
+                        setLinkDependentSearch(e.target.value)
+                        setSelectedLinkDependent(null)
+                        setDependentFormError("")
+                      }}
+                      placeholder="Search by name, email, or member ID"
+                      className="pl-9"
+                    />
+                    {linkDependentSearching && (
+                      <div className="absolute right-3 top-2.5 text-xs text-slate-400">Searching...</div>
+                    )}
+                  </div>
+                </div>
+
+                {selectedLinkDependent ? (
+                  <div className="rounded-md border border-slate-200 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium text-slate-900">
+                            {selectedLinkDependent.firstName} {selectedLinkDependent.lastName}
+                          </p>
+                          <Badge variant="secondary">{selectedLinkDependent.ageTier}</Badge>
+                          {!selectedLinkDependent.active && (
+                            <Badge variant="secondary" className="bg-slate-100 text-slate-600 border-slate-200">Inactive</Badge>
+                          )}
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">{selectedLinkDependent.email}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {selectedLinkDependent.canLogin ? "Can login" : "Non-login"}
+                          {selectedLinkDependent.dateOfBirth ? ` · DOB ${fmtDate(selectedLinkDependent.dateOfBirth)}` : ""}
+                        </p>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={clearLinkDependent} disabled={dependentSaving}>
+                        Change
+                      </Button>
+                    </div>
+                  </div>
+                ) : linkDependentSearch.trim().length >= 2 && linkDependentSearchResults.length > 0 ? (
+                  <div className="max-h-56 overflow-y-auto rounded-md border border-slate-200">
+                    {linkDependentSearchResults.map((candidate) => (
+                      <button
+                        key={candidate.id}
+                        type="button"
+                        onClick={() => selectLinkDependent(candidate)}
+                        className="w-full border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50"
+                      >
+                        <span className="font-medium">{candidate.firstName} {candidate.lastName}</span>
+                        <span className="ml-2 text-slate-500">{candidate.email}</span>
+                        <span className="ml-2 text-xs text-slate-400">{candidate.ageTier}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : linkDependentSearch.trim().length >= 2 && !linkDependentSearching ? (
+                  <p className="text-sm text-slate-500">No eligible members found.</p>
+                ) : (
+                  <p className="text-sm text-slate-500">Start typing at least 2 characters to search.</p>
+                )}
+
+                {selectedLinkDependent && (
+                  <div className="space-y-4">
+                    <div className="space-y-3 rounded-md border border-slate-200 p-3">
+                      <div className="flex items-start gap-2">
+                        <Checkbox
+                          id="link-dependent-inherit-email"
+                          checked={linkDependentInheritEmail}
+                          onCheckedChange={(checked) => setLinkDependentInheritEmail(checked === true)}
+                          disabled={dependentSaving}
+                        />
+                        <Label htmlFor="link-dependent-inherit-email" className="text-sm font-normal">
+                          Inherit email from this parent
+                        </Label>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Checkbox
+                          id="link-dependent-disable-login"
+                          checked={linkDependentDisableLogin}
+                          onCheckedChange={(checked) => setLinkDependentDisableLogin(checked === true)}
+                          disabled={dependentSaving}
+                        />
+                        <Label htmlFor="link-dependent-disable-login" className="text-sm font-normal">
+                          Disable login
+                        </Label>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Add to family groups</Label>
+                      {member.familyGroups.length > 0 ? (
+                        <div className="space-y-2 rounded-md border border-slate-200 p-3">
+                          {member.familyGroups.map((group) => (
+                            <div key={group.id} className="flex items-center gap-2">
+                              <Checkbox
+                                id={`link-dependent-family-group-${group.id}`}
+                                checked={linkDependentFamilyGroupIds.includes(group.id)}
+                                onCheckedChange={(checked) => toggleLinkFamilyGroup(group.id, checked === true)}
+                                disabled={dependentSaving}
+                              />
+                              <Label htmlFor={`link-dependent-family-group-${group.id}`} className="text-sm font-normal">
+                                {group.name || "Unnamed group"}
+                              </Label>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-slate-500">This parent is not in any family groups.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="dependent-email">Email *</Label>
-              <Input
-                id="dependent-email"
-                type="email"
-                value={dependentForm.email}
-                onChange={e => setDependentForm(f => ({ ...f, email: e.target.value }))}
-              />
-              <p className="text-xs text-muted-foreground">
-                This can match the parent email. Delivery will still be controlled by the inherited-email settings.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="dependent-dateOfBirth">Date of Birth *</Label>
-              <Input
-                id="dependent-dateOfBirth"
-                type="date"
-                value={dependentForm.dateOfBirth}
-                onChange={e => setDependentForm(f => ({ ...f, dateOfBirth: e.target.value }))}
-              />
-              <p className="text-xs text-muted-foreground">Age tier will be calculated automatically from date of birth.</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Phone</Label>
-              <div className="flex gap-2">
-                <Input className="w-20" placeholder="64" value={dependentForm.phoneCountryCode} onChange={e => setDependentForm(f => ({ ...f, phoneCountryCode: e.target.value }))} maxLength={5} aria-label="Country code" />
-                <Input className="w-20" placeholder="27" value={dependentForm.phoneAreaCode} onChange={e => setDependentForm(f => ({ ...f, phoneAreaCode: e.target.value }))} maxLength={5} aria-label="Area code" />
-                <Input className="flex-1" placeholder="123 4567" value={dependentForm.phoneNumber} onChange={e => setDependentForm(f => ({ ...f, phoneNumber: e.target.value }))} maxLength={15} aria-label="Phone number" />
-              </div>
-            </div>
-
-            <MemberAddressFields
-              idPrefix="dependent"
-              onSameAsPhysicalChange={setDependentPostalSameAsPhysical}
-              onValuesChange={updateDependentAddressFields}
-              sameAsPhysical={dependentPostalSameAsPhysical}
-              values={dependentForm}
-            />
-          </div>
+            </TabsContent>
+          </Tabs>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDependentOpen(false)} disabled={dependentSaving}>Cancel</Button>
-            <Button onClick={handleCreateDependent} disabled={dependentSaving}>
-              {dependentSaving ? "Creating..." : "Create Dependent"}
+            <Button
+              onClick={dependentMode === "create" ? handleCreateDependent : handleLinkDependent}
+              disabled={dependentSaving || (dependentMode === "link" && !selectedLinkDependent)}
+            >
+              {dependentSaving
+                ? dependentMode === "create" ? "Creating..." : "Linking..."
+                : dependentMode === "create" ? "Create Dependent" : "Link Dependent"}
             </Button>
           </DialogFooter>
         </DialogContent>
