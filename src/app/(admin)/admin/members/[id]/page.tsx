@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, use } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { MemberAddressFields } from "@/components/member-address-fields"
+import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog"
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -15,6 +16,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion"
 import { ArrowLeft, ExternalLink, User, Calendar, CreditCard, Clock, Pencil, Search, Link2, Plus } from "lucide-react"
 import {
   NZ_COUNTRY_CODE,
@@ -143,6 +150,22 @@ const financeAccessBadgeClass: Record<FinanceAccessLevel, string> = {
   NONE: "bg-slate-100 text-slate-700 border-slate-200",
   VIEWER: "bg-amber-100 text-amber-800 border-amber-200",
   MANAGER: "bg-emerald-100 text-emerald-800 border-emerald-200",
+}
+
+const collapsibleMemberSections = ["subs", "bookings", "xero", "audit"] as const
+type CollapsibleMemberSection = (typeof collapsibleMemberSections)[number]
+
+const memberSectionStorageKeys: Record<CollapsibleMemberSection, string> = {
+  subs: "admin-member-section:subs",
+  bookings: "admin-member-section:bookings",
+  xero: "admin-member-section:xero",
+  audit: "admin-member-section:audit",
+}
+
+function isCollapsibleMemberSection(
+  value: string
+): value is CollapsibleMemberSection {
+  return collapsibleMemberSections.includes(value as CollapsibleMemberSection)
 }
 
 function formatAdminName(admin: AdminActor | null | undefined) {
@@ -296,6 +319,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [linkDependentInheritEmail, setLinkDependentInheritEmail] = useState(false)
   const [linkDependentDisableLogin, setLinkDependentDisableLogin] = useState(false)
   const [linkDependentFamilyGroupIds, setLinkDependentFamilyGroupIds] = useState<string[]>([])
+  const [familyGroupEditorId, setFamilyGroupEditorId] = useState<string | null>(null)
   // Account credit state
   const [creditBalance, setCreditBalance] = useState<number>(0)
   const [creditHistory, setCreditHistory] = useState<CreditHistoryItem[]>([])
@@ -326,9 +350,26 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [xeroCreateDecisionResults, setXeroCreateDecisionResults] = useState<XeroSearchResult[]>([])
   const [xeroDecisionContactId, setXeroDecisionContactId] = useState("")
   const [xeroDecisionError, setXeroDecisionError] = useState("")
+  const [openMemberSections, setOpenMemberSections] = useState<CollapsibleMemberSection[]>([])
   const isAdultMember = member?.ageTier === "ADULT"
   const memberId = member?.id
   const shouldAutoOpenEdit = searchParams.get("edit") === "true"
+
+  const handleMemberSectionChange = (value: string[]) => {
+    const nextSections = value.filter(isCollapsibleMemberSection)
+    setOpenMemberSections(nextSections)
+
+    try {
+      collapsibleMemberSections.forEach((section) => {
+        window.localStorage.setItem(
+          memberSectionStorageKeys[section],
+          String(nextSections.includes(section))
+        )
+      })
+    } catch {
+      // Ignore storage failures; the accordion still works for this visit.
+    }
+  }
 
   const fetchMember = async () => {
     try {
@@ -424,6 +465,21 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   }
 
   useEffect(() => { fetchMember(); fetchCredits() }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    try {
+      setOpenMemberSections(
+        collapsibleMemberSections.filter((section) => {
+          const storedValue = window.localStorage.getItem(
+            memberSectionStorageKeys[section]
+          )
+          return storedValue === "true" || storedValue === "open"
+        })
+      )
+    } catch {
+      // Default to collapsed sections when localStorage is unavailable.
+    }
+  }, [])
 
   useEffect(() => {
     setHasHandledInitialEditParam(false)
@@ -1150,7 +1206,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         <div><dt className="text-slate-500">Finance Access</dt><dd className="font-medium"><Badge variant="secondary" className={financeAccessBadgeClass[member.financeAccessLevel]}>{financeAccessLabels[member.financeAccessLevel]}</Badge></dd></div>
         <div><dt className="text-slate-500">Login</dt><dd className="font-medium">{member.canLogin ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Can Login</Badge> : <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Non-Login</Badge>}</dd></div>
         <div><dt className="text-slate-500">Email Inheritance</dt><dd className="font-medium">{member.inheritEmailFrom ? <span className="text-xs">{member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} <span className="text-slate-400">({member.inheritEmailFrom.email})</span></span> : <span className="text-xs text-slate-500">Own email</span>}</dd></div>
-        <div><dt className="text-slate-500">Family Groups</dt><dd className="font-medium">{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Badge key={fg.id} variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200">{fg.name || "Unnamed"}</Badge>)}</div> : <span className="text-xs text-slate-500">None</span>}</dd></div>
+        <div><dt className="text-slate-500">Family Groups</dt><dd className="font-medium">{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Button key={fg.id} type="button" variant="outline" size="sm" className="h-7 border-indigo-200 bg-indigo-50 px-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800" onClick={() => setFamilyGroupEditorId(fg.id)}>{fg.name || "Unnamed"}</Button>)}</div> : <span className="text-xs text-slate-500">None</span>}</dd></div>
         <div>
           <dt className="text-slate-500">Xero Contact</dt>
           <dd className="font-medium space-y-2">
@@ -1188,8 +1244,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           </dd>
         </div>
       </dl></CardContent></Card>
-
-      <XeroRecordActivityPanel localModel="Member" localId={id} compact />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -1266,115 +1320,160 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         </CardContent>
       </Card>
 
-      <Card><CardHeader><CardTitle className="text-base font-medium">Subscription History</CardTitle></CardHeader><CardContent>
-        {member.subscriptions.length === 0 ? <p className="text-sm text-slate-500">No subscription records</p> : (
-          <Table><TableHeader><TableRow><TableHead>Season Year</TableHead><TableHead>Status</TableHead><TableHead>Paid At</TableHead><TableHead>Xero Invoice</TableHead></TableRow></TableHeader><TableBody>{member.subscriptions.map((sub) => (
-            <TableRow key={sub.id}><TableCell className="font-medium">{sub.seasonYear}/{sub.seasonYear + 1}</TableCell><TableCell><Badge variant="secondary" className={subscriptionStatusClass(sub.status)}>{sub.status.replace("_", " ")}</Badge></TableCell><TableCell>{sub.paidAt ? fmtDate(sub.paidAt) : "-"}</TableCell><TableCell>{sub.xeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">View <ExternalLink className="h-3 w-3" /></a> : "-"}</TableCell></TableRow>
-          ))}</TableBody></Table>)}
-      </CardContent></Card>
+      <Accordion
+        type="multiple"
+        value={openMemberSections}
+        onValueChange={handleMemberSectionChange}
+        className="space-y-6"
+      >
+        <AccordionItem value="subs" className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow">
+          <AccordionTrigger className="px-6 py-6 text-left text-base font-medium hover:no-underline">
+            Subscription History
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6">
+            {member.subscriptions.length === 0 ? <p className="text-sm text-slate-500">No subscription records</p> : (
+              <Table><TableHeader><TableRow><TableHead>Season Year</TableHead><TableHead>Status</TableHead><TableHead>Paid At</TableHead><TableHead>Xero Invoice</TableHead></TableRow></TableHeader><TableBody>{member.subscriptions.map((sub) => (
+                <TableRow key={sub.id}><TableCell className="font-medium">{sub.seasonYear}/{sub.seasonYear + 1}</TableCell><TableCell><Badge variant="secondary" className={subscriptionStatusClass(sub.status)}>{sub.status.replace("_", " ")}</Badge></TableCell><TableCell>{sub.paidAt ? fmtDate(sub.paidAt) : "-"}</TableCell><TableCell>{sub.xeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">View <ExternalLink className="h-3 w-3" /></a> : "-"}</TableCell></TableRow>
+              ))}</TableBody></Table>)}
+          </AccordionContent>
+        </AccordionItem>
 
-      <Card><CardHeader><CardTitle className="text-base font-medium">Booking History</CardTitle></CardHeader><CardContent>
-        {member.bookings.length === 0 ? <p className="text-sm text-slate-500">No bookings yet</p> : (
-          <Table><TableHeader><TableRow><TableHead>Check In</TableHead><TableHead>Check Out</TableHead><TableHead>Status</TableHead><TableHead>Guests</TableHead><TableHead>Amount</TableHead></TableRow></TableHeader><TableBody>{member.bookings.map((booking) => (
-            <TableRow key={booking.id}><TableCell>{fmtDate(booking.checkIn)}</TableCell><TableCell>{fmtDate(booking.checkOut)}</TableCell><TableCell><Badge variant="secondary" className={bookingStatusClass(booking.status)}>{bookingStatusLabel(booking.status)}</Badge></TableCell><TableCell>{booking._count.guests}</TableCell><TableCell>{fmt(booking.finalPriceCents)}</TableCell></TableRow>
-          ))}</TableBody></Table>)}
-      </CardContent></Card>
+        <AccordionItem value="bookings" className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow">
+          <AccordionTrigger className="px-6 py-6 text-left text-base font-medium hover:no-underline">
+            Booking History
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6">
+            {member.bookings.length === 0 ? <p className="text-sm text-slate-500">No bookings yet</p> : (
+              <Table><TableHeader><TableRow><TableHead>Check In</TableHead><TableHead>Check Out</TableHead><TableHead>Status</TableHead><TableHead>Guests</TableHead><TableHead>Amount</TableHead></TableRow></TableHeader><TableBody>{member.bookings.map((booking) => (
+                <TableRow key={booking.id}><TableCell>{fmtDate(booking.checkIn)}</TableCell><TableCell>{fmtDate(booking.checkOut)}</TableCell><TableCell><Badge variant="secondary" className={bookingStatusClass(booking.status)}>{bookingStatusLabel(booking.status)}</Badge></TableCell><TableCell>{booking._count.guests}</TableCell><TableCell>{fmt(booking.finalPriceCents)}</TableCell></TableRow>
+              ))}</TableBody></Table>)}
+          </AccordionContent>
+        </AccordionItem>
 
-      <Card><CardHeader><CardTitle className="text-base font-medium">Audit Log</CardTitle></CardHeader><CardContent>
-        {member.auditLogs.length === 0 ? <p className="text-sm text-slate-500">No audit records</p> : (
-          <div className="space-y-3">{member.auditLogs.map((log) => {
-            const timestamp = fmtDateTime(log.createdAt)
-            const structuredDetails = parseInviteAuditDetails(log.details)
-            const isInviteAudit = log.action === "member.setup-invite-sent" || log.action === "member.password-reset-sent"
-
-            return (
-              <div key={log.id} className="flex items-start justify-between border-b border-slate-100 pb-2 last:border-0">
-                <div>
-                  <p className="text-sm font-medium text-slate-700">{formatMemberAuditLogSummary(log, timestamp)}</p>
-                  {(!isInviteAudit || !structuredDetails) && <p className="text-xs text-slate-500 mt-0.5">By {getAuditActorDisplayName(log.actor)}</p>}
-                  {log.details && (!isInviteAudit || !structuredDetails) && <p className="text-xs text-slate-500 mt-0.5">{log.details}</p>}
+        <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-base font-medium">Account Credit</CardTitle><div className="flex items-center gap-3"><span className={`text-lg font-semibold ${creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"}`}>{`$${(creditBalance / 100).toFixed(2)}`}</span><Button size="sm" variant="outline" onClick={toggleAdjustmentForm}>{showAdjustmentForm ? "Cancel" : "Request Adjustment"}</Button></div></CardHeader><CardContent>
+          {adjustmentError && <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{adjustmentError}</div>}
+          {showAdjustmentForm && (
+            <div className="mb-4 p-4 border border-slate-200 rounded-md bg-slate-50 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="adj-amount">Amount ($)</Label>
+                  <Input id="adj-amount" type="number" step="0.01" placeholder="e.g. 25.00 or -10.00" value={adjustmentAmount} onChange={e => setAdjustmentAmount(e.target.value)} />
+                  <p className="text-xs text-slate-500">Positive = add credit, negative = deduct</p>
                 </div>
-                <span className="text-xs text-slate-400 whitespace-nowrap ml-4">{timestamp}</span>
+                <div className="space-y-1">
+                  <Label htmlFor="adj-desc">Description *</Label>
+                  <Input id="adj-desc" placeholder="Reason for adjustment" value={adjustmentDescription} onChange={e => setAdjustmentDescription(e.target.value)} maxLength={500} />
+                </div>
               </div>
-            )
-          })}</div>)}
-      </CardContent></Card>
-
-      <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-base font-medium">Account Credit</CardTitle><div className="flex items-center gap-3"><span className={`text-lg font-semibold ${creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"}`}>{`$${(creditBalance / 100).toFixed(2)}`}</span><Button size="sm" variant="outline" onClick={toggleAdjustmentForm}>{showAdjustmentForm ? "Cancel" : "Request Adjustment"}</Button></div></CardHeader><CardContent>
-        {adjustmentError && <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{adjustmentError}</div>}
-        {showAdjustmentForm && (
-          <div className="mb-4 p-4 border border-slate-200 rounded-md bg-slate-50 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="adj-amount">Amount ($)</Label>
-                <Input id="adj-amount" type="number" step="0.01" placeholder="e.g. 25.00 or -10.00" value={adjustmentAmount} onChange={e => setAdjustmentAmount(e.target.value)} />
-                <p className="text-xs text-slate-500">Positive = add credit, negative = deduct</p>
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="adj-desc">Description *</Label>
-                <Input id="adj-desc" placeholder="Reason for adjustment" value={adjustmentDescription} onChange={e => setAdjustmentDescription(e.target.value)} maxLength={500} />
-              </div>
+              <p className="text-xs text-slate-500">A different admin must approve this request before the member&apos;s credit balance changes.</p>
+              <Button size="sm" onClick={handleAdjustmentSubmit} disabled={adjustmentSaving}>{adjustmentSaving ? "Saving..." : "Submit for Approval"}</Button>
             </div>
-            <p className="text-xs text-slate-500">A different admin must approve this request before the member&apos;s credit balance changes.</p>
-            <Button size="sm" onClick={handleAdjustmentSubmit} disabled={adjustmentSaving}>{adjustmentSaving ? "Saving..." : "Submit for Approval"}</Button>
-          </div>
-        )}
-        {creditLoading ? <p className="text-sm text-slate-500">Loading credit history...</p> : creditError ? <p className="text-sm text-red-600">{creditError}</p> : (
-          <>
-            {pendingAdjustmentRequests.length > 0 && (
-              <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-4">
-                <div className="mb-3">
-                  <p className="text-sm font-medium text-amber-900">Pending manual adjustments</p>
-                  <p className="text-xs text-amber-800">Each request needs approval from a different admin before it becomes account credit.</p>
-                </div>
-                <Table><TableHeader><TableRow><TableHead>Requested</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Requested By</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>{pendingAdjustmentRequests.map((item) => {
-                  const isOwnRequest = session?.user?.id === item.requestedBy.id
-                  const isReviewing = reviewingAdjustmentId === item.id
-                  return (
-                    <TableRow key={item.id}>
-                      <TableCell className="text-sm">{fmtDate(item.createdAt)}</TableCell>
-                      <TableCell className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}>{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
-                      <TableCell className="text-sm text-slate-600 max-w-[260px] truncate">{item.description}</TableCell>
-                      <TableCell className="text-sm">{formatAdminName(item.requestedBy)}</TableCell>
-                      <TableCell className="text-right">
-                        {isOwnRequest ? (
-                          <span className="text-xs text-amber-700">Needs another admin</span>
-                        ) : (
-                          <div className="flex items-center justify-end gap-2">
-                            <Button size="sm" variant="outline" disabled={isReviewing} onClick={() => handleReviewAdjustmentRequest(item.id, "APPROVE")}>{isReviewing ? "Working..." : "Approve"}</Button>
-                            <Button size="sm" variant="ghost" disabled={isReviewing} onClick={() => handleReviewAdjustmentRequest(item.id, "REJECT")}>Reject</Button>
-                          </div>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}</TableBody></Table>
-              </div>
-            )}
-            {creditHistory.length === 0 ? <p className="text-sm text-slate-500">No credit transactions</p> : (
-          <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Approval</TableHead><TableHead>Booking Ref</TableHead></TableRow></TableHeader><TableBody>{creditHistory.map((item) => (
-            <TableRow key={item.id}>
-              <TableCell className="text-sm">{fmtDate(item.createdAt)}</TableCell>
-              <TableCell><Badge variant="secondary" className={item.type === "CANCELLATION_REFUND" ? "bg-orange-100 text-orange-800 border-orange-200" : item.type === "ADMIN_ADJUSTMENT" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-purple-100 text-purple-800 border-purple-200"}>{item.type.replace(/_/g, " ")}</Badge></TableCell>
-              <TableCell className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}>{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
-              <TableCell className="text-sm text-slate-600 max-w-[200px] truncate">{item.description}</TableCell>
-              <TableCell className="text-xs text-slate-600">
-                {item.type === "ADMIN_ADJUSTMENT" && (item.requestedBy || item.approvedBy) ? (
-                  <div className="space-y-1">
-                    {item.requestedBy && <p>Requested by {formatAdminName(item.requestedBy)}</p>}
-                    {item.approvedBy && <p>Approved by {formatAdminName(item.approvedBy)}{item.approvalRequest?.reviewedAt ? ` on ${fmtDate(item.approvalRequest.reviewedAt)}` : ""}</p>}
+          )}
+          {creditLoading ? <p className="text-sm text-slate-500">Loading credit history...</p> : creditError ? <p className="text-sm text-red-600">{creditError}</p> : (
+            <>
+              {pendingAdjustmentRequests.length > 0 && (
+                <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-4">
+                  <div className="mb-3">
+                    <p className="text-sm font-medium text-amber-900">Pending manual adjustments</p>
+                    <p className="text-xs text-amber-800">Each request needs approval from a different admin before it becomes account credit.</p>
                   </div>
-                ) : (
-                  <span className="text-slate-400">-</span>
-                )}
-              </TableCell>
-              <TableCell className="text-sm">{item.sourceBooking ? <span className="text-blue-600">{fmtDate(item.sourceBooking.checkIn)} - {fmtDate(item.sourceBooking.checkOut)}</span> : item.appliedToBooking ? <span className="text-purple-600">{fmtDate(item.appliedToBooking.checkIn)} - {fmtDate(item.appliedToBooking.checkOut)}</span> : "-"}</TableCell>
-            </TableRow>
-          ))}</TableBody></Table>
-            )}
-          </>
-        )}
-      </CardContent></Card>
+                  <Table><TableHeader><TableRow><TableHead>Requested</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Requested By</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>{pendingAdjustmentRequests.map((item) => {
+                    const isOwnRequest = session?.user?.id === item.requestedBy.id
+                    const isReviewing = reviewingAdjustmentId === item.id
+                    return (
+                      <TableRow key={item.id}>
+                        <TableCell className="text-sm">{fmtDate(item.createdAt)}</TableCell>
+                        <TableCell className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}>{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
+                        <TableCell className="text-sm text-slate-600 max-w-[260px] truncate">{item.description}</TableCell>
+                        <TableCell className="text-sm">{formatAdminName(item.requestedBy)}</TableCell>
+                        <TableCell className="text-right">
+                          {isOwnRequest ? (
+                            <span className="text-xs text-amber-700">Needs another admin</span>
+                          ) : (
+                            <div className="flex items-center justify-end gap-2">
+                              <Button size="sm" variant="outline" disabled={isReviewing} onClick={() => handleReviewAdjustmentRequest(item.id, "APPROVE")}>{isReviewing ? "Working..." : "Approve"}</Button>
+                              <Button size="sm" variant="ghost" disabled={isReviewing} onClick={() => handleReviewAdjustmentRequest(item.id, "REJECT")}>Reject</Button>
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}</TableBody></Table>
+                </div>
+              )}
+              {creditHistory.length === 0 ? <p className="text-sm text-slate-500">No credit transactions</p> : (
+            <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead><TableHead>Approval</TableHead><TableHead>Booking Ref</TableHead></TableRow></TableHeader><TableBody>{creditHistory.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell className="text-sm">{fmtDate(item.createdAt)}</TableCell>
+                <TableCell><Badge variant="secondary" className={item.type === "CANCELLATION_REFUND" ? "bg-orange-100 text-orange-800 border-orange-200" : item.type === "ADMIN_ADJUSTMENT" ? "bg-blue-100 text-blue-800 border-blue-200" : "bg-purple-100 text-purple-800 border-purple-200"}>{item.type.replace(/_/g, " ")}</Badge></TableCell>
+                <TableCell className={`font-medium ${item.amountCents > 0 ? "text-green-700" : "text-red-700"}`}>{`${item.amountCents > 0 ? "+" : ""}$${(item.amountCents / 100).toFixed(2)}`}</TableCell>
+                <TableCell className="text-sm text-slate-600 max-w-[200px] truncate">{item.description}</TableCell>
+                <TableCell className="text-xs text-slate-600">
+                  {item.type === "ADMIN_ADJUSTMENT" && (item.requestedBy || item.approvedBy) ? (
+                    <div className="space-y-1">
+                      {item.requestedBy && <p>Requested by {formatAdminName(item.requestedBy)}</p>}
+                      {item.approvedBy && <p>Approved by {formatAdminName(item.approvedBy)}{item.approvalRequest?.reviewedAt ? ` on ${fmtDate(item.approvalRequest.reviewedAt)}` : ""}</p>}
+                    </div>
+                  ) : (
+                    <span className="text-slate-400">-</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-sm">{item.sourceBooking ? <span className="text-blue-600">{fmtDate(item.sourceBooking.checkIn)} - {fmtDate(item.sourceBooking.checkOut)}</span> : item.appliedToBooking ? <span className="text-purple-600">{fmtDate(item.appliedToBooking.checkIn)} - {fmtDate(item.appliedToBooking.checkOut)}</span> : "-"}</TableCell>
+              </TableRow>
+            ))}</TableBody></Table>
+              )}
+            </>
+          )}
+        </CardContent></Card>
+
+        <AccordionItem value="xero" className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow">
+          <AccordionTrigger className="px-6 py-6 text-left text-base font-medium hover:no-underline">
+            Xero Activity
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6">
+            <XeroRecordActivityPanel localModel="Member" localId={id} compact className="border-0 shadow-none" />
+          </AccordionContent>
+        </AccordionItem>
+
+        <AccordionItem value="audit" className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow">
+          <AccordionTrigger className="px-6 py-6 text-left text-base font-medium hover:no-underline">
+            Audit Log
+          </AccordionTrigger>
+          <AccordionContent className="px-6 pb-6">
+            {member.auditLogs.length === 0 ? <p className="text-sm text-slate-500">No audit records</p> : (
+              <div className="space-y-3">{member.auditLogs.map((log) => {
+                const timestamp = fmtDateTime(log.createdAt)
+                const structuredDetails = parseInviteAuditDetails(log.details)
+                const isInviteAudit = log.action === "member.setup-invite-sent" || log.action === "member.password-reset-sent"
+
+                return (
+                  <div key={log.id} className="flex items-start justify-between border-b border-slate-100 pb-2 last:border-0">
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">{formatMemberAuditLogSummary(log, timestamp)}</p>
+                      {(!isInviteAudit || !structuredDetails) && <p className="text-xs text-slate-500 mt-0.5">By {getAuditActorDisplayName(log.actor)}</p>}
+                      {log.details && (!isInviteAudit || !structuredDetails) && <p className="text-xs text-slate-500 mt-0.5">{log.details}</p>}
+                    </div>
+                    <span className="text-xs text-slate-400 whitespace-nowrap ml-4">{timestamp}</span>
+                  </div>
+                )
+              })}</div>)}
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+
+      <FamilyGroupEditorDialog
+        groupId={familyGroupEditorId}
+        open={Boolean(familyGroupEditorId)}
+        onOpenChange={(open) => {
+          if (!open) setFamilyGroupEditorId(null)
+        }}
+        onChanged={() => {
+          setSuccess("Family group updated successfully")
+          setTimeout(() => setSuccess(""), 3000)
+          setLoading(true)
+          void fetchMember()
+        }}
+      />
 
       <Dialog open={xeroSearchOpen} onOpenChange={setXeroSearchOpen}>
         <DialogContent className="sm:max-w-lg">

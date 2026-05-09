@@ -10,7 +10,9 @@ type EmailInheritanceClient = Prisma.TransactionClient | typeof prisma;
 export async function validateInheritEmailSource(input: {
   inheritEmailFromId: string;
   memberId?: string;
-}, db: EmailInheritanceClient = prisma): Promise<InheritanceValidationResult> {
+  db?: EmailInheritanceClient;
+}, dbOverride?: EmailInheritanceClient): Promise<InheritanceValidationResult> {
+  const db = dbOverride ?? input.db ?? prisma;
   const inheritEmailFrom = await db.member.findUnique({
     where: { id: input.inheritEmailFromId },
     select: {

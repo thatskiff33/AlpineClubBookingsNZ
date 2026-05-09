@@ -129,7 +129,8 @@ describe("Admin Send Setup Invite API", () => {
         where: {
           id: { in: ["m1", "m2"] },
           active: true,
-          canLogin: true,
+          ageTier: "ADULT",
+          parentMemberId: null,
         },
       })
     );

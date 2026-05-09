@@ -74,7 +74,8 @@ export async function POST(req: NextRequest) {
       where: {
         id: { in: memberIds },
         active: true,
-        canLogin: true,
+        ageTier: "ADULT",
+        parentMemberId: null,
       },
       select: { id: true, email: true, firstName: true, lastName: true },
     });
