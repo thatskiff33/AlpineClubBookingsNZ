@@ -802,8 +802,11 @@ verify_external_health() {
 }
 
 verify_cron_registration() {
-  local logs
+  local logs=""
   local pattern
+  local missing=""
+  local waited=0
+  local timeout="${CRON_REGISTRATION_TIMEOUT_SECONDS:-60}"
   local patterns=(
     "Scheduled pending booking confirmation"
     "Scheduled daily finance sync"
@@ -822,18 +825,34 @@ verify_cron_registration() {
     "Scheduled waitlist processor"
   )
 
-  logs="$(docker compose logs "$CRON_SERVICE" --tail 200)"
+  while true; do
+    logs="$(docker compose logs "$CRON_SERVICE" --tail 200)"
+    missing=""
+    for pattern in "${patterns[@]}"; do
+      if ! printf '%s\n' "$logs" | grep -Fq "$pattern"; then
+        missing="$pattern"
+        break
+      fi
+    done
+
+    if [ -z "$missing" ]; then
+      break
+    fi
+
+    if [ "$waited" -ge "$timeout" ]; then
+      echo "App startup log is missing expected cron registration after ${timeout}s: $missing" >&2
+      return 1
+    fi
+
+    sleep 2
+    waited=$((waited + 2))
+  done
+
   assert_logs_contain_any \
     "$logs" \
     "Xero membership refresh registration" \
     "Scheduled Xero membership refresh" \
     "Xero membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH"
-  for pattern in "${patterns[@]}"; do
-    if ! printf '%s\n' "$logs" | grep -Fq "$pattern"; then
-      echo "App startup log is missing expected cron registration: $pattern" >&2
-      return 1
-    fi
-  done
 }
 
 get_active_service() {
