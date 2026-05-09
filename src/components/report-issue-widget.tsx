@@ -14,11 +14,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  containsUnsupportedColorFunction,
+  normalizeUnsupportedColorFunctions,
+} from "@/lib/screenshot-color-sanitizer";
 
 const MAX_SCREENSHOT_DATA_URL_LENGTH = 1_500_000;
 const SCREENSHOT_CAPTURE_ID_ATTRIBUTE = "data-report-issue-capture-id";
-const UNSUPPORTED_COLOR_FUNCTION_RE =
-  /\b(?:lab|lch|oklab|oklch|color-mix)\(/i;
 const SCREENSHOT_STYLE_PROPERTIES_TO_RESOLVE = [
   "color",
   "background-color",
@@ -63,86 +65,128 @@ function compressCanvasToDataUrl(canvas: HTMLCanvasElement): string {
   return canvas.toDataURL("image/jpeg", 0.55);
 }
 
-function createStyleProbe() {
-  const probe = document.createElement("div");
-  probe.setAttribute("aria-hidden", "true");
-  probe.style.position = "fixed";
-  probe.style.pointerEvents = "none";
-  probe.style.opacity = "0";
-  probe.style.inset = "-9999px";
-  probe.style.width = "0";
-  probe.style.height = "0";
-  document.body.appendChild(probe);
-
-  return probe;
+function formatCanvasAlpha(alpha: number) {
+  return String(Math.round(alpha * 1000) / 1000);
 }
 
-function resolveColorExpression(
-  probe: HTMLElement,
-  expression: string
-): string | null {
-  probe.style.color = expression;
+function createCssColorConverter() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1;
+  canvas.height = 1;
 
-  const resolved = getComputedStyle(probe).color.trim();
-  probe.style.removeProperty("color");
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const cache = new Map<string, string | null>();
 
-  if (!resolved || UNSUPPORTED_COLOR_FUNCTION_RE.test(resolved)) {
-    return null;
+  if (!context) {
+    return () => null;
   }
 
-  return resolved;
+  return (colorExpression: string) => {
+    const trimmedExpression = colorExpression.trim();
+    if (!trimmedExpression) {
+      return null;
+    }
+
+    if (cache.has(trimmedExpression)) {
+      return cache.get(trimmedExpression) ?? null;
+    }
+
+    try {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = "rgb(1, 2, 3)";
+      const sentinelFillStyle = context.fillStyle;
+      context.fillStyle = trimmedExpression;
+
+      if (context.fillStyle === sentinelFillStyle) {
+        cache.set(trimmedExpression, null);
+        return null;
+      }
+
+      context.fillRect(0, 0, 1, 1);
+      const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+      const resolvedColor =
+        alpha === 255
+          ? `rgb(${red}, ${green}, ${blue})`
+          : `rgba(${red}, ${green}, ${blue}, ${formatCanvasAlpha(alpha / 255)})`;
+
+      cache.set(trimmedExpression, resolvedColor);
+      return resolvedColor;
+    } catch {
+      cache.set(trimmedExpression, null);
+      return null;
+    }
+  };
 }
 
-function resolveStylePropertyValue(
-  probe: HTMLElement,
-  propertyName: string,
-  value: string
-) {
-  probe.style.setProperty(propertyName, value);
-  const resolved = getComputedStyle(probe).getPropertyValue(propertyName).trim();
-  probe.style.removeProperty(propertyName);
-
-  if (!resolved || UNSUPPORTED_COLOR_FUNCTION_RE.test(resolved)) {
-    return null;
+function fallbackHtml2CanvasStyleValue(propertyName: string) {
+  if (propertyName === "background-image" || propertyName.endsWith("shadow")) {
+    return "none";
   }
 
-  return resolved;
+  if (
+    propertyName === "background-color" ||
+    propertyName.includes("border") ||
+    propertyName.includes("outline") ||
+    propertyName.includes("decoration") ||
+    propertyName.includes("emphasis") ||
+    propertyName.includes("stroke")
+  ) {
+    return "transparent";
+  }
+
+  return "rgb(0, 0, 0)";
 }
 
 function collectResolvedStyleOverrides(
   element: HTMLElement,
-  probe: HTMLElement
+  convertColor: (colorExpression: string) => string | null
 ) {
   const computedStyle = getComputedStyle(element);
   const overrides = new Map<string, string>();
+  const getCssVariableValue = (name: string) =>
+    computedStyle.getPropertyValue(name).trim() || null;
 
   for (const propertyName of Array.from(computedStyle).filter((name) =>
     name.startsWith("--")
   )) {
     const rawValue = computedStyle.getPropertyValue(propertyName).trim();
-    if (!rawValue || !UNSUPPORTED_COLOR_FUNCTION_RE.test(rawValue)) {
+    if (!rawValue) {
       continue;
     }
 
-    const resolvedValue = resolveColorExpression(probe, `var(${propertyName})`);
-    if (resolvedValue) {
-      overrides.set(propertyName, resolvedValue);
+    const normalizedValue = normalizeUnsupportedColorFunctions(
+      rawValue,
+      convertColor,
+      getCssVariableValue
+    );
+    if (
+      normalizedValue !== rawValue &&
+      !containsUnsupportedColorFunction(normalizedValue)
+    ) {
+      overrides.set(propertyName, normalizedValue);
     }
   }
 
   for (const propertyName of SCREENSHOT_STYLE_PROPERTIES_TO_RESOLVE) {
     const rawValue = computedStyle.getPropertyValue(propertyName).trim();
-    if (!rawValue || !UNSUPPORTED_COLOR_FUNCTION_RE.test(rawValue)) {
+    if (!rawValue) {
       continue;
     }
 
-    const resolvedValue = resolveStylePropertyValue(
-      probe,
-      propertyName,
-      rawValue
+    const normalizedValue = normalizeUnsupportedColorFunctions(
+      rawValue,
+      convertColor,
+      getCssVariableValue
     );
-    if (resolvedValue) {
-      overrides.set(propertyName, resolvedValue);
+    const normalizedValueHasUnsupportedColor =
+      containsUnsupportedColorFunction(normalizedValue);
+    if (normalizedValue !== rawValue || normalizedValueHasUnsupportedColor) {
+      overrides.set(
+        propertyName,
+        normalizedValueHasUnsupportedColor
+          ? fallbackHtml2CanvasStyleValue(propertyName)
+          : normalizedValue
+      );
     }
   }
 
@@ -159,9 +203,19 @@ function applyResolvedStyleOverrides(
 }
 
 function prepareResolvedStyleOverrides() {
-  const probe = createStyleProbe();
+  const convertColor = createCssColorConverter();
   const previousAttributeValues = new Map<HTMLElement, string | null>();
   const overridesByCaptureId = new Map<string, Array<[string, string]>>();
+
+  const cleanup = () => {
+    for (const [element, previousValue] of previousAttributeValues) {
+      if (previousValue === null) {
+        element.removeAttribute(SCREENSHOT_CAPTURE_ID_ATTRIBUTE);
+      } else {
+        element.setAttribute(SCREENSHOT_CAPTURE_ID_ATTRIBUTE, previousValue);
+      }
+    }
+  };
 
   try {
     const elements = Array.from(
@@ -176,13 +230,17 @@ function prepareResolvedStyleOverrides() {
       );
       element.setAttribute(SCREENSHOT_CAPTURE_ID_ATTRIBUTE, captureId);
 
-      const resolvedOverrides = collectResolvedStyleOverrides(element, probe);
+      const resolvedOverrides = collectResolvedStyleOverrides(
+        element,
+        convertColor
+      );
       if (resolvedOverrides.length > 0) {
         overridesByCaptureId.set(captureId, resolvedOverrides);
       }
     }
-  } finally {
-    probe.remove();
+  } catch (error) {
+    cleanup();
+    throw error;
   }
 
   return {
@@ -200,13 +258,7 @@ function prepareResolvedStyleOverrides() {
       }
     },
     cleanup() {
-      for (const [element, previousValue] of previousAttributeValues) {
-        if (previousValue === null) {
-          element.removeAttribute(SCREENSHOT_CAPTURE_ID_ATTRIBUTE);
-        } else {
-          element.setAttribute(SCREENSHOT_CAPTURE_ID_ATTRIBUTE, previousValue);
-        }
-      }
+      cleanup();
     },
   };
 }
@@ -247,7 +299,10 @@ async function captureViewportScreenshot(options?: {
 
 async function captureViewportScreenshotWithFallbacks(): Promise<string> {
   try {
-    return await captureViewportScreenshot({ foreignObjectRendering: true });
+    return await captureViewportScreenshot({
+      foreignObjectRendering: true,
+      resolveUnsupportedColors: true,
+    });
   } catch {
     return captureViewportScreenshot({ resolveUnsupportedColors: true });
   }
