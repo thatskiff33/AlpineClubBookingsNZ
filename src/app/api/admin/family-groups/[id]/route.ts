@@ -5,6 +5,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
+import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 
 const updateFamilyGroupSchema = z.object({
   name: z.string().min(1).max(200).optional(),
@@ -42,6 +43,13 @@ export async function GET(
               ageTier: true,
               active: true,
               canLogin: true,
+              inheritEmailFromId: true,
+              inheritEmailFrom: {
+                select: { email: true },
+              },
+              passwordHash: true,
+              passwordChangedAt: true,
+              lastLoginAt: true,
             },
           },
         },
@@ -65,7 +73,17 @@ export async function GET(
 
   return NextResponse.json({
     ...group,
-    members: group.memberships.map((m) => ({ ...m.member, role: m.role })),
+    members: group.memberships.map((m) => {
+      const { passwordHash, passwordChangedAt, lastLoginAt, ...member } = m.member;
+      return {
+        ...member,
+        role: m.role,
+        hasPassword: Boolean(passwordHash) && hasMemberCompletedAccountSetup({
+          passwordChangedAt,
+          lastLoginAt,
+        }),
+      };
+    }),
   });
 }
 
