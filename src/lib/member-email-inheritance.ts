@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 
 type InheritanceValidationResult =
   | { ok: true }
@@ -7,8 +8,10 @@ type InheritanceValidationResult =
 export async function validateInheritEmailSource(input: {
   inheritEmailFromId: string;
   memberId?: string;
+  db?: Prisma.TransactionClient | typeof prisma;
 }): Promise<InheritanceValidationResult> {
-  const inheritEmailFrom = await prisma.member.findUnique({
+  const db = input.db ?? prisma;
+  const inheritEmailFrom = await db.member.findUnique({
     where: { id: input.inheritEmailFromId },
     select: {
       id: true,

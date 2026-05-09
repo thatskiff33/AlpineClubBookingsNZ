@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Trash2, Plus, Users, Check, X, Edit2, Search } from "lucide-react";
+import { FamilyGroupEditor } from "@/components/admin/family-group-editor";
 
 interface FamilyGroupMemberRow {
   id: string;
@@ -787,21 +788,19 @@ export default function FamilyGroupsPage() {
                     </div>
                   )}
 
-                  {request.type === "CHILD_REQUEST" && (
-                    <div className="mt-4">
-                      <Label htmlFor={`request-note-${request.id}`}>Optional rejection note</Label>
-                      <Input
-                        id={`request-note-${request.id}`}
-                        value={requestNotes[request.id] ?? ""}
-                        onChange={(e) => setRequestNotes((current) => ({
-                          ...current,
-                          [request.id]: e.target.value,
-                        }))}
-                        placeholder="Why should this request be rejected?"
-                        className="mt-2"
-                      />
-                    </div>
-                  )}
+                  <div className="mt-4">
+                    <Label htmlFor={`request-note-${request.id}`}>Optional rejection note</Label>
+                    <Input
+                      id={`request-note-${request.id}`}
+                      value={requestNotes[request.id] ?? ""}
+                      onChange={(e) => setRequestNotes((current) => ({
+                        ...current,
+                        [request.id]: e.target.value,
+                      }))}
+                      placeholder="Why should this request be rejected?"
+                      className="mt-2"
+                    />
+                  </div>
 
                   {requestErrors[request.id] && (
                     <p className="mt-4 text-sm text-red-600">{requestErrors[request.id]}</p>
@@ -842,42 +841,43 @@ export default function FamilyGroupsPage() {
 
       {/* Create/Edit form */}
       {showForm && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">
-              {editingGroup ? "Edit Family Group" : "New Family Group"}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <Label htmlFor="groupName">Group Name</Label>
-                <Input
-                  id="groupName"
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  placeholder='e.g., "Smith Family"'
-                  required
-                />
-              </div>
+        editingGroup ? (
+          <FamilyGroupEditor
+            groupId={editingGroup.id}
+            onClose={closeForm}
+            onChanged={() => {
+              void fetchData();
+            }}
+          />
+        ) : (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">New Family Group</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <Label htmlFor="groupName">Group Name</Label>
+                  <Input
+                    id="groupName"
+                    value={formName}
+                    onChange={(e) => setFormName(e.target.value)}
+                    placeholder='e.g., "Smith Family"'
+                    required
+                  />
+                </div>
 
-              <div>
-                <Label>Members</Label>
-                {selectedMembers.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-2 mb-2">
-                    {selectedMembers.map((m) => {
-                      // P3.2: Show age tier badge in edit panel
-                      const memberInfo = editingGroup?.members.find((em) => em.id === m.id);
-                      return (
+                <div>
+                  <Label>Members</Label>
+                  {selectedMembers.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2 mb-2">
+                      {selectedMembers.map((m) => (
                         <Badge
                           key={m.id}
                           variant="secondary"
                           className="flex items-center gap-1 py-1 px-2"
                         >
                           {m.firstName} {m.lastName}
-                          {memberInfo?.ageTier && (
-                            <AgeTierBadge tier={memberInfo.ageTier} />
-                          )}
                           <button
                             type="button"
                             onClick={() => removeMember(m.id)}
@@ -886,57 +886,57 @@ export default function FamilyGroupsPage() {
                             <X className="h-3 w-3" />
                           </button>
                         </Badge>
-                      );
-                    })}
-                  </div>
-                )}
-                <div className="relative">
-                  <Input
-                    value={memberSearch}
-                    onChange={(e) => setMemberSearch(e.target.value)}
-                    placeholder="Search members by name or email..."
-                  />
-                  {searching && (
-                    <div className="absolute right-3 top-2.5 text-xs text-slate-400">
-                      Searching...
-                    </div>
-                  )}
-                  {searchResults.length > 0 && (
-                    <div className="absolute z-10 mt-1 w-full bg-white border rounded-md shadow-lg max-h-48 overflow-y-auto">
-                      {searchResults.map((m) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => addMember(m)}
-                          className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm"
-                        >
-                          <span className="font-medium">
-                            {m.firstName} {m.lastName}
-                          </span>
-                          <span className="text-slate-500 ml-2">{m.email}</span>
-                        </button>
                       ))}
                     </div>
                   )}
+                  <div className="relative">
+                    <Input
+                      value={memberSearch}
+                      onChange={(e) => setMemberSearch(e.target.value)}
+                      placeholder="Search members by name or email..."
+                    />
+                    {searching && (
+                      <div className="absolute right-3 top-2.5 text-xs text-slate-400">
+                        Searching...
+                      </div>
+                    )}
+                    {searchResults.length > 0 && (
+                      <div className="absolute z-10 mt-1 w-full bg-white border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                        {searchResults.map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => addMember(m)}
+                            className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm"
+                          >
+                            <span className="font-medium">
+                              {m.firstName} {m.lastName}
+                            </span>
+                            <span className="text-slate-500 ml-2">{m.email}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Add adults, youth, or children to this family group
+                  </p>
                 </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  Add adults, youth, or children to this family group
-                </p>
-              </div>
 
-              {error && <p className="text-sm text-red-600">{error}</p>}
+                {error && <p className="text-sm text-red-600">{error}</p>}
 
-              <div className="flex gap-2">
-                <Button type="submit" disabled={submitting || selectedMembers.length < 1}>
-                  {submitting ? "Saving..." : editingGroup ? "Update Group" : "Create Group"}
-                </Button>
-                <Button type="button" variant="outline" onClick={closeForm}>
-                  Cancel
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+                <div className="flex gap-2">
+                  <Button type="submit" disabled={submitting || selectedMembers.length < 1}>
+                    {submitting ? "Saving..." : "Create Group"}
+                  </Button>
+                  <Button type="button" variant="outline" onClick={closeForm}>
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        )
       )}
 
       {/* Groups table */}

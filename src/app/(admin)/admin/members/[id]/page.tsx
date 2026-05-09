@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, use } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { MemberAddressFields } from "@/components/member-address-fields"
+import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog"
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -269,6 +270,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [dependentPostalSameAsPhysical, setDependentPostalSameAsPhysical] = useState(false)
   const [dependentSaving, setDependentSaving] = useState(false)
   const [dependentFormError, setDependentFormError] = useState("")
+  const [familyGroupEditorId, setFamilyGroupEditorId] = useState<string | null>(null)
   // Account credit state
   const [creditBalance, setCreditBalance] = useState<number>(0)
   const [creditHistory, setCreditHistory] = useState<CreditHistoryItem[]>([])
@@ -987,7 +989,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         <div><dt className="text-slate-500">Finance Access</dt><dd className="font-medium"><Badge variant="secondary" className={financeAccessBadgeClass[member.financeAccessLevel]}>{financeAccessLabels[member.financeAccessLevel]}</Badge></dd></div>
         <div><dt className="text-slate-500">Login</dt><dd className="font-medium">{member.canLogin ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Can Login</Badge> : <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Non-Login</Badge>}</dd></div>
         <div><dt className="text-slate-500">Email Inheritance</dt><dd className="font-medium">{member.inheritEmailFrom ? <span className="text-xs">{member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName} <span className="text-slate-400">({member.inheritEmailFrom.email})</span></span> : <span className="text-xs text-slate-500">Own email</span>}</dd></div>
-        <div><dt className="text-slate-500">Family Groups</dt><dd className="font-medium">{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Badge key={fg.id} variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200">{fg.name || "Unnamed"}</Badge>)}</div> : <span className="text-xs text-slate-500">None</span>}</dd></div>
+        <div><dt className="text-slate-500">Family Groups</dt><dd className="font-medium">{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Button key={fg.id} type="button" variant="outline" size="sm" className="h-7 border-indigo-200 bg-indigo-50 px-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800" onClick={() => setFamilyGroupEditorId(fg.id)}>{fg.name || "Unnamed"}</Button>)}</div> : <span className="text-xs text-slate-500">None</span>}</dd></div>
         <div>
           <dt className="text-slate-500">Xero Contact</dt>
           <dd className="font-medium space-y-2">
@@ -1212,6 +1214,20 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           </>
         )}
       </CardContent></Card>
+
+      <FamilyGroupEditorDialog
+        groupId={familyGroupEditorId}
+        open={Boolean(familyGroupEditorId)}
+        onOpenChange={(open) => {
+          if (!open) setFamilyGroupEditorId(null)
+        }}
+        onChanged={() => {
+          setSuccess("Family group updated successfully")
+          setTimeout(() => setSuccess(""), 3000)
+          setLoading(true)
+          void fetchMember()
+        }}
+      />
 
       <Dialog open={xeroSearchOpen} onOpenChange={setXeroSearchOpen}>
         <DialogContent className="sm:max-w-lg">
