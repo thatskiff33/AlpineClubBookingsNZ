@@ -13,10 +13,11 @@ import {
   getMissingMemberProfileFieldDetails,
 } from "@/lib/member-profile-completeness";
 import logger from "@/lib/logger";
+import { nameField } from "@/lib/zod-helpers";
 
 const delegatedDetailsSchema = z.object({
-  firstName: z.string().min(1, "First name required").max(100),
-  lastName: z.string().min(1, "Last name required").max(100),
+  firstName: nameField({ required: "First name required" }),
+  lastName: nameField({ required: "Last name required" }),
   dateOfBirth: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD format"),

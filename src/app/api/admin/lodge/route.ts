@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
+import { nameField } from "@/lib/zod-helpers";
 
 /**
  * GET /api/admin/lodge
@@ -72,8 +73,8 @@ export async function GET() {
 const updateSchema = z.object({
   email: z.string().email().optional(),
   password: z.string().min(6).optional(),
-  firstName: z.string().min(1).optional(),
-  lastName: z.string().min(1).optional(),
+  firstName: nameField().optional(),
+  lastName: nameField().optional(),
 });
 
 /**

@@ -114,6 +114,16 @@ function assertNoCrlf(value: string, field: string) {
   }
 }
 
+// Defense-in-depth: subject lines interpolate user-controlled member names
+// (issue #323). Schema-level sanitization at API boundaries is the first line
+// of defense, but a contaminated row from before the fix would still trip the
+// CRLF guard on `from`/`to`. Strip CRLF from the subject before send so the
+// email never silently fails — `from`/`to` keep the throw because CRLF there
+// indicates a configuration/normalizer bug, not user input.
+function sanitizeEmailSubject(subject: string) {
+  return subject.replace(/[\r\n]+/g, " ").trim();
+}
+
 export async function sendEmail({
   to,
   subject,
@@ -133,11 +143,11 @@ export async function sendEmail({
   const persistHtmlBody = shouldPersistEmailHtml(templateName);
   const plainTextBody = text || htmlToPlainText(html);
   const normalizedRecipient = normalizeEmailAddress(to);
+  const sanitizedSubject = sanitizeEmailSubject(subject);
 
   assertNoCrlf(from, "from");
   assertNoCrlf(to, "to");
   assertNoCrlf(normalizedRecipient, "to");
-  assertNoCrlf(subject, "subject");
 
   // Create EmailLog record (fire-and-forget logging won't break email delivery)
   let emailLogId: string | null = null;
@@ -145,7 +155,7 @@ export async function sendEmail({
     const log = await prisma.emailLog.create({
       data: {
         to,
-        subject,
+        subject: sanitizedSubject,
         templateName,
         htmlBody: persistHtmlBody ? html : null,
         status: "QUEUED",
@@ -196,7 +206,7 @@ export async function sendEmail({
   }
 
   if (process.env.NODE_ENV === "development") {
-    logger.info({ to, subject, templateName }, "Email sent (dev mode)");
+    logger.info({ to, subject: sanitizedSubject, templateName }, "Email sent (dev mode)");
     if (persistHtmlBody) {
       logger.debug({ html }, "Email HTML content");
     } else {
@@ -220,7 +230,7 @@ export async function sendEmail({
     const result = await transporter.sendMail({
       from,
       to,
-      subject,
+      subject: sanitizedSubject,
       html,
       text: plainTextBody,
       attachments,

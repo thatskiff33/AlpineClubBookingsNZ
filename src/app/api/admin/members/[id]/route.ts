@@ -32,12 +32,13 @@ import {
   getAuditEmailDomain,
   getAuditRequestContext,
 } from "@/lib/audit";
+import { nameField } from "@/lib/zod-helpers";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
 const updateMemberSchema = z.object({
-  firstName: z.string().min(1, "First name is required").max(100).transform((s) => s.replace(/[\r\n]/g, " ").trim()).optional(),
-  lastName: z.string().min(1, "Last name is required").max(100).transform((s) => s.replace(/[\r\n]/g, " ").trim()).optional(),
+  firstName: nameField({ required: "First name is required" }).optional(),
+  lastName: nameField({ required: "Last name is required" }).optional(),
   email: z.string().email("Invalid email address").optional(),
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),

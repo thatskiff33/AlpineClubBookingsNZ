@@ -10,11 +10,12 @@ import { parseDateOnly } from "@/lib/date-only";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { sendAdminFamilyGroupRequestAlert } from "@/lib/email";
+import { nameField } from "@/lib/zod-helpers";
 
 const requestAdultSchema = z.object({
   familyGroupId: z.string().min(1, "Family group ID required"),
-  firstName: z.string().min(1, "First name required").max(100),
-  lastName: z.string().min(1, "Last name required").max(100),
+  firstName: nameField({ required: "First name required" }),
+  lastName: nameField({ required: "Last name required" }),
   dateOfBirth: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Date of birth must be YYYY-MM-DD format"),

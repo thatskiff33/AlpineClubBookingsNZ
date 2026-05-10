@@ -42,6 +42,7 @@ import {
   ADULT_SUPERVISION_REVIEW_REASON,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
+import { nameField } from "@/lib/zod-helpers";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -49,8 +50,8 @@ const createBookingSchema = z.object({
   guests: z
     .array(
       z.object({
-        firstName: z.string().min(1).max(100),
-        lastName: z.string().min(1).max(100),
+        firstName: nameField(),
+        lastName: nameField(),
         ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
