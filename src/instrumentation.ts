@@ -474,8 +474,10 @@ export async function register() {
       try {
         const { pruneCronRuns } = await import("./lib/cron-job-run");
         const { pruneWebhookLogs } = await import("./lib/webhook-log");
+        const { runAuditLogRetentionJob } = await import("./lib/audit-retention");
         await pruneCronRuns();
         await pruneWebhookLogs();
+        const auditRetention = await runAuditLogRetentionJob();
         // Prune expired tokens
         await prisma.emailVerificationToken.deleteMany({
           where: { expiresAt: { lt: new Date() } },
@@ -490,7 +492,15 @@ export async function register() {
           where: { expiresAt: { lt: new Date() } },
         });
         logger.info({ job: "data-pruning" }, "Data pruning complete");
-        await recordCronRun("data-pruning", startedAt, "SUCCESS");
+        await recordCronRun("data-pruning", startedAt, "SUCCESS", {
+          auditRetention: {
+            anonymized: auditRetention.requestData.anonymized,
+            archived: auditRetention.archive.archived,
+            archiveSkipped: auditRetention.archive.skipped,
+            mainPruned: auditRetention.mainPrune.deleted,
+            archivePruned: auditRetention.archivePrune.pruned,
+          },
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "data-pruning" }, "Error in data pruning");
