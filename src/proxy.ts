@@ -6,7 +6,7 @@ import {
   CSP_NONCE_HEADER,
 } from "./lib/csp";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const nonce = createCspNonce();
   const csp = buildContentSecurityPolicy(nonce);
   const requestHeaders = new Headers(request.headers);
@@ -25,7 +25,7 @@ export function middleware(request: NextRequest) {
   return response;
 }
 
-export default middleware;
+export default proxy;
 
 export const config = {
   matcher: [
