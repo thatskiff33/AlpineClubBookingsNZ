@@ -319,6 +319,66 @@ describe("GET /api/members/family", () => {
     expect(body.familyGroupName).toBe("Smith Family");
   });
 
+  it("marks admin and lodge family accounts as exempt from member confirmation", async () => {
+    mockedAuth.mockResolvedValue(memberSession);
+    mockedPrisma.member.findUnique.mockResolvedValue(completeMember({
+      id: "member-1",
+      firstName: "Support",
+      lastName: "Member",
+      familyGroupMemberships: [
+        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Admin Family" } },
+      ],
+    }) as any);
+
+    mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
+      {
+        member: completeMember({
+          id: "admin-2",
+          firstName: "Admin",
+          lastName: "User",
+          role: "ADMIN",
+          canLogin: true,
+          detailsConfirmedAt: null,
+          detailsConfirmedByMemberId: null,
+          onboardingConfirmedAt: null,
+          familyGroupMemberships: [
+            { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Admin Family" } },
+          ],
+        }),
+      },
+      {
+        member: completeMember({
+          id: "lodge-1",
+          firstName: "Lodge",
+          lastName: "User",
+          role: "LODGE",
+          canLogin: true,
+          detailsConfirmedAt: null,
+          detailsConfirmedByMemberId: null,
+          onboardingConfirmedAt: null,
+          familyGroupMemberships: [
+            { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Admin Family" } },
+          ],
+        }),
+      },
+    ] as any);
+
+    const { GET } = await import("@/app/api/members/family/route");
+    const res = await GET();
+    const body = await res.json();
+    const admin = body.familyMembers.find((member: any) => member.id === "admin-2");
+    const lodge = body.familyMembers.find((member: any) => member.id === "lodge-1");
+
+    expect(res.status).toBe(200);
+    for (const account of [admin, lodge]) {
+      expect(account.confirmationMode).toBe("not_allowed");
+      expect(account.profileStatus.confirmationMode).toBe("not_allowed");
+      expect(account.needsOwnLoginConfirmation).toBe(false);
+      expect(account.action).toBeNull();
+      expect(account.canBeBooked).toBe(false);
+    }
+  });
+
   it("deduplicates members across multiple family groups", async () => {
     mockedAuth.mockResolvedValue(memberSession);
     mockedPrisma.member.findUnique.mockResolvedValue({

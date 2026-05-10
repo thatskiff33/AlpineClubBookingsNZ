@@ -2,6 +2,8 @@ export interface BookingFamilyMember {
   relationship: "self" | "partner" | "dependent";
   firstName?: string | null;
   lastName?: string | null;
+  role?: string | null;
+  confirmationMode?: "self" | "delegated" | "not_allowed" | string | null;
   canLogin?: boolean | null;
   canBeBooked?: boolean | null;
   missingFields?: string[];
@@ -29,6 +31,14 @@ function getMemberName(member: BookingFamilyMember) {
   return [member.firstName, member.lastName].filter(Boolean).join(" ").trim() || "This member";
 }
 
+function isConfirmationExemptAccount(member: BookingFamilyMember) {
+  return (
+    member.confirmationMode === "not_allowed" ||
+    member.role === "ADMIN" ||
+    member.role === "LODGE"
+  );
+}
+
 export function getFamilyMemberBookingBlockMessage(
   member: BookingFamilyMember
 ): string | null {
@@ -40,6 +50,10 @@ export function getFamilyMemberBookingBlockMessage(
 
   if (member.pendingRequestStatus) {
     return "This family change is awaiting admin approval. You can add them as a non-member guest until approved.";
+  }
+
+  if (isConfirmationExemptAccount(member)) {
+    return `${name} does not need member detail confirmation and cannot be added as a member guest.`;
   }
 
   if (member.canLogin) {
@@ -62,6 +76,10 @@ export function getFamilyMemberBookingActionLabel(
 
   if (member.pendingRequestStatus || member.action === "pending_admin_approval") {
     return "Pending admin approval";
+  }
+
+  if (isConfirmationExemptAccount(member)) {
+    return null;
   }
 
   if (member.action === "complete_details") {

@@ -83,6 +83,24 @@ describe("family member booking block messages", () => {
     );
   });
 
+  it("does not ask confirmation-exempt accounts to sign in and confirm", () => {
+    const member = {
+      relationship: "partner" as const,
+      firstName: "Admin",
+      role: "ADMIN",
+      confirmationMode: "not_allowed",
+      canLogin: true,
+      canBeBooked: false,
+      needsOwnLoginConfirmation: false,
+      action: null,
+    };
+
+    expect(getFamilyMemberBookingBlockMessage(member)).toContain(
+      "does not need member detail confirmation"
+    );
+    expect(getFamilyMemberBookingActionLabel(member)).toBeNull();
+  });
+
   it("explains pending admin approval", () => {
     const member = {
       relationship: "dependent" as const,

@@ -72,6 +72,7 @@ interface FamilyMember {
   ageTier: string;
   active: boolean;
   canLogin: boolean;
+  role: string;
   isCurrentUser: boolean;
   groupRole: string;
   status: OnboardingStatus;
@@ -79,6 +80,7 @@ interface FamilyMember {
     | "current_user"
     | "self_confirmation_required"
     | "delegated_placeholder"
+    | "confirmation_not_required"
     | "complete";
 }
 
@@ -117,6 +119,10 @@ interface OnboardingData {
 type WizardStep = "profile" | "confirm" | "family";
 
 function getMemberStatusBadge(member: FamilyMember) {
+  if (member.status.confirmationMode === "not_allowed") {
+    return <Badge variant="secondary">No confirmation needed</Badge>;
+  }
+
   if (member.status.isProfileComplete && member.status.isDetailsConfirmed) {
     return <Badge variant="success">Confirmed</Badge>;
   }
@@ -398,6 +404,8 @@ export function MemberOnboardingWizard({
                                     ? `${member.firstName} has their own login and needs to sign in and confirm their details.`
                                     : member.nextAction === "delegated_placeholder"
                                       ? `${member.firstName} does not have their own login. A family adult can complete their details.`
+                                      : member.nextAction === "confirmation_not_required"
+                                        ? `${member.firstName} does not need member detail confirmation.`
                                       : "Member details are confirmed."}
                               </p>
                             </div>

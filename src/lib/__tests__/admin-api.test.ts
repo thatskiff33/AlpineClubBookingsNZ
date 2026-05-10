@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { count: vi.fn() },
+    member: { count: vi.fn(), findMany: vi.fn() },
     memberSubscription: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
     payment: { findMany: vi.fn(), count: vi.fn(), aggregate: vi.fn() },
     auditLog: { findMany: vi.fn(), count: vi.fn() },
@@ -279,6 +279,61 @@ describe("Admin Payments API", () => {
 });
 
 describe("Admin Audit Log API", () => {
+  function auditLog(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: "log1",
+      action: "booking.payment.confirmed",
+      memberId: "admin-1",
+      targetId: "booking-1",
+      details: JSON.stringify({ bookingId: "booking-1", amountCents: 10000 }),
+      ipAddress: "203.0.113.10",
+      createdAt: new Date("2026-04-05T10:00:00"),
+      actorMemberId: "admin-1",
+      subjectMemberId: "member-1",
+      entityType: "Booking",
+      entityId: "booking-1",
+      category: "payment",
+      severity: "critical",
+      outcome: "success",
+      summary: "Payment confirmed",
+      metadata: { bookingId: "booking-1", amountCents: 10000 },
+      requestId: "req-1",
+      userAgent: "Unit Test",
+      retentionClass: "critical",
+      ...overrides,
+    };
+  }
+
+  function mockAuditLogResponse(logs: unknown[] = [], total = logs.length) {
+    vi.mocked(prisma.auditLog.findMany)
+      .mockResolvedValueOnce(logs as any)
+      .mockResolvedValueOnce([
+        { action: "booking.payment.confirmed" },
+        { action: "LOGIN" },
+      ] as any)
+      .mockResolvedValueOnce([{ category: "payment" }] as any)
+      .mockResolvedValueOnce([{ entityType: "Booking" }] as any)
+      .mockResolvedValueOnce([{ outcome: "success" }] as any)
+      .mockResolvedValueOnce([{ severity: "critical" }] as any);
+    vi.mocked(prisma.auditLog.count).mockResolvedValue(total);
+    vi.mocked(prisma.member.findMany).mockResolvedValue([
+      {
+        id: "admin-1",
+        firstName: "Ada",
+        lastName: "Admin",
+        email: "ada@example.com",
+        role: "ADMIN",
+      },
+      {
+        id: "member-1",
+        firstName: "Mara",
+        lastName: "Member",
+        email: "mara@example.com",
+        role: "MEMBER",
+      },
+    ] as any);
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.member.count).mockResolvedValue(1 as any);
@@ -318,71 +373,98 @@ describe("Admin Audit Log API", () => {
     expect(body.error).toBe("Account is deactivated");
   });
 
-  it("returns audit log data and actions for admin", async () => {
+  it("returns readable audit timeline data and filter facets for admin", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
-
-    const mockLogs = [
-      {
-        id: "log1", action: "BOOKING_CREATED", memberId: "m1",
-        targetType: "Booking", targetId: "b1", metadata: {},
-        createdAt: new Date("2026-04-05T10:00:00"),
-      },
-      {
-        id: "log2", action: "BOOKING_CANCELLED", memberId: "m2",
-        targetType: "Booking", targetId: "b2", metadata: {},
-        createdAt: new Date("2026-04-05T11:00:00"),
-      },
-    ];
-
-    const distinctActions = [
-      { action: "BOOKING_CANCELLED" },
-      { action: "BOOKING_CREATED" },
-      { action: "LOGIN" },
-    ];
-
-    // findMany is called twice: once for data, once for distinct actions
-    vi.mocked(prisma.auditLog.findMany)
-      .mockResolvedValueOnce(mockLogs as any)
-      .mockResolvedValueOnce(distinctActions as any);
-    vi.mocked(prisma.auditLog.count).mockResolvedValue(2);
+    mockAuditLogResponse([auditLog()], 1);
 
     const req = new NextRequest("http://localhost/api/admin/audit-log?page=1&pageSize=25");
     const res = await getAuditLog(req);
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(body.data).toHaveLength(2);
-    expect(body.total).toBe(2);
+    expect(body.data).toHaveLength(1);
+    expect(body.total).toBe(1);
     expect(body.page).toBe(1);
     expect(body.pageSize).toBe(25);
-    expect(body.actions).toEqual(["BOOKING_CANCELLED", "BOOKING_CREATED", "LOGIN"]);
+    expect(body.data[0]).toEqual(
+      expect.objectContaining({
+        summary: "Payment confirmed",
+        description: "Amount $100.00 · Booking Id booking-1",
+        actorDisplayName: "Ada Admin",
+        subjectDisplayName: "Mara Member",
+        entityType: "Booking",
+        entityId: "booking-1",
+      })
+    );
+    expect(body.data[0].drilldowns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ href: "/admin/members/member-1" }),
+        expect.objectContaining({ href: "/bookings/booking-1" }),
+      ])
+    );
+    expect(body.facets.eventTypes).toEqual(["booking.payment.confirmed", "LOGIN"]);
+    expect(body.actions).toEqual(["booking.payment.confirmed", "LOGIN"]);
   });
 
-  it("filters by action", async () => {
+  it("filters by event type alias and member scope", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
-    vi.mocked(prisma.auditLog.findMany).mockResolvedValue([] as any);
-    vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
+    mockAuditLogResponse();
 
-    const req = new NextRequest("http://localhost/api/admin/audit-log?action=LOGIN");
+    const req = new NextRequest(
+      "http://localhost/api/admin/audit-log?action=LOGIN&memberId=member-1&memberScope=subject"
+    );
     await getAuditLog(req);
 
-    expect(prisma.auditLog.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { action: "LOGIN" },
-      })
+    const callArgs = vi.mocked(prisma.auditLog.findMany).mock.calls[0][0] as any;
+    expect(callArgs.where.AND).toEqual(
+      expect.arrayContaining([
+        { action: "LOGIN" },
+        expect.objectContaining({
+          OR: expect.arrayContaining([{ subjectMemberId: "member-1" }]),
+        }),
+      ])
     );
   });
 
   it("filters by date range", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
-    vi.mocked(prisma.auditLog.findMany).mockResolvedValue([] as any);
-    vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
+    mockAuditLogResponse();
 
     const req = new NextRequest("http://localhost/api/admin/audit-log?from=2026-04-01&to=2026-04-30");
     await getAuditLog(req);
 
     const callArgs = vi.mocked(prisma.auditLog.findMany).mock.calls[0][0] as any;
-    expect(callArgs.where.createdAt.gte).toEqual(new Date("2026-04-01T00:00:00"));
-    expect(callArgs.where.createdAt.lte).toEqual(new Date("2026-04-30T23:59:59"));
+    const dateWhere = callArgs.where.AND.find(
+      (clause: any) => Boolean(clause.createdAt)
+    );
+    expect(dateWhere.createdAt.gte).toEqual(new Date("2026-04-01T00:00:00"));
+    expect(dateWhere.createdAt.lte).toEqual(new Date("2026-04-30T23:59:59"));
+  });
+
+  it("filters by category, outcome, severity, entity, and text search", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockAuditLogResponse();
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/audit-log?category=payment&outcome=success&severity=critical&entityType=Booking&q=req-1"
+    );
+    await getAuditLog(req);
+
+    const callArgs = vi.mocked(prisma.auditLog.findMany).mock.calls[0][0] as any;
+    expect(callArgs.where.AND).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          OR: expect.arrayContaining([{ category: "payment" }]),
+        }),
+        { outcome: "success" },
+        { severity: "critical" },
+        { entityType: "Booking" },
+        expect.objectContaining({
+          OR: expect.arrayContaining([
+            { requestId: { contains: "req-1", mode: "insensitive" } },
+          ]),
+        }),
+      ])
+    );
   });
 });

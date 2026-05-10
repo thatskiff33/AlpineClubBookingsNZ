@@ -25,7 +25,9 @@ interface FamilyMemberStatus {
   firstName: string;
   lastName: string;
   ageTier: string;
+  role: string;
   canLogin: boolean;
+  confirmationMode: "self" | "delegated" | "not_allowed";
   canBeBooked: boolean;
   missingFields: string[];
   needsOwnLoginConfirmation: boolean;
@@ -83,6 +85,15 @@ function getStatusBadge(
   }
   if (status.canBeBooked) {
     return { label: "Details confirmed", className: "bg-emerald-100 text-emerald-800 border-emerald-200" };
+  }
+  if (status.confirmationMode === "not_allowed") {
+    const label =
+      status.role === "ADMIN"
+        ? "Admin account"
+        : status.role === "LODGE"
+          ? "Lodge account"
+          : "No confirmation needed";
+    return { label, className: "bg-slate-100 text-slate-700 border-slate-200" };
   }
   if (status.canLogin && status.needsOwnLoginConfirmation) {
     return { label: "Needs own confirmation", className: "bg-blue-100 text-blue-800 border-blue-200" };
@@ -469,6 +480,13 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                       );
                       const badge = getStatusBadge(status, groupPendingRequest);
                       const memberName = getMemberName(member);
+                      const needsMemberDetails = Boolean(
+                        status &&
+                        status.confirmationMode !== "not_allowed" &&
+                        !status.canBeBooked &&
+                        !status.pendingRequestStatus &&
+                        !groupPendingRequest
+                      );
                       const pendingRemoval =
                         groupPendingRequest?.type === "REMOVAL_REQUEST" ||
                         (
@@ -489,14 +507,14 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                                   <Badge variant="outline">No login</Badge>
                                 )}
                               </div>
-                              {status && !status.canBeBooked && !status.pendingRequestStatus && !groupPendingRequest && (
+                              {status && needsMemberDetails && (
                                 <p className="text-sm text-slate-600">
                                   {status.canLogin
                                     ? `${member.firstName} has their own login and needs to sign in and confirm their details.`
                                     : `Complete ${member.firstName}'s details before booking them as a member. Because ${member.firstName} does not have their own login, any adult in this family group can do this.`}
                                 </p>
                               )}
-                              {status?.missingFields && status.missingFields.length > 0 && (
+                              {status?.confirmationMode !== "not_allowed" && status?.missingFields && status.missingFields.length > 0 && (
                                 <p className="text-xs text-slate-500">
                                   Missing: {status.missingFields.join(", ")}
                                 </p>

@@ -29,9 +29,23 @@ function serializeFamilyMember(
   const status = serializeStatus(member);
   const isCurrentUser = member.id === currentMemberId;
   const needsAttention =
-    !status.isProfileComplete ||
-    !status.isDetailsConfirmed ||
-    (isCurrentUser && !status.hasCompletedOnboarding);
+    status.confirmationMode !== "not_allowed" &&
+    (
+      !status.isProfileComplete ||
+      !status.isDetailsConfirmed ||
+      (isCurrentUser && !status.hasCompletedOnboarding)
+    );
+  const nextAction = isCurrentUser
+    ? "current_user"
+    : status.confirmationMode === "not_allowed"
+      ? "confirmation_not_required"
+      : member.canLogin
+        ? needsAttention
+          ? "self_confirmation_required"
+          : "complete"
+        : needsAttention
+          ? "delegated_placeholder"
+          : "complete";
 
   return {
     id: member.id,
@@ -42,17 +56,10 @@ function serializeFamilyMember(
     ageTier: member.ageTier,
     active: member.active,
     canLogin: member.canLogin,
+    role: member.role,
     isCurrentUser,
     status,
-    nextAction: isCurrentUser
-      ? "current_user"
-      : member.canLogin
-        ? needsAttention
-          ? "self_confirmation_required"
-          : "complete"
-        : needsAttention
-          ? "delegated_placeholder"
-          : "complete",
+    nextAction,
   };
 }
 
@@ -157,7 +164,8 @@ export async function GET() {
       profile: serializeMemberProfile(currentMember),
       status: currentStatus,
       needsOwnDetailsConfirmation:
-        !currentStatus.isDetailsConfirmed || !currentStatus.hasCompletedOnboarding,
+        currentStatus.confirmationMode === "self" &&
+        (!currentStatus.isDetailsConfirmed || !currentStatus.hasCompletedOnboarding),
     },
     familyGroups: currentMember.familyGroupMemberships.map((membership) => ({
       id: membership.familyGroup.id,

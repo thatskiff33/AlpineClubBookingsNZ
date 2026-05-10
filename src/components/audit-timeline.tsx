@@ -262,7 +262,11 @@ export function AuditTimeline({
                     ) : null}
                     {entry.requestId ? <span>Request {entry.requestId}</span> : null}
                   </div>
-                  {entry.details ? (
+                  {entry.description ? (
+                    <p className="break-words text-xs text-slate-500">
+                      {entry.description}
+                    </p>
+                  ) : entry.details ? (
                     <p className="break-words text-xs text-slate-500">
                       {entry.details}
                     </p>

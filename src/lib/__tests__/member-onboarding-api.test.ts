@@ -101,6 +101,73 @@ describe("member onboarding API", () => {
     expect(body.currentMember.needsOwnDetailsConfirmation).toBe(false);
   });
 
+  it("does not ask admin or lodge family accounts for their own confirmation", async () => {
+    mockedPrisma.member.findUnique.mockResolvedValue({
+      ...completeMember,
+      detailsConfirmedAt: new Date("2026-05-10T02:00:00.000Z"),
+      detailsConfirmedByMemberId: "member-1",
+      onboardingConfirmedAt: new Date("2026-05-10T02:00:00.000Z"),
+      familyGroupMemberships: [
+        {
+          familyGroupId: "family-1",
+          familyGroup: {
+            id: "family-1",
+            name: "Admin Family",
+            memberships: [
+              {
+                role: "MEMBER",
+                member: {
+                  ...completeMember,
+                  detailsConfirmedAt: new Date("2026-05-10T02:00:00.000Z"),
+                  detailsConfirmedByMemberId: "member-1",
+                  onboardingConfirmedAt: new Date("2026-05-10T02:00:00.000Z"),
+                },
+              },
+              {
+                role: "MEMBER",
+                member: {
+                  ...completeMember,
+                  id: "admin-2",
+                  firstName: "Admin",
+                  role: "ADMIN",
+                  detailsConfirmedAt: null,
+                  detailsConfirmedByMemberId: null,
+                  onboardingConfirmedAt: null,
+                },
+              },
+              {
+                role: "MEMBER",
+                member: {
+                  ...completeMember,
+                  id: "lodge-1",
+                  firstName: "Lodge",
+                  role: "LODGE",
+                  detailsConfirmedAt: null,
+                  detailsConfirmedByMemberId: null,
+                  onboardingConfirmedAt: null,
+                },
+              },
+            ],
+          },
+        },
+      ],
+    } as any);
+
+    const { GET } = await import("@/app/api/member/onboarding/route");
+    const res = await GET();
+    const body = await res.json();
+    const familyMembers = body.familyGroups[0].members;
+    const admin = familyMembers.find((member: any) => member.id === "admin-2");
+    const lodge = familyMembers.find((member: any) => member.id === "lodge-1");
+
+    expect(res.status).toBe(200);
+    for (const account of [admin, lodge]) {
+      expect(account.status.confirmationMode).toBe("not_allowed");
+      expect(account.status.needsOwnLoginConfirmation).toBe(false);
+      expect(account.nextAction).toBe("confirmation_not_required");
+    }
+  });
+
   it("sets self confirmation and onboarding timestamps idempotently", async () => {
     mockedPrisma.member.findUnique.mockResolvedValue(completeMember as any);
     mockedPrisma.member.update.mockResolvedValue({

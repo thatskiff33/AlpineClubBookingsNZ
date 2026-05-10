@@ -140,4 +140,21 @@ describe("evaluateMemberProfileCompleteness", () => {
     expect(result.needsOwnLoginConfirmation).toBe(true);
     expect(result.confirmationMode).toBe("self");
   });
+
+  it("does not require self confirmation for admin or lodge login accounts", () => {
+    for (const role of ["ADMIN", "LODGE"]) {
+      const result = evaluateMemberProfileCompleteness({
+        ...completeProfile,
+        id: `${role.toLowerCase()}-1`,
+        role,
+        canLogin: true,
+        detailsConfirmedAt: null,
+        detailsConfirmedByMemberId: null,
+      });
+
+      expect(result.confirmationMode).toBe("not_allowed");
+      expect(result.needsOwnLoginConfirmation).toBe(false);
+      expect(result.canBeBookedAsMember).toBe(false);
+    }
+  });
 });

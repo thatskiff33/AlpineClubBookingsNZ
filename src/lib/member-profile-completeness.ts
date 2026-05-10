@@ -186,8 +186,9 @@ export function evaluateMemberProfileCompleteness(
   member: MemberProfileCompletenessInput,
   options: MemberProfileCompletenessOptions = {}
 ): MemberProfileCompletenessResult {
+  const confirmationExemptRole = member.role === "ADMIN" || member.role === "LODGE";
   const confirmationMode: MemberProfileConfirmationMode =
-    member.active === false || member.role === "LODGE"
+    member.active === false || confirmationExemptRole
       ? "not_allowed"
       : member.canLogin
         ? "self"
