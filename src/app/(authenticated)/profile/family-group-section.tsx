@@ -32,6 +32,14 @@ interface FamilyMemberStatus {
   canCurrentUserConfirmDetails: boolean;
   pendingRequestStatus: string | null;
   pendingRequestType: string | null;
+  pendingRequests?: Array<{
+    id: string;
+    type: string;
+    status: string;
+    familyGroupId: string;
+  }>;
+  pendingRequestFamilyGroupIds?: string[];
+  bookableFamilyGroupIds?: string[];
   action: string | null;
   dateOfBirth: string | null;
 }
@@ -42,6 +50,8 @@ interface PendingFamilyRequest {
   status: string;
   familyGroupId: string;
   subjectMemberId: string | null;
+  invitedMemberId: string | null;
+  linkedMemberId: string | null;
   requestedFirstName: string | null;
   requestedLastName: string | null;
 }
@@ -55,9 +65,20 @@ function getMemberName(member: { firstName: string; lastName: string }) {
   return `${member.firstName} ${member.lastName}`.trim();
 }
 
-function getStatusBadge(status?: FamilyMemberStatus) {
+function pendingRequestTargetsMember(request: PendingFamilyRequest, memberId: string) {
+  return (
+    request.subjectMemberId === memberId ||
+    request.invitedMemberId === memberId ||
+    request.linkedMemberId === memberId
+  );
+}
+
+function getStatusBadge(
+  status?: FamilyMemberStatus,
+  groupPendingRequest?: PendingFamilyRequest
+) {
   if (!status) return { label: "Unknown", className: "bg-slate-100 text-slate-700" };
-  if (status.pendingRequestStatus) {
+  if (groupPendingRequest || status.pendingRequestStatus) {
     return { label: "Pending admin", className: "bg-amber-100 text-amber-800 border-amber-200" };
   }
   if (status.canBeBooked) {
@@ -443,9 +464,17 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                   <div className="space-y-2">
                     {group.members.map((member) => {
                       const status = statusByMemberId.get(member.id);
-                      const badge = getStatusBadge(status);
+                      const groupPendingRequest = groupPendingRequests.find((request) =>
+                        pendingRequestTargetsMember(request, member.id)
+                      );
+                      const badge = getStatusBadge(status, groupPendingRequest);
                       const memberName = getMemberName(member);
-                      const pendingRemoval = status?.pendingRequestType === "REMOVAL_REQUEST";
+                      const pendingRemoval =
+                        groupPendingRequest?.type === "REMOVAL_REQUEST" ||
+                        (
+                          status?.pendingRequestType === "REMOVAL_REQUEST" &&
+                          status.pendingRequestFamilyGroupIds?.includes(group.id)
+                        );
 
                       return (
                         <div key={member.id} className="rounded-lg border border-slate-200 p-3">
@@ -460,7 +489,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                                   <Badge variant="outline">No login</Badge>
                                 )}
                               </div>
-                              {status && !status.canBeBooked && !status.pendingRequestStatus && (
+                              {status && !status.canBeBooked && !status.pendingRequestStatus && !groupPendingRequest && (
                                 <p className="text-sm text-slate-600">
                                   {status.canLogin
                                     ? `${member.firstName} has their own login and needs to sign in and confirm their details.`
@@ -476,7 +505,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
 
                             {canManage && (
                               <div className="flex flex-wrap gap-2">
-                                {status?.canCurrentUserConfirmDetails && !status.canBeBooked && !status.pendingRequestStatus && (
+                                {status?.canCurrentUserConfirmDetails && !status.canBeBooked && !status.pendingRequestStatus && !groupPendingRequest && (
                                   <Button
                                     type="button"
                                     variant="outline"

@@ -35,6 +35,20 @@ describe("family member booking block messages", () => {
     ).toBeNull();
   });
 
+  it("does not block quick-add when a scoped pending request leaves another group bookable", () => {
+    const member = {
+      relationship: "dependent" as const,
+      firstName: "Sam",
+      canBeBooked: true,
+      pendingRequestStatus: null,
+      pendingRequestFamilyGroupIds: ["fg1"],
+      bookableFamilyGroupIds: ["fg2"],
+    };
+
+    expect(getFamilyMemberBookingBlockMessage(member)).toBeNull();
+    expect(getFamilyMemberBookingActionLabel(member)).toBeNull();
+  });
+
   it("explains a non-login member the current user can fix", () => {
     const member = {
       relationship: "dependent" as const,

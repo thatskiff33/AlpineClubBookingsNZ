@@ -8,6 +8,14 @@ export interface BookingFamilyMember {
   needsOwnLoginConfirmation?: boolean | null;
   canCurrentUserConfirmDetails?: boolean | null;
   pendingRequestStatus?: string | null;
+  pendingRequests?: Array<{
+    id: string;
+    type: string;
+    status: string;
+    familyGroupId: string;
+  }>;
+  pendingRequestFamilyGroupIds?: string[];
+  bookableFamilyGroupIds?: string[];
   action?: string | null;
 }
 

@@ -67,6 +67,41 @@ const mockedPrisma = vi.mocked(prisma, true);
 const adminSession = { user: { id: "admin-1", role: "ADMIN" } } as any;
 const memberSession = { user: { id: "member-1", role: "MEMBER" } } as any;
 
+function completeMember(overrides: Record<string, unknown> = {}) {
+  const id = String(overrides.id ?? "member-1");
+  return {
+    id,
+    firstName: "Test",
+    lastName: "Member",
+    ageTier: "ADULT",
+    active: true,
+    canLogin: true,
+    role: "MEMBER",
+    phoneCountryCode: "64",
+    phoneAreaCode: "27",
+    phoneNumber: "1234567",
+    dateOfBirth: new Date("1990-01-01"),
+    streetAddressLine1: "1 Main St",
+    streetAddressLine2: null,
+    streetCity: "Tokoroa",
+    streetRegion: "Waikato",
+    streetPostalCode: "3420",
+    streetCountry: "NZ",
+    postalAddressLine1: "1 Main St",
+    postalAddressLine2: null,
+    postalCity: "Tokoroa",
+    postalRegion: "Waikato",
+    postalPostalCode: "3420",
+    postalCountry: "NZ",
+    profileCompletedAt: new Date("2026-01-01"),
+    detailsConfirmedAt: new Date("2026-01-01"),
+    detailsConfirmedByMemberId: id,
+    onboardingConfirmedAt: new Date("2026-01-01"),
+    familyGroupMemberships: [],
+    ...overrides,
+  };
+}
+
 // Helper to create a NextRequest
 function makeReq(url: string, method: string, body?: unknown) {
   return new NextRequest(`http://localhost${url}`, {
@@ -311,6 +346,120 @@ describe("GET /api/members/family", () => {
     expect(body.familyMembers).toHaveLength(3);
     const emmas = body.familyMembers.filter((m: any) => m.id === "child-1");
     expect(emmas).toHaveLength(1);
+  });
+
+  it("keeps a multi-group member bookable when a pending removal only affects one shared group", async () => {
+    mockedAuth.mockResolvedValue(memberSession);
+    mockedPrisma.member.findUnique.mockResolvedValue(completeMember({
+      id: "member-1",
+      firstName: "Dad",
+      lastName: "Smith",
+      familyGroupMemberships: [
+        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
+        { familyGroupId: "fg2", familyGroup: { id: "fg2", name: "Jones Family" } },
+      ],
+    }) as any);
+
+    const child = completeMember({
+      id: "child-1",
+      firstName: "Emma",
+      lastName: "Smith",
+      ageTier: "CHILD",
+      canLogin: false,
+      detailsConfirmedByMemberId: "member-1",
+      familyGroupMemberships: [
+        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
+        { familyGroupId: "fg2", familyGroup: { id: "fg2", name: "Jones Family" } },
+      ],
+    });
+    mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
+      { member: child },
+      { member: child },
+    ] as any);
+    mockedPrisma.familyGroupJoinRequest.findMany.mockResolvedValue([
+      {
+        id: "remove-req-1",
+        type: "REMOVAL_REQUEST",
+        status: "PENDING",
+        familyGroupId: "fg1",
+        requesterId: "member-1",
+        invitedMemberId: null,
+        linkedMemberId: null,
+        subjectMemberId: "child-1",
+      },
+    ] as any);
+
+    const { GET } = await import("@/app/api/members/family/route");
+    const res = await GET();
+    const body = await res.json();
+    const emma = body.familyMembers.find((member: any) => member.id === "child-1");
+
+    expect(res.status).toBe(200);
+    expect(emma.canBeBooked).toBe(true);
+    expect(emma.pendingRequestStatus).toBeNull();
+    expect(emma.familyGroupIds).toEqual(["fg1", "fg2"]);
+    expect(emma.bookableFamilyGroupIds).toEqual(["fg2"]);
+    expect(emma.pendingRequestFamilyGroupIds).toEqual(["fg1"]);
+    expect(emma.pendingRequests).toEqual([
+      {
+        id: "remove-req-1",
+        type: "REMOVAL_REQUEST",
+        status: "PENDING",
+        familyGroupId: "fg1",
+      },
+    ]);
+  });
+
+  it("blocks a member when every shared membership has a pending removal request", async () => {
+    mockedAuth.mockResolvedValue(memberSession);
+    mockedPrisma.member.findUnique.mockResolvedValue(completeMember({
+      id: "member-1",
+      firstName: "Dad",
+      lastName: "Smith",
+      familyGroupMemberships: [
+        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
+      ],
+    }) as any);
+
+    mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
+      {
+        member: completeMember({
+          id: "child-1",
+          firstName: "Emma",
+          lastName: "Smith",
+          ageTier: "CHILD",
+          canLogin: false,
+          detailsConfirmedByMemberId: "member-1",
+          familyGroupMemberships: [
+            { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
+          ],
+        }),
+      },
+    ] as any);
+    mockedPrisma.familyGroupJoinRequest.findMany.mockResolvedValue([
+      {
+        id: "remove-req-1",
+        type: "REMOVAL_REQUEST",
+        status: "PENDING",
+        familyGroupId: "fg1",
+        requesterId: "member-1",
+        invitedMemberId: null,
+        linkedMemberId: null,
+        subjectMemberId: "child-1",
+      },
+    ] as any);
+
+    const { GET } = await import("@/app/api/members/family/route");
+    const res = await GET();
+    const body = await res.json();
+    const emma = body.familyMembers.find((member: any) => member.id === "child-1");
+
+    expect(res.status).toBe(200);
+    expect(emma.canBeBooked).toBe(false);
+    expect(emma.pendingRequestStatus).toBe("PENDING");
+    expect(emma.pendingRequestType).toBe("REMOVAL_REQUEST");
+    expect(emma.bookableFamilyGroupIds).toEqual([]);
+    expect(emma.pendingRequestFamilyGroupIds).toEqual(["fg1"]);
   });
 });
 
@@ -755,6 +904,53 @@ describe("Admin Family Group Join Requests", () => {
           status: "APPROVED",
           reviewedBy: "admin-1",
           linkedMemberId: "child-1",
+        }),
+      });
+    });
+
+    it("approves a removal request by deleting only the requested family group membership", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue({
+        id: "remove-req-1",
+        familyGroupId: "fg1",
+        requesterId: "member-1",
+        subjectMemberId: "child-1",
+        status: "PENDING",
+        type: "REMOVAL_REQUEST",
+        requester: { id: "member-1", firstName: "Dad", lastName: "Smith", email: "dad@test.com" },
+        familyGroup: { id: "fg1", name: "Smith Family" },
+        subjectMember: { id: "child-1", firstName: "Emma", lastName: "Smith" },
+      } as any);
+
+      const txDeleteMany = vi.fn();
+      const txUpdate = vi.fn();
+      mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
+        callback({
+          familyGroupMember: { deleteMany: txDeleteMany },
+          familyGroupJoinRequest: { update: txUpdate },
+        })
+      );
+
+      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const res = await PUT(
+        makeReq("/api/admin/family-groups/requests", "PUT", {
+          requestId: "remove-req-1",
+          action: "approve",
+        })
+      );
+
+      expect(res.status).toBe(200);
+      expect(txDeleteMany).toHaveBeenCalledWith({
+        where: {
+          familyGroupId: "fg1",
+          memberId: "child-1",
+        },
+      });
+      expect(txUpdate).toHaveBeenCalledWith({
+        where: { id: "remove-req-1" },
+        data: expect.objectContaining({
+          status: "APPROVED",
+          reviewedBy: "admin-1",
         }),
       });
     });

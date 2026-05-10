@@ -36,6 +36,14 @@ interface FamilyMember {
   needsOwnLoginConfirmation?: boolean;
   canCurrentUserConfirmDetails?: boolean;
   pendingRequestStatus?: string | null;
+  pendingRequests?: Array<{
+    id: string;
+    type: string;
+    status: string;
+    familyGroupId: string;
+  }>;
+  pendingRequestFamilyGroupIds?: string[];
+  bookableFamilyGroupIds?: string[];
   action?:
     | "complete_details"
     | "own_login_required"
