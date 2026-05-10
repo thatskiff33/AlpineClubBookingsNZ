@@ -25,9 +25,12 @@ vi.mock("@/lib/prisma", () => ({
       createMany: vi.fn(),
       deleteMany: vi.fn(),
     },
+    familyGroupJoinRequest: {
+      findMany: vi.fn(),
+    },
     member: {
       count: vi.fn(),
-findUnique: vi.fn(),
+      findUnique: vi.fn(),
       findMany: vi.fn(),
     },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({
@@ -77,6 +80,9 @@ const mockPrisma = prisma as unknown as {
     createMany: ReturnType<typeof vi.fn>;
     deleteMany: ReturnType<typeof vi.fn>;
   };
+  familyGroupJoinRequest: {
+    findMany: ReturnType<typeof vi.fn>;
+  };
   member: {
     findUnique: ReturnType<typeof vi.fn>;
     findMany: ReturnType<typeof vi.fn>;
@@ -100,6 +106,7 @@ function makeReq(body?: unknown, params?: Record<string, string>) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockAuth.mockResolvedValue(adminSession);
+  mockPrisma.familyGroupJoinRequest.findMany.mockResolvedValue([]);
 });
 
 // ─── GET /api/admin/family-groups ─────────────────────────────────────────────

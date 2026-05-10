@@ -127,6 +127,10 @@ export async function GET() {
       requesterId: true,
       invitedMemberId: true,
       linkedMemberId: true,
+      subjectMemberId: true,
+      requestedFirstName: true,
+      requestedLastName: true,
+      requestedDateOfBirth: true,
       childFirstName: true,
       childLastName: true,
       childDateOfBirth: true,
@@ -134,6 +138,7 @@ export async function GET() {
       requester: { select: { id: true, firstName: true, lastName: true } },
       invitedMember: { select: { id: true, firstName: true, lastName: true } },
       linkedMember: { select: { id: true, firstName: true, lastName: true } },
+      subjectMember: { select: { id: true, firstName: true, lastName: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -186,6 +191,19 @@ export async function GET() {
             id: request.linkedMember.id,
             name: getMemberDisplayName(request.linkedMember),
           }
+        : null,
+      subjectMember: request.subjectMember
+        ? {
+            id: request.subjectMember.id,
+            name: getMemberDisplayName(request.subjectMember),
+          }
+        : null,
+      requestedName:
+        request.requestedFirstName && request.requestedLastName
+          ? `${request.requestedFirstName} ${request.requestedLastName}`
+          : null,
+      requestedDateOfBirth: request.requestedDateOfBirth
+        ? request.requestedDateOfBirth.toISOString().substring(0, 10)
         : null,
       childName:
         request.childFirstName && request.childLastName

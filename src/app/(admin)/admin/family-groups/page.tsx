@@ -632,7 +632,7 @@ export default function FamilyGroupsPage() {
             Pending Family Group Changes
           </CardTitle>
           <p className="text-sm text-slate-500">
-            Step 1: review the requested change. Step 2: if it is a child/youth request, pick the member record to link. Step 3: approve or reject.
+            Review join, child/youth, same-email adult, and removal requests before approving or rejecting.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -650,6 +650,9 @@ export default function FamilyGroupsPage() {
               const selectedCandidate = candidateMembers.find(
                 (candidate) => candidate.id === requestSelections[request.id]
               );
+              const requiresMemberChoice =
+                request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
+              const selectedCreateNew = requestSelections[request.id] === "__create__";
 
               return (
                 <div key={request.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -711,6 +714,35 @@ export default function FamilyGroupsPage() {
                           </p>
                           <p>Date of birth: {formatDate(request.childDateOfBirth)}</p>
                         </div>
+                      ) : request.type === "ADULT_REQUEST" ? (
+                        <div className="mt-2 space-y-1 text-sm text-slate-600">
+                          <p>
+                            Requested adult:{" "}
+                            <span className="font-medium text-slate-800">
+                              {[request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ")}
+                            </span>
+                          </p>
+                          <p>Date of birth: {formatDate(request.requestedDateOfBirth)}</p>
+                          <p>Shared email: {request.requestedEmail || request.requester.email}</p>
+                          {request.requestNotes && <p>Notes: {request.requestNotes}</p>}
+                        </div>
+                      ) : request.type === "REMOVAL_REQUEST" ? (
+                        <div className="mt-2 space-y-1 text-sm text-slate-600">
+                          <p>
+                            Remove member:{" "}
+                            <span className="font-medium text-slate-800">
+                              {request.subjectMember
+                                ? `${request.subjectMember.firstName} ${request.subjectMember.lastName}`
+                                : "Unknown member"}
+                            </span>
+                          </p>
+                          {request.subjectMember && (
+                            <p>
+                              {request.subjectMember.email} • {request.subjectMember.ageTier}
+                            </p>
+                          )}
+                          {request.requestNotes && <p>Notes: {request.requestNotes}</p>}
+                        </div>
                       ) : (
                         <p className="mt-2 text-sm text-slate-600">
                           Approving this request adds{" "}
@@ -746,47 +778,51 @@ export default function FamilyGroupsPage() {
 
                     <div className="rounded-lg bg-slate-50 p-3">
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        {request.type === "CHILD_REQUEST" ? "Step 3" : "Step 2"}
+                        {requiresMemberChoice ? "Step 3" : "Step 2"}
                       </p>
                       <p className="mt-1 text-sm font-medium text-slate-900">
-                        {request.type === "CHILD_REQUEST"
-                          ? "Choose the member record to link"
+                        {requiresMemberChoice
+                          ? request.type === "ADULT_REQUEST"
+                            ? "Link or create the adult member"
+                            : "Choose the member record to link"
                           : "Approve or reject the request"}
                       </p>
-                      {request.type === "CHILD_REQUEST" ? (
+                      {requiresMemberChoice ? (
                         <div className="mt-2 space-y-2">
-                          {candidateMembers.length > 0 ? (
-                            <>
-                              <Label htmlFor={`request-member-${request.id}`}>Suggested matches</Label>
-                              <select
-                                id={`request-member-${request.id}`}
-                                value={requestSelections[request.id] ?? ""}
-                                onChange={(e) => {
-                                  clearRequestError(request.id);
-                                  setRequestSelections((current) => ({
-                                    ...current,
-                                    [request.id]: e.target.value,
-                                  }));
-                                }}
-                                className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                              >
-                                <option value="">Select a member record</option>
-                                {candidateMembers.map((candidate) => (
-                                  <option key={candidate.id} value={candidate.id}>
-                                    {candidate.firstName} {candidate.lastName}
-                                    {" • "}
-                                    {candidate.ageTier}
-                                    {candidate.alreadyInGroup ? " • already in group" : ""}
-                                    {!candidate.active ? " • inactive" : ""}
-                                  </option>
-                                ))}
-                              </select>
-                            </>
-                          ) : (
-                            <p className="text-sm text-slate-600">
-                              No matching member record has been suggested yet. Search below.
-                            </p>
-                          )}
+                          <div>
+                            <Label htmlFor={`request-member-${request.id}`}>
+                              {request.type === "ADULT_REQUEST" ? "Adult member record" : "Suggested matches"}
+                            </Label>
+                            <select
+                              id={`request-member-${request.id}`}
+                              value={requestSelections[request.id] ?? ""}
+                              onChange={(e) => {
+                                clearRequestError(request.id);
+                                setRequestSelections((current) => ({
+                                  ...current,
+                                  [request.id]: e.target.value,
+                                }));
+                              }}
+                              className="mt-2 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                            >
+                              <option value="">Select a member record</option>
+                              {request.type === "ADULT_REQUEST" && (
+                                <option value="__create__">
+                                  Create new non-login adult from request
+                                </option>
+                              )}
+                              {candidateMembers.map((candidate) => (
+                                <option key={candidate.id} value={candidate.id}>
+                                  {candidate.firstName} {candidate.lastName}
+                                  {" • "}
+                                  {candidate.ageTier}
+                                  {candidate.canLogin ? " • has login" : " • no login"}
+                                  {candidate.alreadyInGroup ? " • already in group" : ""}
+                                  {!candidate.active ? " • inactive" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
 
                           <div className="flex flex-col gap-2 sm:flex-row">
                             <Input
@@ -812,18 +848,22 @@ export default function FamilyGroupsPage() {
                           </div>
 
                           <p className="text-xs text-slate-500">
-                            Suggested matches are based on the requested child name and date of birth. Search if the correct member record is not listed.
+                            {request.type === "ADULT_REQUEST"
+                              ? "Same-email adult approvals can link an existing non-login adult or create a new non-login adult."
+                              : "Suggested matches are based on the requested child name and date of birth. Search if the correct member record is not listed."}
                           </p>
                         </div>
                       ) : (
                         <p className="mt-2 text-sm text-slate-600">
-                          Rejecting leaves the family group unchanged. Approving adds the requester to this group immediately.
+                          {request.type === "REMOVAL_REQUEST"
+                            ? "Approving removes the selected member from this family group only. Rejection leaves membership unchanged."
+                            : "Rejecting leaves the family group unchanged. Approving adds the requester to this group immediately."}
                         </p>
                       )}
                     </div>
                   </div>
 
-                  {request.type === "CHILD_REQUEST" && selectedCandidate && (
+                  {requiresMemberChoice && selectedCandidate && (
                     <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
                       <p className="text-sm font-medium text-slate-900">
                         Selected member record
@@ -835,9 +875,25 @@ export default function FamilyGroupsPage() {
                         {selectedCandidate.email}
                         {" • "}
                         {selectedCandidate.ageTier}
+                        {selectedCandidate.canLogin ? " • has login" : " • no login"}
                         {selectedCandidate.dateOfBirth ? ` • DOB ${formatDate(selectedCandidate.dateOfBirth)}` : ""}
                         {selectedCandidate.alreadyInGroup ? " • already in this group" : ""}
                         {!selectedCandidate.active ? " • inactive" : ""}
+                      </p>
+                    </div>
+                  )}
+
+                  {request.type === "ADULT_REQUEST" && selectedCreateNew && (
+                    <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+                      <p className="text-sm font-medium text-slate-900">
+                        New non-login adult will be created
+                      </p>
+                      <p className="mt-1 text-sm text-slate-700">
+                        {[request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ")}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {request.requestedEmail || request.requester.email}
+                        {request.requestedDateOfBirth ? ` • DOB ${formatDate(request.requestedDateOfBirth)}` : ""}
                       </p>
                     </div>
                   )}
@@ -866,7 +922,7 @@ export default function FamilyGroupsPage() {
                       onClick={() => handleRequest(request, "approve")}
                       disabled={
                         requestSubmittingId === request.id
-                        || (request.type === "CHILD_REQUEST" && !requestSelections[request.id])
+                        || (requiresMemberChoice && !requestSelections[request.id])
                       }
                     >
                       <Check className="mr-2 h-4 w-4" />
@@ -874,6 +930,12 @@ export default function FamilyGroupsPage() {
                         ? "Saving..."
                         : request.type === "CHILD_REQUEST"
                           ? "Approve and Link Member"
+                          : request.type === "ADULT_REQUEST"
+                            ? selectedCreateNew
+                              ? "Approve and Create Adult"
+                              : "Approve and Link Adult"
+                            : request.type === "REMOVAL_REQUEST"
+                              ? "Approve Removal"
                           : "Approve Request"}
                     </Button>
                     <Button
