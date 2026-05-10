@@ -62,22 +62,27 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
   }
 
-  const effectiveMemberId =
-    parsed.data.forMemberId && session.user.role === "ADMIN"
-      ? parsed.data.forMemberId
-      : session.user.id;
+  const isAdminOnBehalf =
+    session.user.role === "ADMIN" && Boolean(parsed.data.forMemberId);
+  const effectiveMemberId = isAdminOnBehalf
+    ? parsed.data.forMemberId!
+    : session.user.id;
 
   try {
     const linkedMembers = await resolveLinkedBookingMembers(
       prisma,
       effectiveMemberId,
       guests.map((guest) => guest.memberId),
-      { skipAuthorization: session.user.role === "ADMIN" && Boolean(parsed.data.forMemberId) }
+      { skipAuthorization: isAdminOnBehalf }
     );
     await assertLinkedBookingMembersCanBeBooked(
       prisma,
       linkedMembers,
-      session.user.id
+      session.user.id,
+      {
+        actorRole: session.user.role,
+        onBehalfOfMemberId: isAdminOnBehalf ? effectiveMemberId : null,
+      }
     );
     guests = normalizeBookingGuestPricingInputs(guests, linkedMembers);
   } catch (error) {

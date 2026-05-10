@@ -5,7 +5,7 @@ import { NextRequest } from "next/server";
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: { count: vi.fn(), findUnique: vi.fn(), findMany: vi.fn() },
-    booking: { create: vi.fn(), update: vi.fn(), findMany: vi.fn() },
+    booking: { create: vi.fn(), update: vi.fn(), findMany: vi.fn(), count: vi.fn() },
     season: { findMany: vi.fn() },
     promoCode: { findUnique: vi.fn() },
     promoCodeAssignment: { findMany: vi.fn() },
@@ -16,6 +16,7 @@ vi.mock("@/lib/prisma", () => ({
     groupDiscountSetting: { findUnique: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn(),
     $executeRaw: vi.fn(),
+    $executeRawUnsafe: vi.fn(),
     $queryRaw: vi.fn(),
   },
 }));
@@ -39,6 +40,7 @@ vi.mock("@/lib/email", () => ({
   sendBookingPendingEmail: vi.fn().mockResolvedValue(undefined),
   sendBookingConfirmedEmail: vi.fn().mockResolvedValue(undefined),
   sendAdminNewBookingAlert: vi.fn().mockResolvedValue(undefined),
+  sendWaitlistConfirmationEmail: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
@@ -91,6 +93,7 @@ import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { calculateBookingPrice } from "@/lib/pricing";
+import { bumpPendingBookings } from "@/lib/bumping";
 import { POST } from "@/app/api/bookings/route";
 import { POST as postQuote } from "@/app/api/bookings/quote/route";
 import { POST as postPromoValidate } from "@/app/api/promo-codes/validate/route";
@@ -100,6 +103,7 @@ const mockedPrisma = vi.mocked(prisma);
 const mockedAudit = vi.mocked(logAudit);
 const mockedGetCredit = vi.mocked(getMemberCreditBalance);
 const mockedCalcPrice = vi.mocked(calculateBookingPrice);
+const mockedBumpPendingBookings = vi.mocked(bumpPendingBookings);
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/bookings", {
@@ -122,6 +126,34 @@ const baseBookingPayload = {
   guests: [{ firstName: "Jane", lastName: "Doe", ageTier: "ADULT", isMember: true, memberId: "target-m1" }],
 };
 
+const legacyIncompleteTargetMember = {
+  id: "target-m1",
+  ageTier: "ADULT",
+  active: true,
+  canLogin: true,
+  firstName: "Jane",
+  lastName: "Doe",
+  phoneCountryCode: null,
+  phoneAreaCode: null,
+  phoneNumber: null,
+  dateOfBirth: null,
+  streetAddressLine1: null,
+  streetCity: null,
+  streetRegion: null,
+  streetPostalCode: null,
+  streetCountry: null,
+  postalAddressLine1: null,
+  postalCity: null,
+  postalRegion: null,
+  postalPostalCode: null,
+  postalCountry: null,
+  role: "MEMBER",
+  profileCompletedAt: null,
+  detailsConfirmedAt: null,
+  detailsConfirmedByMemberId: null,
+  onboardingConfirmedAt: null,
+};
+
 describe("Admin Book on Behalf", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -129,6 +161,7 @@ describe("Admin Book on Behalf", () => {
       async (fn: (tx: typeof mockedPrisma) => Promise<unknown>) => fn(mockedPrisma)
     );
     (mockedPrisma.$executeRaw as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockedPrisma.$executeRawUnsafe as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockedPrisma.$queryRaw as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockedPrisma.promoRedemption.aggregate as ReturnType<typeof vi.fn>).mockResolvedValue({
       _sum: { freeNightsUsed: 0 },
@@ -279,6 +312,100 @@ describe("Admin Book on Behalf", () => {
     // familyGroupMember.findMany should NOT have been called since admin bypasses
     expect(mockedPrisma.familyGroupMember.findMany).not.toHaveBeenCalled();
   });
+
+  it("creates an on-behalf draft for a legacy target member with unconfirmed profile details", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      active: true,
+    });
+    (mockedPrisma.member.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      legacyIncompleteTargetMember,
+    ]);
+    (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "draft-legacy",
+      memberId: "target-m1",
+      createdById: "admin1",
+      status: "DRAFT",
+      guests: [{ id: "g1" }],
+    });
+
+    const req = makeRequest({
+      ...baseBookingPayload,
+      draft: true,
+      forMemberId: "target-m1",
+    });
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body.code).not.toBe("GUEST_PROFILE_REQUIRED");
+    expect(mockedPrisma.familyGroupMember.findMany).not.toHaveBeenCalled();
+  });
+
+  it("creates an on-behalf waitlist booking for a legacy target member with unconfirmed profile details", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    (mockedPrisma.member.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      active: true,
+    });
+    (mockedPrisma.member.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      legacyIncompleteTargetMember,
+    ]);
+    (mockedPrisma.booking.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "full-booking",
+        checkIn: new Date(checkIn),
+        checkOut: new Date(checkOut),
+        guests: Array.from({ length: 29 }, (_, index) => ({ id: `occupied-${index}` })),
+      },
+    ]);
+    mockedBumpPendingBookings.mockResolvedValue({
+      capacityRestored: false,
+      bumpedBookingIds: [],
+    });
+    (mockedPrisma.booking.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+    (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockedPrisma.booking.create as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "waitlist-legacy",
+      memberId: "target-m1",
+      checkIn: new Date(checkIn),
+      checkOut: new Date(checkOut),
+      createdAt: new Date(),
+      status: "WAITLISTED",
+      guests: [{ id: "g1" }],
+    });
+    (mockedPrisma.booking.update as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "waitlist-legacy",
+      memberId: "target-m1",
+      checkIn: new Date(checkIn),
+      checkOut: new Date(checkOut),
+      status: "WAITLISTED",
+      waitlistPosition: 1,
+      finalPriceCents: 5000,
+      guests: [{ id: "g1" }],
+    });
+
+    const req = makeRequest({
+      ...baseBookingPayload,
+      waitlist: true,
+      forMemberId: "target-m1",
+    });
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body.status).toBe("WAITLISTED");
+    expect(body.code).not.toBe("GUEST_PROFILE_REQUIRED");
+    expect(mockedPrisma.booking.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          memberId: "target-m1",
+          createdById: "admin1",
+          status: "WAITLISTED",
+        }),
+      })
+    );
+  });
 });
 
 describe("Create booking guest normalization", () => {
@@ -288,6 +415,7 @@ describe("Create booking guest normalization", () => {
       async (fn: (tx: typeof mockedPrisma) => Promise<unknown>) => fn(mockedPrisma)
     );
     (mockedPrisma.$executeRaw as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (mockedPrisma.$executeRawUnsafe as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockedPrisma.$queryRaw as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockedPrisma.promoRedemption.aggregate as ReturnType<typeof vi.fn>).mockResolvedValue({
       _sum: { freeNightsUsed: 0 },
@@ -392,6 +520,34 @@ describe("Quote API - forMemberId", () => {
 
     // getMemberCreditBalance should be called with target member, not admin
     expect(mockedGetCredit).toHaveBeenCalledWith("target-m1");
+  });
+
+  it("allows an admin on-behalf quote for a legacy target member with unconfirmed profile details", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "admin1", role: "ADMIN" } } as never);
+    (mockedPrisma.member.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      legacyIncompleteTargetMember,
+    ]);
+    (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    mockedGetCredit.mockResolvedValue(1500);
+
+    const req = new NextRequest("http://localhost/api/bookings/quote", {
+      method: "POST",
+      body: JSON.stringify({
+        checkIn,
+        checkOut,
+        guests: [{ ageTier: "ADULT", isMember: true, memberId: "target-m1" }],
+        forMemberId: "target-m1",
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await postQuote(req);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.code).not.toBe("GUEST_PROFILE_REQUIRED");
+    expect(mockedGetCredit).toHaveBeenCalledWith("target-m1");
+    expect(mockedPrisma.familyGroupMember.findMany).not.toHaveBeenCalled();
   });
 
   it("uses session user credit balance when no forMemberId", async () => {
