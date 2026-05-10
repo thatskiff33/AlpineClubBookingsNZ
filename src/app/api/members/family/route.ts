@@ -154,7 +154,8 @@ export async function GET() {
       })
     : [];
 
-  const pendingRequests = groupIds.length > 0
+  const rawPendingRequests = groupIds.length > 0
+    && typeof prisma.familyGroupJoinRequest?.findMany === "function"
     ? await prisma.familyGroupJoinRequest.findMany({
         where: {
           familyGroupId: { in: groupIds },
@@ -168,6 +169,7 @@ export async function GET() {
         },
       })
     : [];
+  const pendingRequests = Array.isArray(rawPendingRequests) ? rawPendingRequests : [];
 
   const pendingRequestStatusByMemberId = new Map<string, string>();
   for (const request of pendingRequests) {
