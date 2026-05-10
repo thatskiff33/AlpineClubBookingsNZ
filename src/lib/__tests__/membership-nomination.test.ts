@@ -110,6 +110,7 @@ import {
 import {
   enqueueXeroEntranceFeeInvoiceOperation,
 } from "@/lib/xero-operation-outbox";
+import { hashActionToken } from "@/lib/action-tokens";
 
 describe("membership nomination workflow", () => {
   beforeEach(() => {
@@ -222,7 +223,19 @@ describe("membership nomination workflow", () => {
       })
     );
     expect(tx.nominationToken.createMany).toHaveBeenCalledTimes(1);
+    const createdTokens = tx.nominationToken.createMany.mock.calls[0][0].data;
+    expect(createdTokens).toHaveLength(2);
+    expect(createdTokens[0]).not.toHaveProperty("token");
+    expect(createdTokens[1]).not.toHaveProperty("token");
+    expect(createdTokens[0].tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(createdTokens[1].tokenHash).toMatch(/^[a-f0-9]{64}$/);
     expect(sendNominationRequestEmail).toHaveBeenCalledTimes(2);
+    const sentTokens = vi
+      .mocked(sendNominationRequestEmail)
+      .mock.calls.map(([args]) => args.token);
+    expect(createdTokens.map((tokenRow: { tokenHash: string }) => tokenRow.tokenHash)).toEqual(
+      sentTokens.map(hashActionToken)
+    );
     expect(result.application.id).toBe("app-1");
     expect(result.emailWarnings).toEqual([]);
   });
@@ -361,7 +374,7 @@ describe("membership nomination workflow", () => {
 
     vi.mocked(prisma.nominationToken.findUnique).mockResolvedValueOnce({
       id: "token-row",
-      token: "token-2",
+      tokenHash: hashActionToken("token-2"),
       applicationId: "app-1",
       nominatorMemberId: "nom-2",
       expiresAt: futureExpiry,
@@ -375,7 +388,7 @@ describe("membership nomination workflow", () => {
       nominationToken: {
         findUnique: vi.fn().mockResolvedValue({
           id: "token-row",
-          token: "token-2",
+          tokenHash: hashActionToken("token-2"),
           applicationId: "app-1",
           nominatorMemberId: "nom-2",
           expiresAt: futureExpiry,
@@ -398,6 +411,16 @@ describe("membership nomination workflow", () => {
 
     const result = await confirmNomination("token-2", "nom-2");
 
+    expect(prisma.nominationToken.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tokenHash: hashActionToken("token-2") },
+      })
+    );
+    expect(tx.nominationToken.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tokenHash: hashActionToken("token-2") },
+      })
+    );
     expect(tx.nominationToken.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -416,6 +439,54 @@ describe("membership nomination workflow", () => {
     expect(sendAdminMembershipApplicationPendingEmail).toHaveBeenCalledTimes(1);
     expect(result.movedToAdmin).toBe(true);
     expect(result.application.status).toBe("PENDING_ADMIN");
+  });
+
+  it("rejects a nomination token for a different nominator account", async () => {
+    vi.mocked(prisma.nominationToken.findUnique).mockResolvedValueOnce({
+      id: "token-row",
+      tokenHash: hashActionToken("token-2"),
+      applicationId: "app-1",
+      nominatorMemberId: "nom-2",
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      confirmedAt: null,
+      createdAt: new Date("2026-04-12T00:00:00.000Z"),
+      application: { status: "PENDING_NOMINATORS" },
+    } as never);
+
+    await expect(confirmNomination("token-2", "nom-1")).rejects.toMatchObject({
+      message: "This nomination link is for a different member",
+      status: 403,
+    });
+    expect(prisma.nominationToken.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tokenHash: hashActionToken("token-2") },
+      })
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects an expired nomination token after hashed lookup", async () => {
+    vi.mocked(prisma.nominationToken.findUnique).mockResolvedValueOnce({
+      id: "token-row",
+      tokenHash: hashActionToken("token-2"),
+      applicationId: "app-1",
+      nominatorMemberId: "nom-2",
+      expiresAt: new Date(Date.now() - 60 * 1000),
+      confirmedAt: null,
+      createdAt: new Date("2026-04-12T00:00:00.000Z"),
+      application: { status: "PENDING_NOMINATORS" },
+    } as never);
+
+    await expect(confirmNomination("token-2", "nom-2")).rejects.toMatchObject({
+      message: "This nomination link has expired",
+      status: 410,
+    });
+    expect(prisma.nominationToken.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { tokenHash: hashActionToken("token-2") },
+      })
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it("approves the application, creates members, and triggers account setup + Xero actions", async () => {

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { auth } from "@/lib/auth";
 import { buildLoginPath } from "@/lib/auth-redirect";
+import { hashActionToken } from "@/lib/action-tokens";
 import {
   parseApplicationFamilyMembers,
 } from "@/lib/nomination";
@@ -37,7 +38,7 @@ export default async function NominationPage({
   const { token } = await params;
 
   const nomination = await prisma.nominationToken.findUnique({
-    where: { token },
+    where: { tokenHash: hashActionToken(token) },
     include: { application: true },
   });
 

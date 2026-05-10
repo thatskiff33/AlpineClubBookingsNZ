@@ -334,7 +334,7 @@ model MemberApplication {
 
 model NominationToken {
   id                String    @id @default(cuid())
-  token             String    @unique
+  tokenHash         String    @unique
   applicationId     String
   nominatorMemberId String
   expiresAt         DateTime
@@ -345,6 +345,7 @@ model NominationToken {
 
   @@index([applicationId])
   @@index([nominatorMemberId])
+  @@index([tokenHash])
   @@index([expiresAt])
 }
 

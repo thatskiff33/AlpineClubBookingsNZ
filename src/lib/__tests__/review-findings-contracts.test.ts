@@ -277,6 +277,18 @@ describe("review finding source/schema contracts", () => {
     expect(schema).toContain("model EmailSuppression");
   });
 
+  it("keeps nomination token page and confirmation lookups hashed at rest", () => {
+    const pageSource = readRepoFile("src/app/(authenticated)/nominations/[token]/page.tsx");
+    const nominationSource = readRepoFile("src/lib/nomination.ts");
+    const schema = readRepoFile("prisma/schema.prisma");
+
+    expect(schema).toContain("model NominationToken");
+    expect(schema).toContain("tokenHash");
+    expect(schema).not.toContain("token             String    @unique");
+    expect(pageSource).toContain("hashActionToken(token)");
+    expect(nominationSource).toContain("where: { tokenHash }");
+  });
+
   it("wires logger and Sentry through shared token scrubbing", () => {
     const loggerSource = readRepoFile("src/lib/logger.ts");
     const sentryServer = readRepoFile("sentry.server.config.ts");

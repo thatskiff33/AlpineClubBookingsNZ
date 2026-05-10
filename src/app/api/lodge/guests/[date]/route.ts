@@ -3,8 +3,6 @@ import { checkLodgeAuth } from "@/lib/lodge-auth";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import {
   addDaysDateOnly,
-  formatDateOnly,
-  getTodayDateOnly,
   parseDateOnly,
 } from "@/lib/date-only";
 import { formatXeroPhone } from "@/lib/phone";
@@ -26,7 +24,6 @@ export async function GET(
 
   const { error, status, tier } = await checkLodgeAuth(dateStr, {
     request: req,
-    allowPublicReadOnly: true,
   });
   if (error) {
     return NextResponse.json({ error }, { status: status! });
@@ -39,10 +36,6 @@ export async function GET(
   const date = parseDateOnly(dateStr);
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
-  }
-
-  if (tier === "none" && dateStr !== formatDateOnly(getTodayDateOnly())) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const nextDay = addDaysDateOnly(date, 1);

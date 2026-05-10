@@ -95,7 +95,7 @@ describe("#24: Kiosk Access Tiers", () => {
       });
     });
 
-    it("returns 'staying-guest' for MEMBER with PAID booking covering date", async () => {
+    it("returns 'staying-guest' for MEMBER with visible booking covering date", async () => {
       mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
       mockPrisma.booking.count.mockResolvedValue(1);
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
@@ -111,6 +111,25 @@ describe("#24: Kiosk Access Tiers", () => {
       const { getKioskAccessTier } = await import("@/lib/kiosk-access");
       const tier = await getKioskAccessTier("user-1", "MEMBER", makeDate("2026-04-08"));
       expect(tier).toBe("staying-guest");
+    });
+
+    it("checks linked member guests as well as booking owners", async () => {
+      mockPrisma.hutLeaderAssignment.count.mockResolvedValue(0);
+      mockPrisma.booking.count.mockResolvedValue(1);
+      const { getKioskAccessTier } = await import("@/lib/kiosk-access");
+      const tier = await getKioskAccessTier("user-1", "MEMBER", makeDate("2026-04-08"));
+
+      expect(tier).toBe("staying-guest");
+      expect(mockPrisma.booking.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              { memberId: "user-1" },
+              { guests: { some: { memberId: "user-1" } } },
+            ],
+          }),
+        })
+      );
     });
 
     it("returns 'none' for MEMBER with no matching bookings or assignments", async () => {
@@ -146,7 +165,7 @@ describe("#24: Kiosk Access Tiers", () => {
       expect(range).toBeNull();
     });
 
-    it("returns date range based on booking dates with day-before", async () => {
+    it("returns date range based on booking dates with one night either side", async () => {
       mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
       mockPrisma.booking.findMany.mockResolvedValue([
         { checkIn: makeDate("2026-04-10"), checkOut: makeDate("2026-04-13") },
@@ -155,7 +174,7 @@ describe("#24: Kiosk Access Tiers", () => {
       const range = await getKioskDateRange("user-1", "MEMBER");
       expect(range).toEqual({
         minDate: "2026-04-09", // day before check-in
-        maxDate: "2026-04-13", // checkOut date
+        maxDate: "2026-04-13", // one night after the last stay night
       });
     });
 
@@ -712,17 +731,16 @@ describe("#24: Lodge Access API", () => {
     expect(data.dateRange).toBeNull();
   });
 
-  it("returns read-only access for unauthenticated user", async () => {
+  it("requires authentication for lodge access info", async () => {
     mockAuth.mockResolvedValue(null);
 
     const { NextRequest } = await import("next/server");
     const { GET } = await import("@/app/api/lodge/access/route");
     const req = new NextRequest("http://localhost/api/lodge/access?date=2026-04-08");
     const res = await GET(req);
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(401);
     const data = await res.json();
-    expect(data.tier).toBe("none");
-    expect(data.canManageRoster).toBe(false);
+    expect(data.error).toBe("Unauthorised");
   });
 
   it("returns 403 for deactivated user with a stale session", async () => {

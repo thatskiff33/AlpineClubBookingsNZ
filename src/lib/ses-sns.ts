@@ -19,6 +19,7 @@ export type SnsVerificationResult =
   | { ok: false; error: string };
 
 const SNS_CERT_HOST_REGEX = /^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$/;
+const UNSAFE_MISSING_TOPIC_OVERRIDE = "SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN";
 
 function isString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
@@ -118,11 +119,23 @@ async function fetchCertificate(
   return response.text();
 }
 
+function allowsUnsafeMissingTopicArn() {
+  const value = process.env[UNSAFE_MISSING_TOPIC_OVERRIDE]?.trim().toLowerCase();
+  return (
+    process.env.NODE_ENV !== "production" &&
+    (value === "1" || value === "true" || value === "yes")
+  );
+}
+
 export async function verifySnsWebhookMessage(
   envelope: SnsWebhookEnvelope,
   fetchImpl: typeof fetch = fetch
 ): Promise<SnsVerificationResult> {
   const expectedTopicArn = process.env.SES_SNS_TOPIC_ARN?.trim();
+  if (!expectedTopicArn && !allowsUnsafeMissingTopicArn()) {
+    return { ok: false, error: "SES_SNS_TOPIC_ARN is required" };
+  }
+
   if (expectedTopicArn && envelope.TopicArn !== expectedTopicArn) {
     return { ok: false, error: "SNS topic ARN is not allowed" };
   }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
 import { getKioskAccessInfo } from "@/lib/kiosk-access";
-import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
+import { parseDateOnly } from "@/lib/date-only";
 import { z } from "zod";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -23,7 +23,6 @@ export async function GET(req: NextRequest) {
 
   const authResult = await checkLodgeAuth(dateStr, {
     request: req,
-    allowPublicReadOnly: true,
   });
   if (authResult.error) {
     return NextResponse.json({ error: authResult.error }, { status: authResult.status! });
@@ -49,10 +48,9 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  const today = formatDateOnly(getTodayDateOnly());
   return NextResponse.json({
     tier: "none",
-    dateRange: { minDate: today, maxDate: today },
+    dateRange: null,
     canManageRoster: false,
     canMarkAttendance: false,
     canCompleteChores: false,

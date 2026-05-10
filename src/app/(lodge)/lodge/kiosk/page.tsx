@@ -79,6 +79,7 @@ export default function KioskPage() {
   const [viewAs, setViewAs] = useState<KioskTier | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [failCount, setFailCount] = useState(0);
   const [showPinForm, setShowPinForm] = useState(false);
@@ -94,30 +95,47 @@ export default function KioskPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [guestsRes, rosterRes, accessRes] = await Promise.all([
+      const accessRes = await fetch(`/api/lodge/access?date=${date}`);
+      if (!accessRes.ok) {
+        setAccess(null);
+        setBookings([]);
+        setAssignments([]);
+        setAuthRequired(accessRes.status === 401);
+        setError(
+          accessRes.status === 401
+            ? "Sign in to view the lodge kiosk."
+            : "You do not have lodge kiosk access for this date."
+        );
+        setFailCount(0);
+        return;
+      }
+
+      const accessData = await accessRes.json();
+      setAccess(accessData);
+      setAuthRequired(false);
+
+      const [guestsRes, rosterRes] = await Promise.all([
         fetch(`/api/lodge/guests/${date}`),
         fetch(`/api/lodge/roster/${date}`),
-        fetch(`/api/lodge/access?date=${date}`),
       ]);
 
-      if (guestsRes.ok) {
-        const guestsData = await guestsRes.json();
-        setBookings(guestsData.bookings);
+      if (!guestsRes.ok || !rosterRes.ok) {
+        setBookings([]);
+        setAssignments([]);
+        setError("Failed to load lodge kiosk data for this date.");
+        setFailCount(0);
+        return;
       }
 
-      if (rosterRes.ok) {
-        const rosterData = await rosterRes.json();
-        setAssignments(rosterData.assignments);
-      }
-
-      if (accessRes.ok) {
-        const accessData = await accessRes.json();
-        setAccess(accessData);
-      }
+      const guestsData = await guestsRes.json();
+      const rosterData = await rosterRes.json();
+      setBookings(guestsData.bookings);
+      setAssignments(rosterData.assignments);
 
       setError(null);
       setFailCount(0);
     } catch {
+      setAuthRequired(false);
       setError("Failed to load data");
       setFailCount((c) => c + 1);
     } finally {
@@ -368,7 +386,17 @@ export default function KioskPage() {
 
       {error && (
         <div className="bg-red-900/50 text-red-200 rounded-xl p-4 mb-4 text-lg">
-          {error}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>{error}</span>
+            {authRequired && (
+              <a
+                href={`/login?callbackUrl=${encodeURIComponent("/lodge/kiosk")}`}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-500 active:bg-blue-400"
+              >
+                Sign in
+              </a>
+            )}
+          </div>
         </div>
       )}
 
