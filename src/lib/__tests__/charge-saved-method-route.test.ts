@@ -118,8 +118,8 @@ describe("POST /api/payments/charge-saved-method", () => {
       },
     });
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
-  mockPaymentUpdate.mockResolvedValue({});
-  mockBookingUpdate.mockResolvedValue({});
+    mockPaymentUpdate.mockResolvedValue({});
+    mockBookingUpdate.mockResolvedValue({});
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
         return arg({
@@ -131,7 +131,11 @@ describe("POST /api/payments/charge-saved-method", () => {
 
       return Promise.all(arg as Promise<unknown>[]);
     });
-    mockMarkBookingPaymentSucceeded.mockResolvedValue(undefined);
+    mockMarkBookingPaymentSucceeded.mockResolvedValue({
+      outcome: "paid",
+      bookingId: "booking-1",
+      bumpedBookingIds: [],
+    });
   });
 
   it("marks the booking PAID immediately when the off-session charge succeeds", async () => {
@@ -183,11 +187,7 @@ describe("POST /api/payments/charge-saved-method", () => {
 
     expect(response.status).toBe(500);
     expect(body).toEqual({ error: "Failed to charge saved payment method" });
-    expect(mockBookingUpdateMany).toHaveBeenCalledTimes(1);
-    expect(mockBookingUpdateMany).toHaveBeenCalledWith({
-      where: { id: "booking-1", status: "PENDING" },
-      data: { status: "CONFIRMED" },
-    });
+    expect(mockBookingUpdateMany).not.toHaveBeenCalled();
   });
 
   it("still succeeds when Xero invoice queueing fails after a successful charge", async () => {

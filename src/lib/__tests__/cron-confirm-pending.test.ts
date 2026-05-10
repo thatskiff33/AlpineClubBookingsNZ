@@ -168,12 +168,17 @@ describe("Cron: Confirm Pending Bookings", () => {
 
       return Promise.all(arg as Promise<unknown>[]);
     });
-    mockMarkBookingPaymentSucceeded.mockResolvedValue(undefined);
+    mockMarkBookingPaymentSucceeded.mockResolvedValue({
+      outcome: "paid",
+      bookingId: "b1",
+      bumpedBookingIds: [],
+    });
     mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
   });
 
   it("confirms a booking when capacity is available and payment succeeds", async () => {
     const booking = makePendingBooking("b1");
+    const expectedIdempotencyKey = ["pending", "charge", "b1"].join("_");
     mockBookingFindMany.mockResolvedValue([booking]);
     mockCheckCapacity.mockResolvedValue({
       available: true,
@@ -199,7 +204,7 @@ describe("Cron: Confirm Pending Bookings", () => {
       customerId: "cus_b1",
       paymentMethodId: "pm_b1",
       metadata: { bookingId: "b1", memberId: "member_b1" },
-      idempotencyKey: "confirm_b1",
+      idempotencyKey: expectedIdempotencyKey,
     });
 
     expect(mockSendConfirmedEmail).toHaveBeenCalledWith(
@@ -432,11 +437,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     const result = await confirmPendingBookings();
 
     expect(result.failedBookingIds).toEqual(["b1"]);
-    expect(mockBookingUpdateMany).toHaveBeenCalledTimes(1);
-    expect(mockBookingUpdateMany).toHaveBeenCalledWith({
-      where: { id: "b1", status: "PENDING" },
-      data: { status: "PAID" },
-    });
+    expect(mockBookingUpdateMany).not.toHaveBeenCalled();
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 });

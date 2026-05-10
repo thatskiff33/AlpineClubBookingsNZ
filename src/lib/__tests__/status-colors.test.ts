@@ -67,8 +67,8 @@ describe("bookingStatusClass helper", () => {
 
 describe("bookingStatusLabel helper", () => {
   it("returns the expected labels for booking statuses", () => {
-    expect(bookingStatusLabels["CONFIRMED"]).toBe("Payment Due");
-    expect(bookingStatusLabel("CONFIRMED")).toBe("Payment Due");
+    expect(bookingStatusLabels["CONFIRMED"]).toBe("Payment Pending");
+    expect(bookingStatusLabel("CONFIRMED")).toBe("Payment Pending");
     expect(bookingStatusLabel("WAITLIST_OFFERED")).toBe("Waitlist Offered");
   });
 

@@ -263,16 +263,12 @@ describe("#22: Hut Leader eligible members includes PAID bookings", () => {
     );
     const content = fs.readFileSync(routePath, "utf-8");
 
-    // Both status filters should include PAID
-    const statusMatches = content.match(/status:\s*\{\s*in:\s*\[([^\]]+)\]/g);
-    expect(statusMatches).toBeTruthy();
-    expect(statusMatches!.length).toBeGreaterThanOrEqual(2);
-
-    for (const match of statusMatches!) {
-      expect(match).toContain('"PAID"');
-      expect(match).toContain('"PENDING"');
-      expect(match).toContain('"CONFIRMED"');
-    }
+    expect(content).toContain("OPERATIONAL_STAY_BOOKING_STATUSES");
+    const { OPERATIONAL_STAY_BOOKING_STATUSES } = await import("@/lib/booking-status");
+    expect(OPERATIONAL_STAY_BOOKING_STATUSES).toContain("PAID");
+    expect(OPERATIONAL_STAY_BOOKING_STATUSES).toContain("COMPLETED");
+    expect(OPERATIONAL_STAY_BOOKING_STATUSES).not.toContain("PENDING");
+    expect(OPERATIONAL_STAY_BOOKING_STATUSES).not.toContain("CONFIRMED");
   });
 
   it("does not include CANCELLED, BUMPED, or DRAFT in eligible query", async () => {

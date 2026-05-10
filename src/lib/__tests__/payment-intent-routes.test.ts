@@ -90,6 +90,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
   mockFindOrCreateCustomer.mockResolvedValue({ id: "cus_123" });
+  mocks.markBookingPaymentSucceeded.mockResolvedValue({
+    outcome: "paid",
+    bookingId: "booking-1",
+    bumpedBookingIds: [],
+  });
 });
 
 describe("payment intent routes", () => {
