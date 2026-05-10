@@ -10,6 +10,7 @@ BLUE_GREEN_DRAIN_SECONDS="${BLUE_GREEN_DRAIN_SECONDS:-30}"
 ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS="${ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS:-0}"
 BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
 MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv}"
+BLUE_GREEN_RUNTIME_STATUS_COOKIE="${BLUE_GREEN_RUNTIME_STATUS_COOKIE:-}"
 
 POSTGRES_SERVICE="postgres"
 CRON_SERVICE="app"
@@ -19,6 +20,7 @@ BLUE_SERVICE="app_blue"
 GREEN_SERVICE="app_green"
 ACTIVE_UPSTREAM_FILE_REL="deploy/caddy/tacbookings-active.caddy"
 READINESS_PATH="/api/health/ready"
+RUNTIME_STATUS_PATH="/api/admin/runtime-status"
 
 SHADOW_DATABASE_NAME="tacbookings_shadow_validate_$$"
 SHADOW_DATABASE_CREATED=0
@@ -712,12 +714,12 @@ assert_runtime_identity() {
   local expected_cron_enabled="$4"
 
   if [ -n "$expected_role" ] && ! printf '%s' "$payload" | grep -q "\"role\":\"${expected_role}\""; then
-    echo "$source readiness payload did not report role=${expected_role}: $payload" >&2
+    echo "$source runtime payload did not report role=${expected_role}: $payload" >&2
     return 1
   fi
 
   if [ -n "$expected_cron_enabled" ] && ! printf '%s' "$payload" | grep -q "\"cronEnabled\":${expected_cron_enabled}"; then
-    echo "$source readiness payload did not report cronEnabled=${expected_cron_enabled}: $payload" >&2
+    echo "$source runtime payload did not report cronEnabled=${expected_cron_enabled}: $payload" >&2
     return 1
   fi
 }
@@ -751,6 +753,20 @@ get_expected_cron_enabled() {
   fi
 }
 
+get_service_runtime_payload() {
+  local service="$1"
+
+  docker compose exec -T "$service" /bin/sh -lc '
+role="${APP_RUNTIME_ROLE:-unknown}"
+cron_enabled="${CRON_ENABLED:-true}"
+case "$cron_enabled" in
+  true|TRUE|1|yes|YES|on|ON) cron_json=true ;;
+  *) cron_json=false ;;
+esac
+printf "{\"role\":\"%s\",\"cronEnabled\":%s}\n" "$role" "$cron_json"
+'
+}
+
 assert_logs_contain_any() {
   local logs="$1"
   local description="$2"
@@ -776,12 +792,14 @@ verify_internal_health() {
   local expected_role
   local expected_cron_enabled
   local payload
+  local runtime_payload
 
   expected_role="$(get_expected_runtime_role "$service")"
   expected_cron_enabled="$(get_expected_cron_enabled "$service")"
   payload="$(docker compose exec -T "$service" wget -qO- "http://127.0.0.1:3000${READINESS_PATH}")"
   assert_readiness_payload_healthy "Internal ${service}" "$payload"
-  assert_runtime_identity "Internal ${service}" "$payload" "$expected_role" "$expected_cron_enabled"
+  runtime_payload="$(get_service_runtime_payload "$service")"
+  assert_runtime_identity "Internal ${service}" "$runtime_payload" "$expected_role" "$expected_cron_enabled"
 }
 
 verify_external_health() {
@@ -790,6 +808,8 @@ verify_external_health() {
   local expected_role
   local expected_cron_enabled
   local payload
+  local runtime_payload
+  local runtime_url
   local url
 
   domain="$(trim_whitespace "$(get_env_file_value DOMAIN)")"
@@ -799,7 +819,14 @@ verify_external_health() {
   wait_for_url "$url" "$HEALTH_TIMEOUT_SECONDS"
   payload="$(curl -fsS "$url")"
   assert_readiness_payload_healthy "External" "$payload"
-  assert_runtime_identity "External" "$payload" "$expected_role" "$expected_cron_enabled"
+
+  if [ -n "$BLUE_GREEN_RUNTIME_STATUS_COOKIE" ]; then
+    runtime_url="https://${domain}${RUNTIME_STATUS_PATH}"
+    runtime_payload="$(curl -fsS -H "Cookie: ${BLUE_GREEN_RUNTIME_STATUS_COOKIE}" "$runtime_url")"
+    assert_runtime_identity "External runtime status" "$runtime_payload" "$expected_role" "$expected_cron_enabled"
+  else
+    warn "Skipping external runtime identity check because BLUE_GREEN_RUNTIME_STATUS_COOKIE is not set; public readiness no longer exposes deployment topology."
+  fi
 }
 
 verify_cron_registration() {

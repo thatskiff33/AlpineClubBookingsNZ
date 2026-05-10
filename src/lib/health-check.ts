@@ -37,10 +37,11 @@ export interface ReadinessHealthReport {
     db: Omit<CheckResult, "error">;
     config: Omit<CheckResult, "error">;
   };
-  runtime: {
-    cronEnabled: boolean;
-    role: string;
-  };
+}
+
+export interface RuntimeStatusReport {
+  cronEnabled: boolean;
+  role: string;
 }
 
 const CHECK_TIMEOUT_MS = 3000;
@@ -162,7 +163,7 @@ function toPublicCheckResult(check: CheckResult) {
   };
 }
 
-function getRuntimeReadinessMetadata() {
+export function getRuntimeStatus(): RuntimeStatusReport {
   return {
     cronEnabled: (process.env.CRON_ENABLED ?? "true").toLowerCase() === "true",
     role: process.env.APP_RUNTIME_ROLE ?? "unknown",
@@ -233,7 +234,6 @@ export async function getReadinessHealthReport(): Promise<{
         db: toPublicCheckResult(db),
         config: toPublicCheckResult(config),
       },
-      runtime: getRuntimeReadinessMetadata(),
     },
   };
 }

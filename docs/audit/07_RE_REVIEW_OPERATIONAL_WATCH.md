@@ -237,8 +237,9 @@ Backing implementation:
   `app_green`.
 - `src/instrumentation.ts` exits before scheduling jobs when
   `CRON_ENABLED=false`.
-- `/api/health/ready` exposes runtime role and cron-enabled state for the
-  responding app instance.
+- `/api/health/ready` exposes only readiness status for load-balancer probes.
+- `/api/admin/runtime-status` exposes runtime role and cron-enabled state to
+  authenticated admin sessions.
 
 Deploy-time check:
 
