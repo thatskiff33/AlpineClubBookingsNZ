@@ -18,7 +18,7 @@ export function BookingFilters() {
   const [search, setSearch] = useState(searchParams.get("search") || "");
   const [sort, setSort] = useState(searchParams.get("sort") || "updatedAt");
   const [month, setMonth] = useState(searchParams.get("month") || "");
-  const bookingStatuses = ["CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED", "CANCELLED", "BUMPED", "COMPLETED", "DRAFT"] as const;
+  const bookingStatuses = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED", "CANCELLED", "BUMPED", "COMPLETED", "DRAFT"] as const;
 
   // Generate month options: current year ±1
   const monthOptions: Array<{ value: string; label: string }> = [];

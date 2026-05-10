@@ -180,7 +180,7 @@ export async function processWaitlistForDates(freedDates: {
 
 /**
  * Confirm a waitlist offer. Re-checks capacity and transitions to
- * CONFIRMED or PENDING based on member/non-member rules.
+ * PAYMENT_PENDING or PENDING based on member/non-member rules.
  */
 export async function confirmWaitlistOffer(
   bookingId: string,
@@ -245,7 +245,7 @@ export async function confirmWaitlistOffer(
         (booking.checkIn.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
       );
       const shouldBePending = hasNonMembers && daysUntilCheckIn > holdDays;
-      const newStatus = shouldBePending ? BookingStatus.PENDING : BookingStatus.CONFIRMED;
+      const newStatus = shouldBePending ? BookingStatus.PENDING : BookingStatus.PAYMENT_PENDING;
 
       const updateData: Record<string, unknown> = {
         status: newStatus,

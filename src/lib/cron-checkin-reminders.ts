@@ -1,8 +1,8 @@
 import { prisma } from "./prisma";
-import { BookingStatus } from "@prisma/client";
 import { sendCheckinReminderEmail } from "./email";
 import { getNZSTTomorrow } from "./nzst-date";
 import logger from "@/lib/logger";
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 
 /**
  * N-01: Send check-in reminder emails for bookings checking in tomorrow.
@@ -15,10 +15,10 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
   const dayAfterNZ = new Date(tomorrowNZ);
   dayAfterNZ.setDate(dayAfterNZ.getDate() + 1);
 
-  // Find CONFIRMED bookings checking in tomorrow
+  // Find paid/operational bookings checking in tomorrow
   const bookings = await prisma.booking.findMany({
     where: {
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID] },
+      status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: {
         gte: tomorrowNZ,
         lt: dayAfterNZ,

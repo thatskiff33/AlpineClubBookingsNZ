@@ -513,10 +513,10 @@ export async function PUT(
       let pendingRefundAmountCents = 0;
 
       const hasSucceededPayment =
-        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
       const hasIssuedXeroInvoice =
-        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
         !!booking.payment?.xeroInvoiceId;
       const xeroNetAmountCents = hasIssuedXeroInvoice
         ? priceDiffCents + changeFeeCents
@@ -559,7 +559,7 @@ export async function PUT(
         if (daysUntilNewCheckIn <= holdDays) {
           newNonMemberHoldUntil = null;
           if (booking.status === "PENDING") {
-            newStatus = "CONFIRMED";
+            newStatus = "PAYMENT_PENDING";
           }
         } else {
           newNonMemberHoldUntil = new Date(

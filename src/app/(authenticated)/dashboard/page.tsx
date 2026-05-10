@@ -28,6 +28,10 @@ import { isHutLeader } from "@/lib/hut-leader";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { summarizeMemberPaymentOwed } from "@/lib/member-dashboard";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
+import {
+  ACTIVE_BOOKING_STATUSES,
+  PAYMENT_OWED_BOOKING_STATUSES,
+} from "@/lib/booking-status";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -71,7 +75,7 @@ export default async function DashboardPage() {
     prisma.booking.findMany({
       where: {
         memberId,
-        status: { in: ["CONFIRMED", "PAID", "PENDING"] },
+        status: { in: [...ACTIVE_BOOKING_STATUSES] },
         checkIn: { gte: today },
       },
       orderBy: { checkIn: "asc" },
@@ -118,9 +122,9 @@ export default async function DashboardPage() {
     prisma.booking.findMany({
       where: {
         memberId,
-        status: { in: ["CONFIRMED", "PAID", "PENDING", "COMPLETED"] },
+        status: { in: [...ACTIVE_BOOKING_STATUSES, "COMPLETED"] },
         OR: [
-          { status: "CONFIRMED" },
+          { status: { in: [...PAYMENT_OWED_BOOKING_STATUSES] } },
           { payment: { is: { additionalAmountCents: { gt: 0 } } } },
         ],
       },

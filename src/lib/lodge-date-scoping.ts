@@ -1,9 +1,8 @@
 import { prisma } from "@/lib/prisma";
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 
 export const LODGE_VISIBLE_BOOKING_STATUSES = [
-  "CONFIRMED",
-  "PAID",
-  "COMPLETED",
+  ...OPERATIONAL_STAY_BOOKING_STATUSES,
 ] as const;
 
 export async function findLodgeGuestForDate(bookingGuestId: string, date: Date) {

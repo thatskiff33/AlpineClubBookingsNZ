@@ -23,6 +23,10 @@ import {
 import { eachDayOfInterval, addDays } from "date-fns";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
+import {
+  ACTIVE_BOOKING_STATUSES,
+  OPERATIONAL_STAY_BOOKING_STATUSES,
+} from "@/lib/booking-status";
 
 async function getStats() {
   const now = new Date();
@@ -49,7 +53,7 @@ async function getStats() {
     prisma.member.count({ where: { active: false } }),
     prisma.booking.count(),
     prisma.booking.count({
-      where: { status: { in: ["CONFIRMED", "PAID", "PENDING"] } },
+      where: { status: { in: [...ACTIVE_BOOKING_STATUSES] } },
     }),
     prisma.payment.aggregate({
       _sum: { amountCents: true },
@@ -60,7 +64,7 @@ async function getStats() {
     }),
     prisma.booking.count({
       where: {
-        status: { in: ["CONFIRMED", "PAID", "PENDING"] },
+        status: { in: [...ACTIVE_BOOKING_STATUSES] },
         checkIn: { gte: today, lte: sevenDaysFromNow },
       },
     }),
@@ -97,7 +101,7 @@ async function getStats() {
     }),
     prisma.booking.findMany({
       where: {
-        status: { in: ["CONFIRMED", "PAID"] },
+        status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
         checkIn: { lte: lookAheadEnd },
         checkOut: { gt: today },
       },
@@ -227,7 +231,7 @@ export default async function AdminDashboardPage() {
           </Card>
         </Link>
 
-        <Link href="/admin/bookings?status=CONFIRMED,PAID" className="group">
+        <Link href="/admin/bookings?status=PAYMENT_PENDING,CONFIRMED,PAID,PENDING" className="group">
           <Card className="hover:shadow-md transition-shadow cursor-pointer">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">
@@ -238,7 +242,7 @@ export default async function AdminDashboardPage() {
             <CardContent>
               <div className="text-3xl font-bold">{stats.activeBookings}</div>
               <p className="text-xs text-muted-foreground mt-1">
-                Payment Due + Paid + Pending
+                Payment pending + paid + holds
               </p>
             </CardContent>
           </Card>

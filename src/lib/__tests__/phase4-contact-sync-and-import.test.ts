@@ -16,6 +16,8 @@ function encryptForTest(plaintext: string) {
 
 const mocks = vi.hoisted(() => {
   const accountingApi = {
+    getContactGroup: vi.fn(),
+    getContactGroups: vi.fn(),
     getContacts: vi.fn(),
     getInvoices: vi.fn(),
     updateContact: vi.fn(),
@@ -40,6 +42,7 @@ const mocks = vi.hoisted(() => {
         findMany: vi.fn(),
       },
       xeroContactGroupCache: {
+        deleteMany: vi.fn(),
         findMany: vi.fn(),
         upsert: vi.fn(),
         updateMany: vi.fn(),
@@ -153,6 +156,7 @@ vi.mock("xero-node", () => ({
 import {
   findPotentialXeroContactsForMember,
   importMembersFromXeroGroups,
+  refreshXeroContactGroupCache,
   syncContactsFromXero,
 } from "@/lib/xero";
 
@@ -171,6 +175,7 @@ describe("Phase 4 contact sync and cached import", () => {
     mocks.prisma.xeroSyncCursor.upsert.mockResolvedValue({});
     mocks.prisma.xeroContactCache.upsert.mockResolvedValue({});
     mocks.prisma.xeroContactCache.findMany.mockResolvedValue([]);
+    mocks.prisma.xeroContactGroupCache.deleteMany.mockResolvedValue({ count: 0 });
     mocks.prisma.xeroContactGroupCache.findMany.mockResolvedValue([]);
     mocks.prisma.xeroContactGroupCache.upsert.mockResolvedValue({});
     mocks.prisma.xeroContactGroupCache.updateMany.mockResolvedValue({ count: 1 });
@@ -197,8 +202,98 @@ describe("Phase 4 contact sync and cached import", () => {
     mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_1" });
     mocks.completeXeroSyncOperation.mockResolvedValue(undefined);
     mocks.failXeroSyncOperation.mockResolvedValue(undefined);
+    mocks.accountingApi.getContactGroup.mockReset();
+    mocks.accountingApi.getContactGroups.mockReset();
+    mocks.accountingApi.getContacts.mockReset();
+    mocks.accountingApi.getInvoices.mockReset();
     mocks.accountingApi.updateContact.mockResolvedValue({
       body: { contacts: [{ contactID: "contact_1" }] },
+    });
+  });
+
+  it("repairs missing contact snapshots when refreshing Xero contact groups", async () => {
+    mocks.accountingApi.getContactGroups.mockResolvedValue({
+      body: {
+        contactGroups: [
+          {
+            contactGroupID: "group_1",
+            name: "Adults",
+            status: "ACTIVE",
+          },
+        ],
+      },
+    });
+    mocks.accountingApi.getContactGroup.mockResolvedValue({
+      body: {
+        contactGroups: [
+          {
+            contacts: [
+              { contactID: "contact_missing", name: "Missing Person" },
+              { contactID: "contact_cached", name: "Cached Person" },
+            ],
+          },
+        ],
+      },
+    });
+    mocks.prisma.xeroContactCache.findMany.mockResolvedValue([
+      { contactId: "contact_cached" },
+    ]);
+    mocks.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact_missing",
+            name: "Missing Person",
+            firstName: "Missing",
+            lastName: "Person",
+            emailAddress: "missing@example.com",
+            contactStatus: "ACTIVE",
+          },
+        ],
+      },
+    });
+
+    const result = await refreshXeroContactGroupCache({
+      repairMissingContactCache: true,
+    });
+
+    expect(result).toEqual([
+      { id: "group_1", name: "Adults", contactCount: 2 },
+    ]);
+    expect(mocks.accountingApi.getContacts).toHaveBeenCalledWith(
+      "tenant_1",
+      undefined,
+      undefined,
+      undefined,
+      ["contact_missing"]
+    );
+    expect(mocks.prisma.xeroContactCache.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { contactId: "contact_missing" },
+        create: expect.objectContaining({
+          contactId: "contact_missing",
+          emailAddress: "missing@example.com",
+        }),
+        update: expect.objectContaining({
+          contactId: "contact_missing",
+          emailAddress: "missing@example.com",
+        }),
+      })
+    );
+    expect(mocks.prisma.xeroContactGroupMembershipCache.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          contactGroupId: "group_1",
+          contactId: "contact_missing",
+          contactName: "Missing Person",
+        }),
+        expect.objectContaining({
+          contactGroupId: "group_1",
+          contactId: "contact_cached",
+          contactName: "Cached Person",
+        }),
+      ]),
+      skipDuplicates: true,
     });
   });
 

@@ -120,11 +120,11 @@ export async function POST(
       // Continue — email failure should not block deletion
     }
 
-    // 2. Cancel all future bookings for the member (PENDING or CONFIRMED)
+    // 2. Cancel all future unpaid/hold bookings for the member.
     const futureBookings = await prisma.booking.findMany({
       where: {
         memberId: member.id,
-        status: { in: ["PENDING", "CONFIRMED"] },
+        status: { in: ["PENDING", "PAYMENT_PENDING", "CONFIRMED"] },
         checkIn: { gte: new Date() },
       },
       select: { id: true },

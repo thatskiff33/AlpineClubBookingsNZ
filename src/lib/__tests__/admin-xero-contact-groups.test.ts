@@ -97,6 +97,29 @@ describe("loadAdminXeroContactGroups", () => {
     );
   });
 
+  it("can request missing contact cache repair during a live refresh", async () => {
+    const fetchImpl = vi.fn<ContactGroupsFetch>().mockResolvedValue(
+      mockResponse({
+        ok: true,
+        payload: {
+          groups: [{ id: "group_3", name: "Children", contactCount: 4 }],
+          refreshed: true,
+        },
+      })
+    );
+
+    await loadAdminXeroContactGroups({
+      refreshFromXero: true,
+      repairMissingContactCache: true,
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "/api/admin/xero/contact-groups?refresh=1&repairMissingContactCache=1"
+    );
+  });
+
   it("surfaces route error messages", async () => {
     const fetchImpl = vi.fn<ContactGroupsFetch>().mockResolvedValue(
       mockResponse({

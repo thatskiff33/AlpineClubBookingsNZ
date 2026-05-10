@@ -7,10 +7,11 @@ import {
   formatDateOnly,
   getTodayDateOnly,
 } from "@/lib/date-only";
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 
 /**
  * GET /api/admin/hut-leaders/unassigned-dates
- * Returns dates in the next 14 days that have PAID/CONFIRMED bookings but no HutLeaderAssignment.
+ * Returns dates in the next 14 days that have paid/operational bookings but no HutLeaderAssignment.
  */
 export async function GET() {
   const session = await auth();
@@ -37,7 +38,7 @@ export async function GET() {
   // Get all bookings in the next 14 days
   const bookings = await prisma.booking.findMany({
     where: {
-      status: { in: ["CONFIRMED", "PAID"] },
+      status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: endDate },
       checkOut: { gt: today },
     },

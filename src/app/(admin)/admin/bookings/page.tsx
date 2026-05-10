@@ -51,7 +51,7 @@ export default async function AdminBookingsPage({
     where.checkIn = { gte: today, lte: futureDate };
     // When filtering upcoming, default to active statuses if no status filter set
     if (!statusFilter) {
-      where.status = { in: ["CONFIRMED", "PAID", "PENDING"] };
+      where.status = { in: ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING"] };
     }
   }
 

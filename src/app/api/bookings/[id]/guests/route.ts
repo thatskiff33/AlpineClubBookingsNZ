@@ -114,9 +114,9 @@ export async function POST(
         throw new ApiError("Forbidden", 403);
       }
 
-      if (!["PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
+      if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
         throw new ApiError(
-          "Only PENDING, CONFIRMED, or PAID bookings can be modified",
+          "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
           400
         );
       }
@@ -350,10 +350,10 @@ export async function POST(
       // Calculate additional amount for confirmed+paid bookings
       let additionalAmountCents = 0;
       const hasSucceededPayment =
-        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
       const hasIssuedXeroInvoice =
-        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
         !!booking.payment?.xeroInvoiceId;
 
       if ((hasSucceededPayment || hasIssuedXeroInvoice) && priceDiffCents > 0) {

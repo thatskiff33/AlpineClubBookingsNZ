@@ -9,6 +9,10 @@ import { eachDayOfInterval, format } from "date-fns";
 import logger from "@/lib/logger";
 import { buildRevenueSeries } from "@/lib/admin-reports";
 import { getSeasonYear } from "@/lib/utils";
+import {
+  OPERATIONAL_STAY_BOOKING_STATUSES,
+  PAYMENT_OWED_BOOKING_STATUSES,
+} from "@/lib/booking-status";
 
 const reportQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -77,7 +81,7 @@ export async function GET(request: NextRequest) {
         where: {
           checkIn: { lte: toDate },
           checkOut: { gte: fromDate },
-          status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.COMPLETED] },
+          status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
         },
         include: { guests: true },
       }),
@@ -160,13 +164,16 @@ export async function GET(request: NextRequest) {
         bookingsByWeek[weekKey] = { total: 0, confirmed: 0, cancelled: 0, bumped: 0, pending: 0 };
       }
       bookingsByWeek[weekKey].total += 1;
-      if (b.status === BookingStatus.CONFIRMED || b.status === BookingStatus.PAID || b.status === BookingStatus.COMPLETED) {
+      if ((OPERATIONAL_STAY_BOOKING_STATUSES as readonly string[]).includes(b.status)) {
         bookingsByWeek[weekKey].confirmed += 1;
       } else if (b.status === BookingStatus.CANCELLED) {
         bookingsByWeek[weekKey].cancelled += 1;
       } else if (b.status === BookingStatus.BUMPED) {
         bookingsByWeek[weekKey].bumped += 1;
-      } else if (b.status === BookingStatus.PENDING) {
+      } else if (
+        b.status === BookingStatus.PENDING ||
+        (PAYMENT_OWED_BOOKING_STATUSES as readonly string[]).includes(b.status)
+      ) {
         bookingsByWeek[weekKey].pending += 1;
       }
     }
@@ -205,7 +212,7 @@ export async function GET(request: NextRequest) {
 
     // 6. Status breakdown
     const statusBreakdown = {
-      confirmed: bookings.filter((b) => b.status === BookingStatus.CONFIRMED).length,
+      confirmed: bookings.filter((b) => b.status === BookingStatus.PAYMENT_PENDING || b.status === BookingStatus.CONFIRMED).length,
       paid: bookings.filter((b) => b.status === BookingStatus.PAID).length,
       completed: bookings.filter((b) => b.status === BookingStatus.COMPLETED).length,
       pending: bookings.filter((b) => b.status === BookingStatus.PENDING).length,

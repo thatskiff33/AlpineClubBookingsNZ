@@ -285,7 +285,7 @@ interface MissingInvoiceBooking {
   memberId: string
   memberName: string
   memberEmail: string
-  status: "CONFIRMED" | "PAID"
+  status: "PAID"
   checkIn: string
   checkOut: string
   createdAt: string
@@ -693,6 +693,7 @@ export default function XeroPage() {
   const [loadingGroups, setLoadingGroups] = useState(false)
   const [refreshingGroups, setRefreshingGroups] = useState(false)
   const [sendInvites, setSendInvites] = useState(false)
+  const [repairMissingContactCache, setRepairMissingContactCache] = useState(false)
 
   // Duplicate detection state
   const [duplicates, setDuplicates] = useState<DuplicateResult | null>(null)
@@ -919,6 +920,7 @@ export default function XeroPage() {
     async (options?: {
       refreshFromXero?: boolean
       fallbackToRefreshIfEmpty?: boolean
+      repairMissingContactCache?: boolean
     }) => {
       if (options?.refreshFromXero) {
         setRefreshingGroups(true)
@@ -931,6 +933,7 @@ export default function XeroPage() {
         const result = await loadAdminXeroContactGroups({
           refreshFromXero: options?.refreshFromXero,
           fallbackToRefreshIfEmpty: options?.fallbackToRefreshIfEmpty,
+          repairMissingContactCache: options?.repairMissingContactCache,
         })
 
         setContactGroups(result.groups)
@@ -1454,7 +1457,10 @@ export default function XeroPage() {
   }
 
   const handleFetchGroups = async () => {
-    await loadContactGroups({ fallbackToRefreshIfEmpty: true })
+    await loadContactGroups({
+      fallbackToRefreshIfEmpty: true,
+      repairMissingContactCache: true,
+    })
   }
 
   const handleImportMembers = async () => {
@@ -1487,6 +1493,7 @@ export default function XeroPage() {
         body: JSON.stringify({
           groupMappings: selectedMappings,
           sendInvites,
+          repairMissingContactCache,
         }),
       })
       if (!res.ok) {
@@ -3551,7 +3558,12 @@ export default function XeroPage() {
                   <div className="flex justify-end">
                     <Button
                       variant="outline"
-                      onClick={() => loadContactGroups({ refreshFromXero: true })}
+                      onClick={() =>
+                        loadContactGroups({
+                          refreshFromXero: true,
+                          repairMissingContactCache: true,
+                        })
+                      }
                       disabled={refreshingGroups}
                     >
                       {refreshingGroups
@@ -3603,6 +3615,19 @@ export default function XeroPage() {
                     />
                     <Label htmlFor="sendInvites" className="text-sm">
                       Send invite emails to new members (password reset link, valid 7 days)
+                    </Label>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="repairMissingContactCache"
+                      checked={repairMissingContactCache}
+                      onChange={(e) => setRepairMissingContactCache(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <Label htmlFor="repairMissingContactCache" className="text-sm">
+                      Repair missing contact snapshots during import
                     </Label>
                   </div>
 

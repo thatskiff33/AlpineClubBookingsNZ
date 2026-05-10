@@ -108,7 +108,7 @@ export async function POST(
       );
     }
 
-    await markBookingPaymentSucceeded({
+    const reconciliation = await markBookingPaymentSucceeded({
       bookingId,
       paymentIntentId: pi.id,
       amountCents: pi.amount,
@@ -117,6 +117,21 @@ export async function POST(
           ? pi.payment_method
           : pi.payment_method?.id ?? null,
     });
+
+    if (
+      reconciliation.outcome === "cancelled_refunded" ||
+      reconciliation.outcome === "cancelled_refund_failed"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Payment succeeded, but lodge capacity is no longer available for this booking.",
+          status: "CANCELLED",
+          refunded: reconciliation.outcome === "cancelled_refunded",
+        },
+        { status: 409 }
+      );
+    }
 
     logAudit({
       action: "booking.payment.confirmed",

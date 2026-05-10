@@ -18,6 +18,7 @@ interface CalendarBooking {
 const STATUS_COLORS: Record<string, string> = {
   DRAFT: "bg-gray-300",
   PENDING: "bg-yellow-400",
+  PAYMENT_PENDING: "bg-amber-500",
   CONFIRMED: "bg-green-500",
   PAID: "bg-blue-500",
   COMPLETED: "bg-purple-500",

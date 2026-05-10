@@ -1266,7 +1266,7 @@ function classifyBookingContext(
     }
   }
 
-  if (booking.status === "CONFIRMED" || booking.status === "PAID") {
+  if (booking.status === "PAID") {
     if (payment && !primaryInvoice) {
       const blockingOperation = getBlockingOperation(
         paymentOperations,

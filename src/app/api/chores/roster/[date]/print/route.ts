@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { requireActiveSessionUser } from "@/lib/session-guards"
 import { prisma } from "@/lib/prisma"
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status"
 
 /**
  * GET /api/chores/roster/[date]/print
@@ -37,7 +38,7 @@ export async function GET(
 
   const bookings = await prisma.booking.findMany({
     where: {
-      status: { in: ["CONFIRMED", "COMPLETED"] },
+      status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: date },
       checkOut: { gt: date },
     },

@@ -74,9 +74,9 @@ export async function DELETE(
         throw new ApiError("Forbidden", 403);
       }
 
-      if (!["PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
+      if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
         throw new ApiError(
-          "Only PENDING, CONFIRMED, or PAID bookings can be modified",
+          "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
           400
         );
       }
@@ -228,10 +228,10 @@ export async function DELETE(
       // Handle refund for price decrease (Stripe call deferred to after tx)
       let refundAmountCents = 0;
       const hasSucceededPayment =
-        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
       const hasIssuedXeroInvoice =
-        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
         !!booking.payment?.xeroInvoiceId;
       const xeroRefundAmountCents =
         hasIssuedXeroInvoice && priceDiffCents < 0 ? Math.abs(priceDiffCents) : 0;

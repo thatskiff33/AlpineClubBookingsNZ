@@ -217,10 +217,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Booking not found" }, { status: 404 });
     }
 
-    if (booking.status !== "CONFIRMED" && booking.status !== "PAID") {
+    if (booking.status !== "PAID") {
       return NextResponse.json(
         {
-          error: "Only CONFIRMED or PAID bookings can be force-synced to Xero invoices.",
+          error: "Only paid bookings can be force-synced to Xero invoices.",
         },
         { status: 409 }
       );

@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
-import { BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
+import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 
 type PrismaClient = typeof prisma;
 type TransactionClient = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
@@ -16,7 +16,7 @@ export interface NightAvailability {
 /**
  * Get the number of occupied beds for each night in a date range.
  * A booking occupies beds from checkIn to checkOut-1 (nights).
- * Only counts CONFIRMED and PENDING bookings.
+ * Only counts bookings that intentionally reserve capacity.
  */
 export async function getAvailability(
   checkIn: Date,
@@ -31,7 +31,7 @@ export async function getAvailability(
     where: {
       checkIn: { lt: checkOut },
       checkOut: { gt: checkIn },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
     },
     include: {
       guests: true,
@@ -79,7 +79,7 @@ export async function checkCapacity(
     where: {
       checkIn: { lt: checkOut },
       checkOut: { gt: checkIn },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
       ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
     },
     include: {
@@ -129,7 +129,7 @@ export async function getMonthAvailability(
     where: {
       checkIn: { lt: endDate },
       checkOut: { gt: startDate },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
     },
     include: {
       guests: true,

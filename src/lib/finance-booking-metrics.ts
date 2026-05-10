@@ -1,24 +1,26 @@
 import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
 import { LODGE_CAPACITY } from "@/lib/capacity";
 import { prisma } from "@/lib/prisma";
+import {
+  OPERATIONAL_STAY_BOOKING_STATUSES,
+  PAYMENT_OWED_BOOKING_STATUSES,
+} from "@/lib/booking-status";
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const MILLISECONDS_PER_DAY = 86_400_000;
 export const MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS = 366;
 
 export const FINANCE_REALIZED_BOOKING_STATUSES = [
-  BookingStatus.CONFIRMED,
-  BookingStatus.PAID,
-  BookingStatus.COMPLETED,
+  ...OPERATIONAL_STAY_BOOKING_STATUSES,
 ] as const;
 
 export const FINANCE_FORWARD_COMMITTED_BOOKING_STATUSES = [
-  BookingStatus.CONFIRMED,
   BookingStatus.PAID,
 ] as const;
 
 export const FINANCE_FORWARD_AT_RISK_BOOKING_STATUSES = [
   BookingStatus.PENDING,
+  ...PAYMENT_OWED_BOOKING_STATUSES,
 ] as const;
 
 const FINANCE_CAPTURED_PAYMENT_STATUSES = new Set<PaymentStatus>([

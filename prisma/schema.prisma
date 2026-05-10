@@ -80,6 +80,7 @@ enum SeasonType {
 enum BookingStatus {
   DRAFT
   PENDING
+  PAYMENT_PENDING
   CONFIRMED
   PAID
   BUMPED

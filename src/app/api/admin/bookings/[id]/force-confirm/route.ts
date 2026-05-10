@@ -68,20 +68,41 @@ export async function POST(
         };
       }
 
+      const nextStatus =
+        booking.finalPriceCents === 0
+          ? BookingStatus.PAID
+          : BookingStatus.PAYMENT_PENDING;
+
       await tx.booking.update({
         where: { id: bookingId },
         data: {
-          status: BookingStatus.CONFIRMED,
+          status: nextStatus,
           waitlistPosition: null,
           waitlistOfferedAt: null,
           waitlistOfferExpiresAt: null,
         },
       });
 
+      if (nextStatus === BookingStatus.PAID) {
+        await tx.payment.upsert({
+          where: { bookingId },
+          create: {
+            bookingId,
+            amountCents: 0,
+            status: "SUCCEEDED",
+          },
+          update: {
+            amountCents: 0,
+            status: "SUCCEEDED",
+          },
+        });
+      }
+
       return {
         success: true,
         booking,
         overbooked: !available,
+        status: nextStatus,
       };
     });
 
@@ -92,7 +113,7 @@ export async function POST(
       );
     }
 
-    const { booking, overbooked } = result;
+    const { booking, overbooked, status } = result;
 
     logAudit({
       action: "waitlist.force_confirmed",
@@ -103,20 +124,21 @@ export async function POST(
         : `Admin force-confirmed waitlisted booking`,
     });
 
-    // Send confirmation email to member
-    sendBookingConfirmedEmail(
-      booking.member.email,
-      booking.member.firstName,
-      booking.checkIn,
-      booking.checkOut,
-      booking.guests.length,
-      booking.finalPriceCents,
-    ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation after force-confirm"));
+    if (status === BookingStatus.PAID) {
+      sendBookingConfirmedEmail(
+        booking.member.email,
+        booking.member.firstName,
+        booking.checkIn,
+        booking.checkOut,
+        booking.guests.length,
+        booking.finalPriceCents,
+      ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation after force-confirm"));
+    }
 
     return NextResponse.json({
       success: true,
       overbooked,
-      status: "CONFIRMED",
+      status,
     });
   } catch (err) {
     logger.error({ err, bookingId }, "Failed to force-confirm waitlisted booking");

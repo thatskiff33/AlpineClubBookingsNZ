@@ -11,6 +11,7 @@ import { getEffectiveEmail } from "@/lib/member-utils"
 import { addDaysDateOnly, formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only"
 import { z } from "zod"
 import logger from "@/lib/logger"
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status"
 
 const rosterActionSchema = z.discriminatedUnion("action", [
   z.object({
@@ -40,7 +41,7 @@ const rosterActionSchema = z.discriminatedUnion("action", [
 async function getGuestsForDate(date: Date): Promise<GuestInput[]> {
   const bookings = await prisma.booking.findMany({
     where: {
-      status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
+      status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: date },
       checkOut: { gt: date },
     },
