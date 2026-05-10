@@ -18,6 +18,7 @@ describe("redact-sensitive-json", () => {
         request: {
           accessToken: "access-token",
           refresh_token: "refresh-token",
+          password: "hunter2",
         },
       })
     ).toEqual({
@@ -30,6 +31,7 @@ describe("redact-sensitive-json", () => {
       request: {
         accessToken: "[REDACTED]",
         refresh_token: "[REDACTED]",
+        password: "[REDACTED]",
       },
     });
   });
@@ -60,6 +62,38 @@ describe("redact-sensitive-json", () => {
     });
   });
 
+  it("redacts email and phone fields in structured payloads", () => {
+    expect(
+      redactSensitiveJson({
+        email: "a@b.com",
+        phone: "+64211234567",
+      })
+    ).toEqual({
+      email: "[REDACTED]",
+      phone: "[REDACTED]",
+    });
+  });
+
+  it("redacts email values on generic fields", () => {
+    expect(
+      redactSensitiveJson({
+        to: "a@b.com",
+      })
+    ).toEqual({
+      to: "[REDACTED]",
+    });
+  });
+
+  it("redacts Stripe payment method fields in structured payloads", () => {
+    expect(
+      redactSensitiveJson({
+        payment_method: "pm_1ABC",
+      })
+    ).toEqual({
+      payment_method: "[REDACTED]",
+    });
+  });
+
   it("redacts stripe token fields in JSON-shaped text", () => {
     expect(
       redactSensitiveText(
@@ -67,6 +101,16 @@ describe("redact-sensitive-json", () => {
       )
     ).toBe(
       '500: {"payment":{"stripeToken":"[REDACTED]","stripe_token":"[REDACTED]"}}'
+    );
+  });
+
+  it("redacts newly sensitive keys in JSON-shaped text", () => {
+    expect(
+      redactSensitiveText(
+        '500: {"email":"a@b.com","phone":"+64211234567","payment_method":"pm_1ABC","chargeId":"ch_1ABC"}'
+      )
+    ).toBe(
+      '500: {"email":"[REDACTED]","phone":"[REDACTED]","payment_method":"[REDACTED]","chargeId":"[REDACTED]"}'
     );
   });
 
