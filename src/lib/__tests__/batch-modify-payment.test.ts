@@ -16,6 +16,7 @@ const mockAssertLinkedBookingMembersCanBeBooked = vi.fn().mockResolvedValue(unde
 const mockGetBookingGuestValidationErrorResponse = vi.fn((error: { message: string }) => ({
   error: error.message,
 }));
+const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
@@ -105,6 +106,7 @@ vi.mock("@/lib/xero", () => ({
   createXeroCreditNoteForModification: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
@@ -451,5 +453,45 @@ describe("PUT /api/bookings/[id]/modify", () => {
       }
     );
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
+  });
+
+  it("queues a primary Xero invoice update for zero-net batch date changes", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        checkIn: "2026-08-24",
+        checkOut: "2026-08-26",
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.additionalAmountCents).toBe(0);
+    expect(data.refundAmountCents).toBe(0);
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroBookingInvoiceUpdateOperation).toHaveBeenCalledWith("bk1", {
+      createdByMemberId: "m1",
+    });
   });
 });

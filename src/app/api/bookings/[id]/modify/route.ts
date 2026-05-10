@@ -24,6 +24,7 @@ import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { cleanupChoreAssignmentsForDateChange } from "@/lib/chore-cleanup";
 import {
+  enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -733,6 +734,12 @@ export async function PUT(
     });
 
     // Xero integration
+    const kickQueuedXeroOperation = async (queued: { queueOperationId: string | null }) => {
+      if (queued.queueOperationId) {
+        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+      }
+    };
+
     if (result.xeroAdditionalAmountCents > 0) {
       void enqueueXeroSupplementaryInvoiceOperation(
         {
@@ -745,11 +752,7 @@ export async function PUT(
           createdByMemberId: session.user.id,
         }
       )
-        .then(async (queued) => {
-          if (queued.queueOperationId) {
-            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-          }
-        })
+        .then(kickQueuedXeroOperation)
         .catch((err) =>
           logger.error({ err, bookingId }, "Failed to queue Xero supplementary invoice for batch modification")
         );
@@ -764,13 +767,19 @@ export async function PUT(
           createdByMemberId: session.user.id,
         }
       )
-        .then(async (queued) => {
-          if (queued.queueOperationId) {
-            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-          }
-        })
+        .then(kickQueuedXeroOperation)
         .catch((err) =>
           logger.error({ err, bookingId }, "Failed to queue Xero credit note for batch modification")
+        );
+    }
+
+    if (result.hasIssuedXeroInvoice && result.datesChanged) {
+      void enqueueXeroBookingInvoiceUpdateOperation(bookingId, {
+        createdByMemberId: session.user.id,
+      })
+        .then(kickQueuedXeroOperation)
+        .catch((err) =>
+          logger.error({ err, bookingId }, "Failed to queue Xero primary invoice update for batch date modification")
         );
     }
 

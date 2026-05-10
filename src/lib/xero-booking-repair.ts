@@ -11,6 +11,7 @@ import {
 import {
   enqueueXeroAccountCreditNoteOperation,
   enqueueXeroBookingInvoiceOperation,
+  enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroCreditNoteAllocationOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
@@ -40,6 +41,7 @@ const MAX_APPLY_PASSES = 3;
 
 export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   "MISSING_PRIMARY_INVOICE",
+  "STALE_PRIMARY_INVOICE_DETAILS",
   "CANCELLED_BOOKING_OPEN_INVOICE",
   "MISSING_SUPPLEMENTARY_INVOICE",
   "MISSING_MODIFICATION_CREDIT_NOTE",
@@ -57,6 +59,7 @@ export type XeroBookingRepairFindingCode =
 
 export const XERO_BOOKING_REPAIR_ACTION_TYPES = [
   "QUEUE_PRIMARY_INVOICE",
+  "QUEUE_PRIMARY_INVOICE_UPDATE",
   "QUEUE_SUPPLEMENTARY_INVOICE",
   "QUEUE_MODIFICATION_CREDIT_NOTE",
   "QUEUE_ACCOUNT_CREDIT_NOTE",
@@ -231,6 +234,8 @@ const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
       id: true,
       bookingId: true,
       modificationType: true,
+      previousData: true,
+      newData: true,
       priceDiffCents: true,
       changeFeeCents: true,
       createdAt: true,
@@ -475,6 +480,7 @@ type XeroOperationRecord = Prisma.XeroSyncOperationGetPayload<{
 type RepairDependencies = {
   prisma: typeof prisma;
   enqueueXeroBookingInvoiceOperation: typeof enqueueXeroBookingInvoiceOperation;
+  enqueueXeroBookingInvoiceUpdateOperation: typeof enqueueXeroBookingInvoiceUpdateOperation;
   enqueueXeroSupplementaryInvoiceOperation: typeof enqueueXeroSupplementaryInvoiceOperation;
   enqueueXeroModificationCreditNoteOperation: typeof enqueueXeroModificationCreditNoteOperation;
   enqueueXeroAccountCreditNoteOperation: typeof enqueueXeroAccountCreditNoteOperation;
@@ -494,6 +500,7 @@ type RepairDependencies = {
 const defaultDependencies: RepairDependencies = {
   prisma,
   enqueueXeroBookingInvoiceOperation,
+  enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroAccountCreditNoteOperation,
@@ -561,6 +568,18 @@ function toIsoDate(value: Date) {
 
 function toDateOnly(value: Date) {
   return value.toISOString().slice(0, 10);
+}
+
+function readJsonRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function readJsonString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 function startOfDay(value: Date) {
@@ -921,6 +940,60 @@ function getModificationNetAmountCents(modification: BookingModificationRecord) 
   return modification.priceDiffCents + modification.changeFeeCents;
 }
 
+function modificationChangedBookingDates(modification: BookingModificationRecord) {
+  if (modification.modificationType === "DATE_CHANGE") {
+    return true;
+  }
+
+  const previousData = readJsonRecord(modification.previousData);
+  const newData = readJsonRecord(modification.newData);
+  if (!previousData || !newData) {
+    return false;
+  }
+
+  const previousCheckIn = readJsonString(previousData.checkIn);
+  const previousCheckOut = readJsonString(previousData.checkOut);
+  const newCheckIn = readJsonString(newData.checkIn);
+  const newCheckOut = readJsonString(newData.checkOut);
+
+  return (
+    Boolean(previousCheckIn && newCheckIn && previousCheckIn !== newCheckIn) ||
+    Boolean(previousCheckOut && newCheckOut && previousCheckOut !== newCheckOut)
+  );
+}
+
+function getLatestDateChangingModification(booking: BookingRepairRecord) {
+  return [...booking.modifications]
+    .filter(modificationChangedBookingDates)
+    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0] ?? null;
+}
+
+function hasSuccessfulPrimaryInvoiceUpdateAfter(
+  operations: XeroOperationRecord[],
+  changedAt: Date
+) {
+  return operations.some(
+    (operation) =>
+      operation.entityType === "INVOICE" &&
+      operation.operationType === "UPDATE" &&
+      ["SUCCEEDED", "PARTIAL"].includes(operation.status) &&
+      operation.createdAt >= changedAt
+  );
+}
+
+function hasSuccessfulPrimaryInvoiceCreateAfter(
+  operations: XeroOperationRecord[],
+  changedAt: Date
+) {
+  return operations.some(
+    (operation) =>
+      operation.entityType === "INVOICE" &&
+      operation.operationType === "CREATE" &&
+      ["SUCCEEDED", "PARTIAL"].includes(operation.status) &&
+      operation.createdAt >= changedAt
+  );
+}
+
 function getKnownModificationRefundTotalCents(booking: BookingRepairRecord) {
   return booking.modifications.reduce((sum, modification) => {
     const netAmount = getModificationNetAmountCents(modification);
@@ -1255,6 +1328,95 @@ function classifyBookingContext(
           actionKeys: [action.key],
         });
       }
+    }
+  }
+
+  const latestDateChangingModification = getLatestDateChangingModification(booking);
+  if (
+    payment &&
+    primaryInvoice &&
+    latestDateChangingModification &&
+    !hasSuccessfulPrimaryInvoiceCreateAfter(
+      paymentOperations,
+      latestDateChangingModification.createdAt
+    ) &&
+    !hasSuccessfulPrimaryInvoiceUpdateAfter(
+      paymentOperations,
+      latestDateChangingModification.createdAt
+    )
+  ) {
+    const updateOperationsAfterLatestDateChange = paymentOperations.filter(
+      (operation) =>
+        operation.entityType === "INVOICE" &&
+        operation.operationType === "UPDATE" &&
+        operation.createdAt >= latestDateChangingModification.createdAt
+    );
+    const blockingOperation = getBlockingOperation(
+      updateOperationsAfterLatestDateChange,
+      "INVOICE",
+      "UPDATE"
+    );
+
+    if (blockingOperation && blockingOperation.retryMeta.supported) {
+      const action = addAction(
+        actionMap,
+        buildRetryAction(booking.id, blockingOperation.operation, blockingOperation.retryMeta)
+      );
+      addFinding(findings, {
+        code: "BLOCKED_BY_XERO_OPERATION",
+        severity: "warning",
+        summary: "A failed or partial Xero primary invoice update is blocking current booking date narration.",
+        safeToAutoApply: true,
+        details: {
+          modificationId: latestDateChangingModification.id,
+          operationId: blockingOperation.operation.id,
+          operationStatus: blockingOperation.operation.status,
+        },
+        actionKeys: [action.key],
+      });
+    } else if (blockingOperation) {
+      const summary = isStuckOperation(blockingOperation.operation)
+        ? "A pending or running Xero primary invoice update looks stuck."
+        : "A Xero primary invoice update is already pending or running.";
+      addFinding(findings, {
+        code: "BLOCKED_BY_XERO_OPERATION",
+        severity: "warning",
+        summary,
+        safeToAutoApply: false,
+        details: {
+          modificationId: latestDateChangingModification.id,
+          operationId: blockingOperation.operation.id,
+          operationStatus: blockingOperation.operation.status,
+        },
+        actionKeys: [],
+      });
+    } else {
+      const action = addAction(actionMap, {
+        key: `queue:primary-invoice-update:${booking.id}:${latestDateChangingModification.id}`,
+        bookingId: booking.id,
+        type: "QUEUE_PRIMARY_INVOICE_UPDATE",
+        description: "Queue an update to refresh the primary Xero invoice date fields and line narration.",
+        safeToAutoApply: true,
+        payload: {
+          bookingId: booking.id,
+          bookingModificationId: latestDateChangingModification.id,
+          xeroInvoiceId: primaryInvoice.objectId,
+        },
+      });
+      addFinding(findings, {
+        code: "STALE_PRIMARY_INVOICE_DETAILS",
+        severity: "warning",
+        summary: "The booking dates changed after the primary Xero invoice was created, but no invoice update has succeeded.",
+        safeToAutoApply: true,
+        details: {
+          paymentId: payment.id,
+          modificationId: latestDateChangingModification.id,
+          xeroInvoiceId: primaryInvoice.objectId,
+          currentCheckIn: toDateOnly(booking.checkIn),
+          currentCheckOut: toDateOnly(booking.checkOut),
+        },
+        actionKeys: [action.key],
+      });
     }
   }
 
@@ -2214,6 +2376,14 @@ async function applyQueuedAction(
   switch (action.type) {
     case "QUEUE_PRIMARY_INVOICE": {
       const result = await deps.enqueueXeroBookingInvoiceOperation(
+        String(action.payload.bookingId)
+      );
+      action.status = result.queueOperationId ? "queued" : "skipped";
+      action.resultMessage = result.message;
+      return;
+    }
+    case "QUEUE_PRIMARY_INVOICE_UPDATE": {
+      const result = await deps.enqueueXeroBookingInvoiceUpdateOperation(
         String(action.payload.bookingId)
       );
       action.status = result.queueOperationId ? "queued" : "skipped";

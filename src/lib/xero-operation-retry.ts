@@ -460,6 +460,15 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
     };
   }
 
+  if (operation.entityType === "INVOICE" && operation.operationType === "UPDATE") {
+    return operation.localModel === "Payment" && operation.localId
+      ? { supported: true, reason: null }
+      : {
+          supported: false,
+          reason: "Invoice update retries require a payment-local record.",
+        };
+  }
+
   if (operation.entityType === "CREDIT_NOTE" && operation.operationType === "CREATE") {
     if (operation.localModel === "Payment" && operation.localId && parsePaymentCreditNoteRetryInput(operation)) {
       return { supported: true, reason: null };
@@ -695,6 +704,17 @@ export async function retryXeroSyncOperation(
         repairExistingLink: true,
       });
       return { message: "Retried Xero supplementary invoice creation." };
+    }
+  }
+
+  if (operation.entityType === "INVOICE" && operation.operationType === "UPDATE") {
+    if (operation.localModel === "Payment") {
+      const bookingId = await getPaymentBookingId(operation.localId!);
+      await xero.updateXeroBookingInvoiceForBooking(bookingId, {
+        createdByMemberId,
+        repairExistingLink: true,
+      });
+      return { message: "Retried Xero booking invoice update." };
     }
   }
 
