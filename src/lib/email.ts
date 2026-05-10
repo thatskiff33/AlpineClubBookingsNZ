@@ -108,6 +108,12 @@ function shouldPersistEmailHtml(templateName: string): boolean {
   return !NON_RETRYABLE_EMAIL_LOG_TEMPLATES.has(templateName);
 }
 
+function assertNoCrlf(value: string, field: string) {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(`Email header field ${field} contains CR/LF`);
+  }
+}
+
 export async function sendEmail({
   to,
   subject,
@@ -123,9 +129,15 @@ export async function sendEmail({
   templateName?: string;
   attachments?: EmailAttachment[];
 }) {
+  const from = formatEmailFromAddress(EMAIL_FROM);
   const persistHtmlBody = shouldPersistEmailHtml(templateName);
   const plainTextBody = text || htmlToPlainText(html);
   const normalizedRecipient = normalizeEmailAddress(to);
+
+  assertNoCrlf(from, "from");
+  assertNoCrlf(to, "to");
+  assertNoCrlf(normalizedRecipient, "to");
+  assertNoCrlf(subject, "subject");
 
   // Create EmailLog record (fire-and-forget logging won't break email delivery)
   let emailLogId: string | null = null;
@@ -206,7 +218,7 @@ export async function sendEmail({
 
   try {
     const result = await transporter.sendMail({
-      from: formatEmailFromAddress(EMAIL_FROM),
+      from,
       to,
       subject,
       html,
