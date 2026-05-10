@@ -130,7 +130,13 @@ export default function RefundRequestsPage() {
         creditRes.json(),
       ])
 
-      setRefundRequests(Array.isArray(refundData) ? refundData : [])
+      setRefundRequests(
+        Array.isArray(refundData)
+          ? refundData
+          : Array.isArray(refundData?.data)
+            ? refundData.data
+            : []
+      )
       setCreditApprovals(Array.isArray(creditData) ? creditData : [])
     } catch {
       setError("Failed to load review queue")

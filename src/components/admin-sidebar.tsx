@@ -154,8 +154,12 @@ function usePendingRefundAppeals(): number {
     fetch("/api/admin/refund-requests?status=PENDING")
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
-        if (!cancelled && Array.isArray(data)) {
-          setCount(data.length);
+        if (!cancelled) {
+          if (typeof data?.total === "number") {
+            setCount(data.total);
+          } else if (Array.isArray(data)) {
+            setCount(data.length);
+          }
         }
       })
       .catch(() => {});

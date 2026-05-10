@@ -7,6 +7,13 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import { z } from "zod";
+
+const querySchema = z.object({
+  status: z.enum(["PENDING", "APPROVED", "REJECTED", "ALL"]).optional().default("PENDING"),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
+});
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -22,15 +29,22 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const status = searchParams.get("status") || "PENDING";
-  const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-  const pageSize = 20;
+  const parsed = querySchema.safeParse(Object.fromEntries(searchParams));
+
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid query parameters", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+  const { status, page, pageSize } = parsed.data;
 
   try {
     const where =
       status === "ALL"
         ? {}
-        : { status: status as "PENDING" | "APPROVED" | "REJECTED" };
+        : { status };
 
     const [requests, total] = await Promise.all([
       prisma.deletionRequest.findMany({
@@ -54,17 +68,20 @@ export async function GET(request: NextRequest) {
       prisma.deletionRequest.count({ where }),
     ]);
 
+    const data = requests.map((r) => ({
+      id: r.id,
+      status: r.status,
+      reason: r.reason,
+      adminNote: r.adminNote,
+      reviewedBy: r.reviewedBy,
+      reviewedAt: r.reviewedAt,
+      createdAt: r.createdAt,
+      member: r.member,
+    }));
+
     return NextResponse.json({
-      requests: requests.map((r) => ({
-        id: r.id,
-        status: r.status,
-        reason: r.reason,
-        adminNote: r.adminNote,
-        reviewedBy: r.reviewedBy,
-        reviewedAt: r.reviewedAt,
-        createdAt: r.createdAt,
-        member: r.member,
-      })),
+      data,
+      requests: data,
       total,
       page,
       pageSize,
