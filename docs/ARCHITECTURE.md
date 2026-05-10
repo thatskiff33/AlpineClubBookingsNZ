@@ -291,9 +291,8 @@ Concurrency guardrail:
 - The legacy finance dashboard remains a fallback path until the rollout, freeze, and retirement runbooks in `docs/finance-dashboard/` are completed.
 
 ### 12. Token Storage
-- Password reset, email verification, email change, and guest chore bearer tokens are stored as SHA-256 hashes in `tokenHash` columns.
+- Password reset, email verification, email change, guest chore, and nomination bearer tokens are stored as SHA-256 hashes in `tokenHash` columns.
 - Incoming raw token values are hashed before lookup, so plaintext bearer tokens are not stored in the database after migration.
-- Membership nomination tokens currently remain in their own `NominationToken` workflow and are not part of the hashed action-token migration documented in `docs/HASHED_TOKEN_MIGRATION.md`.
 
 ---
 
@@ -381,6 +380,8 @@ Concurrency guardrail:
 - `FINANCE_XERO_CLIENT_ID`, `FINANCE_XERO_CLIENT_SECRET`, `FINANCE_XERO_REDIRECT_URI`, `FINANCE_XERO_ENCRYPTION_KEY`
 - `SMTP_HOST`, `SMTP_PORT`, `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY`, `SES_SNS_TOPIC_ARN`, `EMAIL_FROM`
 - `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_AUTH_TOKEN`
+
+`SES_SNS_TOPIC_ARN` is required for deployed SES feedback ingestion. The webhook rejects signed SNS messages when the configured topic allowlist is missing or does not match the message topic.
 
 **Stripe:** Live keys in production (since 2026-04-08). Use test mode for development.
 **Xero:** Connected to production org. Test against demo org for risky changes.

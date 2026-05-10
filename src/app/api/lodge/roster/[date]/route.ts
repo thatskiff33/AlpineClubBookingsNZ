@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
 import { assignmentExistsForDate } from "@/lib/lodge-date-scoping";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
-import { formatDateOnly, getTodayDateOnly, parseDateOnly } from "@/lib/date-only";
+import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
@@ -32,9 +32,8 @@ export async function GET(
 
   const authResult = await checkLodgeAuth(dateStr, {
     request: req,
-    allowPublicReadOnly: true,
   });
-  const { error, status, tier } = authResult;
+  const { error, status } = authResult;
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
@@ -46,10 +45,6 @@ export async function GET(
   const date = parseDateOnly(dateStr);
   if (isNaN(date.getTime())) {
     return NextResponse.json({ error: "Invalid date" }, { status: 400 });
-  }
-
-  if (tier === "none" && dateStr !== formatDateOnly(getTodayDateOnly())) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const assignments = await prisma.choreAssignment.findMany({

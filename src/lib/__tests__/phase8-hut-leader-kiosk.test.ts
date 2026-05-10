@@ -141,16 +141,15 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(data.bookings[0].guests[0].phone).toBe("+64 27 4224115");
   });
 
-  it("allows read-only public lodge access when requested", async () => {
+  it("rejects unauthenticated lodge read-only access", async () => {
     mockAuth.mockResolvedValue(null);
 
     const { checkLodgeAuth } = await import("@/lib/lodge-auth");
-    const result = await checkLodgeAuth("2026-04-13", {
-      allowPublicReadOnly: true,
-    });
+    const result = await checkLodgeAuth("2026-04-13");
 
-    expect(result.error).toBeNull();
+    expect(result.error).toBe("Unauthorised");
     expect(result.tier).toBe("none");
+    expect(result.status).toBe(401);
   });
 
   it("creates a signed hut leader PIN session cookie on successful PIN login", async () => {

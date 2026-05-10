@@ -6,7 +6,7 @@ import { ApplicationStatus, AgeTier, type MemberApplication } from "@prisma/clie
 import { z } from "zod";
 import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
 import { logAudit } from "@/lib/audit";
-import { hashActionToken } from "@/lib/action-tokens";
+import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import {
   sendAdminMembershipApplicationPendingEmail,
   sendMembershipApplicationApprovedEmail,
@@ -394,8 +394,8 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
     verifyNominator(nominator2Email),
   ]);
 
-  const token1 = buildResetToken();
-  const token2 = buildResetToken();
+  const token1 = issueActionToken();
+  const token2 = issueActionToken();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
   const application = await prisma.$transaction(async (tx) => {
@@ -421,13 +421,13 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
     await tx.nominationToken.createMany({
       data: [
         {
-          token: token1,
+          tokenHash: token1.tokenHash,
           applicationId: created.id,
           nominatorMemberId: nominator1.id,
           expiresAt,
         },
         {
-          token: token2,
+          tokenHash: token2.tokenHash,
           applicationId: created.id,
           nominatorMemberId: nominator2.id,
           expiresAt,
@@ -446,7 +446,7 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
       email: nominator1.email,
       nominatorName: nominator1.firstName,
       applicantName,
-      token: token1,
+      token: token1.token,
       familyMemberCount: familyMembers.length,
       expiresAt,
     }).catch((err) => {
@@ -457,7 +457,7 @@ export async function createMemberApplication(input: CreateMemberApplicationInpu
       email: nominator2.email,
       nominatorName: nominator2.firstName,
       applicantName,
-      token: token2,
+      token: token2.token,
       familyMemberCount: familyMembers.length,
       expiresAt,
     }).catch((err) => {
@@ -488,9 +488,10 @@ export async function confirmNomination(token: string, nominatorMemberId: string
   if (!normalizedToken) {
     throw new MembershipApplicationError("Nomination token is required", 422);
   }
+  const tokenHash = hashActionToken(normalizedToken);
 
   const current = await prisma.nominationToken.findUnique({
-    where: { token: normalizedToken },
+    where: { tokenHash },
     include: { application: true },
   });
 
@@ -524,7 +525,7 @@ export async function confirmNomination(token: string, nominatorMemberId: string
     await lockMembershipApplication(tx, current.applicationId);
 
     const latestToken = await tx.nominationToken.findUnique({
-      where: { token: normalizedToken },
+      where: { tokenHash },
       include: { application: true },
     });
 

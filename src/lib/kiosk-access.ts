@@ -3,6 +3,7 @@ import {
   addDaysDateOnly,
   formatDateOnly,
 } from "./date-only";
+import { LODGE_VISIBLE_BOOKING_STATUSES } from "./lodge-date-scoping";
 
 export type KioskTier = "admin" | "hut-leader" | "lodge" | "staying-guest" | "none";
 
@@ -40,11 +41,15 @@ export async function getKioskAccessTier(
 
     if (hutLeaderCount > 0) return "hut-leader";
 
-    // Check staying guest: PAID booking where (checkIn - 1 day) <= date <= checkOut
+    // Check staying guest: booking owner or linked member guest where
+    // (checkIn - 1 day) <= date <= checkOut.
     const stayingGuestCount = await prisma.booking.count({
       where: {
-        memberId: userId,
-        status: "PAID",
+        status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
+        OR: [
+          { memberId: userId },
+          { guests: { some: { memberId: userId } } },
+        ],
         // checkIn - 1 day <= date means checkIn <= date + 1 day
         checkIn: { lte: nextDay },
         // date <= checkOut (using the date itself as the day)
@@ -76,19 +81,42 @@ export async function canAccessKiosk(
  */
 export async function getKioskDateRange(
   userId: string,
-  userRole: string
+  userRole: string,
+  date?: Date
 ): Promise<{ minDate: string; maxDate: string } | null> {
   if (userRole === "ADMIN" || userRole === "LODGE") return null;
 
+  const nextDay = date ? addDaysDateOnly(date, 1) : null;
+
   // Gather all hut leader assignments
   const assignments = await prisma.hutLeaderAssignment.findMany({
-    where: { memberId: userId },
+    where: {
+      memberId: userId,
+      ...(date && nextDay
+        ? {
+            startDate: { lte: nextDay },
+            endDate: { gte: date },
+          }
+        : {}),
+    },
     select: { startDate: true, endDate: true },
   });
 
-  // Gather all PAID bookings
+  // Gather all visible bookings where the signed-in member is staying.
   const bookings = await prisma.booking.findMany({
-    where: { memberId: userId, status: "PAID" },
+    where: {
+      status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
+      OR: [
+        { memberId: userId },
+        { guests: { some: { memberId: userId } } },
+      ],
+      ...(date && nextDay
+        ? {
+            checkIn: { lte: nextDay },
+            checkOut: { gte: date },
+          }
+        : {}),
+    },
     select: { checkIn: true, checkOut: true },
   });
 
@@ -132,7 +160,7 @@ export async function getKioskAccessInfo(
   date: Date
 ): Promise<KioskAccess> {
   const tier = await getKioskAccessTier(userId, userRole, date);
-  const dateRange = await getKioskDateRange(userId, userRole);
+  const dateRange = await getKioskDateRange(userId, userRole, date);
 
   return {
     tier,

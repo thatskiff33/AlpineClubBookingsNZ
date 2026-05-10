@@ -248,6 +248,22 @@ describe("F9: GET /api/lodge/roster/[date] - completedAt/completedVia", () => {
     expect(data.assignments[0].completedAt).toBeNull();
     expect(data.assignments[0].completedVia).toBeNull();
   });
+
+  it("denies unauthenticated roster reads for today before returning chore assignments", async () => {
+    mockAuth.mockResolvedValue(null);
+    const { formatDateOnly, getTodayDateOnly } = await import("@/lib/date-only");
+    const today = formatDateOnly(getTodayDateOnly());
+
+    const { GET } = await import("@/app/api/lodge/roster/[date]/route");
+    const req = new Request(`http://localhost/api/lodge/roster/${today}`) as any;
+
+    const res = await GET(req, makeParams(today));
+    const data = await res.json();
+
+    expect(res.status).toBe(401);
+    expect(data.error).toBe("Unauthorised");
+    expect(mockPrisma.choreAssignment.findMany).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -561,6 +577,22 @@ describe("F9: GET /api/lodge/guests/[date] - arrivedAt/departedAt", () => {
     const data = await res.json();
 
     expect(data.bookings[0].guests[0].ageTier).toBe("YOUTH");
+  });
+
+  it("denies unauthenticated guest list reads for today before returning PII", async () => {
+    mockAuth.mockResolvedValue(null);
+    const { formatDateOnly, getTodayDateOnly } = await import("@/lib/date-only");
+    const today = formatDateOnly(getTodayDateOnly());
+
+    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
+    const req = new Request(`http://localhost/api/lodge/guests/${today}`) as any;
+
+    const res = await GET(req, makeParams(today));
+    const data = await res.json();
+
+    expect(res.status).toBe(401);
+    expect(data.error).toBe("Unauthorised");
+    expect(mockPrisma.booking.findMany).not.toHaveBeenCalled();
   });
 });
 

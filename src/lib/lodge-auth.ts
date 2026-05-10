@@ -5,15 +5,12 @@ import { getActiveLodgePinSessionForRequest } from "./lodge-pin-session";
 import { requireActiveSessionUser } from "./session-guards";
 
 interface CheckLodgeAuthOptions {
-  allowPublicReadOnly?: boolean;
   request?: Request;
 }
 
 /**
  * Shared auth check for lodge API endpoints.
  * Allows ADMIN, LODGE, MEMBER with kiosk access, or a valid hut leader PIN session.
- * When allowPublicReadOnly is true, unauthenticated requests can still read the
- * kiosk in tier "none" mode.
  */
 export async function checkLodgeAuth(
   dateStr?: string,
@@ -69,15 +66,6 @@ export async function checkLodgeAuth(
         pinSession,
       };
     }
-  }
-
-  if (options.allowPublicReadOnly) {
-    return {
-      session: null,
-      tier: "none" as KioskTier,
-      error: null,
-      status: null,
-    };
   }
 
   if (!session?.user) {
