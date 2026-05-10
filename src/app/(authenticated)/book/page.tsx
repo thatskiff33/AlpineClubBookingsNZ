@@ -18,7 +18,11 @@ import {
   type BookingErrorPaymentTarget,
 } from "@/lib/booking-error-payment-targets";
 import Link from "next/link";
-import { shouldShowInviteFamilyGroupMembersLink } from "@/lib/family-booking";
+import {
+  getFamilyMemberBookingActionLabel,
+  getFamilyMemberBookingBlockMessage,
+  shouldShowInviteFamilyGroupMembersLink,
+} from "@/lib/family-booking";
 
 interface FamilyMember {
   id: string;
@@ -26,6 +30,31 @@ interface FamilyMember {
   lastName: string;
   ageTier: AgeTier;
   relationship: "self" | "partner" | "dependent";
+  canLogin?: boolean;
+  canBeBooked?: boolean;
+  missingFields?: string[];
+  needsOwnLoginConfirmation?: boolean;
+  canCurrentUserConfirmDetails?: boolean;
+  pendingRequestStatus?: string | null;
+  action?:
+    | "complete_details"
+    | "own_login_required"
+    | "pending_admin_approval"
+    | "contact_admin"
+    | null;
+}
+
+interface GuestProfileRequiredMember {
+  memberId: string;
+  name: string;
+  canCurrentUserResolve: boolean;
+  needsOwnLoginConfirmation: boolean;
+  missingFields: string[];
+  action:
+    | "complete_details"
+    | "own_login_required"
+    | "pending_admin_approval"
+    | "contact_admin";
 }
 
 interface PriceQuote {
@@ -83,6 +112,7 @@ export default function BookPage() {
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
   const [availablePromoCodes, setAvailablePromoCodes] = useState<{ code: string; description: string | null; type: string; percentOff: number | null; valueCents: number | null; freeNights: number | null }[]>([]);
   const [prefillPromoCode, setPrefillPromoCode] = useState<string | undefined>();
+  const [guestProfileBlocks, setGuestProfileBlocks] = useState<GuestProfileRequiredMember[]>([]);
 
   // Redirect admins to the admin booking page — admins must book on behalf of members
   useEffect(() => {
@@ -140,6 +170,7 @@ export default function BookPage() {
   function addFamilyMemberAsGuest(fm: FamilyMember) {
     if (guests.some((g) => g.memberId === fm.id)) return;
     if (guests.length >= availableBeds) return;
+    if (fm.canBeBooked === false) return;
     setGuests([
       ...guests,
       {
@@ -152,10 +183,37 @@ export default function BookPage() {
     ]);
   }
 
+  function handleGuestProfileRequired(data: {
+    error?: string;
+    members?: GuestProfileRequiredMember[];
+  }) {
+    setError(
+      data.error ||
+        "Some member guests need their details completed or confirmed before booking."
+    );
+    setGuestProfileBlocks(data.members || []);
+    setErrorPaymentTargets([]);
+  }
+
+  function handleBookingApiError(data: Record<string, unknown>, fallback: string) {
+    if (data.code === "GUEST_PROFILE_REQUIRED") {
+      handleGuestProfileRequired(data as {
+        error?: string;
+        members?: GuestProfileRequiredMember[];
+      });
+      return;
+    }
+
+    setGuestProfileBlocks([]);
+    setError(typeof data.error === "string" ? data.error : fallback);
+    setErrorPaymentTargets(getBookingErrorPaymentTargets(data));
+  }
+
   async function handleDateSelect(ci: Date, co: Date) {
     setCheckIn(ci);
     setCheckOut(co);
     setError("");
+    setGuestProfileBlocks([]);
 
     // Fetch availability for selected range
     const res = await fetch(
@@ -182,6 +240,7 @@ export default function BookPage() {
   }
 
   async function handleGuestsDone() {
+    setGuestProfileBlocks([]);
     if (guests.length === 0) {
       setError("Add at least one guest");
       return;
@@ -230,7 +289,7 @@ export default function BookPage() {
         .catch(() => {});
     } else {
       const data = await res.json();
-      setError(data.error || "Failed to calculate price");
+      handleBookingApiError(data, "Failed to calculate price");
     }
     setPriceLoading(false);
   }
@@ -239,6 +298,7 @@ export default function BookPage() {
     setSubmitting(true);
     setError("");
     setErrorPaymentTargets([]);
+    setGuestProfileBlocks([]);
     setShowWaitlistPrompt(false);
 
     const res = await fetch("/api/bookings", {
@@ -265,8 +325,7 @@ export default function BookPage() {
         setWaitlistFullNights(data.fullNights || []);
         setError("");
       } else {
-        setError(data.error || "Failed to create booking");
-        setErrorPaymentTargets(getBookingErrorPaymentTargets(data));
+        handleBookingApiError(data, "Failed to create booking");
       }
       setSubmitting(false);
     }
@@ -276,6 +335,7 @@ export default function BookPage() {
     setJoiningWaitlist(true);
     setError("");
     setErrorPaymentTargets([]);
+    setGuestProfileBlocks([]);
 
     const res = await fetch("/api/bookings", {
       method: "POST",
@@ -296,8 +356,7 @@ export default function BookPage() {
       router.push(`/bookings/${data.id}`);
     } else {
       const data = await res.json();
-      setError(data.error || "Failed to join waitlist");
-      setErrorPaymentTargets(getBookingErrorPaymentTargets(data));
+      handleBookingApiError(data, "Failed to join waitlist");
       setJoiningWaitlist(false);
     }
   }
@@ -306,6 +365,7 @@ export default function BookPage() {
     setSavingDraft(true);
     setError("");
     setErrorPaymentTargets([]);
+    setGuestProfileBlocks([]);
 
     const res = await fetch("/api/bookings", {
       method: "POST",
@@ -327,8 +387,7 @@ export default function BookPage() {
       router.push(`/bookings/${data.id}`);
     } else {
       const data = await res.json();
-      setError(data.error || "Failed to save draft");
-      setErrorPaymentTargets(getBookingErrorPaymentTargets(data));
+      handleBookingApiError(data, "Failed to save draft");
       setSavingDraft(false);
     }
   }
@@ -339,6 +398,38 @@ export default function BookPage() {
 
   function formatCents(cents: number) {
     return `$${(cents / 100).toFixed(2)}`;
+  }
+
+  function getGuestProfileBlockMessage(block: GuestProfileRequiredMember) {
+    if (block.action === "own_login_required") {
+      return `${block.name} has their own login and needs to sign in and confirm their details before they can be booked as a member.`;
+    }
+
+    if (block.action === "pending_admin_approval") {
+      return "This family change is awaiting admin approval. You can add them as a non-member guest until approved.";
+    }
+
+    if (block.canCurrentUserResolve) {
+      return `Complete ${block.name}'s details before booking them as a member.`;
+    }
+
+    return `${block.name}'s member details need to be completed or confirmed before they can be booked as a member.`;
+  }
+
+  function getGuestProfileActionLabel(block: GuestProfileRequiredMember) {
+    if (block.action === "complete_details" && block.canCurrentUserResolve) {
+      return "Complete details";
+    }
+    if (block.action === "own_login_required") {
+      return "Ask them to sign in and confirm";
+    }
+    if (block.action === "pending_admin_approval") {
+      return "Pending admin approval";
+    }
+    if (block.action === "contact_admin") {
+      return "Contact admin";
+    }
+    return null;
   }
 
   const availableCreditCents = priceQuote?.availableCreditCents ?? 0;
@@ -399,6 +490,39 @@ export default function BookPage() {
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
           <p>{error}</p>
+          {guestProfileBlocks.length > 0 && (
+            <div className="mt-3 space-y-3">
+              {guestProfileBlocks.map((block) => {
+                const actionLabel = getGuestProfileActionLabel(block);
+                return (
+                  <div
+                    key={block.memberId}
+                    className="rounded-md border border-red-200 bg-white/70 p-3"
+                  >
+                    <p className="font-medium text-red-800">{block.name}</p>
+                    <p className="mt-1">{getGuestProfileBlockMessage(block)}</p>
+                    {block.missingFields.length > 0 && (
+                      <p className="mt-1 text-red-600">
+                        Missing: {block.missingFields.join(", ")}
+                      </p>
+                    )}
+                    {actionLabel && (
+                      block.action === "complete_details" && block.canCurrentUserResolve ? (
+                        <Link
+                          href="/profile#family-group"
+                          className="mt-2 inline-flex text-sm font-medium text-red-800 underline underline-offset-4"
+                        >
+                          {actionLabel}
+                        </Link>
+                      ) : (
+                        <p className="mt-2 font-medium text-red-800">{actionLabel}</p>
+                      )
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {errorPaymentTargets.length > 0 && (
             <div className="mt-3 space-y-2">
               {errorPaymentTargets.map((target) => (
@@ -521,24 +645,52 @@ export default function BookPage() {
             {familyMembers.length > 0 && (
               <div className="space-y-2">
                 <p className="text-sm font-medium text-muted-foreground">Quick add family members</p>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid gap-2">
                   {familyMembers.map((fm) => {
                     const alreadyAdded = guests.some((g) => g.memberId === fm.id);
+                    const blocked = fm.canBeBooked === false;
                     const label = fm.relationship === "self"
                       ? `${fm.firstName} ${fm.lastName} (You)`
                       : `${fm.firstName} ${fm.lastName} (${fm.ageTier})`;
+                    const blockMessage = getFamilyMemberBookingBlockMessage(fm);
+                    const actionLabel = getFamilyMemberBookingActionLabel(fm);
                     return (
-                      <Button
+                      <div
                         key={fm.id}
-                        type="button"
-                        variant={alreadyAdded ? "secondary" : fm.relationship === "self" ? "default" : "outline"}
-                        size="sm"
-                        disabled={alreadyAdded || guests.length >= availableBeds}
-                        onClick={() => addFamilyMemberAsGuest(fm)}
+                        className={blocked ? "rounded-md border border-amber-200 bg-amber-50 p-3" : ""}
                       >
-                        {alreadyAdded ? "\u2713 " : "+ "}
-                        {label}
-                      </Button>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            type="button"
+                            variant={alreadyAdded ? "secondary" : fm.relationship === "self" ? "default" : "outline"}
+                            size="sm"
+                            disabled={alreadyAdded || guests.length >= availableBeds || blocked}
+                            onClick={() => addFamilyMemberAsGuest(fm)}
+                          >
+                            {alreadyAdded ? "\u2713 " : "+ "}
+                            {label}
+                          </Button>
+                          {blocked && actionLabel && (
+                            actionLabel === "Complete details" ? (
+                              <Button asChild variant="outline" size="sm">
+                                <Link href="/profile#family-group">{actionLabel}</Link>
+                              </Button>
+                            ) : (
+                              <span className="text-xs font-medium text-amber-800">
+                                {actionLabel}
+                              </span>
+                            )
+                          )}
+                        </div>
+                        {blocked && blockMessage && (
+                          <p className="mt-2 text-sm text-amber-800">{blockMessage}</p>
+                        )}
+                        {blocked && fm.missingFields && fm.missingFields.length > 0 && (
+                          <p className="mt-1 text-xs text-amber-700">
+                            Missing: {fm.missingFields.join(", ")}
+                          </p>
+                        )}
+                      </div>
                     );
                   })}
                 </div>

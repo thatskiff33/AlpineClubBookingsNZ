@@ -31,8 +31,10 @@ describe("evaluateMemberProfileCompleteness", () => {
   it("marks a complete confirmed self profile as bookable", () => {
     const result = evaluateMemberProfileCompleteness({
       ...completeProfile,
+      id: "member-1",
       canLogin: true,
       detailsConfirmedAt: new Date("2026-05-10T00:00:00.000Z"),
+      detailsConfirmedByMemberId: "member-1",
     });
 
     expect(result).toMatchObject({
@@ -43,6 +45,21 @@ describe("evaluateMemberProfileCompleteness", () => {
       needsOwnLoginConfirmation: false,
       confirmationMode: "self",
     });
+  });
+
+  it("does not treat a login-capable member as confirmed by another member", () => {
+    const result = evaluateMemberProfileCompleteness({
+      ...completeProfile,
+      id: "member-1",
+      canLogin: true,
+      detailsConfirmedAt: new Date("2026-05-10T00:00:00.000Z"),
+      detailsConfirmedByMemberId: "member-2",
+    });
+
+    expect(result.isProfileComplete).toBe(true);
+    expect(result.isDetailsConfirmed).toBe(false);
+    expect(result.canBeBookedAsMember).toBe(false);
+    expect(result.needsOwnLoginConfirmation).toBe(true);
   });
 
   it("reports missing self profile fields", () => {

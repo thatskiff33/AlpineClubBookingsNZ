@@ -12,7 +12,9 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import {
+  assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
+  getBookingGuestValidationErrorResponse,
   normalizeBookingGuestPricingInputs,
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
@@ -72,10 +74,18 @@ export async function POST(request: NextRequest) {
       guests.map((guest) => guest.memberId),
       { skipAuthorization: session.user.role === "ADMIN" && Boolean(parsed.data.forMemberId) }
     );
+    await assertLinkedBookingMembersCanBeBooked(
+      prisma,
+      linkedMembers,
+      session.user.id
+    );
     guests = normalizeBookingGuestPricingInputs(guests, linkedMembers);
   } catch (error) {
     if (error instanceof BookingGuestValidationError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
+      return NextResponse.json(
+        getBookingGuestValidationErrorResponse(error),
+        { status: error.status }
+      );
     }
     throw error;
   }

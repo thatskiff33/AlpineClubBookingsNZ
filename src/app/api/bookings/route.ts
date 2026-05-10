@@ -32,7 +32,9 @@ import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
 import { logAudit } from "@/lib/audit";
 import {
+  assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
+  getBookingGuestValidationErrorResponse,
   normalizeBookingGuestInputs,
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
@@ -156,11 +158,19 @@ export async function POST(request: NextRequest) {
       guests.map((guest) => guest.memberId),
       { skipAuthorization: isOnBehalf }
     );
+    await assertLinkedBookingMembersCanBeBooked(
+      prisma,
+      linkedMembers,
+      session.user.id
+    );
     const normalizedGuests = normalizeBookingGuestInputs(guests, linkedMembers);
     guests.splice(0, guests.length, ...normalizedGuests);
   } catch (error) {
     if (error instanceof BookingGuestValidationError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
+      return NextResponse.json(
+        getBookingGuestValidationErrorResponse(error),
+        { status: error.status }
+      );
     }
     throw error;
   }

@@ -48,7 +48,7 @@ export async function GET() {
           joinRequests: {
             where: {
               status: "PENDING",
-              type: { in: ["JOIN_REQUEST", "CHILD_REQUEST"] },
+              type: { in: ["JOIN_REQUEST", "CHILD_REQUEST", "ADULT_REQUEST", "REMOVAL_REQUEST"] },
             },
           },
         },

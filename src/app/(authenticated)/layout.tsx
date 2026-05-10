@@ -2,9 +2,14 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NavBar } from "@/components/nav-bar";
+import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { hasFinanceViewerAccess } from "@/lib/finance-auth";
+import {
+  MEMBER_ONBOARDING_GATE_SELECT,
+  shouldShowMemberOnboarding,
+} from "@/lib/member-onboarding";
 
 export default async function AuthenticatedLayout({
   children,
@@ -25,11 +30,7 @@ export default async function AuthenticatedLayout({
   // Check DB directly for force password change and active status (JWT may be stale)
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: {
-      forcePasswordChange: true,
-      active: true,
-      financeAccessLevel: true,
-    },
+    select: MEMBER_ONBOARDING_GATE_SELECT,
   });
 
   // Redirect deleted/deactivated accounts even if JWT is still valid
@@ -74,6 +75,7 @@ export default async function AuthenticatedLayout({
     isHutLeader: isHutLeaderActive,
     isStayingGuest,
   };
+  const showOnboardingWizard = shouldShowMemberOnboarding(member);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
@@ -81,6 +83,7 @@ export default async function AuthenticatedLayout({
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {children}
       </main>
+      <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
       <ReportIssueWidget />
     </div>
   );
