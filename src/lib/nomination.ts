@@ -25,6 +25,7 @@ import {
   enqueueXeroEntranceFeeInvoiceOperation,
   processQueuedXeroOutboxOperations,
 } from "@/lib/xero-operation-outbox";
+import { nameField } from "@/lib/zod-helpers";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format");
@@ -46,8 +47,8 @@ const applicationAddressSchema = z.object({
 });
 
 const familyMemberSchema = z.object({
-  firstName: z.string().min(1).max(100),
-  lastName: z.string().min(1).max(100),
+  firstName: nameField(),
+  lastName: nameField(),
   dateOfBirth: isoDateSchema,
 });
 

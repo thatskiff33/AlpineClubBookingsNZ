@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
   const mockTransporter = {
@@ -51,21 +51,52 @@ describe("email header CRLF injection protections", () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it.each([
-    { field: "to", to: "member@example.com\r\nBcc: attacker@example.com", subject: "Hello" },
-    { field: "to", to: "member@example.com\nBcc: attacker@example.com", subject: "Hello" },
-    { field: "subject", to: "member@example.com", subject: "Hello\r\nBcc: attacker@example.com" },
-    { field: "subject", to: "member@example.com", subject: "Hello\nBcc: attacker@example.com" },
-  ])("rejects CR/LF in $field before sending", async ({ field, to, subject }) => {
+    { to: "member@example.com\r\nBcc: attacker@example.com" },
+    { to: "member@example.com\nBcc: attacker@example.com" },
+  ])("rejects CR/LF in to before sending", async ({ to }) => {
     await expect(
       sendEmail({
         to,
-        subject,
+        subject: "Hello",
         html: "<p>Hello</p>",
       })
-    ).rejects.toThrow(`Email header field ${field} contains CR/LF`);
+    ).rejects.toThrow("Email header field to contains CR/LF");
 
     expect(mockTransporter.sendMail).not.toHaveBeenCalled();
+  });
+
+  // Subject CRLF is sanitized rather than thrown (issue #323): silently dropping the
+  // email broke admin alerts and confirmations whenever a contaminated member name
+  // was interpolated. Defense-in-depth: strip CRLF and continue.
+  it.each([
+    { subject: "Hello\r\nBcc: attacker@example.com" },
+    { subject: "Hello\nBcc: attacker@example.com" },
+  ])("sanitizes CR/LF from subject and still sends", async ({ subject }) => {
+    vi.stubEnv("NODE_ENV", "production");
+    await sendEmail({
+      to: "member@example.com",
+      subject,
+      html: "<p>Hello</p>",
+    });
+
+    expect(mockTransporter.sendMail).toHaveBeenCalledTimes(1);
+    const call = mockTransporter.sendMail.mock.calls[0][0];
+    expect(call.subject).not.toMatch(/[\r\n]/);
+    expect(call.subject).toContain("Hello");
+    expect(call.subject).toContain("Bcc: attacker@example.com");
+    // Persisted EmailLog gets the sanitized value, so retries can't re-introduce CRLF
+    expect(mockPrisma.emailLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          subject: expect.not.stringMatching(/[\r\n]/),
+        }),
+      })
+    );
   });
 
   it("rejects contact-form CRLF payloads before transport", async () => {

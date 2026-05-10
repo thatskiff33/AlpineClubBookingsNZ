@@ -15,10 +15,11 @@ import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { issueActionToken } from "@/lib/action-tokens";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
+import { nameField } from "@/lib/zod-helpers";
 
 const importRowSchema = z.object({
-  firstName: z.string().min(1, "First name is required").max(100),
-  lastName: z.string().min(1, "Last name is required").max(100),
+  firstName: nameField({ required: "First name is required" }),
+  lastName: nameField({ required: "Last name is required" }),
   email: z.string().email("Invalid email address"),
   phone: z.string().max(20).optional().nullable(), // Legacy: single phone string (will be put in phoneNumber)
   phoneCountryCode: z.string().max(5).optional().nullable(),

@@ -52,6 +52,7 @@ import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
+import { nameField } from "@/lib/zod-helpers";
 
 const batchModifySchema = z.object({
   checkIn: z.string().optional(),
@@ -59,8 +60,8 @@ const batchModifySchema = z.object({
   addGuests: z
     .array(
       z.object({
-        firstName: z.string().min(1),
-        lastName: z.string().min(1),
+        firstName: nameField(),
+        lastName: nameField(),
         ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),

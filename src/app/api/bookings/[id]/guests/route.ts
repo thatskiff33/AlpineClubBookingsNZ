@@ -37,13 +37,14 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
+import { nameField } from "@/lib/zod-helpers";
 
 const addGuestsSchema = z.object({
   guests: z
     .array(
       z.object({
-        firstName: z.string().min(1).max(100),
-        lastName: z.string().min(1).max(100),
+        firstName: nameField(),
+        lastName: nameField(),
         ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
