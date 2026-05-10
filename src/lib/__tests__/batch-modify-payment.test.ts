@@ -12,9 +12,22 @@ const mockCalculateBookingPrice = vi.fn();
 const mockAuth = vi.fn();
 const mockRefundPaymentTransactions = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
+const mockAssertLinkedBookingMembersCanBeBooked = vi.fn().mockResolvedValue(undefined);
+const mockGetBookingGuestValidationErrorResponse = vi.fn((error: { message: string }) => ({
+  error: error.message,
+}));
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
+
+const mockBookingGuestValidationError = class BookingGuestValidationError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+};
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -115,17 +128,10 @@ vi.mock("@/lib/age-tier-schema", () => ({
 }));
 
 vi.mock("@/lib/booking-guests", () => {
-  class BookingGuestValidationError extends Error {
-    status: number;
-
-    constructor(message: string, status: number) {
-      super(message);
-      this.status = status;
-    }
-  }
-
   return {
-    BookingGuestValidationError,
+    assertLinkedBookingMembersCanBeBooked: mockAssertLinkedBookingMembersCanBeBooked,
+    BookingGuestValidationError: mockBookingGuestValidationError,
+    getBookingGuestValidationErrorResponse: mockGetBookingGuestValidationErrorResponse,
     normalizeBookingGuestInputs: vi.fn((guests: unknown) => guests),
     resolveLinkedBookingMembers: vi.fn().mockResolvedValue([]),
   };
@@ -276,6 +282,82 @@ describe("PUT /api/bookings/[id]/modify", () => {
       totalRefundedAmountCents: 0,
     });
     mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
+    mockAssertLinkedBookingMembersCanBeBooked.mockResolvedValue(undefined);
+    mockGetBookingGuestValidationErrorResponse.mockImplementation((error: { message: string }) => ({
+      error: error.message,
+    }));
+  });
+
+  it("returns the shared profile-required shape when added linked member guests are blocked", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+    mockAssertLinkedBookingMembersCanBeBooked.mockRejectedValueOnce(
+      new mockBookingGuestValidationError(
+        "Some member guests need their details completed or confirmed before booking.",
+        403
+      )
+    );
+    mockGetBookingGuestValidationErrorResponse.mockReturnValueOnce({
+      code: "GUEST_PROFILE_REQUIRED",
+      error: "Some member guests need their details completed or confirmed before booking.",
+      members: [
+        {
+          memberId: "guest-member-1",
+          name: "Bob Jones",
+          canCurrentUserResolve: true,
+          needsOwnLoginConfirmation: false,
+          missingFields: ["Date of Birth"],
+          action: "complete_details",
+        },
+      ],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        addGuests: [
+          {
+            firstName: "Bob",
+            lastName: "Jones",
+            ageTier: "ADULT",
+            isMember: true,
+            memberId: "guest-member-1",
+          },
+        ],
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(403);
+    const data = await response.json();
+    expect(data).toMatchObject({
+      code: "GUEST_PROFILE_REQUIRED",
+      members: [
+        expect.objectContaining({
+          memberId: "guest-member-1",
+          action: "complete_details",
+        }),
+      ],
+    });
+    expect(mockAssertLinkedBookingMembersCanBeBooked).toHaveBeenCalledWith(
+      tx,
+      expect.anything(),
+      "m1",
+      {
+        actorRole: "MEMBER",
+        onBehalfOfMemberId: null,
+      }
+    );
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
   });
 
   it("creates an additional PaymentIntent when a paid booking increases in price", async () => {

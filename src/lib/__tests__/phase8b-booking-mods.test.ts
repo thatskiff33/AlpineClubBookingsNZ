@@ -725,6 +725,98 @@ describe("POST /api/bookings/[id]/guests", () => {
     expect(body.error).toContain("Not enough beds");
   });
 
+  it("returns the shared profile-required shape for incomplete linked member additions", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    tx.familyGroupMember.findMany.mockImplementation(async (args: any) => {
+      if (args?.where?.memberId === "m1") {
+        return [{ memberId: "m1", familyGroupId: "family-1" }];
+      }
+      if (args?.where?.familyGroupId?.in) {
+        return [
+          { memberId: "m1", familyGroupId: "family-1" },
+          { memberId: "guest-member-1", familyGroupId: "family-1" },
+        ];
+      }
+      if (args?.where?.memberId?.in) {
+        return [
+          { memberId: "m1", familyGroupId: "family-1" },
+          { memberId: "guest-member-1", familyGroupId: "family-1" },
+        ];
+      }
+      return [];
+    });
+    tx.member.findMany.mockImplementation(async (args: any) => {
+      const ids: string[] = args?.where?.id?.in ?? [];
+      if (ids.includes("guest-member-1")) {
+        return [
+          {
+            id: "guest-member-1",
+            active: true,
+            ageTier: "ADULT",
+            canLogin: false,
+            firstName: "Bob",
+            lastName: "Jones",
+            phoneCountryCode: "64",
+            phoneAreaCode: "27",
+            phoneNumber: "4224115",
+            dateOfBirth: null,
+            streetAddressLine1: "1 Snow Road",
+            streetCity: "Taupo",
+            streetRegion: "Waikato",
+            streetPostalCode: "3330",
+            streetCountry: "NZ",
+            postalAddressLine1: "1 Snow Road",
+            postalCity: "Taupo",
+            postalRegion: "Waikato",
+            postalPostalCode: "3330",
+            postalCountry: "NZ",
+            role: "MEMBER",
+            profileCompletedAt: null,
+            detailsConfirmedAt: null,
+            detailsConfirmedByMemberId: null,
+            onboardingConfirmedAt: null,
+          },
+        ];
+      }
+      if (ids.includes("m1")) {
+        return [{ id: "m1", active: true, canLogin: true, ageTier: "ADULT" }];
+      }
+      return [];
+    });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({
+        guests: [
+          {
+            firstName: "Bob",
+            lastName: "Jones",
+            ageTier: "ADULT",
+            isMember: true,
+            memberId: "guest-member-1",
+          },
+        ],
+      }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe("GUEST_PROFILE_REQUIRED");
+    expect(body.members).toContainEqual(
+      expect.objectContaining({
+        memberId: "guest-member-1",
+        name: "Bob Jones",
+        missingFields: expect.arrayContaining(["Date of Birth"]),
+        action: "complete_details",
+      })
+    );
+    expect(tx.bookingGuest.create).not.toHaveBeenCalled();
+  });
+
   it("successfully adds guests and recalculates price", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
     const booking = makeBooking();

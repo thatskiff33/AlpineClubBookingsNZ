@@ -246,17 +246,63 @@ describe("booking profile gate route integration", () => {
   it("quote route uses the shared profile-required response shape", () => {
     const source = readRepoFile("src/app/api/bookings/quote/route.ts");
 
-    expect(source).toContain("assertLinkedBookingMembersCanBeBooked");
+    expect(source).toContain("await assertLinkedBookingMembersCanBeBooked");
     expect(source).toContain("getBookingGuestValidationErrorResponse(error)");
   });
 
   it("create route validates linked member profiles before draft and waitlist paths", () => {
     const source = readRepoFile("src/app/api/bookings/route.ts");
-    const gateIndex = source.indexOf("assertLinkedBookingMembersCanBeBooked");
+    const gateIndex = source.indexOf("await assertLinkedBookingMembersCanBeBooked");
 
     expect(gateIndex).toBeGreaterThan(-1);
     expect(gateIndex).toBeLessThan(source.indexOf("if (draft) {"));
     expect(gateIndex).toBeLessThan(source.indexOf("createWaitlistedBooking({"));
     expect(source).toContain("getBookingGuestValidationErrorResponse(error)");
+  });
+
+  it("add-guests route validates linked member profiles before writing guests", () => {
+    const source = readRepoFile("src/app/api/bookings/[id]/guests/route.ts");
+    const gateIndex = source.indexOf("await assertLinkedBookingMembersCanBeBooked");
+    const normalizeIndex = source.indexOf(
+      "normalizedNewGuests = normalizeBookingGuestInputs",
+      gateIndex
+    );
+
+    expect(gateIndex).toBeGreaterThan(-1);
+    expect(normalizeIndex).toBeGreaterThan(gateIndex);
+    expect(gateIndex).toBeLessThan(source.indexOf("tx.bookingGuest.create"));
+    expect(source).toContain("getBookingGuestValidationErrorResponse(err)");
+    expect(source).toContain("onBehalfOfMemberId:");
+  });
+
+  it("batch modify route validates linked member profiles before pricing and writing guests", () => {
+    const source = readRepoFile("src/app/api/bookings/[id]/modify/route.ts");
+    const gateIndex = source.indexOf("await assertLinkedBookingMembersCanBeBooked");
+    const normalizeIndex = source.indexOf(
+      "normalizeBookingGuestInputs(addGuests, linkedMembers)",
+      gateIndex
+    );
+
+    expect(gateIndex).toBeGreaterThan(-1);
+    expect(normalizeIndex).toBeGreaterThan(gateIndex);
+    expect(gateIndex).toBeLessThan(source.indexOf("calculateBookingPrice(newCheckIn"));
+    expect(gateIndex).toBeLessThan(source.indexOf("tx.bookingGuest.create"));
+    expect(source).toContain("getBookingGuestValidationErrorResponse(err)");
+    expect(source).toContain("onBehalfOfMemberId:");
+  });
+
+  it("modify quote route validates linked member profiles before pricing added guests", () => {
+    const source = readRepoFile("src/app/api/bookings/[id]/modify-quote/route.ts");
+    const gateIndex = source.indexOf("await assertLinkedBookingMembersCanBeBooked");
+    const normalizeIndex = source.indexOf(
+      "normalizeBookingGuestInputs(addGuests, linkedMembers)",
+      gateIndex
+    );
+
+    expect(gateIndex).toBeGreaterThan(-1);
+    expect(normalizeIndex).toBeGreaterThan(gateIndex);
+    expect(gateIndex).toBeLessThan(source.indexOf("calculateBookingPrice("));
+    expect(source).toContain("getBookingGuestValidationErrorResponse(error)");
+    expect(source).toContain("onBehalfOfMemberId:");
   });
 });
