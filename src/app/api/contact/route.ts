@@ -5,11 +5,19 @@ import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { escapeHtml } from "@/lib/email-templates";
 import { prisma } from "@/lib/prisma";
 
+const noEmailHeaderCrlf = (value: string) => !/[\r\n]/.test(value);
+
 const contactSchema = z.object({
-  name: z.string().min(1, "Name is required").max(200),
+  name: z.string().min(1, "Name is required").max(200).refine(
+    noEmailHeaderCrlf,
+    "Name cannot contain line breaks"
+  ),
   email: z.string().email("Invalid email address").max(200),
   message: z.string().min(1, "Message is required").max(5000),
-  recipient: z.string().max(50).optional(),
+  recipient: z.string().max(50).refine(
+    noEmailHeaderCrlf,
+    "Recipient cannot contain line breaks"
+  ).optional(),
 });
 
 const CONTACT_EMAIL =
