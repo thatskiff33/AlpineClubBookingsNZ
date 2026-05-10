@@ -6,8 +6,11 @@ tokoroa.org.nz, www.tokoroa.org.nz {
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
-		# CSP is emitted by Next proxy so script nonces are generated per request.
+		# CSP is emitted by Next middleware so script nonces are generated per request.
 		# style-src intentionally keeps 'unsafe-inline' there while Tailwind/Radix runtime styles are audited.
+		# Defensive baseline: only applied if Next omits the header (e.g. middleware regression).
+		# Caddy's `?` prefix means "set if not already present" so it never intersects with Next's policy.
+		?Content-Security-Policy "default-src 'self'"
 	}
 	handle /finance-legacy* {
 		forward_auth app:3000 {
