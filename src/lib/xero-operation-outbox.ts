@@ -19,11 +19,13 @@ import {
   createUnappliedXeroCreditNote,
   getEntranceFeeContext,
   isXeroConnected,
+  updateXeroBookingInvoiceForBooking,
   type EntranceFeeContext,
 } from "@/lib/xero";
 
 const XERO_OUTBOX_ENTRANCE_FEE_TYPE = "ENTRANCE_FEE_INVOICE";
 const XERO_OUTBOX_BOOKING_INVOICE_TYPE = "BOOKING_INVOICE";
+const XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE = "BOOKING_INVOICE_UPDATE";
 const XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE = "REFUND_CREDIT_NOTE";
 const XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE = "ACCOUNT_CREDIT_NOTE";
 const XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE = "SUPPLEMENTARY_INVOICE";
@@ -40,6 +42,12 @@ interface QueuedEntranceFeeOutboxPayload {
 interface QueuedBookingInvoiceOutboxPayload {
   queueType: typeof XERO_OUTBOX_BOOKING_INVOICE_TYPE;
   bookingId: string;
+}
+
+interface QueuedBookingInvoiceUpdateOutboxPayload {
+  queueType: typeof XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE;
+  bookingId: string;
+  xeroInvoiceId?: string;
 }
 
 interface QueuedRefundCreditNoteOutboxPayload {
@@ -78,6 +86,7 @@ interface QueuedCreditNoteAllocationOutboxPayload {
 type QueuedOutboxPayload =
   | QueuedEntranceFeeOutboxPayload
   | QueuedBookingInvoiceOutboxPayload
+  | QueuedBookingInvoiceUpdateOutboxPayload
   | QueuedRefundCreditNoteOutboxPayload
   | QueuedAccountCreditNoteOutboxPayload
   | QueuedSupplementaryInvoiceOutboxPayload
@@ -135,6 +144,19 @@ function readQueuedOutboxPayload(value: unknown): QueuedOutboxPayload | null {
     return {
       queueType,
       bookingId,
+    };
+  }
+
+  if (queueType === XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE) {
+    const bookingId = readString(payload.bookingId);
+    if (!bookingId) {
+      return null;
+    }
+
+    return {
+      queueType,
+      bookingId,
+      xeroInvoiceId: readString(payload.xeroInvoiceId) ?? undefined,
     };
   }
 
@@ -251,7 +273,7 @@ async function claimQueuedOutboxOperation(
   operationId: string,
   expectedOperation: {
     entityType: "INVOICE" | "CREDIT_NOTE" | "ALLOCATION";
-    operationType: "CREATE" | "ALLOCATE";
+    operationType: "CREATE" | "UPDATE" | "ALLOCATE";
     localModels: ReadonlyArray<"Member" | "Payment" | "Booking" | "BookingModification">;
   }
 ) {
@@ -485,6 +507,97 @@ export async function enqueueXeroBookingInvoiceOperation(
   return {
     queueOperationId: queuedOperation.id,
     message: "Xero booking invoice queued for background processing.",
+  };
+}
+
+export async function enqueueXeroBookingInvoiceUpdateOperation(
+  bookingId: string,
+  options?: { createdByMemberId?: string }
+) {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    select: {
+      id: true,
+      checkIn: true,
+      checkOut: true,
+      payment: {
+        select: {
+          id: true,
+          xeroInvoiceId: true,
+        },
+      },
+    },
+  });
+
+  if (!booking) {
+    throw new Error(`Booking not found: ${bookingId}`);
+  }
+
+  if (!booking.payment) {
+    throw new Error(`No payment record for booking: ${bookingId}`);
+  }
+
+  if (!booking.payment.xeroInvoiceId) {
+    return {
+      queueOperationId: null,
+      message: "No original Xero invoice exists for this booking.",
+    };
+  }
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "booking",
+    bookingId,
+    "invoice-update",
+    booking.payment.xeroInvoiceId,
+    booking.checkIn.toISOString().slice(0, 10),
+    booking.checkOut.toISOString().slice(0, 10),
+    "v1"
+  );
+
+  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey,
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "UPDATE",
+      localModel: "Payment",
+      localId: booking.payment.id,
+      status: {
+        in: ["PENDING", "RUNNING"],
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  if (existingQueuedOperation) {
+    return {
+      queueOperationId: existingQueuedOperation.id,
+      message: "Xero booking invoice update is already queued for background processing.",
+    };
+  }
+
+  const queuedOperation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "INVOICE",
+    operationType: "UPDATE",
+    localModel: "Payment",
+    localId: booking.payment.id,
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE,
+      bookingId,
+      xeroInvoiceId: booking.payment.xeroInvoiceId,
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  return {
+    queueOperationId: queuedOperation.id,
+    message: "Xero booking invoice update queued for background processing.",
   };
 }
 
@@ -1079,6 +1192,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
         {
           requestPayload: {
             path: ["queueType"],
+            equals: XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE,
+          },
+        },
+        {
+          requestPayload: {
+            path: ["queueType"],
             equals: XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
           },
         },
@@ -1126,7 +1245,13 @@ export async function processQueuedXeroOutboxOperations(options?: {
     const payload = readQueuedOutboxPayload(queuedOperation.requestPayload);
     const queueType = readQueueType(queuedOperation.requestPayload);
     const expectedOperation =
-      queueType === XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE
+      queueType === XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE
+        ? {
+            entityType: "INVOICE" as const,
+            operationType: "UPDATE" as const,
+            localModels: ["Payment"] as const,
+          }
+        : queueType === XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE
         ? {
             entityType: "ALLOCATION" as const,
             operationType: "ALLOCATE" as const,
@@ -1178,6 +1303,11 @@ export async function processQueuedXeroOutboxOperations(options?: {
         });
       } else if (payload?.queueType === XERO_OUTBOX_BOOKING_INVOICE_TYPE) {
         await createXeroInvoiceForBooking(payload.bookingId, {
+          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+          syncOperationId: queuedOperation.id,
+        });
+      } else if (payload?.queueType === XERO_OUTBOX_BOOKING_INVOICE_UPDATE_TYPE) {
+        await updateXeroBookingInvoiceForBooking(payload.bookingId, {
           createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
           syncOperationId: queuedOperation.id,
         });

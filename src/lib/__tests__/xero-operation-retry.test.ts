@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   findOrCreateXeroContact: vi.fn(),
   updateXeroContact: vi.fn(),
   createXeroInvoiceForBooking: vi.fn(),
+  updateXeroBookingInvoiceForBooking: vi.fn(),
   createXeroEntranceFeeInvoice: vi.fn(),
   createXeroSupplementaryInvoice: vi.fn(),
   createXeroPaymentForInvoice: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock("@/lib/xero", () => ({
   findOrCreateXeroContact: mocks.findOrCreateXeroContact,
   updateXeroContact: mocks.updateXeroContact,
   createXeroInvoiceForBooking: mocks.createXeroInvoiceForBooking,
+  updateXeroBookingInvoiceForBooking: mocks.updateXeroBookingInvoiceForBooking,
   createXeroEntranceFeeInvoice: mocks.createXeroEntranceFeeInvoice,
   createXeroSupplementaryInvoice: mocks.createXeroSupplementaryInvoice,
   createXeroPaymentForInvoice: mocks.createXeroPaymentForInvoice,
@@ -85,6 +87,19 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
 describe("getXeroOperationRetryMeta", () => {
   it("marks failed payment invoice operations as retryable", () => {
     expect(getXeroOperationRetryMeta(makeOperation())).toEqual({
+      supported: true,
+      reason: null,
+    });
+  });
+
+  it("marks failed payment invoice update operations as retryable", () => {
+    expect(
+      getXeroOperationRetryMeta(
+        makeOperation({
+          operationType: "UPDATE",
+        })
+      )
+    ).toEqual({
       supported: true,
       reason: null,
     });
@@ -150,6 +165,26 @@ describe("retryXeroSyncOperation", () => {
     });
 
     expect(mocks.createXeroInvoiceForBooking).toHaveBeenCalledWith("book_123", {
+      createdByMemberId: "admin_1",
+      repairExistingLink: true,
+    });
+  });
+
+  it("replays booking invoice updates through the booking payment relationship", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        operationType: "UPDATE",
+      })
+    );
+    mocks.findUniquePayment.mockResolvedValue({ bookingId: "book_123" });
+
+    await expect(
+      retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" })
+    ).resolves.toEqual({
+      message: "Retried Xero booking invoice update.",
+    });
+
+    expect(mocks.updateXeroBookingInvoiceForBooking).toHaveBeenCalledWith("book_123", {
       createdByMemberId: "admin_1",
       repairExistingLink: true,
     });

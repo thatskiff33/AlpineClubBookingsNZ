@@ -13,6 +13,7 @@ const mockFindMany = vi.fn();
 const mockMemberCount = vi.fn();
 const mockRefundPaymentTransactions = vi.fn();
 const mockUpsertPaymentIntentTransaction = vi.fn();
+const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
@@ -83,6 +84,7 @@ vi.mock("@/lib/payment-transactions", () => ({
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({ sendBookingModifiedEmail: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
+  enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,

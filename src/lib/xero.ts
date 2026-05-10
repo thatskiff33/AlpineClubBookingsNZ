@@ -5,7 +5,7 @@
  * contact sync, and membership subscription verification.
  */
 
-import { XeroClient, Contact, ContactGroup, Invoice, LineItem, LineAmountTypes, CreditNote, Payment as XeroPayment, Phone, Address } from "xero-node";
+import { XeroClient, Contact, ContactGroup, Invoice, Invoices, LineItem, LineAmountTypes, CreditNote, Payment as XeroPayment, Phone, Address } from "xero-node";
 import type { Contacts } from "xero-node";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { hash } from "bcryptjs";
@@ -90,6 +90,11 @@ export interface CreateXeroEntranceFeeInvoiceOptions
 }
 
 export interface CreateXeroBookingInvoiceOptions
+  extends FindOrCreateXeroContactOptions {
+  syncOperationId?: string;
+}
+
+export interface UpdateXeroBookingInvoiceOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;
 }
@@ -4894,6 +4899,14 @@ function formatDate(date: Date): string {
   return date.toISOString().split("T")[0];
 }
 
+function getBookingInvoiceIssueDate(booking: { checkIn: Date | string }): string {
+  return formatDate(new Date(booking.checkIn));
+}
+
+function getBookingInvoiceDueDate(booking: { createdAt: Date | string }): string {
+  return formatDate(new Date(booking.createdAt));
+}
+
 function buildSyntheticAllocationId(
   creditNoteId: string,
   invoiceId: string,
@@ -5130,7 +5143,6 @@ export async function createXeroInvoiceForBooking(
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
     include: {
-      member: true,
       guests: true,
       payment: true,
     },
@@ -5232,8 +5244,8 @@ export async function createXeroInvoiceForBooking(
     type: Invoice.TypeEnum.ACCREC,
     contact: { contactID: resolvedContactId },
     lineItems,
-    date: formatDate(new Date()),
-    dueDate: formatDate(new Date()), // Already paid
+    date: getBookingInvoiceIssueDate(booking),
+    dueDate: getBookingInvoiceDueDate(booking),
     reference: `Booking ${bookingId.slice(0, 8)}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,
@@ -5412,6 +5424,257 @@ export async function createXeroInvoiceForBooking(
     return createdInvoice.invoiceID;
   } catch (error) {
     await failXeroSyncOperation(operationId!, error);
+    throw error;
+  }
+}
+
+function copyMutableLineItemFields(lineItem: LineItem): LineItem {
+  const next: LineItem = {};
+
+  if (lineItem.lineItemID) next.lineItemID = lineItem.lineItemID;
+  if (lineItem.description) next.description = lineItem.description;
+  if (typeof lineItem.quantity === "number") next.quantity = lineItem.quantity;
+  if (typeof lineItem.unitAmount === "number") next.unitAmount = lineItem.unitAmount;
+  if (lineItem.itemCode) next.itemCode = lineItem.itemCode;
+  if (lineItem.accountCode) next.accountCode = lineItem.accountCode;
+  if (lineItem.taxType) next.taxType = lineItem.taxType;
+  if (typeof lineItem.taxAmount === "number") next.taxAmount = lineItem.taxAmount;
+  if (typeof lineItem.lineAmount === "number") next.lineAmount = lineItem.lineAmount;
+  if (lineItem.tracking) next.tracking = lineItem.tracking;
+  if (typeof lineItem.discountRate === "number") next.discountRate = lineItem.discountRate;
+  if (typeof lineItem.discountAmount === "number") next.discountAmount = lineItem.discountAmount;
+
+  return next;
+}
+
+function mergeBookingInvoiceLineItemDescriptions(
+  existingLineItems: LineItem[],
+  desiredGuestLineItems: LineItem[],
+  checkIn: Date,
+  checkOut: Date,
+  nights: number
+): LineItem[] {
+  const stayNarration = `${nights} night${nights !== 1 ? "s" : ""} - ${formatDate(checkIn)} - ${formatDate(checkOut)}`;
+  let guestLineIndex = 0;
+
+  return existingLineItems.map((existingLineItem) => {
+    const nextLineItem = copyMutableLineItemFields(existingLineItem);
+    const description = existingLineItem.description ?? "";
+
+    if (description.trim().toLowerCase() === "discount") {
+      return nextLineItem;
+    }
+
+    const desiredLineItem = desiredGuestLineItems[guestLineIndex];
+    guestLineIndex += 1;
+
+    if (desiredLineItem?.description) {
+      nextLineItem.description = desiredLineItem.description;
+      return nextLineItem;
+    }
+
+    const dateSuffixPattern = / - \d+ nights? - \d{4}-\d{2}-\d{2} - \d{4}-\d{2}-\d{2}$/;
+    if (description && dateSuffixPattern.test(description)) {
+      nextLineItem.description = description.replace(dateSuffixPattern, ` - ${stayNarration}`);
+    }
+
+    return nextLineItem;
+  });
+}
+
+export async function updateXeroBookingInvoiceForBooking(
+  bookingId: string,
+  options?: UpdateXeroBookingInvoiceOptions
+): Promise<string | null> {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      guests: true,
+      payment: true,
+    },
+  });
+
+  if (!booking) throw new Error(`Booking not found: ${bookingId}`);
+  if (!booking.payment) throw new Error(`No payment record for booking: ${bookingId}`);
+
+  const invoiceId = booking.payment.xeroInvoiceId;
+  if (!invoiceId) {
+    if (options?.syncOperationId) {
+      await completeXeroSyncOperation(options.syncOperationId, {
+        responsePayload: {
+          skipped: true,
+          reason: "No original Xero invoice exists for this booking.",
+        },
+      });
+    }
+    return null;
+  }
+
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const [hutFeeMapping, hutFeeItemCodeMap] = await Promise.all([
+    getResolvedAccountMapping("hutFeesIncome"),
+    getHutFeeItemCodeMap(),
+  ]);
+  const incomeCode = hutFeeMapping.code ?? "200";
+  const checkIn = new Date(booking.checkIn);
+  const checkOut = new Date(booking.checkOut);
+  const nights = getStayNights(checkIn, checkOut).length;
+
+  let bookingSeasonType: string | null = null;
+  const season = await prisma.season.findFirst({
+    where: {
+      startDate: { lte: checkIn },
+      endDate: { gte: checkIn },
+      active: true,
+    },
+    select: { type: true },
+  });
+  if (season) {
+    bookingSeasonType = season.type;
+  }
+
+  const desiredGuestLineItems = buildInvoiceLineItems(
+    booking.guests.map((g) => ({
+      firstName: g.firstName,
+      lastName: g.lastName,
+      ageTier: g.ageTier,
+      isMember: g.isMember,
+      priceCents: g.priceCents,
+    })),
+    checkIn,
+    checkOut,
+    nights,
+    incomeCode,
+    hutFeeMapping.itemCode,
+    hutFeeMapping.codeExplicitlyConfigured,
+    hutFeeItemCodeMap.size > 0 ? hutFeeItemCodeMap : undefined,
+    bookingSeasonType,
+  );
+
+  const invoiceUpdateIdempotencyKey = buildXeroIdempotencyKey(
+    "booking",
+    bookingId,
+    "invoice-update",
+    invoiceId,
+    formatDate(checkIn),
+    formatDate(checkOut),
+    "v1"
+  );
+
+  let operationId = options?.syncOperationId ?? null;
+  if (!operationId) {
+    const operation = await startXeroSyncOperation({
+      direction: "OUTBOUND",
+      entityType: "INVOICE",
+      operationType: "UPDATE",
+      localModel: "Payment",
+      localId: booking.payment.id,
+      idempotencyKey: invoiceUpdateIdempotencyKey,
+      correlationKey: invoiceUpdateIdempotencyKey,
+      requestPayload: {
+        bookingId,
+        invoiceId,
+      },
+      createdByMemberId: options?.createdByMemberId ?? null,
+    });
+    operationId = operation.id;
+  }
+
+  try {
+    const currentInvoiceResponse = await callXeroApi(
+      () => xero.accountingApi.getInvoice(tenantId, invoiceId),
+      {
+        operation: "getInvoice",
+        resourceType: "INVOICE",
+        workflow: "updateXeroBookingInvoiceForBooking",
+        context: `getInvoice(booking ${bookingId})`,
+      }
+    );
+    const currentInvoice = currentInvoiceResponse.body.invoices?.[0];
+    if (!currentInvoice) {
+      throw new Error(`Xero invoice not found: ${invoiceId}`);
+    }
+    if (!currentInvoice.contact) {
+      throw new Error(`Xero invoice ${invoiceId} is missing its contact.`);
+    }
+
+    const currentLineItems = currentInvoice.lineItems ?? [];
+    if (currentLineItems.length === 0) {
+      throw new Error(`Xero invoice ${invoiceId} has no line items to update safely.`);
+    }
+
+    const updatedInvoice: Invoice = {
+      type: currentInvoice.type ?? Invoice.TypeEnum.ACCREC,
+      contact: currentInvoice.contact,
+      lineItems: mergeBookingInvoiceLineItemDescriptions(
+        currentLineItems,
+        desiredGuestLineItems,
+        checkIn,
+        checkOut,
+        nights
+      ),
+      date: getBookingInvoiceIssueDate(booking),
+      dueDate: getBookingInvoiceDueDate(booking),
+      reference: currentInvoice.reference ?? `Booking ${bookingId.slice(0, 8)}`,
+      invoiceNumber: currentInvoice.invoiceNumber,
+      lineAmountTypes: currentInvoice.lineAmountTypes ?? LineAmountTypes.Inclusive,
+    };
+    const requestPayload: Invoices = { invoices: [updatedInvoice] };
+
+    await prisma.xeroSyncOperation.update({
+      where: { id: operationId },
+      data: {
+        requestPayload: sanitizeForJson({
+          ...requestPayload,
+          bookingId,
+          invoiceId,
+        }),
+      },
+    });
+
+    const response = await callXeroApi(
+      () =>
+        xero.accountingApi.updateInvoice(
+          tenantId,
+          invoiceId,
+          requestPayload,
+          undefined,
+          invoiceUpdateIdempotencyKey
+        ),
+      {
+        operation: "updateInvoice",
+        resourceType: "INVOICE",
+        workflow: "updateXeroBookingInvoiceForBooking",
+        context: `updateInvoice(booking ${bookingId})`,
+      }
+    );
+
+    const updated = response.body.invoices?.[0];
+    await completeXeroSyncOperation(operationId, {
+      responsePayload: {
+        previousInvoice: currentInvoiceResponse.body,
+        invoice: response.body,
+      },
+      xeroObjectType: "INVOICE",
+      xeroObjectId: updated?.invoiceID ?? invoiceId,
+      xeroObjectNumber: updated?.invoiceNumber ?? currentInvoice.invoiceNumber ?? null,
+      xeroObjectUrl: buildXeroInvoiceUrl(updated?.invoiceID ?? invoiceId),
+      extraLinks: [
+        {
+          localModel: "Payment",
+          localId: booking.payment.id,
+          xeroObjectType: "INVOICE",
+          xeroObjectId: updated?.invoiceID ?? invoiceId,
+          xeroObjectNumber: updated?.invoiceNumber ?? currentInvoice.invoiceNumber ?? null,
+          xeroObjectUrl: buildXeroInvoiceUrl(updated?.invoiceID ?? invoiceId),
+          role: "PRIMARY_INVOICE",
+        },
+      ],
+    });
+
+    return updated?.invoiceID ?? invoiceId;
+  } catch (error) {
+    await failXeroSyncOperation(operationId, error);
     throw error;
   }
 }
@@ -6152,12 +6415,22 @@ export async function createXeroSupplementaryInvoice(params: {
     return null;
   }
 
+  const bookingModification = bookingModificationId
+    ? await prisma.bookingModification.findUnique({
+        where: { id: bookingModificationId },
+        select: { createdAt: true },
+      })
+    : null;
+  const supplementaryInvoiceDueDate = formatDate(
+    bookingModification?.createdAt ?? new Date()
+  );
+
   const buildInvoice = (resolvedContactId: string): Invoice => ({
     type: Invoice.TypeEnum.ACCREC,
     contact: { contactID: resolvedContactId },
     lineItems,
     date: formatDate(new Date()),
-    dueDate: formatDate(new Date()),
+    dueDate: supplementaryInvoiceDueDate,
     reference: `Supplementary for booking ${bookingId.slice(0, 8)}${booking.payment?.xeroInvoiceId ? ` (original: ${booking.payment.xeroInvoiceId})` : ""}`,
     status: Invoice.StatusEnum.AUTHORISED,
     lineAmountTypes: LineAmountTypes.Inclusive,

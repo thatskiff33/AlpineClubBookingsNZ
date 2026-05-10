@@ -264,6 +264,10 @@ function createDependencies(state: {
       queueOperationId: "queue_booking",
       message: "queued",
     }),
+    enqueueXeroBookingInvoiceUpdateOperation: vi.fn().mockResolvedValue({
+      queueOperationId: "queue_booking_update",
+      message: "queued",
+    }),
     enqueueXeroSupplementaryInvoiceOperation,
     enqueueXeroModificationCreditNoteOperation: vi.fn().mockResolvedValue({
       queueOperationId: "queue_credit_note",
@@ -378,6 +382,45 @@ describe("runBookingXeroRepair", () => {
     );
   });
 
+  it("classifies stale primary invoice details after a zero-net date change", async () => {
+    const booking = makeBooking({
+      checkIn: new Date("2026-05-30T00:00:00Z"),
+      checkOut: new Date("2026-05-31T00:00:00Z"),
+      modifications: [
+        {
+          id: "mod_date_1",
+          bookingId: "booking_1",
+          modificationType: "DATE_CHANGE",
+          previousData: {
+            checkIn: "2026-05-29",
+            checkOut: "2026-05-30",
+          },
+          newData: {
+            checkIn: "2026-05-30",
+            checkOut: "2026-05-31",
+          },
+          priceDiffCents: 0,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({ bookings: [booking] });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const bookingReport = report.passes[0].bookings[0];
+    expect(bookingReport.findings.map((finding) => finding.code)).toContain(
+      "STALE_PRIMARY_INVOICE_DETAILS"
+    );
+    expect(bookingReport.actions.map((action) => action.type)).toContain(
+      "QUEUE_PRIMARY_INVOICE_UPDATE"
+    );
+  });
+
   it("classifies missing modification credit notes for negative booking modifications", async () => {
     const booking = makeBooking({
       modifications: [
@@ -460,7 +503,7 @@ describe("runBookingXeroRepair", () => {
         {
           id: "mod_4",
           bookingId: "booking_1",
-          modificationType: "DATE_CHANGE",
+          modificationType: "GUEST_ADD",
           priceDiffCents: 1500,
           changeFeeCents: 0,
           createdAt: new Date("2026-05-02T00:00:00Z"),

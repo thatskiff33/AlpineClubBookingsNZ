@@ -23,6 +23,7 @@ import { logAudit } from "@/lib/audit";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import { cleanupChoreAssignmentsForDateChange } from "@/lib/chore-cleanup";
 import {
+  enqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -383,6 +384,9 @@ export async function PUT(
       // CHR-01: Clean up chore assignments for dates no longer in range
       const oldCheckIn = new Date(booking.checkIn);
       const oldCheckOut = new Date(booking.checkOut);
+      const datesChanged =
+        newCheckIn.getTime() !== oldCheckIn.getTime() ||
+        newCheckOut.getTime() !== oldCheckOut.getTime();
       const { choreWarnings } = await cleanupChoreAssignmentsForDateChange(
         tx,
         bookingId,
@@ -439,6 +443,7 @@ export async function PUT(
         pendingRefundAmountCents,
         promoRemoved,
         choreWarnings,
+        datesChanged,
         oldCheckIn,
         oldCheckOut,
         hasSucceededPayment,
@@ -532,6 +537,12 @@ export async function PUT(
     });
 
     // XER-01: Xero invoice adjustment (fire-and-forget)
+    const kickQueuedXeroOperation = async (queued: { queueOperationId: string | null }) => {
+      if (queued.queueOperationId) {
+        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+      }
+    };
+
     if (result.xeroAdditionalAmountCents > 0) {
       void enqueueXeroSupplementaryInvoiceOperation(
         {
@@ -544,11 +555,7 @@ export async function PUT(
           createdByMemberId: session.user.id,
         }
       )
-        .then(async (queued) => {
-          if (queued.queueOperationId) {
-            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-          }
-        })
+        .then(kickQueuedXeroOperation)
         .catch((err) =>
           logger.error({ err, bookingId }, "Failed to queue Xero supplementary invoice for modification")
         );
@@ -563,13 +570,19 @@ export async function PUT(
           createdByMemberId: session.user.id,
         }
       )
-        .then(async (queued) => {
-          if (queued.queueOperationId) {
-            await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
-          }
-        })
+        .then(kickQueuedXeroOperation)
         .catch((err) =>
           logger.error({ err, bookingId }, "Failed to queue Xero credit note for modification")
+        );
+    }
+
+    if (result.hasIssuedXeroInvoice && result.datesChanged) {
+      void enqueueXeroBookingInvoiceUpdateOperation(bookingId, {
+        createdByMemberId: session.user.id,
+      })
+        .then(kickQueuedXeroOperation)
+        .catch((err) =>
+          logger.error({ err, bookingId }, "Failed to queue Xero primary invoice update for date modification")
         );
     }
 

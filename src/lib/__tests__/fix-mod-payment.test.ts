@@ -38,6 +38,7 @@ const mockFindPaymentTransactionByIntentId = vi.fn();
 const mockMarkPaymentIntentTransactionSucceeded = vi.fn();
 const mockMarkPaymentIntentTransactionFailed = vi.fn();
 const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking", message: "queued" });
+const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroRefundCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_refund", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
@@ -121,6 +122,7 @@ vi.mock("@/lib/xero", () => ({
 }));
 vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceOperation: mockEnqueueXeroBookingInvoiceOperation,
+  enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroRefundCreditNoteOperation: mockEnqueueXeroRefundCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
@@ -337,6 +339,9 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
         createdByMemberId: "m1",
       }
     );
+    expect(mockEnqueueXeroBookingInvoiceUpdateOperation).toHaveBeenCalledWith("bk1", {
+      createdByMemberId: "m1",
+    });
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
   });
 
@@ -604,6 +609,38 @@ describe("PUT /api/bookings/[id]/modify-dates — price increase", () => {
         createdByMemberId: "m1",
       }
     );
+  });
+
+  it("queues a primary Xero invoice update for zero-net date changes", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+    mockedAuth.mockResolvedValue(makeSession() as any);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCalcPrice.mockReturnValue({
+      totalPriceCents: 10000,
+      guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+    } as any);
+    mockedCalcChangeFee.mockReturnValue({ feeCents: 0, fromTierRefundPct: 0, toTierRefundPct: 0 });
+    mockMemberFindUnique.mockResolvedValue({ active: true, email: "alice@test.com", firstName: "Alice" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/modify-dates", {
+      method: "PUT",
+      body: JSON.stringify({ checkIn: "2026-08-05", checkOut: "2026-08-07" }),
+    });
+    const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.additionalAmountCents).toBe(0);
+    expect(data.refundAmountCents).toBe(0);
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroBookingInvoiceUpdateOperation).toHaveBeenCalledWith("bk1", {
+      createdByMemberId: "m1",
+    });
   });
 });
 

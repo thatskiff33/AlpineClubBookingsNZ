@@ -46,6 +46,8 @@ const mocks = vi.hoisted(() => {
     refreshWithRefreshToken: vi.fn(),
     accountingApi: {
       createInvoices: vi.fn(),
+      getInvoice: vi.fn(),
+      updateInvoice: vi.fn(),
       createPayment: vi.fn(),
       createPayments: vi.fn(),
       createCreditNotes: vi.fn(),
@@ -153,6 +155,7 @@ import {
   createXeroRefundPaymentForInvoice,
   encryptToken,
   resetXeroRateLimitStateForTests,
+  updateXeroBookingInvoiceForBooking,
 } from "@/lib/xero";
 
 describe("createXeroInvoiceForBooking", () => {
@@ -180,6 +183,7 @@ describe("createXeroInvoiceForBooking", () => {
       member: { id: "mem_1" },
       checkIn: "2026-07-31T00:00:00.000Z",
       checkOut: "2026-08-02T00:00:00.000Z",
+      createdAt: "2026-05-15T10:30:00.000Z",
       discountCents: 10000,
       guests: [
         {
@@ -231,6 +235,20 @@ describe("createXeroInvoiceForBooking", () => {
     await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
 
     expect(mocks.xeroClientInstance.accountingApi.createInvoices).toHaveBeenCalledTimes(1);
+    expect(mocks.xeroClientInstance.accountingApi.createInvoices).toHaveBeenCalledWith(
+      "tenant_1",
+      {
+        invoices: [
+          expect.objectContaining({
+            date: "2026-07-31",
+            dueDate: "2026-05-15",
+          }),
+        ],
+      },
+      undefined,
+      undefined,
+      "booking:booking_1:invoice:v1"
+    );
     expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
     expect(mocks.prisma.payment.update).toHaveBeenCalledWith({
       where: { id: "pay_1" },
@@ -251,6 +269,105 @@ describe("createXeroInvoiceForBooking", () => {
           paymentSkipped: true,
           paymentSkipReason: "Zero-total invoice does not require Xero payment recording.",
         }),
+      })
+    );
+  });
+
+  it("updates primary invoice dates and guest line narration without changing amounts", async () => {
+    mocks.prisma.booking.findUnique.mockResolvedValue({
+      id: "booking_1",
+      memberId: "mem_1",
+      member: { id: "mem_1" },
+      checkIn: "2026-08-03T00:00:00.000Z",
+      checkOut: "2026-08-04T00:00:00.000Z",
+      createdAt: "2026-05-15T10:30:00.000Z",
+      discountCents: 0,
+      guests: [
+        {
+          firstName: "Jordan",
+          lastName: "Hartley-Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          priceCents: 10000,
+        },
+      ],
+      payment: {
+        id: "pay_1",
+        status: "SUCCEEDED",
+        amountCents: 10000,
+        stripePaymentIntentId: "pi_1",
+        xeroInvoiceId: "inv_1",
+        xeroInvoiceNumber: "INV-1",
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.getInvoice.mockResolvedValue({
+      body: {
+        invoices: [
+          {
+            invoiceID: "inv_1",
+            invoiceNumber: "INV-1",
+            type: "ACCREC",
+            contact: { contactID: "contact_1" },
+            lineAmountTypes: "Inclusive",
+            reference: "Booking booking_",
+            lineItems: [
+              {
+                lineItemID: "line_1",
+                description:
+                  "Jordan Hartley-Smith - (ADULT, Member) - 1 night - 2026-07-31 - 2026-08-01",
+                quantity: 1,
+                unitAmount: 100,
+                taxType: "OUTPUT2",
+                accountCode: "200",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.updateInvoice.mockResolvedValue({
+      body: {
+        invoices: [
+          {
+            invoiceID: "inv_1",
+            invoiceNumber: "INV-1",
+          },
+        ],
+      },
+    });
+
+    await expect(updateXeroBookingInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+
+    expect(mocks.xeroClientInstance.accountingApi.updateInvoice).toHaveBeenCalledWith(
+      "tenant_1",
+      "inv_1",
+      {
+        invoices: [
+          expect.objectContaining({
+            date: "2026-08-03",
+            dueDate: "2026-05-15",
+            lineItems: [
+              expect.objectContaining({
+                lineItemID: "line_1",
+                description:
+                  "Jordan Hartley-Smith - (ADULT, Member) - 2 nights - 2026-08-03 - 2026-08-04",
+                quantity: 1,
+                unitAmount: 100,
+                taxType: "OUTPUT2",
+                accountCode: "200",
+              }),
+            ],
+          }),
+        ],
+      },
+      undefined,
+      "booking:booking_1:invoice-update:inv_1:2026-08-03:2026-08-04:v1"
+    );
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_1",
+      expect.objectContaining({
+        xeroObjectType: "INVOICE",
+        xeroObjectId: "inv_1",
       })
     );
   });
