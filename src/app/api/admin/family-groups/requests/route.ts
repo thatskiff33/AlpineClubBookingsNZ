@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { AgeTier } from "@prisma/client";
+import { randomBytes } from "crypto";
+import { hash } from "bcryptjs";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
@@ -281,6 +283,7 @@ export async function PUT(req: NextRequest) {
       ageTier: AgeTier;
       active: true;
       canLogin: false;
+      passwordHash: string;
       emailVerified: true;
     } | null = null;
 
@@ -350,6 +353,7 @@ export async function PUT(req: NextRequest) {
           ageTier,
           active: true,
           canLogin: false,
+          passwordHash: await hash(randomBytes(32).toString("hex"), 13),
           emailVerified: true,
         };
       } else {
