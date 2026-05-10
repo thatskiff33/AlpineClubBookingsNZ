@@ -34,9 +34,15 @@ interface ProfileFormProps {
     postalPostalCode: string;
     postalCountry: string;
   };
+  onSaved?: () => void;
+  submitLabel?: string;
 }
 
-export function ProfileForm({ member }: ProfileFormProps) {
+export function ProfileForm({
+  member,
+  onSaved,
+  submitLabel = "Save Changes",
+}: ProfileFormProps) {
   const [form, setForm] = useState({
     firstName: member.firstName,
     lastName: member.lastName,
@@ -101,6 +107,7 @@ export function ProfileForm({ member }: ProfileFormProps) {
       }
 
       toast.success("Profile updated successfully");
+      onSaved?.();
     } catch {
       toast.error("An unexpected error occurred");
     } finally {
@@ -146,6 +153,7 @@ export function ProfileForm({ member }: ProfileFormProps) {
               value={form.phoneCountryCode}
               onChange={handleChange}
               placeholder="64"
+              required
               maxLength={5}
               aria-label="Country code"
             />
@@ -156,6 +164,7 @@ export function ProfileForm({ member }: ProfileFormProps) {
               value={form.phoneAreaCode}
               onChange={handleChange}
               placeholder="27"
+              required
               maxLength={5}
               aria-label="Area code"
             />
@@ -166,6 +175,7 @@ export function ProfileForm({ member }: ProfileFormProps) {
               value={form.phoneNumber}
               onChange={handleChange}
               placeholder="123 4567"
+              required
               maxLength={15}
               aria-label="Phone number"
             />
@@ -185,6 +195,7 @@ export function ProfileForm({ member }: ProfileFormProps) {
           value={form.dateOfBirth}
           onChange={handleChange}
           max={new Date().toISOString().substring(0, 10)}
+          required
         />
         <p className="text-xs text-muted-foreground">
           Used to determine your membership age tier (Adult / Youth / Child / Infant).
@@ -196,6 +207,7 @@ export function ProfileForm({ member }: ProfileFormProps) {
         idPrefix="profile"
         onSameAsPhysicalChange={setSameAsPhysical}
         onValuesChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
+        required
         sameAsPhysical={sameAsPhysical}
         values={form}
       />
@@ -203,7 +215,7 @@ export function ProfileForm({ member }: ProfileFormProps) {
       <div className="flex justify-end pt-2">
         <Button type="submit" disabled={saving}>
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {saving ? "Saving..." : "Save Changes"}
+          {saving ? "Saving..." : submitLabel}
         </Button>
       </div>
     </form>
