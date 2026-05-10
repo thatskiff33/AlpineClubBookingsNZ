@@ -144,7 +144,8 @@ export async function GET() {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  const groupIds = getFamilyGroupMemberships(self).map((m) => m.familyGroupId);
+  const currentMember = self;
+  const groupIds = getFamilyGroupMemberships(currentMember).map((m) => m.familyGroupId);
 
   const groupMemberships = groupIds.length > 0
     ? await prisma.familyGroupMember.findMany({
@@ -192,7 +193,7 @@ export async function GET() {
     }
   }
 
-  const allMembers = [self, ...groupMemberships.map((membership) => membership.member)];
+  const allMembers = [currentMember, ...groupMemberships.map((membership) => membership.member)];
   const memberById = new Map(allMembers.map((member) => [member.id, member]));
   const groupIdsByMemberId = new Map<string, Set<string>>();
   for (const member of allMembers) {
@@ -266,15 +267,15 @@ export async function GET() {
     });
     const canCurrentUserConfirmDetails =
       member.canLogin === false &&
-      isActiveLoginAdult(self.id) &&
-      sharesFamilyGroup(member.id, self.id);
+      isActiveLoginAdult(currentMember.id) &&
+      sharesFamilyGroup(member.id, currentMember.id);
     const pendingRequestStatus =
       pendingRequestStatusByMemberId.get(member.id) ?? null;
     const action = profileStatus.canBeBookedAsMember
       ? null
       : getFamilyMemberAction({
           member,
-          selfId: self.id,
+          selfId: currentMember.id,
           canCurrentUserConfirmDetails,
           needsOwnLoginConfirmation: profileStatus.needsOwnLoginConfirmation,
           pendingRequestStatus,
@@ -298,20 +299,20 @@ export async function GET() {
     });
   }
 
-  addMember(self, "self");
+  addMember(currentMember, "self");
 
   for (const gm of groupMemberships) {
     const rel = gm.member.ageTier === "ADULT" ? "partner" : "dependent";
     addMember(gm.member, rel);
   }
 
-  const firstGroup = self.familyGroupMemberships[0]?.familyGroup ?? null;
+  const firstGroup = getFamilyGroupMemberships(currentMember)[0]?.familyGroup ?? null;
 
   return NextResponse.json({
     familyGroupId: firstGroup?.id ?? null,
     familyGroupName: firstGroup?.name ?? null,
     familyGroupIds: groupIds,
     familyMembers,
-    displayName: getDisplayName(self),
+    displayName: getDisplayName(currentMember),
   });
 }
