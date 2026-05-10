@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, use } from "react"
 import { useSession } from "next-auth/react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { MemberAddressFields } from "@/components/member-address-fields"
+import { AuditTimeline } from "@/components/audit-timeline"
 import { FamilyGroupEditorDialog } from "@/components/admin/family-group-editor-dialog"
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel"
 import { Button } from "@/components/ui/button"
@@ -1142,7 +1143,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
   const fmt = (cents: number) => new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100)
   const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })
-  const fmtDateTime = (d: string) => new Date(d).toLocaleString("en-NZ", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })
   const memberExactAge = member.dateOfBirth ? formatAgeYearsMonths(member.dateOfBirth) : null
 
   return (
@@ -1442,23 +1442,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             Audit Log
           </AccordionTrigger>
           <AccordionContent className="px-6 pb-6">
-            {member.auditLogs.length === 0 ? <p className="text-sm text-slate-500">No audit records</p> : (
-              <div className="space-y-3">{member.auditLogs.map((log) => {
-                const timestamp = fmtDateTime(log.createdAt)
-                const structuredDetails = parseInviteAuditDetails(log.details)
-                const isInviteAudit = log.action === "member.setup-invite-sent" || log.action === "member.password-reset-sent"
-
-                return (
-                  <div key={log.id} className="flex items-start justify-between border-b border-slate-100 pb-2 last:border-0">
-                    <div>
-                      <p className="text-sm font-medium text-slate-700">{formatMemberAuditLogSummary(log, timestamp)}</p>
-                      {(!isInviteAudit || !structuredDetails) && <p className="text-xs text-slate-500 mt-0.5">By {getAuditActorDisplayName(log.actor)}</p>}
-                      {log.details && (!isInviteAudit || !structuredDetails) && <p className="text-xs text-slate-500 mt-0.5">{log.details}</p>}
-                    </div>
-                    <span className="text-xs text-slate-400 whitespace-nowrap ml-4">{timestamp}</span>
-                  </div>
-                )
-              })}</div>)}
+            <AuditTimeline
+              endpoint={`/api/admin/members/${id}/audit-log`}
+              showMetadata
+              showAdminEntityLinks
+            />
           </AccordionContent>
         </AccordionItem>
       </Accordion>

@@ -5,7 +5,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     member: {
       count: vi.fn(),
-findUnique: vi.fn(),
+      findUnique: vi.fn(),
     },
     notificationPreference: {
       upsert: vi.fn(),
@@ -13,6 +13,13 @@ findUnique: vi.fn(),
     auditLog: {
       create: vi.fn(),
     },
+    $transaction: vi.fn().mockImplementation((operation: unknown) => {
+      if (Array.isArray(operation)) {
+        return Promise.all(operation);
+      }
+
+      return (operation as (tx: unknown) => Promise<unknown>)({});
+    }),
   },
 }));
 
@@ -21,14 +28,16 @@ const mockRequireActiveSessionUser = vi.fn(async () => null);
 vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
 }));
-vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/audit", () => ({
+  buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
+  getAuditRequestContext: vi.fn(() => ({ ipAddress: "127.0.0.1" })),
+}));
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { logAudit } from "@/lib/audit";
 import { PUT } from "@/app/api/admin/notifications/route";
 
 const mockedAuth = vi.mocked(auth);
@@ -99,7 +108,6 @@ describe("Admin notifications API", () => {
       id: "admin-2",
       firstName: "Jane",
       lastName: "Doe",
-      email: "jane@example.com",
       role: "ADMIN",
       notificationPreference: null,
     } as any);
@@ -138,11 +146,24 @@ describe("Admin notifications API", () => {
 
     const body = await res.json();
     expect(body.preferences.adminNewBooking).toBe(false);
-    expect(logAudit).toHaveBeenCalledWith(
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: "ADMIN_NOTIFICATION_PREFERENCES_UPDATED",
-        memberId: "admin-1",
-        targetId: "admin-2",
+        data: expect.objectContaining({
+          action: "ADMIN_NOTIFICATION_PREFERENCES_UPDATED",
+          actor: { memberId: "admin-1" },
+          subject: { memberId: "admin-2" },
+          category: "admin",
+          metadata: {
+            changedPreferenceKeys: ["adminNewBooking"],
+            changes: [
+              {
+                key: "adminNewBooking",
+                before: true,
+                after: false,
+              },
+            ],
+          },
+        }),
       })
     );
   });

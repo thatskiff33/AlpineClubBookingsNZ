@@ -5,6 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { hashActionToken } from "@/lib/action-tokens";
+import {
+  buildStructuredAuditLogCreateArgs,
+  getAuditRequestContext,
+} from "@/lib/audit";
 
 const resetPasswordSchema = z.object({
   token: z.string().min(1, "Token is required"),
@@ -70,6 +74,22 @@ export async function POST(req: NextRequest) {
         where: { id: resetToken.id },
         data: { used: true },
       }),
+      prisma.auditLog.create(
+        buildStructuredAuditLogCreateArgs({
+          action: "member.password_reset.completed",
+          actor: { memberId: resetToken.memberId },
+          subject: { memberId: resetToken.memberId },
+          entity: { type: "Member", id: resetToken.memberId },
+          category: "security",
+          severity: "critical",
+          outcome: "success",
+          summary: "Password reset completed",
+          metadata: {
+            method: "reset_token",
+          },
+          request: getAuditRequestContext(req),
+        })
+      ),
     ]);
 
     return NextResponse.json({ success: true });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { MemberAddressFields } from "@/components/member-address-fields";
@@ -11,6 +12,7 @@ import {
   postalMatchesPhysical,
   withDefaultNzCountry,
 } from "@/lib/member-address";
+import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
 
 interface ProfileFormProps {
   member: {
@@ -35,14 +37,18 @@ interface ProfileFormProps {
     postalCountry: string;
   };
   onSaved?: () => void;
+  returnTo?: string | null;
   submitLabel?: string;
 }
 
 export function ProfileForm({
   member,
   onSaved,
+  returnTo,
   submitLabel = "Save Changes",
 }: ProfileFormProps) {
+  const router = useRouter();
+  const safeReturnTo = getSafeInternalReturnPath(returnTo);
   const [form, setForm] = useState({
     firstName: member.firstName,
     lastName: member.lastName,
@@ -108,6 +114,9 @@ export function ProfileForm({
 
       toast.success("Profile updated successfully");
       onSaved?.();
+      if (safeReturnTo) {
+        router.replace(safeReturnTo);
+      }
     } catch {
       toast.error("An unexpected error occurred");
     } finally {

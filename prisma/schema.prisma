@@ -1116,17 +1116,40 @@ model WebhookLog {
 // ---------------------------------------------------------------------------
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  action    String
-  memberId  String?
-  targetId  String?
-  details   String?
-  ipAddress String?
-  createdAt DateTime @default(now())
+  id              String    @id @default(cuid())
+  action          String
+  memberId        String?
+  targetId        String?
+  details         String?
+  ipAddress       String?
+  createdAt       DateTime  @default(now())
+  actorMemberId   String?
+  subjectMemberId String?
+  entityType      String?
+  entityId        String?
+  category        String?
+  severity        String?
+  outcome         String?
+  summary         String?
+  metadata        Json?
+  requestId       String?
+  userAgent       String?
+  retentionClass  String?
+  expiresAt       DateTime?
+  archivedAt      DateTime?
 
   @@index([action])
   @@index([memberId])
   @@index([createdAt])
+  @@index([memberId, createdAt])
+  @@index([targetId, createdAt])
+  @@index([actorMemberId, createdAt])
+  @@index([subjectMemberId, createdAt])
+  @@index([entityType, entityId])
+  @@index([category, createdAt])
+  @@index([expiresAt])
+  @@index([retentionClass, expiresAt])
+  @@index([archivedAt])
 }
 
 // ---------------------------------------------------------------------------

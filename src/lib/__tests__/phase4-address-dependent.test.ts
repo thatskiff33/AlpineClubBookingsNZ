@@ -24,16 +24,25 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn(),
     },
     booking: { findMany: vi.fn().mockResolvedValue([]), aggregate: vi.fn().mockResolvedValue({ _sum: { finalPriceCents: 0 }, _count: 0, _max: { checkOut: null } }) },
-    auditLog: { findMany: vi.fn().mockResolvedValue([]) },
+    auditLog: {
+      create: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     familyGroup: { findMany: vi.fn().mockResolvedValue([]) },
     familyGroupMember: { createMany: vi.fn() },
     passwordResetToken: { create: vi.fn() },
-    $transaction: vi.fn().mockImplementation((cb: (tx: unknown) => Promise<unknown>) => cb({
-      member: {
-        create: vi.fn().mockResolvedValue({ id: "dep1", firstName: "Child", lastName: "Smith" }),
-      },
-      familyGroupMember: { createMany: vi.fn() },
-    })),
+    $transaction: vi.fn().mockImplementation((operation: unknown) => {
+      if (Array.isArray(operation)) {
+        return Promise.all(operation);
+      }
+
+      return (operation as (tx: unknown) => Promise<unknown>)({
+        member: {
+          create: vi.fn().mockResolvedValue({ id: "dep1", firstName: "Child", lastName: "Smith" }),
+        },
+        familyGroupMember: { createMany: vi.fn() },
+      });
+    }),
   },
 }));
 
@@ -133,6 +142,21 @@ const baseMember = {
   dependents: [],
 };
 
+function mockDefaultTransaction() {
+  vi.mocked(prisma.$transaction).mockImplementation(async (operation: any) => {
+    if (Array.isArray(operation)) {
+      return Promise.all(operation);
+    }
+
+    return operation({
+      member: {
+        create: vi.fn().mockResolvedValue({ id: "dep1", firstName: "Child", lastName: "Smith" }),
+      },
+      familyGroupMember: { createMany: vi.fn() },
+    });
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────
 // member-address.ts utility tests
 // ─────────────────────────────────────────────────────────────────
@@ -229,7 +253,10 @@ describe("Legacy registration route", () => {
 // ─────────────────────────────────────────────────────────────────
 
 describe("Profile update with postalSameAsPhysical", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDefaultTransaction();
+  });
 
   function makeProfilePut(body: Record<string, unknown>) {
     return new NextRequest("http://localhost/api/profile", {
@@ -477,7 +504,10 @@ describe("Admin: Member detail returns dependents", () => {
 // ─────────────────────────────────────────────────────────────────
 
 describe("Admin: Member update with postalSameAsPhysical", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDefaultTransaction();
+  });
 
   function makePutRequest(id: string, body: Record<string, unknown>) {
     return new NextRequest(`http://localhost/api/admin/members/${id}`, {

@@ -10,6 +10,7 @@ import { FamilyGroupSection } from "./family-group-section";
 import { AccountCreditSection } from "./account-credit-section";
 import { DataExportButton } from "./data-export-button";
 import { DeleteAccountButton } from "./delete-account-button";
+import { AuditTimeline } from "@/components/audit-timeline";
 import {
   Card,
   CardContent,
@@ -20,21 +21,29 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
+import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
 import { subscriptionStatusClass } from "@/lib/status-colors";
+
+function singleSearchParam(value?: string | string[]) {
+  return Array.isArray(value) ? value[0] : value;
+}
 
 export default async function ProfilePage({
   searchParams,
 }: {
   searchParams: Promise<{
-    emailChangeError?: string;
-    emailChanged?: string;
+    emailChangeError?: string | string[];
+    emailChanged?: string | string[];
+    returnTo?: string | string[];
   }>;
 }) {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
   const params = await searchParams;
-  const emailChangeError = params.emailChangeError;
-  const emailChanged = params.emailChanged === "true";
+  const emailChangeError = singleSearchParam(params.emailChangeError);
+  const emailChanged = singleSearchParam(params.emailChanged) === "true";
+  const returnTo = getSafeInternalReturnPath(params.returnTo);
 
   const currentSeasonYear = getSeasonYear(new Date());
 
@@ -212,6 +221,23 @@ export default async function ProfilePage({
         </CardContent>
       </Card>
 
+      {/* Account Activity */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Account Activity</CardTitle>
+          <CardDescription>
+            Recent account, booking, payment, family, and privacy activity
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <AuditTimeline
+            endpoint="/api/member/audit-log"
+            categoryOptions={MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS}
+            showMetadata={false}
+          />
+        </CardContent>
+      </Card>
+
       {/* Subscription History */}
       <Card>
         <CardHeader>
@@ -343,6 +369,7 @@ export default async function ProfilePage({
               postalPostalCode: member.postalPostalCode ?? "",
               postalCountry: member.postalCountry ?? "",
             }}
+            returnTo={returnTo}
           />
         </CardContent>
       </Card>

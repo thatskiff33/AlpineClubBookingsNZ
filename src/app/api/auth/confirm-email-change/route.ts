@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { isXeroConnected, updateXeroContact } from "@/lib/xero";
-import { logAudit } from "@/lib/audit";
+import {
+  createStructuredAuditLog,
+  getAuditEmailDomain,
+  getAuditRequestContext,
+} from "@/lib/audit";
 import { buildXeroContactUpdatePayload } from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
 import { hashActionToken } from "@/lib/action-tokens";
@@ -71,11 +75,33 @@ export async function GET(request: NextRequest) {
           data: { email: record.newEmail },
         });
         // Update email for members who inherit email from this member
-        await tx.member.updateMany({
+        const inheritedMembers = await tx.member.updateMany({
           where: { inheritEmailFromId: record.memberId },
           data: { email: record.newEmail },
         });
         await tx.emailChangeToken.delete({ where: { id: record.id } });
+        await createStructuredAuditLog(
+          {
+            action: "EMAIL_CHANGED",
+            actor: { memberId: record.memberId },
+            subject: { memberId: record.memberId },
+            entity: { type: "Member", id: record.memberId },
+            category: "security",
+            severity: "critical",
+            outcome: "success",
+            summary: "Email change confirmed",
+            metadata: {
+              emailChange: {
+                confirmed: true,
+                oldDomain: getAuditEmailDomain(oldEmail),
+                newDomain: getAuditEmailDomain(record.newEmail),
+              },
+              inheritedMemberUpdateCount: inheritedMembers.count,
+            },
+            request: getAuditRequestContext(request),
+          },
+          tx
+        );
       });
     } catch (err) {
       if (err instanceof Error && err.message === "EMAIL_TAKEN") {
@@ -111,12 +137,6 @@ export async function GET(request: NextRequest) {
           logger.error({ err, memberId: record.memberId }, "Failed to update Xero contact email");
         });
     }
-
-    logAudit({
-      action: "EMAIL_CHANGED",
-      memberId: record.memberId,
-      details: JSON.stringify({ oldEmail, newEmail: record.newEmail }),
-    });
 
     return NextResponse.redirect(new URL("/profile?emailChanged=true", baseUrl));
   } catch (err) {

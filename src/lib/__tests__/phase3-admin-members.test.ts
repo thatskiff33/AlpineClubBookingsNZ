@@ -17,7 +17,7 @@ vi.mock("@/lib/prisma", () => ({
       findMany: vi.fn(),
       aggregate: vi.fn(),
     },
-    auditLog: { findMany: vi.fn() },
+    auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
     passwordResetToken: { create: vi.fn() },
     $transaction: vi.fn(),
   },
@@ -30,7 +30,14 @@ vi.mock("@/lib/logger", () => ({
 vi.mock("@/lib/utils", () => ({
   getSeasonYear: vi.fn().mockReturnValue(2026),
 }));
-vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/audit", () => ({
+  buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
+  getAuditEmailDomain: vi.fn((email?: string | null) =>
+    email?.split("@")[1]?.toLowerCase() ?? null
+  ),
+  getAuditRequestContext: vi.fn(() => ({ ipAddress: "127.0.0.1" })),
+  logAudit: vi.fn(),
+}));
 vi.mock("@/lib/rate-limit", () => ({ applyRateLimit: vi.fn().mockReturnValue(null) }));
 vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
