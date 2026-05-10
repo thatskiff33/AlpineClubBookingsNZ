@@ -1,16 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { AgeTier } from "@prisma/client";
+import { randomBytes } from "crypto";
+import { hash } from "bcryptjs";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
-import { sendChildRequestApprovedEmail, sendChildRequestRejectedEmail } from "@/lib/email";
+import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { getSeasonYear } from "@/lib/utils";
+import {
+  sendChildRequestApprovedEmail,
+  sendChildRequestRejectedEmail,
+} from "@/lib/email";
+
+const REVIEWED_REQUEST_TYPES = [
+  "JOIN_REQUEST",
+  "CHILD_REQUEST",
+  "ADULT_REQUEST",
+  "REMOVAL_REQUEST",
+] as const;
 
 const reviewRequestSchema = z.object({
   requestId: z.string().min(1),
   action: z.enum(["approve", "reject"]),
   linkedMemberId: z.string().min(1).optional(),
+  createNewMember: z.boolean().optional(),
   rejectionReason: z.string().max(500).optional(),
 });
 
@@ -24,9 +40,99 @@ function getSameDayRange(date: Date) {
   return { gte: start, lt: end };
 }
 
+function getRequestName(request: {
+  type: string;
+  childFirstName?: string | null;
+  childLastName?: string | null;
+  requestedFirstName?: string | null;
+  requestedLastName?: string | null;
+}) {
+  if (request.type === "CHILD_REQUEST") {
+    return [request.childFirstName, request.childLastName].filter(Boolean).join(" ").trim();
+  }
+  return [request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ").trim();
+}
+
+async function findPotentialMemberMatches(request: {
+  type: string;
+  familyGroupId: string;
+  childFirstName?: string | null;
+  childLastName?: string | null;
+  childDateOfBirth?: Date | null;
+  requestedFirstName?: string | null;
+  requestedLastName?: string | null;
+  requestedDateOfBirth?: Date | null;
+  requestedEmail?: string | null;
+}) {
+  if (request.type !== "CHILD_REQUEST" && request.type !== "ADULT_REQUEST") {
+    return [];
+  }
+
+  const firstName =
+    request.type === "CHILD_REQUEST"
+      ? request.childFirstName
+      : request.requestedFirstName;
+  const lastName =
+    request.type === "CHILD_REQUEST"
+      ? request.childLastName
+      : request.requestedLastName;
+  const dateOfBirth =
+    request.type === "CHILD_REQUEST"
+      ? request.childDateOfBirth
+      : request.requestedDateOfBirth;
+
+  if (!firstName || !lastName) {
+    return [];
+  }
+
+  const members = await prisma.member.findMany({
+    where: {
+      AND: [
+        { firstName: { contains: firstName.trim(), mode: "insensitive" as const } },
+        { lastName: { contains: lastName.trim(), mode: "insensitive" as const } },
+        ...(dateOfBirth ? [{ dateOfBirth: getSameDayRange(dateOfBirth) }] : []),
+        ...(request.type === "ADULT_REQUEST"
+          ? [{ ageTier: "ADULT" as AgeTier }]
+          : []),
+        ...(request.type === "ADULT_REQUEST" && request.requestedEmail
+          ? [{ email: { equals: request.requestedEmail, mode: "insensitive" as const } }]
+          : []),
+      ],
+    },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      ageTier: true,
+      active: true,
+      canLogin: true,
+      dateOfBirth: true,
+      familyGroupMemberships: {
+        where: { familyGroupId: request.familyGroupId },
+        select: { familyGroupId: true },
+      },
+    },
+    orderBy: [{ active: "desc" }, { lastName: "asc" }, { firstName: "asc" }],
+    take: 10,
+  });
+
+  return members.map((member) => ({
+    id: member.id,
+    firstName: member.firstName,
+    lastName: member.lastName,
+    email: member.email,
+    ageTier: member.ageTier,
+    active: member.active,
+    canLogin: member.canLogin,
+    dateOfBirth: member.dateOfBirth,
+    alreadyInGroup: member.familyGroupMemberships.length > 0,
+  }));
+}
+
 /**
  * GET /api/admin/family-groups/requests
- * List pending family group join requests.
+ * List pending family group change requests.
  */
 export async function GET() {
   const session = await auth();
@@ -41,11 +147,14 @@ export async function GET() {
   const requests = await prisma.familyGroupJoinRequest.findMany({
     where: {
       status: "PENDING",
-      type: { in: ["JOIN_REQUEST", "CHILD_REQUEST"] },
+      type: { in: [...REVIEWED_REQUEST_TYPES] },
     },
     include: {
       requester: {
         select: { id: true, firstName: true, lastName: true, email: true },
+      },
+      subjectMember: {
+        select: { id: true, firstName: true, lastName: true, email: true, ageTier: true, active: true },
       },
       familyGroup: {
         select: {
@@ -53,7 +162,11 @@ export async function GET() {
           name: true,
           memberships: {
             where: { member: { active: true } },
-            select: { member: { select: { id: true, firstName: true, lastName: true } } },
+            select: {
+              member: {
+                select: { id: true, firstName: true, lastName: true, email: true, ageTier: true },
+              },
+            },
           },
         },
       },
@@ -62,90 +175,50 @@ export async function GET() {
   });
 
   const mapped = await Promise.all(
-    requests.map(async (request) => {
-      let matchingMembers: Array<{
-        id: string;
-        firstName: string;
-        lastName: string;
-        email: string;
-        ageTier: string;
-        active: boolean;
-        dateOfBirth: Date | null;
-        alreadyInGroup: boolean;
-      }> = [];
-
-      if (request.type === "CHILD_REQUEST" && request.childFirstName && request.childLastName) {
-        const nameFilters = [
-          {
-            firstName: {
-              contains: request.childFirstName.trim(),
-              mode: "insensitive" as const,
-            },
-          },
-          {
-            lastName: {
-              contains: request.childLastName.trim(),
-              mode: "insensitive" as const,
-            },
-          },
-        ];
-
-        const childMatches = await prisma.member.findMany({
-          where: {
-            AND: [
-              ...nameFilters,
-              ...(request.childDateOfBirth
-                ? [{ dateOfBirth: getSameDayRange(request.childDateOfBirth) }]
-                : []),
-            ],
-          },
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            ageTier: true,
-            active: true,
-            dateOfBirth: true,
-            familyGroupMemberships: {
-              where: { familyGroupId: request.familyGroupId },
-              select: { familyGroupId: true },
-            },
-          },
-          orderBy: [{ active: "desc" }, { lastName: "asc" }, { firstName: "asc" }],
-          take: 10,
-        });
-
-        matchingMembers = childMatches.map((member) => ({
-          id: member.id,
-          firstName: member.firstName,
-          lastName: member.lastName,
-          email: member.email,
-          ageTier: member.ageTier,
-          active: member.active,
-          dateOfBirth: member.dateOfBirth,
-          alreadyInGroup: member.familyGroupMemberships.length > 0,
-        }));
-      }
-
-      return {
-        ...request,
-        familyGroup: {
-          ...request.familyGroup,
-          members: request.familyGroup.memberships.map((membership) => membership.member),
-          memberships: undefined,
-        },
-        matchingMembers,
-      };
-    })
+    requests.map(async (request) => ({
+      ...request,
+      familyGroup: {
+        ...request.familyGroup,
+        members: request.familyGroup.memberships.map((membership) => membership.member),
+        memberships: undefined,
+      },
+      matchingMembers: await findPotentialMemberMatches(request),
+    }))
   );
 
   return NextResponse.json({ requests: mapped });
 }
 
+async function validateLinkedMemberForRequest(params: {
+  linkedMemberId: string;
+  requestType: string;
+}) {
+  const linkedMember = await prisma.member.findUnique({
+    where: { id: params.linkedMemberId },
+    select: { id: true, ageTier: true, active: true, canLogin: true },
+  });
+
+  if (!linkedMember) {
+    return { error: "Selected member record not found", status: 404 as const };
+  }
+  if (params.requestType === "ADULT_REQUEST") {
+    if (!linkedMember.active || linkedMember.ageTier !== "ADULT") {
+      return { error: "Selected member must be an active adult", status: 422 as const };
+    }
+    if (linkedMember.canLogin) {
+      return {
+        error: "Same-email adult requests must link to a non-login adult member",
+        status: 422 as const,
+      };
+    }
+  }
+
+  return { memberId: linkedMember.id };
+}
+
 /**
  * PUT /api/admin/family-groups/requests
- * Approve or reject a join request.
+ * Approve or reject a family group change request.
  */
 export async function PUT(req: NextRequest) {
   const session = await auth();
@@ -181,6 +254,7 @@ export async function PUT(req: NextRequest) {
     include: {
       requester: { select: { id: true, firstName: true, lastName: true, email: true } },
       familyGroup: { select: { id: true, name: true } },
+      subjectMember: { select: { id: true, firstName: true, lastName: true } },
     },
   });
 
@@ -200,7 +274,18 @@ export async function PUT(req: NextRequest) {
   }
 
   if (action === "approve") {
-    let memberIdToLink = request.requesterId;
+    let affectedMemberId = request.requesterId;
+    let adultMemberCreateData: {
+      email: string;
+      firstName: string;
+      lastName: string;
+      dateOfBirth: Date;
+      ageTier: AgeTier;
+      active: true;
+      canLogin: false;
+      passwordHash: string;
+      emailVerified: true;
+    } | null = null;
 
     if (request.type === "CHILD_REQUEST") {
       if (!linkedMemberId) {
@@ -209,49 +294,153 @@ export async function PUT(req: NextRequest) {
           { status: 422 }
         );
       }
-
-      const linkedMember = await prisma.member.findUnique({
-        where: { id: linkedMemberId },
-        select: { id: true },
+      const linked = await validateLinkedMemberForRequest({
+        linkedMemberId,
+        requestType: request.type,
       });
+      if ("error" in linked) {
+        return NextResponse.json({ error: linked.error }, { status: linked.status });
+      }
+      affectedMemberId = linked.memberId;
+    }
 
-      if (!linkedMember) {
-        return NextResponse.json({ error: "Selected member record not found" }, { status: 404 });
+    if (request.type === "ADULT_REQUEST") {
+      if (linkedMemberId && parsed.data.createNewMember) {
+        return NextResponse.json(
+          { error: "Choose an existing member or create a new member, not both." },
+          { status: 422 }
+        );
       }
 
-      memberIdToLink = linkedMemberId;
+      if (linkedMemberId) {
+        const linked = await validateLinkedMemberForRequest({
+          linkedMemberId,
+          requestType: request.type,
+        });
+        if ("error" in linked) {
+          return NextResponse.json({ error: linked.error }, { status: linked.status });
+        }
+        affectedMemberId = linked.memberId;
+      } else if (parsed.data.createNewMember) {
+        if (
+          !request.requestedFirstName ||
+          !request.requestedLastName ||
+          !request.requestedDateOfBirth ||
+          !request.requestedEmail
+        ) {
+          return NextResponse.json(
+            { error: "Adult request is missing required member details." },
+            { status: 422 }
+          );
+        }
+
+        const ageTier = await computeAgeTier(
+          request.requestedDateOfBirth,
+          getSeasonStartDate(getSeasonYear())
+        );
+        if (ageTier !== "ADULT") {
+          return NextResponse.json(
+            { error: "Requested member is not an adult for the current season." },
+            { status: 422 }
+          );
+        }
+
+        adultMemberCreateData = {
+          email: request.requestedEmail.toLowerCase().trim(),
+          firstName: request.requestedFirstName.trim(),
+          lastName: request.requestedLastName.trim(),
+          dateOfBirth: request.requestedDateOfBirth,
+          ageTier,
+          active: true,
+          canLogin: false,
+          passwordHash: await hash(randomBytes(32).toString("hex"), 13),
+          emailVerified: true,
+        };
+      } else {
+        return NextResponse.json(
+          { error: "Select an existing adult member or choose to create a new non-login adult." },
+          { status: 422 }
+        );
+      }
+    }
+
+    if (request.type === "REMOVAL_REQUEST") {
+      if (!request.subjectMemberId) {
+        return NextResponse.json(
+          { error: "Removal request is missing the member to remove." },
+          { status: 422 }
+        );
+      }
+      affectedMemberId = request.subjectMemberId;
     }
 
     await prisma.$transaction(async (tx) => {
-      // Add to join table (multi-group: no restriction on existing memberships)
-      await tx.familyGroupMember.upsert({
-        where: { familyGroupId_memberId: { familyGroupId: request.familyGroupId, memberId: memberIdToLink } },
-        create: { familyGroupId: request.familyGroupId, memberId: memberIdToLink, role: "MEMBER" },
-        update: {},
-      });
+      if (adultMemberCreateData) {
+        const created = await tx.member.create({
+          data: adultMemberCreateData,
+          select: { id: true },
+        });
+        affectedMemberId = created.id;
+      }
+
+      if (request.type === "REMOVAL_REQUEST") {
+        await tx.familyGroupMember.deleteMany({
+          where: {
+            familyGroupId: request.familyGroupId,
+            memberId: affectedMemberId,
+          },
+        });
+      } else {
+        await tx.familyGroupMember.upsert({
+          where: {
+            familyGroupId_memberId: {
+              familyGroupId: request.familyGroupId,
+              memberId: affectedMemberId,
+            },
+          },
+          create: {
+            familyGroupId: request.familyGroupId,
+            memberId: affectedMemberId,
+            role: "MEMBER",
+          },
+          update: {},
+        });
+      }
+
       await tx.familyGroupJoinRequest.update({
         where: { id: requestId },
         data: {
           status: "APPROVED",
           reviewedAt: new Date(),
           reviewedBy: session.user.id,
-          ...(request.type === "CHILD_REQUEST" ? { linkedMemberId: memberIdToLink } : {}),
+          ...(request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST"
+            ? { linkedMemberId: affectedMemberId }
+            : {}),
         },
       });
     });
 
+    const auditAction =
+      request.type === "CHILD_REQUEST"
+        ? "FAMILY_GROUP_CHILD_REQUEST_APPROVED"
+        : request.type === "ADULT_REQUEST"
+          ? "FAMILY_GROUP_ADULT_REQUEST_APPROVED"
+          : request.type === "REMOVAL_REQUEST"
+            ? "FAMILY_GROUP_REMOVAL_REQUEST_APPROVED"
+            : "FAMILY_GROUP_JOIN_APPROVED";
+
     logAudit({
-      action:
-        request.type === "CHILD_REQUEST"
-          ? "FAMILY_GROUP_CHILD_REQUEST_APPROVED"
-          : "FAMILY_GROUP_JOIN_APPROVED",
+      action: auditAction,
       memberId: session.user.id,
-      targetId: memberIdToLink,
+      targetId: affectedMemberId,
       details: JSON.stringify({
         familyGroupId: request.familyGroupId,
         requestId,
         requestType: request.type,
-        ...(request.type === "CHILD_REQUEST" ? { linkedMemberId: memberIdToLink } : {}),
+        linkedMemberId:
+          request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST"
+            ? affectedMemberId
+            : undefined,
       }),
     });
 
@@ -261,14 +450,13 @@ export async function PUT(req: NextRequest) {
         requesterId: request.requesterId,
         familyGroupId: request.familyGroupId,
         requestType: request.type,
-        linkedMemberId: request.type === "CHILD_REQUEST" ? memberIdToLink : undefined,
+        affectedMemberId,
       },
-      "Family group join request approved"
+      "Family group request approved"
     );
 
-    // Send approval notification for child requests
     if (request.type === "CHILD_REQUEST" && request.requester) {
-      const childName = `${request.childFirstName ?? ""} ${request.childLastName ?? ""}`.trim();
+      const childName = getRequestName(request);
       sendChildRequestApprovedEmail(
         request.requester.email,
         request.requester.firstName,
@@ -288,13 +476,19 @@ export async function PUT(req: NextRequest) {
       },
     });
 
+    const auditAction =
+      request.type === "CHILD_REQUEST"
+        ? "FAMILY_GROUP_CHILD_REQUEST_REJECTED"
+        : request.type === "ADULT_REQUEST"
+          ? "FAMILY_GROUP_ADULT_REQUEST_REJECTED"
+          : request.type === "REMOVAL_REQUEST"
+            ? "FAMILY_GROUP_REMOVAL_REQUEST_REJECTED"
+            : "FAMILY_GROUP_JOIN_REJECTED";
+
     logAudit({
-      action:
-        request.type === "CHILD_REQUEST"
-          ? "FAMILY_GROUP_CHILD_REQUEST_REJECTED"
-          : "FAMILY_GROUP_JOIN_REJECTED",
+      action: auditAction,
       memberId: session.user.id,
-      targetId: request.requesterId,
+      targetId: request.subjectMemberId ?? request.requesterId,
       details: JSON.stringify({
         familyGroupId: request.familyGroupId,
         requestId,
@@ -305,12 +499,11 @@ export async function PUT(req: NextRequest) {
 
     logger.info(
       { requestId, requesterId: request.requesterId, requestType: request.type },
-      "Family group join request rejected"
+      "Family group request rejected"
     );
 
-    // Send rejection notification for child requests
     if (request.type === "CHILD_REQUEST" && request.requester) {
-      const childName = `${request.childFirstName ?? ""} ${request.childLastName ?? ""}`.trim();
+      const childName = getRequestName(request);
       sendChildRequestRejectedEmail(
         request.requester.email,
         request.requester.firstName,

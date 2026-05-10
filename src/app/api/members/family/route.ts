@@ -1,7 +1,124 @@
 import { NextResponse } from "next/server";
+import type { AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
+import {
+  formatMemberProfileMissingField,
+  getMemberProfileCompleteness,
+  type MemberProfileCompletenessInput,
+  type MemberProfileCompletenessResult,
+} from "@/lib/member-profile-completeness";
+import type { BookingGuestProfileAction } from "@/lib/booking-guests";
+
+const FAMILY_MEMBER_PROFILE_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  ageTier: true,
+  active: true,
+  canLogin: true,
+  role: true,
+  phoneCountryCode: true,
+  phoneAreaCode: true,
+  phoneNumber: true,
+  dateOfBirth: true,
+  streetAddressLine1: true,
+  streetAddressLine2: true,
+  streetCity: true,
+  streetRegion: true,
+  streetPostalCode: true,
+  streetCountry: true,
+  postalAddressLine1: true,
+  postalAddressLine2: true,
+  postalCity: true,
+  postalRegion: true,
+  postalPostalCode: true,
+  postalCountry: true,
+  profileCompletedAt: true,
+  detailsConfirmedAt: true,
+  detailsConfirmedByMemberId: true,
+  onboardingConfirmedAt: true,
+  familyGroupMemberships: {
+    select: {
+      familyGroupId: true,
+      familyGroup: { select: { id: true, name: true } },
+    },
+  },
+} as const;
+
+type FamilyMemberRecord = MemberProfileCompletenessInput & {
+  id: string;
+  firstName: string;
+  lastName: string;
+  ageTier: AgeTier;
+  active: boolean;
+  canLogin: boolean;
+  role: string;
+  familyGroupMemberships: Array<{
+    familyGroupId: string;
+    familyGroup?: { id: string; name: string | null } | null;
+  }>;
+};
+
+type FamilyMemberRelationship = "self" | "partner" | "dependent";
+
+function getFamilyGroupMemberships(
+  member: Partial<Pick<FamilyMemberRecord, "familyGroupMemberships">>
+) {
+  return Array.isArray(member.familyGroupMemberships)
+    ? member.familyGroupMemberships
+    : [];
+}
+
+function getDisplayName(member: { firstName?: string | null; lastName?: string | null }) {
+  return [member.firstName, member.lastName].filter(Boolean).join(" ").trim() || "this member";
+}
+
+function getFamilyMemberAction(params: {
+  member: FamilyMemberRecord;
+  selfId: string;
+  canCurrentUserConfirmDetails: boolean;
+  needsOwnLoginConfirmation: boolean;
+  pendingRequestStatus: string | null;
+}): BookingGuestProfileAction | null {
+  const {
+    member,
+    selfId,
+    canCurrentUserConfirmDetails,
+    needsOwnLoginConfirmation,
+    pendingRequestStatus,
+  } = params;
+
+  if (pendingRequestStatus) {
+    return "pending_admin_approval";
+  }
+
+  if (member.canLogin && member.id !== selfId && needsOwnLoginConfirmation) {
+    return "own_login_required";
+  }
+
+  if (member.id === selfId || canCurrentUserConfirmDetails) {
+    return "complete_details";
+  }
+
+  if (needsOwnLoginConfirmation) {
+    return "own_login_required";
+  }
+
+  return "contact_admin";
+}
+
+function serializeProfileStatus(status: MemberProfileCompletenessResult) {
+  return {
+    isProfileComplete: status.isProfileComplete,
+    isDetailsConfirmed: status.isDetailsConfirmed,
+    canBeBookedAsMember: status.canBeBookedAsMember,
+    missingFields: status.missingFields.map(formatMemberProfileMissingField),
+    needsOwnLoginConfirmation: status.needsOwnLoginConfirmation,
+    confirmationMode: status.confirmationMode,
+  };
+}
 
 /**
  * GET /api/members/family
@@ -20,80 +137,182 @@ export async function GET() {
 
   const self = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      ageTier: true,
-      familyGroupMemberships: {
-        select: {
-          familyGroupId: true,
-          familyGroup: { select: { id: true, name: true } },
-        },
-      },
-    },
+    select: FAMILY_MEMBER_PROFILE_SELECT,
   });
 
   if (!self) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  // Build the family members list with deduplication
+  const currentMember = self;
+  const groupIds = getFamilyGroupMemberships(currentMember).map((m) => m.familyGroupId);
+
+  const groupMemberships = groupIds.length > 0
+    ? await prisma.familyGroupMember.findMany({
+        where: {
+          familyGroupId: { in: groupIds },
+          memberId: { not: session.user.id },
+          member: { active: true },
+        },
+        include: {
+          member: {
+            select: FAMILY_MEMBER_PROFILE_SELECT,
+          },
+        },
+        orderBy: { member: { firstName: "asc" } },
+      })
+    : [];
+
+  const rawPendingRequests = groupIds.length > 0
+    && typeof prisma.familyGroupJoinRequest?.findMany === "function"
+    ? await prisma.familyGroupJoinRequest.findMany({
+        where: {
+          familyGroupId: { in: groupIds },
+          status: "PENDING",
+        },
+        select: {
+          invitedMemberId: true,
+          linkedMemberId: true,
+          subjectMemberId: true,
+          status: true,
+        },
+      })
+    : [];
+  const pendingRequests = Array.isArray(rawPendingRequests) ? rawPendingRequests : [];
+
+  const pendingRequestStatusByMemberId = new Map<string, string>();
+  for (const request of pendingRequests) {
+    for (const memberId of [
+      request.invitedMemberId,
+      request.linkedMemberId,
+      request.subjectMemberId,
+    ]) {
+      if (memberId) {
+        pendingRequestStatusByMemberId.set(memberId, request.status);
+      }
+    }
+  }
+
+  const allMembers = [currentMember, ...groupMemberships.map((membership) => membership.member)];
+  const memberById = new Map(allMembers.map((member) => [member.id, member]));
+  const groupIdsByMemberId = new Map<string, Set<string>>();
+  for (const member of allMembers) {
+    groupIdsByMemberId.set(
+      member.id,
+      new Set(
+        getFamilyGroupMemberships(member).map((membership) => membership.familyGroupId)
+      )
+    );
+  }
+
+  function sharesFamilyGroup(memberId: string, otherMemberId: string) {
+    const groups = groupIdsByMemberId.get(memberId);
+    const otherGroups = groupIdsByMemberId.get(otherMemberId);
+    if (!groups || !otherGroups) {
+      return false;
+    }
+
+    for (const groupId of groups) {
+      if (otherGroups.has(groupId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function isActiveLoginAdult(memberId: string) {
+    const member = memberById.get(memberId);
+    return (
+      member?.active === true &&
+      member.canLogin === true &&
+      member.ageTier === "ADULT"
+    );
+  }
+
+  function hasValidDelegatedConfirmation(member: FamilyMemberRecord) {
+    return (
+      member.canLogin === false &&
+      Boolean(member.detailsConfirmedByMemberId) &&
+      isActiveLoginAdult(member.detailsConfirmedByMemberId!) &&
+      sharesFamilyGroup(member.id, member.detailsConfirmedByMemberId!)
+    );
+  }
+
   const seen = new Set<string>();
   const familyMembers: {
     id: string;
     firstName: string;
     lastName: string;
-    ageTier: string;
-    relationship: "self" | "partner" | "dependent";
+    ageTier: AgeTier;
+    relationship: FamilyMemberRelationship;
+    canLogin: boolean;
+    profileStatus: ReturnType<typeof serializeProfileStatus>;
+    canBeBooked: boolean;
+    missingFields: string[];
+    needsOwnLoginConfirmation: boolean;
+    canCurrentUserConfirmDetails: boolean;
+    pendingRequestStatus: string | null;
+    action: BookingGuestProfileAction | null;
   }[] = [];
 
   function addMember(
-    m: { id: string; firstName: string; lastName: string; ageTier: string },
-    relationship: "self" | "partner" | "dependent"
+    member: FamilyMemberRecord,
+    relationship: FamilyMemberRelationship
   ) {
-    if (seen.has(m.id)) return;
-    seen.add(m.id);
-    familyMembers.push({ ...m, relationship });
-  }
+    if (seen.has(member.id)) return;
+    seen.add(member.id);
 
-  // 1. Always include self
-  addMember(
-    { id: self.id, firstName: self.firstName, lastName: self.lastName, ageTier: self.ageTier },
-    "self"
-  );
-
-  // 2. All members from all family groups the user belongs to
-  const groupIds = self.familyGroupMemberships.map((m) => m.familyGroupId);
-
-  if (groupIds.length > 0) {
-    const groupMemberships = await prisma.familyGroupMember.findMany({
-      where: {
-        familyGroupId: { in: groupIds },
-        memberId: { not: session.user.id },
-        member: { active: true },
-      },
-      include: {
-        member: {
-          select: { id: true, firstName: true, lastName: true, ageTier: true },
-        },
-      },
-      orderBy: { member: { firstName: "asc" } },
+    const profileStatus = getMemberProfileCompleteness(member, {
+      delegatedConfirmationValid: hasValidDelegatedConfirmation(member),
     });
-    for (const gm of groupMemberships) {
-      // Adults are "partner", youth/children are "dependent"
-      const rel = gm.member.ageTier === "ADULT" ? "partner" : "dependent";
-      addMember(gm.member, rel);
-    }
+    const canCurrentUserConfirmDetails =
+      member.canLogin === false &&
+      isActiveLoginAdult(currentMember.id) &&
+      sharesFamilyGroup(member.id, currentMember.id);
+    const pendingRequestStatus =
+      pendingRequestStatusByMemberId.get(member.id) ?? null;
+    const action = profileStatus.canBeBookedAsMember
+      ? null
+      : getFamilyMemberAction({
+          member,
+          selfId: currentMember.id,
+          canCurrentUserConfirmDetails,
+          needsOwnLoginConfirmation: profileStatus.needsOwnLoginConfirmation,
+          pendingRequestStatus,
+        });
+    const serializedStatus = serializeProfileStatus(profileStatus);
+
+    familyMembers.push({
+      id: member.id,
+      firstName: member.firstName,
+      lastName: member.lastName,
+      ageTier: member.ageTier,
+      relationship,
+      canLogin: member.canLogin,
+      profileStatus: serializedStatus,
+      canBeBooked: serializedStatus.canBeBookedAsMember && !pendingRequestStatus,
+      missingFields: serializedStatus.missingFields,
+      needsOwnLoginConfirmation: serializedStatus.needsOwnLoginConfirmation,
+      canCurrentUserConfirmDetails,
+      pendingRequestStatus,
+      action,
+    });
   }
 
-  // Return the first group's info for backward compat (or null if no groups)
-  const firstGroup = self.familyGroupMemberships[0]?.familyGroup ?? null;
+  addMember(currentMember, "self");
+
+  for (const gm of groupMemberships) {
+    const rel = gm.member.ageTier === "ADULT" ? "partner" : "dependent";
+    addMember(gm.member, rel);
+  }
+
+  const firstGroup = getFamilyGroupMemberships(currentMember)[0]?.familyGroup ?? null;
 
   return NextResponse.json({
     familyGroupId: firstGroup?.id ?? null,
     familyGroupName: firstGroup?.name ?? null,
     familyGroupIds: groupIds,
     familyMembers,
+    displayName: getDisplayName(currentMember),
   });
 }

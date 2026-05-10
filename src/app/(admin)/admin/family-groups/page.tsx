@@ -33,23 +33,38 @@ interface FamilyGroup {
 interface RequestMemberMatch extends MemberOption {
   ageTier: string;
   active: boolean;
+  canLogin?: boolean;
   dateOfBirth: string | null;
   alreadyInGroup: boolean;
 }
 
 interface FamilyGroupRequest {
   id: string;
-  type: "JOIN_REQUEST" | "CHILD_REQUEST";
+  type: "JOIN_REQUEST" | "CHILD_REQUEST" | "ADULT_REQUEST" | "REMOVAL_REQUEST";
   createdAt: string;
   requester: { id: string; firstName: string; lastName: string; email: string };
   familyGroup: {
     id: string;
     name: string | null;
-    members: { id: string; firstName: string; lastName: string }[];
+    members: { id: string; firstName: string; lastName: string; email?: string; ageTier?: string }[];
   };
   childFirstName?: string | null;
   childLastName?: string | null;
   childDateOfBirth?: string | null;
+  requestedFirstName?: string | null;
+  requestedLastName?: string | null;
+  requestedDateOfBirth?: string | null;
+  requestedEmail?: string | null;
+  requestNotes?: string | null;
+  subjectMemberId?: string | null;
+  subjectMember?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    ageTier: string;
+    active: boolean;
+  } | null;
   matchingMembers: RequestMemberMatch[];
 }
 
@@ -132,6 +147,9 @@ export default function FamilyGroupsPage() {
             }
             if (request.type === "CHILD_REQUEST" && request.matchingMembers.length === 1) {
               nextSelections[request.id] = request.matchingMembers[0].id;
+            }
+            if (request.type === "ADULT_REQUEST" && request.matchingMembers.length === 0) {
+              nextSelections[request.id] = "__create__";
             }
           }
 
@@ -308,7 +326,10 @@ export default function FamilyGroupsPage() {
   }
 
   function getRequestTypeLabel(request: FamilyGroupRequest) {
-    return request.type === "CHILD_REQUEST" ? "Child/Youth Request" : "Join Request";
+    if (request.type === "CHILD_REQUEST") return "Child/Youth Request";
+    if (request.type === "ADULT_REQUEST") return "Same-email Adult Request";
+    if (request.type === "REMOVAL_REQUEST") return "Removal Request";
+    return "Join Request";
   }
 
   function getRequestSummary(request: FamilyGroupRequest) {
@@ -316,7 +337,30 @@ export default function FamilyGroupsPage() {
       const childName = [request.childFirstName, request.childLastName].filter(Boolean).join(" ");
       return `${request.requester.firstName} ${request.requester.lastName} wants to add ${childName || "a child/youth member"} to ${request.familyGroup.name || "this family group"}.`;
     }
+    if (request.type === "ADULT_REQUEST") {
+      const adultName = [request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ");
+      return `${request.requester.firstName} ${request.requester.lastName} wants to add ${adultName || "a same-email adult"} to ${request.familyGroup.name || "this family group"}.`;
+    }
+    if (request.type === "REMOVAL_REQUEST") {
+      const subjectName = request.subjectMember
+        ? `${request.subjectMember.firstName} ${request.subjectMember.lastName}`
+        : "a member";
+      return `${request.requester.firstName} ${request.requester.lastName} wants to remove ${subjectName} from ${request.familyGroup.name || "this family group"}.`;
+    }
     return `${request.requester.firstName} ${request.requester.lastName} wants to join ${request.familyGroup.name || "this family group"}.`;
+  }
+
+  function getRequestSubjectName(request: FamilyGroupRequest) {
+    if (request.type === "CHILD_REQUEST") {
+      return [request.childFirstName, request.childLastName].filter(Boolean).join(" ");
+    }
+    if (request.type === "ADULT_REQUEST") {
+      return [request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ");
+    }
+    if (request.type === "REMOVAL_REQUEST" && request.subjectMember) {
+      return `${request.subjectMember.firstName} ${request.subjectMember.lastName}`;
+    }
+    return "";
   }
 
   function getRequestCandidates(request: FamilyGroupRequest) {
@@ -334,7 +378,7 @@ export default function FamilyGroupsPage() {
 
   async function searchRequestMembers(request: FamilyGroupRequest) {
     const query = requestSearchTerms[request.id]?.trim()
-      || [request.childFirstName, request.childLastName].filter(Boolean).join(" ").trim();
+      || getRequestSubjectName(request);
 
     if (query.length < 2) {
       setRequestErrors((current) => ({
@@ -368,6 +412,7 @@ export default function FamilyGroupsPage() {
           email: string;
           ageTier: string;
           active: boolean;
+          canLogin?: boolean;
           dateOfBirth?: string | null;
         }) => ({
           id: member.id,
@@ -376,6 +421,7 @@ export default function FamilyGroupsPage() {
           email: member.email,
           ageTier: member.ageTier,
           active: member.active,
+          canLogin: member.canLogin,
           dateOfBirth: member.dateOfBirth ?? null,
           alreadyInGroup: request.familyGroup.members.some(
             (groupMember) => groupMember.id === member.id
@@ -439,11 +485,13 @@ export default function FamilyGroupsPage() {
     clearRequestError(request.id);
 
     const linkedMemberId = requestSelections[request.id];
+    const needsMemberSelection =
+      request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
 
-    if (action === "approve" && request.type === "CHILD_REQUEST" && !linkedMemberId) {
+    if (action === "approve" && needsMemberSelection && !linkedMemberId) {
       setRequestErrors((current) => ({
         ...current,
-        [request.id]: "Choose the member record that should be linked before approving this request.",
+        [request.id]: "Choose the member record to link, or create a new non-login adult where available.",
       }));
       return;
     }
@@ -457,8 +505,10 @@ export default function FamilyGroupsPage() {
         body: JSON.stringify({
           requestId: request.id,
           action,
-          ...(action === "approve" && request.type === "CHILD_REQUEST"
-            ? { linkedMemberId }
+          ...(action === "approve" && needsMemberSelection && linkedMemberId
+            ? linkedMemberId === "__create__"
+              ? { createNewMember: true }
+              : { linkedMemberId }
             : {}),
           ...(action === "reject" && requestNotes[request.id]?.trim()
             ? { rejectionReason: requestNotes[request.id].trim() }
@@ -610,6 +660,10 @@ export default function FamilyGroupsPage() {
                           className={
                             request.type === "CHILD_REQUEST"
                               ? "bg-blue-100 text-blue-800 border-blue-200"
+                              : request.type === "ADULT_REQUEST"
+                                ? "bg-violet-100 text-violet-800 border-violet-200"
+                                : request.type === "REMOVAL_REQUEST"
+                                  ? "bg-rose-100 text-rose-800 border-rose-200"
                               : "bg-emerald-100 text-emerald-800 border-emerald-200"
                           }
                         >

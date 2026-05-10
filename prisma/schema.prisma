@@ -245,6 +245,7 @@ model Member {
   familyGroupRequests                    FamilyGroupJoinRequest[]       @relation("FamilyGroupRequester")
   familyGroupInvitations                 FamilyGroupJoinRequest[]       @relation("FamilyGroupInvitedMember")
   familyGroupLinkedRequests              FamilyGroupJoinRequest[]       @relation("FamilyGroupLinkedMember")
+  familyGroupSubjectRequests             FamilyGroupJoinRequest[]       @relation("FamilyGroupSubjectMember")
   deletionRequests                       DeletionRequest[]
   credits                                MemberCredit[]
   requestedCreditAdjustments             MemberCredit[]                 @relation("RequestedAdminCredits")
@@ -1317,7 +1318,7 @@ model FamilyGroupJoinRequest {
   id            String    @id @default(cuid())
   familyGroupId String
   requesterId   String
-  type          String    @default("JOIN_REQUEST") // JOIN_REQUEST | ADULT_INVITE | CHILD_REQUEST
+  type          String    @default("JOIN_REQUEST") // JOIN_REQUEST | ADULT_INVITE | CHILD_REQUEST | ADULT_REQUEST | REMOVAL_REQUEST
   status        String    @default("PENDING") // PENDING | APPROVED | REJECTED
   createdAt     DateTime  @default(now())
   reviewedAt    DateTime?
@@ -1332,9 +1333,21 @@ model FamilyGroupJoinRequest {
   childLastName    String?
   childDateOfBirth DateTime?
 
+  // For ADULT_REQUEST: non-login adult details submitted by a family adult
+  requestedFirstName   String?
+  requestedLastName    String?
+  requestedDateOfBirth DateTime?
+  requestedEmail       String?
+
   // Set by admin when approving CHILD_REQUEST — links to existing member
   linkedMemberId String?
   linkedMember   Member? @relation("FamilyGroupLinkedMember", fields: [linkedMemberId], references: [id])
+
+  // For REMOVAL_REQUEST: member to remove from the requested family group
+  subjectMemberId String?
+  subjectMember   Member? @relation("FamilyGroupSubjectMember", fields: [subjectMemberId], references: [id])
+
+  requestNotes String?
 
   familyGroup FamilyGroup @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
   requester   Member      @relation("FamilyGroupRequester", fields: [requesterId], references: [id], onDelete: Cascade)
@@ -1343,6 +1356,8 @@ model FamilyGroupJoinRequest {
   @@index([requesterId])
   @@index([invitedMemberId])
   @@index([linkedMemberId])
+  @@index([subjectMemberId])
+  @@index([requestedEmail])
   @@index([status])
   @@index([type])
 }
