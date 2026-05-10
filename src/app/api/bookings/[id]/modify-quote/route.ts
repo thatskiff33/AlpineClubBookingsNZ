@@ -23,7 +23,9 @@ import {
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import {
+  assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
+  getBookingGuestValidationErrorResponse,
   normalizeBookingGuestInputs,
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
@@ -123,12 +125,25 @@ export async function POST(
       (addGuests ?? []).map((guest) => guest.memberId),
       { skipAuthorization: session.user.role === "ADMIN" }
     );
+    await assertLinkedBookingMembersCanBeBooked(
+      prisma,
+      linkedMembers,
+      session.user.id,
+      {
+        actorRole: session.user.role,
+        onBehalfOfMemberId:
+          session.user.role === "ADMIN" ? booking.memberId : null,
+      }
+    );
     normalizedAddGuests = addGuests
       ? normalizeBookingGuestInputs(addGuests, linkedMembers)
       : undefined;
   } catch (error) {
     if (error instanceof BookingGuestValidationError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
+      return NextResponse.json(
+        getBookingGuestValidationErrorResponse(error),
+        { status: error.status }
+      );
     }
     throw error;
   }

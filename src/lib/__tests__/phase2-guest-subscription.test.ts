@@ -361,4 +361,92 @@ describe("P2.3: Guest subscription check", () => {
     expect(body.code).toBe("GUEST_SUBSCRIPTION_REQUIRED");
     expect(body.unpaidMembers).toContain("Bob Jones");
   });
+
+  it("blocks the modify quote flow from pricing incomplete linked member guests", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockPrisma.familyGroupMember.findMany.mockImplementation(async (args: { where?: { memberId?: string | { in?: string[] }; familyGroupId?: { in?: string[] } } }) => {
+      if (args?.where?.memberId === "member-1") {
+        return [{ familyGroupId: "family-1", memberId: "member-1" }];
+      }
+      if (args?.where?.familyGroupId) {
+        return [
+          { familyGroupId: "family-1", memberId: "member-1" },
+          { familyGroupId: "family-1", memberId: "guest-member-1" },
+        ];
+      }
+      if (typeof args?.where?.memberId === "object" && args.where.memberId.in) {
+        return [
+          { familyGroupId: "family-1", memberId: "member-1" },
+          { familyGroupId: "family-1", memberId: "guest-member-1" },
+        ];
+      }
+      return [];
+    });
+    mockPrisma.member.findMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) => {
+      const ids = args?.where?.id?.in ?? [];
+      if (ids.includes("guest-member-1")) {
+        return [
+          {
+            id: "guest-member-1",
+            active: true,
+            ageTier: "ADULT",
+            canLogin: false,
+            firstName: "Bob",
+            lastName: "Jones",
+            phoneCountryCode: "64",
+            phoneAreaCode: "27",
+            phoneNumber: "4224115",
+            dateOfBirth: null,
+            streetAddressLine1: "1 Snow Road",
+            streetCity: "Taupo",
+            streetRegion: "Waikato",
+            streetPostalCode: "3330",
+            streetCountry: "NZ",
+            postalAddressLine1: "1 Snow Road",
+            postalCity: "Taupo",
+            postalRegion: "Waikato",
+            postalPostalCode: "3330",
+            postalCountry: "NZ",
+            role: "MEMBER",
+            profileCompletedAt: null,
+            detailsConfirmedAt: null,
+            detailsConfirmedByMemberId: null,
+            onboardingConfirmedAt: null,
+          },
+        ];
+      }
+      if (ids.includes("member-1")) {
+        return [{ id: "member-1", active: true, canLogin: true, ageTier: "ADULT" }];
+      }
+      return [];
+    });
+
+    const req = makeModifyQuoteRequest({
+      addGuests: [
+        {
+          firstName: "Bob",
+          lastName: "Jones",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "guest-member-1",
+        },
+      ],
+    });
+
+    const res = await getModifyQuote(req, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.code).toBe("GUEST_PROFILE_REQUIRED");
+    expect(body.members).toContainEqual(
+      expect.objectContaining({
+        memberId: "guest-member-1",
+        missingFields: expect.arrayContaining(["Date of Birth"]),
+        action: "complete_details",
+      })
+    );
+    expect(mockPrisma.memberSubscription.findMany).not.toHaveBeenCalled();
+  });
 });

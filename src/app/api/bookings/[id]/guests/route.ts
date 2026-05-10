@@ -25,7 +25,9 @@ import { ageTierEnum } from "@/lib/age-tier-schema";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
+  assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
+  getBookingGuestValidationErrorResponse,
   normalizeBookingGuestInputs,
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
@@ -126,10 +128,20 @@ export async function POST(
           newGuests.map((guest) => guest.memberId),
           { skipAuthorization: session.user.role === "ADMIN" }
         );
+        await assertLinkedBookingMembersCanBeBooked(
+          tx,
+          linkedMembers,
+          session.user.id,
+          {
+            actorRole: session.user.role,
+            onBehalfOfMemberId:
+              session.user.role === "ADMIN" ? booking.memberId : null,
+          }
+        );
         normalizedNewGuests = normalizeBookingGuestInputs(newGuests, linkedMembers);
       } catch (error) {
         if (error instanceof BookingGuestValidationError) {
-          throw new ApiError(error.message, error.status);
+          throw error;
         }
         throw error;
       }
@@ -518,6 +530,12 @@ export async function POST(
       promoRemoved: result.promoRemoved,
     });
   } catch (err) {
+    if (err instanceof BookingGuestValidationError) {
+      return NextResponse.json(
+        getBookingGuestValidationErrorResponse(err),
+        { status: err.status }
+      );
+    }
     if (err instanceof ApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }
