@@ -124,7 +124,7 @@ export function shouldShowMemberOnboarding(member: MemberOnboardingProfile) {
   if (
     member.active !== true ||
     member.canLogin !== true ||
-    member.role === "LODGE" ||
+    member.role !== "MEMBER" ||
     member.forcePasswordChange === true
   ) {
     return false;

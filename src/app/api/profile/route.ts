@@ -216,7 +216,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  if (existing.canLogin) {
+  if (existing.canLogin && existing.role === "MEMBER") {
     const profileCompleteness = evaluateSelfServiceProfilePayload({
       firstName: updateData.firstName as string | null | undefined,
       lastName: updateData.lastName as string | null | undefined,

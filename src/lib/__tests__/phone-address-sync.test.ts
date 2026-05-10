@@ -471,6 +471,35 @@ describe("Profile API: structured phone and address fields", () => {
     expect(prisma.member.update).not.toHaveBeenCalled();
   });
 
+  it("does not enforce first-login profile completeness for admin accounts", async () => {
+    vi.mocked(auth).mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      id: "admin1",
+      role: "ADMIN",
+      profileCompletedAt: null,
+    } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      id: "admin1",
+      role: "ADMIN",
+      firstName: "Admin",
+      lastName: "User",
+    } as any);
+
+    const res = await updateProfile(makeProfilePut({
+      firstName: "Admin",
+      lastName: "User",
+    }));
+
+    expect(res.status).toBe(200);
+    expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.not.objectContaining({
+        profileCompletedAt: expect.any(Date),
+      }),
+    }));
+  });
+
   it("rejects a future date of birth", async () => {
     vi.mocked(auth).mockResolvedValue(memberSession);
 

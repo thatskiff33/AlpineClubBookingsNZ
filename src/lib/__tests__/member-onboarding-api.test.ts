@@ -141,7 +141,7 @@ describe("member onboarding API", () => {
     expect(mockedPrisma.member.update).not.toHaveBeenCalled();
   });
 
-  it("rejects unauthenticated and non-login users", async () => {
+  it("rejects unauthenticated and non-member users", async () => {
     mockedAuth.mockResolvedValueOnce(null as any);
     const { POST } = await import("@/app/api/member/onboarding/confirm/route");
 
@@ -151,6 +151,13 @@ describe("member onboarding API", () => {
     mockedPrisma.member.findUnique.mockResolvedValue({
       ...completeMember,
       canLogin: false,
+    } as any);
+
+    expect((await POST()).status).toBe(403);
+
+    mockedPrisma.member.findUnique.mockResolvedValue({
+      ...completeMember,
+      role: "ADMIN",
     } as any);
 
     expect((await POST()).status).toBe(403);
@@ -170,7 +177,14 @@ describe("member onboarding API", () => {
     expect(mockedPrisma.member.findUnique).not.toHaveBeenCalled();
   });
 
-  it("does not gate lodge accounts or members before forced password change", () => {
+  it("only gates MEMBER accounts before forced password change", () => {
+    expect(
+      shouldShowMemberOnboarding({
+        ...completeMember,
+        role: "ADMIN",
+      })
+    ).toBe(false);
+
     expect(
       shouldShowMemberOnboarding({
         ...completeMember,

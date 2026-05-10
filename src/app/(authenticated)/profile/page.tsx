@@ -2,8 +2,9 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getSeasonYear } from "@/lib/utils";
-import { ProfileForm } from "./profile-form";
+import { formatCents, getSeasonYear } from "@/lib/utils";
+import { ProfileDetailsCard } from "./profile-details-card";
+import { ProfileSectionCard } from "./profile-section-card";
 import { ChangeEmailForm } from "./change-email-form";
 import { NotificationPreferences } from "./notification-preferences";
 import { FamilyGroupSection } from "./family-group-section";
@@ -23,10 +24,40 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
 import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
+import { getAvailablePromoCodesForMember } from "@/lib/promo";
 import { subscriptionStatusClass } from "@/lib/status-colors";
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function formatPromoBenefit(promo: {
+  freeNights: number | null;
+  percentOff: number | null;
+  type: string;
+  valueCents: number | null;
+}) {
+  if (promo.type === "PERCENTAGE") {
+    return promo.percentOff !== null
+      ? `${promo.percentOff}% off`
+      : "Percentage discount";
+  }
+
+  if (promo.type === "FIXED_AMOUNT") {
+    return promo.valueCents !== null
+      ? `${formatCents(promo.valueCents)} off`
+      : "Fixed discount";
+  }
+
+  if (promo.type === "FREE_NIGHTS") {
+    if (promo.freeNights === null) {
+      return "Free nights";
+    }
+
+    return `${promo.freeNights} free night${promo.freeNights === 1 ? "" : "s"}`;
+  }
+
+  return promo.type.replaceAll("_", " ").toLowerCase();
 }
 
 export default async function ProfilePage({
@@ -104,6 +135,30 @@ export default async function ProfilePage({
   const subscriptionStatus = currentSub?.status ?? null;
   const seasonLabel = `${currentSeasonYear}/${currentSeasonYear + 1}`;
   const subscriptionHistory = member.subscriptions;
+  const availablePromoCodes = await getAvailablePromoCodesForMember(member.id);
+  const profileFormMember = {
+    id: member.id,
+    firstName: member.firstName,
+    lastName: member.lastName,
+    phoneCountryCode: member.phoneCountryCode ?? "",
+    phoneAreaCode: member.phoneAreaCode ?? "",
+    phoneNumber: member.phoneNumber ?? "",
+    dateOfBirth: member.dateOfBirth
+      ? member.dateOfBirth.toISOString().substring(0, 10)
+      : "",
+    streetAddressLine1: member.streetAddressLine1 ?? "",
+    streetAddressLine2: member.streetAddressLine2 ?? "",
+    streetCity: member.streetCity ?? "",
+    streetRegion: member.streetRegion ?? "",
+    streetPostalCode: member.streetPostalCode ?? "",
+    streetCountry: member.streetCountry ?? "",
+    postalAddressLine1: member.postalAddressLine1 ?? "",
+    postalAddressLine2: member.postalAddressLine2 ?? "",
+    postalCity: member.postalCity ?? "",
+    postalRegion: member.postalRegion ?? "",
+    postalPostalCode: member.postalPostalCode ?? "",
+    postalCountry: member.postalCountry ?? "",
+  };
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -221,94 +276,110 @@ export default async function ProfilePage({
         </CardContent>
       </Card>
 
-      {/* Account Activity */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Account Activity</CardTitle>
-          <CardDescription>
-            Recent account, booking, payment, family, and privacy activity
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <AuditTimeline
-            endpoint="/api/member/audit-log"
-            categoryOptions={MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS}
-            showMetadata={false}
-          />
-        </CardContent>
-      </Card>
-
       {/* Subscription History */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Subscription History</CardTitle>
-          <CardDescription>
-            Your membership payment status across seasons
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {subscriptionHistory.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No subscription records — contact the club if this seems wrong.
-            </p>
-          ) : (
-            <div className="divide-y">
-              {subscriptionHistory.map((sub) => {
-                const label = `${sub.seasonYear}/${sub.seasonYear + 1}`;
-                const isCurrent = sub.seasonYear === currentSeasonYear;
-                return (
-                  <div key={sub.seasonYear} className="flex justify-between items-center py-2.5">
-                    <span className="text-sm">
-                      {label}
-                      {isCurrent && (
-                        <span className="ml-2 text-xs text-muted-foreground">(current)</span>
-                      )}
-                    </span>
-                    <Badge className={subscriptionStatusClass(sub.status)}>
-                      {sub.status === "PAID" ? "Paid" : sub.status === "UNPAID" ? "Unpaid" : sub.status === "OVERDUE" ? "Overdue" : sub.status.replace("_", " ")}
-                    </Badge>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <ProfileSectionCard
+        collapsible
+        defaultOpen={false}
+        description="Your membership payment status across seasons"
+        title="Subscription History"
+      >
+        {subscriptionHistory.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No subscription records — contact the club if this seems wrong.
+          </p>
+        ) : (
+          <div className="divide-y">
+            {subscriptionHistory.map((sub) => {
+              const label = `${sub.seasonYear}/${sub.seasonYear + 1}`;
+              const isCurrent = sub.seasonYear === currentSeasonYear;
+              return (
+                <div key={sub.seasonYear} className="flex justify-between items-center py-2.5">
+                  <span className="text-sm">
+                    {label}
+                    {isCurrent && (
+                      <span className="ml-2 text-xs text-muted-foreground">(current)</span>
+                    )}
+                  </span>
+                  <Badge className={subscriptionStatusClass(sub.status)}>
+                    {sub.status === "PAID" ? "Paid" : sub.status === "UNPAID" ? "Unpaid" : sub.status === "OVERDUE" ? "Overdue" : sub.status.replace("_", " ")}
+                  </Badge>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </ProfileSectionCard>
 
       {/* Account Credit */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Account Credit</CardTitle>
-          <CardDescription>
-            Your credit balance and transaction history
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <AccountCreditSection />
-        </CardContent>
-      </Card>
+      <ProfileSectionCard
+        description="Your credit balance and transaction history"
+        title="Account Credit"
+      >
+        <AccountCreditSection />
+      </ProfileSectionCard>
+
+      {/* Promo Codes */}
+      <ProfileSectionCard
+        description="Promo codes assigned to your member account"
+        title="Promo Codes"
+      >
+        {availablePromoCodes.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No assigned promo codes available.
+          </p>
+        ) : (
+          <div className="divide-y">
+            {availablePromoCodes.map((promo) => (
+              <div
+                className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0"
+                key={promo.code}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className="font-mono" variant="secondary">
+                    {promo.code}
+                  </Badge>
+                  <Badge variant="success">{formatPromoBenefit(promo)}</Badge>
+                </div>
+                {promo.description ? (
+                  <p className="text-sm text-muted-foreground">
+                    {promo.description}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </ProfileSectionCard>
 
       {/* Family Group */}
-      <Card id="family-group">
-        <CardHeader>
-          <CardTitle>Family Group</CardTitle>
-          <CardDescription>
-            Manage your family group members. Adults can invite other adults, and request to add children or youth.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FamilyGroupSection
-            familyGroups={member.familyGroupMemberships.map((ms) => ({
-              id: ms.familyGroup.id,
-              name: ms.familyGroup.name,
-              members: ms.familyGroup.memberships
-                .map((m) => m.member)
-                .filter((m) => m.id !== member.id),
-            }))}
-            canManage={member.ageTier === "ADULT" && member.canLogin === true}
-          />
-        </CardContent>
-      </Card>
+      <ProfileSectionCard
+        collapsible
+        defaultOpen
+        description="Manage your family group members. Adults can invite other adults, and request to add children or youth."
+        id="family-group"
+        title="Family Group"
+      >
+        <FamilyGroupSection
+          familyGroups={member.familyGroupMemberships.map((ms) => ({
+            id: ms.familyGroup.id,
+            name: ms.familyGroup.name,
+            members: ms.familyGroup.memberships
+              .map((m) => m.member)
+              .filter((m) => m.id !== member.id),
+          }))}
+          canManage={member.ageTier === "ADULT" && member.canLogin === true}
+        />
+      </ProfileSectionCard>
+
+      {/* Notification Preferences */}
+      <ProfileSectionCard
+        collapsible
+        defaultOpen
+        description="Choose which email notifications you receive"
+        title="Notification Preferences"
+      >
+        <NotificationPreferences />
+      </ProfileSectionCard>
 
       {/* Change Email */}
       <Card>
@@ -323,56 +394,21 @@ export default async function ProfilePage({
         </CardContent>
       </Card>
 
-      {/* Notification Preferences */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Notification Preferences</CardTitle>
-          <CardDescription>
-            Choose which email notifications you receive
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <NotificationPreferences />
-        </CardContent>
-      </Card>
+      <ProfileDetailsCard member={profileFormMember} returnTo={returnTo} />
 
-      {/* Editable profile */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Personal Details</CardTitle>
-          <CardDescription>
-            Update your name, phone, address, and date of birth. Changes are synced with Xero.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ProfileForm
-            member={{
-              id: member.id,
-              firstName: member.firstName,
-              lastName: member.lastName,
-              phoneCountryCode: member.phoneCountryCode ?? "",
-              phoneAreaCode: member.phoneAreaCode ?? "",
-              phoneNumber: member.phoneNumber ?? "",
-              dateOfBirth: member.dateOfBirth
-                ? member.dateOfBirth.toISOString().substring(0, 10)
-                : "",
-              streetAddressLine1: member.streetAddressLine1 ?? "",
-              streetAddressLine2: member.streetAddressLine2 ?? "",
-              streetCity: member.streetCity ?? "",
-              streetRegion: member.streetRegion ?? "",
-              streetPostalCode: member.streetPostalCode ?? "",
-              streetCountry: member.streetCountry ?? "",
-              postalAddressLine1: member.postalAddressLine1 ?? "",
-              postalAddressLine2: member.postalAddressLine2 ?? "",
-              postalCity: member.postalCity ?? "",
-              postalRegion: member.postalRegion ?? "",
-              postalPostalCode: member.postalPostalCode ?? "",
-              postalCountry: member.postalCountry ?? "",
-            }}
-            returnTo={returnTo}
-          />
-        </CardContent>
-      </Card>
+      {/* Account Activity */}
+      <ProfileSectionCard
+        collapsible
+        defaultOpen={false}
+        description="Recent account, booking, payment, family, and privacy activity"
+        title="Account Activity"
+      >
+        <AuditTimeline
+          endpoint="/api/member/audit-log"
+          categoryOptions={MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS}
+          showMetadata={false}
+        />
+      </ProfileSectionCard>
 
       {/* Privacy & Data */}
       <Card>

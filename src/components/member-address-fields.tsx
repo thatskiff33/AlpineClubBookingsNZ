@@ -31,6 +31,7 @@ interface MemberAddressFieldsProps {
   idPrefix?: string;
   physicalDescription?: ReactNode;
   postalDescription?: ReactNode;
+  readOnly?: boolean;
   required?: boolean;
 }
 
@@ -43,13 +44,19 @@ export function MemberAddressFields({
   onValuesChange,
   physicalDescription,
   postalDescription,
+  readOnly = false,
   required = false,
   sameAsPhysical,
   values,
 }: MemberAddressFieldsProps) {
   const streetValues = pickStreetAddressValues(values);
+  const readOnlyInputClassName = readOnly
+    ? "bg-slate-50 text-slate-900 shadow-none focus-visible:ring-0"
+    : undefined;
 
   function applyStreetPatch(patch: Partial<MemberAddressValues>) {
+    if (readOnly) return;
+
     if (!sameAsPhysical) {
       onValuesChange(patch);
       return;
@@ -67,6 +74,8 @@ export function MemberAddressFields({
   }
 
   function handleStreetFieldChange(field: StreetAddressField, value: string) {
+    if (readOnly) return;
+
     const patch = {
       [field]: value,
     } as Partial<MemberAddressValues>;
@@ -83,11 +92,19 @@ export function MemberAddressFields({
   }
 
   function handleSameAsPhysicalChange(checked: boolean) {
+    if (readOnly) return;
+
     onSameAsPhysicalChange(checked);
 
     if (checked) {
       onValuesChange(copyStreetAddressToPostal(streetValues));
     }
+  }
+
+  function handlePostalPatch(patch: Partial<MemberAddressValues>) {
+    if (readOnly) return;
+
+    onValuesChange(patch);
   }
 
   const physicalFields = (
@@ -97,6 +114,7 @@ export function MemberAddressFields({
         <Label htmlFor={`${idPrefix}-streetAddressLine1`}>Address line 1</Label>
         <AddressAutocomplete
           addressParams={{ post_box: "0" }}
+          className={readOnlyInputClassName}
           disabled={disabled}
           id={`${idPrefix}-streetAddressLine1`}
           maxLength={200}
@@ -114,6 +132,7 @@ export function MemberAddressFields({
             handleStreetFieldChange("streetAddressLine1", nextValue)
           }
           placeholder="Start typing an NZ address"
+          readOnly={readOnly}
           required={required}
           value={values.streetAddressLine1}
         />
@@ -121,6 +140,7 @@ export function MemberAddressFields({
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-streetAddressLine2`}>Address line 2</Label>
         <Input
+          className={readOnlyInputClassName}
           disabled={disabled}
           id={`${idPrefix}-streetAddressLine2`}
           maxLength={200}
@@ -131,6 +151,7 @@ export function MemberAddressFields({
             )
           }
           placeholder="Apartment, unit, level, or building"
+          readOnly={readOnly}
           value={values.streetAddressLine2}
         />
       </div>
@@ -138,6 +159,7 @@ export function MemberAddressFields({
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-streetCity`}>City / town</Label>
           <Input
+            className={readOnlyInputClassName}
             disabled={disabled}
             id={`${idPrefix}-streetCity`}
             maxLength={200}
@@ -145,6 +167,7 @@ export function MemberAddressFields({
               handleStreetFieldChange("streetCity", event.target.value)
             }
             placeholder="City / town"
+            readOnly={readOnly}
             required={required}
             value={values.streetCity}
           />
@@ -152,6 +175,7 @@ export function MemberAddressFields({
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-streetRegion`}>Region</Label>
           <Input
+            className={readOnlyInputClassName}
             disabled={disabled}
             id={`${idPrefix}-streetRegion`}
             maxLength={200}
@@ -159,6 +183,7 @@ export function MemberAddressFields({
               handleStreetFieldChange("streetRegion", event.target.value)
             }
             placeholder="Region"
+            readOnly={readOnly}
             required={required}
             value={values.streetRegion}
           />
@@ -168,6 +193,7 @@ export function MemberAddressFields({
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-streetPostalCode`}>Postal code</Label>
           <Input
+            className={readOnlyInputClassName}
             disabled={disabled}
             id={`${idPrefix}-streetPostalCode`}
             maxLength={20}
@@ -178,6 +204,7 @@ export function MemberAddressFields({
               )
             }
             placeholder="Postal code"
+            readOnly={readOnly}
             required={required}
             value={values.streetPostalCode}
           />
@@ -185,6 +212,7 @@ export function MemberAddressFields({
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-streetCountry`}>Country</Label>
           <Input
+            className={readOnlyInputClassName}
             disabled={disabled}
             id={`${idPrefix}-streetCountry`}
             maxLength={100}
@@ -192,6 +220,7 @@ export function MemberAddressFields({
               handleStreetFieldChange("streetCountry", event.target.value)
             }
             placeholder="Country"
+            readOnly={readOnly}
             required={required}
             value={values.streetCountry}
           />
@@ -210,11 +239,12 @@ export function MemberAddressFields({
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-postalAddressLine1`}>Address line 1</Label>
         <AddressAutocomplete
+          className={readOnlyInputClassName}
           disabled={disabled}
           id={`${idPrefix}-postalAddressLine1`}
           maxLength={200}
           onAddressSelected={(selection) =>
-            onValuesChange({
+            handlePostalPatch({
               postalAddressLine1: selection.addressLine1,
               postalAddressLine2: selection.addressLine2,
               postalCity: selection.city,
@@ -224,9 +254,10 @@ export function MemberAddressFields({
             })
           }
           onChange={(nextValue) =>
-            onValuesChange({ postalAddressLine1: nextValue })
+            handlePostalPatch({ postalAddressLine1: nextValue })
           }
           placeholder="Start typing an NZ postal address"
+          readOnly={readOnly}
           required={required}
           value={values.postalAddressLine1}
         />
@@ -234,13 +265,15 @@ export function MemberAddressFields({
       <div className="space-y-2">
         <Label htmlFor={`${idPrefix}-postalAddressLine2`}>Address line 2</Label>
         <Input
+          className={readOnlyInputClassName}
           disabled={disabled}
           id={`${idPrefix}-postalAddressLine2`}
           maxLength={200}
           onChange={(event) =>
-            onValuesChange({ postalAddressLine2: event.target.value })
+            handlePostalPatch({ postalAddressLine2: event.target.value })
           }
           placeholder="Apartment, unit, level, or building"
+          readOnly={readOnly}
           value={values.postalAddressLine2}
         />
       </div>
@@ -248,13 +281,15 @@ export function MemberAddressFields({
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-postalCity`}>City / town</Label>
           <Input
+            className={readOnlyInputClassName}
             disabled={disabled}
             id={`${idPrefix}-postalCity`}
             maxLength={200}
             onChange={(event) =>
-              onValuesChange({ postalCity: event.target.value })
+              handlePostalPatch({ postalCity: event.target.value })
             }
             placeholder="City / town"
+            readOnly={readOnly}
             required={required}
             value={values.postalCity}
           />
@@ -262,13 +297,15 @@ export function MemberAddressFields({
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-postalRegion`}>Region</Label>
           <Input
+            className={readOnlyInputClassName}
             disabled={disabled}
             id={`${idPrefix}-postalRegion`}
             maxLength={200}
             onChange={(event) =>
-              onValuesChange({ postalRegion: event.target.value })
+              handlePostalPatch({ postalRegion: event.target.value })
             }
             placeholder="Region"
+            readOnly={readOnly}
             required={required}
             value={values.postalRegion}
           />
@@ -278,13 +315,15 @@ export function MemberAddressFields({
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-postalPostalCode`}>Postal code</Label>
           <Input
+            className={readOnlyInputClassName}
             disabled={disabled}
             id={`${idPrefix}-postalPostalCode`}
             maxLength={20}
             onChange={(event) =>
-              onValuesChange({ postalPostalCode: event.target.value })
+              handlePostalPatch({ postalPostalCode: event.target.value })
             }
             placeholder="Postal code"
+            readOnly={readOnly}
             required={required}
             value={values.postalPostalCode}
           />
@@ -292,13 +331,15 @@ export function MemberAddressFields({
         <div className="space-y-2">
           <Label htmlFor={`${idPrefix}-postalCountry`}>Country</Label>
           <Input
+            className={readOnlyInputClassName}
             disabled={disabled}
             id={`${idPrefix}-postalCountry`}
             maxLength={100}
             onChange={(event) =>
-              onValuesChange({ postalCountry: event.target.value })
+              handlePostalPatch({ postalCountry: event.target.value })
             }
             placeholder="Country"
+            readOnly={readOnly}
             required={required}
             value={values.postalCountry}
           />
@@ -311,7 +352,7 @@ export function MemberAddressFields({
     <div className="flex items-center gap-2 pb-1">
       <Checkbox
         checked={sameAsPhysical}
-        disabled={disabled}
+        disabled={disabled || readOnly}
         id={`${idPrefix}-sameAsPhysical`}
         onCheckedChange={(checked) =>
           handleSameAsPhysicalChange(checked === true)

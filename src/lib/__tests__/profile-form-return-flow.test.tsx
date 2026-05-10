@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { InputHTMLAttributes } from "react";
+import type { AnchorHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ProfileDetailsCard } from "@/app/(authenticated)/profile/profile-details-card";
 import { ProfileForm } from "@/app/(authenticated)/profile/profile-form";
 
 const fetchMock = vi.fn();
@@ -14,6 +15,21 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({
     replace: replaceMock,
   }),
+}));
+
+vi.mock("next/link", () => ({
+  default: ({
+    children,
+    href,
+    ...props
+  }: {
+    children: ReactNode;
+    href: string;
+  } & AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a href={href} {...props}>
+      {children}
+    </a>
+  ),
 }));
 
 vi.mock("sonner", () => ({
@@ -135,5 +151,30 @@ describe("ProfileForm return flow", () => {
 
     expect(onSaved).toHaveBeenCalledTimes(1);
     expect(replaceMock).not.toHaveBeenCalled();
+  });
+
+  it("can render the profile form as a read-only view", () => {
+    render(
+      <ProfileForm
+        editable={false}
+        member={member}
+        showSubmitButton={false}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Save Changes" })).toBeNull();
+    expect((screen.getByLabelText("First Name") as HTMLInputElement).readOnly).toBe(true);
+  });
+
+  it("uses one top button to switch the profile details card from edit to save", () => {
+    render(<ProfileDetailsCard member={member} />);
+
+    expect((screen.getByLabelText("First Name") as HTMLInputElement).readOnly).toBe(true);
+    expect(screen.getByRole("link", { name: /Back to Dashboard/ }).getAttribute("href")).toBe("/dashboard");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    expect((screen.getByLabelText("First Name") as HTMLInputElement).readOnly).toBe(false);
   });
 });
