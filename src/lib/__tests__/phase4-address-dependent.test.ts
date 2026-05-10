@@ -120,6 +120,7 @@ const baseMember = {
   dateOfBirth: new Date("1990-01-15"), role: "MEMBER", ageTier: "ADULT",
   active: true, forcePasswordChange: false, xeroContactId: null,
   joinedDate: null, createdAt: new Date("2025-01-01"), canLogin: true,
+  profileCompletedAt: null,
   parentMemberId: null, inheritParentEmail: false, inheritEmailFromId: null,
   streetAddressLine1: "123 Main St", streetAddressLine2: null,
   streetCity: "Tokoroa", streetRegion: "Waikato",
@@ -245,6 +246,10 @@ describe("Profile update with postalSameAsPhysical", () => {
 
     const res = await updateProfile(makeProfilePut({
       firstName: "Alice", lastName: "Smith",
+      phoneCountryCode: "64",
+      phoneAreaCode: "27",
+      phoneNumber: "4224115",
+      dateOfBirth: "1990-01-15",
       streetAddressLine1: "42 Lodge Rd",
       streetCity: "Whakapapa",
       streetRegion: "Manawatu-Wanganui",
