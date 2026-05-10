@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
-import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
+import {
+  unstable_doesMiddlewareMatch as unstable_doesProxyMatch,
+} from "next/experimental/testing/server";
 import {
   buildContentSecurityPolicy,
   CSP_HEADER,
   CSP_NONCE_HEADER,
   CSP_REPORT_ONLY_HEADER,
 } from "@/lib/csp";
-import middleware, { config } from "../../middleware";
+import proxy, { config } from "../../proxy";
 
 function directive(policy: string, name: string) {
   const match = policy
@@ -45,31 +47,31 @@ describe("CSP policy", () => {
   });
 });
 
-describe("CSP middleware", () => {
+describe("CSP proxy", () => {
   it("matches root page requests but skips API/static/prefetch requests", () => {
     expect(
-      unstable_doesMiddlewareMatch({
+      unstable_doesProxyMatch({
         config,
         nextConfig: {},
         url: "/",
       })
     ).toBe(true);
     expect(
-      unstable_doesMiddlewareMatch({
+      unstable_doesProxyMatch({
         config,
         nextConfig: {},
         url: "/api/health",
       })
     ).toBe(false);
     expect(
-      unstable_doesMiddlewareMatch({
+      unstable_doesProxyMatch({
         config,
         nextConfig: {},
         url: "/_next/static/chunks/app.js",
       })
     ).toBe(false);
     expect(
-      unstable_doesMiddlewareMatch({
+      unstable_doesProxyMatch({
         config,
         headers: { purpose: "prefetch" },
         nextConfig: {},
@@ -79,7 +81,7 @@ describe("CSP middleware", () => {
   });
 
   it("emits a single enforced CSP header with a per-request nonce and no report-only header", () => {
-    const response = middleware(new NextRequest("https://tokoroa.org.nz/"));
+    const response = proxy(new NextRequest("https://tokoroa.org.nz/"));
     const enforcedPolicy = response.headers.get(CSP_HEADER);
 
     expect(enforcedPolicy).toBeTruthy();
@@ -97,8 +99,8 @@ describe("CSP middleware", () => {
   });
 
   it("generates a different nonce per request", () => {
-    const a = middleware(new NextRequest("https://tokoroa.org.nz/"));
-    const b = middleware(new NextRequest("https://tokoroa.org.nz/"));
+    const a = proxy(new NextRequest("https://tokoroa.org.nz/"));
+    const b = proxy(new NextRequest("https://tokoroa.org.nz/"));
     const nonceA = nonceFromScriptSrc(a.headers.get(CSP_HEADER) as string);
     const nonceB = nonceFromScriptSrc(b.headers.get(CSP_HEADER) as string);
 
