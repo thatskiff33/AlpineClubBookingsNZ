@@ -36,15 +36,23 @@ interface ProfileFormProps {
     postalPostalCode: string;
     postalCountry: string;
   };
+  editable?: boolean;
+  formId?: string;
   onSaved?: () => void;
+  onSavingChange?: (saving: boolean) => void;
   returnTo?: string | null;
+  showSubmitButton?: boolean;
   submitLabel?: string;
 }
 
 export function ProfileForm({
   member,
+  editable = true,
+  formId,
   onSaved,
+  onSavingChange,
   returnTo,
+  showSubmitButton = true,
   submitLabel = "Save Changes",
 }: ProfileFormProps) {
   const router = useRouter();
@@ -86,14 +94,27 @@ export function ProfileForm({
     })
   );
   const [saving, setSaving] = useState(false);
+  const readOnly = !editable;
+  const readOnlyInputClassName = readOnly
+    ? "bg-slate-50 text-slate-900 shadow-none focus-visible:ring-0"
+    : undefined;
+
+  function setSavingState(nextSaving: boolean) {
+    setSaving(nextSaving);
+    onSavingChange?.(nextSaving);
+  }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (readOnly) return;
+
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSaving(true);
+    if (readOnly) return;
+
+    setSavingState(true);
 
     try {
       const res = await fetch("/api/profile", {
@@ -120,18 +141,21 @@ export function ProfileForm({
     } catch {
       toast.error("An unexpected error occurred");
     } finally {
-      setSaving(false);
+      setSavingState(false);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form id={formId} onSubmit={handleSubmit} className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="firstName">First Name</Label>
           <Input
+            className={readOnlyInputClassName}
+            disabled={saving}
             id="firstName"
             name="firstName"
+            readOnly={readOnly}
             value={form.firstName}
             onChange={handleChange}
             required
@@ -142,8 +166,11 @@ export function ProfileForm({
         <div className="space-y-2">
           <Label htmlFor="lastName">Last Name</Label>
           <Input
+            className={readOnlyInputClassName}
+            disabled={saving}
             id="lastName"
             name="lastName"
+            readOnly={readOnly}
             value={form.lastName}
             onChange={handleChange}
             required
@@ -158,7 +185,10 @@ export function ProfileForm({
         <div className="flex gap-2">
           <div className="w-20">
             <Input
+              className={readOnlyInputClassName}
+              disabled={saving}
               name="phoneCountryCode"
+              readOnly={readOnly}
               value={form.phoneCountryCode}
               onChange={handleChange}
               placeholder="64"
@@ -169,7 +199,10 @@ export function ProfileForm({
           </div>
           <div className="w-20">
             <Input
+              className={readOnlyInputClassName}
+              disabled={saving}
               name="phoneAreaCode"
+              readOnly={readOnly}
               value={form.phoneAreaCode}
               onChange={handleChange}
               placeholder="27"
@@ -180,7 +213,10 @@ export function ProfileForm({
           </div>
           <div className="flex-1">
             <Input
+              className={readOnlyInputClassName}
+              disabled={saving}
               name="phoneNumber"
+              readOnly={readOnly}
               value={form.phoneNumber}
               onChange={handleChange}
               placeholder="123 4567"
@@ -198,9 +234,12 @@ export function ProfileForm({
       <div className="space-y-2">
         <Label htmlFor="dateOfBirth">Date of Birth</Label>
         <Input
+          className={readOnlyInputClassName}
+          disabled={saving}
           id="dateOfBirth"
           name="dateOfBirth"
           type="date"
+          readOnly={readOnly}
           value={form.dateOfBirth}
           onChange={handleChange}
           max={new Date().toISOString().substring(0, 10)}
@@ -213,20 +252,24 @@ export function ProfileForm({
 
       <MemberAddressFields
         collapsible
+        disabled={saving}
         idPrefix="profile"
         onSameAsPhysicalChange={setSameAsPhysical}
         onValuesChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
+        readOnly={readOnly}
         required
         sameAsPhysical={sameAsPhysical}
         values={form}
       />
 
-      <div className="flex justify-end pt-2">
-        <Button type="submit" disabled={saving}>
-          {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {saving ? "Saving..." : submitLabel}
-        </Button>
-      </div>
+      {showSubmitButton ? (
+        <div className="flex justify-end pt-2">
+          <Button type="submit" disabled={saving}>
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {saving ? "Saving..." : submitLabel}
+          </Button>
+        </div>
+      ) : null}
     </form>
   );
 }

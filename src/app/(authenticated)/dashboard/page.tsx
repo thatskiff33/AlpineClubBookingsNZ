@@ -28,7 +28,6 @@ import { isHutLeader } from "@/lib/hut-leader";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { summarizeMemberPaymentOwed } from "@/lib/member-dashboard";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
-import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -158,8 +157,8 @@ export default async function DashboardPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button asChild variant="outline">
-            <Link href={buildProfilePathWithReturnTo("/dashboard")}>
-              Edit Profile
+            <Link href="/profile">
+              View User Profile
             </Link>
           </Button>
           <Button asChild>

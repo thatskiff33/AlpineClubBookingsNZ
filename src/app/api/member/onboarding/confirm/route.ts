@@ -28,9 +28,9 @@ export async function POST() {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  if (!member.active || !member.canLogin || member.role === "LODGE") {
+  if (!member.active || !member.canLogin || member.role !== "MEMBER") {
     return NextResponse.json(
-      { error: "Onboarding confirmation is only available to active login-capable members" },
+      { error: "Onboarding confirmation is only available to active login-capable member accounts" },
       { status: 403 }
     );
   }
