@@ -47,6 +47,7 @@ export type AuditLogParams = {
   retentionClass?: AuditRetentionClass | null;
   expiresAt?: Date | null;
   archivedAt?: Date | null;
+  incidentPreserved?: boolean | null;
 };
 
 export type StructuredAuditEvent = {
@@ -74,11 +75,13 @@ export type StructuredAuditEvent = {
   };
   retentionClass?: AuditRetentionClass | null;
   expiresAt?: Date | null;
+  incidentPreserved?: boolean | null;
 };
 
 type AuditLogClient = Prisma.TransactionClient | typeof prisma;
 
 const REDACTED = "[REDACTED]";
+const REDACTED_CARD = "[REDACTED_CARD]";
 const REDACTED_LONG_HTML = "[REDACTED_LONG_HTML]";
 const TRUNCATED = "[TRUNCATED]";
 const MAX_METADATA_DEPTH = 6;
@@ -89,6 +92,9 @@ const MAX_METADATA_JSON_LENGTH = 24000;
 
 const SECRET_VALUE_PATTERN =
   /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]+|\b(?:pi|seti|si|cs)_[A-Za-z0-9]+_secret_[A-Za-z0-9]+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/;
+const SENSITIVE_TEXT_KEY_VALUE_PATTERN =
+  /\b(password|passcode|token|secret|authorization|cookie|card(?:number)?|cvc|cvv)\s*[:=]\s*("[^"]*"|'[^']*'|[^,\s;]+)/gi;
+const PAYMENT_CARD_NUMBER_PATTERN = /\b(?:\d[ -]?){13,19}\b/g;
 
 type SanitizedMetadataValue = Prisma.InputJsonValue | null;
 
@@ -136,17 +142,60 @@ function isLongHtml(value: string): boolean {
   return value.length > 500 && /<\/?[a-z][\s\S]*>/i.test(value);
 }
 
+function isLikelyPaymentCardNumber(value: string): boolean {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length < 13 || digits.length > 19) {
+    return false;
+  }
+
+  let sum = 0;
+  let shouldDouble = false;
+  for (let index = digits.length - 1; index >= 0; index -= 1) {
+    let digit = Number(digits[index]);
+    if (shouldDouble) {
+      digit *= 2;
+      if (digit > 9) {
+        digit -= 9;
+      }
+    }
+    sum += digit;
+    shouldDouble = !shouldDouble;
+  }
+
+  return sum % 10 === 0;
+}
+
+function redactSensitiveText(value: string): string {
+  return value
+    .replace(SENSITIVE_TEXT_KEY_VALUE_PATTERN, (_match, key: string) => {
+      return `${key}=${REDACTED}`;
+    })
+    .replace(PAYMENT_CARD_NUMBER_PATTERN, (candidate) => {
+      return isLikelyPaymentCardNumber(candidate) ? REDACTED_CARD : candidate;
+    });
+}
+
 function sanitizeMetadataString(value: string): string {
   if (SECRET_VALUE_PATTERN.test(value)) {
     return REDACTED;
   }
+  const redacted = redactSensitiveText(value);
   if (isLongHtml(value)) {
     return REDACTED_LONG_HTML;
   }
-  if (value.length > MAX_METADATA_STRING_LENGTH) {
-    return `${value.slice(0, MAX_METADATA_STRING_LENGTH)}...${TRUNCATED}`;
+  if (redacted.length > MAX_METADATA_STRING_LENGTH) {
+    return `${redacted.slice(0, MAX_METADATA_STRING_LENGTH)}...${TRUNCATED}`;
   }
-  return value;
+  return redacted;
+}
+
+export function sanitizeAuditArchiveText(
+  value?: string | null
+): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return sanitizeMetadataString(value);
 }
 
 function sanitizeMetadataValue(
@@ -348,6 +397,7 @@ function buildAuditLogCreateData(
             ? getAuditRetentionExpiresAt(retentionClass)
             : undefined),
     archivedAt: params.archivedAt ?? undefined,
+    incidentPreserved: params.incidentPreserved ? true : undefined,
   });
 }
 
@@ -382,6 +432,7 @@ function buildStructuredAuditLogCreateData(
     userAgent: event.request?.userAgent ?? undefined,
     retentionClass,
     expiresAt,
+    incidentPreserved: event.incidentPreserved ? true : undefined,
   });
 }
 
