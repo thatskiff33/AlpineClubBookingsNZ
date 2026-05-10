@@ -63,6 +63,14 @@ type FamilyMemberRecord = MemberProfileCompletenessInput & {
 
 type FamilyMemberRelationship = "self" | "partner" | "dependent";
 
+function getFamilyGroupMemberships(
+  member: Partial<Pick<FamilyMemberRecord, "familyGroupMemberships">>
+) {
+  return Array.isArray(member.familyGroupMemberships)
+    ? member.familyGroupMemberships
+    : [];
+}
+
 function getDisplayName(member: { firstName?: string | null; lastName?: string | null }) {
   return [member.firstName, member.lastName].filter(Boolean).join(" ").trim() || "this member";
 }
@@ -136,7 +144,7 @@ export async function GET() {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  const groupIds = self.familyGroupMemberships.map((m) => m.familyGroupId);
+  const groupIds = getFamilyGroupMemberships(self).map((m) => m.familyGroupId);
 
   const groupMemberships = groupIds.length > 0
     ? await prisma.familyGroupMember.findMany({
@@ -190,7 +198,9 @@ export async function GET() {
   for (const member of allMembers) {
     groupIdsByMemberId.set(
       member.id,
-      new Set(member.familyGroupMemberships.map((membership) => membership.familyGroupId))
+      new Set(
+        getFamilyGroupMemberships(member).map((membership) => membership.familyGroupId)
+      )
     );
   }
 
