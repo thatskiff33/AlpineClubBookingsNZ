@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireFinanceViewerApiAccess } from "@/lib/finance-api-auth";
@@ -27,6 +28,19 @@ function readBearerToken(request: NextRequest) {
   return token || null;
 }
 
+function safeBearerCompare(provided: string, expected: string) {
+  const providedBuffer = Buffer.from(provided, "utf8");
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  const paddedProvidedBuffer = Buffer.alloc(expectedBuffer.length);
+
+  providedBuffer.copy(paddedProvidedBuffer, 0, 0, expectedBuffer.length);
+
+  return (
+    timingSafeEqual(paddedProvidedBuffer, expectedBuffer) &&
+    providedBuffer.length === expectedBuffer.length
+  );
+}
+
 function getCurrentIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -48,7 +62,7 @@ export async function GET(request: NextRequest) {
   }
 
   const providedToken = readBearerToken(request);
-  if (!providedToken || providedToken !== expectedToken) {
+  if (!providedToken || !safeBearerCompare(providedToken, expectedToken)) {
     return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
   }
 

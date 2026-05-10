@@ -58,7 +58,7 @@ describe("finance legacy dashboard bookings route", () => {
     });
   });
 
-  it("returns the export payload for authorised requests", async () => {
+  it("returns the export payload when the bearer token is identical", async () => {
     const response = await getFinanceLegacyDashboardBookingsRoute(
       new NextRequest(
         "https://tokoroa.org.nz/api/finance/legacy-dashboard/bookings?historyStartDate=2020-04-01&asOfDate=2026-05-03",
@@ -79,6 +79,44 @@ describe("finance legacy dashboard bookings route", () => {
       historyStartDate: "2020-04-01",
       asOfDate: "2026-05-03",
     });
+  });
+
+  it("rejects a different-length bearer token", async () => {
+    const response = await getFinanceLegacyDashboardBookingsRoute(
+      new NextRequest(
+        "https://tokoroa.org.nz/api/finance/legacy-dashboard/bookings",
+        {
+          headers: {
+            authorization: "Bearer test-export-token-extra",
+          },
+        }
+      )
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      error: "Unauthorised",
+    });
+    expect(mockGetLegacyDashboardBookingExport).not.toHaveBeenCalled();
+  });
+
+  it("rejects a same-length one-byte-different bearer token", async () => {
+    const response = await getFinanceLegacyDashboardBookingsRoute(
+      new NextRequest(
+        "https://tokoroa.org.nz/api/finance/legacy-dashboard/bookings",
+        {
+          headers: {
+            authorization: "Bearer test-export-tokea",
+          },
+        }
+      )
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      error: "Unauthorised",
+    });
+    expect(mockGetLegacyDashboardBookingExport).not.toHaveBeenCalled();
   });
 
   it("rejects requests without finance viewer access before checking the export token", async () => {
