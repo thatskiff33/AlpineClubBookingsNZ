@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useEffectEvent, useRef } from "react";
+import { useCspNonce } from "@/components/security/csp-nonce-provider";
 import { Input, type InputProps } from "@/components/ui/input";
 
 declare global {
@@ -63,7 +64,7 @@ let addressfinderScriptPromise: Promise<void> | null = null;
 let hasWarnedAboutMissingKey = false;
 let hasWarnedAboutLoadFailure = false;
 
-function loadAddressfinderScript() {
+function loadAddressfinderScript(nonce?: string) {
   if (typeof window === "undefined") {
     return Promise.resolve();
   }
@@ -79,6 +80,10 @@ function loadAddressfinderScript() {
       );
 
       if (existing) {
+        if (nonce && !existing.nonce) {
+          existing.nonce = nonce;
+        }
+
         if (window.AddressFinder?.Widget) {
           resolve();
           return;
@@ -96,6 +101,9 @@ function loadAddressfinderScript() {
       const script = document.createElement("script");
       script.src = ADDRESSFINDER_SCRIPT_URL;
       script.async = true;
+      if (nonce) {
+        script.nonce = nonce;
+      }
       script.onload = () => resolve();
       script.onerror = () =>
         reject(new Error("Failed to load Addressfinder"));
@@ -141,6 +149,7 @@ export function AddressAutocomplete({
 }: AddressAutocompleteProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const widgetRef = useRef<AddressFinderWidget | null>(null);
+  const cspNonce = useCspNonce();
   const addressfinderKey = process.env.NEXT_PUBLIC_ADDRESSFINDER_KEY;
   const addressParamsKey = JSON.stringify(addressParams ?? {});
 
@@ -182,7 +191,7 @@ export function AddressAutocomplete({
 
     let cancelled = false;
 
-    loadAddressfinderScript()
+    loadAddressfinderScript(cspNonce)
       .then(() => {
         if (
           cancelled ||
@@ -228,7 +237,7 @@ export function AddressAutocomplete({
       widgetRef.current?.disable?.();
       widgetRef.current = null;
     };
-  }, [addressParamsKey, addressfinderKey, countryCode]);
+  }, [addressParamsKey, addressfinderKey, countryCode, cspNonce]);
 
   useEffect(() => {
     applyDisabledState(widgetRef.current);

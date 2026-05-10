@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { SessionProvider } from "next-auth/react";
+import { CspNonceProvider } from "@/components/security/csp-nonce-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { CSP_NONCE_HEADER } from "@/lib/csp";
 import "./globals.css";
 
 const baseUrl = process.env.NEXTAUTH_URL || "https://tokoroa.org.nz";
@@ -32,16 +35,20 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
+
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col font-sans">
-        <SessionProvider>{children}</SessionProvider>
-        <Toaster richColors position="top-right" />
+        <CspNonceProvider nonce={nonce}>
+          <SessionProvider>{children}</SessionProvider>
+          <Toaster richColors position="top-right" />
+        </CspNonceProvider>
       </body>
     </html>
   );
