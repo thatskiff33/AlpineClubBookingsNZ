@@ -11,6 +11,7 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
+import { FamilyGroupSection } from "@/app/(authenticated)/profile/family-group-section";
 import { ProfileForm } from "@/app/(authenticated)/profile/profile-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -92,6 +93,8 @@ interface PendingRequest {
   type: string;
   familyGroupName: string | null;
   childName: string | null;
+  requestedName: string | null;
+  subjectMember: { id: string; name: string } | null;
   invitedMember: { id: string; name: string } | null;
   requester: { id: string; name: string } | null;
   direction: "submitted" | "invitation" | "family_group";
@@ -135,6 +138,14 @@ function PendingRequestSummary({ request }: { request: PendingRequest }) {
         ? request.invitedMember
           ? `Invite for ${request.invitedMember.name}`
           : "Adult invite"
+        : request.type === "ADULT_REQUEST"
+          ? request.requestedName
+            ? `Add ${request.requestedName}`
+            : "Same-email adult request"
+          : request.type === "REMOVAL_REQUEST"
+            ? request.subjectMember
+              ? `Remove ${request.subjectMember.name}`
+              : "Removal request"
         : request.requester
           ? `${request.requester.name} join request`
           : "Join request";
@@ -358,21 +369,21 @@ export function MemberOnboardingWizard({
                     No family group members are linked to your profile.
                   </div>
                 ) : (
-                  data.familyGroups.map((group) => (
-                    <div key={group.id} className="space-y-3 rounded-md border bg-white p-4">
-                      <div className="flex items-center gap-2">
-                        <Users className="h-4 w-4 text-indigo-700" />
-                        <h3 className="font-medium">
-                          {group.name ?? "Family group"}
-                        </h3>
-                      </div>
-                      <div className="space-y-2">
-                        {group.members.map((member) => (
-                          <div
-                            key={`${group.id}-${member.id}`}
-                            className="flex flex-col gap-3 rounded-md border bg-slate-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                          >
-                            <div>
+                  <div className="space-y-4">
+                    {data.familyGroups.map((group) => (
+                      <div key={group.id} className="space-y-3 rounded-md border bg-white p-4">
+                        <div className="flex items-center gap-2">
+                          <Users className="h-4 w-4 text-indigo-700" />
+                          <h3 className="font-medium">
+                            {group.name ?? "Family group"}
+                          </h3>
+                        </div>
+                        <div className="space-y-2">
+                          {group.members.map((member) => (
+                            <div
+                              key={`${group.id}-${member.id}`}
+                              className="rounded-md border bg-slate-50 px-3 py-2"
+                            >
                               <div className="flex flex-wrap items-center gap-2">
                                 <p className="text-sm font-medium text-slate-900">
                                   {member.name}
@@ -390,23 +401,26 @@ export function MemberOnboardingWizard({
                                       : "Member details are confirmed."}
                               </p>
                             </div>
-                            {!member.isCurrentUser ? (
-                              <div className="flex flex-wrap gap-2">
-                                {member.nextAction === "delegated_placeholder" ? (
-                                  <Button type="button" variant="outline" size="sm" disabled>
-                                    Complete details
-                                  </Button>
-                                ) : null}
-                                <Button type="button" variant="outline" size="sm" disabled>
-                                  Request removal
-                                </Button>
-                              </div>
-                            ) : null}
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    ))}
+
+                    <FamilyGroupSection
+                      familyGroups={data.familyGroups.map((group) => ({
+                        id: group.id,
+                        name: group.name,
+                        members: group.members
+                          .filter((member) => !member.isCurrentUser)
+                          .map((member) => ({
+                            id: member.id,
+                            firstName: member.firstName,
+                            lastName: member.lastName,
+                          })),
+                      }))}
+                      canManage
+                    />
+                  </div>
                 )}
 
                 {data.pendingRequests.length > 0 ? (

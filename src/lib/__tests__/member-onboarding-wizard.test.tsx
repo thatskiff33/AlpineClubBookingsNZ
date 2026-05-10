@@ -22,6 +22,10 @@ vi.mock("@/app/(authenticated)/profile/profile-form", () => ({
   ),
 }));
 
+vi.mock("@/app/(authenticated)/profile/family-group-section", () => ({
+  FamilyGroupSection: () => <div data-testid="family-group-section" />,
+}));
+
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children, open }: { children: ReactNode; open?: boolean }) =>
     open ? <div role="dialog">{children}</div> : null,

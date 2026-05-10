@@ -37,23 +37,38 @@ interface FamilyGroup {
 interface RequestMemberMatch extends MemberOption {
   ageTier: string;
   active: boolean;
+  canLogin?: boolean;
   dateOfBirth: string | null;
   alreadyInGroup: boolean;
 }
 
 interface FamilyGroupRequest {
   id: string;
-  type: "JOIN_REQUEST" | "CHILD_REQUEST";
+  type: "JOIN_REQUEST" | "CHILD_REQUEST" | "ADULT_REQUEST" | "REMOVAL_REQUEST";
   createdAt: string;
   requester: { id: string; firstName: string; lastName: string; email: string };
   familyGroup: {
     id: string;
     name: string | null;
-    members: { id: string; firstName: string; lastName: string }[];
+    members: { id: string; firstName: string; lastName: string; email?: string; ageTier?: string }[];
   };
   childFirstName?: string | null;
   childLastName?: string | null;
   childDateOfBirth?: string | null;
+  requestedFirstName?: string | null;
+  requestedLastName?: string | null;
+  requestedDateOfBirth?: string | null;
+  requestedEmail?: string | null;
+  requestNotes?: string | null;
+  subjectMemberId?: string | null;
+  subjectMember?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    ageTier: string;
+    active: boolean;
+  } | null;
   matchingMembers: RequestMemberMatch[];
 }
 
@@ -213,6 +228,11 @@ export function FamilyGroupEditor({
               request.matchingMembers.length === 1
             ) {
               nextSelections[request.id] = request.matchingMembers[0].id;
+            } else if (
+              request.type === "ADULT_REQUEST" &&
+              request.matchingMembers.length === 0
+            ) {
+              nextSelections[request.id] = "__create__";
             }
           }
           return nextSelections;
@@ -288,7 +308,10 @@ export function FamilyGroupEditor({
   }
 
   function getRequestTypeLabel(request: FamilyGroupRequest) {
-    return request.type === "CHILD_REQUEST" ? "Child/Youth Request" : "Join Request";
+    if (request.type === "CHILD_REQUEST") return "Child/Youth Request";
+    if (request.type === "ADULT_REQUEST") return "Same-email Adult Request";
+    if (request.type === "REMOVAL_REQUEST") return "Removal Request";
+    return "Join Request";
   }
 
   function getRequestSummary(request: FamilyGroupRequest) {
@@ -298,7 +321,32 @@ export function FamilyGroupEditor({
         .join(" ");
       return `${getMemberName(request.requester)} wants to add ${childName || "a child/youth member"} to ${request.familyGroup.name || "this family group"}.`;
     }
+    if (request.type === "ADULT_REQUEST") {
+      const adultName = [request.requestedFirstName, request.requestedLastName]
+        .filter(Boolean)
+        .join(" ");
+      return `${getMemberName(request.requester)} wants to add ${adultName || "a same-email adult"} to ${request.familyGroup.name || "this family group"}.`;
+    }
+    if (request.type === "REMOVAL_REQUEST") {
+      const subjectName = request.subjectMember
+        ? getMemberName(request.subjectMember)
+        : "a member";
+      return `${getMemberName(request.requester)} wants to remove ${subjectName} from ${request.familyGroup.name || "this family group"}.`;
+    }
     return `${getMemberName(request.requester)} wants to join ${request.familyGroup.name || "this family group"}.`;
+  }
+
+  function getRequestSubjectName(request: FamilyGroupRequest) {
+    if (request.type === "CHILD_REQUEST") {
+      return [request.childFirstName, request.childLastName].filter(Boolean).join(" ");
+    }
+    if (request.type === "ADULT_REQUEST") {
+      return [request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ");
+    }
+    if (request.type === "REMOVAL_REQUEST" && request.subjectMember) {
+      return getMemberName(request.subjectMember);
+    }
+    return "";
   }
 
   function getRequestCandidates(request: FamilyGroupRequest) {
@@ -315,7 +363,7 @@ export function FamilyGroupEditor({
   async function searchRequestMembers(request: FamilyGroupRequest) {
     const query =
       requestSearchTerms[request.id]?.trim() ||
-      [request.childFirstName, request.childLastName].filter(Boolean).join(" ").trim();
+      getRequestSubjectName(request);
 
     if (query.length < 2) {
       setRequestErrors((current) => ({
@@ -348,6 +396,7 @@ export function FamilyGroupEditor({
           email: string;
           ageTier: string;
           active: boolean;
+          canLogin?: boolean;
           dateOfBirth?: string | null;
         }) => ({
           id: member.id,
@@ -356,6 +405,7 @@ export function FamilyGroupEditor({
           email: member.email,
           ageTier: member.ageTier,
           active: member.active,
+          canLogin: member.canLogin,
           dateOfBirth: member.dateOfBirth ?? null,
           alreadyInGroup: request.familyGroup.members.some(
             (groupMember) => groupMember.id === member.id
@@ -423,11 +473,13 @@ export function FamilyGroupEditor({
   async function handleRequest(request: FamilyGroupRequest, action: "approve" | "reject") {
     clearRequestError(request.id);
     const linkedMemberId = requestSelections[request.id];
+    const needsMemberSelection =
+      request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
 
-    if (action === "approve" && request.type === "CHILD_REQUEST" && !linkedMemberId) {
+    if (action === "approve" && needsMemberSelection && !linkedMemberId) {
       setRequestErrors((current) => ({
         ...current,
-        [request.id]: "Choose the member record that should be linked before approving this request.",
+        [request.id]: "Choose the member record to link, or create a new non-login adult where available.",
       }));
       return;
     }
@@ -441,8 +493,10 @@ export function FamilyGroupEditor({
         body: JSON.stringify({
           requestId: request.id,
           action,
-          ...(action === "approve" && request.type === "CHILD_REQUEST"
-            ? { linkedMemberId }
+          ...(action === "approve" && needsMemberSelection && linkedMemberId
+            ? linkedMemberId === "__create__"
+              ? { createNewMember: true }
+              : { linkedMemberId }
             : {}),
           ...(action === "reject" && requestNotes[request.id]?.trim()
             ? { rejectionReason: requestNotes[request.id].trim() }
@@ -821,7 +875,7 @@ export function FamilyGroupEditor({
 
         <section className="space-y-3 rounded-lg border border-slate-200 p-4">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Pending join requests</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Pending family changes</h3>
             <p className="mt-1 text-sm text-slate-500">
               Review requests that target this family group.
             </p>
@@ -836,6 +890,9 @@ export function FamilyGroupEditor({
               const selectedCandidate = candidateMembers.find(
                 (candidate) => candidate.id === requestSelections[request.id]
               );
+              const requiresMemberChoice =
+                request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST";
+              const selectedCreateNew = requestSelections[request.id] === "__create__";
 
               return (
                 <div key={request.id} className="rounded-lg border border-slate-200 bg-white p-4">
@@ -846,6 +903,10 @@ export function FamilyGroupEditor({
                           className={
                             request.type === "CHILD_REQUEST"
                               ? "bg-blue-100 text-blue-800 border-blue-200"
+                              : request.type === "ADULT_REQUEST"
+                                ? "bg-violet-100 text-violet-800 border-violet-200"
+                                : request.type === "REMOVAL_REQUEST"
+                                  ? "bg-rose-100 text-rose-800 border-rose-200"
                               : "bg-emerald-100 text-emerald-800 border-emerald-200"
                           }
                         >
@@ -866,54 +927,60 @@ export function FamilyGroupEditor({
                     </div>
                   </div>
 
-                  {request.type === "CHILD_REQUEST" && (
+                  {requiresMemberChoice && (
                     <div className="mt-4 space-y-3">
                       <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
                         <p>
-                          Requested member:{" "}
+                          Requested {request.type === "ADULT_REQUEST" ? "adult" : "member"}:{" "}
                           <span className="font-medium text-slate-800">
-                            {[request.childFirstName, request.childLastName]
-                              .filter(Boolean)
-                              .join(" ")}
+                            {getRequestSubjectName(request)}
                           </span>
                         </p>
-                        <p>Date of birth: {formatDate(request.childDateOfBirth)}</p>
+                        <p>
+                          Date of birth:{" "}
+                          {formatDate(
+                            request.type === "ADULT_REQUEST"
+                              ? request.requestedDateOfBirth
+                              : request.childDateOfBirth
+                          )}
+                        </p>
+                        {request.type === "ADULT_REQUEST" && (
+                          <p>Shared email: {request.requestedEmail || request.requester.email}</p>
+                        )}
                       </div>
 
-                      {candidateMembers.length > 0 ? (
-                        <div>
-                          <Label htmlFor={`editor-request-member-${request.id}`}>
-                            Suggested matches
-                          </Label>
-                          <select
-                            id={`editor-request-member-${request.id}`}
-                            value={requestSelections[request.id] ?? ""}
-                            onChange={(event) => {
-                              clearRequestError(request.id);
-                              setRequestSelections((current) => ({
-                                ...current,
-                                [request.id]: event.target.value,
-                              }));
-                            }}
-                            className="mt-2 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                          >
-                            <option value="">Select a member record</option>
-                            {candidateMembers.map((candidate) => (
-                              <option key={candidate.id} value={candidate.id}>
-                                {getMemberName(candidate)}
-                                {" - "}
-                                {candidate.ageTier}
-                                {candidate.alreadyInGroup ? " - already in group" : ""}
-                                {!candidate.active ? " - inactive" : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-slate-600">
-                          No matching member record has been suggested yet. Search below.
-                        </p>
-                      )}
+                      <div>
+                        <Label htmlFor={`editor-request-member-${request.id}`}>
+                          {request.type === "ADULT_REQUEST" ? "Adult member record" : "Suggested matches"}
+                        </Label>
+                        <select
+                          id={`editor-request-member-${request.id}`}
+                          value={requestSelections[request.id] ?? ""}
+                          onChange={(event) => {
+                            clearRequestError(request.id);
+                            setRequestSelections((current) => ({
+                              ...current,
+                              [request.id]: event.target.value,
+                            }));
+                          }}
+                          className="mt-2 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                        >
+                          <option value="">Select a member record</option>
+                          {request.type === "ADULT_REQUEST" && (
+                            <option value="__create__">Create new non-login adult from request</option>
+                          )}
+                          {candidateMembers.map((candidate) => (
+                            <option key={candidate.id} value={candidate.id}>
+                              {getMemberName(candidate)}
+                              {" - "}
+                              {candidate.ageTier}
+                              {candidate.canLogin ? " - has login" : " - no login"}
+                              {candidate.alreadyInGroup ? " - already in group" : ""}
+                              {!candidate.active ? " - inactive" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
                       <div className="flex flex-col gap-2 sm:flex-row">
                         <Input
@@ -950,6 +1017,7 @@ export function FamilyGroupEditor({
                             {selectedCandidate.email}
                             {" - "}
                             {selectedCandidate.ageTier}
+                            {selectedCandidate.canLogin ? " - has login" : " - no login"}
                             {selectedCandidate.dateOfBirth
                               ? ` - DOB ${formatDate(selectedCandidate.dateOfBirth)}`
                               : ""}
@@ -958,6 +1026,34 @@ export function FamilyGroupEditor({
                           </p>
                         </div>
                       )}
+                      {request.type === "ADULT_REQUEST" && selectedCreateNew && (
+                        <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+                          <p className="text-sm font-medium text-slate-900">
+                            New non-login adult will be created
+                          </p>
+                          <p className="mt-1 text-sm text-slate-700">
+                            {getRequestSubjectName(request)}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {request.requestedEmail || request.requester.email}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {request.type === "REMOVAL_REQUEST" && (
+                    <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
+                      <p>
+                        Remove member:{" "}
+                        <span className="font-medium text-slate-800">
+                          {request.subjectMember ? getMemberName(request.subjectMember) : "Unknown member"}
+                        </span>
+                      </p>
+                      {request.subjectMember && (
+                        <p>{request.subjectMember.email} - {request.subjectMember.ageTier}</p>
+                      )}
+                      {request.requestNotes && <p>Notes: {request.requestNotes}</p>}
                     </div>
                   )}
 
@@ -989,7 +1085,7 @@ export function FamilyGroupEditor({
                       onClick={() => handleRequest(request, "approve")}
                       disabled={
                         requestSubmittingId === request.id ||
-                        (request.type === "CHILD_REQUEST" && !requestSelections[request.id])
+                        (requiresMemberChoice && !requestSelections[request.id])
                       }
                     >
                       <Check className="h-4 w-4" />
@@ -997,6 +1093,12 @@ export function FamilyGroupEditor({
                         ? "Saving..."
                         : request.type === "CHILD_REQUEST"
                           ? "Approve and Link Member"
+                          : request.type === "ADULT_REQUEST"
+                            ? selectedCreateNew
+                              ? "Approve and Create Adult"
+                              : "Approve and Link Adult"
+                            : request.type === "REMOVAL_REQUEST"
+                              ? "Approve Removal"
                           : "Approve Request"}
                     </Button>
                     <Button

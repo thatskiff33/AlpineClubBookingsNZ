@@ -55,13 +55,32 @@ type FamilyMemberRecord = MemberProfileCompletenessInput & {
   active: boolean;
   canLogin: boolean;
   role: string;
-  familyGroupMemberships: Array<{
+  familyGroupMemberships?: Array<{
     familyGroupId: string;
     familyGroup?: { id: string; name: string | null } | null;
   }>;
 };
 
 type FamilyMemberRelationship = "self" | "partner" | "dependent";
+
+type PendingFamilyRequest = {
+  id: string;
+  type: string;
+  status: string;
+  familyGroupId: string;
+  requesterId: string;
+  invitedMemberId: string | null;
+  linkedMemberId: string | null;
+  subjectMemberId: string | null;
+  requestedFirstName: string | null;
+  requestedLastName: string | null;
+  requestedDateOfBirth: Date | null;
+  requestedEmail: string | null;
+  requestNotes: string | null;
+  childFirstName: string | null;
+  childLastName: string | null;
+  childDateOfBirth: Date | null;
+};
 
 function getFamilyGroupMemberships(
   member: Partial<Pick<FamilyMemberRecord, "familyGroupMemberships">>
@@ -73,6 +92,14 @@ function getFamilyGroupMemberships(
 
 function getDisplayName(member: { firstName?: string | null; lastName?: string | null }) {
   return [member.firstName, member.lastName].filter(Boolean).join(" ").trim() || "this member";
+}
+
+function toDateInputValue(value: Date | string | null | undefined) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().substring(0, 10);
+  }
+  return value.substring(0, 10);
 }
 
 function getFamilyMemberAction(params: {
@@ -109,6 +136,18 @@ function getFamilyMemberAction(params: {
   return "contact_admin";
 }
 
+function getPendingRequestForMember(
+  memberId: string,
+  pendingRequests: PendingFamilyRequest[]
+) {
+  return pendingRequests.find(
+    (request) =>
+      request.invitedMemberId === memberId ||
+      request.linkedMemberId === memberId ||
+      request.subjectMemberId === memberId
+  ) ?? null;
+}
+
 function serializeProfileStatus(status: MemberProfileCompletenessResult) {
   return {
     isProfileComplete: status.isProfileComplete,
@@ -122,8 +161,7 @@ function serializeProfileStatus(status: MemberProfileCompletenessResult) {
 
 /**
  * GET /api/members/family
- * Returns the quick-add list for the booking wizard:
- * self + all members from all family groups the user belongs to.
+ * Returns self + all active members from all family groups the user belongs to.
  */
 export async function GET() {
   const session = await auth();
@@ -145,7 +183,9 @@ export async function GET() {
   }
 
   const currentMember = self;
-  const groupIds = getFamilyGroupMemberships(currentMember).map((m) => m.familyGroupId);
+  const groupIds = getFamilyGroupMemberships(currentMember).map(
+    (membership) => membership.familyGroupId
+  );
 
   const groupMemberships = groupIds.length > 0
     ? await prisma.familyGroupMember.findMany({
@@ -171,27 +211,27 @@ export async function GET() {
           status: "PENDING",
         },
         select: {
+          id: true,
+          type: true,
+          status: true,
+          familyGroupId: true,
+          requesterId: true,
           invitedMemberId: true,
           linkedMemberId: true,
           subjectMemberId: true,
-          status: true,
+          requestedFirstName: true,
+          requestedLastName: true,
+          requestedDateOfBirth: true,
+          requestedEmail: true,
+          requestNotes: true,
+          childFirstName: true,
+          childLastName: true,
+          childDateOfBirth: true,
         },
+        orderBy: { createdAt: "desc" },
       })
     : [];
   const pendingRequests = Array.isArray(rawPendingRequests) ? rawPendingRequests : [];
-
-  const pendingRequestStatusByMemberId = new Map<string, string>();
-  for (const request of pendingRequests) {
-    for (const memberId of [
-      request.invitedMemberId,
-      request.linkedMemberId,
-      request.subjectMemberId,
-    ]) {
-      if (memberId) {
-        pendingRequestStatusByMemberId.set(memberId, request.status);
-      }
-    }
-  }
 
   const allMembers = [currentMember, ...groupMemberships.map((membership) => membership.member)];
   const memberById = new Map(allMembers.map((member) => [member.id, member]));
@@ -239,7 +279,7 @@ export async function GET() {
   }
 
   const seen = new Set<string>();
-  const familyMembers: {
+  const familyMembers: Array<{
     id: string;
     firstName: string;
     lastName: string;
@@ -252,25 +292,27 @@ export async function GET() {
     needsOwnLoginConfirmation: boolean;
     canCurrentUserConfirmDetails: boolean;
     pendingRequestStatus: string | null;
+    pendingRequestType: string | null;
     action: BookingGuestProfileAction | null;
-  }[] = [];
+    dateOfBirth: string | null;
+    familyGroupIds: string[];
+  }> = [];
 
-  function addMember(
-    member: FamilyMemberRecord,
-    relationship: FamilyMemberRelationship
-  ) {
+  function addMember(member: FamilyMemberRecord, relationship: FamilyMemberRelationship) {
     if (seen.has(member.id)) return;
     seen.add(member.id);
 
     const profileStatus = getMemberProfileCompleteness(member, {
       delegatedConfirmationValid: hasValidDelegatedConfirmation(member),
     });
+    const sharedFamilyGroupIds = getFamilyGroupMemberships(member)
+      .map((membership) => membership.familyGroupId)
+      .filter((groupId) => groupIds.includes(groupId));
+    const pendingRequest = getPendingRequestForMember(member.id, pendingRequests);
     const canCurrentUserConfirmDetails =
       member.canLogin === false &&
       isActiveLoginAdult(currentMember.id) &&
       sharesFamilyGroup(member.id, currentMember.id);
-    const pendingRequestStatus =
-      pendingRequestStatusByMemberId.get(member.id) ?? null;
     const action = profileStatus.canBeBookedAsMember
       ? null
       : getFamilyMemberAction({
@@ -278,7 +320,7 @@ export async function GET() {
           selfId: currentMember.id,
           canCurrentUserConfirmDetails,
           needsOwnLoginConfirmation: profileStatus.needsOwnLoginConfirmation,
-          pendingRequestStatus,
+          pendingRequestStatus: pendingRequest?.status ?? null,
         });
     const serializedStatus = serializeProfileStatus(profileStatus);
 
@@ -290,20 +332,24 @@ export async function GET() {
       relationship,
       canLogin: member.canLogin,
       profileStatus: serializedStatus,
-      canBeBooked: serializedStatus.canBeBookedAsMember && !pendingRequestStatus,
+      canBeBooked: serializedStatus.canBeBookedAsMember && !pendingRequest,
       missingFields: serializedStatus.missingFields,
       needsOwnLoginConfirmation: serializedStatus.needsOwnLoginConfirmation,
       canCurrentUserConfirmDetails,
-      pendingRequestStatus,
+      pendingRequestStatus: pendingRequest?.status ?? null,
+      pendingRequestType: pendingRequest?.type ?? null,
       action,
+      dateOfBirth: toDateInputValue(member.dateOfBirth),
+      familyGroupIds: sharedFamilyGroupIds,
     });
   }
 
   addMember(currentMember, "self");
-
-  for (const gm of groupMemberships) {
-    const rel = gm.member.ageTier === "ADULT" ? "partner" : "dependent";
-    addMember(gm.member, rel);
+  for (const membership of groupMemberships) {
+    addMember(
+      membership.member,
+      membership.member.ageTier === "ADULT" ? "partner" : "dependent"
+    );
   }
 
   const firstGroup = getFamilyGroupMemberships(currentMember)[0]?.familyGroup ?? null;
@@ -312,7 +358,25 @@ export async function GET() {
     familyGroupId: firstGroup?.id ?? null,
     familyGroupName: firstGroup?.name ?? null,
     familyGroupIds: groupIds,
-    familyMembers,
     displayName: getDisplayName(currentMember),
+    familyMembers,
+    pendingRequests: pendingRequests.map((request) => ({
+      id: request.id,
+      type: request.type,
+      status: request.status,
+      familyGroupId: request.familyGroupId,
+      requesterId: request.requesterId,
+      invitedMemberId: request.invitedMemberId,
+      linkedMemberId: request.linkedMemberId,
+      subjectMemberId: request.subjectMemberId,
+      requestedFirstName: request.requestedFirstName,
+      requestedLastName: request.requestedLastName,
+      requestedDateOfBirth: toDateInputValue(request.requestedDateOfBirth),
+      requestedEmail: request.requestedEmail,
+      requestNotes: request.requestNotes,
+      childFirstName: request.childFirstName,
+      childLastName: request.childLastName,
+      childDateOfBirth: toDateInputValue(request.childDateOfBirth),
+    })),
   });
 }

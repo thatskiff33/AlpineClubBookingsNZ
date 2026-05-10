@@ -72,6 +72,9 @@ export interface MemberProfileCompletenessOptions {
   delegatedConfirmationValid?: boolean;
 }
 
+export type ConfirmationMode = MemberProfileConfirmationMode;
+export type MemberProfileCompleteness = MemberProfileCompletenessResult;
+
 export interface SelfServiceProfilePayloadCompletenessResult {
   isProfileComplete: boolean;
   missingFields: MemberProfileMissingField[];
@@ -205,7 +208,8 @@ export function evaluateMemberProfileCompleteness(
   return {
     isProfileComplete,
     isDetailsConfirmed,
-    canBeBookedAsMember: isProfileComplete && isDetailsConfirmed,
+    canBeBookedAsMember:
+      member.active !== false && isProfileComplete && isDetailsConfirmed,
     missingFields,
     needsOwnLoginConfirmation:
       confirmationMode === "self" && (!isProfileComplete || !isDetailsConfirmed),
