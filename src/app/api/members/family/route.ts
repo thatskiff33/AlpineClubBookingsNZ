@@ -82,6 +82,11 @@ type PendingFamilyRequest = {
   childDateOfBirth: Date | null;
 };
 
+type FamilyMemberPendingRequest = Pick<
+  PendingFamilyRequest,
+  "id" | "type" | "status" | "familyGroupId"
+>;
+
 function getFamilyGroupMemberships(
   member: Partial<Pick<FamilyMemberRecord, "familyGroupMemberships">>
 ) {
@@ -136,16 +141,25 @@ function getFamilyMemberAction(params: {
   return "contact_admin";
 }
 
-function getPendingRequestForMember(
+function requestTargetsMember(request: PendingFamilyRequest, memberId: string) {
+  return (
+    request.invitedMemberId === memberId ||
+    request.linkedMemberId === memberId ||
+    request.subjectMemberId === memberId
+  );
+}
+
+function getPendingRequestsForMember(
   memberId: string,
+  familyGroupIds: string[],
   pendingRequests: PendingFamilyRequest[]
 ) {
-  return pendingRequests.find(
+  const familyGroupIdSet = new Set(familyGroupIds);
+  return pendingRequests.filter(
     (request) =>
-      request.invitedMemberId === memberId ||
-      request.linkedMemberId === memberId ||
-      request.subjectMemberId === memberId
-  ) ?? null;
+      familyGroupIdSet.has(request.familyGroupId) &&
+      requestTargetsMember(request, memberId)
+  );
 }
 
 function serializeProfileStatus(status: MemberProfileCompletenessResult) {
@@ -293,6 +307,9 @@ export async function GET() {
     canCurrentUserConfirmDetails: boolean;
     pendingRequestStatus: string | null;
     pendingRequestType: string | null;
+    pendingRequests: FamilyMemberPendingRequest[];
+    pendingRequestFamilyGroupIds: string[];
+    bookableFamilyGroupIds: string[];
     action: BookingGuestProfileAction | null;
     dateOfBirth: string | null;
     familyGroupIds: string[];
@@ -308,7 +325,25 @@ export async function GET() {
     const sharedFamilyGroupIds = getFamilyGroupMemberships(member)
       .map((membership) => membership.familyGroupId)
       .filter((groupId) => groupIds.includes(groupId));
-    const pendingRequest = getPendingRequestForMember(member.id, pendingRequests);
+    const memberPendingRequests = getPendingRequestsForMember(
+      member.id,
+      sharedFamilyGroupIds,
+      pendingRequests
+    );
+    const pendingRequestFamilyGroupIds = [
+      ...new Set(memberPendingRequests.map((request) => request.familyGroupId)),
+    ];
+    const pendingRequestFamilyGroupIdSet = new Set(pendingRequestFamilyGroupIds);
+    const bookableFamilyGroupIds = sharedFamilyGroupIds.filter(
+      (groupId) => !pendingRequestFamilyGroupIdSet.has(groupId)
+    );
+    const allSharedMembershipsBlocked =
+      sharedFamilyGroupIds.length > 0 &&
+      bookableFamilyGroupIds.length === 0 &&
+      memberPendingRequests.length > 0;
+    const effectivePendingRequest = allSharedMembershipsBlocked
+      ? memberPendingRequests[0] ?? null
+      : null;
     const canCurrentUserConfirmDetails =
       member.canLogin === false &&
       isActiveLoginAdult(currentMember.id) &&
@@ -320,7 +355,7 @@ export async function GET() {
           selfId: currentMember.id,
           canCurrentUserConfirmDetails,
           needsOwnLoginConfirmation: profileStatus.needsOwnLoginConfirmation,
-          pendingRequestStatus: pendingRequest?.status ?? null,
+          pendingRequestStatus: effectivePendingRequest?.status ?? null,
         });
     const serializedStatus = serializeProfileStatus(profileStatus);
 
@@ -332,12 +367,20 @@ export async function GET() {
       relationship,
       canLogin: member.canLogin,
       profileStatus: serializedStatus,
-      canBeBooked: serializedStatus.canBeBookedAsMember && !pendingRequest,
+      canBeBooked: serializedStatus.canBeBookedAsMember && !allSharedMembershipsBlocked,
       missingFields: serializedStatus.missingFields,
       needsOwnLoginConfirmation: serializedStatus.needsOwnLoginConfirmation,
       canCurrentUserConfirmDetails,
-      pendingRequestStatus: pendingRequest?.status ?? null,
-      pendingRequestType: pendingRequest?.type ?? null,
+      pendingRequestStatus: effectivePendingRequest?.status ?? null,
+      pendingRequestType: effectivePendingRequest?.type ?? null,
+      pendingRequests: memberPendingRequests.map((request) => ({
+        id: request.id,
+        type: request.type,
+        status: request.status,
+        familyGroupId: request.familyGroupId,
+      })),
+      pendingRequestFamilyGroupIds,
+      bookableFamilyGroupIds,
       action,
       dateOfBirth: toDateInputValue(member.dateOfBirth),
       familyGroupIds: sharedFamilyGroupIds,
