@@ -3,7 +3,11 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { formatCents, getSeasonYear } from "@/lib/utils";
-import { ProfileDetailsCard } from "./profile-details-card";
+import {
+  ProfileDetailsCard,
+  ProfileDetailsPageActions,
+  ProfileDetailsProvider,
+} from "./profile-details-card";
 import { ProfileSectionCard } from "./profile-section-card";
 import { ChangeEmailForm } from "./change-email-form";
 import { NotificationPreferences } from "./notification-preferences";
@@ -161,13 +165,17 @@ export default async function ProfilePage({
   };
 
   return (
-    <div className="max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Profile</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Manage your account details
-        </p>
-      </div>
+    <ProfileDetailsProvider>
+      <div className="max-w-2xl space-y-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Profile</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Manage your account details
+            </p>
+          </div>
+          <ProfileDetailsPageActions />
+        </div>
 
       {emailChanged ? (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
@@ -440,6 +448,7 @@ export default async function ProfilePage({
           </div>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </ProfileDetailsProvider>
   );
 }

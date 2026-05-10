@@ -3,7 +3,11 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AnchorHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ProfileDetailsCard } from "@/app/(authenticated)/profile/profile-details-card";
+import {
+  ProfileDetailsCard,
+  ProfileDetailsPageActions,
+  ProfileDetailsProvider,
+} from "@/app/(authenticated)/profile/profile-details-card";
 import { ProfileForm } from "@/app/(authenticated)/profile/profile-form";
 
 const fetchMock = vi.fn();
@@ -167,7 +171,12 @@ describe("ProfileForm return flow", () => {
   });
 
   it("uses one top button to switch the profile details card from edit to save", () => {
-    render(<ProfileDetailsCard member={member} />);
+    render(
+      <ProfileDetailsProvider>
+        <ProfileDetailsPageActions />
+        <ProfileDetailsCard member={member} />
+      </ProfileDetailsProvider>,
+    );
 
     expect((screen.getByLabelText("First Name") as HTMLInputElement).readOnly).toBe(true);
     expect(screen.getByRole("link", { name: /Back to Dashboard/ }).getAttribute("href")).toBe("/dashboard");

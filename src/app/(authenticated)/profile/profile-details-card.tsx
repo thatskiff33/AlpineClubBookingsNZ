@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  type ReactNode,
+} from "react";
 import { ArrowLeft, ChevronDown, Loader2, Pencil, Save } from "lucide-react";
 import { ProfileForm } from "./profile-form";
 import {
@@ -41,10 +46,29 @@ interface ProfileDetailsCardProps {
 const PROFILE_DETAILS_FORM_ID = "profile-details-form";
 const PROFILE_DETAILS_CONTENT_ID = "profile-details-content";
 
-export function ProfileDetailsCard({
-  member,
-  returnTo,
-}: ProfileDetailsCardProps) {
+interface ProfileDetailsContextValue {
+  isEditing: boolean;
+  isExpanded: boolean;
+  isSaving: boolean;
+  startEditing: () => void;
+  setIsEditing: (isEditing: boolean) => void;
+  setIsExpanded: (nextExpanded: boolean | ((current: boolean) => boolean)) => void;
+  setIsSaving: (isSaving: boolean) => void;
+}
+
+const ProfileDetailsContext = createContext<ProfileDetailsContextValue | null>(null);
+
+function useProfileDetails() {
+  const context = useContext(ProfileDetailsContext);
+
+  if (!context) {
+    throw new Error("Profile details controls must be rendered inside ProfileDetailsProvider");
+  }
+
+  return context;
+}
+
+export function ProfileDetailsProvider({ children }: { children: ReactNode }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -53,6 +77,60 @@ export function ProfileDetailsCard({
     setIsExpanded(true);
     setIsEditing(true);
   }
+
+  return (
+    <ProfileDetailsContext.Provider
+      value={{
+        isEditing,
+        isExpanded,
+        isSaving,
+        startEditing,
+        setIsEditing,
+        setIsExpanded,
+        setIsSaving,
+      }}
+    >
+      {children}
+    </ProfileDetailsContext.Provider>
+  );
+}
+
+export function ProfileDetailsPageActions() {
+  const { isEditing, isSaving, startEditing } = useProfileDetails();
+
+  return (
+    <div className="flex flex-wrap gap-2 sm:justify-end">
+      <Button
+        disabled={isSaving}
+        form={isEditing ? PROFILE_DETAILS_FORM_ID : undefined}
+        onClick={isEditing ? undefined : startEditing}
+        type={isEditing ? "submit" : "button"}
+      >
+        {isSaving ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : isEditing ? (
+          <Save className="h-4 w-4" />
+        ) : (
+          <Pencil className="h-4 w-4" />
+        )}
+        {isSaving ? "Saving..." : isEditing ? "Save" : "Edit"}
+      </Button>
+      <Button asChild variant="outline">
+        <Link href="/dashboard">
+          <ArrowLeft className="h-4 w-4" />
+          Back to Dashboard
+        </Link>
+      </Button>
+    </div>
+  );
+}
+
+export function ProfileDetailsCard({
+  member,
+  returnTo,
+}: ProfileDetailsCardProps) {
+  const { isEditing, isExpanded, setIsEditing, setIsExpanded, setIsSaving } =
+    useProfileDetails();
 
   return (
     <Card>
@@ -77,27 +155,6 @@ export function ProfileDetailsCard({
               <ChevronDown
                 className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-180" : ""}`}
               />
-            </Button>
-            <Button
-              disabled={isSaving}
-              form={isEditing ? PROFILE_DETAILS_FORM_ID : undefined}
-              onClick={isEditing ? undefined : startEditing}
-              type={isEditing ? "submit" : "button"}
-            >
-              {isSaving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : isEditing ? (
-                <Save className="h-4 w-4" />
-              ) : (
-                <Pencil className="h-4 w-4" />
-              )}
-              {isSaving ? "Saving..." : isEditing ? "Save" : "Edit"}
-            </Button>
-            <Button asChild variant="outline">
-              <Link href="/dashboard">
-                <ArrowLeft className="h-4 w-4" />
-                Back to Dashboard
-              </Link>
             </Button>
           </div>
         </div>
