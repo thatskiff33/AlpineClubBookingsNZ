@@ -100,6 +100,17 @@ export class BookingGuestProfileRequiredError extends BookingGuestValidationErro
   }
 }
 
+export type LinkedBookingMemberProfileGateContext = {
+  actorRole?: string | null;
+  onBehalfOfMemberId?: string | null;
+};
+
+function skipsMemberProfileGateForAdminOnBehalf(
+  context?: LinkedBookingMemberProfileGateContext
+) {
+  return context?.actorRole === "ADMIN" && Boolean(context.onBehalfOfMemberId);
+}
+
 export function getBookingGuestValidationErrorResponse(
   error: BookingGuestValidationError
 ) {
@@ -220,8 +231,13 @@ function getBlockedGuestAction(params: {
 export async function assertLinkedBookingMembersCanBeBooked(
   db: BookingGuestLookupDb,
   linkedMembers: Map<string, LinkedBookingMember>,
-  currentUserId: string
+  currentUserId: string,
+  context?: LinkedBookingMemberProfileGateContext
 ) {
+  if (skipsMemberProfileGateForAdminOnBehalf(context)) {
+    return;
+  }
+
   const members = [...linkedMembers.values()].filter(hasProfileGateFields);
   if (members.length === 0) {
     return;

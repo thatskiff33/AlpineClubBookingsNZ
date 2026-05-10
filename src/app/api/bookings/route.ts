@@ -161,7 +161,11 @@ export async function POST(request: NextRequest) {
     await assertLinkedBookingMembersCanBeBooked(
       prisma,
       linkedMembers,
-      session.user.id
+      session.user.id,
+      {
+        actorRole: session.user.role,
+        onBehalfOfMemberId: isOnBehalf ? effectiveMemberId : null,
+      }
     );
     const normalizedGuests = normalizeBookingGuestInputs(guests, linkedMembers);
     guests.splice(0, guests.length, ...normalizedGuests);

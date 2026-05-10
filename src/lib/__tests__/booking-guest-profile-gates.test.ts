@@ -133,6 +133,42 @@ describe("assertLinkedBookingMembersCanBeBooked", () => {
     });
   });
 
+  it("still blocks incomplete linked member guests for member-facing bookings", async () => {
+    const db = mockDb();
+    const guest = member({ dateOfBirth: null });
+
+    await expect(
+      assertLinkedBookingMembersCanBeBooked(
+        asBookingDb(db),
+        linkedMap(guest),
+        "adult-1",
+        { actorRole: "MEMBER" }
+      )
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "GUEST_PROFILE_REQUIRED",
+    });
+  });
+
+  it("allows admins booking on behalf to bypass the member-facing profile gate", async () => {
+    const db = mockDb();
+    const legacyGuest = member({
+      dateOfBirth: null,
+      detailsConfirmedAt: null,
+      detailsConfirmedByMemberId: null,
+    });
+
+    await expect(
+      assertLinkedBookingMembersCanBeBooked(
+        asBookingDb(db),
+        linkedMap(legacyGuest),
+        "admin-1",
+        { actorRole: "ADMIN", onBehalfOfMemberId: "target-member-1" }
+      )
+    ).resolves.toBeUndefined();
+    expect(db.familyGroupMember.findMany).not.toHaveBeenCalled();
+  });
+
   it("allows a login-capable member who confirmed their own details", async () => {
     const db = mockDb();
     const self = member({
