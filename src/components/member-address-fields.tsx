@@ -31,6 +31,7 @@ interface MemberAddressFieldsProps {
   idPrefix?: string;
   physicalDescription?: ReactNode;
   postalDescription?: ReactNode;
+  required?: boolean;
 }
 
 export function MemberAddressFields({
@@ -42,6 +43,7 @@ export function MemberAddressFields({
   onValuesChange,
   physicalDescription,
   postalDescription,
+  required = false,
   sameAsPhysical,
   values,
 }: MemberAddressFieldsProps) {
@@ -112,6 +114,7 @@ export function MemberAddressFields({
             handleStreetFieldChange("streetAddressLine1", nextValue)
           }
           placeholder="Start typing an NZ address"
+          required={required}
           value={values.streetAddressLine1}
         />
       </div>
@@ -142,6 +145,7 @@ export function MemberAddressFields({
               handleStreetFieldChange("streetCity", event.target.value)
             }
             placeholder="City / town"
+            required={required}
             value={values.streetCity}
           />
         </div>
@@ -155,6 +159,7 @@ export function MemberAddressFields({
               handleStreetFieldChange("streetRegion", event.target.value)
             }
             placeholder="Region"
+            required={required}
             value={values.streetRegion}
           />
         </div>
@@ -173,6 +178,7 @@ export function MemberAddressFields({
               )
             }
             placeholder="Postal code"
+            required={required}
             value={values.streetPostalCode}
           />
         </div>
@@ -186,6 +192,7 @@ export function MemberAddressFields({
               handleStreetFieldChange("streetCountry", event.target.value)
             }
             placeholder="Country"
+            required={required}
             value={values.streetCountry}
           />
         </div>
@@ -220,6 +227,7 @@ export function MemberAddressFields({
             onValuesChange({ postalAddressLine1: nextValue })
           }
           placeholder="Start typing an NZ postal address"
+          required={required}
           value={values.postalAddressLine1}
         />
       </div>
@@ -247,6 +255,7 @@ export function MemberAddressFields({
               onValuesChange({ postalCity: event.target.value })
             }
             placeholder="City / town"
+            required={required}
             value={values.postalCity}
           />
         </div>
@@ -260,6 +269,7 @@ export function MemberAddressFields({
               onValuesChange({ postalRegion: event.target.value })
             }
             placeholder="Region"
+            required={required}
             value={values.postalRegion}
           />
         </div>
@@ -275,6 +285,7 @@ export function MemberAddressFields({
               onValuesChange({ postalPostalCode: event.target.value })
             }
             placeholder="Postal code"
+            required={required}
             value={values.postalPostalCode}
           />
         </div>
@@ -288,6 +299,7 @@ export function MemberAddressFields({
               onValuesChange({ postalCountry: event.target.value })
             }
             placeholder="Country"
+            required={required}
             value={values.postalCountry}
           />
         </div>

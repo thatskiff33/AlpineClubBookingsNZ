@@ -18,7 +18,7 @@ export type MemberProfileMissingField =
 export interface MemberProfileCompletenessInput {
   id?: string | null;
   active?: boolean | null;
-  canLogin: boolean;
+  canLogin?: boolean | null;
   role?: string | null;
   firstName?: string | null;
   lastName?: string | null;
@@ -68,6 +68,10 @@ export interface MemberProfileCompletenessResult {
   confirmationMode: MemberProfileConfirmationMode;
 }
 
+export interface MemberProfileCompletenessOptions {
+  delegatedConfirmationValid?: boolean;
+}
+
 export interface SelfServiceProfilePayloadCompletenessResult {
   isProfileComplete: boolean;
   missingFields: MemberProfileMissingField[];
@@ -81,6 +85,40 @@ const REQUIRED_STREET_ADDRESS_FIELDS = STREET_ADDRESS_FIELDS.filter(
 const REQUIRED_POSTAL_ADDRESS_FIELDS = POSTAL_ADDRESS_FIELDS.filter(
   (field) => field !== "postalAddressLine2"
 );
+
+export const MEMBER_PROFILE_FIELD_LABELS: Record<MemberProfileMissingField, string> = {
+  firstName: "First Name",
+  lastName: "Last Name",
+  phoneCountryCode: "Phone Country Code",
+  phoneAreaCode: "Phone Area Code",
+  phoneNumber: "Phone Number",
+  dateOfBirth: "Date of Birth",
+  streetAddressLine1: "Physical Address Line 1",
+  streetAddressLine2: "Physical Address Line 2",
+  streetCity: "Physical City / Town",
+  streetRegion: "Physical Region",
+  streetPostalCode: "Physical Postal Code",
+  streetCountry: "Physical Country",
+  postalAddressLine1: "Postal Address Line 1",
+  postalAddressLine2: "Postal Address Line 2",
+  postalCity: "Postal City / Town",
+  postalRegion: "Postal Region",
+  postalPostalCode: "Postal Postal Code",
+  postalCountry: "Postal Country",
+};
+
+export function formatMemberProfileMissingField(field: MemberProfileMissingField) {
+  return MEMBER_PROFILE_FIELD_LABELS[field];
+}
+
+export function getMissingMemberProfileFieldDetails(
+  missingFields: readonly MemberProfileMissingField[]
+) {
+  return missingFields.map((key) => ({
+    key,
+    label: formatMemberProfileMissingField(key),
+  }));
+}
 
 function hasPresentValue(value: unknown): boolean {
   if (value instanceof Date) {
@@ -142,7 +180,8 @@ export function isSelfServiceProfilePayloadComplete(
 }
 
 export function evaluateMemberProfileCompleteness(
-  member: MemberProfileCompletenessInput
+  member: MemberProfileCompletenessInput,
+  options: MemberProfileCompletenessOptions = {}
 ): MemberProfileCompletenessResult {
   const confirmationMode: MemberProfileConfirmationMode =
     member.active === false || member.role === "LODGE"
@@ -153,15 +192,14 @@ export function evaluateMemberProfileCompleteness(
   const missingFields = getProfileMissingFields(member);
   const isProfileComplete = missingFields.length === 0;
   const selfConfirmedByMember =
-    !member.detailsConfirmedByMemberId ||
-    !member.id ||
-    member.detailsConfirmedByMemberId === member.id;
+    Boolean(member.id) && member.detailsConfirmedByMemberId === member.id;
   const isDetailsConfirmed =
     confirmationMode === "self"
       ? hasPresentValue(member.detailsConfirmedAt) && selfConfirmedByMember
       : confirmationMode === "delegated"
         ? hasPresentValue(member.detailsConfirmedAt) &&
-          hasPresentValue(member.detailsConfirmedByMemberId)
+          hasPresentValue(member.detailsConfirmedByMemberId) &&
+          options.delegatedConfirmationValid !== false
         : false;
 
   return {
