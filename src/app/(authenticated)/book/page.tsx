@@ -23,6 +23,7 @@ import {
   getFamilyMemberBookingBlockMessage,
   shouldShowInviteFamilyGroupMembersLink,
 } from "@/lib/family-booking";
+import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 
 interface FamilyMember {
   id: string;
@@ -89,6 +90,12 @@ const UNKNOWN_SUBSCRIPTION_STATUS: SubscriptionStatus = {
   invoiceUrl: null,
   invoiceNumber: null,
 };
+
+const PROFILE_RETURN_TO_BOOK = buildProfilePathWithReturnTo("/book");
+const PROFILE_FAMILY_GROUP_RETURN_TO_BOOK = buildProfilePathWithReturnTo(
+  "/book",
+  "family-group",
+);
 
 export default function BookPage() {
   const router = useRouter();
@@ -470,7 +477,10 @@ export default function BookPage() {
             ) : (
               <>
                 Please{" "}
-                <Link href="/profile" className="underline font-medium">
+                <Link
+                  href={PROFILE_RETURN_TO_BOOK}
+                  className="underline font-medium"
+                >
                   contact the club
                 </Link>{" "}
                 before booking.
@@ -517,7 +527,7 @@ export default function BookPage() {
                     {actionLabel && (
                       block.action === "complete_details" && block.canCurrentUserResolve ? (
                         <Link
-                          href="/profile#family-group"
+                          href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
                           className="mt-2 inline-flex text-sm font-medium text-red-800 underline underline-offset-4"
                         >
                           {actionLabel}
@@ -681,7 +691,9 @@ export default function BookPage() {
                           {blocked && actionLabel && (
                             actionLabel === "Complete details" ? (
                               <Button asChild variant="outline" size="sm">
-                                <Link href="/profile#family-group">{actionLabel}</Link>
+                                <Link href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}>
+                                  {actionLabel}
+                                </Link>
                               </Button>
                             ) : (
                               <span className="text-xs font-medium text-amber-800">
@@ -709,7 +721,7 @@ export default function BookPage() {
                 <p className="text-sm text-slate-600">
                   No other family group members are available to quick add yet.{" "}
                   <Link
-                    href="/profile#family-group"
+                    href={PROFILE_FAMILY_GROUP_RETURN_TO_BOOK}
                     className="font-medium text-indigo-700 underline underline-offset-4 hover:text-indigo-800"
                   >
                     Invite family group members

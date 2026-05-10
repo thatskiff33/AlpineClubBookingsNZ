@@ -23,6 +23,15 @@ import {
   POSTAL_ADDRESS_FIELDS,
 } from "@/lib/member-address";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
+import {
+  buildMemberAuditLogWhere,
+  getAuditLogActorMemberId,
+} from "@/lib/audit-query";
+import {
+  buildStructuredAuditLogCreateArgs,
+  getAuditEmailDomain,
+  getAuditRequestContext,
+} from "@/lib/audit";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -73,6 +82,101 @@ const ADDRESS_FIELDS = [
   "streetAddressLine1", "streetAddressLine2", "streetCity", "streetRegion", "streetPostalCode", "streetCountry",
   "postalAddressLine1", "postalAddressLine2", "postalCity", "postalRegion", "postalPostalCode", "postalCountry",
 ] as const;
+const ADMIN_MEMBER_AUDIT_FIELDS = [
+  "firstName",
+  "lastName",
+  "email",
+  ...PHONE_FIELDS,
+  ...ADDRESS_FIELDS,
+  "dateOfBirth",
+  "ageTier",
+  "joinedDate",
+  "role",
+  "financeAccessLevel",
+  "active",
+  "canLogin",
+  "forcePasswordChange",
+  "inheritEmailFromId",
+] as const;
+const ADMIN_MEMBER_ACCESS_FIELDS = [
+  "role",
+  "financeAccessLevel",
+  "active",
+  "canLogin",
+  "forcePasswordChange",
+] as const;
+
+function normalizeAuditValue(value: unknown): unknown {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (value === undefined || value === "") {
+    return null;
+  }
+  return value;
+}
+
+function getChangedFields(
+  before: Record<string, unknown>,
+  updateData: Record<string, unknown>,
+  fields: readonly string[]
+): string[] {
+  return fields.filter((field) => {
+    if (!Object.prototype.hasOwnProperty.call(updateData, field)) {
+      return false;
+    }
+    return normalizeAuditValue(before[field]) !== normalizeAuditValue(updateData[field]);
+  });
+}
+
+function hasAnyField(
+  changedFields: readonly string[],
+  fields: readonly string[]
+): boolean {
+  return fields.some((field) => changedFields.includes(field));
+}
+
+function buildAccessChanges(
+  before: Record<string, unknown>,
+  updateData: Record<string, unknown>,
+  changedFields: readonly string[]
+) {
+  return ADMIN_MEMBER_ACCESS_FIELDS.filter((field) =>
+    changedFields.includes(field)
+  ).map((field) => ({
+    field,
+    before: before[field],
+    after: updateData[field],
+  }));
+}
+
+function getAdminMemberAuditAction(
+  before: Record<string, unknown>,
+  updateData: Record<string, unknown>
+): { action: string; summary: string } {
+  if (
+    Object.prototype.hasOwnProperty.call(updateData, "active") &&
+    before.active !== updateData.active
+  ) {
+    if (updateData.active === false) {
+      return {
+        action: "admin.member.deactivated",
+        summary: "Member deactivated by admin",
+      };
+    }
+    if (updateData.active === true) {
+      return {
+        action: "admin.member.reactivated",
+        summary: "Member reactivated by admin",
+      };
+    }
+  }
+
+  return {
+    action: "admin.member.updated",
+    summary: "Member updated by admin",
+  };
+}
 
 /**
  * GET /api/admin/members/[id]
@@ -173,9 +277,7 @@ export async function GET(
       },
     }),
     prisma.auditLog.findMany({
-      where: {
-        OR: [{ memberId: id }, { targetId: id }],
-      },
+      where: buildMemberAuditLogWhere(id),
       orderBy: { createdAt: "desc" },
       take: 50,
     }),
@@ -197,7 +299,7 @@ export async function GET(
   const actorIds = Array.from(
     new Set(
       auditLogs
-        .map((log) => log.memberId)
+        .map((log) => getAuditLogActorMemberId(log))
         .filter((memberId): memberId is string => Boolean(memberId))
     )
   );
@@ -211,10 +313,13 @@ export async function GET(
   const auditActorById = new Map(
     auditActors.map((actor) => [actor.id, actor])
   );
-  const auditLogsWithActors = auditLogs.map((log) => ({
-    ...log,
-    actor: log.memberId ? auditActorById.get(log.memberId) ?? null : null,
-  }));
+  const auditLogsWithActors = auditLogs.map((log) => {
+    const actorMemberId = getAuditLogActorMemberId(log);
+    return {
+      ...log,
+      actor: actorMemberId ? auditActorById.get(actorMemberId) ?? null : null,
+    };
+  });
 
   let xeroContactGroups: Array<{ id: string; name: string }> = [];
   let xeroContactGroupsLoaded = !member.xeroContactId;
@@ -428,43 +533,100 @@ export async function PUT(
   }
 
   try {
-    const updated = await prisma.member.update({
-      where: { id },
-      data: updateData,
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        email: true,
-        phoneCountryCode: true,
-        phoneAreaCode: true,
-        phoneNumber: true,
-        dateOfBirth: true,
-        role: true,
-        financeAccessLevel: true,
-        ageTier: true,
-        active: true,
-        canLogin: true,
-        parentMemberId: true,
-        inheritParentEmail: true,
-        inheritEmailFromId: true,
-        xeroContactId: true,
-        joinedDate: true,
-        createdAt: true,
-        streetAddressLine1: true,
-        streetAddressLine2: true,
-        streetCity: true,
-        streetRegion: true,
-        streetPostalCode: true,
-        streetCountry: true,
-        postalAddressLine1: true,
-        postalAddressLine2: true,
-        postalCity: true,
-        postalRegion: true,
-        postalPostalCode: true,
-        postalCountry: true,
-      },
-    });
+    const existingAuditRecord = existing as unknown as Record<string, unknown>;
+    const changedFields = getChangedFields(
+      existingAuditRecord,
+      updateData,
+      ADMIN_MEMBER_AUDIT_FIELDS
+    );
+    const accessChanges = buildAccessChanges(
+      existingAuditRecord,
+      updateData,
+      changedFields
+    );
+    const auditAction = getAdminMemberAuditAction(
+      existingAuditRecord,
+      updateData
+    );
+    const [updated] = await prisma.$transaction([
+      prisma.member.update({
+        where: { id },
+        data: updateData,
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phoneCountryCode: true,
+          phoneAreaCode: true,
+          phoneNumber: true,
+          dateOfBirth: true,
+          role: true,
+          financeAccessLevel: true,
+          ageTier: true,
+          active: true,
+          canLogin: true,
+          parentMemberId: true,
+          inheritParentEmail: true,
+          inheritEmailFromId: true,
+          xeroContactId: true,
+          joinedDate: true,
+          createdAt: true,
+          streetAddressLine1: true,
+          streetAddressLine2: true,
+          streetCity: true,
+          streetRegion: true,
+          streetPostalCode: true,
+          streetCountry: true,
+          postalAddressLine1: true,
+          postalAddressLine2: true,
+          postalCity: true,
+          postalRegion: true,
+          postalPostalCode: true,
+          postalCountry: true,
+        },
+      }),
+      prisma.auditLog.create(
+        buildStructuredAuditLogCreateArgs({
+          action: auditAction.action,
+          actor: { memberId: session.user.id },
+          subject: { memberId: id },
+          entity: { type: "Member", id },
+          category: "admin",
+          severity: "critical",
+          outcome: "success",
+          summary: auditAction.summary,
+          metadata: {
+            changedFields,
+            changedFieldCount: changedFields.length,
+            fieldGroups: {
+              name: hasAnyField(changedFields, ["firstName", "lastName"]),
+              email: changedFields.includes("email"),
+              phone: hasAnyField(changedFields, PHONE_FIELDS),
+              address: hasAnyField(changedFields, ADDRESS_FIELDS),
+              access: accessChanges.length > 0,
+              dateOfBirth: changedFields.includes("dateOfBirth"),
+              ageTier: changedFields.includes("ageTier"),
+              joinedDate: changedFields.includes("joinedDate"),
+              emailInheritance: changedFields.includes("inheritEmailFromId"),
+            },
+            accessChanges,
+            emailChange: changedFields.includes("email")
+              ? {
+                  changed: true,
+                  oldDomain: getAuditEmailDomain(existing.email),
+                  newDomain: getAuditEmailDomain(
+                    typeof updateData.email === "string"
+                      ? updateData.email
+                      : null
+                  ),
+                }
+              : undefined,
+          },
+          request: getAuditRequestContext(req),
+        })
+      ),
+    ]);
 
     const needsContactUpdate =
       updated.xeroContactId &&
@@ -517,7 +679,7 @@ export async function PUT(
  * Soft-delete a member (set active: false).
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
@@ -544,10 +706,36 @@ export async function DELETE(
     );
   }
 
-  await prisma.member.update({
-    where: { id },
-    data: { active: false },
-  });
+  await prisma.$transaction([
+    prisma.member.update({
+      where: { id },
+      data: { active: false },
+    }),
+    prisma.auditLog.create(
+      buildStructuredAuditLogCreateArgs({
+        action: "admin.member.deactivated",
+        actor: { memberId: session.user.id },
+        subject: { memberId: id },
+        entity: { type: "Member", id },
+        category: "admin",
+        severity: "critical",
+        outcome: "success",
+        summary: "Member deactivated by admin",
+        metadata: {
+          changedFields: existing.active ? ["active"] : [],
+          accessChanges: [
+            {
+              field: "active",
+              before: existing.active,
+              after: false,
+            },
+          ],
+          deleteStyleAction: true,
+        },
+        request: getAuditRequestContext(req),
+      })
+    ),
+  ]);
 
   return NextResponse.json({ success: true });
 }

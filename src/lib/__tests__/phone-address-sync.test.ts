@@ -14,7 +14,14 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn(),
     },
     booking: { findMany: vi.fn(), aggregate: vi.fn() },
-    auditLog: { findMany: vi.fn() },
+    auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
+    $transaction: vi.fn().mockImplementation((operation: unknown) => {
+      if (Array.isArray(operation)) {
+        return Promise.all(operation);
+      }
+
+      return (operation as (tx: unknown) => Promise<unknown>)({});
+    }),
   },
 }));
 
@@ -276,6 +283,41 @@ describe("Profile API: structured phone and address fields", () => {
         postalAddressLine1: "PO Box 42",
       }),
     }));
+  });
+
+  it("writes structured audit metadata for profile field changes", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      firstName: "Alicia",
+      streetCity: "Whakapapa",
+    } as any);
+
+    const res = await updateProfile(
+      makeProfilePut({
+        ...validProfileBody,
+        firstName: "Alicia",
+        streetCity: "Whakapapa",
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "member.profile.updated",
+        actorMemberId: "m1",
+        subjectMemberId: "m1",
+        category: "account",
+        metadata: expect.objectContaining({
+          changedFields: expect.arrayContaining(["firstName", "streetCity"]),
+          fieldGroups: expect.objectContaining({
+            name: true,
+            address: true,
+          }),
+        }),
+      }),
+    });
   });
 
   it("rejects phoneCountryCode exceeding max length", async () => {

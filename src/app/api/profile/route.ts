@@ -18,6 +18,10 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
 import { parseDateOnly } from "@/lib/date-only";
 import { evaluateSelfServiceProfilePayload } from "@/lib/member-profile-completeness";
+import {
+  buildStructuredAuditLogCreateArgs,
+  getAuditRequestContext,
+} from "@/lib/audit";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -53,6 +57,16 @@ const profileSchema = z.object({
 const PHONE_FIELDS = ["phoneCountryCode", "phoneAreaCode", "phoneNumber"] as const;
 const STREET_FIELDS = ["streetAddressLine1", "streetAddressLine2", "streetCity", "streetRegion", "streetPostalCode", "streetCountry"] as const;
 const POSTAL_FIELDS = ["postalAddressLine1", "postalAddressLine2", "postalCity", "postalRegion", "postalPostalCode", "postalCountry"] as const;
+const PROFILE_AUDIT_FIELDS = [
+  "firstName",
+  "lastName",
+  ...PHONE_FIELDS,
+  "dateOfBirth",
+  "ageTier",
+  ...STREET_FIELDS,
+  ...POSTAL_FIELDS,
+  "profileCompletedAt",
+] as const;
 const PROFILE_XERO_SYNC_SELECT = {
   id: true,
   canLogin: true,
@@ -80,6 +94,36 @@ const PROFILE_XERO_SYNC_SELECT = {
   postalCountry: true,
   profileCompletedAt: true,
 } as const;
+
+function normalizeAuditValue(value: unknown): unknown {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (value === undefined || value === "") {
+    return null;
+  }
+  return value;
+}
+
+function getChangedFields(
+  before: Record<string, unknown>,
+  updateData: Record<string, unknown>,
+  fields: readonly string[]
+): string[] {
+  return fields.filter((field) => {
+    if (!Object.prototype.hasOwnProperty.call(updateData, field)) {
+      return false;
+    }
+    return normalizeAuditValue(before[field]) !== normalizeAuditValue(updateData[field]);
+  });
+}
+
+function hasAnyField(
+  changedFields: readonly string[],
+  fields: readonly string[]
+): boolean {
+  return fields.some((field) => changedFields.includes(field));
+}
 
 export async function PUT(req: NextRequest) {
   const session = await auth();
@@ -210,11 +254,47 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
-    const updated = await prisma.member.update({
-      where: { id: session.user.id },
-      data: updateData,
-      select: PROFILE_XERO_SYNC_SELECT,
-    });
+    const changedFields = getChangedFields(
+      existing as unknown as Record<string, unknown>,
+      updateData,
+      PROFILE_AUDIT_FIELDS
+    );
+    const [updated] = await prisma.$transaction([
+      prisma.member.update({
+        where: { id: session.user.id },
+        data: updateData,
+        select: PROFILE_XERO_SYNC_SELECT,
+      }),
+      prisma.auditLog.create(
+        buildStructuredAuditLogCreateArgs({
+          action: "member.profile.updated",
+          actor: { memberId: session.user.id },
+          subject: { memberId: session.user.id },
+          entity: { type: "Member", id: session.user.id },
+          category: "account",
+          severity: "important",
+          outcome: "success",
+          summary: "Member profile updated",
+          metadata: {
+            changedFields,
+            changedFieldCount: changedFields.length,
+            fieldGroups: {
+              name: hasAnyField(changedFields, ["firstName", "lastName"]),
+              phone: hasAnyField(changedFields, PHONE_FIELDS),
+              address: hasAnyField(changedFields, [
+                ...STREET_FIELDS,
+                ...POSTAL_FIELDS,
+              ]),
+              dateOfBirth: changedFields.includes("dateOfBirth"),
+              ageTier: changedFields.includes("ageTier"),
+              profileCompleted: changedFields.includes("profileCompletedAt"),
+            },
+            postalSameAsPhysical: data.postalSameAsPhysical === true,
+          },
+          request: getAuditRequestContext(req),
+        })
+      ),
+    ]);
 
     const needsContactUpdate =
       updated.xeroContactId &&

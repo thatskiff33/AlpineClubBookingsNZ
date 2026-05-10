@@ -21,6 +21,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { cn } from "@/lib/utils";
 
 interface NavBarProps {
@@ -53,6 +54,10 @@ export function getAuthenticatedBrandHref() {
 export function NavBar({ user }: NavBarProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const profileHref =
+    pathname === "/profile"
+      ? "/profile"
+      : buildProfilePathWithReturnTo(pathname);
 
   const links = [
     ...memberLinks,
@@ -122,7 +127,7 @@ export function NavBar({ user }: NavBarProps) {
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
-                <Link href="/profile">
+                <Link href={profileHref}>
                   <User className="mr-2 h-4 w-4" />
                   Profile
                 </Link>
@@ -185,7 +190,7 @@ export function NavBar({ user }: NavBarProps) {
                 <p className="text-xs text-muted-foreground">{user.email}</p>
               </div>
               <Link
-                href="/profile"
+                href={profileHref}
                 onClick={() => setMobileOpen(false)}
                 className="flex items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition-colors"
               >

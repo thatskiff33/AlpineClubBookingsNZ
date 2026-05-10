@@ -4,6 +4,10 @@ import bcrypt from "bcryptjs";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
+import {
+  buildStructuredAuditLogCreateArgs,
+  getAuditRequestContext,
+} from "@/lib/audit";
 
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, "Current password is required"),
@@ -36,7 +40,7 @@ export async function POST(req: NextRequest) {
 
   const member = await prisma.member.findUnique({
     where: { id: session.user.id },
-    select: { passwordHash: true },
+    select: { passwordHash: true, forcePasswordChange: true },
   });
 
   if (!member) {
@@ -53,14 +57,33 @@ export async function POST(req: NextRequest) {
 
   const newHash = await bcrypt.hash(newPassword, 13);
 
-  await prisma.member.update({
-    where: { id: session.user.id },
-    data: {
-      passwordHash: newHash,
-      forcePasswordChange: false,
-      passwordChangedAt: new Date(),
-    },
-  });
+  await prisma.$transaction([
+    prisma.member.update({
+      where: { id: session.user.id },
+      data: {
+        passwordHash: newHash,
+        forcePasswordChange: false,
+        passwordChangedAt: new Date(),
+      },
+    }),
+    prisma.auditLog.create(
+      buildStructuredAuditLogCreateArgs({
+        action: "member.password.changed",
+        actor: { memberId: session.user.id },
+        subject: { memberId: session.user.id },
+        entity: { type: "Member", id: session.user.id },
+        category: "security",
+        severity: "critical",
+        outcome: "success",
+        summary: "Password changed",
+        metadata: {
+          method: "authenticated_change",
+          forcePasswordChangeCleared: member.forcePasswordChange,
+        },
+        request: getAuditRequestContext(req),
+      })
+    ),
+  ]);
 
   return NextResponse.json({ success: true });
 }

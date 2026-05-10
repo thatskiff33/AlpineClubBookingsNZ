@@ -11,7 +11,14 @@ vi.mock("@/lib/prisma", () => ({
       count: vi.fn(),
     },
     booking: { findMany: vi.fn(), aggregate: vi.fn() },
-    auditLog: { findMany: vi.fn() },
+    auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
+    $transaction: vi.fn().mockImplementation((operation: unknown) => {
+      if (Array.isArray(operation)) {
+        return Promise.all(operation);
+      }
+
+      return (operation as (tx: unknown) => Promise<unknown>)({});
+    }),
   },
 }));
 
@@ -160,6 +167,25 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ role: "ADMIN" }),
     }));
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "admin.member.updated",
+        actorMemberId: "admin1",
+        subjectMemberId: "m1",
+        category: "admin",
+        severity: "critical",
+        metadata: expect.objectContaining({
+          changedFields: ["role"],
+          accessChanges: [
+            {
+              field: "role",
+              before: "MEMBER",
+              after: "ADMIN",
+            },
+          ],
+        }),
+      }),
+    });
   });
 
   it("updates finance access level", async () => {
@@ -240,6 +266,23 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     expect(res.status).toBe(200);
     // No cascade deactivation — family group model replaces parent/dependent
     expect(prisma.member.updateMany).not.toHaveBeenCalled();
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "admin.member.deactivated",
+        actorMemberId: "admin1",
+        subjectMemberId: "m1",
+        metadata: expect.objectContaining({
+          changedFields: ["active"],
+          accessChanges: [
+            {
+              field: "active",
+              before: true,
+              after: false,
+            },
+          ],
+        }),
+      }),
+    });
   });
 
   it("clears dateOfBirth when empty string is passed", async () => {

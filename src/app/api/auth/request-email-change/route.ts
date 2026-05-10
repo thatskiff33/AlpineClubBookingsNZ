@@ -4,11 +4,15 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { sendEmailChangeVerification, sendEmailChangeNotification } from "@/lib/email";
-import { createEmailChangeToken } from "@/lib/verification-tokens";
+import { EMAIL_CHANGE_TTL_MS } from "@/lib/verification-tokens";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
-import { logAudit } from "@/lib/audit";
-import { getClientIp } from "@/lib/rate-limit";
+import {
+  createStructuredAuditLog,
+  getAuditEmailDomain,
+  getAuditRequestContext,
+} from "@/lib/audit";
 import logger from "@/lib/logger";
+import { issueActionToken } from "@/lib/action-tokens";
 
 const requestSchema = z.object({
   newEmail: z.string().email("Invalid email address"),
@@ -63,20 +67,42 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "This email is already in use" }, { status: 409 });
     }
 
-    const token = await createEmailChangeToken(member.id, newEmail);
+    const { token, tokenHash } = issueActionToken();
+    const expiresAt = new Date(Date.now() + EMAIL_CHANGE_TTL_MS);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.emailChangeToken.deleteMany({ where: { memberId: member.id } });
+      await tx.emailChangeToken.create({
+        data: { memberId: member.id, newEmail, tokenHash, expiresAt },
+      });
+      await createStructuredAuditLog(
+        {
+          action: "EMAIL_CHANGE_REQUESTED",
+          actor: { memberId: member.id },
+          subject: { memberId: member.id },
+          entity: { type: "Member", id: member.id },
+          category: "security",
+          severity: "critical",
+          outcome: "success",
+          summary: "Email change requested",
+          metadata: {
+            emailChange: {
+              requested: true,
+              currentDomain: getAuditEmailDomain(member.email),
+              newDomain: getAuditEmailDomain(newEmail),
+            },
+          },
+          request: getAuditRequestContext(request),
+        },
+        tx
+      );
+    });
 
     // Send verification to new email and notification to old email
     await Promise.all([
       sendEmailChangeVerification(newEmail, token),
       sendEmailChangeNotification(member.email, newEmail),
     ]);
-
-    logAudit({
-      action: "EMAIL_CHANGE_REQUESTED",
-      memberId: member.id,
-      details: JSON.stringify({ newEmail }),
-      ipAddress: getClientIp(request),
-    });
 
     return NextResponse.json({ success: true });
   } catch (err) {

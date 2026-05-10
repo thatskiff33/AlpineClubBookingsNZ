@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { logAudit } from "@/lib/audit";
+import {
+  buildStructuredAuditLogCreateArgs,
+  getAuditRequestContext,
+} from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import {
   ADMIN_NOTIFICATION_PREFERENCE_KEYS,
@@ -68,7 +71,6 @@ export async function PUT(request: Request) {
       id: true,
       firstName: true,
       lastName: true,
-      email: true,
       role: true,
       notificationPreference: {
         select: ADMIN_NOTIFICATION_PREFERENCE_SELECT,
@@ -90,37 +92,50 @@ export async function PUT(request: Request) {
     targetMember.notificationPreference
   );
 
-  const updated = await prisma.notificationPreference.upsert({
-    where: { memberId: targetMember.id },
-    create: {
-      memberId: targetMember.id,
-      ...parsed.data.preferences,
-    },
-    update: parsed.data.preferences,
-    select: ADMIN_NOTIFICATION_PREFERENCE_SELECT,
+  const after = resolveAdminNotificationPreferences({
+    ...before,
+    ...parsed.data.preferences,
   });
-
-  const after = resolveAdminNotificationPreferences(updated);
   const changes = ADMIN_NOTIFICATION_PREFERENCE_KEYS.filter(
-    (key) => parsed.data.preferences[key] !== undefined
+    (key) =>
+      parsed.data.preferences[key] !== undefined && before[key] !== after[key]
   ).map((key) => ({
     key,
     before: before[key],
     after: after[key],
   }));
 
-  logAudit({
-    action: "ADMIN_NOTIFICATION_PREFERENCES_UPDATED",
-    memberId: session.user.id,
-    targetId: targetMember.id,
-    details: JSON.stringify({
-      targetEmail: targetMember.email,
-      changes,
+  const [updated] = await prisma.$transaction([
+    prisma.notificationPreference.upsert({
+      where: { memberId: targetMember.id },
+      create: {
+        memberId: targetMember.id,
+        ...parsed.data.preferences,
+      },
+      update: parsed.data.preferences,
+      select: ADMIN_NOTIFICATION_PREFERENCE_SELECT,
     }),
-  });
+    prisma.auditLog.create(
+      buildStructuredAuditLogCreateArgs({
+        action: "ADMIN_NOTIFICATION_PREFERENCES_UPDATED",
+        actor: { memberId: session.user.id },
+        subject: { memberId: targetMember.id },
+        entity: { type: "NotificationPreference", id: targetMember.id },
+        category: "admin",
+        severity: "important",
+        outcome: "success",
+        summary: "Admin notification preferences updated",
+        metadata: {
+          changedPreferenceKeys: changes.map((change) => change.key),
+          changes,
+        },
+        request: getAuditRequestContext(request),
+      })
+    ),
+  ]);
 
   return NextResponse.json({
     memberId: targetMember.id,
-    preferences: after,
+    preferences: resolveAdminNotificationPreferences(updated),
   });
 }

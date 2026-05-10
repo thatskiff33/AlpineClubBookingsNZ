@@ -30,7 +30,14 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
-vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/audit", () => ({
+  buildStructuredAuditLogCreateArgs: vi.fn((event) => ({ data: event })),
+  getAuditEmailDomain: vi.fn((email?: string | null) =>
+    email?.split("@")[1]?.toLowerCase() ?? null
+  ),
+  getAuditRequestContext: vi.fn(() => ({ ipAddress: "127.0.0.1" })),
+  logAudit: vi.fn(),
+}));
 vi.mock("@/lib/email", () => ({
   sendAdminPasswordResetEmail: vi.fn().mockResolvedValue(undefined),
   sendMemberSetupInviteEmail: vi.fn().mockResolvedValue(undefined),

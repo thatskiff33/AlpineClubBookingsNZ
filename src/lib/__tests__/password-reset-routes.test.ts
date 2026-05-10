@@ -13,6 +13,9 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    auditLog: {
+      create: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
 }));
@@ -50,6 +53,7 @@ const mockedDeleteTokens = vi.mocked(prisma.passwordResetToken.deleteMany);
 const mockedCreateToken = vi.mocked(prisma.passwordResetToken.create);
 const mockedFindToken = vi.mocked(prisma.passwordResetToken.findUnique);
 const mockedUpdateToken = vi.mocked(prisma.passwordResetToken.update);
+const mockedCreateAuditLog = vi.mocked(prisma.auditLog.create);
 const mockedTransaction = vi.mocked(prisma.$transaction);
 const mockedSendPasswordResetEmail = vi.mocked(sendPasswordResetEmail);
 
@@ -62,6 +66,7 @@ describe("password reset routes", () => {
     mockedCreateToken.mockResolvedValue({ id: "tok1" } as never);
     mockedMemberUpdate.mockResolvedValue({ id: "member-1" } as never);
     mockedUpdateToken.mockResolvedValue({ id: "tok1" } as never);
+    mockedCreateAuditLog.mockResolvedValue({ id: "audit-1" } as never);
     mockedTransaction.mockResolvedValue([] as never);
   });
 
@@ -131,6 +136,18 @@ describe("password reset routes", () => {
     expect(mockedUpdateToken).toHaveBeenCalledWith({
       where: { id: "tok1" },
       data: { used: true },
+    });
+    expect(mockedCreateAuditLog).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "member.password_reset.completed",
+        actorMemberId: "member-1",
+        subjectMemberId: "member-1",
+        category: "security",
+        severity: "critical",
+        metadata: {
+          method: "reset_token",
+        },
+      }),
     });
     expect(mockedTransaction).toHaveBeenCalledTimes(1);
   });
