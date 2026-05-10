@@ -24,8 +24,13 @@ vi.mock("@/lib/runtime-config", () => ({
   })),
 }));
 
+vi.mock("@/lib/auth", () => ({
+  auth: vi.fn(),
+}));
+
 import { prisma } from "@/lib/prisma";
 import { getRuntimeConfigCheck } from "@/lib/runtime-config";
+import { auth } from "@/lib/auth";
 
 // Helper to call the route handler
 async function callHealthEndpoint(envOverrides: Record<string, string | undefined> = {}) {
@@ -46,6 +51,20 @@ async function callReadinessEndpoint(envOverrides: Record<string, string | undef
   Object.assign(process.env, envOverrides);
 
   const { GET } = await import("@/app/api/health/ready/route");
+  const response = await GET();
+  const data = await response.json();
+
+  process.env = originalEnv;
+  return { response, data };
+}
+
+async function callRuntimeStatusEndpoint(
+  envOverrides: Record<string, string | undefined> = {}
+) {
+  const originalEnv = { ...process.env };
+  Object.assign(process.env, envOverrides);
+
+  const { GET } = await import("@/app/api/admin/runtime-status/route");
   const response = await GET();
   const data = await response.json();
 
@@ -119,6 +138,10 @@ describe("GET /api/health", () => {
 describe("GET /api/health/ready", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getRuntimeConfigCheck).mockReturnValue({
+      status: "ok",
+      latencyMs: 1,
+    });
   });
 
   it("returns healthy when database and runtime config checks pass", async () => {
@@ -137,10 +160,9 @@ describe("GET /api/health/ready", () => {
     expect(data.status).toBe("healthy");
     expect(data.checks.db.status).toBe("ok");
     expect(data.checks.config.status).toBe("ok");
-    expect(data.runtime).toEqual({
-      cronEnabled: false,
-      role: "web-blue",
-    });
+    expect(data.runtime).toBeUndefined();
+    expect(JSON.stringify(data)).not.toContain("cronEnabled");
+    expect(JSON.stringify(data)).not.toContain("web-blue");
   });
 
   it("returns unhealthy when the runtime config check fails", async () => {
@@ -171,7 +193,68 @@ describe("GET /api/health/ready", () => {
     expect(data.status).toBe("unhealthy");
     expect(data.checks.db.status).toBe("error");
     expect(data.checks.db.error).toBeUndefined();
-    expect(data.runtime).toEqual({
+    expect(data.runtime).toBeUndefined();
+    expect(JSON.stringify(data)).not.toContain("cronEnabled");
+    expect(JSON.stringify(data)).not.toContain("cron-leader");
+  });
+
+  it("does not expose runtime metadata on the error path", async () => {
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([{ "?column?": 1 }]);
+    vi.mocked(getRuntimeConfigCheck).mockImplementation(() => {
+      throw new Error("Config unavailable");
+    });
+
+    const { response, data } = await callReadinessEndpoint({
+      APP_RUNTIME_ROLE: "web-green",
+      CRON_ENABLED: "false",
+    });
+
+    expect(response.status).toBe(503);
+    expect(data.status).toBe("unhealthy");
+    expect(data.checks).toEqual({});
+    expect(data.runtime).toBeUndefined();
+    expect(JSON.stringify(data)).not.toContain("cronEnabled");
+    expect(JSON.stringify(data)).not.toContain("web-green");
+  });
+});
+
+describe("GET /api/admin/runtime-status", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("requires an authenticated session", async () => {
+    vi.mocked(auth).mockResolvedValue(null);
+
+    const { response, data } = await callRuntimeStatusEndpoint();
+
+    expect(response.status).toBe(401);
+    expect(data).toEqual({ error: "Unauthorized" });
+  });
+
+  it("requires an admin session", async () => {
+    vi.mocked(auth).mockResolvedValue({
+      user: { id: "member-1", role: "MEMBER" },
+    } as any);
+
+    const { response, data } = await callRuntimeStatusEndpoint();
+
+    expect(response.status).toBe(403);
+    expect(data).toEqual({ error: "Forbidden" });
+  });
+
+  it("returns runtime status for admins", async () => {
+    vi.mocked(auth).mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN" },
+    } as any);
+
+    const { response, data } = await callRuntimeStatusEndpoint({
+      APP_RUNTIME_ROLE: "cron-leader",
+      CRON_ENABLED: "true",
+    });
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({
       cronEnabled: true,
       role: "cron-leader",
     });
