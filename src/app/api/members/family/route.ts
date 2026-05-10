@@ -112,6 +112,7 @@ function getFamilyMemberAction(params: {
   selfId: string;
   canCurrentUserConfirmDetails: boolean;
   needsOwnLoginConfirmation: boolean;
+  confirmationMode: string;
   pendingRequestStatus: string | null;
 }): BookingGuestProfileAction | null {
   const {
@@ -119,11 +120,16 @@ function getFamilyMemberAction(params: {
     selfId,
     canCurrentUserConfirmDetails,
     needsOwnLoginConfirmation,
+    confirmationMode,
     pendingRequestStatus,
   } = params;
 
   if (pendingRequestStatus) {
     return "pending_admin_approval";
+  }
+
+  if (confirmationMode === "not_allowed") {
+    return null;
   }
 
   if (member.canLogin && member.id !== selfId && needsOwnLoginConfirmation) {
@@ -298,8 +304,10 @@ export async function GET() {
     firstName: string;
     lastName: string;
     ageTier: AgeTier;
+    role: string;
     relationship: FamilyMemberRelationship;
     canLogin: boolean;
+    confirmationMode: string;
     profileStatus: ReturnType<typeof serializeProfileStatus>;
     canBeBooked: boolean;
     missingFields: string[];
@@ -355,6 +363,7 @@ export async function GET() {
           selfId: currentMember.id,
           canCurrentUserConfirmDetails,
           needsOwnLoginConfirmation: profileStatus.needsOwnLoginConfirmation,
+          confirmationMode: profileStatus.confirmationMode,
           pendingRequestStatus: effectivePendingRequest?.status ?? null,
         });
     const serializedStatus = serializeProfileStatus(profileStatus);
@@ -364,8 +373,10 @@ export async function GET() {
       firstName: member.firstName,
       lastName: member.lastName,
       ageTier: member.ageTier,
+      role: member.role,
       relationship,
       canLogin: member.canLogin,
+      confirmationMode: serializedStatus.confirmationMode,
       profileStatus: serializedStatus,
       canBeBooked: serializedStatus.canBeBookedAsMember && !allSharedMembershipsBlocked,
       missingFields: serializedStatus.missingFields,

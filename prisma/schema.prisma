@@ -1141,6 +1141,7 @@ model AuditLog {
   incidentPreserved Boolean   @default(false)
 
   @@index([action])
+  @@index([action, createdAt])
   @@index([memberId])
   @@index([createdAt])
   @@index([memberId, createdAt])
@@ -1148,7 +1149,10 @@ model AuditLog {
   @@index([actorMemberId, createdAt])
   @@index([subjectMemberId, createdAt])
   @@index([entityType, entityId])
+  @@index([entityType, createdAt])
   @@index([category, createdAt])
+  @@index([outcome, createdAt])
+  @@index([severity, createdAt])
   @@index([expiresAt])
   @@index([retentionClass, expiresAt])
   @@index([archivedAt])

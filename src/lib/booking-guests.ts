@@ -213,6 +213,10 @@ function getBlockedGuestAction(params: {
 }): BookingGuestProfileAction {
   const { member, status, currentUserId, canCurrentUserResolve } = params;
 
+  if (status.confirmationMode === "not_allowed") {
+    return "contact_admin";
+  }
+
   if (member.canLogin === true && member.id !== currentUserId) {
     return "own_login_required";
   }
