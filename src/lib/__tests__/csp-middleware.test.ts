@@ -7,7 +7,7 @@ import {
   CSP_NONCE_HEADER,
   CSP_REPORT_ONLY_HEADER,
 } from "@/lib/csp";
-import { config, proxy } from "../../proxy";
+import middleware, { config } from "../../middleware";
 
 function directive(policy: string, name: string) {
   const match = policy
@@ -45,7 +45,7 @@ describe("CSP policy", () => {
   });
 });
 
-describe("CSP proxy", () => {
+describe("CSP middleware", () => {
   it("matches root page requests but skips API/static/prefetch requests", () => {
     expect(
       unstable_doesMiddlewareMatch({
@@ -78,13 +78,12 @@ describe("CSP proxy", () => {
     ).toBe(false);
   });
 
-  it("fetches / with nonce-bearing CSP headers", () => {
-    const response = proxy(new NextRequest("https://tokoroa.org.nz/"));
+  it("emits a single enforced CSP header with a per-request nonce and no report-only header", () => {
+    const response = middleware(new NextRequest("https://tokoroa.org.nz/"));
     const enforcedPolicy = response.headers.get(CSP_HEADER);
-    const reportOnlyPolicy = response.headers.get(CSP_REPORT_ONLY_HEADER);
 
     expect(enforcedPolicy).toBeTruthy();
-    expect(reportOnlyPolicy).toBe(enforcedPolicy);
+    expect(response.headers.get(CSP_REPORT_ONLY_HEADER)).toBeNull();
     expectStrictScriptSrc(enforcedPolicy as string);
 
     const nonce = nonceFromScriptSrc(enforcedPolicy as string);
@@ -95,5 +94,16 @@ describe("CSP proxy", () => {
     expect(
       response.headers.get(`x-middleware-request-${CSP_HEADER.toLowerCase()}`)
     ).toBe(enforcedPolicy);
+  });
+
+  it("generates a different nonce per request", () => {
+    const a = middleware(new NextRequest("https://tokoroa.org.nz/"));
+    const b = middleware(new NextRequest("https://tokoroa.org.nz/"));
+    const nonceA = nonceFromScriptSrc(a.headers.get(CSP_HEADER) as string);
+    const nonceB = nonceFromScriptSrc(b.headers.get(CSP_HEADER) as string);
+
+    expect(nonceA).toBeTruthy();
+    expect(nonceB).toBeTruthy();
+    expect(nonceA).not.toEqual(nonceB);
   });
 });
