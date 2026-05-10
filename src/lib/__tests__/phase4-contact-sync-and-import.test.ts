@@ -638,6 +638,55 @@ describe("Phase 4 contact sync and cached import", () => {
     expect(mocks.prisma.member.update).not.toHaveBeenCalled();
   });
 
+  it("does not report a name mismatch for an email match that is already linked to another Xero contact", async () => {
+    mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue({
+      cursorDateTime: null,
+      lastSuccessfulSyncAt: new Date("2026-04-14T10:05:00.000Z"),
+      metadata: {},
+    });
+    mocks.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact_duplicate_email",
+            name: "John Smith",
+            firstName: "John",
+            lastName: "Smith",
+            emailAddress: "shared@example.com",
+          },
+        ],
+      },
+    });
+    mocks.prisma.member.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "member_1",
+        firstName: "Jane",
+        lastName: "Doe",
+        email: "shared@example.com",
+        active: true,
+        xeroContactId: "contact_current_link",
+        joinedDate: null,
+        phoneNumber: null,
+        streetAddressLine1: null,
+        postalAddressLine1: null,
+      });
+
+    const report = await syncContactsFromXero();
+
+    expect(report.updated).toEqual([]);
+    expect(report.skippedNameMismatch).toEqual([]);
+    expect(report.skippedOther).toEqual([
+      {
+        name: "John Smith",
+        xeroContactId: "contact_duplicate_email",
+        reason:
+          "Matching member Jane Doe is already linked to a different Xero contact",
+      },
+    ]);
+    expect(mocks.prisma.member.update).not.toHaveBeenCalled();
+  });
+
   it("does not backfill an already-linked member when the linked contact name differs", async () => {
     mocks.prisma.xeroSyncCursor.findUnique.mockResolvedValue({
       cursorDateTime: null,

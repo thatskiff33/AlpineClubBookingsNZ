@@ -2026,6 +2026,15 @@ export async function syncContactsFromXero(
         continue;
       }
 
+      if (member.xeroContactId && member.xeroContactId !== contact.contactID) {
+        report.skippedOther.push({
+          name: contactName,
+          xeroContactId: contact.contactID,
+          reason: `Matching member ${member.firstName} ${member.lastName} is already linked to a different Xero contact`,
+        });
+        continue;
+      }
+
       const changes: string[] = [];
       const updateData: Record<string, unknown> = {};
 

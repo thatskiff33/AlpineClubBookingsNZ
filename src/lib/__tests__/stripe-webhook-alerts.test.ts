@@ -69,7 +69,11 @@ const {
   }),
   mockSyncRefundsFromStripeCharge: vi.fn().mockResolvedValue(null),
   mockUpsertPaymentIntentTransaction: vi.fn().mockResolvedValue(undefined),
-  mockMarkBookingPaymentSucceeded: vi.fn().mockResolvedValue(undefined),
+  mockMarkBookingPaymentSucceeded: vi.fn().mockResolvedValue({
+    outcome: "paid",
+    bookingId: "booking-1",
+    bumpedBookingIds: [],
+  }),
   mockMarkBookingSetupIntentSucceeded: vi.fn().mockResolvedValue(undefined),
   mockListRefundsForCharge: vi.fn().mockResolvedValue([]),
 }));
@@ -176,7 +180,11 @@ describe("Stripe webhook Xero alerting", () => {
     });
     mockSyncRefundsFromStripeCharge.mockResolvedValue(null);
     mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
-    mockMarkBookingPaymentSucceeded.mockResolvedValue(undefined);
+    mockMarkBookingPaymentSucceeded.mockResolvedValue({
+      outcome: "paid",
+      bookingId: "booking-1",
+      bumpedBookingIds: [],
+    });
     mockMarkBookingSetupIntentSucceeded.mockResolvedValue(undefined);
     mockListRefundsForCharge.mockResolvedValue([]);
     mockTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>

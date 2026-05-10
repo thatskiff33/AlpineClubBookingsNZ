@@ -119,6 +119,21 @@ interface ForceSyncMemberOption {
   xeroContactId: string | null
 }
 
+interface ForceSyncXeroContactOption {
+  contactId: string
+  name: string
+  firstName: string | null
+  lastName: string | null
+  email: string | null
+  isLinked: boolean
+  linkedMemberId: string | null
+  linkedMemberName: string | null
+  existingMemberId: string | null
+  existingMemberName: string | null
+  canImportAsMember: boolean
+  importBlockReason: string | null
+}
+
 interface ForceSyncBookingOption {
   id: string
   memberName: string
@@ -682,6 +697,9 @@ export default function XeroPage() {
   const [forceSyncMemberResults, setForceSyncMemberResults] = useState<ForceSyncMemberOption[]>([])
   const [forceSyncMemberSearching, setForceSyncMemberSearching] = useState(false)
   const [selectedForceSyncMember, setSelectedForceSyncMember] = useState<ForceSyncMemberOption | null>(null)
+  const [forceSyncXeroContactResults, setForceSyncXeroContactResults] = useState<ForceSyncXeroContactOption[]>([])
+  const [forceSyncXeroContactSearching, setForceSyncXeroContactSearching] = useState(false)
+  const [importingXeroContactId, setImportingXeroContactId] = useState<string | null>(null)
   const [forceSyncBookingSearch, setForceSyncBookingSearch] = useState("")
   const [forceSyncBookingResults, setForceSyncBookingResults] = useState<ForceSyncBookingOption[]>([])
   const [forceSyncBookingSearching, setForceSyncBookingSearching] = useState(false)
@@ -1135,6 +1153,52 @@ export default function XeroPage() {
   }, [forceSyncMemberSearch, forceSyncType, selectedForceSyncMember])
 
   useEffect(() => {
+    if (forceSyncType !== "CONTACT" || selectedForceSyncMember) {
+      setForceSyncXeroContactResults([])
+      setForceSyncXeroContactSearching(false)
+      return
+    }
+
+    const query = forceSyncMemberSearch.trim()
+    if (query.length < 2) {
+      setForceSyncXeroContactResults([])
+      setForceSyncXeroContactSearching(false)
+      return
+    }
+
+    let cancelled = false
+    setForceSyncXeroContactSearching(true)
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/admin/xero/search-contacts?q=${encodeURIComponent(query)}`)
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to search Xero contacts")
+        }
+
+        if (!cancelled) {
+          setForceSyncXeroContactResults(data.contacts ?? [])
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setForceSyncXeroContactResults([])
+          setError(err instanceof Error ? err.message : "Failed to search Xero contacts")
+        }
+      } finally {
+        if (!cancelled) {
+          setForceSyncXeroContactSearching(false)
+        }
+      }
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [forceSyncMemberSearch, forceSyncType, selectedForceSyncMember])
+
+  useEffect(() => {
     if (forceSyncType !== "INVOICE" || selectedForceSyncBooking) {
       setForceSyncBookingResults([])
       setForceSyncBookingSearching(false)
@@ -1375,12 +1439,55 @@ export default function XeroPage() {
     }
   }
 
+  const handleImportXeroContactAsMember = async (contact: ForceSyncXeroContactOption) => {
+    if (!contact.canImportAsMember) {
+      setError(contact.importBlockReason || "This Xero contact cannot be imported.")
+      return
+    }
+
+    setImportingXeroContactId(contact.contactId)
+    setOperationMessage("")
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/import-member-contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ xeroContactId: contact.contactId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to import Xero contact")
+      }
+
+      setSelectedForceSyncMember({
+        id: data.memberId,
+        firstName: data.memberFirstName || contact.firstName || contact.name,
+        lastName: data.memberLastName || contact.lastName || "",
+        email: data.memberEmail,
+        active: data.active ?? true,
+        xeroContactId: data.xeroContactId,
+      })
+      setForceSyncMemberSearch("")
+      setForceSyncMemberResults([])
+      setForceSyncXeroContactResults([])
+      setOperationMessage(data.warning ? `${data.message} ${data.warning}` : data.message)
+      await fetchHealth()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to import Xero contact")
+    } finally {
+      setImportingXeroContactId(null)
+    }
+  }
+
   const handleForceSyncTypeChange = (value: "CONTACT" | "INVOICE" | "MEMBERSHIP") => {
     setForceSyncType(value)
     setError("")
     setSelectedForceSyncMember(null)
     setForceSyncMemberSearch("")
     setForceSyncMemberResults([])
+    setForceSyncXeroContactResults([])
+    setForceSyncXeroContactSearching(false)
+    setImportingXeroContactId(null)
     setSelectedForceSyncBooking(null)
     setForceSyncBookingSearch("")
     setForceSyncBookingResults([])
@@ -2633,7 +2740,7 @@ export default function XeroPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="CONTACT">Contact</SelectItem>
+                        <SelectItem value="CONTACT">Member contact</SelectItem>
                         <SelectItem value="INVOICE">Booking invoice</SelectItem>
                         <SelectItem value="MEMBERSHIP">Membership status</SelectItem>
                       </SelectContent>
@@ -2783,6 +2890,7 @@ export default function XeroPage() {
                               setSelectedForceSyncMember(null)
                               setForceSyncMemberSearch("")
                               setForceSyncMemberResults([])
+                              setForceSyncXeroContactResults([])
                             }}
                           >
                             Change
@@ -2797,45 +2905,103 @@ export default function XeroPage() {
                             setError("")
                             setForceSyncMemberSearch(event.target.value)
                           }}
-                          placeholder="Search by member name, email, or member ID"
+                          placeholder={
+                            forceSyncType === "CONTACT"
+                              ? "Search TACBookings members and Xero contacts by name or email"
+                              : "Search by member name, email, or member ID"
+                          }
                         />
-                        {forceSyncMemberSearching ? (
+                        {forceSyncMemberSearching || forceSyncXeroContactSearching ? (
                           <div className="absolute right-3 top-2.5 text-xs text-slate-400">
                             Searching...
                           </div>
                         ) : null}
-                        {forceSyncMemberResults.length > 0 ? (
+                        {forceSyncMemberResults.length > 0 || forceSyncXeroContactResults.length > 0 ? (
                           <div className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-md border bg-white shadow-lg">
-                            {forceSyncMemberResults.map((member) => (
-                              <button
-                                key={member.id}
-                                type="button"
-                                onClick={() => {
-                                  setError("")
-                                  setSelectedForceSyncMember(member)
-                                  setForceSyncMemberSearch("")
-                                  setForceSyncMemberResults([])
-                                }}
-                                className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
-                              >
-                                <div className="font-medium text-slate-900">
-                                  {member.firstName} {member.lastName}
+                            {forceSyncMemberResults.length > 0 ? (
+                              <div className={forceSyncXeroContactResults.length > 0 ? "border-b" : ""}>
+                                {forceSyncType === "CONTACT" && forceSyncXeroContactResults.length > 0 ? (
+                                  <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                                    TACBookings members
+                                  </div>
+                                ) : null}
+                                {forceSyncMemberResults.map((member) => (
+                                  <button
+                                    key={member.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setError("")
+                                      setSelectedForceSyncMember(member)
+                                      setForceSyncMemberSearch("")
+                                      setForceSyncMemberResults([])
+                                      setForceSyncXeroContactResults([])
+                                    }}
+                                    className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                                  >
+                                    <div className="font-medium text-slate-900">
+                                      {member.firstName} {member.lastName}
+                                    </div>
+                                    <div className="truncate text-xs text-slate-500">
+                                      {member.email}
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                      ID {member.id}
+                                      {member.xeroContactId ? " • linked" : " • unlinked"}
+                                      {!member.active ? " • inactive" : ""}
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
+                            {forceSyncType === "CONTACT" && forceSyncXeroContactResults.length > 0 ? (
+                              <div>
+                                <div className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                                  Xero contacts
                                 </div>
-                                <div className="truncate text-xs text-slate-500">
-                                  {member.email}
-                                </div>
-                                <div className="text-xs text-slate-500">
-                                  ID {member.id}
-                                  {member.xeroContactId ? " • linked" : " • unlinked"}
-                                  {!member.active ? " • inactive" : ""}
-                                </div>
-                              </button>
-                            ))}
+                                {forceSyncXeroContactResults.map((contact) => (
+                                  <div
+                                    key={contact.contactId}
+                                    className="flex items-start justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-50"
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="font-medium text-slate-900">{contact.name}</div>
+                                      <div className="truncate text-xs text-slate-500">
+                                        {contact.email || "No email address"}
+                                      </div>
+                                      <div className={contact.canImportAsMember ? "text-xs text-emerald-700" : "text-xs text-amber-700"}>
+                                        {contact.canImportAsMember
+                                          ? "Can be imported as a linked TACBookings member."
+                                          : contact.importBlockReason || "Cannot be imported from here."}
+                                      </div>
+                                    </div>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant={contact.canImportAsMember ? "default" : "outline"}
+                                      onClick={() => handleImportXeroContactAsMember(contact)}
+                                      disabled={
+                                        !contact.canImportAsMember ||
+                                        importingXeroContactId === contact.contactId ||
+                                        syncing !== null
+                                      }
+                                    >
+                                      {importingXeroContactId === contact.contactId ? "Importing..." : "Import"}
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
-                        {forceSyncMemberSearch.trim().length >= 2 && !forceSyncMemberSearching && forceSyncMemberResults.length === 0 ? (
+                        {forceSyncMemberSearch.trim().length >= 2 &&
+                        !forceSyncMemberSearching &&
+                        !forceSyncXeroContactSearching &&
+                        forceSyncMemberResults.length === 0 &&
+                        forceSyncXeroContactResults.length === 0 ? (
                           <p className="mt-1 text-xs text-slate-500">
-                            No matching member records found yet.
+                            {forceSyncType === "CONTACT"
+                              ? "No matching TACBookings members or Xero contacts found yet."
+                              : "No matching member records found yet."}
                           </p>
                         ) : null}
                       </div>
@@ -2857,7 +3023,7 @@ export default function XeroPage() {
 
                 <p className="mt-3 text-xs text-muted-foreground">
                   {forceSyncType === "CONTACT"
-                    ? "Search for the member by name or email, then run a one-off repair or create the missing Xero contact link."
+                    ? "Search by name or email. Select an existing TACBookings member to force-sync, or import an unlinked Xero contact when that member name does not already exist locally."
                     : forceSyncType === "INVOICE"
                       ? "Search for the booking by ID, member name, or email, then queue invoice creation only when that booking is eligible."
                       : "Search for the member by name or email, then refresh that member’s subscription state from Xero invoices."}

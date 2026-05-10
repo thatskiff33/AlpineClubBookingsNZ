@@ -24,7 +24,7 @@ describe("finance-booking-metrics", () => {
         id: "booking-confirmed-split",
         checkIn: new Date("2026-04-20T00:00:00.000Z"),
         checkOut: new Date("2026-04-23T00:00:00.000Z"),
-        status: BookingStatus.CONFIRMED,
+        status: BookingStatus.PAID,
         finalPriceCents: 30000,
         guests: [{ id: "g-1" }, { id: "g-2" }],
         payment: {
@@ -110,10 +110,11 @@ describe("finance-booking-metrics", () => {
         checkOut: { gt: new Date("2026-04-18T00:00:00.000Z") },
         status: {
           in: [
-            BookingStatus.CONFIRMED,
             BookingStatus.PAID,
             BookingStatus.COMPLETED,
             BookingStatus.PENDING,
+            BookingStatus.PAYMENT_PENDING,
+            BookingStatus.CONFIRMED,
           ],
         },
       },
@@ -171,17 +172,11 @@ describe("finance-booking-metrics", () => {
         },
       },
       statusBreakdown: {
-        CONFIRMED: {
-          bookingCount: 1,
-          bookingNights: 2,
-          guestNights: 4,
-          bookedRevenueCents: 20000,
-        },
         PAID: {
-          bookingCount: 1,
-          bookingNights: 2,
-          guestNights: 2,
-          bookedRevenueCents: 12000,
+          bookingCount: 2,
+          bookingNights: 4,
+          guestNights: 6,
+          bookedRevenueCents: 32000,
         },
         COMPLETED: {
           bookingCount: 1,
@@ -250,17 +245,11 @@ describe("finance-booking-metrics", () => {
             occupancyRate: 0.023,
           },
           statusBreakdown: {
-            CONFIRMED: {
+            PAID: {
               bookingCount: 1,
               bookingNights: 1,
               guestNights: 2,
               bookedRevenueCents: 10000,
-            },
-            PAID: {
-              bookingCount: 0,
-              bookingNights: 0,
-              guestNights: 0,
-              bookedRevenueCents: 0,
             },
           },
         },
@@ -280,6 +269,18 @@ describe("finance-booking-metrics", () => {
               bookingNights: 2,
               guestNights: 2,
               bookedRevenueCents: 8000,
+            },
+            PAYMENT_PENDING: {
+              bookingCount: 0,
+              bookingNights: 0,
+              guestNights: 0,
+              bookedRevenueCents: 0,
+            },
+            CONFIRMED: {
+              bookingCount: 0,
+              bookingNights: 0,
+              guestNights: 0,
+              bookedRevenueCents: 0,
             },
           },
         },

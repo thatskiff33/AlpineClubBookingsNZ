@@ -48,7 +48,7 @@ function representativeBookings() {
       id: "booking-confirmed-split",
       checkIn: new Date("2026-04-20T00:00:00.000Z"),
       checkOut: new Date("2026-04-23T00:00:00.000Z"),
-      status: BookingStatus.CONFIRMED,
+      status: BookingStatus.PAID,
       finalPriceCents: 30000,
       guests: [{ id: "guest-1" }, { id: "guest-2" }],
       payment: {
@@ -315,19 +315,11 @@ describe("finance report output validation", () => {
     expect(model.realized.statusRows).toEqual([
       {
         pipeline: "Realized",
-        status: "Confirmed",
-        bookingCount: "1",
-        bookingNights: "2",
-        guestNights: "4",
-        bookedRevenue: "$200.00",
-      },
-      {
-        pipeline: "Realized",
         status: "Paid",
-        bookingCount: "1",
-        bookingNights: "2",
-        guestNights: "2",
-        bookedRevenue: "$120.00",
+        bookingCount: "2",
+        bookingNights: "4",
+        guestNights: "6",
+        bookedRevenue: "$320.00",
       },
       {
         pipeline: "Realized",
@@ -405,19 +397,11 @@ describe("finance report output validation", () => {
     expect(model.forward.statusRows).toEqual([
       {
         pipeline: "Committed",
-        status: "Confirmed",
+        status: "Paid",
         bookingCount: "1",
         bookingNights: "1",
         guestNights: "2",
         bookedRevenue: "$100.00",
-      },
-      {
-        pipeline: "Committed",
-        status: "Paid",
-        bookingCount: "0",
-        bookingNights: "0",
-        guestNights: "0",
-        bookedRevenue: "$0.00",
       },
       {
         pipeline: "At risk",
@@ -426,6 +410,22 @@ describe("finance report output validation", () => {
         bookingNights: "2",
         guestNights: "2",
         bookedRevenue: "$80.00",
+      },
+      {
+        pipeline: "At risk",
+        status: "Payment Pending",
+        bookingCount: "0",
+        bookingNights: "0",
+        guestNights: "0",
+        bookedRevenue: "$0.00",
+      },
+      {
+        pipeline: "At risk",
+        status: "Confirmed",
+        bookingCount: "0",
+        bookingNights: "0",
+        guestNights: "0",
+        bookedRevenue: "$0.00",
       },
     ]);
   });

@@ -599,10 +599,10 @@ describe("PUT /api/bookings/[id]/modify-dates", () => {
     });
     const res = await PUT(req, { params: Promise.resolve({ id: "bk1" }) });
     expect(res.status).toBe(200);
-    // tx.booking.update should have been called with status CONFIRMED
+    // Immediate-payment bookings do not hold capacity until payment succeeds.
     expect(tx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: "CONFIRMED" }),
+        data: expect.objectContaining({ status: "PAYMENT_PENDING" }),
       })
     );
   });

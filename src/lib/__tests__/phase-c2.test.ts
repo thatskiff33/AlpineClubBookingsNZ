@@ -12,6 +12,7 @@ findUnique: vi.fn(),
     findFirst: vi.fn(),
     findMany: vi.fn(),
     update: vi.fn(),
+    create: vi.fn(),
   },
 };
 
@@ -178,6 +179,177 @@ describe("#28: Xero Search Contacts API", () => {
     expect(data.contacts[0].isLinked).toBe(true);
     expect(data.contacts[0].linkedMemberName).toBe("John Smith");
     expect(data.contacts[1].isLinked).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Admin import one Xero contact as member
+// ---------------------------------------------------------------------------
+
+describe("Admin Xero contact member import API", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRefreshXeroContactCachesFromContact.mockResolvedValue({
+      cachedContact: {
+        contactId: "xc-1",
+        name: "Alice Example",
+        firstName: "Alice",
+        lastName: "Example",
+        emailAddress: "alice@example.com",
+        companyNumber: "02/03/2004",
+        contactStatus: "ACTIVE",
+        phoneCountryCode: "64",
+        phoneAreaCode: "27",
+        phoneNumber: "1234567",
+        streetAddressLine1: "1 Alpine Way",
+        streetAddressLine2: null,
+        streetCity: "Taupo",
+        streetRegion: "Waikato",
+        streetPostalCode: "3330",
+        streetCountry: "NZ",
+        postalAddressLine1: "PO Box 1",
+        postalAddressLine2: null,
+        postalCity: "Taupo",
+        postalRegion: "Waikato",
+        postalPostalCode: "3330",
+        postalCountry: "NZ",
+      },
+      groupMemberships: {
+        contactId: "xc-1",
+        observed: false,
+        contactGroupsSeen: 0,
+        membershipsAdded: 0,
+        membershipsRemoved: 0,
+        groupsTouched: 0,
+      },
+    });
+    mockSyncMemberSubscriptionHistoryForLinkedContact.mockResolvedValue({
+      seasonYears: [2026],
+      syncedCount: 1,
+      results: [],
+      errors: [],
+    });
+  });
+
+  it("creates and links a member from an unlinked Xero contact", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockGetAuthenticatedXeroClient.mockResolvedValue({
+      xero: {
+        accountingApi: {
+          getContact: vi.fn(),
+        },
+      },
+      tenantId: "tenant-1",
+    });
+    mockCallXeroApi.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "xc-1",
+            name: "Alice Example",
+            firstName: "Alice",
+            lastName: "Example",
+            emailAddress: "alice@example.com",
+          },
+        ],
+      },
+    });
+    mockPrisma.member.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    mockPrisma.member.create.mockResolvedValue({
+      id: "member-1",
+      firstName: "Alice",
+      lastName: "Example",
+      email: "alice@example.com",
+      active: true,
+      xeroContactId: "xc-1",
+    });
+
+    const { POST } = await import("@/app/api/admin/xero/import-member-contact/route");
+    const req = makeRequest("/api/admin/xero/import-member-contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ xeroContactId: "xc-1" }),
+    });
+    const res = await POST(req as any);
+
+    expect(res.status).toBe(201);
+    expect(mockPrisma.member.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          email: "alice@example.com",
+          firstName: "Alice",
+          lastName: "Example",
+          xeroContactId: "xc-1",
+          canLogin: true,
+          emailVerified: false,
+          phoneNumber: "1234567",
+          streetAddressLine1: "1 Alpine Way",
+          postalAddressLine1: "PO Box 1",
+        }),
+      })
+    );
+    expect(mockUpsertXeroObjectLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localModel: "Member",
+        localId: "member-1",
+        xeroObjectType: "CONTACT",
+        xeroObjectId: "xc-1",
+      })
+    );
+    const data = await res.json();
+    expect(data.memberId).toBe("member-1");
+    expect(data.xeroContactId).toBe("xc-1");
+  });
+
+  it("does not import when a TACBookings member already has that name", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    mockGetAuthenticatedXeroClient.mockResolvedValue({
+      xero: {
+        accountingApi: {
+          getContact: vi.fn(),
+        },
+      },
+      tenantId: "tenant-1",
+    });
+    mockCallXeroApi.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "xc-1",
+            name: "Alice Example",
+            firstName: "Alice",
+            lastName: "Example",
+            emailAddress: "alice@example.com",
+          },
+        ],
+      },
+    });
+    mockPrisma.member.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "member-existing",
+        firstName: "Alice",
+        lastName: "Example",
+        email: "local@example.com",
+        xeroContactId: null,
+      });
+
+    const { POST } = await import("@/app/api/admin/xero/import-member-contact/route");
+    const req = makeRequest("/api/admin/xero/import-member-contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ xeroContactId: "xc-1" }),
+    });
+    const res = await POST(req as any);
+
+    expect(res.status).toBe(409);
+    expect(mockPrisma.member.create).not.toHaveBeenCalled();
+    const data = await res.json();
+    expect(data.error).toContain("already exists");
+    expect(data.existingMemberId).toBe("member-existing");
   });
 });
 

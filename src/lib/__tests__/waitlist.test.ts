@@ -233,7 +233,7 @@ describe("processWaitlistForDates", () => {
 });
 
 describe("confirmWaitlistOffer", () => {
-  it("transitions to CONFIRMED for all-member bookings", async () => {
+  it("transitions to PAYMENT_PENDING for all-member bookings", async () => {
     const { confirmWaitlistOffer } = await import("@/lib/waitlist");
     const { checkCapacity: mockCheckCapacity } = await import("@/lib/capacity");
 
@@ -252,7 +252,7 @@ describe("confirmWaitlistOffer", () => {
     const result = await confirmWaitlistOffer("booking1", "m1");
 
     expect(result.success).toBe(true);
-    expect(result.newStatus).toBe("CONFIRMED");
+    expect(result.newStatus).toBe("PAYMENT_PENDING");
   });
 
   it("transitions to PENDING for non-member bookings far from check-in", async () => {

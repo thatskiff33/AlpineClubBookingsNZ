@@ -101,7 +101,7 @@ describe("Admin booking search route", () => {
       },
       {
         id: "booking-789",
-        status: "CONFIRMED",
+        status: "PAID",
         checkIn: new Date("2026-07-04"),
         checkOut: new Date("2026-07-05"),
         updatedAt: new Date("2026-04-25T10:00:00.000Z"),
@@ -120,7 +120,7 @@ describe("Admin booking search route", () => {
       },
       {
         id: "booking-999",
-        status: "CONFIRMED",
+        status: "PAID",
         checkIn: new Date("2026-08-01"),
         checkOut: new Date("2026-08-02"),
         updatedAt: new Date("2026-04-24T10:00:00.000Z"),
@@ -220,7 +220,7 @@ describe("Admin booking search route", () => {
         xeroInvoiceId: null,
         canForceSyncInvoice: false,
         forceSyncInvoiceReason:
-          "Only CONFIRMED or PAID bookings can be force-synced to Xero invoices.",
+          "Only paid bookings can be force-synced to Xero invoices.",
       },
       {
         id: "booking-789",
@@ -228,7 +228,7 @@ describe("Admin booking search route", () => {
         memberEmail: "cara@example.com",
         checkIn: "2026-07-04",
         checkOut: "2026-07-05",
-        status: "CONFIRMED",
+        status: "PAID",
         guestCount: 3,
         paymentId: "payment-789",
         xeroInvoiceId: "inv-789",
@@ -241,7 +241,7 @@ describe("Admin booking search route", () => {
         memberEmail: "drew@example.com",
         checkIn: "2026-08-01",
         checkOut: "2026-08-02",
-        status: "CONFIRMED",
+        status: "PAID",
         guestCount: 4,
         paymentId: "payment-999",
         xeroInvoiceId: null,
