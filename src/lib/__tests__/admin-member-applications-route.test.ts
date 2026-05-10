@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
   memberApplicationFindMany: vi.fn(),
+  memberApplicationCount: vi.fn(),
   memberFindMany: vi.fn(),
   parseApplicationAddress: vi.fn(),
   parseApplicationFamilyMembers: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     memberApplication: {
       findMany: mocks.memberApplicationFindMany,
+      count: mocks.memberApplicationCount,
     },
     member: {
       findMany: mocks.memberFindMany,
@@ -44,6 +46,7 @@ describe("GET /api/admin/member-applications", () => {
     });
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.memberApplicationFindMany.mockResolvedValue([]);
+    mocks.memberApplicationCount.mockResolvedValue(0);
     mocks.memberFindMany.mockResolvedValue([]);
     mocks.parseApplicationAddress.mockImplementation((value) => value);
     mocks.parseApplicationFamilyMembers.mockImplementation((value) => value);
@@ -72,13 +75,23 @@ describe("GET /api/admin/member-applications", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
+      data: [],
       applications: [],
       pendingCount: 0,
+      page: 1,
+      pageSize: 25,
+      total: 0,
     });
     expect(mocks.requireActiveSessionUser).toHaveBeenCalledWith("admin-1");
     expect(mocks.memberApplicationFindMany).toHaveBeenCalledWith({
       orderBy: { createdAt: "desc" },
       where: undefined,
+      take: 25,
+      skip: 0,
+    });
+    expect(mocks.memberApplicationCount).toHaveBeenCalledWith({ where: undefined });
+    expect(mocks.memberApplicationCount).toHaveBeenCalledWith({
+      where: { status: "PENDING_ADMIN" },
     });
     expect(mocks.memberFindMany).not.toHaveBeenCalled();
   });

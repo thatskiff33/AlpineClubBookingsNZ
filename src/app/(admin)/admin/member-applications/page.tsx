@@ -49,7 +49,7 @@ const filters: Array<{ label: string; value: string }> = [
   { label: "Waiting on nominators", value: "PENDING_NOMINATORS" },
   { label: "Approved", value: "APPROVED" },
   { label: "Rejected", value: "REJECTED" },
-  { label: "All", value: "all" },
+  { label: "All", value: "" },
 ];
 
 function formatDate(value: string | null) {
@@ -96,7 +96,9 @@ export default function MemberApplicationsPage() {
 
     try {
       const params = new URLSearchParams();
-      params.set("status", nextFilter);
+      if (nextFilter) {
+        params.set("status", nextFilter);
+      }
       const response = await fetch(`/api/admin/member-applications?${params.toString()}`);
       const data = await response.json();
 
