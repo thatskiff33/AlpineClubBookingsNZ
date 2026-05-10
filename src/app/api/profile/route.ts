@@ -16,6 +16,8 @@ import {
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
+import { parseDateOnly } from "@/lib/date-only";
+import { evaluateSelfServiceProfilePayload } from "@/lib/member-profile-completeness";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 
@@ -53,6 +55,8 @@ const STREET_FIELDS = ["streetAddressLine1", "streetAddressLine2", "streetCity",
 const POSTAL_FIELDS = ["postalAddressLine1", "postalAddressLine2", "postalCity", "postalRegion", "postalPostalCode", "postalCountry"] as const;
 const PROFILE_XERO_SYNC_SELECT = {
   id: true,
+  canLogin: true,
+  role: true,
   firstName: true,
   lastName: true,
   phoneCountryCode: true,
@@ -74,6 +78,7 @@ const PROFILE_XERO_SYNC_SELECT = {
   postalRegion: true,
   postalPostalCode: true,
   postalCountry: true,
+  profileCompletedAt: true,
 } as const;
 
 export async function PUT(req: NextRequest) {
@@ -139,7 +144,7 @@ export async function PUT(req: NextRequest) {
   // Date of birth
   const { dateOfBirth } = data;
   if (dateOfBirth && dateOfBirth !== "") {
-    const dob = new Date(dateOfBirth);
+    const dob = parseDateOnly(dateOfBirth);
     if (isNaN(dob.getTime())) {
       return NextResponse.json(
         { error: "Invalid date of birth" },
@@ -164,6 +169,44 @@ export async function PUT(req: NextRequest) {
   });
   if (!existing) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
+  }
+
+  if (existing.canLogin) {
+    const profileCompleteness = evaluateSelfServiceProfilePayload({
+      firstName: updateData.firstName as string | null | undefined,
+      lastName: updateData.lastName as string | null | undefined,
+      phoneCountryCode: updateData.phoneCountryCode as string | null | undefined,
+      phoneAreaCode: updateData.phoneAreaCode as string | null | undefined,
+      phoneNumber: updateData.phoneNumber as string | null | undefined,
+      dateOfBirth: updateData.dateOfBirth as Date | null | undefined,
+      streetAddressLine1: updateData.streetAddressLine1 as string | null | undefined,
+      streetAddressLine2: updateData.streetAddressLine2 as string | null | undefined,
+      streetCity: updateData.streetCity as string | null | undefined,
+      streetRegion: updateData.streetRegion as string | null | undefined,
+      streetPostalCode: updateData.streetPostalCode as string | null | undefined,
+      streetCountry: updateData.streetCountry as string | null | undefined,
+      postalAddressLine1: updateData.postalAddressLine1 as string | null | undefined,
+      postalAddressLine2: updateData.postalAddressLine2 as string | null | undefined,
+      postalCity: updateData.postalCity as string | null | undefined,
+      postalRegion: updateData.postalRegion as string | null | undefined,
+      postalPostalCode: updateData.postalPostalCode as string | null | undefined,
+      postalCountry: updateData.postalCountry as string | null | undefined,
+      postalSameAsPhysical: data.postalSameAsPhysical,
+    });
+
+    if (!profileCompleteness.isProfileComplete) {
+      return NextResponse.json(
+        {
+          error: "Profile is incomplete",
+          missingFields: profileCompleteness.missingFields,
+        },
+        { status: 422 }
+      );
+    }
+
+    if (!existing.profileCompletedAt) {
+      updateData.profileCompletedAt = new Date();
+    }
   }
 
   try {

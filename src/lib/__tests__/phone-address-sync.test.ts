@@ -74,10 +74,11 @@ const baseMember = {
   dateOfBirth: new Date("1990-01-15"), role: "MEMBER", ageTier: "ADULT",
   active: true, forcePasswordChange: false, xeroContactId: null,
   joinedDate: null, createdAt: new Date("2025-01-01"), canLogin: true,
-  streetAddressLine1: null, streetAddressLine2: null, streetCity: null,
-  streetRegion: null, streetPostalCode: null, streetCountry: null,
-  postalAddressLine1: null, postalAddressLine2: null, postalCity: null,
-  postalRegion: null, postalPostalCode: null, postalCountry: null,
+  profileCompletedAt: null,
+  streetAddressLine1: "123 Main St", streetAddressLine2: null, streetCity: "Tokoroa",
+  streetRegion: "Waikato", streetPostalCode: "3420", streetCountry: "NZ",
+  postalAddressLine1: "PO Box 42", postalAddressLine2: null, postalCity: "Tokoroa",
+  postalRegion: "Waikato", postalPostalCode: "3420", postalCountry: "NZ",
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -209,6 +210,17 @@ describe("Profile API: structured phone and address fields", () => {
   const validProfileBody = {
     firstName: "Alice", lastName: "Smith",
     phoneCountryCode: "64", phoneAreaCode: "27", phoneNumber: "4224115",
+    dateOfBirth: "1990-01-15",
+    streetAddressLine1: "123 Main St",
+    streetCity: "Tokoroa",
+    streetRegion: "Waikato",
+    streetPostalCode: "3420",
+    streetCountry: "NZ",
+    postalAddressLine1: "PO Box 42",
+    postalCity: "Tokoroa",
+    postalRegion: "Waikato",
+    postalPostalCode: "3420",
+    postalCountry: "NZ",
   };
 
   it("accepts structured phone fields", async () => {
@@ -369,21 +381,89 @@ describe("Profile API: structured phone and address fields", () => {
     });
   });
 
-  it("nullifies empty phone fields", async () => {
+  it("rejects empty required phone fields", async () => {
     vi.mocked(auth).mockResolvedValue(memberSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
-    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember } as any);
 
-    await updateProfile(makeProfilePut({
-      firstName: "Alice", lastName: "Smith",
+    const res = await updateProfile(makeProfilePut({
+      ...validProfileBody,
       phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "",
     }));
 
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toEqual(
+      expect.objectContaining({
+        missingFields: expect.arrayContaining([
+          "phoneCountryCode",
+          "phoneAreaCode",
+          "phoneNumber",
+        ]),
+      })
+    );
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects incomplete required profile fields", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
+
+    const res = await updateProfile(makeProfilePut({
+      firstName: "Alice",
+      lastName: "Smith",
+      phoneCountryCode: "64",
+      phoneAreaCode: "27",
+      phoneNumber: "4224115",
+      dateOfBirth: "1990-01-15",
+    }));
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toEqual(
+      expect.objectContaining({
+        missingFields: expect.arrayContaining([
+          "streetAddressLine1",
+          "streetCity",
+          "postalAddressLine1",
+        ]),
+      })
+    );
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a future date of birth", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+
+    const futureYear = new Date().getFullYear() + 1;
+    const res = await updateProfile(makeProfilePut({
+      ...validProfileBody,
+      dateOfBirth: `${futureYear}-01-01`,
+    }));
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toEqual(
+      expect.objectContaining({
+        error: "Date of birth cannot be in the future",
+      })
+    );
+    expect(prisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("sets profileCompletedAt when required fields are complete", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      profileCompletedAt: null,
+    } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      profileCompletedAt: new Date("2026-05-10T00:00:00.000Z"),
+    } as any);
+
+    const res = await updateProfile(makeProfilePut(validProfileBody));
+
+    expect(res.status).toBe(200);
     expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
-        phoneCountryCode: null,
-        phoneAreaCode: null,
-        phoneNumber: null,
+        profileCompletedAt: expect.any(Date),
       }),
     }));
   });
