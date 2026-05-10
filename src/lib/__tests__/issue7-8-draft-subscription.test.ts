@@ -234,7 +234,7 @@ beforeEach(() => {
   mockTx.booking.findMany.mockResolvedValue([]);
   mockTx.booking.create.mockResolvedValue({
     id: "booking-1",
-    status: "CONFIRMED",
+    status: "PAYMENT_PENDING",
     finalPriceCents: 10000,
     nonMemberHoldUntil: null,
     guests: [{ id: "g1" }],
@@ -370,7 +370,7 @@ describe("Issue 7: GET /api/bookings/drafts", () => {
   });
 });
 
-// ─── Issue 7: Payment intent transitions DRAFT -> CONFIRMED ──────────────────
+// ─── Issue 7: Payment intent transitions DRAFT -> PAYMENT_PENDING ────────────
 
 describe("Issue 7: create-payment-intent with DRAFT booking", () => {
   beforeEach(async () => {
@@ -382,7 +382,7 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
     (stripe.findOrCreateCustomer as ReturnType<typeof vi.fn>).mockResolvedValue({ id: "cus_test" });
   });
 
-  it("accepts DRAFT status and transitions to CONFIRMED", async () => {
+  it("accepts DRAFT status and transitions to PAYMENT_PENDING", async () => {
     mockAuth.mockResolvedValue(memberSession());
 
     const draftBooking = {
@@ -421,10 +421,10 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
     const data = await res.json();
     expect(data.clientSecret).toBe("secret_test");
 
-    // Verify DRAFT -> CONFIRMED transition was called
+    // Verify DRAFT -> PAYMENT_PENDING transition was called
     expect(mockTx.booking.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: "CONFIRMED" }),
+        data: expect.objectContaining({ status: "PAYMENT_PENDING" }),
       })
     );
     expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
@@ -489,14 +489,14 @@ describe("Issue 10: Subscription check on booking creation", () => {
     mockAuth.mockResolvedValue(memberSession());
     mockPrisma.memberSubscription.findFirst.mockResolvedValue({ id: "sub-1", status: "PAID" });
 
-    const confirmedBooking = {
+    const paymentPendingBooking = {
       id: "booking-1",
-      status: "CONFIRMED",
+      status: "PAYMENT_PENDING",
       finalPriceCents: 10000,
       nonMemberHoldUntil: null,
       guests: [{ id: "g1" }],
     };
-    mockTx.booking.create.mockResolvedValue(confirmedBooking);
+    mockTx.booking.create.mockResolvedValue(paymentPendingBooking);
 
     const res = await createBooking(makeBookingBody());
     expect(res.status).toBe(201);

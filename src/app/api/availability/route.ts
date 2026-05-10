@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
+import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 
 const availabilityQuerySchema = z.object({
   year: z.coerce.number().int().min(2000).max(2100),
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       where: {
         checkIn: { lt: endDate },
         checkOut: { gt: startDate },
-        status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+        status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
       },
       include: { guests: true },
     }),

@@ -23,6 +23,7 @@ import {
   POSTAL_ADDRESS_FIELDS,
 } from "@/lib/member-address";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   buildMemberAuditLogWhere,
   getAuditLogActorMemberId,
@@ -285,7 +286,7 @@ export async function GET(
     prisma.booking.aggregate({
       where: {
         memberId: id,
-        status: { in: ["CONFIRMED", "COMPLETED"] },
+        status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       },
       _sum: { finalPriceCents: true },
       _count: true,

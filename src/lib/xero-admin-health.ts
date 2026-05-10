@@ -13,7 +13,7 @@ export interface MissingXeroInvoiceBooking {
   memberId: string;
   memberName: string;
   memberEmail: string;
-  status: "CONFIRMED" | "PAID";
+  status: "PAID";
   checkIn: string;
   checkOut: string;
   createdAt: string;
@@ -84,7 +84,7 @@ function formatBookingSnapshot(input: {
     memberId: input.member.id,
     memberName: `${input.member.firstName} ${input.member.lastName}`,
     memberEmail: input.member.email,
-    status: input.status as "CONFIRMED" | "PAID",
+    status: input.status as "PAID",
     checkIn: input.checkIn.toISOString(),
     checkOut: input.checkOut.toISOString(),
     createdAt: input.createdAt.toISOString(),
@@ -97,7 +97,7 @@ export async function getMissingXeroInvoiceBookings(options?: {
 }): Promise<MissingXeroInvoicesSnapshot> {
   const candidates = await prisma.booking.findMany({
     where: {
-      status: { in: ["CONFIRMED", "PAID"] },
+      status: "PAID",
       payment: { isNot: null },
     },
     select: {

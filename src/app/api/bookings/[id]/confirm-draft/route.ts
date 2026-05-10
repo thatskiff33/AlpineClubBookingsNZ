@@ -12,6 +12,7 @@ import {
 import { sendAdminNewBookingAlert, sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 
 export async function POST(
   request: NextRequest,
@@ -88,7 +89,7 @@ export async function POST(
         id: { not: id },
         checkIn: { lt: freshBooking.checkOut },
         checkOut: { gt: freshBooking.checkIn },
-        status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+        status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
       },
       include: { guests: true },
     });

@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   const monthStart = new Date(year, month - 1, 1);
   const monthEnd = new Date(year, month, 0); // last day of month
 
-  const VALID_STATUSES = new Set(["DRAFT", "PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"]);
+  const VALID_STATUSES = new Set(["DRAFT", "PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"]);
   const statusParam = request.nextUrl.searchParams.get("status");
   const statusFilter: Record<string, unknown> = {};
   if (statusParam && statusParam !== "all") {

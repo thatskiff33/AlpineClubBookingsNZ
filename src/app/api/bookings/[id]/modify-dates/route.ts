@@ -108,9 +108,9 @@ export async function PUT(
         throw new ApiError("Forbidden", 403);
       }
 
-      if (!["PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
+      if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
         throw new ApiError(
-          "Only PENDING, CONFIRMED, or PAID bookings can be modified",
+          "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be modified",
           400
         );
       }
@@ -297,10 +297,10 @@ export async function PUT(
       let additionalAmountCents = 0;
 
       const hasSucceededPayment =
-        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
         booking.payment?.status === "SUCCEEDED";
       const hasIssuedXeroInvoice =
-        ["CONFIRMED", "PAID"].includes(booking.status) &&
+        ["PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status) &&
         !!booking.payment?.xeroInvoiceId;
       const xeroNetAmountCents = hasIssuedXeroInvoice
         ? priceDiffCents + changeFeeCents
@@ -357,10 +357,10 @@ export async function PUT(
         );
 
         if (daysUntilNewCheckIn <= holdDays) {
-          // Within hold period - auto-confirm PENDING bookings
+          // Within hold period - move PENDING bookings to immediate payment.
           newNonMemberHoldUntil = null;
           if (booking.status === "PENDING") {
-            newStatus = "CONFIRMED";
+            newStatus = "PAYMENT_PENDING";
           }
         } else {
           newNonMemberHoldUntil = new Date(

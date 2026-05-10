@@ -26,9 +26,8 @@ const ChargeSavedMethodSchema = z.object({
  * or by admin to manually confirm a pending booking.
  */
 export async function POST(request: NextRequest) {
-  // Track bookingId outside try so catch block can revert status on charge failure
-  let claimedBookingId: string | null = null;
   let paymentSucceeded = false;
+  let finalCapacityClaimed = false;
 
   try {
     // This endpoint is called by internal cron or admin
@@ -95,19 +94,6 @@ export async function POST(request: NextRequest) {
     }
     const savedPayment = booking.payment;
 
-    // Atomically claim the booking to prevent double-charge with cron
-    const claimed = await prisma.booking.updateMany({
-      where: { id: bookingId, status: "PENDING" },
-      data: { status: "CONFIRMED" },
-    });
-    if (claimed.count === 0) {
-      return NextResponse.json(
-        { error: "Booking is already being processed" },
-        { status: 409 }
-      );
-    }
-    claimedBookingId = bookingId;
-
     // Charge the saved payment method
     const paymentIntent = await chargePaymentMethod({
       amountCents: booking.finalPriceCents,
@@ -117,13 +103,13 @@ export async function POST(request: NextRequest) {
         bookingId: booking.id,
         memberId: booking.memberId,
       },
-      idempotencyKey: `charge_${booking.id}`,
+      idempotencyKey: `pending_charge_${booking.id}`,
     });
 
     // Update payment record and revert booking status if payment not yet succeeded
     if (paymentIntent.status === "succeeded") {
       paymentSucceeded = true;
-      await markBookingPaymentSucceeded({
+      const reconciliation = await markBookingPaymentSucceeded({
         bookingId: booking.id,
         paymentIntentId: paymentIntent.id,
         amountCents: paymentIntent.amount,
@@ -132,6 +118,23 @@ export async function POST(request: NextRequest) {
             ? paymentIntent.payment_method
             : paymentIntent.payment_method?.id ?? null,
       });
+
+      if (
+        reconciliation.outcome === "cancelled_refunded" ||
+        reconciliation.outcome === "cancelled_refund_failed"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Payment succeeded, but lodge capacity is no longer available for this booking.",
+            status: "CANCELLED",
+            refunded: reconciliation.outcome === "cancelled_refunded",
+          },
+          { status: 409 }
+        );
+      }
+
+      finalCapacityClaimed = true;
 
       logAudit({
         action: "booking.payment.confirmed",
@@ -168,7 +171,6 @@ export async function POST(request: NextRequest) {
           data: { status: "PENDING" },
         });
       });
-      claimedBookingId = null; // Already reverted
       // Alert admins so they can contact the member to complete payment manually
       logger.warn(
         { bookingId: booking.id, piStatus: paymentIntent.status, memberId: booking.memberId },
@@ -185,7 +187,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Queue the invoice durably and try to kick the worker when payment succeeds.
-    if (paymentIntent.status === "succeeded") {
+    if (paymentIntent.status === "succeeded" && finalCapacityClaimed) {
       try {
         const queuedInvoice = await enqueueXeroBookingInvoiceOperation(booking.id, {
           createdByMemberId: session?.user?.id,
@@ -200,7 +202,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    claimedBookingId = null; // Success — no revert needed
     return NextResponse.json({
       success: true,
       paymentIntentId: paymentIntent.id,
@@ -209,10 +210,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     logger.error({ err: error }, "Error charging saved method");
 
-    if (claimedBookingId && !paymentSucceeded) {
+    if (!paymentSucceeded) {
       logAudit({
         action: "booking.payment.failed",
-        targetId: claimedBookingId,
         details: JSON.stringify({
           errorMessage:
             error instanceof Error
@@ -220,29 +220,9 @@ export async function POST(request: NextRequest) {
               : "Failed to charge saved payment method",
         }),
         ipAddress:
-          request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-          "unknown",
+            request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+            "unknown",
       });
-    }
-
-    // Only roll the booking back when Stripe never confirmed a successful charge.
-    // If Stripe already succeeded, keep the claimed state so the webhook/manual
-    // reconciliation path can finish local persistence safely.
-    if (claimedBookingId && !paymentSucceeded) {
-      try {
-        await prisma.booking.updateMany({
-          where: { id: claimedBookingId, status: "CONFIRMED" },
-          data: { status: "PENDING" },
-        });
-        logger.info({ bookingId: claimedBookingId }, "Reverted booking to PENDING after charge failure");
-      } catch (revertErr) {
-        logger.error({ err: revertErr, bookingId: claimedBookingId }, "Failed to revert booking status after charge failure");
-      }
-    } else if (claimedBookingId) {
-      logger.error(
-        { bookingId: claimedBookingId },
-        "Stripe charge succeeded but local booking reconciliation failed; leaving booking claimed for webhook recovery"
-      );
     }
 
     return NextResponse.json(

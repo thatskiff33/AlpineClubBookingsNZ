@@ -4,6 +4,7 @@ import { BookingStatus, Prisma } from "@prisma/client";
 import { eachDayOfInterval, subDays, format, startOfDay } from "date-fns";
 import { sendBookingBumpedEmail, sendAdminBookingBumpedAlert } from "./email";
 import logger from "@/lib/logger";
+import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 
 export interface BumpResult {
   bumpedBookingIds: string[];
@@ -16,7 +17,7 @@ type BookingWithGuests = Prisma.BookingGetPayload<{
 
 /**
  * Calculate occupied beds per night for a date range, excluding specific booking IDs.
- * Only counts CONFIRMED and PENDING bookings.
+ * Only counts bookings that intentionally reserve capacity.
  */
 export async function getOccupiedBedsPerNight(
   checkIn: Date,
@@ -34,7 +35,7 @@ export async function getOccupiedBedsPerNight(
     where: {
       checkIn: { lt: checkOut },
       checkOut: { gt: checkIn },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
       ...(excludeBookingIds.length > 0
         ? { id: { notIn: excludeBookingIds } }
         : {}),

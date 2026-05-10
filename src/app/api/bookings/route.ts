@@ -4,7 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { calculateBookingPrice, type SeasonRateData, type GroupDiscountConfig } from "@/lib/pricing";
-import { LODGE_CAPACITY } from "@/lib/capacity";
+import { checkCapacity, LODGE_CAPACITY } from "@/lib/capacity";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { z } from "zod";
@@ -14,6 +14,7 @@ import {
   bumpPendingBookings,
   sendBumpedNotifications,
 } from "@/lib/bumping";
+import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   validatePromoCodeRules,
   redeemPromoCode,
@@ -460,7 +461,7 @@ export async function POST(request: NextRequest) {
     (checkIn.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
   );
   const shouldBePending = hasNonMembers && daysUntilCheckIn > holdDays;
-  const status = shouldBePending ? BookingStatus.PENDING : BookingStatus.CONFIRMED;
+  const status = shouldBePending ? BookingStatus.PENDING : BookingStatus.PAYMENT_PENDING;
 
   let bumpedBookingIds: string[] = [];
   let isZeroDollarConfirmed = false;
@@ -475,7 +476,8 @@ export async function POST(request: NextRequest) {
       // automatically when the transaction commits or rolls back.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-      // Check capacity
+      // Preflight capacity. Only PAID and deliberate PENDING non-member holds
+      // reserve beds; PAYMENT_PENDING bookings do not.
       const nights = eachDayOfInterval({
         start: checkIn,
         end: subDays(checkOut, 1),
@@ -485,7 +487,7 @@ export async function POST(request: NextRequest) {
         where: {
           checkIn: { lt: checkOut },
           checkOut: { gt: checkIn },
-          status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+          status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
         },
         include: { guests: true },
       });
@@ -513,46 +515,6 @@ export async function POST(request: NextRequest) {
 
         if (occupiedBeds + guests.length > LODGE_CAPACITY) {
           capacityExceeded = true;
-        }
-      }
-
-      if (capacityExceeded) {
-        // If this is a member-only booking (CONFIRMED), try bumping PENDING non-member bookings
-        if (allMembers || daysUntilCheckIn <= holdDays) {
-          // Only member-only bookings can trigger bumping
-          if (!allMembers) {
-            // Non-member booking within 7 days can't bump anyone
-            throw new Error(
-              "Not enough beds available for your dates. Non-member bookings cannot bump other bookings."
-            );
-          }
-
-          const bumpResult = await bumpPendingBookings(
-            checkIn,
-            checkOut,
-            guests.length,
-            tx
-          );
-
-          if (!bumpResult.capacityRestored) {
-            // Even bumping couldn't free enough space — offer waitlist
-            const fullNights = nightDetails.filter((n) => n.availableBeds < guests.length);
-            throw Object.assign(new Error("CAPACITY_EXCEEDED"), {
-              code: "CAPACITY_EXCEEDED",
-              fullNights: fullNights.map((n) => n.date),
-              canWaitlist: true,
-            });
-          }
-
-          bumpedBookingIds = bumpResult.bumpedBookingIds;
-        } else {
-          // Capacity is full — offer waitlist
-          const fullNights = nightDetails.filter((n) => n.availableBeds < guests.length);
-          throw Object.assign(new Error("CAPACITY_EXCEEDED"), {
-            code: "CAPACITY_EXCEEDED",
-            fullNights: fullNights.map((n) => n.date),
-            canWaitlist: true,
-          });
         }
       }
 
@@ -678,7 +640,7 @@ export async function POST(request: NextRequest) {
       // Apply account credit if requested
       let creditAppliedCents = 0;
       const requestedCredit = parsed.data.applyCreditCents || 0;
-      if (requestedCredit > 0 && status === BookingStatus.CONFIRMED) {
+      if (requestedCredit > 0 && status === BookingStatus.PAYMENT_PENDING) {
         const creditBalance = await getMemberCreditBalance(effectiveMemberId, tx);
         if (requestedCredit > creditBalance) {
           throw new Error(`Insufficient credit: ${creditBalance} cents available, ${requestedCredit} requested`);
@@ -690,6 +652,15 @@ export async function POST(request: NextRequest) {
       }
 
       const effectivePriceCents = finalPriceCents - creditAppliedCents;
+
+      if (capacityExceeded && (status === BookingStatus.PENDING || effectivePriceCents > 0)) {
+        const fullNights = nightDetails.filter((n) => n.availableBeds < guests.length);
+        throw Object.assign(new Error("CAPACITY_EXCEEDED"), {
+          code: "CAPACITY_EXCEEDED",
+          fullNights: fullNights.map((n) => n.date),
+          canWaitlist: true,
+        });
+      }
 
       const nonMemberHoldUntil = shouldBePending
         ? new Date(checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000)
@@ -747,11 +718,55 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Zero-dollar or credit-covered CONFIRMED booking: create a SUCCEEDED Payment and set status to PAID.
-      // Only applies when the booking would normally be CONFIRMED (all-members or check-in
+      // Zero-dollar or credit-covered PAYMENT_PENDING booking: final-claim capacity
+      // immediately, create a SUCCEEDED Payment, and set status to PAID.
+      // Only applies when the booking would normally be payment pending (all-members or check-in
       // within hold window). PENDING $0 bookings (non-member, far-future) are handled by the
       // cron job so the non-member bumping system remains intact.
-      if (effectivePriceCents === 0 && status === BookingStatus.CONFIRMED) {
+      if (effectivePriceCents === 0 && status === BookingStatus.PAYMENT_PENDING) {
+        const capacityCheck = await checkCapacity(
+          checkIn,
+          checkOut,
+          guests.length,
+          newBooking.id,
+          tx
+        );
+
+        if (!capacityCheck.available) {
+          if (!allMembers) {
+            const fullNights = capacityCheck.nightDetails
+              .filter((night) => night.availableBeds < guests.length)
+              .map((night) => night.date.toISOString().split("T")[0]);
+
+            throw Object.assign(new Error("CAPACITY_EXCEEDED"), {
+              code: "CAPACITY_EXCEEDED",
+              fullNights,
+              canWaitlist: true,
+            });
+          }
+
+          const bumpResult = await bumpPendingBookings(
+            checkIn,
+            checkOut,
+            guests.length,
+            tx
+          );
+
+          if (!bumpResult.capacityRestored) {
+            const fullNights = capacityCheck.nightDetails
+              .filter((night) => night.availableBeds < guests.length)
+              .map((night) => night.date.toISOString().split("T")[0]);
+
+            throw Object.assign(new Error("CAPACITY_EXCEEDED"), {
+              code: "CAPACITY_EXCEEDED",
+              fullNights,
+              canWaitlist: true,
+            });
+          }
+
+          bumpedBookingIds = bumpResult.bumpedBookingIds;
+        }
+
         isZeroDollarConfirmed = true;
         await tx.payment.create({
           data: {

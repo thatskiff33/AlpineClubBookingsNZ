@@ -56,7 +56,7 @@ describe("Issue 15: KPI Card hrefs", () => {
   const kpiCards = [
     { label: "Total Members", href: "/admin/members" },
     { label: "Total Bookings", href: "/admin/bookings" },
-    { label: "Active Bookings", href: "/admin/bookings?status=CONFIRMED,PAID" },
+    { label: "Active Bookings", href: "/admin/bookings?status=PAYMENT_PENDING,CONFIRMED,PAID,PENDING" },
     { label: "Revenue This Month", href: "/admin/payments" },
     { label: "Upcoming Check-ins", href: "/admin/bookings?upcoming=7" },
     { label: "Active Members", href: "/admin/members?active=true" },
@@ -76,11 +76,13 @@ describe("Issue 15: KPI Card hrefs", () => {
     expect(card?.href).toBe("/admin/bookings");
   });
 
-  it("Active Bookings links to /admin/bookings with CONFIRMED,PAID status filter", () => {
+  it("Active Bookings links to /admin/bookings with active status filter", () => {
     const card = kpiCards.find((c) => c.label === "Active Bookings");
     expect(card?.href).toContain("/admin/bookings");
+    expect(card?.href).toContain("PAYMENT_PENDING");
     expect(card?.href).toContain("CONFIRMED");
     expect(card?.href).toContain("PAID");
+    expect(card?.href).toContain("PENDING");
   });
 
   it("Revenue This Month links to /admin/payments", () => {
@@ -112,12 +114,12 @@ describe("Issue 15: Bookings page filter logic", () => {
   }
 
   it("returns single status when only one provided", () => {
-    expect(buildStatusFilter("CONFIRMED")).toBe("CONFIRMED");
+    expect(buildStatusFilter("PAYMENT_PENDING")).toBe("PAYMENT_PENDING");
   });
 
   it("returns { in: [...] } for comma-separated statuses", () => {
-    const result = buildStatusFilter("CONFIRMED,PAID") as { in: string[] };
-    expect(result).toEqual({ in: ["CONFIRMED", "PAID"] });
+    const result = buildStatusFilter("PAYMENT_PENDING,PAID") as { in: string[] };
+    expect(result).toEqual({ in: ["PAYMENT_PENDING", "PAID"] });
   });
 
   it("returns { not: DRAFT } when no filter provided", () => {
@@ -129,13 +131,13 @@ describe("Issue 15: Bookings page filter logic", () => {
   });
 
   it("handles three statuses in comma list", () => {
-    const result = buildStatusFilter("CONFIRMED,PAID,PENDING") as { in: string[] };
-    expect(result).toEqual({ in: ["CONFIRMED", "PAID", "PENDING"] });
+    const result = buildStatusFilter("PAYMENT_PENDING,PAID,PENDING") as { in: string[] };
+    expect(result).toEqual({ in: ["PAYMENT_PENDING", "PAID", "PENDING"] });
   });
 
   it("strips whitespace from comma-separated values", () => {
-    const result = buildStatusFilter("CONFIRMED, PAID") as { in: string[] };
-    expect(result).toEqual({ in: ["CONFIRMED", "PAID"] });
+    const result = buildStatusFilter("PAYMENT_PENDING, PAID") as { in: string[] };
+    expect(result).toEqual({ in: ["PAYMENT_PENDING", "PAID"] });
   });
 });
 

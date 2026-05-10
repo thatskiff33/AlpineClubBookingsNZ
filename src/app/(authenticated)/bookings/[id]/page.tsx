@@ -30,6 +30,7 @@ import {
   getRemainingRefundableCents,
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
+import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 
 const historyToneClasses: Record<BookingHistoryTone, string> = {
   default: "border-slate-200 bg-slate-100 text-slate-700",
@@ -120,7 +121,7 @@ export default async function BookingDetailPage({
   const isDraft = booking.status === "DRAFT";
   const isWaitlisted = booking.status === "WAITLISTED";
   const isWaitlistOffered = booking.status === "WAITLIST_OFFERED";
-  const canCancel = ["CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
+  const canCancel = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
   const isFutureCheckIn = new Date(booking.checkIn) > new Date();
   const showArrivalTime = !["CANCELLED", "COMPLETED"].includes(booking.status);
   const canModify =
@@ -294,12 +295,15 @@ export default async function BookingDetailPage({
       )}
 
       {/* Show payment form if payment hasn't been completed */}
-      {(booking.status === "CONFIRMED" && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
+      {(isPaymentOwedBookingStatus(booking.status) && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
         <Card>
           <CardHeader>
             <CardTitle>Complete Payment</CardTitle>
           </CardHeader>
           <CardContent>
+            <p className="text-sm text-gray-600 mb-4">
+              Payment is required to secure this booking. Availability may change until payment succeeds.
+            </p>
             <BookingPaymentSection
               bookingId={booking.id}
               amountCents={booking.finalPriceCents}

@@ -11,6 +11,7 @@ import {
   ChoreHistoryEntry,
 } from "@/lib/chore-allocator";
 import logger from "@/lib/logger";
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const bodySchema = z.object({
@@ -67,8 +68,8 @@ export async function POST(
 
     // Get guests staying on this date
     const bookings = await prisma.booking.findMany({
-      where: {
-      status: { in: ["CONFIRMED", "PAID", "COMPLETED"] },
+    where: {
+      status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: date },
       checkOut: { gt: date },
     },

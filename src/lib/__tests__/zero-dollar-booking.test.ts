@@ -7,7 +7,7 @@
  *          that will never come because no Stripe payment is created).
  *
  * Test coverage:
- * - Booking creation route: $0 CONFIRMED bookings get SUCCEEDED Payment + PAID status in TX
+ * - Booking creation route: $0 PAYMENT_PENDING bookings get SUCCEEDED Payment + PAID status in TX
  * - Booking creation route: $0 PENDING bookings (non-member, far future) stay PENDING
  * - Booking creation route: normal non-zero bookings follow existing flow (no payment in TX)
  * - Cron: $0 PENDING bookings confirmed without Stripe charge
@@ -215,7 +215,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       memberId: "m1",
       checkIn: new Date(tomorrow),
       checkOut: new Date(dayAfterTomorrow),
-      status: "CONFIRMED",
+      status: "PAYMENT_PENDING",
       totalPriceCents: 10000,
       discountCents: 10000,
       finalPriceCents: 0,
@@ -249,9 +249,14 @@ describe("Booking Creation Route: zero-dollar handling", () => {
     mockMemberCount.mockResolvedValue(1);
     mockTxBookingFindMany.mockResolvedValue([]);
     mockTxSeasonFindMany.mockResolvedValue([]);
+    mockCheckCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 29,
+      nightDetails: [],
+    });
   });
 
-  it("creates a SUCCEEDED Payment inside the transaction for a $0 CONFIRMED booking", async () => {
+  it("creates a SUCCEEDED Payment inside the transaction for a $0 PAYMENT_PENDING booking", async () => {
     setupStandardMocks();
     setupZeroDollarConfirmedBooking();
 
@@ -273,7 +278,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
     });
   });
 
-  it("sets booking status to PAID inside the transaction for a $0 CONFIRMED booking", async () => {
+  it("sets booking status to PAID inside the transaction for a $0 PAYMENT_PENDING booking", async () => {
     setupStandardMocks();
     setupZeroDollarConfirmedBooking();
 
@@ -291,7 +296,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
     });
   });
 
-  it("sends confirmation email for a $0 CONFIRMED booking (not pending email)", async () => {
+  it("sends confirmation email for a $0 PAYMENT_PENDING booking (not pending email)", async () => {
     setupStandardMocks();
     setupZeroDollarConfirmedBooking();
 
@@ -361,7 +366,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
     expect(mockTxBookingUpdate).not.toHaveBeenCalled();
   });
 
-  it("does NOT create Payment in the transaction for a normal non-zero CONFIRMED booking", async () => {
+  it("does NOT create Payment in the transaction for a normal non-zero PAYMENT_PENDING booking", async () => {
     setupStandardMocks();
     mockedCalcPrice.mockReturnValue({
       totalPriceCents: 10000,
@@ -373,7 +378,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       memberId: "m1",
       checkIn: new Date(tomorrow),
       checkOut: new Date(dayAfterTomorrow),
-      status: "CONFIRMED",
+      status: "PAYMENT_PENDING",
       totalPriceCents: 10000,
       discountCents: 0,
       finalPriceCents: 10000,
@@ -393,7 +398,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
     const res = await POST(req);
     expect(res.status).toBe(201);
 
-    // Non-zero CONFIRMED: waits for Stripe webhook — no payment in tx
+    // Non-zero PAYMENT_PENDING: waits for Stripe webhook — no payment in tx
     expect(mockTxPaymentCreate).not.toHaveBeenCalled();
     expect(mockTxBookingUpdate).not.toHaveBeenCalled();
   });
@@ -573,21 +578,20 @@ describe("BookingPaymentWrapper: amountCents === 0 logic", () => {
 });
 
 describe("Booking Detail Page: payment section visibility", () => {
-  it("hides Complete Payment section for PAID bookings (the new $0 CONFIRMED state)", () => {
-    // page.tsx line 93: status === "CONFIRMED" && (!payment || payment.status !== "SUCCEEDED")
+  it("hides Complete Payment section for PAID bookings (the new $0 PAYMENT_PENDING state)", () => {
     const showCompletePayment = (
       status: string,
       payment: { status: string } | null
-    ) => status === "CONFIRMED" && (!payment || payment.status !== "SUCCEEDED");
+    ) => ["PAYMENT_PENDING", "CONFIRMED"].includes(status) && (!payment || payment.status !== "SUCCEEDED");
 
     // $0 bookings now land on PAID status with SUCCEEDED payment → form hidden
     expect(showCompletePayment("PAID", { status: "SUCCEEDED" })).toBe(false);
-    // CONFIRMED + SUCCEEDED payment → form hidden
-    expect(showCompletePayment("CONFIRMED", { status: "SUCCEEDED" })).toBe(false);
-    // CONFIRMED + no payment → form shown (normal flow waiting for Stripe)
-    expect(showCompletePayment("CONFIRMED", null)).toBe(true);
-    // CONFIRMED + PENDING payment → form shown
-    expect(showCompletePayment("CONFIRMED", { status: "PENDING" })).toBe(true);
+    // PAYMENT_PENDING + SUCCEEDED payment → form hidden
+    expect(showCompletePayment("PAYMENT_PENDING", { status: "SUCCEEDED" })).toBe(false);
+    // PAYMENT_PENDING + no payment → form shown (normal flow waiting for Stripe)
+    expect(showCompletePayment("PAYMENT_PENDING", null)).toBe(true);
+    // PAYMENT_PENDING + PENDING payment → form shown
+    expect(showCompletePayment("PAYMENT_PENDING", { status: "PENDING" })).toBe(true);
   });
 
   it("hides Save Payment Method section for PAID bookings", () => {
@@ -597,7 +601,7 @@ describe("Booking Detail Page: payment section visibility", () => {
       payment: { stripeSetupIntentId?: string | null } | null
     ) => status === "PENDING" && (!payment || !payment.stripeSetupIntentId);
 
-    // PAID status: neither CONFIRMED nor PENDING → both sections hidden
+    // PAID status: neither PAYMENT_PENDING nor PENDING → both sections hidden
     expect(showSavePayment("PAID", null)).toBe(false);
     expect(showSavePayment("PAID", { stripeSetupIntentId: null })).toBe(false);
     // PENDING with no setup intent → show save card form
@@ -606,11 +610,11 @@ describe("Booking Detail Page: payment section visibility", () => {
     expect(showSavePayment("PENDING", { stripeSetupIntentId: "seti_1" })).toBe(false);
   });
 
-  it("$0 CONFIRMED booking has PAID status: both payment sections hidden", () => {
+  it("$0 PAYMENT_PENDING booking has PAID status: both payment sections hidden", () => {
     const status: string = "PAID";
     const payment = { status: "SUCCEEDED", stripeSetupIntentId: null as string | null };
 
-    const showCompletePayment = status === "CONFIRMED" && (!payment || payment.status !== "SUCCEEDED");
+    const showCompletePayment = ["PAYMENT_PENDING", "CONFIRMED"].includes(status) && (!payment || payment.status !== "SUCCEEDED");
     const showSavePayment = status === "PENDING" && (!payment || !payment.stripeSetupIntentId);
 
     expect(showCompletePayment).toBe(false);

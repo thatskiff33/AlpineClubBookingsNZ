@@ -1,3 +1,5 @@
+import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+
 export interface DashboardPaymentSnapshot {
   status: string;
   finalPriceCents: number;
@@ -20,7 +22,7 @@ export function summarizeMemberPaymentOwed(
     (summary, booking) => {
       let bookingOwedCents = 0;
 
-      if (booking.status === "CONFIRMED" && booking.payment?.status !== "SUCCEEDED") {
+      if (isPaymentOwedBookingStatus(booking.status) && booking.payment?.status !== "SUCCEEDED") {
         bookingOwedCents += booking.finalPriceCents;
       }
 

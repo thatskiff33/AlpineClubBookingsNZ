@@ -6,7 +6,8 @@ describe("getBookingPaymentMode", () => {
     expect(getBookingPaymentMode("PENDING")).toBe("setup");
   });
 
-  it("uses payment mode for confirmed bookings with lifecycle already decided", () => {
+  it("uses payment mode for payment-pending bookings with lifecycle already decided", () => {
+    expect(getBookingPaymentMode("PAYMENT_PENDING")).toBe("payment");
     expect(getBookingPaymentMode("CONFIRMED")).toBe("payment");
     expect(getBookingPaymentMode("DRAFT")).toBe("payment");
     expect(getBookingPaymentMode("PAID")).toBe("payment");

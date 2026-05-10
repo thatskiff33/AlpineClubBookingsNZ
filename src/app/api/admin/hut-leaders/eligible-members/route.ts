@@ -3,10 +3,11 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 
 /**
  * GET /api/admin/hut-leaders/eligible-members?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
- * Returns adult members who have active bookings (PENDING/CONFIRMED/PAID) overlapping the given date range,
+ * Returns adult members who have paid/operational bookings overlapping the given date range,
  * along with their booking dates and suggested assignment dates.
  */
 export async function GET(req: NextRequest) {
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest) {
       ageTier: "ADULT",
       memberId: { not: null },
       booking: {
-        status: { in: ["PENDING", "CONFIRMED", "PAID"] },
+        status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
         checkIn: { lte: rangeEnd },
         checkOut: { gt: rangeStart },
       },
@@ -90,7 +91,7 @@ export async function GET(req: NextRequest) {
   // Also include booking owners who are adults
   const bookings = await prisma.booking.findMany({
     where: {
-      status: { in: ["PENDING", "CONFIRMED", "PAID"] },
+      status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: rangeEnd },
       checkOut: { gt: rangeStart },
     },

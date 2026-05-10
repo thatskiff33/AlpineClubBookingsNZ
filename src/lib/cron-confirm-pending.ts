@@ -164,17 +164,6 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         continue;
       }
 
-      // Atomically claim the booking to prevent double-charge with manual confirm
-      const claimed = await prisma.booking.updateMany({
-        where: { id: booking.id, status: BookingStatus.PENDING },
-        data: { status: BookingStatus.PAID },
-      });
-      if (claimed.count === 0) {
-        // Another process already changed the status - skip
-        logger.info({ bookingId: booking.id, job: "confirmPendingBookings" }, "Booking already processed by another handler");
-        continue;
-      }
-
       // Charge the saved card
       chargeAttempted = true;
       const paymentIntent = await chargePaymentMethod({
@@ -185,12 +174,12 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           bookingId: booking.id,
           memberId: booking.memberId,
         },
-        idempotencyKey: `confirm_${booking.id}`,
+        idempotencyKey: `pending_charge_${booking.id}`,
       });
 
       if (paymentIntent.status === "succeeded") {
         paymentSucceeded = true;
-        await markBookingPaymentSucceeded({
+        const reconciliation = await markBookingPaymentSucceeded({
           bookingId: booking.id,
           paymentIntentId: paymentIntent.id,
           amountCents: paymentIntent.amount,
@@ -199,6 +188,23 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
               ? paymentIntent.payment_method
               : paymentIntent.payment_method?.id ?? null,
         });
+
+        if (
+          reconciliation.outcome === "cancelled_refunded" ||
+          reconciliation.outcome === "cancelled_refund_failed"
+        ) {
+          logger.warn(
+            {
+              bookingId: booking.id,
+              paymentIntentId: paymentIntent.id,
+              outcome: reconciliation.outcome,
+              job: "confirmPendingBookings",
+            },
+            "Pending booking payment succeeded but final capacity claim failed"
+          );
+          result.failedBookingIds.push(booking.id);
+          continue;
+        }
 
         result.confirmedBookingIds.push(booking.id);
 

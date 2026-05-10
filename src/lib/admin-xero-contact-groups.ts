@@ -28,14 +28,24 @@ export interface LoadAdminXeroContactGroupsResult {
 interface LoadAdminXeroContactGroupsOptions {
   refreshFromXero?: boolean;
   fallbackToRefreshIfEmpty?: boolean;
+  repairMissingContactCache?: boolean;
   fetchImpl?: ContactGroupsFetch;
 }
 
 async function requestContactGroups(
   fetchImpl: ContactGroupsFetch,
-  refreshFromXero: boolean
+  refreshFromXero: boolean,
+  repairMissingContactCache: boolean
 ): Promise<LoadAdminXeroContactGroupsResult> {
-  const suffix = refreshFromXero ? "?refresh=1" : "";
+  const params = new URLSearchParams();
+  if (refreshFromXero) {
+    params.set("refresh", "1");
+  }
+  if (refreshFromXero && repairMissingContactCache) {
+    params.set("repairMissingContactCache", "1");
+  }
+  const query = params.toString();
+  const suffix = query ? `?${query}` : "";
   const response = await fetchImpl(`/api/admin/xero/contact-groups${suffix}`);
   const payload = await response.json().catch(() => null);
 
@@ -54,14 +64,19 @@ export async function loadAdminXeroContactGroups(
 ): Promise<LoadAdminXeroContactGroupsResult> {
   const fetchImpl = options.fetchImpl ?? (fetch as ContactGroupsFetch);
   const refreshFromXero = options.refreshFromXero === true;
-  const initial = await requestContactGroups(fetchImpl, refreshFromXero);
+  const repairMissingContactCache = options.repairMissingContactCache === true;
+  const initial = await requestContactGroups(
+    fetchImpl,
+    refreshFromXero,
+    repairMissingContactCache
+  );
 
   if (
     !refreshFromXero &&
     options.fallbackToRefreshIfEmpty &&
     initial.groups.length === 0
   ) {
-    return requestContactGroups(fetchImpl, true);
+    return requestContactGroups(fetchImpl, true, repairMissingContactCache);
   }
 
   return initial;

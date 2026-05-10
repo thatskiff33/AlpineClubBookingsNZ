@@ -65,10 +65,10 @@ export async function cancelBooking(
     return { status: 403, error: "Forbidden" };
   }
 
-  if (!["PENDING", "CONFIRMED", "PAID", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status)) {
+  if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status)) {
     return {
       status: 400,
-      error: "Only PENDING, CONFIRMED, PAID, WAITLISTED, or WAITLIST_OFFERED bookings can be cancelled",
+      error: "Only PENDING, PAYMENT_PENDING, CONFIRMED, PAID, WAITLISTED, or WAITLIST_OFFERED bookings can be cancelled",
     };
   }
 
@@ -182,7 +182,7 @@ export async function cancelBooking(
     };
   }
 
-  // Handle CONFIRMED/PAID bookings without successful payment
+  // Handle PAYMENT_PENDING/CONFIRMED/PAID bookings without successful payment
   if (!booking.payment || booking.payment.status !== "SUCCEEDED") {
     if (booking.payment) {
       await cancelOutstandingPaymentIntents({

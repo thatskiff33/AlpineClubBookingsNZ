@@ -22,7 +22,12 @@ export async function GET(request: NextRequest) {
 
   try {
     const refreshFromXero = request.nextUrl.searchParams.get("refresh") === "1";
-    const groups = await getXeroContactGroups({ refreshFromXero });
+    const repairMissingContactCache =
+      request.nextUrl.searchParams.get("repairMissingContactCache") === "1";
+    const groups = await getXeroContactGroups({
+      refreshFromXero,
+      repairMissingContactCache,
+    });
     return NextResponse.json({ groups, refreshed: refreshFromXero });
   } catch (error) {
     const xeroError = getXeroApiErrorInfo(error, "Failed to fetch contact groups");

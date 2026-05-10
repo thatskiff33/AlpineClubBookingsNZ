@@ -1,3 +1,5 @@
+import { IMMEDIATE_PAYMENT_BOOKING_STATUSES } from "@/lib/booking-status";
+
 export type BookingPaymentMode = "payment" | "setup";
 
 export interface BookingPaymentFlowState {
@@ -27,7 +29,7 @@ export function canCreateImmediatePaymentIntent(
     return false;
   }
 
-  return ["CONFIRMED", "DRAFT", "PENDING"].includes(state.status);
+  return (IMMEDIATE_PAYMENT_BOOKING_STATUSES as readonly string[]).includes(state.status);
 }
 
 export function getBookingPaymentMode(

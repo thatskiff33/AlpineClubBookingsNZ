@@ -49,7 +49,7 @@ export async function POST(
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
   }
 
-  if (booking.finalPriceCents === 0 && result.newStatus === BookingStatus.CONFIRMED) {
+  if (booking.finalPriceCents === 0 && result.newStatus === BookingStatus.PAYMENT_PENDING) {
     await prisma.$transaction([
       prisma.payment.create({
         data: {
@@ -113,7 +113,7 @@ export async function POST(
   return NextResponse.json({
     success: true,
     status: result.newStatus,
-    requiresPayment: result.newStatus === BookingStatus.CONFIRMED && booking.finalPriceCents > 0,
+    requiresPayment: result.newStatus === BookingStatus.PAYMENT_PENDING && booking.finalPriceCents > 0,
     requiresSetup: result.newStatus === BookingStatus.PENDING,
   });
 }

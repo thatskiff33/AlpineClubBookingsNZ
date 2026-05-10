@@ -14,11 +14,11 @@ function getInvoiceSyncEligibility(booking: {
   status: string;
   payment: { id: string; xeroInvoiceId: string | null } | null;
 }, linkedPaymentIds: Set<string>, queuedPaymentIds: Set<string>) {
-  if (booking.status !== "CONFIRMED" && booking.status !== "PAID") {
+  if (booking.status !== "PAID") {
     return {
       canForceSyncInvoice: false,
       forceSyncInvoiceReason:
-        "Only CONFIRMED or PAID bookings can be force-synced to Xero invoices.",
+        "Only paid bookings can be force-synced to Xero invoices.",
     };
   }
 

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   requireActiveSessionUser: vi.fn(),
   getXeroContactGroupMismatchSnapshot: vi.fn(),
   getXeroContactLinkMismatchSnapshot: vi.fn(),
+  getXeroContactGroups: vi.fn(),
   syncContactsFromXero: vi.fn(),
   importMembersFromXeroGroups: vi.fn(),
   logger: {
@@ -29,6 +30,7 @@ vi.mock("@/lib/xero-contact-link-mismatches", () => ({
   getXeroContactLinkMismatchSnapshot: mocks.getXeroContactLinkMismatchSnapshot,
 }));
 vi.mock("@/lib/xero", () => ({
+  getXeroContactGroups: mocks.getXeroContactGroups,
   syncContactsFromXero: mocks.syncContactsFromXero,
   importMembersFromXeroGroups: mocks.importMembersFromXeroGroups,
   XeroDailyLimitError: class XeroDailyLimitError extends Error {},
@@ -133,6 +135,25 @@ describe("Phase 4 Xero admin routes", () => {
       false,
       { allowLiveXeroFetch: true }
     );
+  });
+
+  it("passes the contact-cache repair flag through the contact groups route", async () => {
+    mocks.getXeroContactGroups.mockResolvedValue([
+      { id: "group_1", name: "Adults", contactCount: 2 },
+    ]);
+
+    const { GET } = await import("@/app/api/admin/xero/contact-groups/route");
+    const res = await GET(
+      new NextRequest(
+        "http://localhost/api/admin/xero/contact-groups?refresh=1&repairMissingContactCache=1"
+      )
+    );
+
+    expect(res.status).toBe(200);
+    expect(mocks.getXeroContactGroups).toHaveBeenCalledWith({
+      refreshFromXero: true,
+      repairMissingContactCache: true,
+    });
   });
 
   it("returns the contact group mismatch snapshot", async () => {

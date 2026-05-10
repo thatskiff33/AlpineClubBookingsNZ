@@ -173,6 +173,10 @@ interface ImportMembersFromXeroGroupsOptions {
   allowLiveXeroFetch?: boolean;
 }
 
+interface RefreshXeroContactGroupCacheOptions {
+  repairMissingContactCache?: boolean;
+}
+
 export interface CachedXeroContact {
   contactId: string;
   name: string | null;
@@ -2318,9 +2322,73 @@ async function fetchXeroContactGroupsFromXero(): Promise<
   return refreshedGroups;
 }
 
-export async function refreshXeroContactGroupCache(): Promise<
-  Array<{ id: string; name: string; contactCount: number }>
-> {
+async function repairMissingXeroContactCacheEntriesForGroups(
+  refreshedGroups: RefreshedXeroContactGroup[],
+  fetchedAt: Date
+): Promise<void> {
+  const contactIds = Array.from(
+    new Set(
+      refreshedGroups.flatMap((group) =>
+        group.contacts.map((contact) => contact.id)
+      )
+    )
+  );
+  if (contactIds.length === 0) {
+    return;
+  }
+
+  const cachedRows = await prisma.xeroContactCache.findMany({
+    where: {
+      contactId: {
+        in: contactIds,
+      },
+    },
+    select: {
+      contactId: true,
+    },
+  });
+  const cachedContactIds = new Set(cachedRows.map((row) => row.contactId));
+  const missingContactIds = contactIds.filter(
+    (contactId) => !cachedContactIds.has(contactId)
+  );
+  if (missingContactIds.length === 0) {
+    return;
+  }
+
+  const { xero, tenantId } = await getAuthenticatedXeroClient();
+  const repairedContacts = await fetchXeroContactsByIdsFromXero({
+    xero,
+    tenantId,
+    contactIds: missingContactIds,
+    workflow: "refreshXeroContactGroupCache",
+    contextPrefix: "refreshXeroContactGroupCache repair missing contact cache",
+  });
+
+  const repairedContactIds = new Set<string>();
+  for (const contact of repairedContacts) {
+    const cachedContact = await upsertXeroContactCacheEntry(contact, fetchedAt);
+    if (cachedContact) {
+      repairedContactIds.add(cachedContact.contactId);
+    }
+  }
+
+  const unrepairedContactIds = missingContactIds.filter(
+    (contactId) => !repairedContactIds.has(contactId)
+  );
+  if (unrepairedContactIds.length > 0) {
+    logger.warn(
+      {
+        missingContactCount: unrepairedContactIds.length,
+        missingContactIds: unrepairedContactIds,
+      },
+      "Xero contact group refresh could not repair every missing contact cache entry"
+    );
+  }
+}
+
+export async function refreshXeroContactGroupCache(
+  options: RefreshXeroContactGroupCacheOptions = {}
+): Promise<Array<{ id: string; name: string; contactCount: number }>> {
   const refreshStartedAt = new Date();
   const refreshedGroups = await fetchXeroContactGroupsFromXero();
   const refreshedAt = new Date();
@@ -2328,6 +2396,13 @@ export async function refreshXeroContactGroupCache(): Promise<
     (total, group) => total + group.contacts.length,
     0
   );
+
+  if (options.repairMissingContactCache) {
+    await repairMissingXeroContactCacheEntriesForGroups(
+      refreshedGroups,
+      refreshedAt
+    );
+  }
 
   await prisma.$transaction(async (tx) => {
     const refreshedGroupIds = refreshedGroups.map((group) => group.id);
@@ -2416,9 +2491,12 @@ export async function refreshXeroContactGroupCache(): Promise<
 
 export async function getXeroContactGroups(options?: {
   refreshFromXero?: boolean;
+  repairMissingContactCache?: boolean;
 }): Promise<Array<{ id: string; name: string; contactCount: number }>> {
   if (options?.refreshFromXero) {
-    return refreshXeroContactGroupCache();
+    return refreshXeroContactGroupCache({
+      repairMissingContactCache: options.repairMissingContactCache,
+    });
   }
 
   const groups = await prisma.xeroContactGroupCache.findMany({

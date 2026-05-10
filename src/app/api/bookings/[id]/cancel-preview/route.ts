@@ -45,9 +45,9 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    if (!["PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
+    if (!["PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID"].includes(booking.status)) {
       return NextResponse.json(
-        { error: "Only PENDING, CONFIRMED, or PAID bookings can be cancelled" },
+        { error: "Only PENDING, PAYMENT_PENDING, CONFIRMED, or PAID bookings can be cancelled" },
         { status: 400 }
       );
     }

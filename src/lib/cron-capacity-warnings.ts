@@ -1,10 +1,10 @@
 import { prisma } from "./prisma";
-import { BookingStatus } from "@prisma/client";
 import { sendAdminCapacityWarningAlert } from "./email";
 import { LODGE_CAPACITY } from "./capacity";
 import { getNZSTToday } from "./nzst-date";
 import { eachDayOfInterval, addDays } from "date-fns";
 import logger from "@/lib/logger";
+import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 
 const WARN_THRESHOLD_BEDS = 5; // Alert when <= 5 beds remaining
 
@@ -27,7 +27,7 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
     where: {
       checkIn: { lt: endDate },
       checkOut: { gt: todayNZ },
-      status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+      status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
     },
     include: { guests: true },
   });

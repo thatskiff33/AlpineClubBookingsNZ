@@ -256,7 +256,7 @@ async function handlePaymentIntentSucceeded(
     throw new Error(`Stripe payment amount mismatch for booking ${bookingId}`);
   }
 
-  await markBookingPaymentSucceeded({
+  const reconciliation = await markBookingPaymentSucceeded({
     bookingId,
     paymentIntentId: paymentIntent.id,
     amountCents: paymentIntent.amount,
@@ -265,6 +265,21 @@ async function handlePaymentIntentSucceeded(
         ? paymentIntent.payment_method
         : paymentIntent.payment_method?.id ?? null,
   });
+
+  if (
+    reconciliation.outcome === "cancelled_refunded" ||
+    reconciliation.outcome === "cancelled_refund_failed"
+  ) {
+    logger.warn(
+      {
+        bookingId,
+        paymentIntentId: paymentIntent.id,
+        outcome: reconciliation.outcome,
+      },
+      "Payment succeeded but final capacity claim failed; booking cancelled"
+    );
+    return;
+  }
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Booking paid via PaymentIntent");
 

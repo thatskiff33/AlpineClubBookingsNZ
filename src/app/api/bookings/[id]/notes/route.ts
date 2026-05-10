@@ -41,7 +41,7 @@ export async function PUT(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!["CONFIRMED", "PENDING"].includes(booking.status)) {
+  if (!["PAYMENT_PENDING", "CONFIRMED", "PENDING"].includes(booking.status)) {
     return NextResponse.json(
       { error: "Notes can only be edited on active bookings" },
       { status: 400 }

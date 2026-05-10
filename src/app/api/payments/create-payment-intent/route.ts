@@ -11,6 +11,7 @@ import { BookingStatus } from "@prisma/client";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
+import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 
 export async function POST(request: NextRequest) {
   try {
@@ -58,6 +59,7 @@ export async function POST(request: NextRequest) {
 
     if (
       booking.status !== "PENDING" &&
+      booking.status !== "PAYMENT_PENDING" &&
       booking.status !== "CONFIRMED" &&
       booking.status !== "DRAFT"
     ) {
@@ -88,7 +90,7 @@ export async function POST(request: NextRequest) {
 
       if (existingIntent.status === "succeeded") {
         if (booking.payment.status !== "SUCCEEDED") {
-          await markBookingPaymentSucceeded({
+          const reconciliation = await markBookingPaymentSucceeded({
             bookingId: booking.id,
             paymentIntentId: existingIntent.id,
             amountCents: existingIntent.amount,
@@ -97,6 +99,21 @@ export async function POST(request: NextRequest) {
                 ? existingIntent.payment_method
                 : existingIntent.payment_method?.id ?? null,
           });
+
+          if (
+            reconciliation.outcome === "cancelled_refunded" ||
+            reconciliation.outcome === "cancelled_refund_failed"
+          ) {
+            return NextResponse.json(
+              {
+                error:
+                  "Payment succeeded, but lodge capacity is no longer available for this booking.",
+                status: BookingStatus.CANCELLED,
+                refunded: reconciliation.outcome === "cancelled_refunded",
+              },
+              { status: 409 }
+            );
+          }
         }
 
         return NextResponse.json({
@@ -113,7 +130,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // For DRAFT bookings: check capacity and transition to CONFIRMED before charging
+    // For DRAFT bookings: preflight capacity and transition to PAYMENT_PENDING before charging.
+    // Payment success performs the final capacity claim.
     if (booking.status === "DRAFT") {
       await prisma.$transaction(async (tx) => {
         await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(1)`);
@@ -134,7 +152,7 @@ export async function POST(request: NextRequest) {
             id: { not: bookingId },
             checkIn: { lt: freshBooking.checkOut },
             checkOut: { gt: freshBooking.checkIn },
-            status: { in: [BookingStatus.CONFIRMED, BookingStatus.PAID, BookingStatus.PENDING] },
+            status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
           },
           include: { guests: true },
         });
@@ -162,10 +180,10 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Transition DRAFT -> CONFIRMED
+        // Transition DRAFT -> PAYMENT_PENDING
         await tx.booking.update({
           where: { id: bookingId },
-          data: { status: BookingStatus.CONFIRMED, draftExpiresAt: null },
+          data: { status: BookingStatus.PAYMENT_PENDING, draftExpiresAt: null },
         });
       });
 
@@ -176,7 +194,7 @@ export async function POST(request: NextRequest) {
           checkOut: booking.checkOut,
           guestCount: booking.guests?.length ?? 0,
           totalCents: booking.finalPriceCents,
-          status: BookingStatus.CONFIRMED,
+          status: BookingStatus.PAYMENT_PENDING,
           reviewReason: booking.adminReviewReason,
         }).catch((err) =>
           logger.error({ err, bookingId }, "Failed to send admin review alert for activated draft booking")
