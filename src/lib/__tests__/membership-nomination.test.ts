@@ -100,6 +100,10 @@ import {
   createMemberApplication,
 } from "@/lib/nomination";
 import {
+  assertLinkedBookingMembersCanBeBooked,
+  type LinkedBookingMember,
+} from "@/lib/booking-guests";
+import {
   sendAdminMembershipApplicationPendingEmail,
   sendMembershipApplicationApprovedEmail,
   sendNominationRequestEmail,
@@ -548,6 +552,7 @@ describe("membership nomination workflow", () => {
           .mockResolvedValueOnce({
             id: "member-2",
           }),
+        update: vi.fn().mockResolvedValue({ id: "member-1" }),
       },
       familyGroup: {
         create: vi.fn().mockResolvedValue({ id: "fg-1" }),
@@ -620,6 +625,9 @@ describe("membership nomination workflow", () => {
           email: "jane@test.com",
           canLogin: true,
           emailVerified: true,
+          profileCompletedAt: expect.any(Date),
+          detailsConfirmedAt: expect.any(Date),
+          onboardingConfirmedAt: expect.any(Date),
         }),
       })
     );
@@ -631,9 +639,71 @@ describe("membership nomination workflow", () => {
           canLogin: false,
           parentMemberId: "member-1",
           inheritEmailFromId: "member-1",
+          phoneCountryCode: "64",
+          phoneAreaCode: "21",
+          phoneNumber: "5551234",
+          profileCompletedAt: expect.any(Date),
+          detailsConfirmedAt: expect.any(Date),
+          detailsConfirmedByMemberId: "member-1",
+          onboardingConfirmedAt: expect.any(Date),
         }),
       })
     );
+    expect(tx.member.update).toHaveBeenCalledWith({
+      where: { id: "member-1" },
+      data: {
+        detailsConfirmedByMemberId: "member-1",
+      },
+    });
+
+    const applicantData = tx.member.create.mock.calls[0][0].data;
+    const dependentData = tx.member.create.mock.calls[1][0].data;
+    expect(dependentData.profileCompletedAt).toBe(applicantData.profileCompletedAt);
+    expect(dependentData.detailsConfirmedAt).toBe(applicantData.detailsConfirmedAt);
+    expect(dependentData.onboardingConfirmedAt).toBe(applicantData.onboardingConfirmedAt);
+
+    const bookingDb = {
+      familyGroupMember: {
+        findMany: vi.fn().mockResolvedValue([
+          { memberId: "member-1", familyGroupId: "fg-1" },
+          { memberId: "member-2", familyGroupId: "fg-1" },
+        ]),
+      },
+      member: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "member-1", active: true, canLogin: true, ageTier: "ADULT" },
+        ]),
+      },
+    };
+    const linkedMembers = new Map<string, LinkedBookingMember>([
+      [
+        "member-1",
+        {
+          ...applicantData,
+          id: "member-1",
+          active: true,
+          canLogin: true,
+          detailsConfirmedByMemberId: "member-1",
+        } as LinkedBookingMember,
+      ],
+      [
+        "member-2",
+        {
+          ...dependentData,
+          id: "member-2",
+          active: true,
+          canLogin: false,
+        } as LinkedBookingMember,
+      ],
+    ]);
+
+    await expect(
+      assertLinkedBookingMembersCanBeBooked(
+        bookingDb as Parameters<typeof assertLinkedBookingMembersCanBeBooked>[0],
+        linkedMembers,
+        "member-1"
+      )
+    ).resolves.toBeUndefined();
     expect(findOrCreateXeroContact).toHaveBeenCalledTimes(2);
     expect(enqueueXeroEntranceFeeInvoiceOperation).toHaveBeenCalledWith("member-1", {
       createdByMemberId: "admin-1",

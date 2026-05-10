@@ -699,6 +699,9 @@ export async function approveMemberApplication(
     const applicantAgeTier = await computeTier(
       lockedApplication.applicantDateOfBirth.toISOString().slice(0, 10)
     );
+    // The application form captures the booking-gate profile details, so
+    // approval counts as initial confirmation for the applicant and dependents.
+    const profileConfirmedAt = new Date();
 
     const existing = await tx.member.findFirst({
       where: {
@@ -742,12 +745,22 @@ export async function approveMemberApplication(
         postalRegion: address.postalRegion,
         postalPostalCode: address.postalPostalCode,
         postalCountry: address.postalCountry,
+        profileCompletedAt: profileConfirmedAt,
+        detailsConfirmedAt: profileConfirmedAt,
+        onboardingConfirmedAt: profileConfirmedAt,
       },
       select: {
         id: true,
         email: true,
         firstName: true,
         lastName: true,
+      },
+    });
+
+    await tx.member.update({
+      where: { id: applicantMember.id },
+      data: {
+        detailsConfirmedByMemberId: applicantMember.id,
       },
     });
 
@@ -788,6 +801,9 @@ export async function approveMemberApplication(
           parentMemberId: applicantMember.id,
           inheritParentEmail: true,
           inheritEmailFromId: applicantMember.id,
+          phoneCountryCode: applicantPhone.phoneCountryCode,
+          phoneAreaCode: applicantPhone.phoneAreaCode,
+          phoneNumber: applicantPhone.phoneNumber,
           streetAddressLine1: address.streetAddressLine1,
           streetAddressLine2: address.streetAddressLine2,
           streetCity: address.streetCity,
@@ -800,6 +816,10 @@ export async function approveMemberApplication(
           postalRegion: address.postalRegion,
           postalPostalCode: address.postalPostalCode,
           postalCountry: address.postalCountry,
+          profileCompletedAt: profileConfirmedAt,
+          detailsConfirmedAt: profileConfirmedAt,
+          detailsConfirmedByMemberId: applicantMember.id,
+          onboardingConfirmedAt: profileConfirmedAt,
         },
         select: { id: true },
       });
