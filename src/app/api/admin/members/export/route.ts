@@ -7,6 +7,7 @@ import { AgeTier } from "@prisma/client";
 import logger from "@/lib/logger";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
+const SUBSCRIPTION_STATUS_FILTERS = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"] as const;
 
 /**
  * Escape a value for RFC 4180 CSV format.
@@ -36,7 +37,8 @@ export async function GET(req: NextRequest) {
 
   const sp = req.nextUrl.searchParams;
   const q = sp.get("q") || undefined;
-  const currentSeasonYear = getSeasonYear(new Date());
+  const now = new Date();
+  const currentSeasonYear = getSeasonYear(now);
 
   // Build where clause (same logic as list endpoint)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -77,19 +79,77 @@ export async function GET(req: NextRequest) {
     andConditions.push({ xeroContactId: null });
   }
 
+  const financeAccessFilter = sp.get("financeAccess");
+  if (
+    financeAccessFilter &&
+    ["NONE", "VIEWER", "MANAGER"].includes(financeAccessFilter)
+  ) {
+    andConditions.push({ financeAccessLevel: financeAccessFilter });
+  }
+
+  const activePendingInviteFilter = {
+    used: false,
+    expiresAt: { gt: now },
+  };
+  const inviteStatusFilter = sp.get("inviteStatus");
+  if (inviteStatusFilter === "invite") {
+    andConditions.push(
+      { canLogin: true },
+      { passwordChangedAt: null },
+      { lastLoginAt: null },
+      { passwordResetTokens: { none: activePendingInviteFilter } },
+    );
+  } else if (inviteStatusFilter === "resend-invite") {
+    andConditions.push(
+      { canLogin: true },
+      { passwordChangedAt: null },
+      { lastLoginAt: null },
+      { passwordResetTokens: { some: activePendingInviteFilter } },
+    );
+  } else if (inviteStatusFilter === "reset-password") {
+    andConditions.push(
+      { canLogin: true },
+      {
+        OR: [
+          { passwordChangedAt: { not: null } },
+          { lastLoginAt: { not: null } },
+        ],
+      },
+    );
+  }
+
   const subscriptionFilter = sp.get("subscription");
-  if (subscriptionFilter === "NONE") {
-    andConditions.push({
-      subscriptions: { none: { seasonYear: currentSeasonYear } },
-    });
+  if (subscriptionFilter === "NOT_REQUIRED") {
+    andConditions.push({ role: "ADMIN" });
+  } else if (subscriptionFilter === "NONE") {
+    andConditions.push(
+      { role: { not: "ADMIN" } },
+      {
+        subscriptions: { none: { seasonYear: currentSeasonYear } },
+      },
+    );
   } else if (
     subscriptionFilter &&
-    ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"].includes(subscriptionFilter)
+    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(subscriptionFilter)
   ) {
-    andConditions.push({
-      subscriptions: {
-        some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
+    andConditions.push(
+      { role: { not: "ADMIN" } },
+      {
+        subscriptions: {
+          some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
+        },
       },
+    );
+  }
+
+  const familyGroupFilter = sp.get("familyGroup");
+  if (familyGroupFilter === "none") {
+    andConditions.push({ familyGroupMemberships: { none: {} } });
+  } else if (familyGroupFilter === "any") {
+    andConditions.push({ familyGroupMemberships: { some: {} } });
+  } else if (familyGroupFilter && familyGroupFilter !== "all") {
+    andConditions.push({
+      familyGroupMemberships: { some: { familyGroupId: familyGroupFilter } },
     });
   }
 
@@ -110,6 +170,7 @@ export async function GET(req: NextRequest) {
         phoneNumber: true,
         dateOfBirth: true,
         role: true,
+        financeAccessLevel: true,
         ageTier: true,
         active: true,
         xeroContactId: true,
@@ -150,7 +211,7 @@ export async function GET(req: NextRequest) {
       m.ageTier,
       m.active ? "Yes" : "No",
       m.xeroContactId || "",
-      m.subscriptions[0]?.status || "",
+      m.role === "ADMIN" ? "NOT_REQUIRED" : m.subscriptions[0]?.status || "NONE",
       new Date(m.createdAt).toISOString(),
     ]);
 

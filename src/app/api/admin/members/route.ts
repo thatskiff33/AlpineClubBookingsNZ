@@ -71,6 +71,7 @@ const createMemberSchema = z.object({
 });
 
 const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
+const SUBSCRIPTION_STATUS_FILTERS = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"] as const;
 
 /**
  * GET /api/admin/members
@@ -124,7 +125,8 @@ export async function GET(req: NextRequest) {
       orderBy = [{ lastName: "asc" }, { firstName: "asc" }];
   }
 
-  const currentSeasonYear = getSeasonYear(new Date());
+  const now = new Date();
+  const currentSeasonYear = getSeasonYear(now);
 
   // Build where clause
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -232,21 +234,61 @@ export async function GET(req: NextRequest) {
     andConditions.push({ xeroContactId: null });
   }
 
+  // Filter: invite status. This mirrors the action shown in the members table.
+  const activePendingInviteFilter = {
+    used: false,
+    expiresAt: { gt: now },
+  };
+  const inviteStatusFilter = sp.get("inviteStatus");
+  if (inviteStatusFilter === "invite") {
+    andConditions.push(
+      { canLogin: true },
+      { passwordChangedAt: null },
+      { lastLoginAt: null },
+      { passwordResetTokens: { none: activePendingInviteFilter } },
+    );
+  } else if (inviteStatusFilter === "resend-invite") {
+    andConditions.push(
+      { canLogin: true },
+      { passwordChangedAt: null },
+      { lastLoginAt: null },
+      { passwordResetTokens: { some: activePendingInviteFilter } },
+    );
+  } else if (inviteStatusFilter === "reset-password") {
+    andConditions.push(
+      { canLogin: true },
+      {
+        OR: [
+          { passwordChangedAt: { not: null } },
+          { lastLoginAt: { not: null } },
+        ],
+      },
+    );
+  }
+
   // Filter: subscription
   const subscriptionFilter = sp.get("subscription");
-  if (subscriptionFilter === "NONE") {
-    andConditions.push({
-      subscriptions: { none: { seasonYear: currentSeasonYear } },
-    });
+  if (subscriptionFilter === "NOT_REQUIRED") {
+    andConditions.push({ role: "ADMIN" });
+  } else if (subscriptionFilter === "NONE") {
+    andConditions.push(
+      { role: { not: "ADMIN" } },
+      {
+        subscriptions: { none: { seasonYear: currentSeasonYear } },
+      },
+    );
   } else if (
     subscriptionFilter &&
-    ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"].includes(subscriptionFilter)
+    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(subscriptionFilter)
   ) {
-    andConditions.push({
-      subscriptions: {
-        some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
+    andConditions.push(
+      { role: { not: "ADMIN" } },
+      {
+        subscriptions: {
+          some: { seasonYear: currentSeasonYear, status: subscriptionFilter },
+        },
       },
-    });
+    );
   }
 
   // Filter: family group (via join table)
@@ -256,7 +298,9 @@ export async function GET(req: NextRequest) {
   } else if (familyGroupFilter === "any") {
     andConditions.push({ familyGroupMemberships: { some: {} } });
   } else if (familyGroupFilter && familyGroupFilter !== "all") {
-    andConditions.push({ familyGroupMemberships: { some: { familyGroupId: familyGroupFilter } } });
+    andConditions.push({
+      familyGroupMemberships: { some: { familyGroupId: familyGroupFilter } },
+    });
   }
 
   // Filter: Xero contact group — fetch contact IDs from Xero, then filter DB
@@ -366,7 +410,6 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const now = new Date();
   const membersWithSub = members.map((m) => {
     const hasCompletedAccountSetup = hasMemberCompletedAccountSetup(m);
     const latestToken = m.passwordResetTokens?.[0];
@@ -380,8 +423,8 @@ export async function GET(req: NextRequest) {
 
     return {
       ...m,
-      subscriptionStatus: m.subscriptions[0]?.status ?? null,
-      subscriptionXeroInvoiceId: m.subscriptions[0]?.xeroInvoiceId ?? null,
+      subscriptionStatus: m.role === "ADMIN" ? "NOT_REQUIRED" : m.subscriptions[0]?.status ?? null,
+      subscriptionXeroInvoiceId: m.role === "ADMIN" ? null : m.subscriptions[0]?.xeroInvoiceId ?? null,
       familyGroups: m.familyGroupMemberships.map((fg) => ({
         id: fg.familyGroup.id,
         name: fg.familyGroup.name,

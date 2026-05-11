@@ -36,7 +36,7 @@ interface Member {
   active: boolean; xeroContactId: string | null
   xeroContactGroupsLoaded: boolean
   xeroContactGroups: Array<{ id: string; name: string }>
-  subscriptionStatus: "NOT_INVOICED" | "UNPAID" | "PAID" | "OVERDUE" | null
+  subscriptionStatus: "NOT_INVOICED" | "UNPAID" | "PAID" | "OVERDUE" | "NOT_REQUIRED" | null
   subscriptionXeroInvoiceId: string | null; createdAt: string; joinedDate: string | null
   forcePasswordChange: boolean
   hasCompletedAccountSetup: boolean
@@ -94,7 +94,7 @@ interface XeroFeatureFlags {
   liveMemberGroupLookups: boolean
 }
 
-interface Filters { role: string; financeAccess: string; active: string; ageTier: string; xeroLinked: string; subscription: string; xeroContactGroup: string }
+interface Filters { role: string; financeAccess: string; active: string; ageTier: string; familyGroup: string; inviteStatus: string; xeroLinked: string; subscription: string; xeroContactGroup: string }
 interface ImportRow { firstName: string; lastName: string; email: string; phone?: string; dateOfBirth?: string; role?: string }
 interface PasswordActionTarget {
   label: string
@@ -127,7 +127,32 @@ const emptyForm: MemberForm = {
   postalAddressLine1: "", postalAddressLine2: "", postalCity: "",
   postalRegion: "", postalPostalCode: "", postalCountry: "",
 }
-const emptyFilters: Filters = { role: "", financeAccess: "", active: "", ageTier: "", xeroLinked: "", subscription: "", xeroContactGroup: "" }
+const emptyFilters: Filters = { role: "", financeAccess: "", active: "", ageTier: "", familyGroup: "", inviteStatus: "", xeroLinked: "", subscription: "", xeroContactGroup: "" }
+const filterLabelMap: Record<keyof Filters, string> = {
+  role: "Role",
+  financeAccess: "Finance",
+  active: "Status",
+  ageTier: "Age Tier",
+  familyGroup: "Family Group",
+  inviteStatus: "Invite Status",
+  xeroLinked: "Xero",
+  subscription: "Subscription",
+  xeroContactGroup: "Xero Group",
+}
+const filterValueLabels: Partial<Record<keyof Filters, Record<string, string>>> = {
+  active: { true: "Active", false: "Inactive" },
+  familyGroup: { any: "Yes", none: "No" },
+  inviteStatus: { invite: "Invite", "resend-invite": "Resend Invite", "reset-password": "Reset Password" },
+  xeroLinked: { true: "Linked", false: "Not Linked" },
+  subscription: {
+    PAID: "Paid",
+    UNPAID: "Unpaid",
+    OVERDUE: "Overdue",
+    NOT_INVOICED: "Not Invoiced",
+    NONE: "No Record",
+    NOT_REQUIRED: "Not Required",
+  },
+}
 
 function getMissingFieldsForXeroCreate(form: MemberForm): string[] {
   const missing: string[] = []
@@ -179,6 +204,8 @@ export default function MembersPage() {
     financeAccess: searchParams.get("financeAccess") || "",
     active: searchParams.get("active") || "",
     ageTier: searchParams.get("ageTier") || "",
+    familyGroup: searchParams.get("familyGroup") || "",
+    inviteStatus: searchParams.get("inviteStatus") || "",
     xeroLinked: searchParams.get("xeroLinked") || "",
     subscription: searchParams.get("subscription") || "",
     xeroContactGroup: searchParams.get("xeroContactGroup") || "",
@@ -929,7 +956,8 @@ export default function MembersPage() {
   }
 
   const buildExportUrl = () => { const p = new URLSearchParams(); if (debouncedSearch) p.set("q", debouncedSearch); Object.entries(filters).forEach(([k, v]) => { if (v) p.set(k, v) }); const qs = p.toString(); return qs ? `/api/admin/members/export?${qs}` : "/api/admin/members/export" }
-  const statusConfig: Record<string, { className: string; label: string }> = { PAID: { className: "bg-green-100 text-green-800 border-green-200 hover:bg-green-200", label: "Paid" }, UNPAID: { className: "bg-yellow-100 text-yellow-800 border-yellow-200 hover:bg-yellow-200", label: "Unpaid" }, OVERDUE: { className: "bg-red-100 text-red-800 border-red-200 hover:bg-red-200", label: "Overdue" }, NOT_INVOICED: { className: "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200", label: "Not Invoiced" } }
+  const statusConfig: Record<string, { className: string; label: string }> = { PAID: { className: "bg-green-100 text-green-800 border-green-200 hover:bg-green-200", label: "Paid" }, UNPAID: { className: "bg-yellow-100 text-yellow-800 border-yellow-200 hover:bg-yellow-200", label: "Unpaid" }, OVERDUE: { className: "bg-red-100 text-red-800 border-red-200 hover:bg-red-200", label: "Overdue" }, NOT_INVOICED: { className: "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200", label: "Not Invoiced" }, NONE: { className: "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100", label: "No Record" }, NOT_REQUIRED: { className: "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100", label: "Not Required" } }
+  const getFilterDisplayValue = (key: string, value: string) => key === "xeroContactGroup" ? (xeroContactGroupsList.find(g => g.id === value)?.name ?? value) : (filterValueLabels[key as keyof Filters]?.[value] ?? value)
   const selectedMembers = members.filter((member) => selectedIds.has(member.id))
   const selectedInviteCount = selectedMembers.filter((member) => getMemberPasswordActionKind(member) === "invite").length
   const selectedResendInviteCount = selectedMembers.filter((member) => getMemberPasswordActionKind(member) === "resend-invite").length
@@ -1002,12 +1030,14 @@ export default function MembersPage() {
         <Select value={filters.financeAccess || "all"} onValueChange={v => setFilter("financeAccess", v === "all" ? "" : v)}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Finance" /></SelectTrigger><SelectContent><SelectItem value="all">All Finance Access</SelectItem><SelectItem value="NONE">No Finance Access</SelectItem><SelectItem value="VIEWER">Finance Viewer</SelectItem><SelectItem value="MANAGER">Finance Manager</SelectItem></SelectContent></Select>
         <Select value={filters.active || "all"} onValueChange={v => setFilter("active", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Status" /></SelectTrigger><SelectContent><SelectItem value="all">All Status</SelectItem><SelectItem value="true">Active</SelectItem><SelectItem value="false">Inactive</SelectItem></SelectContent></Select>
         <Select value={filters.ageTier || "all"} onValueChange={v => setFilter("ageTier", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Age Tier" /></SelectTrigger><SelectContent><SelectItem value="all">All Tiers</SelectItem><SelectItem value="INFANT">Infant</SelectItem><SelectItem value="CHILD">Child</SelectItem><SelectItem value="YOUTH">Youth</SelectItem><SelectItem value="ADULT">Adult</SelectItem></SelectContent></Select>
+        <Select value={filters.familyGroup || "all"} onValueChange={v => setFilter("familyGroup", v === "all" ? "" : v)}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Family Group" /></SelectTrigger><SelectContent><SelectItem value="all">All Family Groups</SelectItem><SelectItem value="any">Family Group: Yes</SelectItem><SelectItem value="none">Family Group: No</SelectItem></SelectContent></Select>
+        <Select value={filters.inviteStatus || "all"} onValueChange={v => setFilter("inviteStatus", v === "all" ? "" : v)}><SelectTrigger className="w-[165px]"><SelectValue placeholder="Invite Status" /></SelectTrigger><SelectContent><SelectItem value="all">All Invite Status</SelectItem><SelectItem value="invite">Invite</SelectItem><SelectItem value="resend-invite">Resend Invite</SelectItem><SelectItem value="reset-password">Reset Password</SelectItem></SelectContent></Select>
         <Select value={filters.xeroLinked || "all"} onValueChange={v => setFilter("xeroLinked", v === "all" ? "" : v)}><SelectTrigger className="w-[130px]"><SelectValue placeholder="Xero" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero</SelectItem><SelectItem value="true">Linked</SelectItem><SelectItem value="false">Not Linked</SelectItem></SelectContent></Select>
-        <Select value={filters.subscription || "all"} onValueChange={v => setFilter("subscription", v === "all" ? "" : v)}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Subscription" /></SelectTrigger><SelectContent><SelectItem value="all">All Subs</SelectItem><SelectItem value="PAID">Paid</SelectItem><SelectItem value="UNPAID">Unpaid</SelectItem><SelectItem value="OVERDUE">Overdue</SelectItem><SelectItem value="NOT_INVOICED">Not Invoiced</SelectItem><SelectItem value="NONE">No Record</SelectItem></SelectContent></Select>
+        <Select value={filters.subscription || "all"} onValueChange={v => setFilter("subscription", v === "all" ? "" : v)}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Subscription" /></SelectTrigger><SelectContent><SelectItem value="all">All Subs</SelectItem><SelectItem value="PAID">Paid</SelectItem><SelectItem value="UNPAID">Unpaid</SelectItem><SelectItem value="OVERDUE">Overdue</SelectItem><SelectItem value="NOT_INVOICED">Not Invoiced</SelectItem><SelectItem value="NONE">No Record</SelectItem><SelectItem value="NOT_REQUIRED">Not Required</SelectItem></SelectContent></Select>
         {xeroFeatures.liveMemberGroupLookups && xeroContactGroupsList.length > 0 && <Select value={filters.xeroContactGroup || "all"} onValueChange={v => setFilter("xeroContactGroup", v === "all" ? "" : v)}><SelectTrigger className="w-[170px]"><SelectValue placeholder="Xero Group" /></SelectTrigger><SelectContent><SelectItem value="all">All Xero Groups</SelectItem>{xeroContactGroupsList.map(g => <SelectItem key={g.id} value={g.id}>{g.name} ({g.contactCount})</SelectItem>)}</SelectContent></Select>}
         {activeFilterCount > 0 && <Button variant="ghost" size="sm" onClick={clearFilters}><X className="h-4 w-4 mr-1" />Clear ({activeFilterCount})</Button>}
       </div>
-      {activeFilterCount > 0 && <div className="flex flex-wrap gap-2">{Object.entries(filters).filter(([,v]) => v).map(([k, v]) => { const displayValue = k === "xeroContactGroup" ? (xeroContactGroupsList.find(g => g.id === v)?.name ?? v) : v; return <Badge key={k} variant="secondary" className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setFilter(k as keyof Filters, "")}>{k}: {displayValue}<X className="h-3 w-3" /></Badge> })}</div>}
+      {activeFilterCount > 0 && <div className="flex flex-wrap gap-2">{Object.entries(filters).filter(([,v]) => v).map(([k, v]) => <Badge key={k} variant="secondary" className="inline-flex items-center gap-1 cursor-pointer" onClick={() => setFilter(k as keyof Filters, "")}>{filterLabelMap[k as keyof Filters]}: {getFilterDisplayValue(k, v)}<X className="h-3 w-3" /></Badge>)}</div>}
       {selectedIds.size > 0 && <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-md"><span className="text-sm font-medium text-blue-700">{selectedIds.size} selected</span><Button size="sm" variant="outline" onClick={() => { setBulkAction("deactivate"); setBulkDialogOpen(true) }}>Deactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("reactivate"); setBulkDialogOpen(true) }}>Reactivate</Button><Button size="sm" variant="outline" onClick={() => { setBulkAction("set-role"); setBulkDialogOpen(true) }}>Change Role</Button><Button size="sm" variant="outline" disabled={selectedPasswordActionCount === 0} onClick={() => openPasswordActionDialog([...selectedIds], `${selectedPasswordActionCount} selected login member(s)`)}>{bulkPasswordActionLabel}</Button><Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}><X className="h-4 w-4" /></Button></div>}
 
       <Card><CardHeader className="pb-0"><CardTitle className="text-base font-medium">Member List</CardTitle></CardHeader><CardContent className="pt-4">
@@ -1037,7 +1067,7 @@ export default function MembersPage() {
               <TableCell><Badge variant={member.active ? "default" : "destructive"} className={member.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}>{member.active ? "Active" : "Inactive"}</Badge></TableCell>
               <TableCell>{member.canLogin ? <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">Can Login</Badge> : <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">Non-Login</Badge>}</TableCell>
               <TableCell>{member.familyGroups && member.familyGroups.length > 0 ? <div className="flex flex-wrap gap-1">{member.familyGroups.map(fg => <Link key={fg.id} href={`/admin/family-groups?edit=${fg.id}`}><Badge variant="secondary" className="bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer">{fg.name || "Unnamed Group"}</Badge></Link>)}</div> : <span className="text-xs text-slate-400">-</span>}</TableCell>
-              <TableCell>{member.subscriptionStatus ? (() => { const cfg = statusConfig[member.subscriptionStatus] || statusConfig.NOT_INVOICED; const badge = <Badge variant="secondary" className={`${cfg.className} ${member.subscriptionXeroInvoiceId ? "cursor-pointer inline-flex items-center gap-1" : ""}`}>{cfg.label}{member.subscriptionXeroInvoiceId && <ExternalLink className="h-3 w-3" />}</Badge>; return member.subscriptionXeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${member.subscriptionXeroInvoiceId}`} target="_blank" rel="noopener noreferrer">{badge}</a> : badge })() : <span className="text-xs text-slate-400">-</span>}</TableCell>
+              <TableCell>{(() => { const cfg = statusConfig[member.subscriptionStatus ?? "NONE"] || statusConfig.NOT_INVOICED; const badge = <Badge variant="secondary" className={`${cfg.className} ${member.subscriptionXeroInvoiceId ? "cursor-pointer inline-flex items-center gap-1" : ""}`}>{cfg.label}{member.subscriptionXeroInvoiceId && <ExternalLink className="h-3 w-3" />}</Badge>; return member.subscriptionXeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${member.subscriptionXeroInvoiceId}`} target="_blank" rel="noopener noreferrer">{badge}</a> : badge })()}</TableCell>
               <TableCell>
                 <div className="space-y-1">
                   {member.xeroContactId ? (

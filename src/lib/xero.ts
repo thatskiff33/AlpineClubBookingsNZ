@@ -200,6 +200,34 @@ interface RefreshXeroContactGroupCacheOptions {
   repairMissingContactCache?: boolean;
 }
 
+interface ImportedXeroMemberDetail {
+  name: string;
+  email: string;
+  xeroContactId: string;
+  group: string;
+}
+
+interface ImportedXeroDependentDetail extends ImportedXeroMemberDetail {
+  parentMemberId: string;
+  parentName: string;
+}
+
+interface LinkedXeroMemberDetail extends ImportedXeroMemberDetail {
+  memberId: string;
+}
+
+interface SkippedXeroContactDetail {
+  name: string;
+  xeroContactId: string;
+  group: string;
+  reason?: string;
+}
+
+interface CachedGroupContactRef {
+  contactId: string;
+  contactName: string | null;
+}
+
 export interface CachedXeroContact {
   contactId: string;
   name: string | null;
@@ -2581,6 +2609,7 @@ async function repairMissingXeroContactCacheEntriesForGroups(
     contactIds: missingContactIds,
     workflow: "refreshXeroContactGroupCache",
     contextPrefix: "refreshXeroContactGroupCache repair missing contact cache",
+    includeArchived: true,
   });
 
   const repairedContactIds = new Set<string>();
@@ -3551,6 +3580,7 @@ async function fetchXeroContactsByIdsFromXero(input: {
   contactIds: string[];
   workflow: string;
   contextPrefix: string;
+  includeArchived?: boolean;
 }): Promise<Contact[]> {
   const contacts: Contact[] = [];
 
@@ -3563,7 +3593,9 @@ async function fetchXeroContactsByIdsFromXero(input: {
           undefined,
           undefined,
           undefined,
-          batch
+          batch,
+          undefined,
+          input.includeArchived
         ),
       {
         operation: "getContacts",
@@ -3669,6 +3701,11 @@ export async function importMembersFromXeroGroups(
   linkedExisting: number;
   skippedNoEmail: number;
   skippedNoEmailDetails: Array<{ name: string; xeroContactId: string }>;
+  skippedArchived: number;
+  skippedArchivedDetails: SkippedXeroContactDetail[];
+  createdMembers: ImportedXeroMemberDetail[];
+  createdDependents: ImportedXeroDependentDetail[];
+  linkedExistingDetails: LinkedXeroMemberDetail[];
   errors: number;
   errorDetails: Array<{ member: string; error: string }>;
   groupsProcessed: string[];
@@ -3679,6 +3716,11 @@ export async function importMembersFromXeroGroups(
   let linkedExisting = 0;
   let skippedNoEmail = 0;
   const skippedNoEmailDetails: Array<{ name: string; xeroContactId: string }> = [];
+  let skippedArchived = 0;
+  const skippedArchivedDetails: SkippedXeroContactDetail[] = [];
+  const createdMembers: ImportedXeroMemberDetail[] = [];
+  const createdDependents: ImportedXeroDependentDetail[] = [];
+  const linkedExistingDetails: LinkedXeroMemberDetail[] = [];
   let errors = 0;
   const errorDetails: Array<{ member: string; error: string }> = [];
   const groupsProcessed: string[] = [];
@@ -3707,13 +3749,22 @@ export async function importMembersFromXeroGroups(
     select: {
       contactGroupId: true,
       contactId: true,
+      contactName: true,
     },
   });
-  const contactIdsByGroup = new Map<string, string[]>();
+  const contactsByGroup = new Map<string, CachedGroupContactRef[]>();
+  const contactNamesById = new Map<string, string>();
   for (const row of membershipRows) {
-    const existing = contactIdsByGroup.get(row.contactGroupId) ?? [];
-    existing.push(row.contactId);
-    contactIdsByGroup.set(row.contactGroupId, existing);
+    const existing = contactsByGroup.get(row.contactGroupId) ?? [];
+    existing.push({
+      contactId: row.contactId,
+      contactName: row.contactName ?? null,
+    });
+    contactsByGroup.set(row.contactGroupId, existing);
+
+    if (row.contactName) {
+      contactNamesById.set(row.contactId, row.contactName);
+    }
   }
 
   const uniqueContactIds = Array.from(
@@ -3783,6 +3834,7 @@ export async function importMembersFromXeroGroups(
       contactIds: missingContactIds,
       workflow: "importMembersFromXeroGroups",
       contextPrefix: "importMembersFromXeroGroups repair",
+      includeArchived: true,
     });
     const repairedAt = new Date();
 
@@ -3795,33 +3847,50 @@ export async function importMembersFromXeroGroups(
   }
 
   for (const mapping of groupMappings) {
-    const contactIds = contactIdsByGroup.get(mapping.groupId) ?? [];
+    const groupContacts = contactsByGroup.get(mapping.groupId) ?? [];
     groupsProcessed.push(mapping.groupName);
     logger.info(
       {
         groupName: mapping.groupName,
-        groupContactCount: contactIds.length,
-        cachedContactCount: contactIds.filter((contactId) =>
-          cachedContactsById.has(contactId)
+        groupContactCount: groupContacts.length,
+        cachedContactCount: groupContacts.filter((groupContact) =>
+          cachedContactsById.has(groupContact.contactId)
         ).length,
       },
       "Loaded cached group contacts for import"
     );
 
-    for (const contactId of contactIds) {
-      const contact = cachedContactsById.get(contactId);
+    for (const groupContact of groupContacts) {
+      const contact = cachedContactsById.get(groupContact.contactId);
       if (!contact) {
         errors++;
+        const contactName =
+          groupContact.contactName ??
+          contactNamesById.get(groupContact.contactId) ??
+          groupContact.contactId;
         errorDetails.push({
-          member: `${mapping.groupName}:${contactId}`,
+          member: `${mapping.groupName}: ${contactName}`,
           error:
-            "Missing cached Xero contact snapshot. Run contact sync first, or retry the import in repair mode.",
+            options.allowLiveXeroFetch
+              ? "Xero did not return a contact snapshot during repair, so this group member could not be imported."
+              : "Missing cached Xero contact snapshot. Run contact sync first, or retry the import in repair mode.",
         });
         continue;
       }
 
       try {
         const contactName = getXeroContactDisplayName(contact);
+        if (contact.contactStatus.toUpperCase() !== "ACTIVE") {
+          skippedArchived++;
+          skippedArchivedDetails.push({
+            name: contactName,
+            xeroContactId: contact.contactId,
+            group: mapping.groupName,
+            reason: `Xero contact status is ${contact.contactStatus}`,
+          });
+          continue;
+        }
+
         if (!contact.emailAddress) {
           skippedNoEmail++;
           skippedNoEmailDetails.push({
@@ -3906,6 +3975,13 @@ export async function importMembersFromXeroGroups(
               });
               if (updates.xeroContactId) {
                 linkedExisting++;
+                linkedExistingDetails.push({
+                  name: `${existingPrimary.firstName} ${existingPrimary.lastName}`,
+                  email: existingPrimary.email,
+                  memberId: existingPrimary.id,
+                  xeroContactId: contact.contactId,
+                  group: mapping.groupName,
+                });
               }
             }
             continue;
@@ -3933,6 +4009,13 @@ export async function importMembersFromXeroGroups(
                 data: { xeroContactId: contact.contactId },
               });
               linkedExisting++;
+              linkedExistingDetails.push({
+                name: `${existingFamilyMember.firstName} ${existingFamilyMember.lastName}`,
+                email,
+                memberId: existingFamilyMember.id,
+                xeroContactId: contact.contactId,
+                group: mapping.groupName,
+              });
             }
             continue;
           }
@@ -4015,6 +4098,14 @@ export async function importMembersFromXeroGroups(
           }
 
           createdAsDependent++;
+          createdDependents.push({
+            name: `${depFirstName} ${depLastName}`,
+            email,
+            xeroContactId: contact.contactId,
+            group: mapping.groupName,
+            parentMemberId: existingPrimary.id,
+            parentName: `${existingPrimary.firstName} ${existingPrimary.lastName}`,
+          });
           continue;
         }
 
@@ -4060,6 +4151,12 @@ export async function importMembersFromXeroGroups(
         });
 
         created++;
+        createdMembers.push({
+          name: `${firstName} ${lastName}`,
+          email,
+          xeroContactId: contact.contactId,
+          group: mapping.groupName,
+        });
 
         if (sendInvites) {
           try {
@@ -4111,6 +4208,11 @@ export async function importMembersFromXeroGroups(
     linkedExisting,
     skippedNoEmail,
     skippedNoEmailDetails,
+    skippedArchived,
+    skippedArchivedDetails,
+    createdMembers,
+    createdDependents,
+    linkedExistingDetails,
     errors,
     errorDetails,
     groupsProcessed,

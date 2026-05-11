@@ -270,7 +270,9 @@ describe("Phase 4 contact sync and cached import", () => {
       undefined,
       undefined,
       undefined,
-      ["contact_missing"]
+      ["contact_missing"],
+      undefined,
+      true
     );
     expect(mocks.prisma.xeroContactCache.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -875,6 +877,14 @@ describe("Phase 4 contact sync and cached import", () => {
 
     expect(result).toMatchObject({
       created: 1,
+      createdMembers: [
+        {
+          name: "New Person",
+          email: "new@example.com",
+          xeroContactId: "contact_1",
+          group: "Adults",
+        },
+      ],
       errors: 0,
       groupsProcessed: ["Adults"],
     });
@@ -893,6 +903,178 @@ describe("Phase 4 contact sync and cached import", () => {
       })
     );
     expect(createCall.data.joinedDate).toBeUndefined();
+  });
+
+  it("reports family dependents created from cached contacts", async () => {
+    mocks.prisma.xeroSyncCursor.findUnique
+      .mockResolvedValueOnce({
+        cursorDateTime: new Date("2026-04-14T08:00:00.000Z"),
+        lastSuccessfulSyncAt: new Date("2026-04-14T08:05:00.000Z"),
+        metadata: {},
+      })
+      .mockResolvedValueOnce({
+        cursorDateTime: new Date("2026-04-14T09:00:00.000Z"),
+        lastSuccessfulSyncAt: new Date("2026-04-14T09:05:00.000Z"),
+        metadata: {},
+      });
+    mocks.prisma.xeroContactGroupMembershipCache.findMany.mockResolvedValue([
+      { contactGroupId: "group_1", contactId: "contact_child", contactName: "Child Person" },
+    ]);
+    mocks.prisma.xeroContactCache.findMany.mockResolvedValue([
+      {
+        contactId: "contact_child",
+        name: "Child Person",
+        firstName: "Child",
+        lastName: "Person",
+        emailAddress: "family@example.com",
+        companyNumber: "02/03/2014",
+        contactStatus: "ACTIVE",
+        phoneCountryCode: null,
+        phoneAreaCode: null,
+        phoneNumber: null,
+        streetAddressLine1: null,
+        streetAddressLine2: null,
+        streetCity: null,
+        streetRegion: null,
+        streetPostalCode: null,
+        streetCountry: null,
+        postalAddressLine1: null,
+        postalAddressLine2: null,
+        postalCity: null,
+        postalRegion: null,
+        postalPostalCode: null,
+        postalCountry: null,
+      },
+    ]);
+    mocks.prisma.member.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "parent_1",
+        email: "family@example.com",
+        firstName: "Parent",
+        lastName: "Person",
+        xeroContactId: null,
+        dateOfBirth: null,
+        phoneNumber: null,
+        streetAddressLine1: null,
+        postalAddressLine1: null,
+      })
+      .mockResolvedValueOnce(null);
+    mocks.prisma.member.create.mockResolvedValue({
+      id: "member_child",
+      email: "family@example.com",
+    });
+
+    const result = await importMembersFromXeroGroups(
+      [{ groupId: "group_1", groupName: "Children", ageTier: "CHILD" as any }],
+      false
+    );
+
+    expect(result).toMatchObject({
+      created: 0,
+      createdAsDependent: 1,
+      createdDependents: [
+        {
+          name: "Child Person",
+          email: "family@example.com",
+          xeroContactId: "contact_child",
+          group: "Children",
+          parentMemberId: "parent_1",
+          parentName: "Parent Person",
+        },
+      ],
+      errors: 0,
+    });
+  });
+
+  it("includes archived contacts during repair and skips them instead of erroring", async () => {
+    mocks.prisma.xeroSyncCursor.findUnique
+      .mockResolvedValueOnce({
+        cursorDateTime: new Date("2026-04-14T08:00:00.000Z"),
+        lastSuccessfulSyncAt: new Date("2026-04-14T08:05:00.000Z"),
+        metadata: {},
+      })
+      .mockResolvedValueOnce({
+        cursorDateTime: new Date("2026-04-14T09:00:00.000Z"),
+        lastSuccessfulSyncAt: new Date("2026-04-14T09:05:00.000Z"),
+        metadata: {},
+      });
+    mocks.prisma.xeroContactGroupMembershipCache.findMany.mockResolvedValue([
+      { contactGroupId: "group_1", contactId: "contact_archived", contactName: "Archived Person" },
+    ]);
+    mocks.prisma.xeroContactCache.findMany.mockResolvedValue([]);
+    mocks.accountingApi.getContacts.mockResolvedValue({
+      body: {
+        contacts: [
+          {
+            contactID: "contact_archived",
+            name: "Archived Person",
+            firstName: "Archived",
+            lastName: "Person",
+            emailAddress: "archived@example.com",
+            contactStatus: "ARCHIVED",
+          },
+        ],
+      },
+    });
+
+    const result = await importMembersFromXeroGroups(
+      [{ groupId: "group_1", groupName: "Adults", ageTier: "ADULT" as any }],
+      false,
+      { allowLiveXeroFetch: true }
+    );
+
+    expect(mocks.accountingApi.getContacts.mock.calls[0][6]).toBe(true);
+    expect(result).toMatchObject({
+      created: 0,
+      skippedArchived: 1,
+      skippedArchivedDetails: [
+        {
+          name: "Archived Person",
+          xeroContactId: "contact_archived",
+          group: "Adults",
+          reason: "Xero contact status is ARCHIVED",
+        },
+      ],
+      errors: 0,
+    });
+    expect(mocks.prisma.member.create).not.toHaveBeenCalled();
+  });
+
+  it("reports unrepaired missing snapshots with the cached group contact name", async () => {
+    mocks.prisma.xeroSyncCursor.findUnique
+      .mockResolvedValueOnce({
+        cursorDateTime: new Date("2026-04-14T08:00:00.000Z"),
+        lastSuccessfulSyncAt: new Date("2026-04-14T08:05:00.000Z"),
+        metadata: {},
+      })
+      .mockResolvedValueOnce({
+        cursorDateTime: new Date("2026-04-14T09:00:00.000Z"),
+        lastSuccessfulSyncAt: new Date("2026-04-14T09:05:00.000Z"),
+        metadata: {},
+      });
+    mocks.prisma.xeroContactGroupMembershipCache.findMany.mockResolvedValue([
+      { contactGroupId: "group_1", contactId: "contact_missing", contactName: "Missing Person" },
+    ]);
+    mocks.prisma.xeroContactCache.findMany.mockResolvedValue([]);
+    mocks.accountingApi.getContacts.mockResolvedValue({ body: { contacts: [] } });
+
+    const result = await importMembersFromXeroGroups(
+      [{ groupId: "group_1", groupName: "Adults", ageTier: "ADULT" as any }],
+      false,
+      { allowLiveXeroFetch: true }
+    );
+
+    expect(result).toMatchObject({
+      created: 0,
+      errors: 1,
+      errorDetails: [
+        {
+          member: "Adults: Missing Person",
+          error: "Xero did not return a contact snapshot during repair, so this group member could not be imported.",
+        },
+      ],
+    });
   });
 
   it("fails cached group import with a repair message when contact snapshots are missing", async () => {
