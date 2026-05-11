@@ -49,7 +49,11 @@ export async function POST(request?: Request) {
   }
 
   try {
-    const report = await syncContactsFromXero(options);
+    const report = await syncContactsFromXero({
+      ...options,
+      auditActorMemberId: session.user.id,
+      auditSource: "admin-xero-sync-contacts",
+    });
     return NextResponse.json({ syncReport: report });
   } catch (error) {
     const xeroError = getXeroApiErrorInfo(error, "Contact sync failed");

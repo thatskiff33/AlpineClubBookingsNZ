@@ -910,7 +910,7 @@ describe("Admin Family Group Join Requests", () => {
       expect(body.error).toMatch(/select the member record/i);
     });
 
-    it("approves a child request and links the selected member", async () => {
+    it("approves an infant/child/youth request and links the selected member", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue({
         id: "req-child-1",
@@ -923,7 +923,11 @@ describe("Admin Family Group Join Requests", () => {
         requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
         familyGroup: { id: "fg1", name: "Smith Family" },
       } as any);
-      mockedPrisma.member.findUnique.mockResolvedValue({ id: "child-1" } as any);
+      mockedPrisma.member.findUnique.mockResolvedValue({
+        id: "child-1",
+        active: true,
+        ageTier: "INFANT",
+      } as any);
 
       const txUpsert = vi.fn();
       const txUpdate = vi.fn();
@@ -966,6 +970,39 @@ describe("Admin Family Group Join Requests", () => {
           linkedMemberId: "child-1",
         }),
       });
+    });
+
+    it("rejects approving a child request with an adult member", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue({
+        id: "req-child-1",
+        familyGroupId: "fg1",
+        requesterId: "parent-1",
+        status: "PENDING",
+        type: "CHILD_REQUEST",
+        childFirstName: "Sam",
+        childLastName: "Smith",
+        requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
+        familyGroup: { id: "fg1", name: "Smith Family" },
+      } as any);
+      mockedPrisma.member.findUnique.mockResolvedValue({
+        id: "adult-1",
+        active: true,
+        ageTier: "ADULT",
+      } as any);
+
+      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const res = await PUT(
+        makeReq("/api/admin/family-groups/requests", "PUT", {
+          requestId: "req-child-1",
+          action: "approve",
+          linkedMemberId: "adult-1",
+        })
+      );
+
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.error).toMatch(/infant, child, or youth/i);
     });
 
     it("approves a removal request by deleting only the requested family group membership", async () => {

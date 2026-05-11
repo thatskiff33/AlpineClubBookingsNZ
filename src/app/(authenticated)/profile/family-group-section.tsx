@@ -650,7 +650,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                           onClick={() => { resetForms(); setShowChildForm(group.id); }}
                         >
                           <Baby className="h-4 w-4 mr-1" />
-                          Request to Add Child/Youth
+                          Request to Add Infant/Child/Youth
                         </Button>
                       </>
                     )}
@@ -748,7 +748,7 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                   <form onSubmit={(e) => handleChildRequest(e, group.id)} className="space-y-3 rounded-lg border p-4">
                     <p className="text-sm font-medium flex items-center gap-2">
                       <Baby className="h-4 w-4" />
-                      Request to Add Child/Youth
+                      Request to Add Infant/Child/Youth
                     </p>
                     <p className="text-xs text-muted-foreground">
                       An admin will review your request and link them to an existing member record.

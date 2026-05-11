@@ -18,8 +18,16 @@ export async function findLodgeGuestForDate(bookingGuestId: string, date: Date) 
     select: {
       id: true,
       bookingId: true,
+      firstName: true,
+      lastName: true,
+      memberId: true,
       arrivedAt: true,
       departedAt: true,
+      booking: {
+        select: {
+          memberId: true,
+        },
+      },
     },
   });
 }

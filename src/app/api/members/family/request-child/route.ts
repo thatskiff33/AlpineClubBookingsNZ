@@ -18,7 +18,7 @@ const requestChildSchema = z.object({
 
 /**
  * POST /api/members/family/request-child
- * Parent requests adding a child/youth to their family group.
+ * Parent requests adding an infant/child/youth to their family group.
  * Goes to admin queue for approval — admin must link to existing member.
  */
 export async function POST(req: NextRequest) {
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (requester.ageTier !== "ADULT") {
-    return NextResponse.json({ error: "Only adults can request to add children or youth" }, { status: 403 });
+    return NextResponse.json({ error: "Only adults can request to add infants, children, or youth" }, { status: 403 });
   }
 
   if (requester.familyGroupMemberships.length === 0) {
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
 
   logger.info(
     { requestId: request.id, requesterId: session.user.id, familyGroupId, childName: `${firstName} ${lastName}` },
-    "Child/youth family group request submitted"
+    "Infant/child/youth family group request submitted"
   );
 
   // Send confirmation email to parent (fire-and-forget)
@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
 
   // Send admin alert (fire-and-forget)
   sendAdminFamilyGroupRequestAlert({
-    requestType: "Child/Youth Request",
+    requestType: "Infant/Child/Youth Request",
     requesterName: `${requester.firstName} ${requester.lastName}`,
     groupName: groupInfo?.name ?? "Unnamed Group",
     details: `Wants to add ${firstName} ${lastName}${dateOfBirth ? ` (DOB: ${dateOfBirth})` : ""}`,
@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json(
     {
-      message: "Request submitted. An admin will review and link the child/youth member to your family group.",
+      message: "Request submitted. An admin will review and link the infant/child/youth member to your family group.",
       requestId: request.id,
     },
     { status: 201 }

@@ -30,9 +30,18 @@ const {
       count: vi.fn(),
       findMany: vi.fn(),
     },
+    bookingGuest: {
+      findFirst: vi.fn(),
+      update: vi.fn(),
+    },
     choreAssignment: {
       findMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
+    auditLog: {
+      create: vi.fn(),
+    },
+    $transaction: vi.fn(),
   },
   mockAuth: vi.fn(),
   mockSendHutLeaderAssignmentEmail: vi.fn(),
@@ -57,6 +66,12 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     process.env.NEXTAUTH_SECRET = "test-auth-secret";
     mockPrisma.member.count.mockResolvedValue(1);
     mockSendHutLeaderAssignmentEmail.mockResolvedValue(undefined);
+    mockPrisma.auditLog.create.mockResolvedValue({});
+    mockPrisma.choreAssignment.deleteMany.mockResolvedValue({ count: 0 });
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) =>
+        callback(mockPrisma)
+    );
   });
 
   it("creates hut leader assignments with a bcrypt-hashed PIN and emails the plaintext PIN", async () => {
@@ -190,6 +205,108 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     const data = await res.json();
     expect(data.tier).toBe("hut-leader");
     expect(data.memberName).toBe("Alice Smith");
+    expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "lodge.pin.login.succeeded",
+        memberId: "member-1",
+        targetId: "member-1",
+        subjectMemberId: "member-1",
+        category: "lodge",
+        outcome: "success",
+        retentionClass: "sensitive_access",
+        ipAddress: "10.0.0.1",
+      }),
+    });
+  });
+
+  it("writes member-linked audit rows when marking lodge guests arrived and departed", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+    });
+    mockPrisma.bookingGuest.findFirst
+      .mockResolvedValueOnce({
+        id: "guest-1",
+        bookingId: "booking-1",
+        firstName: "Alice",
+        lastName: "Guest",
+        memberId: "guest-member-1",
+        arrivedAt: null,
+        departedAt: null,
+        booking: {
+          memberId: "booking-owner-1",
+        },
+      })
+      .mockResolvedValueOnce({
+        id: "guest-2",
+        bookingId: "booking-2",
+        firstName: "Bob",
+        lastName: "Guest",
+        memberId: null,
+        arrivedAt: new Date("2026-04-13T08:00:00.000Z"),
+        departedAt: null,
+        booking: {
+          memberId: "booking-owner-2",
+        },
+      });
+    mockPrisma.bookingGuest.update.mockResolvedValue({});
+
+    const { PUT: arrive } = await import("@/app/api/lodge/guests/[date]/arrive/route");
+    const arriveRes = await arrive(
+      new Request("http://localhost/api/lodge/guests/2026-04-13/arrive", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-forwarded-for": "10.0.0.4",
+        },
+        body: JSON.stringify({ bookingGuestId: "guest-1" }),
+      }) as any,
+      { params: Promise.resolve({ date: "2026-04-13" }) }
+    );
+
+    expect(arriveRes.status).toBe(200);
+    expect(mockPrisma.bookingGuest.update).toHaveBeenCalledWith({
+      where: { id: "guest-1" },
+      data: { arrivedAt: expect.any(Date) },
+    });
+
+    const { PUT: depart } = await import("@/app/api/lodge/guests/[date]/depart/route");
+    const departRes = await depart(
+      new Request("http://localhost/api/lodge/guests/2026-04-13/depart", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-forwarded-for": "10.0.0.5",
+        },
+        body: JSON.stringify({ bookingGuestId: "guest-2" }),
+      }) as any,
+      { params: Promise.resolve({ date: "2026-04-13" }) }
+    );
+
+    expect(departRes.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: "lodge.guest.arrived",
+          memberId: "admin-1",
+          subjectMemberId: "guest-member-1",
+          entityType: "BookingGuest",
+          entityId: "guest-1",
+          category: "lodge",
+          ipAddress: "10.0.0.4",
+        }),
+      });
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: "lodge.guest.departed",
+          memberId: "admin-1",
+          subjectMemberId: "booking-owner-2",
+          entityType: "BookingGuest",
+          entityId: "guest-2",
+          category: "lodge",
+          ipAddress: "10.0.0.5",
+        }),
+      });
+    });
   });
 
   it("rate limits PIN login after 5 failed attempts per minute", async () => {

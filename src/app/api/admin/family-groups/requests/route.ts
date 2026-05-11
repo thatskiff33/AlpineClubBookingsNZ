@@ -22,6 +22,8 @@ const REVIEWED_REQUEST_TYPES = [
   "REMOVAL_REQUEST",
 ] as const;
 
+const CHILD_REQUEST_AGE_TIERS: AgeTier[] = ["INFANT", "CHILD", "YOUTH"];
+
 const reviewRequestSchema = z.object({
   requestId: z.string().min(1),
   action: z.enum(["approve", "reject"]),
@@ -93,6 +95,12 @@ async function findPotentialMemberMatches(request: {
         ...(dateOfBirth ? [{ dateOfBirth: getSameDayRange(dateOfBirth) }] : []),
         ...(request.type === "ADULT_REQUEST"
           ? [{ ageTier: "ADULT" as AgeTier }]
+          : []),
+        ...(request.type === "CHILD_REQUEST"
+          ? [
+              { ageTier: { in: CHILD_REQUEST_AGE_TIERS } },
+              { active: true },
+            ]
           : []),
         ...(request.type === "ADULT_REQUEST" && request.requestedEmail
           ? [{ email: { equals: request.requestedEmail, mode: "insensitive" as const } }]
@@ -201,6 +209,14 @@ async function validateLinkedMemberForRequest(params: {
   if (!linkedMember) {
     return { error: "Selected member record not found", status: 404 as const };
   }
+  if (params.requestType === "CHILD_REQUEST") {
+    if (!linkedMember.active || !CHILD_REQUEST_AGE_TIERS.includes(linkedMember.ageTier)) {
+      return {
+        error: "Selected member must be an active infant, child, or youth",
+        status: 422 as const,
+      };
+    }
+  }
   if (params.requestType === "ADULT_REQUEST") {
     if (!linkedMember.active || linkedMember.ageTier !== "ADULT") {
       return { error: "Selected member must be an active adult", status: 422 as const };
@@ -290,7 +306,7 @@ export async function PUT(req: NextRequest) {
     if (request.type === "CHILD_REQUEST") {
       if (!linkedMemberId) {
         return NextResponse.json(
-          { error: "Select the member record to link before approving this child/youth request." },
+          { error: "Select the member record to link before approving this infant/child/youth request." },
           { status: 422 }
         );
       }

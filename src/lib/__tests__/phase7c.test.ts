@@ -26,7 +26,14 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
-vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
+vi.mock("@/lib/audit", () => ({
+  logAudit: vi.fn(),
+  getAuditRequestContext: vi.fn(() => ({
+    id: null,
+    ipAddress: "127.0.0.1",
+    userAgent: null,
+  })),
+}));
 
 // ---------------------------------------------------------------------------
 // Mock auth
@@ -323,7 +330,14 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
   it("sets arrivedAt when guest has not arrived", async () => {
     mockPrisma.bookingGuest.findFirst.mockResolvedValue({
       id: "g1",
+      bookingId: "booking-1",
+      firstName: "Alice",
+      lastName: "Guest",
+      memberId: "member-1",
       arrivedAt: null,
+      booking: {
+        memberId: "booking-owner-1",
+      },
     });
     mockPrisma.bookingGuest.update.mockResolvedValue({});
 
@@ -351,7 +365,14 @@ describe("F9: PUT /api/lodge/guests/[date]/arrive", () => {
   it("clears arrivedAt when guest already arrived (toggle off)", async () => {
     mockPrisma.bookingGuest.findFirst.mockResolvedValue({
       id: "g1",
+      bookingId: "booking-1",
+      firstName: "Alice",
+      lastName: "Guest",
+      memberId: "member-1",
       arrivedAt: new Date(),
+      booking: {
+        memberId: "booking-owner-1",
+      },
     });
     mockPrisma.bookingGuest.update.mockResolvedValue({});
 
@@ -450,7 +471,14 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
   it("sets departedAt when guest has not departed", async () => {
     mockPrisma.bookingGuest.findFirst.mockResolvedValue({
       id: "g1",
+      bookingId: "booking-1",
+      firstName: "Alice",
+      lastName: "Guest",
+      memberId: "member-1",
       departedAt: null,
+      booking: {
+        memberId: "booking-owner-1",
+      },
     });
     mockPrisma.bookingGuest.update.mockResolvedValue({});
 
@@ -481,7 +509,14 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
   it("clears departedAt when guest already departed (toggle off)", async () => {
     mockPrisma.bookingGuest.findFirst.mockResolvedValue({
       id: "g1",
+      bookingId: "booking-1",
+      firstName: "Alice",
+      lastName: "Guest",
+      memberId: "member-1",
       departedAt: new Date(),
+      booking: {
+        memberId: "booking-owner-1",
+      },
     });
     mockPrisma.bookingGuest.update.mockResolvedValue({});
 

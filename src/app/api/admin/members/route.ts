@@ -88,6 +88,7 @@ export async function GET(req: NextRequest) {
 
   const sp = req.nextUrl.searchParams;
   const q = sp.get("q") || sp.get("search") || undefined;
+  const trimmedQuery = q?.trim();
 
   // Pagination
   const page = Math.max(1, parseInt(sp.get("page") || "1", 10) || 1);
@@ -131,13 +132,27 @@ export async function GET(req: NextRequest) {
   const andConditions: Record<string, unknown>[] = [];
 
   // Text search
-  if (q) {
+  if (trimmedQuery) {
+    const queryTerms = trimmedQuery.split(/\s+/).filter(Boolean);
     andConditions.push({
       OR: [
-        { id: { startsWith: q } },
-        { firstName: { contains: q, mode: "insensitive" } },
-        { lastName: { contains: q, mode: "insensitive" } },
-        { email: { contains: q, mode: "insensitive" } },
+        { id: { startsWith: trimmedQuery } },
+        { firstName: { contains: trimmedQuery, mode: "insensitive" } },
+        { lastName: { contains: trimmedQuery, mode: "insensitive" } },
+        { email: { contains: trimmedQuery, mode: "insensitive" } },
+        ...(queryTerms.length > 1
+          ? [
+              {
+                AND: queryTerms.map((term) => ({
+                  OR: [
+                    { firstName: { contains: term, mode: "insensitive" } },
+                    { lastName: { contains: term, mode: "insensitive" } },
+                    { email: { contains: term, mode: "insensitive" } },
+                  ],
+                })),
+              },
+            ]
+          : []),
       ],
     });
   }
@@ -195,6 +210,18 @@ export async function GET(req: NextRequest) {
     AGE_TIER_VALUES.includes(ageTierFilter as (typeof AGE_TIER_VALUES)[number])
   ) {
     andConditions.push({ ageTier: ageTierFilter });
+  } else {
+    const ageTierInFilter = sp.get("ageTierIn");
+    const ageTierIn = ageTierInFilter
+      ?.split(",")
+      .map((tier) => tier.trim())
+      .filter((tier): tier is (typeof AGE_TIER_VALUES)[number] =>
+        AGE_TIER_VALUES.includes(tier as (typeof AGE_TIER_VALUES)[number])
+      );
+
+    if (ageTierIn && ageTierIn.length > 0) {
+      andConditions.push({ ageTier: { in: ageTierIn } });
+    }
   }
 
   // Filter: xeroLinked

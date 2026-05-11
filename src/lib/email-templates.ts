@@ -1083,14 +1083,14 @@ export function familyGroupInviteAcceptedTemplate(
   `);
 }
 
-/** Sent to parent when their child/youth request is submitted (confirmation) */
+/** Sent to parent when their infant/child/youth request is submitted (confirmation) */
 export function childRequestSubmittedTemplate(
   parentName: string,
   childName: string,
   groupName: string
 ): string {
   return layout(`
-    ${heading("Child/Youth Request Submitted")}
+    ${heading("Infant/Child/Youth Request Submitted")}
     ${paragraph("Hi " + escapeHtml(parentName) + ",")}
     ${paragraph("Your request to add <strong>" + escapeHtml(childName) + "</strong> to the family group <strong>" + escapeHtml(groupName) + "</strong> has been submitted.")}
     ${alertBox("An administrator will review your request and link the member to your family group. You'll be notified once it's been processed.", "info")}
@@ -1098,14 +1098,14 @@ export function childRequestSubmittedTemplate(
   `);
 }
 
-/** Sent to parent when their child/youth request is approved by admin */
+/** Sent to parent when their infant/child/youth request is approved by admin */
 export function childRequestApprovedTemplate(
   parentName: string,
   childName: string,
   groupName: string
 ): string {
   return layout(`
-    ${heading("Child/Youth Added to Family Group")}
+    ${heading("Infant/Child/Youth Added to Family Group")}
     ${paragraph("Hi " + escapeHtml(parentName) + ",")}
     ${paragraph("<strong>" + escapeHtml(childName) + "</strong> has been added to your family group <strong>" + escapeHtml(groupName) + "</strong>.")}
     ${alertBox("You can now include them when making bookings.", "success")}
@@ -1113,7 +1113,7 @@ export function childRequestApprovedTemplate(
   `);
 }
 
-/** Sent to parent when their child/youth request is rejected by admin */
+/** Sent to parent when their infant/child/youth request is rejected by admin */
 export function childRequestRejectedTemplate(
   parentName: string,
   childName: string,
@@ -1123,7 +1123,7 @@ export function childRequestRejectedTemplate(
     ? `${alertBox("Admin note: " + escapeHtml(reason), "warning")}`
     : "";
   return layout(`
-    ${heading("Child/Youth Request Update")}
+    ${heading("Infant/Child/Youth Request Update")}
     ${paragraph("Hi " + escapeHtml(parentName) + ",")}
     ${paragraph("Your request to add <strong>" + escapeHtml(childName) + "</strong> to your family group was not approved.")}
     ${reasonHtml}

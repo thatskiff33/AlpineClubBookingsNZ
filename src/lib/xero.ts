@@ -46,6 +46,7 @@ import {
   getXeroContactNameOrderRepair,
   type XeroContactLinkMismatchEntry,
 } from "@/lib/xero-contact-link-mismatches";
+import { createAuditLog } from "@/lib/audit";
 
 // ---------------------------------------------------------------------------
 // Rate limit error
@@ -186,6 +187,8 @@ interface XeroSyncCursorMetadata {
 interface SyncContactsFromXeroOptions {
   fullResync?: boolean;
   backfillJoinedDates?: boolean;
+  auditActorMemberId?: string | null;
+  auditSource?: string;
 }
 
 interface ImportMembersFromXeroGroupsOptions {
@@ -1823,6 +1826,66 @@ function addNameMismatchToSyncReport(
   });
 }
 
+function getSafeXeroContactAuditChanges(changes: string[]) {
+  const fields = new Set<string>();
+
+  for (const change of changes) {
+    if (change.startsWith("Linked to Xero contact")) {
+      fields.add("xeroContactLink");
+    } else if (change.startsWith("Joined date set")) {
+      fields.add("joinedDate");
+    } else if (change.startsWith("Phone set")) {
+      fields.add("phone");
+    } else if (change.startsWith("Street address set")) {
+      fields.add("streetAddress");
+    } else if (change.startsWith("Postal address set")) {
+      fields.add("postalAddress");
+    } else if (change.startsWith("Xero contact name set")) {
+      fields.add("xeroContactName");
+    } else {
+      fields.add("other");
+    }
+  }
+
+  return Array.from(fields);
+}
+
+async function writeXeroContactSyncAudit(input: {
+  actorMemberId?: string | null;
+  memberId: string;
+  xeroContactId: string;
+  changes: string[];
+  source: string;
+}) {
+  const changedFields = getSafeXeroContactAuditChanges(input.changes);
+
+  try {
+    await createAuditLog({
+      action: "xero.contact.synced_to_member",
+      memberId: input.actorMemberId ?? null,
+      targetId: input.memberId,
+      subjectMemberId: input.memberId,
+      entityType: "Member",
+      entityId: input.memberId,
+      category: "xero",
+      severity: "critical",
+      outcome: "success",
+      summary: "Xero contact synced to member",
+      details: `${changedFields.length} Xero contact field${changedFields.length === 1 ? "" : "s"} synced to member`,
+      metadata: {
+        source: input.source,
+        xeroContactId: input.xeroContactId,
+        changedFields,
+      },
+    });
+  } catch (err) {
+    logger.error(
+      { err, memberId: input.memberId, xeroContactId: input.xeroContactId },
+      "Failed to write Xero contact sync audit log"
+    );
+  }
+}
+
 async function repairXeroContactNameOrderIfNeeded(input: {
   xero: XeroClient;
   tenantId: string;
@@ -2122,6 +2185,13 @@ export async function syncContactsFromXero(
         }
 
         if (changes.length > 0) {
+          await writeXeroContactSyncAudit({
+            actorMemberId: options.auditActorMemberId,
+            memberId: alreadyLinked.id,
+            xeroContactId: contact.contactID,
+            changes,
+            source: options.auditSource ?? "syncContactsFromXero",
+          });
           report.updated.push({
             name: `${alreadyLinked.firstName} ${alreadyLinked.lastName}`,
             memberId: alreadyLinked.id,
@@ -2275,6 +2345,13 @@ export async function syncContactsFromXero(
       }
 
       if (changes.length > 0) {
+        await writeXeroContactSyncAudit({
+          actorMemberId: options.auditActorMemberId,
+          memberId: member.id,
+          xeroContactId: contact.contactID,
+          changes,
+          source: options.auditSource ?? "syncContactsFromXero",
+        });
         report.updated.push({
           name: `${member.firstName} ${member.lastName}`,
           memberId: member.id,

@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
   const ageTier = await computeAgeTier(dateOfBirth, getSeasonStartDate(getSeasonYear()));
   if (ageTier !== "ADULT") {
     return NextResponse.json(
-      { error: "Use the child/youth request flow for members under 18" },
+      { error: "Use the infant/child/youth request flow for members under 18" },
       { status: 422 }
     );
   }

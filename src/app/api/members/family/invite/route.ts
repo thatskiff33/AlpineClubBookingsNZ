@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
 
   if (target.ageTier !== "ADULT") {
     return NextResponse.json(
-      { error: "Only adults can be invited directly. For children or youth, use the 'Request to Add Child/Youth' option instead." },
+      { error: "Only adults can be invited directly. For infants, children, or youth, use the 'Request to Add Infant/Child/Youth' option instead." },
       { status: 422 }
     );
   }

@@ -309,6 +309,70 @@ describe("Xero Member Management", () => {
         ])
       );
     });
+
+    it("matches multi-word member searches token-by-token", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      const req = new NextRequest(
+        "http://localhost/api/admin/members?q=Oscar%20van%20Wheeler&pageSize=10"
+      );
+      const res = await getMembers(req);
+
+      expect(res.status).toBe(200);
+
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0] as any;
+      const searchCondition = call.where.AND[0];
+      const tokenizedNameCondition = searchCondition.OR.find((condition: any) =>
+        Array.isArray(condition.AND)
+      );
+
+      expect(tokenizedNameCondition).toBeDefined();
+      expect(tokenizedNameCondition.AND).toHaveLength(3);
+      expect(tokenizedNameCondition.AND[0].OR).toEqual(
+        expect.arrayContaining([
+          { firstName: { contains: "Oscar", mode: "insensitive" } },
+          { lastName: { contains: "Oscar", mode: "insensitive" } },
+          { email: { contains: "Oscar", mode: "insensitive" } },
+        ])
+      );
+      expect(tokenizedNameCondition.AND[1].OR).toEqual(
+        expect.arrayContaining([
+          { firstName: { contains: "van", mode: "insensitive" } },
+          { lastName: { contains: "van", mode: "insensitive" } },
+          { email: { contains: "van", mode: "insensitive" } },
+        ])
+      );
+      expect(tokenizedNameCondition.AND[2].OR).toEqual(
+        expect.arrayContaining([
+          { firstName: { contains: "Wheeler", mode: "insensitive" } },
+          { lastName: { contains: "Wheeler", mode: "insensitive" } },
+          { email: { contains: "Wheeler", mode: "insensitive" } },
+        ])
+      );
+    });
+
+    it("supports filtering searches to multiple age tiers", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      const req = new NextRequest(
+        "http://localhost/api/admin/members?q=oscar&active=true&ageTierIn=INFANT,CHILD,YOUTH&pageSize=10"
+      );
+      const res = await getMembers(req);
+
+      expect(res.status).toBe(200);
+
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0] as any;
+      expect(call.where.AND).toEqual(
+        expect.arrayContaining([
+          { active: true },
+          { ageTier: { in: ["INFANT", "CHILD", "YOUTH"] } },
+        ])
+      );
+    });
   });
 
   describe("GET /api/admin/xero/search-contacts", () => {
