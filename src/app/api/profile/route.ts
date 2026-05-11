@@ -12,6 +12,7 @@ import {
 import {
   buildXeroContactUpdatePayload,
   hasMemberXeroContactChanges,
+  shouldRepairXeroContactNameOrder,
 } from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -297,9 +298,16 @@ export async function PUT(req: NextRequest) {
       ),
     ]);
 
-    const needsContactUpdate =
+    const hasMappedContactUpdate = updated.xeroContactId
+      ? hasMemberXeroContactChanges(existing, updated)
+      : false;
+    const shouldRepairContactNameOrder = updated.xeroContactId
+      ? await shouldRepairXeroContactNameOrder(updated)
+      : false;
+    const needsContactUpdate = Boolean(
       updated.xeroContactId &&
-      hasMemberXeroContactChanges(existing, updated);
+        (hasMappedContactUpdate || shouldRepairContactNameOrder)
+    );
     const needsContactGroupSync =
       updated.xeroContactId && existing.ageTier !== updated.ageTier;
 
@@ -314,7 +322,7 @@ export async function PUT(req: NextRequest) {
                 localModel: "Member",
                 localId: session.user.id,
                 createdByMemberId: session.user.id,
-                preserveXeroName: true,
+                preserveXeroName: !shouldRepairContactNameOrder,
               }
             );
           }

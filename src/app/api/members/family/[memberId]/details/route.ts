@@ -15,6 +15,7 @@ import {
 import {
   buildXeroContactUpdatePayload,
   hasMemberXeroContactChanges,
+  shouldRepairXeroContactNameOrder,
 } from "@/lib/xero-contact-sync";
 import {
   evaluateMemberProfileCompleteness,
@@ -250,9 +251,16 @@ export async function PUT(
     "Family member details confirmed by delegate"
   );
 
-  const needsContactUpdate =
+  const hasMappedContactUpdate = updated.xeroContactId
+    ? hasMemberXeroContactChanges(target, updated)
+    : false;
+  const shouldRepairContactNameOrder = updated.xeroContactId
+    ? await shouldRepairXeroContactNameOrder(updated)
+    : false;
+  const needsContactUpdate = Boolean(
     updated.xeroContactId &&
-    hasMemberXeroContactChanges(target, updated);
+      (hasMappedContactUpdate || shouldRepairContactNameOrder)
+  );
   const needsContactGroupSync =
     updated.xeroContactId && target.ageTier !== updated.ageTier;
 
@@ -267,7 +275,7 @@ export async function PUT(
               localModel: "Member",
               localId: updated.id,
               createdByMemberId: requester.id,
-              preserveXeroName: true,
+              preserveXeroName: !shouldRepairContactNameOrder,
             }
           );
         }
