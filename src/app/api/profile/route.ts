@@ -314,6 +314,7 @@ export async function PUT(req: NextRequest) {
                 localModel: "Member",
                 localId: session.user.id,
                 createdByMemberId: session.user.id,
+                preserveXeroName: true,
               }
             );
           }

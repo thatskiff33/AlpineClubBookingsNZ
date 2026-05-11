@@ -17,6 +17,7 @@ type AgeTierSettingInput = {
   minAge: number;
   maxAge: number | null;
   label: string;
+  subscriptionRequiredForBooking: boolean;
   xeroContactGroupId: string | null;
   xeroContactGroupName: string | null;
   xeroAcceptedContactGroups: Array<{
@@ -34,6 +35,7 @@ const putSchema = z.object({
         minAge: z.number().int().min(0),
         maxAge: z.number().int().min(0).nullable(),
         label: z.string().min(1).max(100),
+        subscriptionRequiredForBooking: z.boolean(),
         xeroContactGroupId: z.string().trim().min(1).max(100).nullable().optional(),
         xeroContactGroupName: z.string().trim().min(1).max(255).nullable().optional(),
         xeroAcceptedContactGroups: z
@@ -67,6 +69,7 @@ export async function GET() {
       minAge: true,
       maxAge: true,
       label: true,
+      subscriptionRequiredForBooking: true,
       xeroContactGroupId: true,
       xeroContactGroupName: true,
       xeroAcceptedContactGroups: {
@@ -239,6 +242,7 @@ export async function PUT(request: NextRequest) {
           minAge: s.minAge,
           maxAge: s.maxAge,
           label: s.label,
+          subscriptionRequiredForBooking: s.subscriptionRequiredForBooking,
           xeroContactGroupId: s.xeroContactGroupId,
           xeroContactGroupName: s.xeroContactGroupName,
           sortOrder: s.sortOrder,
@@ -255,6 +259,7 @@ export async function PUT(request: NextRequest) {
           minAge: s.minAge,
           maxAge: s.maxAge,
           label: s.label,
+          subscriptionRequiredForBooking: s.subscriptionRequiredForBooking,
           xeroContactGroupId: s.xeroContactGroupId,
           xeroContactGroupName: s.xeroContactGroupName,
           sortOrder: s.sortOrder,
@@ -285,6 +290,7 @@ export async function PUT(request: NextRequest) {
       minAge: true,
       maxAge: true,
       label: true,
+      subscriptionRequiredForBooking: true,
       xeroContactGroupId: true,
       xeroContactGroupName: true,
       xeroAcceptedContactGroups: {

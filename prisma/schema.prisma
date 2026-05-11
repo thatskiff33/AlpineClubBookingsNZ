@@ -1491,6 +1491,7 @@ model AgeTierSetting {
   minAge                    Int
   maxAge                    Int? // null for ADULT (no upper limit)
   label                     String // e.g. "Child (under 10)"
+  subscriptionRequiredForBooking Boolean @default(true)
   xeroContactGroupId        String?
   xeroContactGroupName      String?
   xeroAcceptedContactGroups AgeTierXeroAcceptedContactGroup[]

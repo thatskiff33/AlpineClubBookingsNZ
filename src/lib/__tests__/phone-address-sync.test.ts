@@ -342,26 +342,45 @@ describe("Profile API: structured phone and address fields", () => {
     vi.mocked(auth).mockResolvedValue(memberSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
     vi.mocked(prisma.member.update).mockResolvedValue({
-      ...baseMember, firstName: "Alicia", xeroContactId: "xc1",
+      ...baseMember, phoneNumber: "9999999", xeroContactId: "xc1",
     } as any);
     vi.mocked(isXeroConnected).mockResolvedValue(true);
 
-    await updateProfile(makeProfilePut({ ...validProfileBody, firstName: "Alicia" }));
+    await updateProfile(makeProfilePut({ ...validProfileBody, phoneNumber: "9999999" }));
 
     expect(updateXeroContact).toHaveBeenCalledWith(
       "xc1",
       expect.objectContaining({
-        firstName: "Alicia",
-        lastName: "Smith",
         phoneCountryCode: "64",
+        phoneNumber: "9999999",
         dateOfBirth: new Date("1990-01-15"),
       }),
       expect.objectContaining({
         localModel: "Member",
         localId: "m1",
         createdByMemberId: "m1",
+        preserveXeroName: true,
       })
     );
+  });
+
+  it("does not sync to Xero when only the member name changes", async () => {
+    vi.mocked(auth).mockResolvedValue(memberSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      xeroContactId: "xc1",
+    } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      firstName: "Alicia",
+      xeroContactId: "xc1",
+    } as any);
+
+    await updateProfile(makeProfilePut({ ...validProfileBody, firstName: "Alicia" }));
+
+    expect(isXeroConnected).not.toHaveBeenCalled();
+    expect(updateXeroContact).not.toHaveBeenCalled();
+    expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
   });
 
   it("does not sync to Xero when Xero-mapped fields are unchanged", async () => {
@@ -626,6 +645,7 @@ describe("Admin Member Edit: structured phone and address", () => {
         localModel: "Member",
         localId: "m1",
         createdByMemberId: "admin1",
+        preserveXeroName: true,
       }),
     );
   });

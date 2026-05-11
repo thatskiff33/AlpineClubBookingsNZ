@@ -37,6 +37,7 @@ interface QueuedEntranceFeeOutboxPayload {
   category: EntranceFeeCategory;
   itemCode: string | null;
   feeAmountCents: number;
+  description?: string | null;
 }
 
 interface QueuedBookingInvoiceOutboxPayload {
@@ -257,6 +258,7 @@ function readQueuedOutboxPayload(value: unknown): QueuedOutboxPayload | null {
           ? payload.itemCode
           : null,
     feeAmountCents,
+    description: readString(payload.description) ?? null,
   };
 }
 
@@ -312,18 +314,27 @@ function buildPrecomputedEntranceFeeContext(
     return null;
   }
 
-  return {
+  const entranceFeeContext: EntranceFeeContext = {
     category: payload.category,
     feeMapping: {
       itemCode: payload.itemCode ?? null,
       amountCents: payload.feeAmountCents,
     },
   };
+  if (payload.description) {
+    entranceFeeContext.description = payload.description;
+  }
+
+  return entranceFeeContext;
 }
 
 export async function enqueueXeroEntranceFeeInvoiceOperation(
   memberId: string,
-  options?: { createdByMemberId?: string }
+  options?: {
+    createdByMemberId?: string;
+    amountCents?: number | null;
+    description?: string | null;
+  }
 ) {
   const existingLink = await prisma.xeroObjectLink.findFirst({
     where: {
@@ -344,7 +355,9 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
   }
 
   const entranceFee = await getEntranceFeeContext(memberId);
-  const feeAmountCents = entranceFee.feeMapping.amountCents;
+  const feeAmountCents =
+    options?.amountCents ?? entranceFee.feeMapping.amountCents;
+  const description = options?.description?.trim() || null;
 
   if (!feeAmountCents || feeAmountCents <= 0) {
     return {
@@ -397,6 +410,7 @@ export async function enqueueXeroEntranceFeeInvoiceOperation(
       category: entranceFee.category,
       itemCode: entranceFee.feeMapping.itemCode,
       feeAmountCents,
+      ...(description ? { description } : {}),
     },
     createdByMemberId: options?.createdByMemberId ?? null,
   });

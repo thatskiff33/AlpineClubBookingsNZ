@@ -62,6 +62,25 @@ describe("computeAgeTierWithSettings — TAC default boundaries", () => {
       computeAgeTierWithSettings(new Date("1985-01-01"), ref2026, AGE_TIER_DEFAULTS)
     ).toBe("ADULT");
   });
+
+  it("sets default booking subscription requirement per tier", () => {
+    expect(
+      AGE_TIER_DEFAULTS.find((setting) => setting.tier === "INFANT")
+        ?.subscriptionRequiredForBooking
+    ).toBe(false);
+    expect(
+      AGE_TIER_DEFAULTS.find((setting) => setting.tier === "CHILD")
+        ?.subscriptionRequiredForBooking
+    ).toBe(false);
+    expect(
+      AGE_TIER_DEFAULTS.find((setting) => setting.tier === "YOUTH")
+        ?.subscriptionRequiredForBooking
+    ).toBe(true);
+    expect(
+      AGE_TIER_DEFAULTS.find((setting) => setting.tier === "ADULT")
+        ?.subscriptionRequiredForBooking
+    ).toBe(true);
+  });
 });
 
 describe("computeAgeTierWithSettings — custom settings", () => {
@@ -237,7 +256,12 @@ describe("normalizeAgeTierSettings", () => {
       },
     ];
 
-    expect(normalizeAgeTierSettings(customRows)).toEqual(customRows);
+    expect(normalizeAgeTierSettings(customRows)).toEqual(
+      customRows.map((row) => ({
+        ...row,
+        subscriptionRequiredForBooking: true,
+      }))
+    );
   });
 });
 

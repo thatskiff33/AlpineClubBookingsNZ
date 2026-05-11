@@ -271,11 +271,56 @@ describe("retryXeroSyncOperation", () => {
         postalAddressLine1: "PO Box 99",
         dateOfBirth: new Date(Date.UTC(1990, 2, 2)),
       }),
-      {
+      expect.objectContaining({
         localModel: "Member",
         localId: "mem_123",
         createdByMemberId: "admin_1",
-      }
+        preserveXeroName: false,
+      })
+    );
+  });
+
+  it("replays contact updates that intentionally preserve the Xero contact name", async () => {
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CONTACT",
+        operationType: "UPDATE",
+        localModel: "Member",
+        localId: "mem_123",
+        requestPayload: {
+          contacts: [
+            {
+              contactID: "xero_contact_1",
+              emailAddress: "jane@example.com",
+              phones: [
+                {
+                  phoneCountryCode: "64",
+                  phoneAreaCode: "21",
+                  phoneNumber: "7654321",
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.updateXeroContact).toHaveBeenCalledWith(
+      "xero_contact_1",
+      expect.objectContaining({
+        email: "jane@example.com",
+        phoneCountryCode: "64",
+        phoneAreaCode: "21",
+        phoneNumber: "7654321",
+      }),
+      expect.objectContaining({
+        localModel: "Member",
+        localId: "mem_123",
+        createdByMemberId: "admin_1",
+        preserveXeroName: true,
+      })
     );
   });
 

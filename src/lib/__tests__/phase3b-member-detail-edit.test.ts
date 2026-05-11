@@ -324,25 +324,48 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
     }));
   });
 
-  it("calls updateXeroContact when member has xeroContactId and Xero is connected", async () => {
+  it("calls updateXeroContact when member contact fields change and Xero is connected", async () => {
     const { isXeroConnected, updateXeroContact } = await import("@/lib/xero");
     vi.mocked(isXeroConnected).mockResolvedValue(true);
 
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
-    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, firstName: "Bob", xeroContactId: "xc1" } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, phoneNumber: "022-456", xeroContactId: "xc1" } as any);
 
-    await updateMember(makePutRequest("m1", { firstName: "Bob" }), { params: Promise.resolve({ id: "m1" }) });
+    await updateMember(makePutRequest("m1", { phoneNumber: "022-456" }), { params: Promise.resolve({ id: "m1" }) });
 
     expect(updateXeroContact).toHaveBeenCalledWith(
       "xc1",
-      expect.objectContaining({ firstName: "Bob" }),
+      expect.objectContaining({ phoneNumber: "022-456" }),
       expect.objectContaining({
         localModel: "Member",
         localId: "m1",
         createdByMemberId: "admin1",
+        preserveXeroName: true,
       })
     );
+  });
+
+  it("does not call updateXeroContact when only the member name changes", async () => {
+    const {
+      isXeroConnected,
+      syncManagedXeroContactGroupForMember,
+      updateXeroContact,
+    } = await import("@/lib/xero");
+
+    mockedAuth.mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({ ...baseMember, xeroContactId: "xc1" } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({
+      ...baseMember,
+      firstName: "Bob",
+      xeroContactId: "xc1",
+    } as any);
+
+    await updateMember(makePutRequest("m1", { firstName: "Bob" }), { params: Promise.resolve({ id: "m1" }) });
+
+    expect(isXeroConnected).not.toHaveBeenCalled();
+    expect(updateXeroContact).not.toHaveBeenCalled();
+    expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
   });
 
   it("does not call updateXeroContact when only local-only fields change", async () => {
@@ -377,9 +400,9 @@ describe("Phase 3b: Member Detail Edit — PUT /api/admin/members/[id]", () => {
 
     mockedAuth.mockResolvedValue(adminSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue(baseMember as any);
-    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, xeroContactId: "xc1" } as any);
+    vi.mocked(prisma.member.update).mockResolvedValue({ ...baseMember, phoneNumber: "022-456", xeroContactId: "xc1" } as any);
 
-    await updateMember(makePutRequest("m1", { firstName: "Bob" }), { params: Promise.resolve({ id: "m1" }) });
+    await updateMember(makePutRequest("m1", { phoneNumber: "022-456" }), { params: Promise.resolve({ id: "m1" }) });
 
     expect(updateXeroContact).not.toHaveBeenCalled();
     expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();

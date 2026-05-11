@@ -8,6 +8,15 @@ import { getSeasonYear } from "@/lib/utils";
 import { parseDateOnly } from "@/lib/date-only";
 import { logAudit } from "@/lib/audit";
 import {
+  isXeroConnected,
+  syncManagedXeroContactGroupForMember,
+  updateXeroContact,
+} from "@/lib/xero";
+import {
+  buildXeroContactUpdatePayload,
+  hasMemberXeroContactChanges,
+} from "@/lib/xero-contact-sync";
+import {
   evaluateMemberProfileCompleteness,
   evaluateSelfServiceProfilePayload,
   getMissingMemberProfileFieldDetails,
@@ -33,6 +42,7 @@ const DELEGATED_MEMBER_SELECT = {
   canLogin: true,
   role: true,
   ageTier: true,
+  xeroContactId: true,
   phoneCountryCode: true,
   phoneAreaCode: true,
   phoneNumber: true,
@@ -239,6 +249,42 @@ export async function PUT(
     },
     "Family member details confirmed by delegate"
   );
+
+  const needsContactUpdate =
+    updated.xeroContactId &&
+    hasMemberXeroContactChanges(target, updated);
+  const needsContactGroupSync =
+    updated.xeroContactId && target.ageTier !== updated.ageTier;
+
+  if (updated.xeroContactId && (needsContactUpdate || needsContactGroupSync)) {
+    try {
+      if (await isXeroConnected()) {
+        if (needsContactUpdate) {
+          await updateXeroContact(
+            updated.xeroContactId,
+            buildXeroContactUpdatePayload(updated),
+            {
+              localModel: "Member",
+              localId: updated.id,
+              createdByMemberId: requester.id,
+              preserveXeroName: true,
+            }
+          );
+        }
+
+        if (needsContactGroupSync) {
+          await syncManagedXeroContactGroupForMember(updated.id, {
+            createdByMemberId: requester.id,
+          });
+        }
+      }
+    } catch (xeroErr) {
+      logger.error(
+        { err: xeroErr, requesterId: requester.id, targetMemberId: updated.id },
+        "Xero sync failed for delegated family member details update"
+      );
+    }
+  }
 
   return NextResponse.json({
     member: {

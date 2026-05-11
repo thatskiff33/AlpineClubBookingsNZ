@@ -145,6 +145,38 @@ describe("issue reports API", () => {
     );
   });
 
+  it("accepts public page URLs when the app is behind a local proxy origin", async () => {
+    const req = new NextRequest("http://127.0.0.1:3000/api/issue-reports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://tokoroa.org.nz",
+      },
+      body: JSON.stringify({
+        pageUrl: "https://tokoroa.org.nz/admin/audit-log?page=2",
+        pageTitle: "Audit Log",
+        description: "The report should keep the public page URL from the browser.",
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+
+    expect(mockedIssueReportCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        pageUrl: "https://tokoroa.org.nz/admin/audit-log?page=2",
+      }),
+      select: { id: true },
+    });
+
+    expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pageUrl: "https://tokoroa.org.nz/admin/audit-log?page=2",
+        issueReportUrl: "https://tokoroa.org.nz/admin/issue-reports?report=issue-1",
+      })
+    );
+  });
+
   it("stores screenshots for in-app review without emailing attachments", async () => {
     const screenshotDataUrl = `data:image/png;base64,${Buffer.from("png").toString("base64")}`;
     const req = new NextRequest("http://localhost:3000/api/issue-reports", {

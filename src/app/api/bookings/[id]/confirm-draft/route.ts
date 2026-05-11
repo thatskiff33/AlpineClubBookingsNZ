@@ -13,6 +13,7 @@ import { sendAdminNewBookingAlert, sendBookingConfirmedEmail } from "@/lib/email
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
+import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
 
 export async function POST(
   request: NextRequest,
@@ -55,7 +56,10 @@ export async function POST(
   }
 
   // Subscription check (non-admins only)
-  if (session.user.role !== "ADMIN") {
+  if (
+    session.user.role !== "ADMIN" &&
+    await requiresPaidSubscriptionForAgeTierFromSettings(booking.member.ageTier)
+  ) {
     const seasonYear = getSeasonYear(new Date(booking.checkIn));
     const paidSub = await prisma.memberSubscription.findFirst({
       where: { memberId: session.user.id, seasonYear, status: "PAID" },

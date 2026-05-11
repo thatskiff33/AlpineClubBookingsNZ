@@ -98,6 +98,7 @@ export interface EntranceFeeContext {
     itemCode: string | null;
     amountCents: number | null;
   };
+  description?: string | null;
 }
 
 export interface CreateXeroEntranceFeeInvoiceOptions
@@ -4121,8 +4122,8 @@ export async function importMembersFromXeroGroups(
 // ---------------------------------------------------------------------------
 
 export interface XeroContactUpdateData {
-  firstName: string;
-  lastName: string;
+  firstName?: string;
+  lastName?: string;
   email: string;
   dateOfBirth?: Date | null;
   phoneCountryCode?: string | null;
@@ -4152,22 +4153,34 @@ export async function updateXeroContact(
     localModel?: string;
     localId?: string;
     createdByMemberId?: string;
+    preserveXeroName?: boolean;
   }
 ): Promise<void> {
   const { xero, tenantId } = await getAuthenticatedXeroClient();
 
-  const buildContact = (contactId: string): Contact => ({
-    contactID: contactId,
-    name: `${data.firstName} ${data.lastName}`,
-    firstName: data.firstName,
-    lastName: data.lastName,
-    emailAddress: data.email,
-    companyNumber: formatDateOfBirthForXero(data.dateOfBirth),
-    phones: data.phoneNumber
-      ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneCountryCode: data.phoneCountryCode || "", phoneAreaCode: data.phoneAreaCode || "", phoneNumber: data.phoneNumber }]
-      : [],
-    addresses: buildXeroAddresses(data),
-  });
+  const buildContact = (contactId: string): Contact => {
+    const contact: Contact = {
+      contactID: contactId,
+      emailAddress: data.email,
+      companyNumber: formatDateOfBirthForXero(data.dateOfBirth),
+      phones: data.phoneNumber
+        ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneCountryCode: data.phoneCountryCode || "", phoneAreaCode: data.phoneAreaCode || "", phoneNumber: data.phoneNumber }]
+        : [],
+      addresses: buildXeroAddresses(data),
+    };
+
+    if (!options?.preserveXeroName) {
+      if (!data.firstName || !data.lastName) {
+        throw new Error("firstName and lastName are required when updating Xero contact names");
+      }
+
+      contact.name = `${data.firstName} ${data.lastName}`;
+      contact.firstName = data.firstName;
+      contact.lastName = data.lastName;
+    }
+
+    return contact;
+  };
   const buildOperationKeys = (contactId: string) => {
     const payloadHash = buildXeroPayloadHash(buildContact(contactId));
     const idempotencyKey = buildXeroIdempotencyKey(
@@ -5171,6 +5184,7 @@ export function buildEntranceFeeLineItem(
   accountCode: string = "200",
   itemCode?: string | null,
   accountCodeExplicitlyConfigured: boolean = false,
+  descriptionOverride?: string | null,
 ): LineItem {
   const lineItem: LineItem = {
     quantity: 1,
@@ -5178,10 +5192,14 @@ export function buildEntranceFeeLineItem(
     taxType: "OUTPUT2",
   };
 
+  const description = descriptionOverride?.trim();
   if (itemCode) {
     lineItem.itemCode = itemCode;
+    if (description) {
+      lineItem.description = description;
+    }
   } else {
-    lineItem.description = `Membership entrance fee (${categoryLabel})`;
+    lineItem.description = description || `Membership entrance fee (${categoryLabel})`;
   }
 
   if (!itemCode || accountCode !== "200" || accountCodeExplicitlyConfigured) {
@@ -7227,6 +7245,7 @@ export async function createXeroEntranceFeeInvoice(
       incomeCode,
       feeMapping.itemCode,
       incomeMapping.codeExplicitlyConfigured,
+      entranceFee.description,
     );
 
     const buildInvoice = (resolvedContactId: string): Invoice => ({
@@ -7316,6 +7335,7 @@ export async function createXeroEntranceFeeInvoice(
           metadata: {
             category,
             feeAmountCents: feeMapping.amountCents,
+            description: entranceFee.description ?? null,
           },
         },
       ],

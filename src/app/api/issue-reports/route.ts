@@ -53,6 +53,71 @@ function parseScreenshot(
   };
 }
 
+function firstHeaderValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || null;
+}
+
+function httpOrigin(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function forwardedOrigin(request: NextRequest) {
+  const forwardedHost =
+    firstHeaderValue(request.headers.get("x-forwarded-host")) ||
+    request.headers.get("host");
+  if (!forwardedHost) {
+    return null;
+  }
+
+  const forwardedProto = firstHeaderValue(
+    request.headers.get("x-forwarded-proto")
+  );
+  const protocol = forwardedProto === "http" ? "http" : "https";
+  return httpOrigin(`${protocol}://${forwardedHost}`);
+}
+
+function uniqueOrigins(origins: Array<string | null>) {
+  return Array.from(
+    new Set(origins.filter((origin): origin is string => Boolean(origin)))
+  );
+}
+
+function normalizeIssueReportPageUrl(input: string, request: NextRequest) {
+  const configuredOrigin = httpOrigin(process.env.NEXTAUTH_URL);
+  const requestOrigin = httpOrigin(request.nextUrl.origin);
+  const originHeader = httpOrigin(request.headers.get("origin"));
+  const refererOrigin = httpOrigin(request.headers.get("referer"));
+  const trustedOrigins = uniqueOrigins([
+    originHeader,
+    refererOrigin,
+    forwardedOrigin(request),
+    requestOrigin,
+    configuredOrigin,
+  ]);
+
+  for (const baseUrl of trustedOrigins) {
+    const pageUrl = normalizeInternalAppUrl(input, { baseUrl });
+    if (pageUrl) {
+      return { pageUrl, appOrigin: baseUrl };
+    }
+  }
+
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -95,16 +160,18 @@ export async function POST(request: NextRequest) {
     }
 
     const screenshot = parseScreenshot(parsed.data.screenshotDataUrl);
-    const pageUrl = normalizeInternalAppUrl(parsed.data.pageUrl, {
-      baseUrl: request.nextUrl.origin,
-    });
-    if (!pageUrl) {
+    const pageUrlContext = normalizeIssueReportPageUrl(
+      parsed.data.pageUrl,
+      request
+    );
+    if (!pageUrlContext) {
       return NextResponse.json(
         { error: "Page URL must point to this site" },
         { status: 400 }
       );
     }
 
+    const { pageUrl, appOrigin } = pageUrlContext;
     const pageTitle = parsed.data.pageTitle?.trim() || null;
     const description = parsed.data.description.trim();
     const now = new Date();
@@ -145,10 +212,15 @@ export async function POST(request: NextRequest) {
       pageUrl,
       pageTitle,
       description,
-      issueReportUrl: `${request.nextUrl.origin}/admin/issue-reports?report=${encodeURIComponent(issueReport.id)}`,
+      issueReportUrl: `${appOrigin}/admin/issue-reports?report=${encodeURIComponent(
+        issueReport.id
+      )}`,
       hasScreenshot: Boolean(screenshot),
     }).catch((err) =>
-      logger.error({ err, issueReportId: issueReport.id }, "Failed to send admin issue report alert")
+      logger.error(
+        { err, issueReportId: issueReport.id },
+        "Failed to send admin issue report alert"
+      )
     );
 
     return NextResponse.json({ id: issueReport.id }, { status: 201 });

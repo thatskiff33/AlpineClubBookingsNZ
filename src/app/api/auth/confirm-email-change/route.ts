@@ -16,6 +16,30 @@ const confirmEmailChangeQuerySchema = z.object({
   token: z.string().min(1),
 });
 
+const XERO_CONTACT_SYNC_SELECT = {
+  id: true,
+  email: true,
+  firstName: true,
+  lastName: true,
+  xeroContactId: true,
+  dateOfBirth: true,
+  phoneCountryCode: true,
+  phoneAreaCode: true,
+  phoneNumber: true,
+  streetAddressLine1: true,
+  streetAddressLine2: true,
+  streetCity: true,
+  streetRegion: true,
+  streetPostalCode: true,
+  streetCountry: true,
+  postalAddressLine1: true,
+  postalAddressLine2: true,
+  postalCity: true,
+  postalRegion: true,
+  postalPostalCode: true,
+  postalCountry: true,
+} as const;
+
 export async function GET(request: NextRequest) {
   const rateLimited = applyRateLimit(rateLimiters.verificationToken, request);
   if (rateLimited) {
@@ -36,17 +60,7 @@ export async function GET(request: NextRequest) {
     const record = await prisma.emailChangeToken.findUnique({
       where: { tokenHash: hashActionToken(token) },
       include: {
-        member: {
-          select: {
-            id: true, email: true, firstName: true, lastName: true, xeroContactId: true,
-            dateOfBirth: true,
-            phoneCountryCode: true, phoneAreaCode: true, phoneNumber: true,
-            streetAddressLine1: true, streetAddressLine2: true, streetCity: true,
-            streetRegion: true, streetPostalCode: true, streetCountry: true,
-            postalAddressLine1: true, postalAddressLine2: true, postalCity: true,
-            postalRegion: true, postalPostalCode: true, postalCountry: true,
-          },
-        },
+        member: { select: XERO_CONTACT_SYNC_SELECT },
       },
     });
 
@@ -114,27 +128,44 @@ export async function GET(request: NextRequest) {
       throw err;
     }
 
-    // Update Xero contact if connected (fire-and-forget)
-    if (record.member.xeroContactId) {
+    const inheritedLinkedMembers = await prisma.member.findMany({
+      where: {
+        inheritEmailFromId: record.memberId,
+        xeroContactId: { not: null },
+      },
+      select: XERO_CONTACT_SYNC_SELECT,
+    });
+    const xeroContactMembers = [
+      ...(record.member.xeroContactId
+        ? [{ ...record.member, email: record.newEmail }]
+        : []),
+      ...inheritedLinkedMembers,
+    ];
+
+    // Update linked Xero contacts if connected (fire-and-forget)
+    if (xeroContactMembers.length > 0) {
       isXeroConnected()
         .then(async (connected) => {
           if (connected) {
-            await updateXeroContact(
-              record.member.xeroContactId!,
-              buildXeroContactUpdatePayload({
-                ...record.member,
-                email: record.newEmail,
-              }),
-              {
-                localModel: "Member",
-                localId: record.member.id,
-                createdByMemberId: record.member.id,
-              }
-            );
+            for (const member of xeroContactMembers) {
+              await updateXeroContact(
+                member.xeroContactId!,
+                buildXeroContactUpdatePayload(member),
+                {
+                  localModel: "Member",
+                  localId: member.id,
+                  createdByMemberId: record.member.id,
+                  preserveXeroName: true,
+                }
+              );
+            }
           }
         })
         .catch((err) => {
-          logger.error({ err, memberId: record.memberId }, "Failed to update Xero contact email");
+          logger.error(
+            { err, memberId: record.memberId, inheritedMemberCount: inheritedLinkedMembers.length },
+            "Failed to update Xero contact email"
+          );
         });
     }
 

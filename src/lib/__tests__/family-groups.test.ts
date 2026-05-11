@@ -57,9 +57,19 @@ vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
   rateLimiters: { familyGroupJoinRequest: { id: "fgjr", limit: 3, windowSeconds: 3600 } },
 }));
+vi.mock("@/lib/xero", () => ({
+  isXeroConnected: vi.fn().mockResolvedValue(false),
+  syncManagedXeroContactGroupForMember: vi.fn(),
+  updateXeroContact: vi.fn(),
+}));
 
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import {
+  isXeroConnected,
+  syncManagedXeroContactGroupForMember,
+  updateXeroContact,
+} from "@/lib/xero";
 
 const mockedAuth = vi.mocked(auth);
 const mockedPrisma = vi.mocked(prisma, true);
@@ -74,6 +84,7 @@ function completeMember(overrides: Record<string, unknown> = {}) {
     firstName: "Test",
     lastName: "Member",
     ageTier: "ADULT",
+    xeroContactId: null,
     active: true,
     canLogin: true,
     role: "MEMBER",
@@ -560,6 +571,7 @@ describe("PUT /api/members/family/[memberId]/details", () => {
 
   it("allows an adult in the same family group to confirm non-login member details", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "MEMBER" } } as any);
+    vi.mocked(isXeroConnected).mockResolvedValue(true);
     mockedPrisma.member.findUnique
       .mockResolvedValueOnce(completeAdult as any)
       .mockResolvedValueOnce({
@@ -569,6 +581,7 @@ describe("PUT /api/members/family/[memberId]/details", () => {
         lastName: "Smith",
         canLogin: false,
         ageTier: "CHILD",
+        xeroContactId: "xc-child",
         detailsConfirmedAt: null,
         detailsConfirmedByMemberId: null,
       } as any);
@@ -579,6 +592,7 @@ describe("PUT /api/members/family/[memberId]/details", () => {
       lastName: "Smith",
       canLogin: false,
       ageTier: "CHILD",
+      xeroContactId: "xc-child",
       dateOfBirth: new Date("2018-01-01"),
       detailsConfirmedByMemberId: "adult-1",
     } as any);
@@ -603,6 +617,21 @@ describe("PUT /api/members/family/[memberId]/details", () => {
         detailsConfirmedByMemberId: "adult-1",
       }),
     }));
+    expect(updateXeroContact).toHaveBeenCalledWith(
+      "xc-child",
+      expect.objectContaining({
+        dateOfBirth: new Date("2018-01-01"),
+        phoneCountryCode: "64",
+        streetAddressLine1: "1 Main St",
+      }),
+      expect.objectContaining({
+        localModel: "Member",
+        localId: "child-1",
+        createdByMemberId: "adult-1",
+        preserveXeroName: true,
+      })
+    );
+    expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
   });
 });
 

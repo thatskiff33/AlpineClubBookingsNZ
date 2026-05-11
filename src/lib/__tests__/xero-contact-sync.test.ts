@@ -63,6 +63,16 @@ describe("xero-contact-sync helpers", () => {
     ).toBe(false);
   });
 
+  it("ignores name-only changes because Xero names are reviewed through mismatch checks", () => {
+    expect(
+      hasMemberXeroContactChanges(baseContactSnapshot, {
+        ...baseContactSnapshot,
+        firstName: "Alicia",
+        lastName: "Jones",
+      })
+    ).toBe(false);
+  });
+
   it("detects a mapped field change", () => {
     expect(
       hasMemberXeroContactChanges(baseContactSnapshot, {

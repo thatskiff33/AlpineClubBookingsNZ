@@ -9,9 +9,22 @@ import {
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import logger from "@/lib/logger";
 
+const entranceFeeInvoiceDecisionSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("CREATE"),
+    amountCents: z.number().int().positive().max(1_000_000).optional().nullable(),
+    narration: z.string().trim().max(500).optional().nullable(),
+  }),
+  z.object({
+    action: z.literal("SKIP"),
+    reason: z.string().trim().min(3).max(500),
+  }),
+]);
+
 const reviewSchema = z.object({
   decision: z.enum(["APPROVE", "REJECT"]),
   adminNotes: z.string().max(4000).optional().nullable(),
+  entranceFeeInvoiceDecision: entranceFeeInvoiceDecisionSchema.optional().nullable(),
 });
 
 export async function PUT(
@@ -57,7 +70,8 @@ export async function PUT(
       const result = await approveMemberApplication(
         id,
         session.user.id,
-        parsed.data.adminNotes
+        parsed.data.adminNotes,
+        parsed.data.entranceFeeInvoiceDecision
       );
 
       return NextResponse.json({
