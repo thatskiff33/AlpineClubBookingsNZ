@@ -1,5 +1,6 @@
 import {
   XeroErrorShape,
+  getXeroErrorBodyMessage,
   getXeroErrorHeader,
   getXeroErrorStatusCode,
 } from "@/lib/xero-error-shape";
@@ -11,6 +12,11 @@ export interface XeroApiErrorInfo {
 }
 
 function getFallbackMessage(error: unknown, fallbackMessage: string): string {
+  const bodyMessage = getXeroErrorBodyMessage(error);
+  if (bodyMessage) {
+    return bodyMessage;
+  }
+
   if (error instanceof Error && error.message.trim()) {
     return error.message;
   }
@@ -42,6 +48,8 @@ export function getXeroApiErrorInfo(
   const isDailyLimit =
     (error instanceof Error && error.name === "XeroDailyLimitError") ||
     (statusCode === 429 && rateLimitProblem === "day");
+  const isTransientOutage =
+    error instanceof Error && error.name === "XeroTransientOutageError";
 
   if (isDailyLimit) {
     return {
@@ -64,6 +72,29 @@ export function getXeroApiErrorInfo(
       handled: true,
       status: 401,
       message: "Xero connection expired. Please reconnect Xero from the admin panel.",
+    };
+  }
+
+  if (isTransientOutage) {
+    return {
+      handled: true,
+      status: 503,
+      message: getFallbackMessage(error, "Xero is temporarily unavailable. Please try again shortly."),
+    };
+  }
+
+  if (statusCode !== undefined && statusCode >= 500 && statusCode <= 599) {
+    const correlationId = getXeroErrorHeader(error, "xero-correlation-id");
+    const retryMessage =
+      `Xero is temporarily unavailable (HTTP ${statusCode}). ` +
+      `${getFallbackMessage(error, fallbackMessage)} ` +
+      "Please try again in a few minutes." +
+      (correlationId ? ` Xero correlation ID: ${correlationId}.` : "");
+
+    return {
+      handled: false,
+      status: 502,
+      message: retryMessage,
     };
   }
 

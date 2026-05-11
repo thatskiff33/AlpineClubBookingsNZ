@@ -6,16 +6,21 @@ export interface XeroErrorShape {
   response?: {
     statusCode?: number;
     headers?: XeroErrorHeaders;
+    body?: XeroErrorBody;
   };
   statusCode?: number;
   status?: number;
   headers?: XeroErrorHeaders;
-  body?: {
-    Detail?: string;
-    Message?: string;
-    Title?: string;
-  };
+  body?: XeroErrorBody;
   message?: string;
+}
+
+interface XeroErrorBody {
+  Detail?: string;
+  Message?: string;
+  Title?: string;
+  Status?: number;
+  Instance?: string;
 }
 
 function getStringCandidates(error: unknown): string[] {
@@ -79,7 +84,11 @@ function getErrorCandidates(error: unknown): XeroErrorShape[] {
 export function getXeroErrorStatusCode(error: unknown): number | undefined {
   for (const candidate of getErrorCandidates(error)) {
     const statusCode =
-      candidate.response?.statusCode ?? candidate.statusCode ?? candidate.status;
+      candidate.response?.statusCode ??
+      candidate.statusCode ??
+      candidate.status ??
+      candidate.body?.Status ??
+      candidate.response?.body?.Status;
     if (typeof statusCode === "number") {
       return statusCode;
     }
@@ -89,6 +98,25 @@ export function getXeroErrorStatusCode(error: unknown): number | undefined {
     const match = value.match(/"statusCode":(\d{3})/);
     if (match) {
       return Number(match[1]);
+    }
+  }
+
+  return undefined;
+}
+
+export function getXeroErrorBodyMessage(error: unknown): string | undefined {
+  for (const candidate of getErrorCandidates(error)) {
+    const responseBody = candidate.response?.body;
+    const responseMessage =
+      responseBody?.Detail ?? responseBody?.Message ?? responseBody?.Title;
+    if (responseMessage) {
+      return responseMessage;
+    }
+
+    const body = candidate.body;
+    const message = body?.Detail ?? body?.Message ?? body?.Title;
+    if (message) {
+      return message;
     }
   }
 
