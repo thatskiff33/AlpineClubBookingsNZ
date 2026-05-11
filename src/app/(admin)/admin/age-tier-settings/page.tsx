@@ -341,31 +341,54 @@ export default function AgeTierSettingsPage() {
               setting.tier,
               xeroGroups
             );
+            const isLastTier = lastTier && setting.tier === lastTier.tier;
+            const maxAgeDisplay = isLastTier
+              ? "No limit"
+              : String(
+                  (sorted.find((row) => row.sortOrder === setting.sortOrder + 1)
+                    ?.minAge ?? 0) - 1
+                );
+            const labelInputId = `age-tier-label-${setting.tier}`;
+            const minAgeInputId = `age-tier-min-age-${setting.tier}`;
+            const maxAgeInputId = `age-tier-max-age-${setting.tier}`;
+            const primaryGroupInputId = `age-tier-primary-group-${setting.tier}`;
+            const subscriptionInputId = `subscription-required-${setting.tier}`;
 
             return (
               <div
                 key={setting.tier}
-                className="grid grid-cols-1 items-end gap-4 border-b pb-4 last:border-0 last:pb-0 sm:grid-cols-4"
+                className="space-y-4 border-b pb-5 last:border-0 last:pb-0"
               >
-                  <div className="space-y-1">
-                    <Label className="text-xs text-slate-500 uppercase tracking-wide">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       {setting.tier}
-                    </Label>
-                    <div className="space-y-1">
-                      <Label>Label</Label>
-                      <Input
-                        value={setting.label}
-                        onChange={(event) =>
-                          updateRow(setting.tier, "label", event.target.value)
-                        }
-                        disabled={!editing}
-                        className={!editing ? "bg-slate-50 text-slate-700" : ""}
-                      />
-                    </div>
+                    </p>
+                    <p className="text-sm text-slate-600">{setting.label}</p>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Ages {setting.minAge}
+                    {isLastTier ? "+" : `-${maxAgeDisplay}`}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-[minmax(12rem,1.25fr)_minmax(7rem,0.55fr)_minmax(7rem,0.55fr)_minmax(15rem,1.65fr)]">
+                  <div className="space-y-1">
+                    <Label htmlFor={labelInputId}>Label</Label>
+                    <Input
+                      id={labelInputId}
+                      value={setting.label}
+                      onChange={(event) =>
+                        updateRow(setting.tier, "label", event.target.value)
+                      }
+                      disabled={!editing}
+                      className={!editing ? "bg-slate-50 text-slate-700" : ""}
+                    />
                   </div>
                   <div className="space-y-1">
-                    <Label>Min Age (years)</Label>
+                    <Label htmlFor={minAgeInputId}>Min Age (years)</Label>
                     <Input
+                      id={minAgeInputId}
                       type="number"
                       min={0}
                       value={setting.minAge}
@@ -381,34 +404,29 @@ export default function AgeTierSettingsPage() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label>Max Age (years)</Label>
+                    <Label htmlFor={maxAgeInputId}>Max Age (years)</Label>
                     <Input
+                      id={maxAgeInputId}
                       type="text"
                       disabled
-                      value={
-                        lastTier && setting.tier === lastTier.tier
-                          ? "No limit"
-                          : String(
-                              (sorted.find((row) => row.sortOrder === setting.sortOrder + 1)
-                                ?.minAge ?? 0) - 1
-                            )
-                      }
+                      value={maxAgeDisplay}
                       className="bg-slate-50 text-slate-500"
                     />
-                    {!(lastTier && setting.tier === lastTier.tier) ? (
-                      <p className="text-xs text-slate-400">
-                        Auto-calculated from next tier&apos;s min age
-                      </p>
+                    {!isLastTier ? (
+                      <p className="text-xs text-slate-400">From next min age</p>
                     ) : null}
                   </div>
                   <div className="space-y-1">
-                    <Label>Primary Xero Contact Group</Label>
+                    <Label htmlFor={primaryGroupInputId}>
+                      Primary Xero Contact Group
+                    </Label>
                     <Select
                       value={setting.xeroContactGroupId ?? "__none__"}
                       onValueChange={(value) => updateXeroContactGroup(setting.tier, value)}
                       disabled={!editing || loadingXeroGroups || refreshingXeroGroups}
                     >
                       <SelectTrigger
+                        id={primaryGroupInputId}
                         className={!editing ? "bg-slate-50 text-slate-700" : ""}
                       >
                         <SelectValue placeholder="Not mapped" />
@@ -435,9 +453,12 @@ export default function AgeTierSettingsPage() {
                       group by default.
                     </p>
                   </div>
-                  <div className="flex items-start gap-3 rounded-md border bg-slate-50/70 p-3 sm:col-span-4">
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(16rem,20rem)_1fr]">
+                  <div className="flex items-start gap-3 rounded-md border bg-slate-50/70 p-3">
                     <Checkbox
-                      id={`subscription-required-${setting.tier}`}
+                      id={subscriptionInputId}
                       checked={setting.subscriptionRequiredForBooking}
                       onCheckedChange={(checked) =>
                         updateRow(
@@ -449,36 +470,49 @@ export default function AgeTierSettingsPage() {
                       disabled={!editing}
                     />
                     <div className="space-y-1">
-                      <Label htmlFor={`subscription-required-${setting.tier}`}>
+                      <Label htmlFor={subscriptionInputId}>
                         Subscription Required for Booking
                       </Label>
                       <p className="text-xs text-slate-500">
-                        When enabled, members in this age tier must have a paid
-                        subscription for the booking season before they can be booked
-                        as the owner or as a member guest.
+                        Requires a paid subscription before members in this tier can be
+                        booked as owners or member guests.
                       </p>
                     </div>
                   </div>
-                  <div className="space-y-2 sm:col-span-4">
-                    <Label>Additional Accepted Xero Groups</Label>
-                    <div className="rounded-md border bg-slate-50/70 p-3">
-                      {availableAcceptedGroups.length === 0 ? (
+
+                  <div className="rounded-md border bg-slate-50/70 p-3">
+                    <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="space-y-1">
+                        <Label>Additional Accepted Xero Groups</Label>
                         <p className="text-xs text-slate-500">
-                          No other eligible Xero contact groups available.
+                          Special-purpose groups that still count as valid for this tier.
                         </p>
-                      ) : (
-                        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        {setting.xeroAcceptedContactGroups.length} accepted
+                      </p>
+                    </div>
+                    {availableAcceptedGroups.length === 0 ? (
+                      <p className="text-xs text-slate-500">
+                        No other eligible Xero contact groups available.
+                      </p>
+                    ) : (
+                      <div className="max-h-36 overflow-y-auto pr-1">
+                        <div className="flex flex-wrap gap-2">
                           {availableAcceptedGroups.map((group) => {
                             const checked = setting.xeroAcceptedContactGroups.some(
                               (candidate) => candidate.groupId === group.id
                             );
+                            const acceptedGroupInputId = `accepted-group-${setting.tier}-${group.id}`;
 
                             return (
                               <label
                                 key={group.id}
-                                className="flex items-center gap-3 rounded-md border bg-white px-3 py-2 text-sm"
+                                htmlFor={acceptedGroupInputId}
+                                className="inline-flex min-w-0 max-w-full items-center gap-2 rounded-md border bg-white px-2.5 py-1.5 text-sm"
                               >
                                 <Checkbox
+                                  id={acceptedGroupInputId}
                                   checked={checked}
                                   onCheckedChange={(nextChecked) =>
                                     toggleAcceptedXeroContactGroup(
@@ -489,7 +523,7 @@ export default function AgeTierSettingsPage() {
                                   }
                                   disabled={!editing || loadingXeroGroups || refreshingXeroGroups}
                                 />
-                                <span className="flex-1 text-slate-700">
+                                <span className="min-w-0 truncate text-slate-700">
                                   {group.name}
                                   {group.contactCount > 0
                                     ? ` (${group.contactCount})`
@@ -499,13 +533,10 @@ export default function AgeTierSettingsPage() {
                             );
                           })}
                         </div>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-400">
-                      Use this for special-purpose Xero groups such as Admin or Life Member
-                      groups that should still count as valid for the same booking tier.
-                    </p>
+                      </div>
+                    )}
                   </div>
+                </div>
               </div>
             );
           })}

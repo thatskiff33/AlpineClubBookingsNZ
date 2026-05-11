@@ -168,6 +168,27 @@ function collectResolvedStyleOverrides(
   const getCssVariableValue = (name: string) =>
     computedStyle.getPropertyValue(name).trim() || null;
 
+  for (const propertyName of Array.from(computedStyle).filter((name) =>
+    name.startsWith("--")
+  )) {
+    const rawValue = computedStyle.getPropertyValue(propertyName).trim();
+    if (!rawValue) {
+      continue;
+    }
+
+    const normalizedValue = normalizeUnsupportedColorFunctions(
+      rawValue,
+      convertColor,
+      getCssVariableValue
+    );
+    if (
+      normalizedValue !== rawValue &&
+      !containsUnsupportedColorFunction(normalizedValue)
+    ) {
+      overrides.set(propertyName, normalizedValue);
+    }
+  }
+
   for (const propertyName of SCREENSHOT_STYLE_PROPERTIES_TO_RESOLVE) {
     const rawValue = computedStyle.getPropertyValue(propertyName).trim();
     if (
@@ -374,25 +395,17 @@ async function captureViewportScreenshot(options?: {
 
 async function captureViewportScreenshotWithFallbacks(): Promise<string> {
   try {
-    return await captureViewportScreenshot();
-  } catch (error) {
-    if (error instanceof BlankScreenshotError) {
-      throw error;
-    }
-  }
-
-  try {
     return await captureViewportScreenshot({ resolveUnsupportedColors: true });
   } catch (error) {
     if (error instanceof BlankScreenshotError) {
       throw error;
     }
-
-    return captureViewportScreenshot({
-      resolveUnsupportedColors: true,
-      includeOffscreenStyleOverrides: true,
-    });
   }
+
+  return captureViewportScreenshot({
+    resolveUnsupportedColors: true,
+    includeOffscreenStyleOverrides: true,
+  });
 }
 
 export function ReportIssueWidget({

@@ -112,7 +112,30 @@ describe("Admin Send Setup Invite API", () => {
     );
   });
 
-  it("skips inactive and dependent members", async () => {
+  it("sends setup invites to active login-enabled members even when they have a parent link", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedFindMany.mockResolvedValue([
+      { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
+    ] as any);
+
+    const res = await POST(makeReq({ memberIds: ["m1"] }));
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.sent).toBe(1);
+    expect(body.skipped).toBe(0);
+    expect(mockedFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: { in: ["m1"] },
+          active: true,
+          canLogin: true,
+        },
+      })
+    );
+  });
+
+  it("skips inactive and non-login members", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
     mockedFindMany.mockResolvedValue([
       { id: "m1", email: "alice@test.com", firstName: "Alice", lastName: "Smith" },
@@ -129,8 +152,7 @@ describe("Admin Send Setup Invite API", () => {
         where: {
           id: { in: ["m1", "m2"] },
           active: true,
-          ageTier: "ADULT",
-          parentMemberId: null,
+          canLogin: true,
         },
       })
     );

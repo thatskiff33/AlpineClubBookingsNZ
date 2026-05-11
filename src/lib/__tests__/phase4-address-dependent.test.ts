@@ -131,7 +131,7 @@ const baseMember = {
   active: true, forcePasswordChange: false, xeroContactId: null,
   joinedDate: null, createdAt: new Date("2025-01-01"), canLogin: true,
   profileCompletedAt: null,
-  parentMemberId: null, inheritParentEmail: false, inheritEmailFromId: null,
+  parentMemberId: null, parent: null, inheritParentEmail: false, inheritEmailFromId: null,
   streetAddressLine1: "123 Main St", streetAddressLine2: null,
   streetCity: "Tokoroa", streetRegion: "Waikato",
   streetPostalCode: "3420", streetCountry: "NZ",
@@ -497,6 +497,33 @@ describe("Admin: Member detail returns dependents", () => {
     const body = await res.json();
     expect(body.dependents).toHaveLength(1);
     expect(body.dependents[0].firstName).toBe("Child");
+  });
+
+  it("includes the parent in the response", async () => {
+    vi.mocked(auth).mockResolvedValue(adminSession);
+    vi.mocked(prisma.member.findUnique).mockResolvedValue({
+      ...baseMember,
+      parentMemberId: "parent1",
+      parent: {
+        id: "parent1",
+        firstName: "Parent",
+        lastName: "Smith",
+        email: "parent@test.com",
+        ageTier: "ADULT",
+        active: true,
+        canLogin: true,
+      },
+      inheritEmailFrom: null,
+    } as any);
+
+    const res = await getMemberDetail(
+      new NextRequest("http://localhost/api/admin/members/m1"),
+      { params: Promise.resolve({ id: "m1" }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.parent.firstName).toBe("Parent");
+    expect(body.parentMemberId).toBe("parent1");
   });
 });
 

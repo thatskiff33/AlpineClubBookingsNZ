@@ -23,7 +23,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion"
-import { ArrowLeft, ExternalLink, User, Calendar, CreditCard, Clock, Pencil, Search, Link2, Plus } from "lucide-react"
+import { ArrowLeft, ExternalLink, User, Calendar, CreditCard, Clock, Pencil, Search, Link2, Plus, Trash2 } from "lucide-react"
 import {
   NZ_COUNTRY_CODE,
   postalMatchesPhysical,
@@ -79,6 +79,8 @@ interface MemberDetail {
   financeAccessLevel: FinanceAccessLevel
   active: boolean; forcePasswordChange: boolean; xeroContactId: string | null; joinedDate: string | null; createdAt: string
   canLogin: boolean
+  parentMemberId: string | null
+  parent: ParentMemberSummary | null
   xeroContactGroupsLoaded: boolean
   xeroContactGroups: Array<{ id: string; name: string }>
   inheritEmailFromId: string | null
@@ -116,6 +118,16 @@ interface MemberDetail {
   streetRegion: string | null; streetPostalCode: string | null; streetCountry: string | null
   postalAddressLine1: string | null; postalAddressLine2: string | null; postalCity: string | null
   postalRegion: string | null; postalPostalCode: string | null; postalCountry: string | null
+}
+
+interface ParentMemberSummary {
+  id: string
+  firstName: string
+  lastName: string
+  email: string
+  ageTier: string
+  active: boolean
+  canLogin: boolean
 }
 
 interface AuditActor {
@@ -265,6 +277,11 @@ interface LinkDependentSearchResult {
   dateOfBirth: string | null
 }
 
+interface LinkParentSearchResult extends ParentMemberSummary {
+  dateOfBirth: string | null
+  familyGroups: { id: string; name: string | null }[]
+}
+
 function shouldDefaultLinkSideEffects(ageTier: string) {
   return ageTier !== "ADULT"
 }
@@ -342,6 +359,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [loading, setLoading] = useState(true)
   const [pageError, setPageError] = useState("")
   const [success, setSuccess] = useState("")
+  const [relationshipError, setRelationshipError] = useState("")
   const [xeroError, setXeroError] = useState("")
   const [editOpen, setEditOpen] = useState(false)
   const [form, setForm] = useState<EditForm>({ firstName: "", lastName: "", email: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", dateOfBirth: "", joinedDate: "", role: "MEMBER", ageTier: "ADULT", financeAccessLevel: "NONE", active: true, canLogin: true, forcePasswordChange: false, inheritEmailFromId: null, streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: "", postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: "" })
@@ -367,6 +385,17 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [linkDependentInheritEmail, setLinkDependentInheritEmail] = useState(false)
   const [linkDependentDisableLogin, setLinkDependentDisableLogin] = useState(false)
   const [linkDependentFamilyGroupIds, setLinkDependentFamilyGroupIds] = useState<string[]>([])
+  const [parentLinkOpen, setParentLinkOpen] = useState(false)
+  const [parentLinkSearch, setParentLinkSearch] = useState("")
+  const [parentLinkSearchResults, setParentLinkSearchResults] = useState<LinkParentSearchResult[]>([])
+  const [parentLinkSearching, setParentLinkSearching] = useState(false)
+  const [selectedLinkParent, setSelectedLinkParent] = useState<LinkParentSearchResult | null>(null)
+  const [parentLinkInheritEmail, setParentLinkInheritEmail] = useState(false)
+  const [parentLinkDisableLogin, setParentLinkDisableLogin] = useState(false)
+  const [parentLinkFamilyGroupIds, setParentLinkFamilyGroupIds] = useState<string[]>([])
+  const [parentLinkSaving, setParentLinkSaving] = useState(false)
+  const [parentLinkError, setParentLinkError] = useState("")
+  const [unlinkingDependentId, setUnlinkingDependentId] = useState<string | null>(null)
   const [familyGroupEditorId, setFamilyGroupEditorId] = useState<string | null>(null)
   // Account credit state
   const [creditBalance, setCreditBalance] = useState<number>(0)
@@ -714,6 +743,73 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     }
   }, [dependentMode, dependentOpen, linkDependentSearch, memberId, selectedLinkDependent?.id])
 
+  useEffect(() => {
+    if (!parentLinkOpen || !memberId || member?.parent?.id) {
+      setParentLinkSearchResults([])
+      setParentLinkSearching(false)
+      return
+    }
+
+    const query = parentLinkSearch.trim()
+    if (query.length < 2) {
+      setParentLinkSearchResults([])
+      setParentLinkSearching(false)
+      return
+    }
+
+    let cancelled = false
+    setParentLinkSearching(true)
+    setParentLinkError("")
+
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          q: query,
+          pageSize: "8",
+          parentLinkEligibleFor: memberId,
+        })
+        const res = await fetch(`/api/admin/members?${params.toString()}`)
+        const data = await res.json().catch(() => ({}))
+
+        if (!res.ok) {
+          throw new Error(data.error || "Failed to search parent members")
+        }
+
+        if (!cancelled) {
+          setParentLinkSearchResults(
+            (data.members ?? [])
+              .map((candidate: LinkParentSearchResult) => ({
+                id: candidate.id,
+                firstName: candidate.firstName,
+                lastName: candidate.lastName,
+                email: candidate.email,
+                ageTier: candidate.ageTier,
+                active: candidate.active,
+                canLogin: candidate.canLogin,
+                dateOfBirth: candidate.dateOfBirth,
+                familyGroups: candidate.familyGroups ?? [],
+              }))
+              .filter((candidate: LinkParentSearchResult) => candidate.id !== selectedLinkParent?.id)
+          )
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setParentLinkSearchResults([])
+          setParentLinkError(error instanceof Error ? error.message : "Failed to search parent members")
+        }
+      } finally {
+        if (!cancelled) {
+          setParentLinkSearching(false)
+        }
+      }
+    }, 300)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [member?.parent?.id, memberId, parentLinkOpen, parentLinkSearch, selectedLinkParent?.id])
+
   const openEditDialog = useCallback(() => {
     if (!member) return
     setForm({
@@ -1034,6 +1130,119 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     }
   }
 
+  const openParentLinkDialog = () => {
+    if (!member) return
+    const defaultSideEffects = shouldDefaultLinkSideEffects(member.ageTier)
+    setParentLinkSearch("")
+    setParentLinkSearchResults([])
+    setParentLinkSearching(false)
+    setSelectedLinkParent(null)
+    setParentLinkInheritEmail(defaultSideEffects)
+    setParentLinkDisableLogin(defaultSideEffects)
+    setParentLinkFamilyGroupIds([])
+    setParentLinkError("")
+    setParentLinkOpen(true)
+  }
+
+  const selectLinkParent = (candidate: LinkParentSearchResult) => {
+    if (!member) return
+    const defaultSideEffects = shouldDefaultLinkSideEffects(member.ageTier)
+    setSelectedLinkParent(candidate)
+    setParentLinkInheritEmail(defaultSideEffects)
+    setParentLinkDisableLogin(defaultSideEffects)
+    setParentLinkFamilyGroupIds(candidate.familyGroups.map((group) => group.id))
+    setParentLinkSearch("")
+    setParentLinkSearchResults([])
+    setParentLinkError("")
+  }
+
+  const clearLinkParent = () => {
+    if (!member) return
+    const defaultSideEffects = shouldDefaultLinkSideEffects(member.ageTier)
+    setSelectedLinkParent(null)
+    setParentLinkInheritEmail(defaultSideEffects)
+    setParentLinkDisableLogin(defaultSideEffects)
+    setParentLinkFamilyGroupIds([])
+    setParentLinkSearch("")
+    setParentLinkSearchResults([])
+    setParentLinkError("")
+  }
+
+  const toggleParentLinkFamilyGroup = (familyGroupId: string, checked: boolean) => {
+    setParentLinkFamilyGroupIds((current) =>
+      checked
+        ? Array.from(new Set([...current, familyGroupId]))
+        : current.filter((id) => id !== familyGroupId)
+    )
+  }
+
+  const handleLinkParent = async () => {
+    if (!member || !selectedLinkParent) return
+
+    setParentLinkSaving(true)
+    setParentLinkError("")
+    setRelationshipError("")
+
+    try {
+      const res = await fetch(`/api/admin/members/${selectedLinkParent.id}/dependents/link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberId: member.id,
+          inheritEmail: parentLinkInheritEmail,
+          disableLogin: parentLinkDisableLogin,
+          addToFamilyGroupIds: parentLinkFamilyGroupIds,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to link parent")
+      }
+
+      setParentLinkOpen(false)
+      setSuccess("Parent linked successfully")
+      setTimeout(() => setSuccess(""), 3000)
+      setLoading(true)
+      await fetchMember()
+    } catch (err) {
+      setParentLinkError(err instanceof Error ? err.message : "Failed to link parent")
+    } finally {
+      setParentLinkSaving(false)
+    }
+  }
+
+  const handleUnlinkDependent = async (
+    parentId: string,
+    dependentId: string,
+    dependentName: string
+  ) => {
+    if (!confirm(`Remove the parent/dependant link for ${dependentName}?`)) return
+
+    setUnlinkingDependentId(dependentId)
+    setRelationshipError("")
+
+    try {
+      const res = await fetch(`/api/admin/members/${parentId}/dependents/${dependentId}`, {
+        method: "DELETE",
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to remove parent/dependant link")
+      }
+
+      setSuccess("Parent/dependant link removed")
+      setTimeout(() => setSuccess(""), 3000)
+      setLoading(true)
+      await fetchMember()
+    } catch (err) {
+      setRelationshipError(err instanceof Error ? err.message : "Failed to remove parent/dependant link")
+    } finally {
+      setUnlinkingDependentId(null)
+    }
+  }
+
   const updateDependentAddressFields = (patch: Partial<MemberAddressValues>) => {
     setDependentForm((current) => ({ ...current, ...patch }))
   }
@@ -1290,6 +1499,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       </div>
 
       {success && <div className="p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">{success}</div>}
+      {relationshipError && <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{relationshipError}</div>}
       {xeroError && !xeroSearchOpen && !editOpen && !xeroCreateOpen && !xeroCreateDecisionOpen && (
         <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{xeroError}</div>
       )}
@@ -1345,6 +1555,86 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           </dd>
         </div>
       </dl></CardContent></Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base font-medium">Parent Link</CardTitle>
+          {member.parent ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                handleUnlinkDependent(
+                  member.parent!.id,
+                  member.id,
+                  `${member.firstName} ${member.lastName}`
+                )
+              }
+              disabled={unlinkingDependentId === member.id}
+            >
+              <Trash2 className="h-4 w-4 mr-1" />
+              {unlinkingDependentId === member.id ? "Removing..." : "Remove Parent"}
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={openParentLinkDialog}
+              disabled={member.dependents.length > 0}
+              title={member.dependents.length > 0 ? "Members with dependants cannot be linked under another parent." : undefined}
+            >
+              <Link2 className="h-4 w-4 mr-1" />
+              Add Parent
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent>
+          {member.parent ? (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-medium text-slate-900">
+                    {member.parent.firstName} {member.parent.lastName}
+                  </p>
+                  <Badge variant="secondary">{member.parent.ageTier}</Badge>
+                  <Badge
+                    variant={member.parent.active ? "default" : "destructive"}
+                    className={member.parent.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}
+                  >
+                    {member.parent.active ? "Active" : "Inactive"}
+                  </Badge>
+                  {member.parent.canLogin ? (
+                    <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
+                      Can Login
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">
+                      Non-Login
+                    </Badge>
+                  )}
+                </div>
+                <p className="mt-1 text-sm text-slate-500">{member.parent.email}</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => router.push(`/admin/members/${member.parent!.id}`)}
+              >
+                View Parent
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-slate-500">No parent member linked.</p>
+              {member.dependents.length > 0 && (
+                <p className="text-xs text-slate-500">
+                  This member already has dependants, so they cannot be linked under another parent.
+                </p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -1475,13 +1765,30 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => router.push(`/admin/members/${dependent.id}`)}
-                      >
-                        View
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => router.push(`/admin/members/${dependent.id}`)}
+                        >
+                          View
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            handleUnlinkDependent(
+                              member.id,
+                              dependent.id,
+                              `${dependent.firstName} ${dependent.lastName}`
+                            )
+                          }
+                          disabled={unlinkingDependentId === dependent.id}
+                        >
+                          <Trash2 className="h-4 w-4 mr-1" />
+                          {unlinkingDependentId === dependent.id ? "Removing..." : "Remove"}
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1825,6 +2132,143 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             </Button>
             <Button onClick={() => handleXeroPush(true)} disabled={xeroLinking || xeroPushing}>
               {xeroPushing ? "Creating..." : "Create New Contact Anyway"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={parentLinkOpen} onOpenChange={setParentLinkOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Link Parent</DialogTitle>
+            <DialogDescription>
+              Link {member.firstName} {member.lastName} under an active adult member.
+            </DialogDescription>
+          </DialogHeader>
+          {parentLinkError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{parentLinkError}</div>}
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="link-parent-search">Parent search</Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                <Input
+                  id="link-parent-search"
+                  value={parentLinkSearch}
+                  onChange={(e) => {
+                    setParentLinkSearch(e.target.value)
+                    setSelectedLinkParent(null)
+                    setParentLinkError("")
+                  }}
+                  placeholder="Search by name, email, or member ID"
+                  className="pl-9"
+                />
+                {parentLinkSearching && (
+                  <div className="absolute right-3 top-2.5 text-xs text-slate-400">Searching...</div>
+                )}
+              </div>
+            </div>
+
+            {selectedLinkParent ? (
+              <div className="rounded-md border border-slate-200 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-medium text-slate-900">
+                        {selectedLinkParent.firstName} {selectedLinkParent.lastName}
+                      </p>
+                      <Badge variant="secondary">{selectedLinkParent.ageTier}</Badge>
+                      {!selectedLinkParent.active && (
+                        <Badge variant="secondary" className="bg-slate-100 text-slate-600 border-slate-200">Inactive</Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">{selectedLinkParent.email}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {selectedLinkParent.canLogin ? "Can login" : "Non-login"}
+                      {selectedLinkParent.dateOfBirth ? ` · DOB ${fmtDate(selectedLinkParent.dateOfBirth)}` : ""}
+                    </p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={clearLinkParent} disabled={parentLinkSaving}>
+                    Change
+                  </Button>
+                </div>
+              </div>
+            ) : parentLinkSearch.trim().length >= 2 && parentLinkSearchResults.length > 0 ? (
+              <div className="max-h-56 overflow-y-auto rounded-md border border-slate-200">
+                {parentLinkSearchResults.map((candidate) => (
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    onClick={() => selectLinkParent(candidate)}
+                    className="w-full border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50"
+                  >
+                    <span className="font-medium">{candidate.firstName} {candidate.lastName}</span>
+                    <span className="ml-2 text-slate-500">{candidate.email}</span>
+                    <span className="ml-2 text-xs text-slate-400">{candidate.ageTier}</span>
+                  </button>
+                ))}
+              </div>
+            ) : parentLinkSearch.trim().length >= 2 && !parentLinkSearching ? (
+              <p className="text-sm text-slate-500">No eligible active adult members found.</p>
+            ) : (
+              <p className="text-sm text-slate-500">Start typing at least 2 characters to search.</p>
+            )}
+
+            {selectedLinkParent && (
+              <div className="space-y-4">
+                <div className="space-y-3 rounded-md border border-slate-200 p-3">
+                  <div className="flex items-start gap-2">
+                    <Checkbox
+                      id="link-parent-inherit-email"
+                      checked={parentLinkInheritEmail}
+                      onCheckedChange={(checked) => setParentLinkInheritEmail(checked === true)}
+                      disabled={parentLinkSaving}
+                    />
+                    <Label htmlFor="link-parent-inherit-email" className="text-sm font-normal">
+                      Inherit email from this parent
+                    </Label>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Checkbox
+                      id="link-parent-disable-login"
+                      checked={parentLinkDisableLogin}
+                      onCheckedChange={(checked) => setParentLinkDisableLogin(checked === true)}
+                      disabled={parentLinkSaving}
+                    />
+                    <Label htmlFor="link-parent-disable-login" className="text-sm font-normal">
+                      Disable login
+                    </Label>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Add to parent family groups</Label>
+                  {selectedLinkParent.familyGroups.length > 0 ? (
+                    <div className="space-y-2 rounded-md border border-slate-200 p-3">
+                      {selectedLinkParent.familyGroups.map((group) => (
+                        <div key={group.id} className="flex items-center gap-2">
+                          <Checkbox
+                            id={`link-parent-family-group-${group.id}`}
+                            checked={parentLinkFamilyGroupIds.includes(group.id)}
+                            onCheckedChange={(checked) => toggleParentLinkFamilyGroup(group.id, checked === true)}
+                            disabled={parentLinkSaving}
+                          />
+                          <Label htmlFor={`link-parent-family-group-${group.id}`} className="text-sm font-normal">
+                            {group.name || "Unnamed group"}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-500">This parent is not in any family groups.</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setParentLinkOpen(false)} disabled={parentLinkSaving}>Cancel</Button>
+            <Button onClick={handleLinkParent} disabled={parentLinkSaving || !selectedLinkParent}>
+              {parentLinkSaving ? "Linking..." : "Link Parent"}
             </Button>
           </DialogFooter>
         </DialogContent>
