@@ -1,8 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  prisma: {
+    xeroContactCache: {
+      findUnique: vi.fn(),
+    },
+  },
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: mocks.prisma,
+}));
 
 import {
   buildXeroContactUpdatePayload,
   hasMemberXeroContactChanges,
+  shouldRepairXeroContactNameOrder,
 } from "@/lib/xero-contact-sync";
 
 const baseContactSnapshot = {
@@ -28,6 +41,10 @@ const baseContactSnapshot = {
 };
 
 describe("xero-contact-sync helpers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("builds a Xero contact update payload including date of birth", () => {
     expect(buildXeroContactUpdatePayload(baseContactSnapshot)).toEqual({
       firstName: "Alice",
@@ -80,5 +97,40 @@ describe("xero-contact-sync helpers", () => {
         phoneNumber: "9999999",
       })
     ).toBe(true);
+  });
+
+  it("repairs cached Xero names that are clearly last-name first", async () => {
+    mocks.prisma.xeroContactCache.findUnique.mockResolvedValue({
+      name: "Smith, Alice",
+      firstName: null,
+      lastName: null,
+    });
+
+    await expect(
+      shouldRepairXeroContactNameOrder({
+        ...baseContactSnapshot,
+        xeroContactId: "contact_1",
+      })
+    ).resolves.toBe(true);
+
+    expect(mocks.prisma.xeroContactCache.findUnique).toHaveBeenCalledWith({
+      where: { contactId: "contact_1" },
+      select: { name: true, firstName: true, lastName: true },
+    });
+  });
+
+  it("keeps unrelated reviewed Xero names preserved", async () => {
+    mocks.prisma.xeroContactCache.findUnique.mockResolvedValue({
+      name: "The Smith Family",
+      firstName: null,
+      lastName: null,
+    });
+
+    await expect(
+      shouldRepairXeroContactNameOrder({
+        ...baseContactSnapshot,
+        xeroContactId: "contact_1",
+      })
+    ).resolves.toBe(false);
   });
 });

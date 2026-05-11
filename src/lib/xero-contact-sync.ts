@@ -1,8 +1,14 @@
 import type { XeroContactUpdateData } from "@/lib/xero";
+import { prisma } from "@/lib/prisma";
+import { getXeroContactNameOrderRepair } from "@/lib/xero-contact-link-mismatches";
 
 export type MemberXeroContactSnapshot = XeroContactUpdateData & {
   firstName: string;
   lastName: string;
+};
+
+export type LinkedMemberXeroContactSnapshot = MemberXeroContactSnapshot & {
+  xeroContactId?: string | null;
 };
 
 function normalizeOptionalString(value: string | null | undefined): string | null {
@@ -76,4 +82,28 @@ export function hasMemberXeroContactChanges(
     normalizeOptionalString(previous.postalPostalCode) !== normalizeOptionalString(next.postalPostalCode) ||
     normalizeOptionalString(previous.postalCountry) !== normalizeOptionalString(next.postalCountry)
   );
+}
+
+export async function shouldRepairXeroContactNameOrder(
+  member: LinkedMemberXeroContactSnapshot
+): Promise<boolean> {
+  const xeroContactId = member.xeroContactId?.trim();
+  if (!xeroContactId) {
+    return false;
+  }
+
+  const cachedContact = await prisma.xeroContactCache.findUnique({
+    where: { contactId: xeroContactId },
+    select: {
+      name: true,
+      firstName: true,
+      lastName: true,
+    },
+  });
+
+  if (!cachedContact) {
+    return false;
+  }
+
+  return Boolean(getXeroContactNameOrderRepair(member, cachedContact));
 }

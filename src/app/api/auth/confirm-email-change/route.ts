@@ -7,7 +7,10 @@ import {
   getAuditEmailDomain,
   getAuditRequestContext,
 } from "@/lib/audit";
-import { buildXeroContactUpdatePayload } from "@/lib/xero-contact-sync";
+import {
+  buildXeroContactUpdatePayload,
+  shouldRepairXeroContactNameOrder,
+} from "@/lib/xero-contact-sync";
 import logger from "@/lib/logger";
 import { hashActionToken } from "@/lib/action-tokens";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
@@ -148,6 +151,8 @@ export async function GET(request: NextRequest) {
         .then(async (connected) => {
           if (connected) {
             for (const member of xeroContactMembers) {
+              const shouldRepairContactNameOrder =
+                await shouldRepairXeroContactNameOrder(member);
               await updateXeroContact(
                 member.xeroContactId!,
                 buildXeroContactUpdatePayload(member),
@@ -155,7 +160,7 @@ export async function GET(request: NextRequest) {
                   localModel: "Member",
                   localId: member.id,
                   createdByMemberId: record.member.id,
-                  preserveXeroName: true,
+                  preserveXeroName: !shouldRepairContactNameOrder,
                 }
               );
             }
