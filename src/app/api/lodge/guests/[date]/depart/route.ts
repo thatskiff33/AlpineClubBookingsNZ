@@ -5,6 +5,7 @@ import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import logger from "@/lib/logger";
+import { logAudit, getAuditRequestContext } from "@/lib/audit";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const bodySchema = z.object({
@@ -23,7 +24,8 @@ export async function PUT(
 ) {
   const { date: dateStr } = await params;
 
-  const { error, status, tier } = await checkLodgeAuth(dateStr, { request: req });
+  const authResult = await checkLodgeAuth(dateStr, { request: req });
+  const { error, status, tier } = authResult;
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
@@ -81,6 +83,43 @@ export async function PUT(
           },
         });
       }
+    });
+
+    const actorMemberId =
+      authResult.session?.user.id ??
+      ("pinSession" in authResult
+        ? authResult.pinSession?.memberId ?? null
+        : null);
+    const auditRequest = getAuditRequestContext(req);
+    const markedDeparted = Boolean(departedAt);
+    logAudit({
+      action: markedDeparted
+        ? "lodge.guest.departed"
+        : "lodge.guest.departure_cleared",
+      memberId: actorMemberId,
+      targetId: guest.id,
+      subjectMemberId: guest.memberId ?? guest.booking.memberId,
+      entityType: "BookingGuest",
+      entityId: guest.id,
+      category: "lodge",
+      severity: "important",
+      outcome: "success",
+      summary: markedDeparted
+        ? "Guest marked departed"
+        : "Guest departure cleared",
+      details: `${markedDeparted ? "Marked guest departed" : "Cleared guest departure"} for ${dateStr}`,
+      metadata: {
+        date: dateStr,
+        tier,
+        bookingId: guest.bookingId,
+        bookingGuestId: guest.id,
+        bookingMemberId: guest.booking.memberId,
+        guestMemberId: guest.memberId,
+        guestName: `${guest.firstName} ${guest.lastName}`,
+      },
+      ipAddress: auditRequest?.ipAddress,
+      requestId: auditRequest?.id,
+      userAgent: auditRequest?.userAgent,
     });
 
     return NextResponse.json({ success: true, departedAt: departedAt?.toISOString() ?? null });

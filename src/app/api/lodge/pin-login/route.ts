@@ -13,6 +13,7 @@ import {
   getClientIp,
   rateLimiters,
 } from "@/lib/rate-limit";
+import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 
 const bodySchema = z.object({
   pin: z.string().regex(/^\d{6}$/),
@@ -32,8 +33,25 @@ function rateLimitResponse(message: string, retryAfter: number) {
 
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req);
+  const auditRequest = getAuditRequestContext(req);
   const lockout = getLodgePinLockout(ip);
   if (lockout.locked) {
+    await createAuditLog({
+      action: "lodge.pin.login.blocked",
+      details: "Lodge PIN login blocked by IP lockout",
+      category: "security",
+      severity: "important",
+      outcome: "blocked",
+      summary: "Lodge PIN login blocked",
+      metadata: {
+        retryAfter: lockout.retryAfter,
+        reason: "ip-lockout",
+      },
+      ipAddress: auditRequest?.ipAddress,
+      requestId: auditRequest?.id,
+      userAgent: auditRequest?.userAgent,
+      retentionClass: "sensitive_access",
+    });
     return rateLimitResponse(
       "Too many failed PIN attempts. Please try again later.",
       lockout.retryAfter
@@ -63,6 +81,29 @@ export async function POST(req: NextRequest) {
   const assignment = await findActiveHutLeaderAssignmentByPin(parsed.data.pin);
   if (!assignment) {
     const failure = recordLodgePinFailure(ip);
+    await createAuditLog({
+      action: failure.locked
+        ? "lodge.pin.login.locked"
+        : "lodge.pin.login.failed",
+      details: failure.locked
+        ? "Lodge PIN login failed and triggered lockout"
+        : "Lodge PIN login failed",
+      category: "security",
+      severity: failure.locked ? "important" : "info",
+      outcome: "failure",
+      summary: failure.locked
+        ? "Lodge PIN login locked"
+        : "Lodge PIN login failed",
+      metadata: {
+        failureCount: failure.count,
+        locked: failure.locked,
+        retryAfter: failure.retryAfter,
+      },
+      ipAddress: auditRequest?.ipAddress,
+      requestId: auditRequest?.id,
+      userAgent: auditRequest?.userAgent,
+      retentionClass: "sensitive_access",
+    });
     if (failure.locked) {
       return rateLimitResponse(
         "Too many failed PIN attempts. Please try again later.",
@@ -74,6 +115,27 @@ export async function POST(req: NextRequest) {
   }
 
   clearLodgePinFailures(ip);
+
+  await createAuditLog({
+    action: "lodge.pin.login.succeeded",
+    memberId: assignment.memberId,
+    targetId: assignment.memberId,
+    subjectMemberId: assignment.memberId,
+    entityType: "Member",
+    entityId: assignment.memberId,
+    category: "lodge",
+    severity: "important",
+    outcome: "success",
+    summary: "Lodge PIN login succeeded",
+    details: "Hut leader signed in with lodge PIN",
+    metadata: {
+      assignmentId: assignment.id,
+    },
+    ipAddress: auditRequest?.ipAddress,
+    requestId: auditRequest?.id,
+    userAgent: auditRequest?.userAgent,
+    retentionClass: "sensitive_access",
+  });
 
   const session = createLodgePinSessionWithVersion(
     assignment.id,

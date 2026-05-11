@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   memberCreditUpdate: vi.fn(),
   memberCreditUpdateMany: vi.fn(),
   linkFindMany: vi.fn(),
+  auditLogCreate: vi.fn(),
+  bookingFindMany: vi.fn(),
+  bookingModificationFindMany: vi.fn(),
   paymentFindMany: vi.fn(),
   paymentUpdate: vi.fn(),
   subscriptionFindMany: vi.fn(),
@@ -69,6 +72,15 @@ vi.mock("@/lib/prisma", () => ({
     },
     xeroObjectLink: {
       findMany: mocks.linkFindMany,
+    },
+    auditLog: {
+      create: mocks.auditLogCreate,
+    },
+    booking: {
+      findMany: mocks.bookingFindMany,
+    },
+    bookingModification: {
+      findMany: mocks.bookingModificationFindMany,
     },
     payment: {
       findMany: mocks.paymentFindMany,
@@ -216,6 +228,11 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.memberCreditFindMany.mockResolvedValue([]);
     mocks.memberCreditUpdate.mockResolvedValue({ id: "credit_1" });
     mocks.memberCreditUpdateMany.mockResolvedValue({ count: 0 });
+    mocks.auditLogCreate.mockResolvedValue({});
+    mocks.bookingFindMany.mockResolvedValue([]);
+    mocks.bookingModificationFindMany.mockResolvedValue([]);
+    mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
   });
 
   it("marks duplicate inbound events as processed without re-running reconciliation", async () => {
@@ -373,6 +390,25 @@ describe("processStoredXeroInboundEvents", () => {
         xeroObjectId: "contact_1",
       })
     );
+    expect(mocks.auditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "xero.contact.reconciled",
+        subjectMemberId: "mem_1",
+        entityType: "Member",
+        entityId: "mem_1",
+        category: "xero",
+        metadata: expect.objectContaining({
+          source: "xero-inbound-contact",
+          xeroObjectId: "contact_1",
+          changedFields: expect.arrayContaining([
+            "xeroContactId",
+            "phoneCountryCode",
+            "streetAddressLine1",
+            "joinedDate",
+          ]),
+        }),
+      }),
+    });
   });
 
   it("reconciles invoice events into payment metadata and membership refresh", async () => {
@@ -398,13 +434,21 @@ describe("processStoredXeroInboundEvents", () => {
         },
       ])
       .mockResolvedValueOnce([]);
-    mocks.paymentFindMany.mockResolvedValue([
-      {
-        id: "pay_1",
-        xeroInvoiceId: null,
-        xeroInvoiceNumber: null,
-      },
-    ]);
+    mocks.paymentFindMany
+      .mockResolvedValueOnce([
+        {
+          id: "pay_1",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_1",
+          bookingId: "booking_1",
+          booking: { memberId: "mem_1" },
+        },
+      ]);
     mocks.subscriptionFindMany.mockResolvedValue([]);
     mocks.memberFindMany.mockResolvedValue([{ id: "mem_1" }]);
     mocks.checkMembershipStatus.mockResolvedValue({
@@ -456,6 +500,22 @@ describe("processStoredXeroInboundEvents", () => {
         role: "PRIMARY_INVOICE",
       })
     );
+    expect(mocks.auditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "xero.invoice.reconciled",
+        subjectMemberId: "mem_1",
+        entityType: "Payment",
+        entityId: "pay_1",
+        category: "xero",
+        metadata: expect.objectContaining({
+          source: "xero-inbound-invoice",
+          xeroObjectId: "inv_1",
+          invoiceNumber: "INV-001",
+          matchedPayments: 1,
+          updatedPayments: 1,
+        }),
+      }),
+    });
   });
 
   it("recovers missing supplementary invoice and payment links from the outbound operation ledger", async () => {

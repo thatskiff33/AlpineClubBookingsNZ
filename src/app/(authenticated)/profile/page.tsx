@@ -363,7 +363,7 @@ export default async function ProfilePage({
       <ProfileSectionCard
         collapsible
         defaultOpen
-        description="Manage your family group members. Adults can invite other adults, and request to add children or youth."
+        description="Manage your family group members. Adults can invite other adults, and request to add infants, children, or youth."
         id="family-group"
         title="Family Group"
       >

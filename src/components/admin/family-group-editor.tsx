@@ -90,6 +90,8 @@ const AGE_TIER_COLORS: Record<string, string> = {
   ADULT: "bg-slate-100 text-slate-700 border-slate-200",
 };
 
+const CHILD_REQUEST_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);
+
 const SESSION_LAG_WARNING =
   "The previous holder's session may remain valid for up to 8 hours after the swap.";
 
@@ -150,6 +152,7 @@ export function FamilyGroupEditor({
   const [requestSelections, setRequestSelections] = useState<Record<string, string>>({});
   const [requestSearchTerms, setRequestSearchTerms] = useState<Record<string, string>>({});
   const [requestSearchResults, setRequestSearchResults] = useState<Record<string, RequestMemberMatch[]>>({});
+  const [requestSearchFeedback, setRequestSearchFeedback] = useState<Record<string, string>>({});
   const [requestNotes, setRequestNotes] = useState<Record<string, string>>({});
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [requestSearchingId, setRequestSearchingId] = useState<string | null>(null);
@@ -307,8 +310,17 @@ export function FamilyGroupEditor({
     });
   }
 
+  function clearRequestSearchFeedback(requestId: string) {
+    setRequestSearchFeedback((current) => {
+      if (!current[requestId]) return current;
+      const next = { ...current };
+      delete next[requestId];
+      return next;
+    });
+  }
+
   function getRequestTypeLabel(request: FamilyGroupRequest) {
-    if (request.type === "CHILD_REQUEST") return "Child/Youth Request";
+    if (request.type === "CHILD_REQUEST") return "Infant/Child/Youth Request";
     if (request.type === "ADULT_REQUEST") return "Same-email Adult Request";
     if (request.type === "REMOVAL_REQUEST") return "Removal Request";
     return "Join Request";
@@ -319,7 +331,7 @@ export function FamilyGroupEditor({
       const childName = [request.childFirstName, request.childLastName]
         .filter(Boolean)
         .join(" ");
-      return `${getMemberName(request.requester)} wants to add ${childName || "a child/youth member"} to ${request.familyGroup.name || "this family group"}.`;
+      return `${getMemberName(request.requester)} wants to add ${childName || "an infant/child/youth member"} to ${request.familyGroup.name || "this family group"}.`;
     }
     if (request.type === "ADULT_REQUEST") {
       const adultName = [request.requestedFirstName, request.requestedLastName]
@@ -374,10 +386,15 @@ export function FamilyGroupEditor({
     }
 
     clearRequestError(request.id);
+    clearRequestSearchFeedback(request.id);
     setRequestSearchingId(request.id);
 
     try {
-      const res = await fetch(`/api/admin/members?q=${encodeURIComponent(query)}&pageSize=10`);
+      const ageTierSearchFilter =
+        request.type === "CHILD_REQUEST" ? "&ageTierIn=INFANT,CHILD,YOUTH" : "";
+      const res = await fetch(
+        `/api/admin/members?q=${encodeURIComponent(query)}&active=true&pageSize=10${ageTierSearchFilter}`
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setRequestErrors((current) => ({
@@ -387,18 +404,20 @@ export function FamilyGroupEditor({
         return;
       }
 
-      setRequestSearchResults((current) => ({
-        ...current,
-        [request.id]: (data.members ?? []).map((member: {
-          id: string;
-          firstName: string;
-          lastName: string;
-          email: string;
-          ageTier: string;
-          active: boolean;
-          canLogin?: boolean;
-          dateOfBirth?: string | null;
-        }) => ({
+      const foundMembers = ((data.members ?? []) as {
+        id: string;
+        firstName: string;
+        lastName: string;
+        email: string;
+        ageTier: string;
+        active: boolean;
+        canLogin?: boolean;
+        dateOfBirth?: string | null;
+      }[])
+        .filter((member) =>
+          request.type !== "CHILD_REQUEST" || CHILD_REQUEST_AGE_TIERS.has(member.ageTier)
+        )
+        .map((member) => ({
           id: member.id,
           firstName: member.firstName,
           lastName: member.lastName,
@@ -410,7 +429,28 @@ export function FamilyGroupEditor({
           alreadyInGroup: request.familyGroup.members.some(
             (groupMember) => groupMember.id === member.id
           ),
-        })),
+        }));
+
+      setRequestSearchResults((current) => ({
+        ...current,
+        [request.id]: foundMembers,
+      }));
+
+      if (foundMembers.length === 1) {
+        setRequestSelections((current) => ({
+          ...current,
+          [request.id]: foundMembers[0].id,
+        }));
+      }
+
+      setRequestSearchFeedback((current) => ({
+        ...current,
+        [request.id]:
+          foundMembers.length === 0
+            ? `No eligible member records found for "${query}".`
+            : foundMembers.length === 1
+              ? `Found and selected ${foundMembers[0].firstName} ${foundMembers[0].lastName}.`
+              : `Found ${foundMembers.length} member records.`,
       }));
     } finally {
       setRequestSearchingId((current) => (current === request.id ? null : current));
@@ -519,6 +559,11 @@ export function FamilyGroupEditor({
         return next;
       });
       setRequestSearchTerms((current) => {
+        const next = { ...current };
+        delete next[request.id];
+        return next;
+      });
+      setRequestSearchFeedback((current) => {
         const next = { ...current };
         delete next[request.id];
         return next;
@@ -887,6 +932,8 @@ export function FamilyGroupEditor({
           ) : (
             requests.map((request) => {
               const candidateMembers = getRequestCandidates(request);
+              const searchedMembers = requestSearchResults[request.id] ?? [];
+              const requestSearchMessage = requestSearchFeedback[request.id];
               const selectedCandidate = candidateMembers.find(
                 (candidate) => candidate.id === requestSelections[request.id]
               );
@@ -958,6 +1005,7 @@ export function FamilyGroupEditor({
                           value={requestSelections[request.id] ?? ""}
                           onChange={(event) => {
                             clearRequestError(request.id);
+                            clearRequestSearchFeedback(request.id);
                             setRequestSelections((current) => ({
                               ...current,
                               [request.id]: event.target.value,
@@ -987,6 +1035,7 @@ export function FamilyGroupEditor({
                           value={requestSearchTerms[request.id] ?? ""}
                           onChange={(event) => {
                             clearRequestError(request.id);
+                            clearRequestSearchFeedback(request.id);
                             setRequestSearchTerms((current) => ({
                               ...current,
                               [request.id]: event.target.value,
@@ -1004,6 +1053,52 @@ export function FamilyGroupEditor({
                           {requestSearchingId === request.id ? "Searching..." : "Search"}
                         </Button>
                       </div>
+
+                      {requestSearchMessage && (
+                        <p className="text-xs font-medium text-slate-700">
+                          {requestSearchMessage}
+                        </p>
+                      )}
+
+                      {searchedMembers.length > 0 && (
+                        <div className="space-y-2 rounded-md border border-slate-200 bg-white p-2">
+                          {searchedMembers.map((candidate) => (
+                            <button
+                              key={candidate.id}
+                              type="button"
+                              onClick={() => {
+                                clearRequestError(request.id);
+                                clearRequestSearchFeedback(request.id);
+                                setRequestSelections((current) => ({
+                                  ...current,
+                                  [request.id]: candidate.id,
+                                }));
+                              }}
+                              className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
+                                requestSelections[request.id] === candidate.id
+                                  ? "border-amber-300 bg-amber-50"
+                                  : "border-slate-200 bg-white hover:bg-slate-50"
+                              }`}
+                            >
+                              <span className="flex flex-wrap items-center gap-2 font-medium text-slate-900">
+                                {getMemberName(candidate)}
+                                <AgeTierBadge tier={candidate.ageTier} />
+                                {requestSelections[request.id] === candidate.id && (
+                                  <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
+                                    Selected
+                                  </Badge>
+                                )}
+                              </span>
+                              <span className="mt-1 block text-xs text-slate-500">
+                                {candidate.email}
+                                {candidate.dateOfBirth ? ` - DOB ${formatDate(candidate.dateOfBirth)}` : ""}
+                                {candidate.canLogin ? " - has login" : " - no login"}
+                                {candidate.alreadyInGroup ? " - already in this group" : ""}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
 
                       {selectedCandidate && (
                         <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">

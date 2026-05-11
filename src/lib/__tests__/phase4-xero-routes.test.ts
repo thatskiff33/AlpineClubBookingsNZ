@@ -66,7 +66,10 @@ describe("Phase 4 Xero admin routes", () => {
     const res = await POST();
 
     expect(res.status).toBe(200);
-    expect(mocks.syncContactsFromXero).toHaveBeenCalledWith({});
+    expect(mocks.syncContactsFromXero).toHaveBeenCalledWith({
+      auditActorMemberId: "admin_1",
+      auditSource: "admin-xero-sync-contacts",
+    });
   });
 
   it("passes explicit repair flags through the sync contacts route", async () => {
@@ -95,6 +98,8 @@ describe("Phase 4 Xero admin routes", () => {
     expect(mocks.syncContactsFromXero).toHaveBeenCalledWith({
       fullResync: true,
       backfillJoinedDates: true,
+      auditActorMemberId: "admin_1",
+      auditSource: "admin-xero-sync-contacts",
     });
   });
 

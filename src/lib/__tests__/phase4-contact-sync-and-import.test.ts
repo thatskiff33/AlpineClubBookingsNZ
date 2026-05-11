@@ -74,6 +74,9 @@ const mocks = vi.hoisted(() => {
       xeroAccountMapping: {
         findUnique: vi.fn(),
       },
+      auditLog: {
+        create: vi.fn(),
+      },
       $transaction: vi.fn(),
     },
     recordXeroApiUsage: vi.fn(),
@@ -185,6 +188,7 @@ describe("Phase 4 contact sync and cached import", () => {
     mocks.prisma.xeroContactGroupMembershipCache.createMany.mockResolvedValue({ count: 0 });
     mocks.prisma.xeroContactGroupMembershipCache.updateMany.mockResolvedValue({ count: 0 });
     mocks.prisma.member.update.mockResolvedValue({});
+    mocks.prisma.auditLog.create.mockResolvedValue({});
     mocks.prisma.member.create.mockResolvedValue({
       id: "member_new",
       email: "new@example.com",
@@ -390,6 +394,26 @@ describe("Phase 4 contact sync and cached import", () => {
       }),
     });
     expect(updatedMemberCall.data).not.toHaveProperty("joinedDate");
+    expect(mocks.prisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "xero.contact.synced_to_member",
+        subjectMemberId: "member_1",
+        entityType: "Member",
+        entityId: "member_1",
+        category: "xero",
+        metadata: expect.objectContaining({
+          xeroContactId: "contact_1",
+          changedFields: expect.arrayContaining([
+            "xeroContactLink",
+            "phone",
+            "streetAddress",
+          ]),
+        }),
+      }),
+    });
+    expect(
+      JSON.stringify(mocks.prisma.auditLog.create.mock.calls[0][0].data.metadata)
+    ).not.toContain("1112222");
 
     expect(mocks.prisma.xeroSyncCursor.upsert).toHaveBeenCalledWith(
       expect.objectContaining({

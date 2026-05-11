@@ -1040,7 +1040,7 @@ export async function sendChildRequestSubmittedEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Child/Youth request submitted — Tokoroa Alpine Club - Bookings",
+    subject: "Infant/Child/Youth request submitted — Tokoroa Alpine Club - Bookings",
     html: childRequestSubmittedTemplate(parentName, childName, groupName),
     templateName: "child-request-submitted",
   });
@@ -1068,7 +1068,7 @@ export async function sendChildRequestRejectedEmail(
 ) {
   await sendEmail({
     to: email,
-    subject: "Child/Youth request update — Tokoroa Alpine Club - Bookings",
+    subject: "Infant/Child/Youth request update — Tokoroa Alpine Club - Bookings",
     html: childRequestRejectedTemplate(parentName, childName, reason),
     templateName: "child-request-rejected",
   });

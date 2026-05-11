@@ -82,6 +82,8 @@ const AGE_TIER_COLORS: Record<string, string> = {
   ADULT: "bg-slate-100 text-slate-700 border-slate-200",
 };
 
+const CHILD_REQUEST_AGE_TIERS = new Set(["INFANT", "CHILD", "YOUTH"]);
+
 function AgeTierBadge({ tier }: { tier: string }) {
   const colors = AGE_TIER_COLORS[tier] || "bg-gray-100 text-gray-700 border-gray-200";
   return (
@@ -115,6 +117,7 @@ export default function FamilyGroupsPage() {
   const [requestSelections, setRequestSelections] = useState<Record<string, string>>({});
   const [requestSearchTerms, setRequestSearchTerms] = useState<Record<string, string>>({});
   const [requestSearchResults, setRequestSearchResults] = useState<Record<string, RequestMemberMatch[]>>({});
+  const [requestSearchFeedback, setRequestSearchFeedback] = useState<Record<string, string>>({});
   const [requestNotes, setRequestNotes] = useState<Record<string, string>>({});
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [requestSearchingId, setRequestSearchingId] = useState<string | null>(null);
@@ -325,8 +328,19 @@ export default function FamilyGroupsPage() {
     });
   }
 
+  function clearRequestSearchFeedback(requestId: string) {
+    setRequestSearchFeedback((current) => {
+      if (!current[requestId]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[requestId];
+      return next;
+    });
+  }
+
   function getRequestTypeLabel(request: FamilyGroupRequest) {
-    if (request.type === "CHILD_REQUEST") return "Child/Youth Request";
+    if (request.type === "CHILD_REQUEST") return "Infant/Child/Youth Request";
     if (request.type === "ADULT_REQUEST") return "Same-email Adult Request";
     if (request.type === "REMOVAL_REQUEST") return "Removal Request";
     return "Join Request";
@@ -335,7 +349,7 @@ export default function FamilyGroupsPage() {
   function getRequestSummary(request: FamilyGroupRequest) {
     if (request.type === "CHILD_REQUEST") {
       const childName = [request.childFirstName, request.childLastName].filter(Boolean).join(" ");
-      return `${request.requester.firstName} ${request.requester.lastName} wants to add ${childName || "a child/youth member"} to ${request.familyGroup.name || "this family group"}.`;
+      return `${request.requester.firstName} ${request.requester.lastName} wants to add ${childName || "an infant/child/youth member"} to ${request.familyGroup.name || "this family group"}.`;
     }
     if (request.type === "ADULT_REQUEST") {
       const adultName = [request.requestedFirstName, request.requestedLastName].filter(Boolean).join(" ");
@@ -389,10 +403,15 @@ export default function FamilyGroupsPage() {
     }
 
     clearRequestError(request.id);
+    clearRequestSearchFeedback(request.id);
     setRequestSearchingId(request.id);
 
     try {
-      const res = await fetch(`/api/admin/members?q=${encodeURIComponent(query)}&pageSize=10`);
+      const ageTierSearchFilter =
+        request.type === "CHILD_REQUEST" ? "&ageTierIn=INFANT,CHILD,YOUTH" : "";
+      const res = await fetch(
+        `/api/admin/members?q=${encodeURIComponent(query)}&active=true&pageSize=10${ageTierSearchFilter}`
+      );
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
@@ -403,18 +422,20 @@ export default function FamilyGroupsPage() {
         return;
       }
 
-      setRequestSearchResults((current) => ({
-        ...current,
-        [request.id]: (data.members ?? []).map((member: {
-          id: string;
-          firstName: string;
-          lastName: string;
-          email: string;
-          ageTier: string;
-          active: boolean;
-          canLogin?: boolean;
-          dateOfBirth?: string | null;
-        }) => ({
+      const foundMembers = ((data.members ?? []) as {
+        id: string;
+        firstName: string;
+        lastName: string;
+        email: string;
+        ageTier: string;
+        active: boolean;
+        canLogin?: boolean;
+        dateOfBirth?: string | null;
+      }[])
+        .filter((member) =>
+          request.type !== "CHILD_REQUEST" || CHILD_REQUEST_AGE_TIERS.has(member.ageTier)
+        )
+        .map((member) => ({
           id: member.id,
           firstName: member.firstName,
           lastName: member.lastName,
@@ -426,7 +447,28 @@ export default function FamilyGroupsPage() {
           alreadyInGroup: request.familyGroup.members.some(
             (groupMember) => groupMember.id === member.id
           ),
-        })),
+        }));
+
+      setRequestSearchResults((current) => ({
+        ...current,
+        [request.id]: foundMembers,
+      }));
+
+      if (foundMembers.length === 1) {
+        setRequestSelections((current) => ({
+          ...current,
+          [request.id]: foundMembers[0].id,
+        }));
+      }
+
+      setRequestSearchFeedback((current) => ({
+        ...current,
+        [request.id]:
+          foundMembers.length === 0
+            ? `No eligible member records found for "${query}".`
+            : foundMembers.length === 1
+              ? `Found and selected ${foundMembers[0].firstName} ${foundMembers[0].lastName}.`
+              : `Found ${foundMembers.length} member records.`,
       }));
     } finally {
       setRequestSearchingId((current) => (current === request.id ? null : current));
@@ -535,6 +577,11 @@ export default function FamilyGroupsPage() {
         delete next[request.id];
         return next;
       });
+      setRequestSearchFeedback((current) => {
+        const next = { ...current };
+        delete next[request.id];
+        return next;
+      });
       setRequestNotes((current) => {
         const next = { ...current };
         delete next[request.id];
@@ -632,7 +679,7 @@ export default function FamilyGroupsPage() {
             Pending Family Group Changes
           </CardTitle>
           <p className="text-sm text-slate-500">
-            Review join, child/youth, same-email adult, and removal requests before approving or rejecting.
+            Review join, infant/child/youth, same-email adult, and removal requests before approving or rejecting.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -647,6 +694,8 @@ export default function FamilyGroupsPage() {
           ) : (
             requests.map((request) => {
               const candidateMembers = getRequestCandidates(request);
+              const searchedMembers = requestSearchResults[request.id] ?? [];
+              const requestSearchMessage = requestSearchFeedback[request.id];
               const selectedCandidate = candidateMembers.find(
                 (candidate) => candidate.id === requestSelections[request.id]
               );
@@ -798,6 +847,7 @@ export default function FamilyGroupsPage() {
                               value={requestSelections[request.id] ?? ""}
                               onChange={(e) => {
                                 clearRequestError(request.id);
+                                clearRequestSearchFeedback(request.id);
                                 setRequestSelections((current) => ({
                                   ...current,
                                   [request.id]: e.target.value,
@@ -829,6 +879,7 @@ export default function FamilyGroupsPage() {
                               value={requestSearchTerms[request.id] ?? ""}
                               onChange={(e) => {
                                 clearRequestError(request.id);
+                                clearRequestSearchFeedback(request.id);
                                 setRequestSearchTerms((current) => ({
                                   ...current,
                                   [request.id]: e.target.value,
@@ -850,8 +901,54 @@ export default function FamilyGroupsPage() {
                           <p className="text-xs text-slate-500">
                             {request.type === "ADULT_REQUEST"
                               ? "Same-email adult approvals can link an existing non-login adult or create a new non-login adult."
-                              : "Suggested matches are based on the requested child name and date of birth. Search if the correct member record is not listed."}
+                              : "Suggested matches are based on the requested infant, child, or youth name and date of birth. Search if the correct member record is not listed."}
                           </p>
+
+                          {requestSearchMessage && (
+                            <p className="text-xs font-medium text-slate-700">
+                              {requestSearchMessage}
+                            </p>
+                          )}
+
+                          {searchedMembers.length > 0 && (
+                            <div className="space-y-2 rounded-md border border-slate-200 bg-white p-2">
+                              {searchedMembers.map((candidate) => (
+                                <button
+                                  key={candidate.id}
+                                  type="button"
+                                  onClick={() => {
+                                    clearRequestError(request.id);
+                                    clearRequestSearchFeedback(request.id);
+                                    setRequestSelections((current) => ({
+                                      ...current,
+                                      [request.id]: candidate.id,
+                                    }));
+                                  }}
+                                  className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
+                                    requestSelections[request.id] === candidate.id
+                                      ? "border-amber-300 bg-amber-50"
+                                      : "border-slate-200 bg-white hover:bg-slate-50"
+                                  }`}
+                                >
+                                  <span className="flex flex-wrap items-center gap-2 font-medium text-slate-900">
+                                    {candidate.firstName} {candidate.lastName}
+                                    <AgeTierBadge tier={candidate.ageTier} />
+                                    {requestSelections[request.id] === candidate.id && (
+                                      <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
+                                        Selected
+                                      </Badge>
+                                    )}
+                                  </span>
+                                  <span className="mt-1 block text-xs text-slate-500">
+                                    {candidate.email}
+                                    {candidate.dateOfBirth ? ` • DOB ${formatDate(candidate.dateOfBirth)}` : ""}
+                                    {candidate.canLogin ? " • has login" : " • no login"}
+                                    {candidate.alreadyInGroup ? " • already in this group" : ""}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <p className="mt-2 text-sm text-slate-600">

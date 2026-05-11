@@ -1979,7 +1979,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               />
               <Label htmlFor="edit-canLogin">Can Login</Label>
               <p className="text-xs text-muted-foreground ml-2">
-                Adults who can sign in and make bookings. Uncheck for children or youth managed by family group.
+                Adults who can sign in and make bookings. Uncheck for infants, children, or youth managed by family group.
                 {isSelf ? " You cannot disable login for your own admin account." : ""}
               </p>
             </div>

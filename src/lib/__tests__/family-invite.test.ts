@@ -121,7 +121,7 @@ describe("POST /api/members/family/invite", () => {
     expect(body.error).toMatch(/yourself/i);
   });
 
-  it("rejects inviting a child/youth directly", async () => {
+  it("rejects inviting an infant/child/youth directly", async () => {
     mockedAuth.mockResolvedValue(adultSession);
     vi.mocked(prisma.member.findUnique).mockResolvedValue({
       id: "adult1", active: true, ageTier: "ADULT", canLogin: true,
@@ -134,7 +134,7 @@ describe("POST /api/members/family/invite", () => {
     const res = await inviteMember(makePostRequest({ email: "child@test.com", familyGroupId: "g1" }));
     expect(res.status).toBe(422);
     const body = await res.json();
-    expect(body.error).toMatch(/children or youth/i);
+    expect(body.error).toMatch(/infants, children, or youth/i);
   });
 
   it("rejects if target already in group", async () => {
