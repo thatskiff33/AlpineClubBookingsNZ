@@ -407,8 +407,135 @@ describe("Phase 3: Admin Member Management", () => {
       await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NONE"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
       expect(call.where?.AND).toEqual(expect.arrayContaining([
+        { role: { not: "ADMIN" } },
         { subscriptions: { none: { seasonYear: 2026 } } },
       ]));
+    });
+
+    it("filters by family group presence", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(new NextRequest("http://localhost/api/admin/members?familyGroup=any"));
+      let call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([
+        { familyGroupMemberships: { some: {} } },
+      ]));
+
+      vi.mocked(prisma.member.findMany).mockClear();
+      await getMembers(new NextRequest("http://localhost/api/admin/members?familyGroup=none"));
+      call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([
+        { familyGroupMemberships: { none: {} } },
+      ]));
+    });
+
+    it("filters by first-time invite status", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(new NextRequest("http://localhost/api/admin/members?inviteStatus=invite"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([
+        { canLogin: true },
+        { passwordChangedAt: null },
+        { lastLoginAt: null },
+        { passwordResetTokens: { none: { used: false, expiresAt: { gt: expect.any(Date) } } } },
+      ]));
+    });
+
+    it("filters by resend invite status", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(new NextRequest("http://localhost/api/admin/members?inviteStatus=resend-invite"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([
+        { canLogin: true },
+        { passwordChangedAt: null },
+        { lastLoginAt: null },
+        { passwordResetTokens: { some: { used: false, expiresAt: { gt: expect.any(Date) } } } },
+      ]));
+    });
+
+    it("filters by reset password status", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(new NextRequest("http://localhost/api/admin/members?inviteStatus=reset-password"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([
+        { canLogin: true },
+        {
+          OR: [
+            { passwordChangedAt: { not: null } },
+            { lastLoginAt: { not: null } },
+          ],
+        },
+      ]));
+    });
+
+    it("filters admin users as subscription not required", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NOT_REQUIRED"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([{ role: "ADMIN" }]));
+    });
+
+    it("returns admin users with subscription not required", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        {
+          id: "admin-member",
+          firstName: "Admin",
+          lastName: "User",
+          email: "admin@test.com",
+          phoneCountryCode: null,
+          phoneAreaCode: null,
+          phoneNumber: null,
+          dateOfBirth: null,
+          role: "ADMIN",
+          financeAccessLevel: "NONE",
+          ageTier: "ADULT",
+          active: true,
+          canLogin: true,
+          xeroContactId: null,
+          joinedDate: null,
+          createdAt: new Date("2025-01-01"),
+          forcePasswordChange: false,
+          passwordChangedAt: null,
+          lastLoginAt: null,
+          streetAddressLine1: null,
+          streetAddressLine2: null,
+          streetCity: null,
+          streetRegion: null,
+          streetPostalCode: null,
+          streetCountry: null,
+          postalAddressLine1: null,
+          postalAddressLine2: null,
+          postalCity: null,
+          postalRegion: null,
+          postalPostalCode: null,
+          postalCountry: null,
+          familyGroupMemberships: [],
+          subscriptions: [{ status: "PAID", seasonYear: 2026, xeroInvoiceId: "inv-1" }],
+          passwordResetTokens: [],
+        },
+      ] as any);
+      mockSessionAndMemberListCounts(1);
+
+      const res = await getMembers(new NextRequest("http://localhost/api/admin/members"));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.members[0].subscriptionStatus).toBe("NOT_REQUIRED");
+      expect(body.members[0].subscriptionXeroInvoiceId).toBeNull();
     });
 
   });
@@ -475,6 +602,40 @@ describe("Phase 3: Admin Member Management", () => {
         { role: "ADMIN" },
         { active: true },
       ]));
+    });
+
+    it("applies family group, invite status, and subscription filters to export", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+
+      await exportMembers(new NextRequest("http://localhost/api/admin/members/export?familyGroup=any&inviteStatus=resend-invite&subscription=NOT_REQUIRED"));
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(expect.arrayContaining([
+        { familyGroupMemberships: { some: {} } },
+        { canLogin: true },
+        { passwordChangedAt: null },
+        { lastLoginAt: null },
+        { passwordResetTokens: { some: { used: false, expiresAt: { gt: expect.any(Date) } } } },
+        { role: "ADMIN" },
+      ]));
+    });
+
+    it("exports admin subscription status as not required", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        {
+          firstName: "Admin", lastName: "User", email: "admin@test.com",
+          phoneCountryCode: null, phoneAreaCode: null, phoneNumber: null, dateOfBirth: null,
+          role: "ADMIN", ageTier: "ADULT", active: true,
+          xeroContactId: null, createdAt: new Date("2025-01-01"),
+          subscriptions: [{ status: "PAID" }],
+        },
+      ] as any);
+
+      const res = await exportMembers(new NextRequest("http://localhost/api/admin/members/export"));
+      const csv = await res.text();
+      expect(csv).toContain("NOT_REQUIRED");
+      expect(csv).not.toContain("PAID");
     });
 
     it("applies INFANT age tier filter to export", async () => {

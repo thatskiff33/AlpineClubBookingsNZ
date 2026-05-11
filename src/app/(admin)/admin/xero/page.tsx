@@ -40,10 +40,33 @@ interface SyncResult {
   // Import-specific fields
   created?: number
   createdAsDependent?: number
+  createdMembers?: Array<{ name: string; email: string; xeroContactId: string; group: string }>
+  createdDependents?: Array<{
+    name: string
+    email: string
+    xeroContactId: string
+    group: string
+    parentMemberId: string
+    parentName: string
+  }>
   skippedExisting?: number
   linkedExisting?: number
+  linkedExistingDetails?: Array<{
+    name: string
+    email: string
+    memberId: string
+    xeroContactId: string
+    group: string
+  }>
   skippedNoEmail?: number
   skippedNoEmailDetails?: Array<{ name: string; xeroContactId: string }>
+  skippedArchived?: number
+  skippedArchivedDetails?: Array<{
+    name: string
+    xeroContactId: string
+    group: string
+    reason?: string
+  }>
   groupsProcessed?: string[]
   // Detailed sync report fields (#29)
   syncReport?: SyncReport
@@ -3097,11 +3120,52 @@ export default function XeroPage() {
                         <span className="text-muted-foreground">New members created:</span>{" "}
                         <span className="font-medium text-green-700">{syncResult.created}</span>
                       </p>
+                      {syncResult.createdMembers && syncResult.createdMembers.length > 0 && (
+                        <ul className="ml-4 mt-1 space-y-0.5 text-sm">
+                          {syncResult.createdMembers.map((member, i) => (
+                            <li key={`${member.xeroContactId}-${i}`} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span>{member.name}</span>
+                              <span className="text-xs text-muted-foreground">{member.email}</span>
+                              <Badge variant="outline" className="text-xs">{member.group}</Badge>
+                              <a
+                                href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 hover:underline"
+                              >
+                                Open in Xero ↗
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                       {syncResult.createdAsDependent !== undefined && syncResult.createdAsDependent > 0 && (
-                        <p>
-                          <span className="text-muted-foreground">Family dependents created:</span>{" "}
-                          <span className="font-medium text-blue-700">{syncResult.createdAsDependent}</span>
-                        </p>
+                        <div>
+                          <p>
+                            <span className="text-muted-foreground">Family dependents created:</span>{" "}
+                            <span className="font-medium text-blue-700">{syncResult.createdAsDependent}</span>
+                          </p>
+                          {syncResult.createdDependents && syncResult.createdDependents.length > 0 && (
+                            <ul className="ml-4 mt-1 space-y-0.5 text-sm">
+                              {syncResult.createdDependents.map((member, i) => (
+                                <li key={`${member.xeroContactId}-${i}`} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                  <span>{member.name}</span>
+                                  <span className="text-xs text-muted-foreground">{member.email}</span>
+                                  <Badge variant="outline" className="text-xs">{member.group}</Badge>
+                                  <span className="text-xs text-muted-foreground">Linked to {member.parentName}</span>
+                                  <a
+                                    href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:underline"
+                                  >
+                                    Open in Xero ↗
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
                       )}
                       {syncResult.skippedExisting !== undefined && syncResult.skippedExisting > 0 && (
                         <p>
@@ -3110,10 +3174,31 @@ export default function XeroPage() {
                         </p>
                       )}
                       {syncResult.linkedExisting !== undefined && syncResult.linkedExisting > 0 && (
-                        <p>
-                          <span className="text-muted-foreground">Existing members linked to Xero:</span>{" "}
-                          {syncResult.linkedExisting}
-                        </p>
+                        <div>
+                          <p>
+                            <span className="text-muted-foreground">Existing members linked to Xero:</span>{" "}
+                            {syncResult.linkedExisting}
+                          </p>
+                          {syncResult.linkedExistingDetails && syncResult.linkedExistingDetails.length > 0 && (
+                            <ul className="ml-4 mt-1 space-y-0.5 text-sm">
+                              {syncResult.linkedExistingDetails.map((member, i) => (
+                                <li key={`${member.memberId}-${member.xeroContactId}-${i}`} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                  <span>{member.name}</span>
+                                  <span className="text-xs text-muted-foreground">{member.email}</span>
+                                  <Badge variant="outline" className="text-xs">{member.group}</Badge>
+                                  <a
+                                    href={`https://go.xero.com/Contacts/View/${member.xeroContactId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:underline"
+                                  >
+                                    Open in Xero ↗
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
                       )}
                       {syncResult.skippedNoEmail !== undefined && syncResult.skippedNoEmail > 0 && (
                         <div>
@@ -3128,6 +3213,35 @@ export default function XeroPage() {
                                   <span>{c.name}</span>
                                   <a
                                     href={`https://go.xero.com/Contacts/View/${c.xeroContactId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs text-blue-600 hover:underline"
+                                  >
+                                    Open in Xero ↗
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                      {syncResult.skippedArchived !== undefined && syncResult.skippedArchived > 0 && (
+                        <div>
+                          <p>
+                            <span className="text-muted-foreground">Skipped (not active in Xero):</span>{" "}
+                            {syncResult.skippedArchived}
+                          </p>
+                          {syncResult.skippedArchivedDetails && syncResult.skippedArchivedDetails.length > 0 && (
+                            <ul className="ml-4 mt-1 space-y-0.5 text-sm">
+                              {syncResult.skippedArchivedDetails.map((contact, i) => (
+                                <li key={`${contact.xeroContactId}-${i}`} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                  <span>{contact.name}</span>
+                                  <Badge variant="outline" className="text-xs">{contact.group}</Badge>
+                                  {contact.reason ? (
+                                    <span className="text-xs text-muted-foreground">{contact.reason}</span>
+                                  ) : null}
+                                  <a
+                                    href={`https://go.xero.com/Contacts/View/${contact.xeroContactId}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-xs text-blue-600 hover:underline"
