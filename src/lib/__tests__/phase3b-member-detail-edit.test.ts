@@ -12,6 +12,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     booking: { findMany: vi.fn(), aggregate: vi.fn() },
     auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
+    promoCodeAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     $transaction: vi.fn().mockImplementation((operation: unknown) => {
       if (Array.isArray(operation)) {
         return Promise.all(operation);
