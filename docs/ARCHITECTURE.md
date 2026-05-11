@@ -373,6 +373,8 @@ Concurrency guardrail:
 
 **Backups:** Lightsail snapshots + daily pg_dump to S3 (env vars: `BACKUP_ENABLED`, `BACKUP_S3_BUCKET`, `BACKUP_S3_REGION`, `BACKUP_S3_ACCESS_KEY_ID`, `BACKUP_S3_SECRET_ACCESS_KEY`, `BACKUP_RETENTION_DAYS`, `BACKUP_CRON_SCHEDULE`).
 
+**Audit retention:** The daily `data-pruning` cron anonymizes audit request data after 90 days, moves eligible non-critical audit logs older than 12 months to the optional archive database, and prunes expired main/archive rows. Configure `AUDIT_ARCHIVE_DATABASE_URL` on the cron-enabled production app when archive movement is required; `AUDIT_LOG_ARCHIVE_DATABASE_URL` remains as a backward-compatible alias. See `docs/AUDIT_RETENTION_ARCHIVE_RUNBOOK.md`.
+
 **Environment variables:** See `.env.example` for full list. Key vars:
 - `DATABASE_URL`, `AUTH_SECRET`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`

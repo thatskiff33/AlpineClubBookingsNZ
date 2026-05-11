@@ -142,7 +142,18 @@ export async function POST(req: NextRequest) {
     action: "FAMILY_GROUP_INVITE_SENT",
     memberId: session.user.id,
     targetId: familyGroupId,
+    subjectMemberId: target.id,
+    entityType: "FamilyGroupJoinRequest",
+    entityId: invitation.id,
+    category: "family",
+    outcome: "success",
+    summary: "Family group invitation sent",
     details: JSON.stringify({ invitedEmail: normalizedEmail, invitedMemberId: target.id }),
+    metadata: {
+      familyGroupId,
+      invitedEmail: normalizedEmail,
+      invitedMemberId: target.id,
+    },
   });
 
   logger.info(

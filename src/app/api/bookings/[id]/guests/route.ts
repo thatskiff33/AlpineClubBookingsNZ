@@ -467,10 +467,22 @@ export async function POST(
       action: "booking.modify.guests.add",
       memberId: session.user.id,
       targetId: bookingId,
+      subjectMemberId: result.booking.memberId,
+      entityType: "BookingModification",
+      entityId: result.bookingModificationId,
+      category: "booking",
+      outcome: "success",
+      summary: "Booking guests added",
       details: JSON.stringify({
         addedGuests: result.addedGuestNames,
         priceDiffCents: result.priceDiffCents,
       }),
+      metadata: {
+        bookingId,
+        addedGuests: result.addedGuestNames,
+        priceDiffCents: result.priceDiffCents,
+        newGuestCount: result.booking.guests.length,
+      },
       ipAddress,
     });
 

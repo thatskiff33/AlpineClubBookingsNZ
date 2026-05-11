@@ -433,6 +433,12 @@ export async function PUT(req: NextRequest) {
       action: auditAction,
       memberId: session.user.id,
       targetId: affectedMemberId,
+      subjectMemberId: affectedMemberId,
+      entityType: "FamilyGroupJoinRequest",
+      entityId: requestId,
+      category: "family",
+      outcome: "success",
+      summary: "Family group request approved",
       details: JSON.stringify({
         familyGroupId: request.familyGroupId,
         requestId,
@@ -442,6 +448,14 @@ export async function PUT(req: NextRequest) {
             ? affectedMemberId
             : undefined,
       }),
+      metadata: {
+        familyGroupId: request.familyGroupId,
+        requestType: request.type,
+        linkedMemberId:
+          request.type === "CHILD_REQUEST" || request.type === "ADULT_REQUEST"
+            ? affectedMemberId
+            : null,
+      },
     });
 
     logger.info(
@@ -489,12 +503,23 @@ export async function PUT(req: NextRequest) {
       action: auditAction,
       memberId: session.user.id,
       targetId: request.subjectMemberId ?? request.requesterId,
+      subjectMemberId: request.subjectMemberId ?? request.requesterId,
+      entityType: "FamilyGroupJoinRequest",
+      entityId: requestId,
+      category: "family",
+      outcome: "success",
+      summary: "Family group request rejected",
       details: JSON.stringify({
         familyGroupId: request.familyGroupId,
         requestId,
         requestType: request.type,
         rejectionReason: rejectionReason || undefined,
       }),
+      metadata: {
+        familyGroupId: request.familyGroupId,
+        requestType: request.type,
+        rejectionReason: rejectionReason || null,
+      },
     });
 
     logger.info(

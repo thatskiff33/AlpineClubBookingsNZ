@@ -186,7 +186,20 @@ export async function POST(
       action: "XERO_PUSH",
       memberId: session.user.id,
       targetId: id,
+      subjectMemberId: id,
+      entityType: "Member",
+      entityId: id,
+      category: "xero",
+      outcome: "success",
+      summary: "Member pushed to Xero",
       details: `Created Xero contact ${xeroContactId}`,
+      metadata: {
+        xeroContactId,
+        entranceFeeInvoiceQueued,
+        entranceFeeInvoiceMessage: entranceFeeInvoiceMessage ?? null,
+        flushedSubscriptionHistoryCount:
+          flushedSubscriptionHistory.deletedCount,
+      },
     });
 
     logger.info({ memberId: id, xeroContactId }, "Pushed member to Xero as new contact");

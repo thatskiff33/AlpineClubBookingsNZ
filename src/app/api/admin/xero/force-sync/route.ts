@@ -107,6 +107,7 @@ async function resolveBooking(query: string) {
     },
     select: {
       id: true,
+      memberId: true,
       status: true,
       payment: {
         select: {
@@ -174,7 +175,17 @@ export async function POST(request: NextRequest) {
           action: "XERO_FORCE_SYNC_CONTACT",
           memberId: session.user.id,
           targetId: member.id,
+          subjectMemberId: member.id,
+          entityType: "Member",
+          entityId: member.id,
+          category: "xero",
+          outcome: "success",
+          summary: "Xero contact force-synced",
           details: `Force-synced Xero contact for ${member.email}`,
+          metadata: {
+            memberEmail: member.email,
+            xeroContactId,
+          },
         });
 
         return NextResponse.json({
@@ -195,7 +206,18 @@ export async function POST(request: NextRequest) {
         action: "XERO_FORCE_SYNC_MEMBERSHIP",
         memberId: session.user.id,
         targetId: member.id,
+        subjectMemberId: member.id,
+        entityType: "Member",
+        entityId: member.id,
+        category: "xero",
+        outcome: "success",
+        summary: "Xero membership status refreshed",
         details: `Force-refreshed membership status for ${member.email}`,
+        metadata: {
+          memberEmail: member.email,
+          status: result.status,
+          xeroInvoiceId: result.xeroInvoiceId ?? null,
+        },
       });
 
       return NextResponse.json({
@@ -254,7 +276,19 @@ export async function POST(request: NextRequest) {
       action: "XERO_FORCE_SYNC_INVOICE",
       memberId: session.user.id,
       targetId: booking.id,
+      subjectMemberId: booking.memberId,
+      entityType: "Booking",
+      entityId: booking.id,
+      category: "xero",
+      outcome: "success",
+      summary: "Xero booking invoice force-sync queued",
       details: queueResult.message,
+      metadata: {
+        bookingStatus: booking.status,
+        paymentId: booking.payment.id,
+        xeroInvoiceId: booking.payment.xeroInvoiceId ?? null,
+        queueOperationId: queueResult.queueOperationId ?? null,
+      },
     });
 
     return NextResponse.json(

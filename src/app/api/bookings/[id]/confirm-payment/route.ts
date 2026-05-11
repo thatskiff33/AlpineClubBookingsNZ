@@ -137,10 +137,21 @@ export async function POST(
       action: "booking.payment.confirmed",
       memberId: session.user.id,
       targetId: bookingId,
+      subjectMemberId: payment.booking.memberId,
+      entityType: "Booking",
+      entityId: bookingId,
+      category: "payment",
+      outcome: "success",
+      summary: "Booking payment confirmed",
       details: JSON.stringify({
         paymentIntentId,
         amountCents: pi.amount,
       }),
+      metadata: {
+        paymentIntentId,
+        amountCents: pi.amount,
+        reconciliationOutcome: reconciliation.outcome,
+      },
       ipAddress,
     });
 

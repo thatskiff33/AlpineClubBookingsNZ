@@ -244,7 +244,17 @@ export async function POST(request: NextRequest) {
       action: "XERO_IMPORT_MEMBER_CONTACT",
       memberId: session.user.id,
       targetId: member.id,
+      subjectMemberId: member.id,
+      entityType: "Member",
+      entityId: member.id,
+      category: "xero",
+      outcome: "success",
+      summary: "Member imported from Xero contact",
       details: `Imported Xero contact ${cachedContact.contactId} as ${member.firstName} ${member.lastName}`,
+      metadata: {
+        xeroContactId: cachedContact.contactId,
+        contactName: cachedContact.name ?? null,
+      },
     });
 
     return NextResponse.json(

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkLodgeAuth } from "@/lib/lodge-auth";
-import { assignmentExistsForDate } from "@/lib/lodge-date-scoping";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
+import { logAudit } from "@/lib/audit";
 import { z } from "zod";
 import logger from "@/lib/logger";
 
@@ -97,7 +97,8 @@ export async function PUT(
 ) {
   const { date: dateStr } = await params;
 
-  const { error, status, tier } = await checkLodgeAuth(dateStr, { request: req });
+  const authResult = await checkLodgeAuth(dateStr, { request: req });
+  const { error, status, tier } = authResult;
   if (error) {
     return NextResponse.json({ error }, { status: status! });
   }
@@ -133,8 +134,23 @@ export async function PUT(
   const data = parsed.data;
 
   try {
-    const assignmentExists = await assignmentExistsForDate(data.assignmentId, date);
-    if (!assignmentExists) {
+    const assignment = await prisma.choreAssignment.findFirst({
+      where: { id: data.assignmentId, date },
+      select: {
+        id: true,
+        choreTemplateId: true,
+        bookingId: true,
+        bookingGuestId: true,
+        bookingGuest: {
+          select: {
+            memberId: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    });
+    if (!assignment) {
       return NextResponse.json(
         { error: "Assignment not found for this date" },
         { status: 404 }
@@ -160,6 +176,31 @@ export async function PUT(
         },
       });
     }
+
+    const completed = data.action === "complete";
+    logAudit({
+      action: completed ? "lodge.chore.completed" : "lodge.chore.uncompleted",
+      memberId: authResult.session?.user.id ?? null,
+      targetId: data.assignmentId,
+      subjectMemberId: assignment.bookingGuest?.memberId ?? null,
+      entityType: "ChoreAssignment",
+      entityId: data.assignmentId,
+      category: "lodge",
+      outcome: "success",
+      summary: completed ? "Lodge chore completed" : "Lodge chore reopened",
+      details: `${completed ? "Completed" : "Reopened"} chore assignment for ${dateStr}`,
+      metadata: {
+        date: dateStr,
+        tier,
+        bookingId: assignment.bookingId,
+        bookingGuestId: assignment.bookingGuestId,
+        choreTemplateId: assignment.choreTemplateId,
+        completedVia: completed ? "KIOSK" : null,
+        guestName: assignment.bookingGuest
+          ? `${assignment.bookingGuest.firstName} ${assignment.bookingGuest.lastName}`
+          : null,
+      },
+    });
   } catch (err) {
     logger.error({ err }, "Error toggling chore completion");
     return NextResponse.json(

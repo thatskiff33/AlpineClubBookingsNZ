@@ -435,12 +435,47 @@ export async function POST(request: NextRequest) {
         return createdBooking;
       });
 
+      logAudit({
+        action: "booking.created",
+        memberId: session.user.id,
+        targetId: newBooking.id,
+        subjectMemberId: effectiveMemberId,
+        entityType: "Booking",
+        entityId: newBooking.id,
+        category: "booking",
+        outcome: "success",
+        summary: "Draft booking created",
+        details: "Draft booking created",
+        metadata: {
+          status: newBooking.status,
+          onBehalf: isOnBehalf,
+          checkIn: checkIn.toISOString(),
+          checkOut: checkOut.toISOString(),
+          guestCount: guests.length,
+          hasNonMembers: guests.some((guest) => !guest.isMember),
+          finalPriceCents: newBooking.finalPriceCents,
+        },
+      });
+
       if (isOnBehalf) {
         logAudit({
           action: "booking.created_on_behalf",
           memberId: session.user.id,
           targetId: newBooking.id,
+          subjectMemberId: effectiveMemberId,
+          entityType: "Booking",
+          entityId: newBooking.id,
+          category: "booking",
+          outcome: "success",
+          summary: "Draft booking created on behalf of member",
           details: `Admin created draft booking on behalf of member ${effectiveMemberId}`,
+          metadata: {
+            status: newBooking.status,
+            checkIn: checkIn.toISOString(),
+            checkOut: checkOut.toISOString(),
+            guestCount: guests.length,
+            hasNonMembers: guests.some((guest) => !guest.isMember),
+          },
         });
       }
 
@@ -787,12 +822,49 @@ export async function POST(request: NextRequest) {
     });
 
     // Audit log for on-behalf bookings
+    logAudit({
+      action: "booking.created",
+      memberId: session.user.id,
+      targetId: booking.id,
+      subjectMemberId: effectiveMemberId,
+      entityType: "Booking",
+      entityId: booking.id,
+      category: "booking",
+      outcome: "success",
+      summary: "Booking created",
+      details: `Booking created with status ${booking.status}`,
+      metadata: {
+        status: booking.status,
+        onBehalf: isOnBehalf,
+        checkIn: checkIn.toISOString(),
+        checkOut: checkOut.toISOString(),
+        guestCount: guests.length,
+        hasNonMembers,
+        finalPriceCents: booking.finalPriceCents,
+        zeroDollarConfirmed: isZeroDollarConfirmed,
+      },
+    });
+
     if (isOnBehalf) {
       logAudit({
         action: "booking.created_on_behalf",
         memberId: session.user.id,
         targetId: booking.id,
+        subjectMemberId: effectiveMemberId,
+        entityType: "Booking",
+        entityId: booking.id,
+        category: "booking",
+        outcome: "success",
+        summary: "Booking created on behalf of member",
         details: `Admin created booking on behalf of member ${effectiveMemberId}`,
+        metadata: {
+          status: booking.status,
+          checkIn: checkIn.toISOString(),
+          checkOut: checkOut.toISOString(),
+          guestCount: guests.length,
+          hasNonMembers,
+          finalPriceCents: booking.finalPriceCents,
+        },
       });
     }
 
@@ -1138,7 +1210,21 @@ async function createWaitlistedBooking(params: {
     action: "booking.waitlisted",
     memberId: effectiveMemberId,
     targetId: newBooking.id,
+    subjectMemberId: effectiveMemberId,
+    entityType: "Booking",
+    entityId: newBooking.id,
+    category: "booking",
+    outcome: "success",
+    summary: "Booking added to waitlist",
     details: `Booking added to waitlist at position #${position}`,
+    metadata: {
+      checkIn: checkIn.toISOString(),
+      checkOut: checkOut.toISOString(),
+      guestCount: newBooking.guests.length,
+      position,
+      finalPriceCents: newBooking.finalPriceCents,
+      requiresAdminReview: newBooking.requiresAdminReview,
+    },
   });
 
   return NextResponse.json(newBooking, { status: 201 });

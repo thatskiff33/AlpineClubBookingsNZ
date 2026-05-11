@@ -122,7 +122,17 @@ export async function PUT(req: NextRequest) {
       action: "FAMILY_GROUP_INVITE_ACCEPTED",
       memberId: session.user.id,
       targetId: invitation.familyGroupId,
+      subjectMemberId: session.user.id,
+      entityType: "FamilyGroupJoinRequest",
+      entityId: invitationId,
+      category: "family",
+      outcome: "success",
+      summary: "Family group invitation accepted",
       details: JSON.stringify({ invitationId }),
+      metadata: {
+        familyGroupId: invitation.familyGroupId,
+        invitationId,
+      },
     });
 
     logger.info(
@@ -164,7 +174,17 @@ export async function PUT(req: NextRequest) {
       action: "FAMILY_GROUP_INVITE_DECLINED",
       memberId: session.user.id,
       targetId: invitation.familyGroupId,
+      subjectMemberId: session.user.id,
+      entityType: "FamilyGroupJoinRequest",
+      entityId: invitationId,
+      category: "family",
+      outcome: "success",
+      summary: "Family group invitation declined",
       details: JSON.stringify({ invitationId }),
+      metadata: {
+        familyGroupId: invitation.familyGroupId,
+        invitationId,
+      },
     });
 
     logger.info(

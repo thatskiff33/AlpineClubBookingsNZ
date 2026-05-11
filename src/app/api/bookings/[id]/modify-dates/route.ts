@@ -523,6 +523,12 @@ export async function PUT(
       action: "booking.modify.dates",
       memberId: session.user.id,
       targetId: bookingId,
+      subjectMemberId: result.booking.memberId,
+      entityType: "BookingModification",
+      entityId: result.bookingModificationId,
+      category: "booking",
+      outcome: "success",
+      summary: "Booking dates modified",
       details: JSON.stringify({
         oldCheckIn: result.oldCheckIn.toISOString().split("T")[0],
         oldCheckOut: result.oldCheckOut.toISOString().split("T")[0],
@@ -533,6 +539,17 @@ export async function PUT(
         refundAmountCents: result.refundAmountCents,
         promoRemoved: result.promoRemoved,
       }),
+      metadata: {
+        bookingId,
+        oldCheckIn: result.oldCheckIn.toISOString().split("T")[0],
+        oldCheckOut: result.oldCheckOut.toISOString().split("T")[0],
+        newCheckIn: result.booking.checkIn.toISOString().split("T")[0],
+        newCheckOut: result.booking.checkOut.toISOString().split("T")[0],
+        priceDiffCents: result.priceDiffCents,
+        changeFeeCents: result.changeFeeCents,
+        refundAmountCents: result.refundAmountCents,
+        promoRemoved: result.promoRemoved,
+      },
       ipAddress,
     });
 

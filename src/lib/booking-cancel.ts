@@ -87,12 +87,13 @@ export async function cancelBooking(
     });
     await cleanupPromoRedemption(bookingId);
 
-    logAudit({
-      action: "booking.cancel",
-      memberId: sessionUserId,
-      targetId: bookingId,
+    logBookingCancellationAudit({
+      booking,
+      bookingId,
+      sessionUserId,
       details: `Waitlisted booking cancelled (was ${wasOffered ? "WAITLIST_OFFERED" : "WAITLISTED"})`,
       ipAddress,
+      metadata: { wasOffered },
     });
 
     sendBookingCancelledEmail(
@@ -150,12 +151,16 @@ export async function cancelBooking(
     });
     await cleanupPromoRedemption(bookingId);
 
-    logAudit({
-      action: "booking.cancel",
-      memberId: sessionUserId,
-      targetId: bookingId,
+    logBookingCancellationAudit({
+      booking,
+      bookingId,
+      sessionUserId,
       details: "Pending booking cancelled, no payment taken",
       ipAddress,
+      metadata: {
+        paymentTaken: false,
+        setupIntentCancelled: Boolean(booking.payment?.stripeSetupIntentId),
+      },
     });
 
     sendBookingCancelledEmail(
@@ -263,15 +268,20 @@ export async function cancelBooking(
       }
     }
 
-    logAudit({
-      action: "booking.cancel",
-      memberId: sessionUserId,
-      targetId: bookingId,
+    logBookingCancellationAudit({
+      booking,
+      bookingId,
+      sessionUserId,
       details:
         xeroClearingAmountCents > 0
           ? `Confirmed booking cancelled before payment capture; queued Xero credit note for ${xeroClearingAmountCents} cents to clear the outstanding invoice`
           : "Confirmed booking cancelled, no payment to refund",
       ipAddress,
+      metadata: {
+        paymentTaken: false,
+        xeroClearingAmountCents,
+        queuedXeroClearingCreditNote: xeroClearingAmountCents > 0,
+      },
     });
 
     sendBookingCancelledEmail(
@@ -392,14 +402,22 @@ export async function cancelBooking(
 
     await cleanupPromoRedemption(bookingId);
 
-    logAudit({
-      action: "booking.cancel",
-      memberId: sessionUserId,
-      targetId: bookingId,
+    logBookingCancellationAudit({
+      booking,
+      bookingId,
+      sessionUserId,
       details: booking.payment.changeFeeCents > 0
         ? `Credit ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${booking.payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents as account credit`
         : `Credit ${refundPercentage}% = ${refundAmountCents} cents as account credit`,
       ipAddress,
+      metadata: {
+        refundMethod: "credit",
+        refundAmountCents,
+        refundPercentage,
+        refundableBaseCents,
+        changeFeeCents: booking.payment.changeFeeCents,
+        creditRestoredCents,
+      },
     });
 
     sendBookingCancelledEmail(
@@ -474,14 +492,23 @@ export async function cancelBooking(
 
     await cleanupPromoRedemption(bookingId);
 
-    logAudit({
-      action: "booking.cancel",
-      memberId: sessionUserId,
-      targetId: bookingId,
+    logBookingCancellationAudit({
+      booking,
+      bookingId,
+      sessionUserId,
       details: booking.payment.changeFeeCents > 0
         ? `Refund ${refundPercentage}% of ${refundableBaseCents} cents (excluding ${booking.payment.changeFeeCents} cents change fee) = ${refundAmountCents} cents`
         : `Refund ${refundPercentage}% = ${refundAmountCents} cents`,
       ipAddress,
+      metadata: {
+        refundMethod: "card",
+        refundAmountCents,
+        refundPercentage,
+        refundableBaseCents,
+        changeFeeCents: booking.payment.changeFeeCents,
+        creditRestoredCents,
+        stripeRefundId: refundResult.refunds[0]?.refundId ?? null,
+      },
     });
 
     sendBookingCancelledEmail(
@@ -531,12 +558,19 @@ export async function cancelBooking(
   }
   await cleanupPromoRedemption(bookingId);
 
-  logAudit({
-    action: "booking.cancel",
-    memberId: sessionUserId,
-    targetId: bookingId,
+  logBookingCancellationAudit({
+    booking,
+    bookingId,
+    sessionUserId,
     details: "No refund per cancellation policy",
     ipAddress,
+    metadata: {
+      refundAmountCents: 0,
+      refundPercentage,
+      refundMethod: "card",
+      creditRestoredCents,
+      failedOutstandingAdditionalPayment: shouldFailAdditionalPayment,
+    },
   });
 
   sendBookingCancelledEmail(
@@ -564,6 +598,63 @@ export async function cancelBooking(
         "Booking cancelled. No refund applicable per cancellation policy.",
     },
   };
+}
+
+type CancellationAuditBooking = {
+  memberId: string;
+  status: string;
+  checkIn: Date;
+  checkOut: Date;
+  payment?: {
+    id?: string | null;
+    status?: string | null;
+    amountCents?: number | null;
+    refundedAmountCents?: number | null;
+    changeFeeCents?: number | null;
+    creditAppliedCents?: number | null;
+  } | null;
+};
+
+function logBookingCancellationAudit({
+  booking,
+  bookingId,
+  sessionUserId,
+  details,
+  ipAddress,
+  metadata,
+}: {
+  booking: CancellationAuditBooking;
+  bookingId: string;
+  sessionUserId: string;
+  details: string;
+  ipAddress: string;
+  metadata?: Record<string, unknown>;
+}) {
+  logAudit({
+    action: "booking.cancel",
+    memberId: sessionUserId,
+    targetId: bookingId,
+    subjectMemberId: booking.memberId,
+    entityType: "Booking",
+    entityId: bookingId,
+    category: "booking",
+    severity: "critical",
+    outcome: "success",
+    summary: "Booking cancelled",
+    details,
+    metadata: {
+      statusBefore: booking.status,
+      checkIn: booking.checkIn.toISOString(),
+      checkOut: booking.checkOut.toISOString(),
+      paymentId: booking.payment?.id ?? null,
+      paymentStatus: booking.payment?.status ?? null,
+      paidAmountCents: booking.payment?.amountCents ?? null,
+      refundedAmountCents: booking.payment?.refundedAmountCents ?? null,
+      creditAppliedCents: booking.payment?.creditAppliedCents ?? null,
+      ...metadata,
+    },
+    ipAddress,
+  });
 }
 
 function hasOutstandingAdditionalPaymentIntent(
