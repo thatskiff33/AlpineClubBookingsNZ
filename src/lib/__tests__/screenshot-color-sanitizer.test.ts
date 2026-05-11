@@ -51,10 +51,25 @@ describe("screenshot color sanitizer", () => {
     ).toBe("rgb(40, 50, 60)");
   });
 
+  it("substitutes nested CSS variable fallbacks before converting unsupported colors", () => {
+    const convertColor = vi.fn((colorExpression: string) =>
+      colorExpression === "lab(52% 12 18)" ? "rgb(10, 20, 30)" : null
+    );
+    const getCssVariableValue = (name: string) =>
+      name === "--brand-color" ? "lab(52% 12 18)" : null;
+
+    expect(
+      normalizeUnsupportedColorFunctions(
+        "var(--missing-color, var(--brand-color, rgb(0, 0, 0)))",
+        convertColor,
+        getCssVariableValue
+      )
+    ).toBe("rgb(10, 20, 30)");
+  });
+
   it("keeps an unsupported value when conversion fails", () => {
     expect(normalizeUnsupportedColorFunctions("lab(52% 12 18)", () => null)).toBe(
       "lab(52% 12 18)"
     );
   });
 });
-

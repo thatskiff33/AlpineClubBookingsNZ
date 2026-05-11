@@ -34,6 +34,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: vi.fn(),
       count: vi.fn(),
     },
+    xeroContactCache: { findUnique: vi.fn().mockResolvedValue(null) },
     $transaction: vi.fn(),
   },
 }));

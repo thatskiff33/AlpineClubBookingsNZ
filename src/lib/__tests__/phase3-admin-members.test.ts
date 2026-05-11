@@ -367,6 +367,27 @@ describe("Phase 3: Admin Member Management", () => {
       );
     });
 
+    it("filters to active adult parent-link candidates and excludes the current member", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+      mockSessionAndMemberListCounts(0);
+
+      await getMembers(
+        new NextRequest(
+          "http://localhost/api/admin/members?q=alice&parentLinkEligibleFor=child-1"
+        )
+      );
+
+      const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
+      expect(call.where?.AND).toEqual(
+        expect.arrayContaining([
+          { id: { not: "child-1" } },
+          { active: true },
+          { ageTier: "ADULT" },
+        ])
+      );
+    });
+
     it("combines text search with filters (AND logic)", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);

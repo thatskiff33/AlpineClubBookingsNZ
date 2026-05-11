@@ -70,12 +70,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // canLogin is the source of truth; legacy parent links may remain on adult login records.
     const members = await prisma.member.findMany({
       where: {
         id: { in: memberIds },
         active: true,
-        ageTier: "ADULT",
-        parentMemberId: null,
+        canLogin: true,
       },
       select: { id: true, email: true, firstName: true, lastName: true },
     });

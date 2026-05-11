@@ -40,29 +40,84 @@ function substituteCssVariables(
   getCssVariableValue: (name: string) => string | null,
   seen = new Set<string>()
 ): string {
-  return value.replace(
-    /var\(\s*(--[-_a-zA-Z0-9]+)\s*(?:,\s*([^)]+))?\)/g,
-    (match, variableName: string, fallbackValue?: string) => {
-      if (seen.has(variableName)) {
-        return fallbackValue?.trim() || match;
-      }
+  let output = "";
+  let searchFrom = 0;
 
-      const variableValue = getCssVariableValue(variableName)?.trim();
-      if (!variableValue) {
-        return fallbackValue?.trim() || match;
-      }
-
-      seen.add(variableName);
-      const substituted = substituteCssVariables(
-        variableValue,
-        getCssVariableValue,
-        seen
-      );
-      seen.delete(variableName);
-
-      return substituted;
+  while (searchFrom < value.length) {
+    const varIndex = value.indexOf("var(", searchFrom);
+    if (varIndex === -1) {
+      output += value.slice(searchFrom);
+      break;
     }
-  );
+
+    const openParenIndex = varIndex + "var".length;
+    const closeParenIndex = findMatchingCloseParen(value, openParenIndex);
+    if (closeParenIndex === -1) {
+      output += value.slice(searchFrom);
+      break;
+    }
+
+    output += value.slice(searchFrom, varIndex);
+
+    const originalExpression = value.slice(varIndex, closeParenIndex + 1);
+    const expressionBody = value.slice(openParenIndex + 1, closeParenIndex);
+    let separatorIndex = -1;
+    let depth = 0;
+
+    for (let index = 0; index < expressionBody.length; index += 1) {
+      const character = expressionBody[index];
+      if (character === "(") {
+        depth += 1;
+      } else if (character === ")") {
+        depth -= 1;
+      } else if (character === "," && depth === 0) {
+        separatorIndex = index;
+        break;
+      }
+    }
+
+    const variableName =
+      separatorIndex === -1
+        ? expressionBody.trim()
+        : expressionBody.slice(0, separatorIndex).trim();
+    const fallbackValue =
+      separatorIndex === -1
+        ? null
+        : expressionBody.slice(separatorIndex + 1).trim();
+
+    if (!/^--[-_a-zA-Z0-9]+$/.test(variableName)) {
+      output += originalExpression;
+    } else if (seen.has(variableName)) {
+      output += fallbackValue
+        ? substituteCssVariables(fallbackValue, getCssVariableValue, seen)
+        : originalExpression;
+    } else {
+      const variableValue = getCssVariableValue(variableName)?.trim();
+      if (variableValue) {
+        seen.add(variableName);
+        output += substituteCssVariables(
+          variableValue,
+          getCssVariableValue,
+          seen
+        );
+        seen.delete(variableName);
+      } else if (fallbackValue) {
+        seen.add(variableName);
+        output += substituteCssVariables(
+          fallbackValue,
+          getCssVariableValue,
+          seen
+        );
+        seen.delete(variableName);
+      } else {
+        output += originalExpression;
+      }
+    }
+
+    searchFrom = closeParenIndex + 1;
+  }
+
+  return output;
 }
 
 export function normalizeUnsupportedColorFunctions(
@@ -119,4 +174,3 @@ export function normalizeUnsupportedColorFunctions(
 
   return changed ? output : valueWithVariables;
 }
-

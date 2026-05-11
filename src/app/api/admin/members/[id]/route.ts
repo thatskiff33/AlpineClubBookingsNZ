@@ -222,6 +222,17 @@ export async function GET(
         parentMemberId: true,
         inheritParentEmail: true,
         inheritEmailFromId: true,
+        parent: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            ageTier: true,
+            active: true,
+            canLogin: true,
+          },
+        },
         inheritEmailFrom: {
           select: {
             id: true,

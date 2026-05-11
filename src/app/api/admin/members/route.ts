@@ -183,6 +183,15 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const parentLinkEligibleFor = sp.get("parentLinkEligibleFor");
+  if (parentLinkEligibleFor) {
+    andConditions.push(
+      { id: { not: parentLinkEligibleFor } },
+      { active: true },
+      { ageTier: "ADULT" },
+    );
+  }
+
   // Filter: role
   const roleFilter = sp.get("role");
   if (roleFilter && (roleFilter === "MEMBER" || roleFilter === "ADMIN")) {
