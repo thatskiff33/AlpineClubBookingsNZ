@@ -145,11 +145,22 @@ export async function POST(req: NextRequest) {
     action: "FAMILY_GROUP_ADULT_REQUEST",
     memberId: requester.id,
     targetId: parsed.data.familyGroupId,
+    subjectMemberId: requester.id,
+    entityType: "FamilyGroupJoinRequest",
+    entityId: request.id,
+    category: "family",
+    outcome: "success",
+    summary: "Adult family group request submitted",
     details: JSON.stringify({
       requestId: request.id,
       requestedName: `${firstName} ${lastName}`,
       requestedDateOfBirth: parsed.data.dateOfBirth,
     }),
+    metadata: {
+      familyGroupId: parsed.data.familyGroupId,
+      requestedName: `${firstName} ${lastName}`,
+      requestedDateOfBirth: parsed.data.dateOfBirth,
+    },
   });
 
   const groupInfo = await prisma.familyGroup.findUnique({

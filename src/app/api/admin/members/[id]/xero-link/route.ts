@@ -155,7 +155,19 @@ export async function POST(
       action: "XERO_LINK",
       memberId: session.user.id,
       targetId: id,
+      subjectMemberId: id,
+      entityType: "Member",
+      entityId: id,
+      category: "xero",
+      outcome: "success",
+      summary: "Member linked to Xero contact",
       details: `Linked to Xero contact ${parsed.data.xeroContactId} (${contact.name})`,
+      metadata: {
+        xeroContactId: parsed.data.xeroContactId,
+        contactName: contact.name ?? null,
+        flushedSubscriptionHistoryCount:
+          flushedSubscriptionHistory.deletedCount,
+      },
     });
 
     logger.info({ memberId: id, xeroContactId: parsed.data.xeroContactId }, "Manually linked member to Xero contact");

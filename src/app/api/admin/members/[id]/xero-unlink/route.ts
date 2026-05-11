@@ -60,7 +60,18 @@ export async function POST(
       action: "XERO_UNLINK",
       memberId: session.user.id,
       targetId: id,
+      subjectMemberId: id,
+      entityType: "Member",
+      entityId: id,
+      category: "xero",
+      outcome: "success",
+      summary: "Member unlinked from Xero contact",
       details: `Unlinked from Xero contact ${previousXeroContactId}`,
+      metadata: {
+        previousXeroContactId,
+        clearedSubscriptionHistoryCount:
+          flushedSubscriptionHistory.deletedCount,
+      },
     });
 
     logger.info(

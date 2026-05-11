@@ -26,6 +26,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("@/lib/logger", () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
+vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 
 // ---------------------------------------------------------------------------
 // Mock auth
@@ -73,7 +74,18 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
   });
 
   it("sets completedAt and completedVia on complete action", async () => {
-    mockPrisma.choreAssignment.findFirst.mockResolvedValue({ id: "assign-1" });
+    const { logAudit } = await import("@/lib/audit");
+    mockPrisma.choreAssignment.findFirst.mockResolvedValue({
+      id: "assign-1",
+      choreTemplateId: "ct1",
+      bookingId: "booking-1",
+      bookingGuestId: "guest-1",
+      bookingGuest: {
+        memberId: "member-1",
+        firstName: "Alice",
+        lastName: "Smith",
+      },
+    });
     mockPrisma.choreAssignment.update.mockResolvedValue({});
 
     const { PUT } = await import("@/app/api/lodge/roster/[date]/route");
@@ -93,10 +105,26 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
         completedVia: "KIOSK",
       }),
     });
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "lodge.chore.completed",
+        subjectMemberId: "member-1",
+        entityType: "ChoreAssignment",
+        entityId: "assign-1",
+        category: "lodge",
+      })
+    );
   });
 
   it("clears completedAt and completedVia on uncomplete action", async () => {
-    mockPrisma.choreAssignment.findFirst.mockResolvedValue({ id: "assign-1" });
+    const { logAudit } = await import("@/lib/audit");
+    mockPrisma.choreAssignment.findFirst.mockResolvedValue({
+      id: "assign-1",
+      choreTemplateId: "ct1",
+      bookingId: "booking-1",
+      bookingGuestId: "guest-1",
+      bookingGuest: null,
+    });
     mockPrisma.choreAssignment.update.mockResolvedValue({});
 
     const { PUT } = await import("@/app/api/lodge/roster/[date]/route");
@@ -116,6 +144,14 @@ describe("F9: PUT /api/lodge/roster/[date] - chore completion", () => {
         completedVia: null,
       },
     });
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "lodge.chore.uncompleted",
+        entityType: "ChoreAssignment",
+        entityId: "assign-1",
+        category: "lodge",
+      })
+    );
   });
 
   it("rejects unauthenticated requests", async () => {

@@ -106,7 +106,18 @@ export async function POST(
     action: "refund-request.create",
     memberId: session.user.id,
     targetId: bookingId,
+    subjectMemberId: booking.memberId,
+    entityType: "RefundRequest",
+    entityId: refundRequest.id,
+    category: "payment",
+    outcome: "success",
+    summary: "Refund appeal submitted",
     details: `Refund appeal submitted${requestedAmountCents ? ` for $${(requestedAmountCents / 100).toFixed(2)}` : ""}`,
+    metadata: {
+      bookingId,
+      requestedAmountCents: requestedAmountCents ?? null,
+      maxRefundableCents: maxRefundable,
+    },
     ipAddress: req.headers.get("x-forwarded-for") ?? "unknown",
   });
 

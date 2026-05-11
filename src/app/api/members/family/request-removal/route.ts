@@ -138,11 +138,21 @@ export async function POST(req: NextRequest) {
     action: "FAMILY_GROUP_REMOVAL_REQUEST",
     memberId: requester.id,
     targetId: parsed.data.memberId,
+    subjectMemberId: parsed.data.memberId,
+    entityType: "FamilyGroupJoinRequest",
+    entityId: request.id,
+    category: "family",
+    outcome: "success",
+    summary: "Family group removal requested",
     details: JSON.stringify({
       requestId: request.id,
       familyGroupId: parsed.data.familyGroupId,
       notes: notes || undefined,
     }),
+    metadata: {
+      familyGroupId: parsed.data.familyGroupId,
+      notes: notes || null,
+    },
   });
 
   const targetName = `${targetMembership.member.firstName} ${targetMembership.member.lastName}`;

@@ -338,12 +338,26 @@ export async function DELETE(
       action: "booking.modify.guests.remove",
       memberId: session.user.id,
       targetId: bookingId,
+      subjectMemberId: result.booking.memberId,
+      entityType: "BookingModification",
+      entityId: result.bookingModificationId,
+      category: "booking",
+      outcome: "success",
+      summary: "Booking guest removed",
       details: JSON.stringify({
         removedGuest: `${result.removedGuest.firstName} ${result.removedGuest.lastName}`,
         priceDiffCents: result.priceDiffCents,
         refundAmountCents: result.refundAmountCents,
         choreWarnings: result.choreWarnings,
       }),
+      metadata: {
+        bookingId,
+        removedGuest: `${result.removedGuest.firstName} ${result.removedGuest.lastName}`,
+        priceDiffCents: result.priceDiffCents,
+        refundAmountCents: result.refundAmountCents,
+        choreWarnings: result.choreWarnings,
+        newGuestCount: result.booking.guests.length,
+      },
       ipAddress,
     });
 

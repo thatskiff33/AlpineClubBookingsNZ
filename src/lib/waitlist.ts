@@ -73,6 +73,7 @@ export async function processWaitlistForDates(freedDates: {
     guestCount: number;
     expiresAt: Date;
     bookingId: string;
+    memberId: string;
     memberName: string;
     position: number;
   };
@@ -135,6 +136,7 @@ export async function processWaitlistForDates(freedDates: {
             guestCount: candidate.guests.length,
             expiresAt,
             bookingId: candidate.id,
+            memberId: candidate.memberId,
             memberName: `${candidate.member.firstName} ${candidate.member.lastName}`,
             position: position + 1,
           };
@@ -170,8 +172,22 @@ export async function processWaitlistForDates(freedDates: {
 
     logAudit({
       action: "waitlist.offer_sent",
+      memberId: null,
       targetId: offerDetails.bookingId,
+      subjectMemberId: offerDetails.memberId,
+      entityType: "Booking",
+      entityId: offerDetails.bookingId,
+      category: "booking",
+      outcome: "success",
+      summary: "Waitlist offer sent",
       details: `Waitlist offer sent to ${offerDetails.memberName}`,
+      metadata: {
+        checkIn: offerDetails.checkIn.toISOString(),
+        checkOut: offerDetails.checkOut.toISOString(),
+        guestCount: offerDetails.guestCount,
+        position: offerDetails.position,
+        expiresAt: offerDetails.expiresAt.toISOString(),
+      },
     });
   }
 
@@ -277,7 +293,16 @@ export async function confirmWaitlistOffer(
       action: "waitlist.offer_confirmed",
       memberId,
       targetId: bookingId,
+      subjectMemberId: memberId,
+      entityType: "Booking",
+      entityId: bookingId,
+      category: "booking",
+      outcome: "success",
+      summary: "Waitlist offer confirmed",
       details: `Waitlist offer confirmed, new status: ${result.newStatus}`,
+      metadata: {
+        newStatus: result.newStatus,
+      },
     });
   }
 
@@ -353,8 +378,20 @@ export async function expireStaleOffers(): Promise<{
 
     logAudit({
       action: "waitlist.offer_expired",
+      memberId: null,
       targetId: offer.id,
+      subjectMemberId: offer.memberId,
+      entityType: "Booking",
+      entityId: offer.id,
+      category: "booking",
+      outcome: "success",
+      summary: "Waitlist offer expired",
       details: `Waitlist offer expired, reverted to WAITLISTED`,
+      metadata: {
+        checkIn: offer.checkIn.toISOString(),
+        checkOut: offer.checkOut.toISOString(),
+        newPosition: offer.newPosition,
+      },
     });
   }
 

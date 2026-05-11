@@ -215,10 +215,20 @@ export async function PUT(
     action: "FAMILY_MEMBER_DETAILS_DELEGATED_CONFIRMED",
     memberId: requester.id,
     targetId: updated.id,
+    subjectMemberId: updated.id,
+    entityType: "Member",
+    entityId: updated.id,
+    category: "family",
+    outcome: "success",
+    summary: "Family member details confirmed by delegate",
     details: JSON.stringify({
       familyGroupIds: sharedFamilyGroupIds,
       inheritedContactFromMemberId: requester.id,
     }),
+    metadata: {
+      familyGroupIds: sharedFamilyGroupIds,
+      inheritedContactFromMemberId: requester.id,
+    },
   });
 
   logger.info(

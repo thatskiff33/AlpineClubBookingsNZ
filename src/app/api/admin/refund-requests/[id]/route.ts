@@ -161,7 +161,17 @@ export async function PUT(
       action: "refund-request.approve",
       memberId: session.user.id,
       targetId: id,
+      subjectMemberId: booking.memberId,
+      entityType: "RefundRequest",
+      entityId: id,
+      category: "payment",
+      outcome: "success",
+      summary: "Refund appeal approved",
       details: `Approved refund appeal for $${(approvedAmountCents / 100).toFixed(2)} on booking ${booking.id}`,
+      metadata: {
+        bookingId: booking.id,
+        approvedAmountCents,
+      },
       ipAddress: req.headers.get("x-forwarded-for") ?? "unknown",
     });
 
@@ -210,7 +220,17 @@ export async function PUT(
       action: "refund-request.reject",
       memberId: session.user.id,
       targetId: id,
+      subjectMemberId: booking.memberId,
+      entityType: "RefundRequest",
+      entityId: id,
+      category: "payment",
+      outcome: "success",
+      summary: "Refund appeal rejected",
       details: `Rejected refund appeal for booking ${booking.id}`,
+      metadata: {
+        bookingId: booking.id,
+        adminNotes: adminNotes ?? null,
+      },
       ipAddress: req.headers.get("x-forwarded-for") ?? "unknown",
     });
 
