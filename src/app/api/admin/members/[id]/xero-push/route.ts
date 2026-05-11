@@ -22,6 +22,10 @@ import {
 
 const pushSchema = z.object({
   createEntranceFeeInvoice: z.boolean().optional().default(false),
+  entranceFeeInvoiceDecision: z.enum(["CREATE", "SKIP"]).optional(),
+  entranceFeeInvoiceSkipReason: z.string().trim().max(500).optional().nullable(),
+  entranceFeeInvoiceAmountCents: z.number().int().positive().max(1_000_000).optional(),
+  entranceFeeInvoiceNarration: z.string().trim().max(500).optional().nullable(),
   forceCreate: z.boolean().optional().default(false),
 });
 
@@ -80,6 +84,22 @@ export async function POST(
     const parsed = pushSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
+
+    const entranceFeeDecision = parsed.data.entranceFeeInvoiceDecision;
+    const createEntranceFeeInvoice =
+      entranceFeeDecision === "CREATE" ||
+      (!entranceFeeDecision && parsed.data.createEntranceFeeInvoice);
+    const entranceFeeSkipReason =
+      parsed.data.entranceFeeInvoiceSkipReason?.trim() || null;
+    const entranceFeeNarration =
+      parsed.data.entranceFeeInvoiceNarration?.trim() || null;
+
+    if (entranceFeeDecision === "SKIP" && !entranceFeeSkipReason) {
+      return NextResponse.json(
+        { error: "A reason is required when not raising the entrance fee invoice." },
+        { status: 422 }
+      );
     }
 
     if (!parsed.data.forceCreate) {
@@ -146,12 +166,28 @@ export async function POST(
       );
     }
 
-    if (parsed.data.createEntranceFeeInvoice) {
+    if (createEntranceFeeInvoice) {
       try {
+        const entranceFeeInvoiceOptions: {
+          createdByMemberId: string;
+          amountCents?: number;
+          description?: string;
+        } = {
+          createdByMemberId: session.user.id,
+        };
+        if (parsed.data.entranceFeeInvoiceAmountCents) {
+          entranceFeeInvoiceOptions.amountCents =
+            parsed.data.entranceFeeInvoiceAmountCents;
+        }
+        if (entranceFeeNarration) {
+          entranceFeeInvoiceOptions.description = entranceFeeNarration;
+        }
+
         const queuedEntranceFeeInvoice =
-          await enqueueXeroEntranceFeeInvoiceOperation(id, {
-            createdByMemberId: session.user.id,
-          });
+          await enqueueXeroEntranceFeeInvoiceOperation(
+            id,
+            entranceFeeInvoiceOptions
+          );
 
         entranceFeeInvoiceQueued = Boolean(
           queuedEntranceFeeInvoice.queueOperationId
@@ -180,6 +216,23 @@ export async function POST(
         }`;
         warning = warning ? `${warning} ${entranceFeeWarning}` : entranceFeeWarning;
       }
+    } else if (entranceFeeSkipReason) {
+      await logAudit({
+        action: "XERO_ENTRANCE_FEE_INVOICE_SKIPPED",
+        memberId: session.user.id,
+        targetId: id,
+        subjectMemberId: id,
+        entityType: "Member",
+        entityId: id,
+        category: "xero",
+        outcome: "success",
+        summary: "Entrance fee invoice skipped",
+        details: entranceFeeSkipReason,
+        metadata: {
+          reason: entranceFeeSkipReason,
+          source: "member-xero-push",
+        },
+      });
     }
 
     await logAudit({
@@ -197,6 +250,7 @@ export async function POST(
         xeroContactId,
         entranceFeeInvoiceQueued,
         entranceFeeInvoiceMessage: entranceFeeInvoiceMessage ?? null,
+        entranceFeeInvoiceSkippedReason: entranceFeeSkipReason,
         flushedSubscriptionHistoryCount:
           flushedSubscriptionHistory.deletedCount,
       },

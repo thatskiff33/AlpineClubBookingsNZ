@@ -149,6 +149,33 @@ describe("enqueueXeroEntranceFeeInvoiceOperation", () => {
     );
   });
 
+  it("queues entrance fee invoices with admin amount and narration overrides", async () => {
+    await expect(
+      enqueueXeroEntranceFeeInvoiceOperation("member_1", {
+        createdByMemberId: "admin_1",
+        amountCents: 12345,
+        description: "Entrance fee waived to adjusted family rate",
+      })
+    ).resolves.toEqual({
+      queueOperationId: "op_entrance_1",
+      message: "Xero entrance fee invoice queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        idempotencyKey: "member:member_1:entrance-fee-invoice:ADULT:12345:v1",
+        correlationKey: "member:member_1:entrance-fee-invoice:ADULT:12345:v1",
+        requestPayload: {
+          queueType: "ENTRANCE_FEE_INVOICE",
+          category: "ADULT",
+          itemCode: "EF-ADULT",
+          feeAmountCents: 12345,
+          description: "Entrance fee waived to adjusted family rate",
+        },
+      })
+    );
+  });
+
   it("skips queueing when there is no configured entrance fee", async () => {
     mocks.getEntranceFeeContext.mockResolvedValue({
       category: "CHILD",

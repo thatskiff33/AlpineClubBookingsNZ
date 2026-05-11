@@ -31,6 +31,7 @@ import { getMemberCreditBalance, applyCreditToBooking } from "@/lib/member-credi
 import { findUnpaidMemberGuests } from "@/lib/booking-member-guest-subscriptions";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
+import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
 import { logAudit } from "@/lib/audit";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -95,6 +96,7 @@ export async function POST(request: NextRequest) {
   // Resolve effective member: admin booking on behalf of another member
   let effectiveMemberId = session.user.id;
   let isOnBehalf = false;
+  let effectiveMemberAgeTier: AgeTier | null = null;
 
   // Admins must always use forMemberId to book on behalf — they cannot book for themselves
   if (session.user.role === "ADMIN" && !parsed.data.forMemberId) {
@@ -126,8 +128,9 @@ export async function POST(request: NextRequest) {
   if (!isOnBehalf) {
     const member = await prisma.member.findUnique({
       where: { id: session.user.id },
-      select: { emailVerified: true, xeroContactId: true },
+      select: { emailVerified: true, xeroContactId: true, ageTier: true },
     });
+    effectiveMemberAgeTier = member?.ageTier ?? null;
 
     // Gate: email must be verified before booking
     if (!member?.emailVerified) {
@@ -194,7 +197,10 @@ export async function POST(request: NextRequest) {
 
   // Issue 10: Subscription check — non-admins must have a PAID subscription for the check-in season
   // Admin booking on-behalf skips this (admin is trusted to make this decision)
-  if (session.user.role !== "ADMIN") {
+  if (
+    session.user.role !== "ADMIN" &&
+    await requiresPaidSubscriptionForAgeTierFromSettings(effectiveMemberAgeTier)
+  ) {
     const seasonYear = getSeasonYear(checkIn);
     const paidSub = await prisma.memberSubscription.findFirst({
       where: {

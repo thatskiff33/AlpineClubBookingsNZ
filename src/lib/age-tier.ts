@@ -31,10 +31,10 @@ export function computeAge(dateOfBirth: Date, referenceDate: Date): number {
 // ---------------------------------------------------------------------------
 
 export const AGE_TIER_DEFAULTS = [
-  { tier: "INFANT" as AgeTier, minAge: 0, maxAge: 4, label: "Infant (under 5)", xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 0 },
-  { tier: "CHILD" as AgeTier, minAge: 5, maxAge: 9 as number | null, label: "Child (5-9)", xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 1 },
-  { tier: "YOUTH" as AgeTier, minAge: 10, maxAge: 17 as number | null, label: "Youth (10-17)", xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 2 },
-  { tier: "ADULT" as AgeTier, minAge: 18, maxAge: null as number | null, label: "Adult (18+)", xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 3 },
+  { tier: "INFANT" as AgeTier, minAge: 0, maxAge: 4, label: "Infant (under 5)", subscriptionRequiredForBooking: false, xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 0 },
+  { tier: "CHILD" as AgeTier, minAge: 5, maxAge: 9 as number | null, label: "Child (5-9)", subscriptionRequiredForBooking: false, xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 1 },
+  { tier: "YOUTH" as AgeTier, minAge: 10, maxAge: 17 as number | null, label: "Youth (10-17)", subscriptionRequiredForBooking: true, xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 2 },
+  { tier: "ADULT" as AgeTier, minAge: 18, maxAge: null as number | null, label: "Adult (18+)", subscriptionRequiredForBooking: true, xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 3 },
 ];
 
 export type AgeTierSettingData = {
@@ -42,6 +42,7 @@ export type AgeTierSettingData = {
   minAge: number;
   maxAge: number | null;
   label: string;
+  subscriptionRequiredForBooking?: boolean;
   xeroContactGroupId?: string | null;
   xeroContactGroupName?: string | null;
   xeroAcceptedContactGroups?: Array<{
@@ -95,6 +96,8 @@ export function normalizeAgeTierSettings(
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((setting) => ({
         ...setting,
+        subscriptionRequiredForBooking:
+          setting.subscriptionRequiredForBooking ?? true,
         xeroAcceptedContactGroups: setting.xeroAcceptedContactGroups ?? [],
       }))
   );
@@ -165,6 +168,7 @@ export async function getAgeTierSettings(): Promise<AgeTierSettingData[]> {
         minAge: r.minAge,
         maxAge: r.maxAge,
         label: r.label,
+        subscriptionRequiredForBooking: r.subscriptionRequiredForBooking ?? true,
         xeroContactGroupId: r.xeroContactGroupId,
         xeroContactGroupName: r.xeroContactGroupName,
         xeroAcceptedContactGroups: Array.isArray(r.xeroAcceptedContactGroups)

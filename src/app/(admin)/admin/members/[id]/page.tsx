@@ -49,6 +49,14 @@ interface XeroPushResponse {
   warning?: string
 }
 
+interface XeroEntranceFeeInvoiceOptions {
+  createEntranceFeeInvoice: boolean
+  entranceFeeInvoiceDecision: "CREATE" | "SKIP"
+  entranceFeeInvoiceSkipReason?: string
+  entranceFeeInvoiceAmountCents?: number
+  entranceFeeInvoiceNarration?: string
+}
+
 interface AdminActor {
   id: string
   firstName: string
@@ -386,6 +394,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [xeroPushing, setXeroPushing] = useState(false)
   const [xeroCreateOpen, setXeroCreateOpen] = useState(false)
   const [xeroCreateEntranceFeeInvoice, setXeroCreateEntranceFeeInvoice] = useState(false)
+  const [xeroEntranceFeeSkipReason, setXeroEntranceFeeSkipReason] = useState("")
+  const [xeroEntranceFeeAmount, setXeroEntranceFeeAmount] = useState("")
+  const [xeroEntranceFeeNarration, setXeroEntranceFeeNarration] = useState("")
   const [xeroCreateDecisionOpen, setXeroCreateDecisionOpen] = useState(false)
   const [xeroCreateDecisionResults, setXeroCreateDecisionResults] = useState<XeroSearchResult[]>([])
   const [xeroDecisionContactId, setXeroDecisionContactId] = useState("")
@@ -394,6 +405,47 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const isAdultMember = member?.ageTier === "ADULT"
   const memberId = member?.id
   const shouldAutoOpenEdit = searchParams.get("edit") === "true"
+
+  const resetXeroEntranceFeeDecision = () => {
+    resetXeroEntranceFeeDecision()
+    setXeroEntranceFeeSkipReason("")
+    setXeroEntranceFeeAmount("")
+    setXeroEntranceFeeNarration("")
+  }
+
+  const getXeroEntranceFeeInvoiceOptions = (): XeroEntranceFeeInvoiceOptions => {
+    if (!xeroCreateEntranceFeeInvoice) {
+      const reason = xeroEntranceFeeSkipReason.trim()
+      if (!reason) {
+        throw new Error("Enter a reason for not raising the entrance fee invoice.")
+      }
+
+      return {
+        createEntranceFeeInvoice: false,
+        entranceFeeInvoiceDecision: "SKIP",
+        entranceFeeInvoiceSkipReason: reason,
+      }
+    }
+
+    const amountText = xeroEntranceFeeAmount.trim()
+    let amountCents: number | undefined
+    if (amountText) {
+      const parsedAmount = Number(amountText)
+      amountCents = Math.round(parsedAmount * 100)
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || amountCents <= 0) {
+        throw new Error("Enter a valid entrance fee amount, or leave it blank to use the configured amount.")
+      }
+    }
+
+    return {
+      createEntranceFeeInvoice: true,
+      entranceFeeInvoiceDecision: "CREATE",
+      ...(amountCents ? { entranceFeeInvoiceAmountCents: amountCents } : {}),
+      ...(xeroEntranceFeeNarration.trim()
+        ? { entranceFeeInvoiceNarration: xeroEntranceFeeNarration.trim() }
+        : {}),
+    }
+  }
 
   const handleMemberSectionChange = (value: string[]) => {
     const nextSections = value.filter(isCollapsibleMemberSection)
@@ -1036,7 +1088,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       setSelectedXeroContactId("")
       setXeroSearchQuery("")
       setXeroSearchResults([])
-      setXeroCreateEntranceFeeInvoice(false)
+      resetXeroEntranceFeeDecision()
       setSuccess("Member unlinked from Xero")
       setTimeout(() => setSuccess(""), 3000)
       setLoading(true)
@@ -1047,6 +1099,10 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
   const requestXeroPush = async (options?: {
     createEntranceFeeInvoice?: boolean
+    entranceFeeInvoiceDecision?: "CREATE" | "SKIP"
+    entranceFeeInvoiceSkipReason?: string
+    entranceFeeInvoiceAmountCents?: number
+    entranceFeeInvoiceNarration?: string
     forceCreate?: boolean
   }) => {
     const res = await fetch(`/api/admin/members/${id}/xero-push`, {
@@ -1054,6 +1110,10 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         createEntranceFeeInvoice: Boolean(options?.createEntranceFeeInvoice),
+        entranceFeeInvoiceDecision: options?.entranceFeeInvoiceDecision,
+        entranceFeeInvoiceSkipReason: options?.entranceFeeInvoiceSkipReason,
+        entranceFeeInvoiceAmountCents: options?.entranceFeeInvoiceAmountCents,
+        entranceFeeInvoiceNarration: options?.entranceFeeInvoiceNarration,
         forceCreate: Boolean(options?.forceCreate),
       }),
     })
@@ -1116,8 +1176,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const handleXeroPush = async (forceCreate = false) => {
     setXeroPushing(true); setXeroError("")
     try {
+      const entranceFeeInvoiceOptions = getXeroEntranceFeeInvoiceOptions()
       const result = await requestXeroPush({
-        createEntranceFeeInvoice: xeroCreateEntranceFeeInvoice,
+        ...entranceFeeInvoiceOptions,
         forceCreate,
       })
       if (result.status === "needsDecision") {
@@ -1131,7 +1192,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         return
       }
 
-      await applyXeroPushSuccess(result.data, xeroCreateEntranceFeeInvoice)
+      await applyXeroPushSuccess(result.data, entranceFeeInvoiceOptions.createEntranceFeeInvoice)
     } catch (err) { setXeroError(err instanceof Error ? err.message : "Push failed") }
     finally { setXeroPushing(false) }
   }
@@ -1220,7 +1281,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             ) : (
               <>
                 <Button variant="outline" size="sm" onClick={() => { setXeroSearchOpen(true); setXeroSearchQuery(""); setXeroSearchResults([]); setXeroError(""); }}><Link2 className="h-4 w-4 mr-1" />Link to Xero</Button>
-                <Button variant="outline" size="sm" onClick={() => { setXeroCreateEntranceFeeInvoice(false); setXeroCreateOpen(true); setXeroError(""); }} disabled={xeroPushing}><Plus className="h-4 w-4 mr-1" />{xeroPushing ? "Creating..." : "Create in Xero"}</Button>
+                <Button variant="outline" size="sm" onClick={() => { resetXeroEntranceFeeDecision(); setXeroCreateOpen(true); setXeroError(""); }} disabled={xeroPushing}><Plus className="h-4 w-4 mr-1" />{xeroPushing ? "Creating..." : "Create in Xero"}</Button>
               </>
             )}
             <Button size="sm" onClick={openEditDialog}><Pencil className="h-4 w-4 mr-1" />Edit Member</Button>
@@ -1642,9 +1703,45 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               />
               <div>
                 <Label htmlFor="member-detail-xero-create-invoice">Create membership entrance fee invoice after contact creation</Label>
-                <p className="text-xs text-muted-foreground">Leave this unchecked if you only want to create and link the Xero contact for now.</p>
+                <p className="text-xs text-muted-foreground">If this is not raised, record why for the audit trail.</p>
               </div>
             </div>
+            {xeroCreateEntranceFeeInvoice ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="member-detail-xero-entrance-amount">Amount override ($)</Label>
+                  <Input
+                    id="member-detail-xero-entrance-amount"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    placeholder="Use configured amount"
+                    value={xeroEntranceFeeAmount}
+                    onChange={e => setXeroEntranceFeeAmount(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="member-detail-xero-entrance-narration">Narration override</Label>
+                  <Input
+                    id="member-detail-xero-entrance-narration"
+                    placeholder="Use default narration"
+                    value={xeroEntranceFeeNarration}
+                    onChange={e => setXeroEntranceFeeNarration(e.target.value)}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <Label htmlFor="member-detail-xero-entrance-skip-reason">Reason for not raising invoice</Label>
+                <textarea
+                  id="member-detail-xero-entrance-skip-reason"
+                  className="min-h-20 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  value={xeroEntranceFeeSkipReason}
+                  onChange={e => setXeroEntranceFeeSkipReason(e.target.value)}
+                />
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setXeroCreateOpen(false)} disabled={xeroPushing}>Cancel</Button>
@@ -2149,7 +2246,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                       variant="outline"
                       size="sm"
                       onClick={() => {
-                        setXeroCreateEntranceFeeInvoice(false)
+                        resetXeroEntranceFeeDecision()
                         setXeroCreateOpen(true)
                         setXeroError("")
                       }}

@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import html2canvas from "html2canvas";
+import { useEffect, useState } from "react";
 import { AlertTriangle, Bug, Camera, LoaderCircle, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -21,6 +20,18 @@ import {
 
 const MAX_SCREENSHOT_DATA_URL_LENGTH = 1_500_000;
 const SCREENSHOT_CAPTURE_ID_ATTRIBUTE = "data-report-issue-capture-id";
+const VIEWPORT_STYLE_OVERRIDE_PADDING_PX = 160;
+const SCROLL_KEYS = new Set([
+  " ",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+]);
 const SCREENSHOT_STYLE_PROPERTIES_TO_RESOLVE = [
   "color",
   "background-color",
@@ -50,6 +61,17 @@ function nextFrame() {
   return new Promise<void>((resolve) => {
     window.requestAnimationFrame(() => resolve());
   });
+}
+
+async function loadHtml2Canvas() {
+  const html2CanvasModule = await import("html2canvas");
+  return html2CanvasModule.default;
+}
+
+class BlankScreenshotError extends Error {
+  constructor() {
+    super("Screenshot capture produced a blank image. Please try again.");
+  }
 }
 
 function compressCanvasToDataUrl(canvas: HTMLCanvasElement): string {
@@ -146,30 +168,12 @@ function collectResolvedStyleOverrides(
   const getCssVariableValue = (name: string) =>
     computedStyle.getPropertyValue(name).trim() || null;
 
-  for (const propertyName of Array.from(computedStyle).filter((name) =>
-    name.startsWith("--")
-  )) {
-    const rawValue = computedStyle.getPropertyValue(propertyName).trim();
-    if (!rawValue) {
-      continue;
-    }
-
-    const normalizedValue = normalizeUnsupportedColorFunctions(
-      rawValue,
-      convertColor,
-      getCssVariableValue
-    );
-    if (
-      normalizedValue !== rawValue &&
-      !containsUnsupportedColorFunction(normalizedValue)
-    ) {
-      overrides.set(propertyName, normalizedValue);
-    }
-  }
-
   for (const propertyName of SCREENSHOT_STYLE_PROPERTIES_TO_RESOLVE) {
     const rawValue = computedStyle.getPropertyValue(propertyName).trim();
-    if (!rawValue) {
+    if (
+      !rawValue ||
+      (!rawValue.includes("var(") && !containsUnsupportedColorFunction(rawValue))
+    ) {
       continue;
     }
 
@@ -202,7 +206,25 @@ function applyResolvedStyleOverrides(
   }
 }
 
-function prepareResolvedStyleOverrides() {
+function elementMayAffectViewport(element: HTMLElement) {
+  if (element === document.documentElement || element === document.body) {
+    return true;
+  }
+
+  const rect = element.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) {
+    return false;
+  }
+
+  return (
+    rect.bottom >= -VIEWPORT_STYLE_OVERRIDE_PADDING_PX &&
+    rect.right >= -VIEWPORT_STYLE_OVERRIDE_PADDING_PX &&
+    rect.top <= window.innerHeight + VIEWPORT_STYLE_OVERRIDE_PADDING_PX &&
+    rect.left <= window.innerWidth + VIEWPORT_STYLE_OVERRIDE_PADDING_PX
+  );
+}
+
+function prepareResolvedStyleOverrides(options?: { includeOffscreen?: boolean }) {
   const convertColor = createCssColorConverter();
   const previousAttributeValues = new Map<HTMLElement, string | null>();
   const overridesByCaptureId = new Map<string, Array<[string, string]>>();
@@ -223,6 +245,10 @@ function prepareResolvedStyleOverrides() {
     );
 
     for (const [index, element] of elements.entries()) {
+      if (!options?.includeOffscreen && !elementMayAffectViewport(element)) {
+        continue;
+      }
+
       const captureId = `${index}`;
       previousAttributeValues.set(
         element,
@@ -263,26 +289,71 @@ function prepareResolvedStyleOverrides() {
   };
 }
 
-async function captureViewportScreenshot(options?: {
-  foreignObjectRendering?: boolean;
-  resolveUnsupportedColors?: boolean;
-}): Promise<string> {
-  const colorOverrides = options?.resolveUnsupportedColors
-    ? prepareResolvedStyleOverrides()
-    : null;
+function canvasLooksBlankBlack(canvas: HTMLCanvasElement) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context || canvas.width === 0 || canvas.height === 0) {
+    return false;
+  }
+
+  const columns = 10;
+  const rows = 10;
+  let sampledPixels = 0;
+  let blackPixels = 0;
 
   try {
+    for (let row = 0; row < rows; row += 1) {
+      for (let column = 0; column < columns; column += 1) {
+        const x = Math.min(
+          canvas.width - 1,
+          Math.round((canvas.width * (column + 0.5)) / columns)
+        );
+        const y = Math.min(
+          canvas.height - 1,
+          Math.round((canvas.height * (row + 0.5)) / rows)
+        );
+        const [red, green, blue, alpha] = context.getImageData(x, y, 1, 1).data;
+        sampledPixels += 1;
+
+        if (alpha > 245 && red < 12 && green < 12 && blue < 12) {
+          blackPixels += 1;
+        }
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return sampledPixels > 0 && blackPixels / sampledPixels > 0.9;
+}
+
+async function captureViewportScreenshot(options?: {
+  resolveUnsupportedColors?: boolean;
+  includeOffscreenStyleOverrides?: boolean;
+}): Promise<string> {
+  const colorOverrides = options?.resolveUnsupportedColors
+    ? prepareResolvedStyleOverrides({
+        includeOffscreen: options.includeOffscreenStyleOverrides,
+      })
+    : null;
+  const scrollX = window.scrollX;
+  const scrollY = window.scrollY;
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+
+  try {
+    const html2canvas = await loadHtml2Canvas();
     const viewportCanvas = await html2canvas(document.documentElement, {
       useCORS: true,
       backgroundColor: "#ffffff",
       logging: false,
-      foreignObjectRendering: options?.foreignObjectRendering ?? false,
-      x: window.scrollX,
-      y: window.scrollY,
-      width: window.innerWidth,
-      height: window.innerHeight,
-      windowWidth: document.documentElement.clientWidth,
-      windowHeight: document.documentElement.clientHeight,
+      x: scrollX,
+      y: scrollY,
+      width: viewportWidth,
+      height: viewportHeight,
+      scrollX,
+      scrollY,
+      windowWidth: viewportWidth,
+      windowHeight: viewportHeight,
       ignoreElements: (element) =>
         element instanceof HTMLElement &&
         element.dataset.reportIssueIgnore === "true",
@@ -290,6 +361,10 @@ async function captureViewportScreenshot(options?: {
         colorOverrides?.applyToClone(clonedDocument);
       },
     });
+
+    if (canvasLooksBlankBlack(viewportCanvas)) {
+      throw new BlankScreenshotError();
+    }
 
     return compressCanvasToDataUrl(viewportCanvas);
   } finally {
@@ -299,16 +374,32 @@ async function captureViewportScreenshot(options?: {
 
 async function captureViewportScreenshotWithFallbacks(): Promise<string> {
   try {
-    return await captureViewportScreenshot({
-      foreignObjectRendering: true,
+    return await captureViewportScreenshot();
+  } catch (error) {
+    if (error instanceof BlankScreenshotError) {
+      throw error;
+    }
+  }
+
+  try {
+    return await captureViewportScreenshot({ resolveUnsupportedColors: true });
+  } catch (error) {
+    if (error instanceof BlankScreenshotError) {
+      throw error;
+    }
+
+    return captureViewportScreenshot({
       resolveUnsupportedColors: true,
+      includeOffscreenStyleOverrides: true,
     });
-  } catch {
-    return captureViewportScreenshot({ resolveUnsupportedColors: true });
   }
 }
 
-export function ReportIssueWidget() {
+export function ReportIssueWidget({
+  avoidDesktopSidebar = false,
+}: {
+  avoidDesktopSidebar?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -317,6 +408,34 @@ export function ReportIssueWidget() {
   const [pageTitle, setPageTitle] = useState("");
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
   const [captureError, setCaptureError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!capturing) {
+      return;
+    }
+
+    const preventScroll = (event: Event) => {
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+    };
+    const preventKeyboardScroll = (event: KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key) && event.cancelable) {
+        event.preventDefault();
+      }
+    };
+    const options = { capture: true, passive: false } as AddEventListenerOptions;
+
+    document.addEventListener("wheel", preventScroll, options);
+    document.addEventListener("touchmove", preventScroll, options);
+    document.addEventListener("keydown", preventKeyboardScroll, true);
+
+    return () => {
+      document.removeEventListener("wheel", preventScroll, options);
+      document.removeEventListener("touchmove", preventScroll, options);
+      document.removeEventListener("keydown", preventKeyboardScroll, true);
+    };
+  }, [capturing]);
 
   function resetForm() {
     setDescription("");
@@ -339,6 +458,7 @@ export function ReportIssueWidget() {
       setPageUrl(window.location.href);
       setPageTitle(document.title);
 
+      await nextFrame();
       await nextFrame();
       const dataUrl = await captureViewportScreenshotWithFallbacks();
       setScreenshotDataUrl(dataUrl);
@@ -399,8 +519,19 @@ export function ReportIssueWidget() {
 
   return (
     <>
+      {capturing ? (
+        <div
+          className="fixed inset-0 z-[49] cursor-progress touch-none"
+          aria-hidden="true"
+          data-report-issue-ignore="true"
+        />
+      ) : null}
       <div
-        className="fixed bottom-5 right-5 z-50"
+        className={
+          avoidDesktopSidebar
+            ? "fixed bottom-20 right-5 z-50 sm:bottom-6 sm:left-6 sm:right-auto md:left-[16.5rem]"
+            : "fixed bottom-20 right-5 z-50 sm:bottom-6 sm:left-6 sm:right-auto"
+        }
         data-report-issue-ignore="true"
       >
         <Button

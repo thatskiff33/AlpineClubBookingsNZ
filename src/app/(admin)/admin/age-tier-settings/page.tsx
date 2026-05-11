@@ -24,6 +24,7 @@ type AgeTierRow = {
   minAge: number;
   maxAge: number | null;
   label: string;
+  subscriptionRequiredForBooking: boolean;
   xeroContactGroupId: string | null;
   xeroContactGroupName: string | null;
   xeroAcceptedContactGroups: Array<{
@@ -45,6 +46,7 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     minAge: 0,
     maxAge: 4,
     label: "Infant (under 5)",
+    subscriptionRequiredForBooking: false,
     xeroContactGroupId: null,
     xeroContactGroupName: null,
     xeroAcceptedContactGroups: [],
@@ -55,6 +57,7 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     minAge: 5,
     maxAge: 9,
     label: "Child (5-9)",
+    subscriptionRequiredForBooking: false,
     xeroContactGroupId: null,
     xeroContactGroupName: null,
     xeroAcceptedContactGroups: [],
@@ -65,6 +68,7 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     minAge: 10,
     maxAge: 17,
     label: "Youth (10-17)",
+    subscriptionRequiredForBooking: true,
     xeroContactGroupId: null,
     xeroContactGroupName: null,
     xeroAcceptedContactGroups: [],
@@ -75,6 +79,7 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
     minAge: 18,
     maxAge: null,
     label: "Adult (18+)",
+    subscriptionRequiredForBooking: true,
     xeroContactGroupId: null,
     xeroContactGroupName: null,
     xeroAcceptedContactGroups: [],
@@ -85,6 +90,7 @@ const DEFAULT_SETTINGS: AgeTierRow[] = [
 function normalizeAgeTierRows(rows: AgeTierRow[]): AgeTierRow[] {
   return rows.map((row) => ({
     ...row,
+    subscriptionRequiredForBooking: row.subscriptionRequiredForBooking ?? true,
     xeroAcceptedContactGroups: Array.isArray(row.xeroAcceptedContactGroups)
       ? row.xeroAcceptedContactGroups
       : [],
@@ -154,7 +160,7 @@ export default function AgeTierSettingsPage() {
   function updateRow(
     tier: string,
     field: keyof AgeTierRow,
-    value: string | number | null
+    value: string | number | boolean | null
   ) {
     setSettings((prev) =>
       prev.map((setting) =>
@@ -429,6 +435,30 @@ export default function AgeTierSettingsPage() {
                       group by default.
                     </p>
                   </div>
+                  <div className="flex items-start gap-3 rounded-md border bg-slate-50/70 p-3 sm:col-span-4">
+                    <Checkbox
+                      id={`subscription-required-${setting.tier}`}
+                      checked={setting.subscriptionRequiredForBooking}
+                      onCheckedChange={(checked) =>
+                        updateRow(
+                          setting.tier,
+                          "subscriptionRequiredForBooking",
+                          checked === true
+                        )
+                      }
+                      disabled={!editing}
+                    />
+                    <div className="space-y-1">
+                      <Label htmlFor={`subscription-required-${setting.tier}`}>
+                        Subscription Required for Booking
+                      </Label>
+                      <p className="text-xs text-slate-500">
+                        When enabled, members in this age tier must have a paid
+                        subscription for the booking season before they can be booked
+                        as the owner or as a member guest.
+                      </p>
+                    </div>
+                  </div>
                   <div className="space-y-2 sm:col-span-4">
                     <Label>Additional Accepted Xero Groups</Label>
                     <div className="rounded-md border bg-slate-50/70 p-3">
@@ -515,6 +545,7 @@ export default function AgeTierSettingsPage() {
                 <th className="text-left py-2 font-medium text-slate-700">Tier</th>
                 <th className="text-left py-2 font-medium text-slate-700">Label</th>
                 <th className="text-left py-2 font-medium text-slate-700">Age Range</th>
+                <th className="text-left py-2 font-medium text-slate-700">Booking Subscription</th>
                 <th className="text-left py-2 font-medium text-slate-700">Xero Group</th>
               </tr>
             </thead>
@@ -527,6 +558,9 @@ export default function AgeTierSettingsPage() {
                     {setting.maxAge !== null
                       ? `${setting.minAge} – ${setting.maxAge}`
                       : `${setting.minAge}+`}
+                  </td>
+                  <td className="py-2 text-slate-600">
+                    {setting.subscriptionRequiredForBooking ? "Required" : "Not required"}
                   </td>
                   <td className="py-2 text-slate-600">
                     {setting.xeroContactGroupName ?? setting.xeroContactGroupId ? (

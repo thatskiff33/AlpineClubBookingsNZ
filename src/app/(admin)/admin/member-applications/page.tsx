@@ -44,6 +44,13 @@ type ApplicationRecord = {
   createdAt: string;
 };
 
+type EntranceFeeDecisionForm = {
+  action: "CREATE" | "SKIP";
+  amount: string;
+  narration: string;
+  reason: string;
+};
+
 const filters: Array<{ label: string; value: string }> = [
   { label: "Pending admin", value: "PENDING_ADMIN" },
   { label: "Waiting on nominators", value: "PENDING_NOMINATORS" },
@@ -85,6 +92,7 @@ export default function MemberApplicationsPage() {
   const [applications, setApplications] = useState<ApplicationRecord[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [entranceFeeDecisions, setEntranceFeeDecisions] = useState<Record<string, EntranceFeeDecisionForm>>({});
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -118,6 +126,20 @@ export default function MemberApplicationsPage() {
         }
         return next;
       });
+      setEntranceFeeDecisions((prev) => {
+        const next = { ...prev };
+        for (const application of data.applications || []) {
+          if (!(application.id in next)) {
+            next[application.id] = {
+              action: "CREATE",
+              amount: "",
+              narration: "",
+              reason: "",
+            };
+          }
+        }
+        return next;
+      });
     } catch {
       setError("Could not load member applications.");
     } finally {
@@ -139,12 +161,50 @@ export default function MemberApplicationsPage() {
     setMessage("");
 
     try {
+      const entranceFeeDecision = entranceFeeDecisions[applicationId] ?? {
+        action: "CREATE",
+        amount: "",
+        narration: "",
+        reason: "",
+      };
+      let entranceFeeInvoiceDecision: unknown = undefined;
+
+      if (decision === "APPROVE") {
+        if (entranceFeeDecision.action === "SKIP") {
+          const reason = entranceFeeDecision.reason.trim();
+          if (!reason) {
+            setError("Enter a reason for not raising the entrance fee invoice.");
+            return;
+          }
+          entranceFeeInvoiceDecision = { action: "SKIP", reason };
+        } else {
+          const amountText = entranceFeeDecision.amount.trim();
+          let amountCents: number | undefined;
+          if (amountText) {
+            const parsedAmount = Number(amountText);
+            amountCents = Math.round(parsedAmount * 100);
+            if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || amountCents <= 0) {
+              setError("Enter a valid entrance fee amount, or leave it blank to use the configured amount.");
+              return;
+            }
+          }
+          entranceFeeInvoiceDecision = {
+            action: "CREATE",
+            ...(amountCents ? { amountCents } : {}),
+            ...(entranceFeeDecision.narration.trim()
+              ? { narration: entranceFeeDecision.narration.trim() }
+              : {}),
+          };
+        }
+      }
+
       const response = await fetch(`/api/admin/member-applications/${applicationId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           decision,
           adminNotes: notes[applicationId] || "",
+          entranceFeeInvoiceDecision,
         }),
       });
       const data = await response.json();
@@ -356,6 +416,111 @@ export default function MemberApplicationsPage() {
                     placeholder="Add committee notes or decision context"
                   />
                 </div>
+
+                {application.status === "PENDING_ADMIN" && (
+                  <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">
+                        Entrance fee invoice
+                      </p>
+                      <p className="mt-1 text-amber-900">
+                        Choose whether to raise the entrance fee invoice when this application is approved.
+                      </p>
+                    </div>
+                    <select
+                      className="w-full rounded-md border border-amber-300 bg-white px-3 py-2 text-sm text-slate-900"
+                      value={entranceFeeDecisions[application.id]?.action ?? "CREATE"}
+                      onChange={(event) =>
+                        setEntranceFeeDecisions((prev) => ({
+                          ...prev,
+                          [application.id]: {
+                            ...(prev[application.id] ?? {
+                              action: "CREATE",
+                              amount: "",
+                              narration: "",
+                              reason: "",
+                            }),
+                            action: event.target.value as "CREATE" | "SKIP",
+                          },
+                        }))
+                      }
+                    >
+                      <option value="CREATE">Raise entrance fee invoice</option>
+                      <option value="SKIP">Do not raise invoice</option>
+                    </select>
+                    {(entranceFeeDecisions[application.id]?.action ?? "CREATE") === "CREATE" ? (
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Amount override ($)</span>
+                          <input
+                            className="w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
+                            inputMode="decimal"
+                            placeholder="Use configured amount"
+                            value={entranceFeeDecisions[application.id]?.amount ?? ""}
+                            onChange={(event) =>
+                              setEntranceFeeDecisions((prev) => ({
+                                ...prev,
+                                [application.id]: {
+                                  ...(prev[application.id] ?? {
+                                    action: "CREATE",
+                                    amount: "",
+                                    narration: "",
+                                    reason: "",
+                                  }),
+                                  amount: event.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-xs font-medium text-slate-700">Narration override</span>
+                          <input
+                            className="w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
+                            placeholder="Use default narration"
+                            value={entranceFeeDecisions[application.id]?.narration ?? ""}
+                            onChange={(event) =>
+                              setEntranceFeeDecisions((prev) => ({
+                                ...prev,
+                                [application.id]: {
+                                  ...(prev[application.id] ?? {
+                                    action: "CREATE",
+                                    amount: "",
+                                    narration: "",
+                                    reason: "",
+                                  }),
+                                  narration: event.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    ) : (
+                      <label className="space-y-1">
+                        <span className="text-xs font-medium text-slate-700">Reason for not raising invoice</span>
+                        <textarea
+                          className="min-h-24 w-full rounded-md border border-amber-300 px-3 py-2 text-sm"
+                          value={entranceFeeDecisions[application.id]?.reason ?? ""}
+                          onChange={(event) =>
+                            setEntranceFeeDecisions((prev) => ({
+                              ...prev,
+                              [application.id]: {
+                                ...(prev[application.id] ?? {
+                                  action: "SKIP",
+                                  amount: "",
+                                  narration: "",
+                                  reason: "",
+                                }),
+                                reason: event.target.value,
+                              },
+                            }))
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
 
                 {application.reviewedAt && (
                   <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">

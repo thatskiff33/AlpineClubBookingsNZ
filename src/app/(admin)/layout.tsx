@@ -62,7 +62,7 @@ export default async function AdminLayout({
         </div>
       </div>
       <MemberOnboardingWizard initialShouldShow={showOnboardingWizard} />
-      <ReportIssueWidget />
+      <ReportIssueWidget avoidDesktopSidebar />
     </div>
   );
 }

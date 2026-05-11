@@ -1,6 +1,9 @@
 import type { XeroContactUpdateData } from "@/lib/xero";
 
-export type MemberXeroContactSnapshot = XeroContactUpdateData;
+export type MemberXeroContactSnapshot = XeroContactUpdateData & {
+  firstName: string;
+  lastName: string;
+};
 
 function normalizeOptionalString(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
@@ -55,8 +58,6 @@ export function hasMemberXeroContactChanges(
   next: MemberXeroContactSnapshot
 ): boolean {
   return (
-    normalizeOptionalString(previous.firstName) !== normalizeOptionalString(next.firstName) ||
-    normalizeOptionalString(previous.lastName) !== normalizeOptionalString(next.lastName) ||
     normalizeOptionalString(previous.email) !== normalizeOptionalString(next.email) ||
     normalizeDateOnly(previous.dateOfBirth) !== normalizeDateOnly(next.dateOfBirth) ||
     normalizeOptionalString(previous.phoneCountryCode) !== normalizeOptionalString(next.phoneCountryCode) ||

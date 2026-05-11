@@ -304,10 +304,10 @@ async function main() {
 
   // Seed age tier settings with correct TAC boundaries (Issue 14)
   const ageTierSettings = [
-    { tier: "INFANT" as const, minAge: 0, maxAge: 4, label: "Infant (under 5)", sortOrder: 0 },
-    { tier: "CHILD" as const, minAge: 5, maxAge: 9, label: "Child (5-9)", sortOrder: 1 },
-    { tier: "YOUTH" as const, minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
-    { tier: "ADULT" as const, minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
+    { tier: "INFANT" as const, minAge: 0, maxAge: 4, label: "Infant (under 5)", subscriptionRequiredForBooking: false, sortOrder: 0 },
+    { tier: "CHILD" as const, minAge: 5, maxAge: 9, label: "Child (5-9)", subscriptionRequiredForBooking: false, sortOrder: 1 },
+    { tier: "YOUTH" as const, minAge: 10, maxAge: 17, label: "Youth (10-17)", subscriptionRequiredForBooking: true, sortOrder: 2 },
+    { tier: "ADULT" as const, minAge: 18, maxAge: null, label: "Adult (18+)", subscriptionRequiredForBooking: true, sortOrder: 3 },
   ];
   for (const setting of ageTierSettings) {
     await prisma.ageTierSetting.upsert({

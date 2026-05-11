@@ -95,6 +95,17 @@ type MembershipApplicationLookupClient = Pick<
 
 type MembershipApplicationLockClient = Pick<typeof prisma, "$executeRaw">;
 
+export type EntranceFeeInvoiceApprovalDecision =
+  | {
+      action: "CREATE";
+      amountCents?: number | null;
+      narration?: string | null;
+    }
+  | {
+      action: "SKIP";
+      reason: string;
+    };
+
 function cleanString(value?: string | null) {
   return value?.replace(/[\r\n]/g, " ").trim() || "";
 }
@@ -644,7 +655,8 @@ async function syncApprovedMembersToXero(memberIds: string[]) {
 export async function approveMemberApplication(
   applicationId: string,
   adminMemberId: string,
-  adminNotes?: string | null
+  adminNotes?: string | null,
+  entranceFeeInvoiceDecision?: EntranceFeeInvoiceApprovalDecision | null
 ) {
   const application = await prisma.memberApplication.findUnique({
     where: { id: applicationId },
@@ -868,28 +880,62 @@ export async function approveMemberApplication(
 
   const warnings = await syncApprovedMembersToXero(approved.createdMemberIds);
 
-  try {
-    const queuedEntranceFeeInvoice = await enqueueXeroEntranceFeeInvoiceOperation(
-      approved.applicantMember.id,
-      {
+  const entranceFeeDecision = entranceFeeInvoiceDecision ?? { action: "CREATE" as const };
+  if (entranceFeeDecision.action === "CREATE") {
+    try {
+      const entranceFeeInvoiceOptions: {
+        createdByMemberId: string;
+        amountCents?: number;
+        description?: string;
+      } = {
         createdByMemberId: adminMemberId,
+      };
+      if (entranceFeeDecision.amountCents) {
+        entranceFeeInvoiceOptions.amountCents = entranceFeeDecision.amountCents;
       }
-    );
+      const narration = entranceFeeDecision.narration?.trim();
+      if (narration) {
+        entranceFeeInvoiceOptions.description = narration;
+      }
 
-    if (queuedEntranceFeeInvoice.queueOperationId && (await isXeroConnected())) {
-      void processQueuedXeroOutboxOperations({ limit: 1 }).catch((err) => {
-        logger.error(
-          { err, memberId: approved.applicantMember.id },
-          "Failed to kick Xero entrance fee outbox worker for approved application"
-        );
-      });
+      const queuedEntranceFeeInvoice = await enqueueXeroEntranceFeeInvoiceOperation(
+        approved.applicantMember.id,
+        entranceFeeInvoiceOptions
+      );
+
+      if (queuedEntranceFeeInvoice.queueOperationId && (await isXeroConnected())) {
+        void processQueuedXeroOutboxOperations({ limit: 1 }).catch((err) => {
+          logger.error(
+            { err, memberId: approved.applicantMember.id },
+            "Failed to kick Xero entrance fee outbox worker for approved application"
+          );
+        });
+      }
+    } catch (err) {
+      logger.error(
+        { err, memberId: approved.applicantMember.id },
+        "Failed to queue entrance fee invoice for approved application"
+      );
+      warnings.push("Entrance fee invoice could not be queued automatically");
     }
-  } catch (err) {
-    logger.error(
-      { err, memberId: approved.applicantMember.id },
-      "Failed to queue entrance fee invoice for approved application"
-    );
-    warnings.push("Entrance fee invoice could not be queued automatically");
+  } else {
+    await logAudit({
+      action: "XERO_ENTRANCE_FEE_INVOICE_SKIPPED",
+      memberId: adminMemberId,
+      targetId: approved.applicantMember.id,
+      subjectMemberId: approved.applicantMember.id,
+      entityType: "Member",
+      entityId: approved.applicantMember.id,
+      category: "xero",
+      outcome: "success",
+      summary: "Entrance fee invoice skipped for approved application",
+      details: entranceFeeDecision.reason,
+      metadata: {
+        applicationId,
+        reason: entranceFeeDecision.reason,
+        source: "member-application-approval",
+      },
+    });
   }
 
   try {

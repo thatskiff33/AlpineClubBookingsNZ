@@ -1,4 +1,6 @@
-import type { SubscriptionStatus } from "@prisma/client";
+import type { AgeTier, SubscriptionStatus } from "@prisma/client";
+import { getAgeTierSettings } from "@/lib/age-tier";
+import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-eligibility";
 import { getSeasonYear } from "@/lib/utils";
 
 interface BookingGuestLike {
@@ -31,8 +33,10 @@ interface BookingMemberGuestSubscriptionDb {
   member: {
     findMany(args: {
       where: { id: { in: string[] } };
-      select: { id: true; firstName: true; lastName: true };
-    }): Promise<Array<{ id: string; firstName: string; lastName: string }>>;
+      select: { id: true; firstName: true; lastName: true; ageTier: true };
+    }): Promise<
+      Array<{ id: string; firstName: string; lastName: string; ageTier: AgeTier }>
+    >;
   };
 }
 
@@ -66,6 +70,7 @@ export async function findUnpaidMemberGuests(
   }
 
   const uniqueIds = [...new Set(memberGuestIds)];
+  const ageTierSettings = await getAgeTierSettings();
   const subscriptions = await db.memberSubscription.findMany({
     where: {
       memberId: { in: uniqueIds },
@@ -82,27 +87,33 @@ export async function findUnpaidMemberGuests(
   const subscriptionById = new Map(
     subscriptions.map((subscription) => [subscription.memberId, subscription])
   );
-  const unpaidMemberIds = uniqueIds.filter(
+  const linkedMembers = await db.member.findMany({
+    where: { id: { in: uniqueIds } },
+    select: { id: true, firstName: true, lastName: true, ageTier: true },
+  });
+
+  const memberById = new Map(linkedMembers.map((member) => [member.id, member]));
+  const billableUnpaidMemberIds = uniqueIds.filter(
     (id) => subscriptionById.get(id)?.status !== "PAID"
+      && (!memberById.has(id)
+        || requiresPaidSubscriptionForAgeTier(
+          memberById.get(id)!.ageTier,
+          ageTierSettings
+        ))
   );
 
-  if (unpaidMemberIds.length === 0) {
+  if (billableUnpaidMemberIds.length === 0) {
     return [];
   }
 
-  const unpaidMembers = await db.member.findMany({
-    where: { id: { in: unpaidMemberIds } },
-    select: { id: true, firstName: true, lastName: true },
-  });
-
   const nameById = new Map(
-    unpaidMembers.map((member) => [
+    linkedMembers.map((member) => [
       member.id,
       `${member.firstName} ${member.lastName}`.trim() || member.id,
     ])
   );
 
-  return unpaidMemberIds.map((id) => {
+  return billableUnpaidMemberIds.map((id) => {
     const subscription = subscriptionById.get(id);
     return {
       memberId: id,

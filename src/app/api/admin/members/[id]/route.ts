@@ -650,6 +650,7 @@ export async function PUT(
                 localModel: "Member",
                 localId: id,
                 createdByMemberId: session.user.id,
+                preserveXeroName: true,
               }
             );
           }

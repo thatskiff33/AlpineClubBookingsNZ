@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -61,8 +62,16 @@ interface XeroSearchResult {
 interface PendingXeroCreateDecision {
   memberId: string
   memberName: string
-  createEntranceFeeInvoice: boolean
+  entranceFeeInvoiceOptions: XeroEntranceFeeInvoiceOptions
   suggestedContacts: XeroSearchResult[]
+}
+
+interface XeroEntranceFeeInvoiceOptions {
+  createEntranceFeeInvoice: boolean
+  entranceFeeInvoiceDecision: "CREATE" | "SKIP"
+  entranceFeeInvoiceSkipReason?: string
+  entranceFeeInvoiceAmountCents?: number
+  entranceFeeInvoiceNarration?: string
 }
 
 interface MemberForm {
@@ -211,6 +220,9 @@ export default function MembersPage() {
   const [xeroSearchLoading, setXeroSearchLoading] = useState(false)
   const [selectedXeroContactId, setSelectedXeroContactId] = useState("")
   const [xeroCreateEntranceFeeInvoice, setXeroCreateEntranceFeeInvoice] = useState(false)
+  const [xeroEntranceFeeSkipReason, setXeroEntranceFeeSkipReason] = useState("")
+  const [xeroEntranceFeeAmount, setXeroEntranceFeeAmount] = useState("")
+  const [xeroEntranceFeeNarration, setXeroEntranceFeeNarration] = useState("")
   const [pendingXeroCreateDecision, setPendingXeroCreateDecision] = useState<PendingXeroCreateDecision | null>(null)
   const [pendingXeroDecisionContactId, setPendingXeroDecisionContactId] = useState("")
   const [pendingXeroDecisionError, setPendingXeroDecisionError] = useState("")
@@ -303,6 +315,106 @@ export default function MembersPage() {
   const setFilter = (key: keyof Filters, value: string) => { setFilters(f => ({ ...f, [key]: value })); setPage(1) }
   const clearFilters = () => { setFilters(emptyFilters); setPage(1) }
   const activeFilterCount = Object.values(filters).filter(Boolean).length
+  const resetXeroEntranceFeeDecision = () => {
+    setXeroCreateEntranceFeeInvoice(false)
+    setXeroEntranceFeeSkipReason("")
+    setXeroEntranceFeeAmount("")
+    setXeroEntranceFeeNarration("")
+  }
+  const getXeroEntranceFeeInvoiceOptions = (): XeroEntranceFeeInvoiceOptions => {
+    if (!xeroCreateEntranceFeeInvoice) {
+      const reason = xeroEntranceFeeSkipReason.trim()
+      if (!reason) {
+        throw new Error("Enter a reason for not raising the entrance fee invoice.")
+      }
+
+      return {
+        createEntranceFeeInvoice: false,
+        entranceFeeInvoiceDecision: "SKIP",
+        entranceFeeInvoiceSkipReason: reason,
+      }
+    }
+
+    const amountText = xeroEntranceFeeAmount.trim()
+    let amountCents: number | undefined
+    if (amountText) {
+      const parsedAmount = Number(amountText)
+      amountCents = Math.round(parsedAmount * 100)
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || amountCents <= 0) {
+        throw new Error("Enter a valid entrance fee amount, or leave it blank to use the configured amount.")
+      }
+    }
+
+    return {
+      createEntranceFeeInvoice: true,
+      entranceFeeInvoiceDecision: "CREATE",
+      ...(amountCents ? { entranceFeeInvoiceAmountCents: amountCents } : {}),
+      ...(xeroEntranceFeeNarration.trim()
+        ? { entranceFeeInvoiceNarration: xeroEntranceFeeNarration.trim() }
+        : {}),
+    }
+  }
+  const renderXeroEntranceFeeDecisionFields = (idPrefix: string) => (
+    <div className="space-y-3">
+      <div className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          id={`${idPrefix}-create-invoice`}
+          checked={xeroCreateEntranceFeeInvoice}
+          onChange={e => {
+            setXeroCreateEntranceFeeInvoice(e.target.checked)
+            setFormError("")
+          }}
+          className="mt-0.5 h-4 w-4 rounded border-gray-300"
+        />
+        <div>
+          <Label htmlFor={`${idPrefix}-create-invoice`}>Create membership entrance fee invoice after contact creation</Label>
+          <p className="text-xs text-muted-foreground">Leave this unchecked only when the invoice is being handled another way.</p>
+        </div>
+      </div>
+
+      {xeroCreateEntranceFeeInvoice ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label htmlFor={`${idPrefix}-amount`}>Invoice amount override</Label>
+            <Input
+              id={`${idPrefix}-amount`}
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              placeholder="Use configured amount"
+              value={xeroEntranceFeeAmount}
+              onChange={e => setXeroEntranceFeeAmount(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1 sm:col-span-2">
+            <Label htmlFor={`${idPrefix}-narration`}>Invoice narration</Label>
+            <Textarea
+              id={`${idPrefix}-narration`}
+              value={xeroEntranceFeeNarration}
+              onChange={e => setXeroEntranceFeeNarration(e.target.value)}
+              maxLength={500}
+              rows={2}
+              placeholder="Optional description to use on the invoice line"
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          <Label htmlFor={`${idPrefix}-skip-reason`}>Reason for not raising the entrance fee invoice</Label>
+          <Textarea
+            id={`${idPrefix}-skip-reason`}
+            value={xeroEntranceFeeSkipReason}
+            onChange={e => setXeroEntranceFeeSkipReason(e.target.value)}
+            maxLength={500}
+            rows={2}
+            placeholder="Required when no entrance fee invoice will be queued"
+          />
+        </div>
+      )}
+    </div>
+  )
   const toggleSelect = (id: string) => setSelectedIds(s => {
     const n = new Set(s)
     if (n.has(id)) {
@@ -341,7 +453,7 @@ export default function MembersPage() {
     setXeroSearchQuery("")
     setXeroSearchResults([])
     setSelectedXeroContactId("")
-    setXeroCreateEntranceFeeInvoice(false)
+    resetXeroEntranceFeeDecision()
     setFormError("")
     setDialogOpen(true)
   }
@@ -386,13 +498,17 @@ export default function MembersPage() {
 
   const requestXeroPush = async (
     memberId: string,
-    options?: { createEntranceFeeInvoice?: boolean; forceCreate?: boolean }
+    options?: Partial<XeroEntranceFeeInvoiceOptions> & { forceCreate?: boolean }
   ) => {
     const res = await fetch(`/api/admin/members/${memberId}/xero-push`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         createEntranceFeeInvoice: Boolean(options?.createEntranceFeeInvoice),
+        entranceFeeInvoiceDecision: options?.entranceFeeInvoiceDecision,
+        entranceFeeInvoiceSkipReason: options?.entranceFeeInvoiceSkipReason,
+        entranceFeeInvoiceAmountCents: options?.entranceFeeInvoiceAmountCents,
+        entranceFeeInvoiceNarration: options?.entranceFeeInvoiceNarration,
         forceCreate: Boolean(options?.forceCreate),
       }),
     })
@@ -418,15 +534,16 @@ export default function MembersPage() {
   const handleXeroPush = async (memberId: string, memberName: string) => {
     setFormError("")
     try {
+      const entranceFeeInvoiceOptions = getXeroEntranceFeeInvoiceOptions()
       const result = await requestXeroPush(memberId, {
-        createEntranceFeeInvoice: xeroCreateEntranceFeeInvoice,
+        ...entranceFeeInvoiceOptions,
       })
 
       if (result.status === "needsDecision") {
         setPendingXeroCreateDecision({
           memberId,
           memberName,
-          createEntranceFeeInvoice: xeroCreateEntranceFeeInvoice,
+          entranceFeeInvoiceOptions,
           suggestedContacts: result.suggestedContacts,
         })
         setPendingXeroDecisionContactId(
@@ -442,12 +559,12 @@ export default function MembersPage() {
       }
       setXeroChoice("")
       setSuccess(
-        xeroCreateEntranceFeeInvoice && data.entranceFeeInvoiceQueued
+        entranceFeeInvoiceOptions.createEntranceFeeInvoice && data.entranceFeeInvoiceQueued
           ? "Xero contact created, linked, and entrance fee invoice queued"
           : "Xero contact created and linked"
       )
       setTimeout(() => setSuccess(""), 3000)
-      if (data.warning || (xeroCreateEntranceFeeInvoice && data.entranceFeeInvoiceMessage && !data.entranceFeeInvoiceQueued)) {
+      if (data.warning || (entranceFeeInvoiceOptions.createEntranceFeeInvoice && data.entranceFeeInvoiceMessage && !data.entranceFeeInvoiceQueued)) {
         setError(data.warning || data.entranceFeeInvoiceMessage)
         setTimeout(() => setError(""), 8000)
       }
@@ -510,7 +627,7 @@ export default function MembersPage() {
     try {
       const result = await requestXeroPush(pendingXeroCreateDecision.memberId, {
         forceCreate: true,
-        createEntranceFeeInvoice: pendingXeroCreateDecision.createEntranceFeeInvoice,
+        ...pendingXeroCreateDecision.entranceFeeInvoiceOptions,
       })
 
       if (result.status !== "created") {
@@ -527,7 +644,7 @@ export default function MembersPage() {
 
       const warning =
         result.data.warning ||
-        (pendingXeroCreateDecision.createEntranceFeeInvoice &&
+        (pendingXeroCreateDecision.entranceFeeInvoiceOptions.createEntranceFeeInvoice &&
         result.data.entranceFeeInvoiceMessage &&
         !result.data.entranceFeeInvoiceQueued
           ? result.data.entranceFeeInvoiceMessage
@@ -536,7 +653,7 @@ export default function MembersPage() {
       closePendingXeroCreateDecision()
       setXeroChoice("")
       setSuccess(
-        pendingXeroCreateDecision.createEntranceFeeInvoice && result.data.entranceFeeInvoiceQueued
+        pendingXeroCreateDecision.entranceFeeInvoiceOptions.createEntranceFeeInvoice && result.data.entranceFeeInvoiceQueued
           ? "Xero contact created, linked, and entrance fee invoice queued"
           : "Xero contact created and linked"
       )
@@ -601,6 +718,11 @@ export default function MembersPage() {
         }
       }
 
+      const entranceFeeInvoiceOptions =
+        !editingMember && xeroConnected && xeroChoice === "create"
+          ? getXeroEntranceFeeInvoiceOptions()
+          : null
+
       const url = editingMember ? `/api/admin/members/${editingMember.id}` : "/api/admin/members"
       const body: Record<string, unknown> = { firstName: form.firstName, lastName: form.lastName, email: form.email, phoneCountryCode: form.phoneCountryCode || null, phoneAreaCode: form.phoneAreaCode || null, phoneNumber: form.phoneNumber || null, dateOfBirth: form.dateOfBirth || null, role: form.role, ageTier: form.ageTier, financeAccessLevel: form.financeAccessLevel, active: form.active, canLogin: form.canLogin, joinedDate: form.joinedDate || null, streetAddressLine1: form.streetAddressLine1 || null, streetAddressLine2: form.streetAddressLine2 || null, streetCity: form.streetCity || null, streetRegion: form.streetRegion || null, streetPostalCode: form.streetPostalCode || null, streetCountry: form.streetCountry || null, postalAddressLine1: form.postalAddressLine1 || null, postalAddressLine2: form.postalAddressLine2 || null, postalCity: form.postalCity || null, postalRegion: form.postalRegion || null, postalPostalCode: form.postalPostalCode || null, postalCountry: form.postalCountry || null }
       if (editingMember) {
@@ -632,14 +754,20 @@ export default function MembersPage() {
         } else if (xeroChoice === "create") {
           try {
             const pushResult = await requestXeroPush(data.id, {
-              createEntranceFeeInvoice: xeroCreateEntranceFeeInvoice,
+              ...(entranceFeeInvoiceOptions ?? {
+                createEntranceFeeInvoice: false,
+              }),
             })
 
             if (pushResult.status === "needsDecision") {
               setPendingXeroCreateDecision({
                 memberId: data.id,
                 memberName: `${data.firstName || form.firstName} ${data.lastName || form.lastName}`.trim(),
-                createEntranceFeeInvoice: xeroCreateEntranceFeeInvoice,
+                entranceFeeInvoiceOptions: entranceFeeInvoiceOptions ?? {
+                  createEntranceFeeInvoice: false,
+                  entranceFeeInvoiceDecision: "SKIP",
+                  entranceFeeInvoiceSkipReason: "No entrance fee invoice requested",
+                },
                 suggestedContacts: pushResult.suggestedContacts,
               })
               setPendingXeroDecisionContactId(
@@ -649,12 +777,12 @@ export default function MembersPage() {
               successMessage = "Member created locally. Review the suggested Xero matches before creating a new contact."
             } else {
               successMessage =
-                xeroCreateEntranceFeeInvoice && pushResult.data.entranceFeeInvoiceQueued
+                entranceFeeInvoiceOptions?.createEntranceFeeInvoice && pushResult.data.entranceFeeInvoiceQueued
                   ? "Member created, pushed to Xero, and entrance fee invoice queued"
                   : "Member created and pushed to Xero"
               warning =
                 pushResult.data.warning ||
-                (xeroCreateEntranceFeeInvoice &&
+                (entranceFeeInvoiceOptions?.createEntranceFeeInvoice &&
                 pushResult.data.entranceFeeInvoiceMessage &&
                 !pushResult.data.entranceFeeInvoiceQueued
                   ? pushResult.data.entranceFeeInvoiceMessage
@@ -1150,7 +1278,7 @@ export default function MembersPage() {
                         setFormError("")
                         setSelectedXeroContactId("")
                         if (value !== "link") { setXeroSearchQuery(""); setXeroSearchResults([]) }
-                        if (value !== "create") { setXeroCreateEntranceFeeInvoice(false) }
+                        if (value !== "create") { resetXeroEntranceFeeDecision() }
                       }}
                     >
                       <SelectTrigger><SelectValue placeholder="Link or create a Xero contact..." /></SelectTrigger>
@@ -1193,19 +1321,7 @@ export default function MembersPage() {
                         <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                           Creating a new Xero contact requires First Name, Last Name, Email, Phone, Postal Address, Physical Address, Date of Birth, and Joined Date. Save changes first, then create. We&apos;ll check for similar Xero contacts before a brand-new contact is created.
                         </div>
-                        <div className="flex items-start gap-2">
-                          <input
-                            type="checkbox"
-                            id="edit-xero-create-invoice"
-                            checked={xeroCreateEntranceFeeInvoice}
-                            onChange={e => setXeroCreateEntranceFeeInvoice(e.target.checked)}
-                            className="mt-0.5 h-4 w-4 rounded border-gray-300"
-                          />
-                          <div>
-                            <Label htmlFor="edit-xero-create-invoice">Create membership entrance fee invoice after contact creation</Label>
-                            <p className="text-xs text-muted-foreground">Leave this unchecked if you only want to create and link the Xero contact for now.</p>
-                          </div>
-                        </div>
+                        {renderXeroEntranceFeeDecisionFields("edit-xero")}
                         <Button type="button" size="sm" onClick={() => handleXeroPush(editingMember.id, `${editingMember.firstName} ${editingMember.lastName}`)} disabled={(() => { const m = getMissingFieldsForXeroCreate(form); return m.length > 0 })()}>
                           Create Xero Contact
                         </Button>
@@ -1232,7 +1348,7 @@ export default function MembersPage() {
                             setXeroSearchResults([])
                           }
                           if (nextChoice !== "create") {
-                            setXeroCreateEntranceFeeInvoice(false)
+                            resetXeroEntranceFeeDecision()
                           }
                         }}
                       >
@@ -1285,18 +1401,8 @@ export default function MembersPage() {
                         <p>
                           Creating a new Xero contact requires First Name, Last Name, Email, Phone, Postal Address, Physical Address, Date of Birth, and Joined Date. We&apos;ll check for similar Xero contacts before a brand-new contact is created.
                         </p>
-                        <div className="flex items-start gap-2 text-slate-900">
-                          <input
-                            type="checkbox"
-                            id="create-xero-create-invoice"
-                            checked={xeroCreateEntranceFeeInvoice}
-                            onChange={e => setXeroCreateEntranceFeeInvoice(e.target.checked)}
-                            className="mt-0.5 h-4 w-4 rounded border-gray-300"
-                          />
-                          <div>
-                            <Label htmlFor="create-xero-create-invoice">Create membership entrance fee invoice after contact creation</Label>
-                            <p className="text-xs text-amber-900/80">Leave this unchecked if you only want to create and link the Xero contact for now.</p>
-                          </div>
+                        <div className="text-slate-900">
+                          {renderXeroEntranceFeeDecisionFields("create-xero")}
                         </div>
                       </div>
                     )}
@@ -1404,7 +1510,7 @@ export default function MembersPage() {
                   </label>
                 ))}
               </div>
-              {pendingXeroCreateDecision.createEntranceFeeInvoice && (
+              {pendingXeroCreateDecision.entranceFeeInvoiceOptions.createEntranceFeeInvoice && (
                 <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                   If you choose <span className="font-medium">Create New Contact Anyway</span>, the membership entrance fee invoice will also be queued.
                 </div>

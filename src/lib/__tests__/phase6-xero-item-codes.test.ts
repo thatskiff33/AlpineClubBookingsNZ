@@ -137,6 +137,19 @@ describe("buildEntranceFeeLineItem", () => {
     expect(item.description).toBe("Membership entrance fee (Adult)");
     expect(item.accountCode).toBe("200");
   });
+
+  it("uses an admin narration override when supplied with an itemCode", () => {
+    const item = buildEntranceFeeLineItem(
+      "Adult",
+      5000,
+      "200",
+      "ENTFEE-ADULT",
+      false,
+      "Adjusted entrance fee"
+    );
+    expect(item.itemCode).toBe("ENTFEE-ADULT");
+    expect(item.description).toBe("Adjusted entrance fee");
+  });
 });
 
 // ─── Per-guest item codes via itemCodeMap ─────────────────────────────────

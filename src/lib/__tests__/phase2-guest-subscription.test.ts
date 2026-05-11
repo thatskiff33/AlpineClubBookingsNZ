@@ -269,6 +269,51 @@ describe("P2.3: Guest subscription check", () => {
     expect(res.status).not.toBe(403);
   });
 
+  it("allows child and infant member-guests without subscription invoice rows", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
+    mockPrisma.member.findMany.mockImplementation(async (args: { where?: { id?: { in?: string[] } } }) => {
+      const ids = args?.where?.id?.in ?? [];
+      if (ids.includes("guest-member-1")) {
+        return [
+          { id: "member-1", ageTier: "ADULT", firstName: "Alice", lastName: "Smith" },
+          { id: "guest-member-1", ageTier: "CHILD", firstName: "Bob", lastName: "Jones" },
+        ];
+      }
+      return [{ id: "member-1", ageTier: "ADULT", firstName: "Alice", lastName: "Smith" }];
+    });
+
+    const req = makeRequest([
+      { firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true },
+      { firstName: "Bob", lastName: "Jones", ageTier: "CHILD", isMember: true, memberId: "guest-member-1" },
+    ]);
+
+    const res = await createBooking(req);
+    const body = await res.json().catch(() => ({}));
+    expect(res.status).not.toBe(403);
+    expect(body.code).not.toBe("GUEST_SUBSCRIPTION_REQUIRED");
+  });
+
+  it("uses the stored member age tier when deciding if a guest subscription is required", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockPrisma.memberSubscription.findMany.mockResolvedValue([]);
+    mockPrisma.member.findMany.mockResolvedValue([
+      { id: "member-1", ageTier: "ADULT", firstName: "Alice", lastName: "Smith" },
+      { id: "guest-member-1", ageTier: "ADULT", firstName: "Bob", lastName: "Jones" },
+    ]);
+
+    const req = makeRequest([
+      { firstName: "Alice", lastName: "Smith", ageTier: "ADULT", isMember: true },
+      { firstName: "Bob", lastName: "Jones", ageTier: "CHILD", isMember: true, memberId: "guest-member-1" },
+    ]);
+
+    const res = await createBooking(req);
+    const body = await res.json();
+    expect(res.status).toBe(403);
+    expect(body.code).toBe("GUEST_SUBSCRIPTION_REQUIRED");
+    expect(body.unpaidMembers).toContain("Bob Jones");
+  });
+
   it("admin-created bookings bypass guest subscription check", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
     // No paid subs for guest

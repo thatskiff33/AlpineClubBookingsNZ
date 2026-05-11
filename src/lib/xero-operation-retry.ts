@@ -88,18 +88,20 @@ function parseXeroDateOfBirth(value: string | null): Date | null {
 
 function parseContactUpdateRetryInput(
   operation: Pick<RetryableOperation, "requestPayload" | "xeroObjectId">
-): { xeroContactId: string; data: XeroContactUpdateData } | null {
+): { xeroContactId: string; data: XeroContactUpdateData; preserveXeroName: boolean } | null {
   const contact = readPayloadContact(operation);
   if (!contact) {
     return null;
   }
 
   const xeroContactId = readString(contact.contactID) ?? operation.xeroObjectId;
+  const name = readString(contact.name);
   const firstName = readString(contact.firstName);
   const lastName = readString(contact.lastName);
   const email = readString(contact.emailAddress);
+  const preserveXeroName = !name && !firstName && !lastName;
 
-  if (!xeroContactId || !firstName || !lastName || !email) {
+  if (!xeroContactId || !email || (!preserveXeroName && (!firstName || !lastName))) {
     return null;
   }
 
@@ -111,8 +113,8 @@ function parseContactUpdateRetryInput(
   return {
     xeroContactId,
     data: {
-      firstName,
-      lastName,
+      ...(firstName ? { firstName } : {}),
+      ...(lastName ? { lastName } : {}),
       email,
       dateOfBirth: parseXeroDateOfBirth(readString(contact.companyNumber)),
       phoneCountryCode: readString(phone?.phoneCountryCode),
@@ -131,6 +133,7 @@ function parseContactUpdateRetryInput(
       postalPostalCode: readString(postal?.postalCode),
       postalCountry: readString(postal?.country),
     },
+    preserveXeroName,
   };
 }
 
@@ -670,6 +673,7 @@ export async function retryXeroSyncOperation(
       localModel: operation.localModel ?? undefined,
       localId: operation.localId ?? undefined,
       createdByMemberId,
+      preserveXeroName: retryInput.preserveXeroName,
     });
 
     return { message: "Retried Xero contact update." };
