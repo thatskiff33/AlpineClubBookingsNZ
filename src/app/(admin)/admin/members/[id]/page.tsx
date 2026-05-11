@@ -78,6 +78,29 @@ interface MemberDetail {
   familyGroups: { id: string; name: string | null }[]
   subscriptions: Array<{ id: string; seasonYear: number; status: string; xeroInvoiceId: string | null; paidAt: string | null }>
   bookings: Array<{ id: string; checkIn: string; checkOut: string; status: string; finalPriceCents: number; _count: { guests: number } }>
+  promoCodes: Array<{
+    id: string
+    code: string
+    description: string | null
+    type: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS"
+    percentOff: number | null
+    valueCents: number | null
+    freeNights: number | null
+    assignedAt: string | null
+    active: boolean
+    archivedAt: string | null
+    validFrom: string | null
+    validUntil: string | null
+    bookingStartFrom: string | null
+    bookingStartUntil: string | null
+    maxRedemptions: number | null
+    currentRedemptions: number
+    singleUse: boolean
+    redemptionCount: number
+    freeNightsUsed: number
+    visibleToMember: boolean
+    statusReason: string
+  }>
   auditLogs: AuditLogEntry[]
   stats: { totalBookings: number; totalSpendCents: number; lastStay: string | null }
   dependents: Array<{ id: string; firstName: string; lastName: string; ageTier: string; active: boolean; dateOfBirth: string | null; canLogin: boolean }>
@@ -236,6 +259,21 @@ interface LinkDependentSearchResult {
 
 function shouldDefaultLinkSideEffects(ageTier: string) {
   return ageTier !== "ADULT"
+}
+
+function formatPromoBenefit(promo: MemberDetail["promoCodes"][number]) {
+  if (promo.type === "PERCENTAGE") {
+    return promo.percentOff !== null ? `${promo.percentOff}% off` : "Percentage discount"
+  }
+  if (promo.type === "FIXED_AMOUNT") {
+    return promo.valueCents !== null
+      ? new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(promo.valueCents / 100) + " off"
+      : "Fixed discount"
+  }
+  if (promo.freeNights !== null) {
+    return `${promo.freeNights} free night${promo.freeNights === 1 ? "" : "s"}`
+  }
+  return "Free nights"
 }
 
 function memberUsesSamePostalAddress(member: Pick<MemberDetail, keyof MemberAddressValues>) {
@@ -1246,6 +1284,76 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           </dd>
         </div>
       </dl></CardContent></Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base font-medium">Promo Codes</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {member.promoCodes.length === 0 ? (
+            <p className="text-sm text-slate-500">No promo codes assigned to this member.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Code</TableHead>
+                  <TableHead>Benefit</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Validity</TableHead>
+                  <TableHead>Usage</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {member.promoCodes.map((promo) => (
+                  <TableRow key={promo.id || promo.code}>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <Badge variant="secondary" className="font-mono">{promo.code}</Badge>
+                        {promo.description && <p className="max-w-xs text-xs text-slate-500">{promo.description}</p>}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm font-medium">{formatPromoBenefit(promo)}</TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <Badge
+                          variant="secondary"
+                          className={promo.visibleToMember ? "bg-green-100 text-green-800 border-green-200" : "bg-amber-100 text-amber-800 border-amber-200"}
+                        >
+                          {promo.visibleToMember ? "Visible to member" : "Not currently usable"}
+                        </Badge>
+                        <p className="text-xs text-slate-500">{promo.statusReason}</p>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-xs text-slate-600">
+                      <div className="space-y-1">
+                        <p>Assigned {promo.assignedAt ? fmtDate(promo.assignedAt) : "unknown"}</p>
+                        <p>
+                          Valid {promo.validFrom ? fmtDate(promo.validFrom) : "now"} - {promo.validUntil ? fmtDate(promo.validUntil) : "no end"}
+                        </p>
+                        {(promo.bookingStartFrom || promo.bookingStartUntil) && (
+                          <p>
+                            Stay dates {promo.bookingStartFrom ? fmtDate(promo.bookingStartFrom) : "any"} - {promo.bookingStartUntil ? fmtDate(promo.bookingStartUntil) : "any"}
+                          </p>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-xs text-slate-600">
+                      <div className="space-y-1">
+                        <p>{promo.currentRedemptions}{promo.maxRedemptions !== null ? `/${promo.maxRedemptions}` : ""} total redemptions</p>
+                        <p>{promo.redemptionCount} by this member</p>
+                        {promo.type === "FREE_NIGHTS" && promo.freeNights !== null && (
+                          <p>{promo.freeNightsUsed}/{promo.freeNights} free nights used</p>
+                        )}
+                        {promo.singleUse && <p>Single use</p>}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">

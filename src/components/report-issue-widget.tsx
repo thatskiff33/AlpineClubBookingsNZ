@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import html2canvas from "html2canvas";
-import { AlertTriangle, Bug, Camera, LoaderCircle, Send } from "lucide-react";
+import { AlertTriangle, Bug, Camera, LoaderCircle, Send, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -445,15 +445,34 @@ export function ReportIssueWidget() {
                   <Camera className="h-4 w-4" />
                   Screenshot
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => runCapture({ closeDialogFirst: true })}
-                  disabled={capturing || submitting}
-                >
-                  {capturing ? "Retaking..." : "Retake"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  {screenshotDataUrl ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={() => setScreenshotDataUrl(null)}
+                      disabled={capturing || submitting}
+                    >
+                      <X className="h-4 w-4" />
+                      Remove
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => runCapture({ closeDialogFirst: true })}
+                    disabled={capturing || submitting}
+                  >
+                    {capturing ? "Retaking..." : "Retake"}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                Screenshots may include names, booking details, or payment context visible on the page.
               </div>
 
               {screenshotDataUrl ? (

@@ -8,12 +8,19 @@ import {
 describe("auth redirect helpers", () => {
   it("keeps safe internal callback paths", () => {
     expect(resolvePostLoginPath("/nominations/token-1")).toBe("/nominations/token-1");
+    expect(resolvePostLoginPath("/dashboard?tab=bookings")).toBe(
+      "/dashboard?tab=bookings"
+    );
   });
 
   it("falls back for invalid or external callback paths", () => {
     expect(resolvePostLoginPath(null)).toBe("/dashboard");
     expect(resolvePostLoginPath("https://evil.example")).toBe("/dashboard");
     expect(resolvePostLoginPath("//evil.example")).toBe("/dashboard");
+    expect(resolvePostLoginPath("/%2f%2fevil.example")).toBe("/dashboard");
+    expect(resolvePostLoginPath("/\\\\evil.example")).toBe("/dashboard");
+    expect(resolvePostLoginPath(" /dashboard")).toBe("/dashboard");
+    expect(resolvePostLoginPath("/dashboard\n/admin")).toBe("/dashboard");
   });
 
   it("does not allow redirecting back to the login page", () => {

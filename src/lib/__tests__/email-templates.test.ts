@@ -253,6 +253,7 @@ describe("email-templates", () => {
         pageUrl: "https://evil.example/phish",
         pageTitle: "Broken page",
         description: "Line 1\n<script>alert(1)</script>\nLine 3",
+        issueReportUrl: `${getAppBaseUrl()}/admin/issue-reports?report=issue-1`,
         hasScreenshot: true,
       });
 
@@ -260,6 +261,7 @@ describe("email-templates", () => {
       expect(html).toContain("Line 1\n&lt;script&gt;alert(1)&lt;/script&gt;\nLine 3");
       expect(html).not.toContain('href="https://evil.example/phish"');
       expect(html).toContain(`href="${getAppBaseUrl()}"`);
+      expect(html).toContain("/admin/issue-reports?report=issue-1");
     });
 
     it("preserves line breaks in refund appeal reasons", () => {

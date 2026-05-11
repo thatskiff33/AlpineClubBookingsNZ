@@ -24,6 +24,7 @@ import {
 } from "@/lib/member-address";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import { getAssignedPromoCodeSummariesForMember } from "@/lib/promo";
 import {
   buildMemberAuditLogWhere,
   getAuditLogActorMemberId,
@@ -199,7 +200,7 @@ export async function GET(
 
   const { id } = await params;
 
-  const [member, bookings, auditLogs, stats] = await Promise.all([
+  const [member, bookings, auditLogs, stats, assignedPromoCodes] = await Promise.all([
     prisma.member.findUnique({
       where: { id },
       select: {
@@ -292,6 +293,7 @@ export async function GET(
       _count: true,
       _max: { checkOut: true },
     }),
+    getAssignedPromoCodeSummariesForMember(id),
   ]);
 
   if (!member) {
@@ -354,6 +356,7 @@ export async function GET(
     })),
     familyGroupMemberships: undefined,
     bookings,
+    promoCodes: assignedPromoCodes,
     auditLogs: auditLogsWithActors,
     xeroContactGroups,
     xeroContactGroupsLoaded,

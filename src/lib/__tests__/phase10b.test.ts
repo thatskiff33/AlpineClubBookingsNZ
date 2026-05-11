@@ -439,10 +439,9 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
       },
     } as any);
 
-    // Simulate one future booking
-    mockedPrisma.booking.findMany.mockResolvedValue([
-      { id: "bk1" },
-    ] as any);
+    mockedPrisma.booking.findMany
+      .mockResolvedValueOnce([] as any)
+      .mockResolvedValueOnce([{ id: "bk1" }] as any);
 
     mockedPrisma.member.update.mockResolvedValue({} as any);
     mockedPrisma.bookingGuest.updateMany.mockResolvedValue({ count: 0 } as any);
@@ -479,6 +478,22 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
 
     // Booking was cancelled
     expect(cancelBooking).toHaveBeenCalledWith("bk1", "a1", "ADMIN", expect.any(String));
+    expect(mockedPrisma.booking.findMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: "PAID",
+        }),
+      })
+    );
+    expect(mockedPrisma.booking.findMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { in: ["PENDING", "PAYMENT_PENDING", "CONFIRMED"] },
+        }),
+      })
+    );
 
     // Approval email sent
     expect(sendAccountDeletionApprovedEmail).toHaveBeenCalledWith("jane@test.com", "Jane");
@@ -488,6 +503,84 @@ describe("F-COMP-04: Admin - approve/reject deletion request", () => {
       where: { id: "dr1" },
       data: expect.objectContaining({ status: "APPROVED" }),
     });
+  });
+
+  it("blocks approval while future PAID bookings remain active", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedPrisma.deletionRequest.findUnique.mockResolvedValue({
+      id: "dr1",
+      status: "PENDING",
+      member: {
+        id: "m1",
+        firstName: "Jane",
+        lastName: "Doe",
+        email: "jane@test.com",
+        role: "MEMBER",
+        active: true,
+      },
+    } as any);
+    mockedPrisma.booking.findMany.mockResolvedValueOnce([{ id: "paid-bk1" }] as any);
+
+    const { cancelBooking } = await import("@/lib/booking-cancel");
+    const { sendAccountDeletionApprovedEmail } = await import("@/lib/email");
+
+    const res = await adminDeletionActionPost(
+      makeRequest({ action: "approve" }),
+      { params }
+    );
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("future paid bookings");
+    expect(body.paidBookingIds).toEqual(["paid-bk1"]);
+    expect(cancelBooking).not.toHaveBeenCalled();
+    expect(sendAccountDeletionApprovedEmail).not.toHaveBeenCalled();
+    expect(mockedPrisma.member.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("does not anonymise the member if future booking cancellation fails", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    mockedPrisma.deletionRequest.findUnique.mockResolvedValue({
+      id: "dr1",
+      status: "PENDING",
+      member: {
+        id: "m1",
+        firstName: "Jane",
+        lastName: "Doe",
+        email: "jane@test.com",
+        role: "MEMBER",
+        active: true,
+      },
+    } as any);
+    mockedPrisma.booking.findMany
+      .mockResolvedValueOnce([] as any)
+      .mockResolvedValueOnce([{ id: "bk1" }] as any);
+
+    const { cancelBooking } = await import("@/lib/booking-cancel");
+    vi.mocked(cancelBooking).mockResolvedValueOnce({
+      status: 400,
+      error: "Only active bookings can be cancelled",
+    });
+    const { sendAccountDeletionApprovedEmail } = await import("@/lib/email");
+
+    const res = await adminDeletionActionPost(
+      makeRequest({ action: "approve" }),
+      { params }
+    );
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toContain("future bookings could not be cancelled");
+    expect(body.failedBookingIds).toEqual(["bk1"]);
+    expect(sendAccountDeletionApprovedEmail).not.toHaveBeenCalled();
+    expect(mockedPrisma.member.update).not.toHaveBeenCalled();
+    expect(mockedPrisma.deletionRequest.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "APPROVED" }),
+      })
+    );
+    expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
   });
 });
 

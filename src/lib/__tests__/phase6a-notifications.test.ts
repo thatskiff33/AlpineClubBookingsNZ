@@ -424,7 +424,8 @@ describe("N-10: EmailLog tracking", () => {
       pageUrl: `${appBaseUrl}/book`,
       pageTitle: "Book | TAC Bookings",
       description: "Line 1\nLine 2",
-      screenshot: null,
+      issueReportUrl: `${appBaseUrl}/admin/issue-reports?report=issue-1`,
+      hasScreenshot: false,
     });
     await Promise.resolve();
     await Promise.resolve();
@@ -433,7 +434,7 @@ describe("N-10: EmailLog tracking", () => {
     expect(mockTransporter.sendMail).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining(
-          `Open Reported Page: ${appBaseUrl}/book`
+          `Review Issue Report: ${appBaseUrl}/admin/issue-reports?report=issue-1`
         ),
       })
     );

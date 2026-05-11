@@ -1,3 +1,5 @@
+import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
+
 const DEFAULT_POST_LOGIN_PATH = "/dashboard";
 const DEFAULT_BOOKING_PATH = "/book";
 
@@ -5,15 +7,18 @@ export function resolvePostLoginPath(
   candidate?: string | null,
   fallback: string = DEFAULT_POST_LOGIN_PATH
 ) {
-  if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//")) {
-    return fallback;
+  const safeFallback = getSafeInternalReturnPath(fallback) ?? DEFAULT_POST_LOGIN_PATH;
+  const safeCandidate = getSafeInternalReturnPath(candidate);
+
+  if (!safeCandidate) {
+    return safeFallback;
   }
 
-  if (candidate === "/login" || candidate.startsWith("/login?")) {
-    return fallback;
+  if (safeCandidate === "/login" || safeCandidate.startsWith("/login?")) {
+    return safeFallback;
   }
 
-  return candidate;
+  return safeCandidate;
 }
 
 export function buildLoginPath(callbackPath?: string | null) {

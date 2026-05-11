@@ -18,6 +18,7 @@ vi.mock("@/lib/prisma", () => ({
       aggregate: vi.fn(),
     },
     auditLog: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn() },
+    promoCodeAssignment: { findMany: vi.fn() },
     passwordResetToken: { create: vi.fn() },
     $transaction: vi.fn(),
   },
@@ -115,6 +116,7 @@ describe("Phase 3: Admin Member Management", () => {
       active: true,
       forcePasswordChange: false,
     } as any);
+    vi.mocked(prisma.promoCodeAssignment.findMany).mockResolvedValue([] as any);
     delete process.env.XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS;
   });
 
@@ -839,6 +841,63 @@ describe("Phase 3: Admin Member Management", () => {
       expect(body.subscriptions).toHaveLength(1);
       expect(body.xeroContactGroups).toEqual([{ id: "cg-1", name: "Camp Families" }]);
       expect(body.xeroContactGroupsLoaded).toBe(true);
+    });
+
+    it("returns assigned promo-code support context on member detail", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findUnique).mockResolvedValue({
+        id: "m1", firstName: "Alice", lastName: "Smith", email: "alice@test.com",
+        role: "MEMBER", ageTier: "ADULT", active: true, forcePasswordChange: false,
+        xeroContactId: null, createdAt: new Date("2025-01-01"), canLogin: true,
+        subscriptions: [],
+        familyGroupMemberships: [],
+        dependents: [],
+      } as any);
+      vi.mocked(prisma.booking.findMany).mockResolvedValue([] as any);
+      vi.mocked(prisma.auditLog.findMany).mockResolvedValue([] as any);
+      vi.mocked(prisma.booking.aggregate).mockResolvedValue({
+        _sum: { finalPriceCents: null },
+        _count: 0,
+        _max: { checkOut: null },
+      } as any);
+      vi.mocked(prisma.promoCodeAssignment.findMany).mockResolvedValue([
+        {
+          createdAt: new Date("2026-05-01"),
+          promoCode: {
+            id: "promo-1",
+            code: "READY10",
+            description: "Assigned and ready",
+            type: "PERCENTAGE",
+            percentOff: 10,
+            valueCents: null,
+            freeNights: null,
+            active: true,
+            archivedAt: null,
+            validFrom: null,
+            validUntil: null,
+            bookingStartFrom: null,
+            bookingStartUntil: null,
+            maxRedemptions: null,
+            currentRedemptions: 0,
+            singleUse: false,
+            redemptions: [],
+          },
+        },
+      ] as any);
+
+      const req = new NextRequest("http://localhost/api/admin/members/m1");
+      const res = await getMemberDetail(req, { params: Promise.resolve({ id: "m1" }) });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(body.promoCodes).toEqual([
+        expect.objectContaining({
+          code: "READY10",
+          visibleToMember: true,
+          statusReason: "Available to member",
+          percentOff: 10,
+        }),
+      ]);
     });
 
     it("returns member detail with the placeholder when cached Xero groups are not ready", async () => {

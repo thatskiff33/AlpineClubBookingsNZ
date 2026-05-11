@@ -28,6 +28,24 @@ export interface AvailablePromoCode {
   freeNights: number | null;
 }
 
+export interface AssignedPromoCodeSummary extends AvailablePromoCode {
+  id: string;
+  assignedAt: Date | null;
+  active: boolean;
+  archivedAt: Date | null;
+  validFrom: Date | null;
+  validUntil: Date | null;
+  bookingStartFrom: Date | null;
+  bookingStartUntil: Date | null;
+  maxRedemptions: number | null;
+  currentRedemptions: number;
+  singleUse: boolean;
+  redemptionCount: number;
+  freeNightsUsed: number;
+  visibleToMember: boolean;
+  statusReason: string;
+}
+
 export interface BookingDetailsForPromo {
   totalPriceCents: number;
   perNightRates: number[];
@@ -95,6 +113,24 @@ export async function getAvailablePromoCodesForMember(
   memberId: string,
   now: Date = new Date()
 ): Promise<AvailablePromoCode[]> {
+  const assignedPromoCodes = await getAssignedPromoCodeSummariesForMember(memberId, now);
+
+  return assignedPromoCodes
+    .filter((promoCode) => promoCode.visibleToMember)
+    .map((promoCode) => ({
+      code: promoCode.code,
+      description: promoCode.description,
+      type: promoCode.type,
+      percentOff: promoCode.percentOff,
+      valueCents: promoCode.valueCents,
+      freeNights: promoCode.freeNights,
+    }));
+}
+
+export async function getAssignedPromoCodeSummariesForMember(
+  memberId: string,
+  now: Date = new Date()
+): Promise<AssignedPromoCodeSummary[]> {
   const assignments = await prisma.promoCodeAssignment.findMany({
     where: { memberId },
     include: {
@@ -110,36 +146,81 @@ export async function getAvailablePromoCodesForMember(
   });
 
   return assignments
-    .map((assignment) => assignment.promoCode)
-    .filter((promoCode) => {
-      if (!promoCode.active || promoCode.archivedAt) return false;
-      if (promoCode.validFrom && now < promoCode.validFrom) return false;
-      if (promoCode.validUntil && now >= promoCode.validUntil) return false;
-      if (
-        promoCode.maxRedemptions !== null &&
-        promoCode.currentRedemptions >= promoCode.maxRedemptions
-      ) {
-        return false;
-      }
-      if (promoCode.singleUse && promoCode.redemptions.length > 0) return false;
-      // For FREE_NIGHTS, hide if all free nights have been consumed
-      if (promoCode.type === "FREE_NIGHTS" && promoCode.freeNights) {
-        const totalUsed = promoCode.redemptions.reduce(
-          (sum, r) => sum + (r.freeNightsUsed ?? 0),
-          0
-        );
-        if (totalUsed >= promoCode.freeNights) return false;
-      }
-      return true;
-    })
-    .map((promoCode) => ({
-      code: promoCode.code,
-      description: promoCode.description,
-      type: promoCode.type,
-      percentOff: promoCode.percentOff,
-      valueCents: promoCode.valueCents,
-      freeNights: promoCode.freeNights,
-    }));
+    .map((assignment) => {
+      const promoCode = assignment.promoCode;
+      const freeNightsUsed = promoCode.redemptions.reduce(
+        (sum, redemption) => sum + (redemption.freeNightsUsed ?? 0),
+        0
+      );
+      const statusReason = getAssignedPromoCodeStatusReason(
+        promoCode,
+        freeNightsUsed,
+        now
+      );
+
+      return {
+        id: promoCode.id,
+        code: promoCode.code,
+        description: promoCode.description,
+        type: promoCode.type,
+        percentOff: promoCode.percentOff,
+        valueCents: promoCode.valueCents,
+        freeNights: promoCode.freeNights,
+        assignedAt: assignment.createdAt ?? null,
+        active: promoCode.active,
+        archivedAt: promoCode.archivedAt,
+        validFrom: promoCode.validFrom,
+        validUntil: promoCode.validUntil,
+        bookingStartFrom: promoCode.bookingStartFrom,
+        bookingStartUntil: promoCode.bookingStartUntil,
+        maxRedemptions: promoCode.maxRedemptions,
+        currentRedemptions: promoCode.currentRedemptions,
+        singleUse: promoCode.singleUse,
+        redemptionCount: promoCode.redemptions.length,
+        freeNightsUsed,
+        visibleToMember: statusReason === null,
+        statusReason: statusReason ?? "Available to member",
+      };
+    });
+}
+
+function getAssignedPromoCodeStatusReason(
+  promoCode: {
+    active: boolean;
+    archivedAt: Date | null;
+    validFrom: Date | null;
+    validUntil: Date | null;
+    maxRedemptions: number | null;
+    currentRedemptions: number;
+    singleUse: boolean;
+    type: PromoCodeType;
+    freeNights: number | null;
+    redemptions: Array<{ id: string; freeNightsUsed: number | null }>;
+  },
+  freeNightsUsed: number,
+  now: Date
+) {
+  if (!promoCode.active) return "Inactive";
+  if (promoCode.archivedAt) return "Archived";
+  if (promoCode.validFrom && now < promoCode.validFrom) return "Not valid yet";
+  if (promoCode.validUntil && now >= promoCode.validUntil) return "Expired";
+  if (
+    promoCode.maxRedemptions !== null &&
+    promoCode.currentRedemptions >= promoCode.maxRedemptions
+  ) {
+    return "Maximum uses reached";
+  }
+  if (promoCode.singleUse && promoCode.redemptions.length > 0) {
+    return "Already used by member";
+  }
+  if (
+    promoCode.type === "FREE_NIGHTS" &&
+    promoCode.freeNights !== null &&
+    freeNightsUsed >= promoCode.freeNights
+  ) {
+    return "Free nights used";
+  }
+  return null;
 }
 
 /**
