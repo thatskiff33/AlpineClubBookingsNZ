@@ -85,6 +85,43 @@ describe("getXeroApiErrorInfo", () => {
     });
   });
 
+  it("maps Xero 5xx errors to concise upstream retry guidance", () => {
+    const error = new Error(
+      JSON.stringify({
+        response: {
+          statusCode: 500,
+          body: {
+            Detail: "An error occurred in Xero.",
+          },
+          headers: {
+            "xero-correlation-id": "correlation-123",
+          },
+        },
+      })
+    );
+
+    expect(getXeroApiErrorInfo(error, "Fallback failure")).toEqual({
+      handled: false,
+      status: 502,
+      message:
+        "Xero is temporarily unavailable (HTTP 500). An error occurred in Xero. Please try again in a few minutes. Xero correlation ID: correlation-123.",
+    });
+  });
+
+  it("maps local transient outage cooldown errors to a friendly 503 response", () => {
+    const error = new Error(
+      "Xero is temporarily unavailable. Suppressing further Xero calls for 120 seconds to protect API quota."
+    );
+    error.name = "XeroTransientOutageError";
+
+    expect(getXeroApiErrorInfo(error, "Fallback failure")).toEqual({
+      handled: true,
+      status: 503,
+      message:
+        "Xero is temporarily unavailable. Suppressing further Xero calls for 120 seconds to protect API quota.",
+    });
+  });
+
   it("falls back to the original error message for unknown failures", () => {
     expect(getXeroApiErrorInfo(new Error("Boom"), "Fallback failure")).toEqual({
       handled: false,

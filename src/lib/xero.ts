@@ -21,7 +21,11 @@ import { getSeasonYear, getStayNights } from "./pricing";
 import { formatXeroPhone } from "./phone";
 import logger from "@/lib/logger";
 import { recordXeroApiUsage, type XeroRateLimitCategory } from "@/lib/xero-api-usage";
-import { getXeroErrorHeader, getXeroErrorStatusCode } from "@/lib/xero-error-shape";
+import {
+  getXeroErrorBodyMessage,
+  getXeroErrorHeader,
+  getXeroErrorStatusCode,
+} from "@/lib/xero-error-shape";
 import {
   getOperationalXeroConfig,
   getOperationalXeroEncryptionKey,
@@ -54,6 +58,18 @@ export class XeroDailyLimitError extends Error {
       `Xero daily API limit reached. Retry after ${retryAfterSec} seconds (~${Math.round(retryAfterSec / 3600)} hours). Please try again tomorrow.`
     );
     this.name = "XeroDailyLimitError";
+    this.retryAfterSec = retryAfterSec;
+  }
+}
+
+export class XeroTransientOutageError extends Error {
+  retryAfterSec: number;
+
+  constructor(retryAfterSec: number) {
+    super(
+      `Xero is temporarily unavailable. Suppressing further Xero calls for ${retryAfterSec} seconds to protect API quota.`
+    );
+    this.name = "XeroTransientOutageError";
     this.retryAfterSec = retryAfterSec;
   }
 }
@@ -145,12 +161,15 @@ const MEMBERSHIP_CURSOR_OVERLAP_MS = 2 * 60 * 1000;
 const MEMBERSHIP_SYNC_THROTTLE_MS = 1200;
 const XERO_PAGE_SIZE = 100;
 const XERO_CONTACT_ID_BATCH_SIZE = 50;
+const DEFAULT_XERO_TRANSIENT_MAX_RETRIES = 1;
+const XERO_TRANSIENT_FAILURE_COOLDOWN_SEC = 120;
 
 // Xero tokens expire after 30 minutes; refresh 10 minutes early
 const TOKEN_REFRESH_BUFFER_MS = 10 * 60 * 1000; // 10 minutes — buffer for long-running bulk ops (contact sync, membership refresh)
 
 // Cache the daily-limit cooldown in-process so we stop hammering Xero until Retry-After expires.
 let xeroDailyLimitUntilMs = 0;
+let xeroTransientOutageUntilMs = 0;
 
 interface XeroSyncCursorMetadata {
   retryMemberIds?: string[];
@@ -1309,6 +1328,22 @@ function throwIfXeroDailyLimitActive(): void {
   }
 }
 
+function getRemainingXeroTransientOutageSeconds(): number {
+  const remainingMs = xeroTransientOutageUntilMs - Date.now();
+  if (remainingMs <= 0) {
+    xeroTransientOutageUntilMs = 0;
+    return 0;
+  }
+  return Math.ceil(remainingMs / 1000);
+}
+
+function throwIfXeroTransientOutageActive(): void {
+  const remainingSec = getRemainingXeroTransientOutageSeconds();
+  if (remainingSec > 0) {
+    throw new XeroTransientOutageError(remainingSec);
+  }
+}
+
 function rememberXeroDailyLimit(retryAfterSec: number): void {
   const clampedRetryAfterSec = Math.max(0, retryAfterSec);
   const nextLimitUntilMs = Date.now() + clampedRetryAfterSec * 1000;
@@ -1325,8 +1360,25 @@ function rememberXeroDailyLimit(retryAfterSec: number): void {
   }
 }
 
+function rememberXeroTransientOutage(retryAfterSec: number): void {
+  const clampedRetryAfterSec = Math.max(0, retryAfterSec);
+  const nextLimitUntilMs = Date.now() + clampedRetryAfterSec * 1000;
+
+  if (nextLimitUntilMs > xeroTransientOutageUntilMs) {
+    xeroTransientOutageUntilMs = nextLimitUntilMs;
+    logger.warn(
+      {
+        retryAfterSec: clampedRetryAfterSec,
+        availableAt: new Date(nextLimitUntilMs).toISOString(),
+      },
+      "Xero transient API failures exceeded retry budget, suppressing further Xero calls until cooldown expires"
+    );
+  }
+}
+
 export function resetXeroRateLimitStateForTests(): void {
   xeroDailyLimitUntilMs = 0;
+  xeroTransientOutageUntilMs = 0;
 }
 
 interface XeroRetryRateLimitEvent {
@@ -1337,6 +1389,7 @@ interface XeroRetryRateLimitEvent {
 
 interface XeroRetryOptions {
   maxRetries?: number;
+  maxTransientRetries?: number;
   maxWaitSec?: number;
   context?: string;
   onRateLimit?: (event: XeroRetryRateLimitEvent) => void;
@@ -1365,7 +1418,61 @@ function getObservedXeroRateLimitCategory(err: unknown): XeroRateLimitCategory {
   return "unknown";
 }
 
+function parseXeroRetryAfterSeconds(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const numericValue = Number.parseInt(value, 10);
+  if (Number.isFinite(numericValue) && numericValue >= 0) {
+    return numericValue;
+  }
+
+  const retryAtMs = Date.parse(value);
+  if (Number.isFinite(retryAtMs)) {
+    return Math.max(0, Math.ceil((retryAtMs - Date.now()) / 1000));
+  }
+
+  return null;
+}
+
+function isRetryableXeroTransientStatus(statusCode: number | undefined): boolean {
+  return (
+    statusCode === 408 ||
+    (statusCode !== undefined && statusCode >= 500 && statusCode <= 599)
+  );
+}
+
+function getXeroTransientRetryDelaySeconds(
+  err: unknown,
+  attempt: number,
+  maxWaitSec: number
+): number {
+  const retryAfterSec = parseXeroRetryAfterSeconds(
+    getXeroErrorHeader(err, "retry-after")
+  );
+  const backoffSec = Math.min(2 ** attempt, maxWaitSec);
+
+  return Math.min(retryAfterSec ?? backoffSec, maxWaitSec);
+}
+
+function getXeroTransientCooldownSeconds(err: unknown): number {
+  return (
+    parseXeroRetryAfterSeconds(getXeroErrorHeader(err, "retry-after")) ??
+    XERO_TRANSIENT_FAILURE_COOLDOWN_SEC
+  );
+}
+
 function getXeroUsageErrorMessage(err: unknown): string | null {
+  const statusCode = getXeroErrorStatusCode(err);
+  const bodyMessage = getXeroErrorBodyMessage(err);
+  if (bodyMessage) {
+    const correlationId = getXeroErrorHeader(err, "xero-correlation-id");
+    const prefix = statusCode ? `HTTP ${statusCode}: ` : "";
+    const suffix = correlationId ? ` (Xero correlation ID: ${correlationId})` : "";
+    return `${prefix}${bodyMessage}${suffix}`;
+  }
+
   if (err instanceof Error) {
     return err.message;
   }
@@ -1590,63 +1697,88 @@ export async function retryXeroWriteWithContactRepair<T>(
 }
 
 /**
- * Retry wrapper for Xero API calls with 429 rate-limit handling.
+ * Retry wrapper for Xero API calls with rate-limit and transient failure handling.
  * - On daily limit: throws XeroDailyLimitError immediately (no point waiting hours).
  * - On minute/app limit: waits Retry-After seconds (capped at maxWaitSec) and retries.
- * - Non-429 errors pass through unchanged.
+ * - On transient Xero/server failures: retries with a short capped exponential backoff.
  */
 export async function withXeroRetry<T>(
   fn: () => Promise<T>,
   options?: XeroRetryOptions
 ): Promise<T> {
   throwIfXeroDailyLimitActive();
+  throwIfXeroTransientOutageActive();
 
-  const maxRetries = options?.maxRetries ?? 3;
+  const maxRateLimitRetries = options?.maxRetries ?? 3;
+  const maxTransientRetries =
+    options?.maxTransientRetries ??
+    Math.min(maxRateLimitRetries, DEFAULT_XERO_TRANSIENT_MAX_RETRIES);
   const maxWaitSec = options?.maxWaitSec ?? 120;
   const context = options?.context ?? "Xero API call";
+  const maxAttempts = Math.max(maxRateLimitRetries, maxTransientRetries);
 
   let lastError: unknown;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (err: unknown) {
       lastError = err;
       const statusCode = getXeroErrorStatusCode(err);
-      if (statusCode !== 429) throw err;
 
-      const retryAfter = getXeroErrorHeader(err, "retry-after");
-      const rateLimitProblem = getXeroErrorHeader(err, "x-rate-limit-problem");
-      const parsedRetryAfterSec = parseInt(
-        retryAfter || (rateLimitProblem === "day" ? "86400" : "30"),
-        10
-      );
-      const rateLimitCategory =
-        rateLimitProblem === "day" || rateLimitProblem === "minute"
-          ? rateLimitProblem
-          : "unknown";
+      if (statusCode === 429) {
+        const retryAfter = getXeroErrorHeader(err, "retry-after");
+        const rateLimitProblem = getXeroErrorHeader(err, "x-rate-limit-problem");
+        const parsedRetryAfterSec =
+          parseXeroRetryAfterSeconds(retryAfter) ??
+          (rateLimitProblem === "day" ? 86400 : 30);
+        const rateLimitCategory =
+          rateLimitProblem === "day" || rateLimitProblem === "minute"
+            ? rateLimitProblem
+            : "unknown";
 
-      options?.onRateLimit?.({
-        attempt: attempt + 1,
-        retryAfterSec: parsedRetryAfterSec,
-        rateLimitCategory,
-      });
+        options?.onRateLimit?.({
+          attempt: attempt + 1,
+          retryAfterSec: parsedRetryAfterSec,
+          rateLimitCategory,
+        });
 
-      // Daily limit — abort immediately, no point retrying for hours
-      if (rateLimitProblem === "day") {
-        const retryAfterSec = parsedRetryAfterSec;
-        rememberXeroDailyLimit(retryAfterSec);
-        throw new XeroDailyLimitError(retryAfterSec);
+        // Daily limit — abort immediately, no point retrying for hours
+        if (rateLimitProblem === "day") {
+          const retryAfterSec = parsedRetryAfterSec;
+          rememberXeroDailyLimit(retryAfterSec);
+          throw new XeroDailyLimitError(retryAfterSec);
+        }
+
+        // Minute/app limit — retry if we have attempts left
+        if (attempt < maxRateLimitRetries) {
+          const waitSec = Math.min(parsedRetryAfterSec, maxWaitSec);
+          logger.warn(
+            { context, attempt: attempt + 1, maxRetries: maxRateLimitRetries, waitSec, rateLimitProblem },
+            "Xero 429 rate limit hit, retrying after backoff"
+          );
+          await throttle(waitSec * 1000);
+          continue;
+        }
+
+        throw err;
       }
 
-      // Minute/app limit — retry if we have attempts left
-      if (attempt < maxRetries) {
-        const waitSec = Math.min(parsedRetryAfterSec, maxWaitSec);
-        logger.warn(
-          { context, attempt: attempt + 1, maxRetries, waitSec, rateLimitProblem },
-          "Xero 429 rate limit hit, retrying after backoff"
-        );
-        await throttle(waitSec * 1000);
+      if (isRetryableXeroTransientStatus(statusCode)) {
+        if (attempt < maxTransientRetries) {
+          const waitSec = getXeroTransientRetryDelaySeconds(err, attempt, maxWaitSec);
+          logger.warn(
+            { context, attempt: attempt + 1, maxRetries: maxTransientRetries, waitSec, statusCode },
+            "Xero transient API failure, retrying after backoff"
+          );
+          await throttle(waitSec * 1000);
+          continue;
+        }
+
+        rememberXeroTransientOutage(getXeroTransientCooldownSeconds(err));
+        throw err;
       }
+
+      throw err;
     }
   }
   throw lastError;

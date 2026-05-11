@@ -109,6 +109,7 @@ vi.mock("@/lib/xero-error-shape", () => ({
     (error: { response?: { headers?: Record<string, string> } }, header: string) =>
       error?.response?.headers?.[header]
   ),
+  getXeroErrorBodyMessage: vi.fn(() => undefined),
   getXeroErrorStatusCode: vi.fn(
     (error: { response?: { statusCode?: number } }) => error?.response?.statusCode
   ),

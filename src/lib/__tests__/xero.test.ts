@@ -20,6 +20,7 @@ import {
   shouldBackfillMembershipStatus,
   withXeroRetry,
   XeroDailyLimitError,
+  XeroTransientOutageError,
   resetXeroRateLimitStateForTests,
 } from "../xero"
 import { Invoice } from "xero-node"
@@ -507,8 +508,8 @@ describe("withXeroRetry", () => {
     expect(result).toBe("ok")
   })
 
-  it("passes through non-429 errors immediately", async () => {
-    const error = { response: { statusCode: 500 }, message: "Internal Server Error" }
+  it("passes through non-retryable errors immediately", async () => {
+    const error = { response: { statusCode: 400 }, message: "Bad Request" }
     await expect(
       withXeroRetry(() => Promise.reject(error))
     ).rejects.toBe(error)
@@ -636,6 +637,69 @@ describe("withXeroRetry", () => {
     expect(result).toBe("done")
     expect(Date.now() - start).toBeLessThan(2000) // Should not have waited 999 seconds
   })
+
+  it("retries transient Xero server errors", async () => {
+    let calls = 0
+    const fn = () => {
+      calls++
+      if (calls === 1) {
+        return Promise.reject({
+          response: { statusCode: 500 },
+          message: "Xero internal error",
+        })
+      }
+      return Promise.resolve("done")
+    }
+
+    const result = await withXeroRetry(fn, { maxRetries: 1, maxWaitSec: 0 })
+
+    expect(result).toBe("done")
+    expect(calls).toBe(2)
+  })
+
+  it("throws after the default transient retry and activates outage cooldown", async () => {
+    let calls = 0
+    const error = {
+      response: { statusCode: 503 },
+      message: "Xero unavailable",
+    }
+    const fn = () => {
+      calls++
+      return Promise.reject(error)
+    }
+
+    await expect(
+      withXeroRetry(fn, { maxRetries: 2, maxWaitSec: 0 })
+    ).rejects.toBe(error)
+    expect(calls).toBe(2) // initial + 1 default transient retry
+
+    const secondFn = vi.fn(() => Promise.resolve("should not run"))
+    await expect(withXeroRetry(secondFn)).rejects.toBeInstanceOf(
+      XeroTransientOutageError
+    )
+    expect(secondFn).not.toHaveBeenCalled()
+  })
+
+  it("honors an explicit transient retry budget", async () => {
+    let calls = 0
+    const error = {
+      response: { statusCode: 500 },
+      message: "Xero unavailable",
+    }
+    const fn = () => {
+      calls++
+      return Promise.reject(error)
+    }
+
+    await expect(
+      withXeroRetry(fn, {
+        maxRetries: 3,
+        maxTransientRetries: 2,
+        maxWaitSec: 0,
+      })
+    ).rejects.toBe(error)
+    expect(calls).toBe(3) // initial + 2 transient retries
+  })
 })
 
 describe("callXeroApi", () => {
@@ -686,6 +750,7 @@ describe("callXeroApi", () => {
         resourceType: "INVOICE",
         workflow: "reconcileXeroInvoice",
         context: "reconcile invoice test",
+        maxRetries: 0,
       })
     ).rejects.toBe(error)
 
@@ -697,6 +762,44 @@ describe("callXeroApi", () => {
         success: false,
         statusCode: 500,
         errorMessage: "Xero exploded",
+      })
+    )
+  })
+
+  it("records concise Xero response details for failed API usage", async () => {
+    const error = new Error(
+      JSON.stringify({
+        response: {
+          statusCode: 500,
+          body: {
+            Detail: "An error occurred in Xero.",
+          },
+          headers: {
+            "xero-correlation-id": "correlation-456",
+          },
+        },
+      })
+    )
+
+    await expect(
+      callXeroApi(() => Promise.reject(error), {
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "syncContactsFromXero",
+        context: "syncContacts getContacts(page 1)",
+        maxRetries: 0,
+      })
+    ).rejects.toBe(error)
+
+    expect(mocks.recordXeroApiUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "getContacts",
+        resourceType: "CONTACT",
+        workflow: "syncContactsFromXero",
+        success: false,
+        statusCode: 500,
+        errorMessage:
+          "HTTP 500: An error occurred in Xero. (Xero correlation ID: correlation-456)",
       })
     )
   })
