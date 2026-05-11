@@ -21,6 +21,12 @@ const actionSchema = z.object({
   note: z.string().max(1000).optional(),
 });
 
+const CANCELLABLE_DELETION_BOOKING_STATUSES = [
+  "PENDING",
+  "PAYMENT_PENDING",
+  "CONFIRMED",
+] as const;
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -112,25 +118,57 @@ export async function POST(
 
     // --- APPROVE ---
 
-    // 1. Send confirmation email BEFORE anonymising (so we have real name/email)
-    try {
-      await sendAccountDeletionApprovedEmail(member.email, member.firstName);
-    } catch (err) {
-      logger.error({ err, memberId: member.id }, "Failed to send deletion approved email");
-      // Continue — email failure should not block deletion
+    const now = new Date();
+
+    // 1. Block approval while future paid stays still need financial/lodge follow-up.
+    const futurePaidBookings = await prisma.booking.findMany({
+      where: {
+        memberId: member.id,
+        status: "PAID",
+        checkIn: { gte: now },
+      },
+      select: { id: true },
+    });
+
+    if (futurePaidBookings.length > 0) {
+      const paidBookingIds = futurePaidBookings.map((booking) => booking.id);
+      logger.warn(
+        { memberId: member.id, paidBookingIds },
+        "Blocked account deletion approval because future paid bookings remain active"
+      );
+      logAudit({
+        action: "member.deletion_approval_blocked",
+        memberId: session.user.id,
+        targetId: member.id,
+        details: `Future paid bookings must be resolved before anonymisation: ${paidBookingIds.join(", ")}`,
+        ipAddress: ip,
+        category: "privacy",
+        severity: "important",
+        outcome: "blocked",
+      });
+
+      return NextResponse.json(
+        {
+          error:
+            "Account deletion cannot be approved while this member has future paid bookings. Cancel or refund the paid bookings first.",
+          paidBookingIds,
+        },
+        { status: 409 }
+      );
     }
 
     // 2. Cancel all future unpaid/hold bookings for the member.
     const futureBookings = await prisma.booking.findMany({
       where: {
         memberId: member.id,
-        status: { in: ["PENDING", "PAYMENT_PENDING", "CONFIRMED"] },
-        checkIn: { gte: new Date() },
+        status: { in: [...CANCELLABLE_DELETION_BOOKING_STATUSES] },
+        checkIn: { gte: now },
       },
       select: { id: true },
     });
 
     const cancelledBookingIds: string[] = [];
+    const failedBookingIds: string[] = [];
     for (const booking of futureBookings) {
       const result = await cancelBooking(
         booking.id,
@@ -141,6 +179,7 @@ export async function POST(
       if (result.status === 200) {
         cancelledBookingIds.push(booking.id);
       } else {
+        failedBookingIds.push(booking.id);
         logger.warn(
           { bookingId: booking.id, memberId: member.id, result },
           "Failed to cancel booking during account deletion"
@@ -148,7 +187,38 @@ export async function POST(
       }
     }
 
-    // 3-6: Anonymise atomically in a single transaction
+    if (failedBookingIds.length > 0) {
+      logAudit({
+        action: "member.deletion_cleanup_failed",
+        memberId: session.user.id,
+        targetId: member.id,
+        details: `Account deletion approval stopped; failed to cancel future bookings: ${failedBookingIds.join(", ")}`,
+        ipAddress: ip,
+        category: "privacy",
+        severity: "critical",
+        outcome: "failure",
+      });
+
+      return NextResponse.json(
+        {
+          error:
+            "Account deletion could not be approved because future bookings could not be cancelled. No member data was anonymised.",
+          failedBookingIds,
+          cancelledBookings: cancelledBookingIds.length,
+        },
+        { status: 409 }
+      );
+    }
+
+    // 3. Send confirmation email BEFORE anonymising (so we have real name/email).
+    try {
+      await sendAccountDeletionApprovedEmail(member.email, member.firstName);
+    } catch (err) {
+      logger.error({ err, memberId: member.id }, "Failed to send deletion approved email");
+      // Continue — email failure should not block deletion
+    }
+
+    // 4-7: Anonymise atomically in a single transaction
     const anonymisedEmail = `deleted-${member.id.substring(0, 8)}@deleted.invalid`;
     await prisma.$transaction(async (tx) => {
       // 3. Anonymise the member record

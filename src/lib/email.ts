@@ -1248,7 +1248,8 @@ export async function sendAdminIssueReportAlert(data: {
   pageUrl: string;
   pageTitle?: string | null;
   description: string;
-  screenshot?: EmailAttachment | null;
+  issueReportUrl: string;
+  hasScreenshot: boolean;
 }) {
   await sendToAdmins({
     subject: `Issue Report: ${data.memberName}`,
@@ -1258,10 +1259,10 @@ export async function sendAdminIssueReportAlert(data: {
       pageUrl: data.pageUrl,
       pageTitle: data.pageTitle,
       description: data.description,
-      hasScreenshot: Boolean(data.screenshot),
+      issueReportUrl: data.issueReportUrl,
+      hasScreenshot: data.hasScreenshot,
     }),
     templateName: "admin-issue-report",
     preferenceKey: "adminIssueReport",
-    attachments: data.screenshot ? [data.screenshot] : undefined,
   });
 }

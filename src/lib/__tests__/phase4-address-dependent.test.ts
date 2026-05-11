@@ -28,6 +28,7 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
     },
+    promoCodeAssignment: { findMany: vi.fn().mockResolvedValue([]) },
     familyGroup: { findMany: vi.fn().mockResolvedValue([]) },
     familyGroupMember: { createMany: vi.fn() },
     passwordResetToken: { create: vi.fn() },

@@ -106,6 +106,36 @@ async function submitProfileForm() {
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 }
 
+async function clickEditAndEmulateDeferredSubmitDefault() {
+  const editButton = screen.getByRole("button", { name: "Edit" });
+  const clickEvent = new MouseEvent("click", {
+    bubbles: true,
+    cancelable: true,
+  });
+
+  fireEvent(editButton, clickEvent);
+
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeTruthy());
+
+  if (clickEvent.defaultPrevented) {
+    return;
+  }
+
+  const saveButton = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+  if (saveButton.type !== "submit") {
+    return;
+  }
+
+  const formId = saveButton.getAttribute("form");
+  const form = formId
+    ? document.getElementById(formId)
+    : saveButton.closest("form");
+
+  if (form) {
+    fireEvent.submit(form);
+  }
+}
+
 describe("ProfileForm return flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -170,7 +200,7 @@ describe("ProfileForm return flow", () => {
     expect((screen.getByLabelText("First Name") as HTMLInputElement).readOnly).toBe(true);
   });
 
-  it("uses one top button to switch the profile details card from edit to save", () => {
+  it("uses separate top edit and save buttons for the profile details card", () => {
     render(
       <ProfileDetailsProvider>
         <ProfileDetailsPageActions />
@@ -181,9 +211,29 @@ describe("ProfileForm return flow", () => {
     expect((screen.getByLabelText("First Name") as HTMLInputElement).readOnly).toBe(true);
     expect(screen.getByRole("link", { name: /Back to Dashboard/ }).getAttribute("href")).toBe("/dashboard");
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const editButton = screen.getByRole("button", { name: "Edit" });
+    fireEvent.click(editButton);
 
-    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    const saveButton = screen.getByRole("button", { name: "Save" });
+    expect(saveButton).toBeTruthy();
+    expect(saveButton).not.toBe(editButton);
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect((screen.getByLabelText("First Name") as HTMLInputElement).readOnly).toBe(false);
+  });
+
+  it("does not submit the profile form on the same click that starts editing", async () => {
+    mockSuccessfulSave();
+
+    render(
+      <ProfileDetailsProvider>
+        <ProfileDetailsPageActions />
+        <ProfileDetailsCard member={member} />
+      </ProfileDetailsProvider>,
+    );
+
+    await clickEditAndEmulateDeferredSubmitDefault();
+
+    expect(fetchMock).not.toHaveBeenCalled();
     expect((screen.getByLabelText("First Name") as HTMLInputElement).readOnly).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { logAudit } from "@/lib/audit";
 import { sendAdminIssueReportAlert } from "@/lib/email";
+import { getIssueReportSensitiveDataExpiresAt } from "@/lib/issue-report-retention";
 import logger from "@/lib/logger";
 
 const MAX_SCREENSHOT_BYTES = 900_000;
@@ -28,7 +29,7 @@ class ApiError extends Error {
 
 function parseScreenshot(
   screenshotDataUrl?: string
-): { dataUrl: string; filename: string; content: Buffer; contentType: string } | null {
+): { dataUrl: string; contentType: string } | null {
   if (!screenshotDataUrl) {
     return null;
   }
@@ -46,17 +47,8 @@ function parseScreenshot(
     throw new ApiError("Screenshot is too large to submit", 400);
   }
 
-  const extension =
-    contentType === "image/png"
-      ? "png"
-      : contentType === "image/webp"
-        ? "webp"
-        : "jpg";
-
   return {
     dataUrl: screenshotDataUrl,
-    filename: `issue-report-screenshot.${extension}`,
-    content,
     contentType,
   };
 }
@@ -115,6 +107,9 @@ export async function POST(request: NextRequest) {
 
     const pageTitle = parsed.data.pageTitle?.trim() || null;
     const description = parsed.data.description.trim();
+    const now = new Date();
+    const browserInfo = request.headers.get("user-agent") ?? null;
+    const sensitiveDataExpiresAt = getIssueReportSensitiveDataExpiresAt(now);
 
     const issueReport = await prisma.issueReport.create({
       data: {
@@ -123,7 +118,10 @@ export async function POST(request: NextRequest) {
         pageTitle,
         description,
         screenshotDataUrl: screenshot?.dataUrl ?? null,
-        browserInfo: request.headers.get("user-agent") ?? null,
+        screenshotCapturedAt: screenshot ? now : null,
+        screenshotExpiresAt: screenshot ? sensitiveDataExpiresAt : null,
+        browserInfo,
+        browserInfoExpiresAt: browserInfo ? sensitiveDataExpiresAt : null,
       },
       select: { id: true },
     });
@@ -147,13 +145,8 @@ export async function POST(request: NextRequest) {
       pageUrl,
       pageTitle,
       description,
-      screenshot: screenshot
-        ? {
-            filename: screenshot.filename,
-            content: screenshot.content,
-            contentType: screenshot.contentType,
-          }
-        : null,
+      issueReportUrl: `${request.nextUrl.origin}/admin/issue-reports?report=${encodeURIComponent(issueReport.id)}`,
+      hasScreenshot: Boolean(screenshot),
     }).catch((err) =>
       logger.error({ err, issueReportId: issueReport.id }, "Failed to send admin issue report alert")
     );

@@ -91,6 +91,10 @@ describe("issue reports API", () => {
         pageUrl: "http://localhost:3000/book",
         pageTitle: "Book | TAC Bookings",
         browserInfo: "Vitest Browser",
+        browserInfoExpiresAt: expect.any(Date),
+        screenshotDataUrl: null,
+        screenshotCapturedAt: null,
+        screenshotExpiresAt: null,
       }),
       select: { id: true },
     });
@@ -100,6 +104,8 @@ describe("issue reports API", () => {
         memberName: "Casey Member",
         memberEmail: "casey@example.com",
         pageUrl: "http://localhost:3000/book",
+        issueReportUrl: "http://localhost:3000/admin/issue-reports?report=issue-1",
+        hasScreenshot: false,
       })
     );
 
@@ -135,6 +141,41 @@ describe("issue reports API", () => {
     expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
       expect.objectContaining({
         pageUrl: "https://tokoroa.org.nz/book?step=review",
+      })
+    );
+  });
+
+  it("stores screenshots for in-app review without emailing attachments", async () => {
+    const screenshotDataUrl = `data:image/png;base64,${Buffer.from("png").toString("base64")}`;
+    const req = new NextRequest("http://localhost:3000/api/issue-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "User-Agent": "Vitest Browser" },
+      body: JSON.stringify({
+        pageUrl: "http://localhost:3000/book",
+        description: "The screenshot should stay inside the admin issue report surface.",
+        screenshotDataUrl,
+      }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(201);
+
+    expect(mockedIssueReportCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        screenshotDataUrl,
+        screenshotCapturedAt: expect.any(Date),
+        screenshotExpiresAt: expect.any(Date),
+      }),
+      select: { id: true },
+    });
+    expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hasScreenshot: true,
+      })
+    );
+    expect(mockedSendAdminIssueReportAlert).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        screenshot: expect.anything(),
       })
     );
   });

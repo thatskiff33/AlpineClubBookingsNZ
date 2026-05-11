@@ -5,6 +5,7 @@ import {
   createContext,
   useContext,
   useState,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import { ArrowLeft, ChevronDown, Loader2, Pencil, Save } from "lucide-react";
@@ -98,23 +99,38 @@ export function ProfileDetailsProvider({ children }: { children: ReactNode }) {
 export function ProfileDetailsPageActions() {
   const { isEditing, isSaving, startEditing } = useProfileDetails();
 
+  function handleEditClick(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    startEditing();
+  }
+
   return (
     <div className="flex flex-wrap gap-2 sm:justify-end">
-      <Button
-        disabled={isSaving}
-        form={isEditing ? PROFILE_DETAILS_FORM_ID : undefined}
-        onClick={isEditing ? undefined : startEditing}
-        type={isEditing ? "submit" : "button"}
-      >
-        {isSaving ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : isEditing ? (
-          <Save className="h-4 w-4" />
-        ) : (
+      {isEditing ? (
+        <Button
+          key="profile-details-save"
+          disabled={isSaving}
+          form={PROFILE_DETAILS_FORM_ID}
+          type="submit"
+        >
+          {isSaving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Save className="h-4 w-4" />
+          )}
+          {isSaving ? "Saving..." : "Save"}
+        </Button>
+      ) : (
+        <Button
+          key="profile-details-edit"
+          disabled={isSaving}
+          onClick={handleEditClick}
+          type="button"
+        >
           <Pencil className="h-4 w-4" />
-        )}
-        {isSaving ? "Saving..." : isEditing ? "Save" : "Edit"}
-      </Button>
+          Edit
+        </Button>
+      )}
       <Button asChild variant="outline">
         <Link href="/dashboard">
           <ArrowLeft className="h-4 w-4" />

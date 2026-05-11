@@ -1404,6 +1404,7 @@ export function adminIssueReportTemplate(data: {
   pageUrl: string;
   pageTitle?: string | null;
   description: string;
+  issueReportUrl: string;
   hasScreenshot: boolean;
 }): string {
   return layout(`
@@ -1413,9 +1414,10 @@ export function adminIssueReportTemplate(data: {
       { label: "Member", value: escapeHtml(data.memberName) },
       { label: "Email", value: escapeHtml(data.memberEmail) },
       { label: "Page", value: escapeHtml(data.pageTitle || data.pageUrl) },
-      { label: "Screenshot", value: data.hasScreenshot ? "Attached" : "Not included" },
+      { label: "Screenshot", value: data.hasScreenshot ? "Available in admin" : "Not included" },
     ])}
     ${alertBox(escapeHtml(data.description), "info")}
+    ${button("Review Issue Report", data.issueReportUrl, { sameOrigin: true })}
     ${button("Open Reported Page", data.pageUrl, { sameOrigin: true })}
   `);
 }
