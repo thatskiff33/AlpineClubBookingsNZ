@@ -28,6 +28,7 @@ import { isHutLeader } from "@/lib/hut-leader";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { summarizeMemberPaymentOwed } from "@/lib/member-dashboard";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
+import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import {
   ACTIVE_BOOKING_STATUSES,
   PAYMENT_OWED_BOOKING_STATUSES,
@@ -349,7 +350,7 @@ export default async function DashboardPage() {
                       </p>
                     </div>
                     <Button asChild size="sm" variant="outline">
-                      <Link href={`/bookings/${booking.id}`}>Resume</Link>
+                      <Link href={buildHrefWithReturnTo(`/bookings/${booking.id}`, "/dashboard")}>Resume</Link>
                     </Button>
                   </div>
                 ))}
@@ -389,7 +390,7 @@ export default async function DashboardPage() {
                 {recentBookings.map((booking) => (
                   <Link
                     key={booking.id}
-                    href={`/bookings/${booking.id}`}
+                    href={buildHrefWithReturnTo(`/bookings/${booking.id}`, "/dashboard")}
                     className="flex items-center justify-between py-3 hover:bg-slate-50 -mx-2 px-2 rounded"
                   >
                     <div className="min-w-0">

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
+import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 
 export default async function MyBookingsPage() {
   const session = await auth();
@@ -38,7 +39,7 @@ export default async function MyBookingsPage() {
       ) : (
         <div className="space-y-3">
           {bookings.map((booking) => (
-            <Link key={booking.id} href={`/bookings/${booking.id}`}>
+            <Link key={booking.id} href={buildHrefWithReturnTo(`/bookings/${booking.id}`, "/bookings")}>
               <Card className="cursor-pointer transition-shadow hover:shadow-md mb-3">
                 <CardContent className="flex items-center justify-between p-4">
                   <div className="space-y-1">

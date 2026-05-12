@@ -47,6 +47,7 @@ import {
   type XeroContactLinkMismatchEntry,
 } from "@/lib/xero-contact-link-mismatches";
 import { createAuditLog } from "@/lib/audit";
+import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
 
 // ---------------------------------------------------------------------------
 // Rate limit error
@@ -4379,6 +4380,13 @@ export async function updateXeroContact(
 // Membership subscription verification
 // ---------------------------------------------------------------------------
 
+type MembershipSubscriptionStatus =
+  | "PAID"
+  | "UNPAID"
+  | "OVERDUE"
+  | "NOT_INVOICED"
+  | "NOT_REQUIRED";
+
 /**
  * Determine membership subscription status for a member by checking
  * Xero invoices for the current season year.
@@ -4581,7 +4589,7 @@ export async function syncMemberSubscriptionHistoryForLinkedContact(
   syncedCount: number;
   results: Array<{
     seasonYear: number;
-    status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED";
+    status: MembershipSubscriptionStatus;
     xeroInvoiceId?: string;
     paidAt?: Date;
     xeroOnlineInvoiceUrl?: string | null;
@@ -4602,7 +4610,7 @@ export async function syncMemberSubscriptionHistoryForLinkedContact(
 
   const results: Array<{
     seasonYear: number;
-    status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED";
+    status: MembershipSubscriptionStatus;
     xeroInvoiceId?: string;
     paidAt?: Date;
     xeroOnlineInvoiceUrl?: string | null;
@@ -4644,7 +4652,7 @@ export async function checkMembershipStatus(
   seasonYear?: number,
   options?: CheckMembershipStatusOptions
 ): Promise<{
-  status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED";
+  status: MembershipSubscriptionStatus;
   xeroInvoiceId?: string;
   paidAt?: Date;
   xeroOnlineInvoiceUrl?: string | null;
@@ -4653,11 +4661,42 @@ export async function checkMembershipStatus(
     where: { id: memberId },
   });
   if (!member) throw new Error(`Member not found: ${memberId}`);
+
+  const year = seasonYear ?? getSeasonYear(new Date());
+  const subscriptionRequired =
+    member.role !== "ADMIN" &&
+    await requiresPaidSubscriptionForAgeTierFromSettings(member.ageTier);
+
+  if (!subscriptionRequired) {
+    await prisma.memberSubscription.upsert({
+      where: {
+        memberId_seasonYear: { memberId, seasonYear: year },
+      },
+      update: {
+        status: "NOT_REQUIRED",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        xeroOnlineInvoiceUrl: null,
+        paidAt: null,
+      },
+      create: {
+        memberId,
+        seasonYear: year,
+        status: "NOT_REQUIRED",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        xeroOnlineInvoiceUrl: null,
+        paidAt: null,
+      },
+    });
+
+    return { status: "NOT_REQUIRED" };
+  }
+
   if (!member.xeroContactId) {
     return { status: "NOT_INVOICED" };
   }
 
-  const year = seasonYear ?? getSeasonYear(new Date());
   const { xero, tenantId } = await getAuthenticatedXeroClient();
   const existingSubscription = await prisma.memberSubscription.findUnique({
     where: {

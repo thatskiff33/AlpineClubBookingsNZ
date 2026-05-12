@@ -31,6 +31,7 @@ import {
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 
 const historyToneClasses: Record<BookingHistoryTone, string> = {
   default: "border-slate-200 bg-slate-100 text-slate-700",
@@ -41,10 +42,13 @@ const historyToneClasses: Record<BookingHistoryTone, string> = {
 
 export default async function BookingDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ returnTo?: string | string[] }>;
 }) {
   const { id } = await params;
+  const query = searchParams ? await searchParams : {};
   const session = await auth();
   if (!session) redirect("/login");
 
@@ -197,12 +201,16 @@ export default async function BookingDetailPage({
     hasNonMembers: booking.hasNonMembers,
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
   };
+  const backHref = resolveInternalReturnPath(
+    query.returnTo,
+    session.user.role === "ADMIN" ? "/admin/bookings" : "/bookings"
+  );
 
   return (
     <div className="max-w-2xl space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Booking Details</h1>
-        <Link href="/bookings">
+        <Link href={backHref}>
           <Button variant="outline">Back to Bookings</Button>
         </Link>
       </div>

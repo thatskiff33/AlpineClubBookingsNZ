@@ -8,9 +8,8 @@ vi.mock("@/lib/session-guards", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    member: { count: vi.fn() },
-    memberSubscription: {
-      findFirst: vi.fn(),
+    member: {
+      findUnique: vi.fn(),
     },
   },
 }));
@@ -20,13 +19,18 @@ import { prisma } from "@/lib/prisma";
 import { GET } from "@/app/api/member/subscription-status/route";
 
 const mockAuth = auth as ReturnType<typeof vi.fn>;
-const mockFindFirst = prisma.memberSubscription.findFirst as ReturnType<typeof vi.fn>;
+const mockFindUnique = prisma.member.findUnique as ReturnType<typeof vi.fn>;
 
 describe("GET /api/member/subscription-status", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-09T12:00:00Z"));
     vi.clearAllMocks();
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      ageTier: "ADULT",
+      subscriptions: [],
+    });
   });
 
   afterEach(() => {
@@ -35,11 +39,15 @@ describe("GET /api/member/subscription-status", () => {
 
   it("returns invoice metadata for the current season", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1" } });
-    mockFindFirst.mockResolvedValue({
-      status: "UNPAID",
-      xeroInvoiceId: "inv-1",
-      xeroInvoiceNumber: "INV-0042",
-      xeroOnlineInvoiceUrl: "https://pay.xero.com/invoice/inv-1",
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      ageTier: "ADULT",
+      subscriptions: [{
+        status: "UNPAID",
+        xeroInvoiceId: "inv-1",
+        xeroInvoiceNumber: "INV-0042",
+        xeroOnlineInvoiceUrl: "https://pay.xero.com/invoice/inv-1",
+      }],
     });
 
     const res = await GET();
@@ -52,14 +60,21 @@ describe("GET /api/member/subscription-status", () => {
       invoiceUrl: "https://pay.xero.com/invoice/inv-1",
       invoiceNumber: "INV-0042",
     });
-    expect(mockFindFirst).toHaveBeenCalledWith(
+    expect(mockFindUnique).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { memberId: "member-1", seasonYear: 2026 },
+        where: { id: "member-1" },
         select: expect.objectContaining({
-          status: true,
-          xeroInvoiceId: true,
-          xeroInvoiceNumber: true,
-          xeroOnlineInvoiceUrl: true,
+          role: true,
+          ageTier: true,
+          subscriptions: expect.objectContaining({
+            where: { seasonYear: 2026 },
+            select: expect.objectContaining({
+              status: true,
+              xeroInvoiceId: true,
+              xeroInvoiceNumber: true,
+              xeroOnlineInvoiceUrl: true,
+            }),
+          }),
         }),
       })
     );
@@ -67,17 +82,37 @@ describe("GET /api/member/subscription-status", () => {
 
   it("keeps member subscription reads local even when the invoice URL is missing", async () => {
     mockAuth.mockResolvedValue({ user: { id: "member-1" } });
-    mockFindFirst.mockResolvedValue({
-      status: "UNPAID",
-      xeroInvoiceId: "inv-1",
-      xeroInvoiceNumber: "INV-0042",
-      xeroOnlineInvoiceUrl: null,
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      ageTier: "ADULT",
+      subscriptions: [{
+        status: "UNPAID",
+        xeroInvoiceId: "inv-1",
+        xeroInvoiceNumber: "INV-0042",
+        xeroOnlineInvoiceUrl: null,
+      }],
     });
 
     const res = await GET();
     const body = await res.json();
 
-    expect(mockFindFirst).toHaveBeenCalledTimes(1);
+    expect(mockFindUnique).toHaveBeenCalledTimes(1);
+    expect(body.invoiceUrl).toBeNull();
+  });
+
+  it("returns not required for members whose age tier does not require subscriptions", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1" } });
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      ageTier: "CHILD",
+      subscriptions: [],
+    });
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.status).toBe("NOT_REQUIRED");
     expect(body.invoiceUrl).toBeNull();
   });
 
@@ -87,6 +122,6 @@ describe("GET /api/member/subscription-status", () => {
     const res = await GET();
 
     expect(res.status).toBe(401);
-    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(mockFindUnique).not.toHaveBeenCalled();
   });
 });

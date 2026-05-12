@@ -93,14 +93,14 @@ describe("paymentStatusClass helper", () => {
 
 describe("subscriptionStatusClasses", () => {
   it("defines all subscription statuses", () => {
-    const statuses = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"];
+    const statuses = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED", "NOT_REQUIRED"];
     for (const s of statuses) {
       expect(subscriptionStatusClasses[s], `missing class for ${s}`).toBeTruthy();
     }
   });
 
   it("each subscription status has a unique colour class", () => {
-    const statuses = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"];
+    const statuses = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED", "NOT_REQUIRED"];
     const classes = statuses.map((s) => subscriptionStatusClasses[s]);
     const unique = new Set(classes);
     expect(unique.size).toBe(statuses.length);

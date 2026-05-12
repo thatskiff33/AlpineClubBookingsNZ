@@ -3,10 +3,13 @@
 import type { AgeTier } from "@prisma/client";
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
+import type { ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { format } from "date-fns";
-import { subscriptionStatusClass } from "@/lib/status-colors";
+import { subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-colors";
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups";
 import { getAgeTierLabel, useAgeTierOptions } from "@/lib/use-age-tier-options";
+import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,7 +28,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Users, CheckCircle, AlertCircle, Clock, ExternalLink, RefreshCw } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  CheckCircle,
+  ExternalLink,
+  RefreshCw,
+  ShieldCheck,
+  Users,
+  Clock,
+} from "lucide-react";
 
 function getSeasonYear(date: Date): number {
   return date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
@@ -54,21 +68,72 @@ interface Subscription {
   };
 }
 
-interface Summary { total: number; paid: number; unpaid: number; overdue: number; notInvoiced: number; }
+interface Summary { total: number; paid: number; unpaid: number; overdue: number; notInvoiced: number; notRequired: number; }
 interface XeroContactGroup { id: string; name: string; contactCount: number; }
 type MembershipSyncMode = "incremental" | "backfill";
+type SubscriptionSortBy =
+  | "member"
+  | "email"
+  | "ageTier"
+  | "xeroContactGroup"
+  | "status"
+  | "xeroInvoice"
+  | "paidAt";
+type SortDir = "asc" | "desc";
+
+const subscriptionSortColumns = new Set<SubscriptionSortBy>([
+  "member",
+  "email",
+  "ageTier",
+  "xeroContactGroup",
+  "status",
+  "xeroInvoice",
+  "paidAt",
+]);
+
+function parsePageParam(value: string | null) {
+  const page = Number(value);
+  return Number.isInteger(page) && page > 0 ? page : 1;
+}
+
+function parseSeasonYearParam(value: string | null) {
+  const year = Number(value);
+  return Number.isInteger(year) && year >= 2020 && year <= 2040
+    ? year
+    : currentYear;
+}
+
+function getSortBy(value: string | null): SubscriptionSortBy {
+  return subscriptionSortColumns.has(value as SubscriptionSortBy)
+    ? (value as SubscriptionSortBy)
+    : "member";
+}
+
+function getSortDir(value: string | null): SortDir {
+  return value === "desc" ? "desc" : "asc";
+}
+
+function getDefaultSortDir(sortBy: SubscriptionSortBy): SortDir {
+  return sortBy === "paidAt" ? "desc" : "asc";
+}
 
 export default function SubscriptionsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const ageTierOptions = useAgeTierOptions();
-  const [seasonYear, setSeasonYear] = useState(currentYear);
-  const [status, setStatus] = useState("all");
-  const [ageTier, setAgeTier] = useState<AgeTier | "all">("all");
-  const [xeroContactGroup, setXeroContactGroup] = useState("all");
-  const [page, setPage] = useState(1);
+  const [seasonYear, setSeasonYear] = useState(() => parseSeasonYearParam(searchParams.get("seasonYear")));
+  const [status, setStatus] = useState(searchParams.get("status") || "all");
+  const [ageTier, setAgeTier] = useState<AgeTier | "all">(
+    (searchParams.get("ageTier") as AgeTier | "all" | null) || "all"
+  );
+  const [xeroContactGroup, setXeroContactGroup] = useState(searchParams.get("xeroContactGroup") || "all");
+  const [sortBy, setSortBy] = useState<SubscriptionSortBy>(() => getSortBy(searchParams.get("sortBy")));
+  const [sortDir, setSortDir] = useState<SortDir>(() => getSortDir(searchParams.get("sortDir")));
+  const [page, setPage] = useState(() => parsePageParam(searchParams.get("page")));
   const [pageSize] = useState(25);
   const [data, setData] = useState<Subscription[]>([]);
   const [total, setTotal] = useState(0);
-  const [summary, setSummary] = useState<Summary>({ total: 0, paid: 0, unpaid: 0, overdue: 0, notInvoiced: 0 });
+  const [summary, setSummary] = useState<Summary>({ total: 0, paid: 0, unpaid: 0, overdue: 0, notInvoiced: 0, notRequired: 0 });
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState<MembershipSyncMode | null>(null);
   const [syncMessage, setSyncMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -114,19 +179,38 @@ export default function SubscriptionsPage() {
       .catch(() => setXeroContactGroupsList([]));
   }, []);
 
+  const buildSubscriptionsSearchParams = useCallback(() => {
+    const params = new URLSearchParams();
+    params.set("seasonYear", String(seasonYear));
+    if (status !== "all") params.set("status", status);
+    if (ageTier !== "all") params.set("ageTier", ageTier);
+    if (xeroContactGroup !== "all") params.set("xeroContactGroup", xeroContactGroup);
+    if (sortBy !== "member") params.set("sortBy", sortBy);
+    if (sortDir !== getDefaultSortDir(sortBy)) params.set("sortDir", sortDir);
+    if (page > 1) params.set("page", String(page));
+    return params;
+  }, [seasonYear, status, ageTier, xeroContactGroup, sortBy, sortDir, page]);
+
+  const subscriptionsQuery = buildSubscriptionsSearchParams().toString();
+  const currentSubscriptionsPath = subscriptionsQuery
+    ? `/admin/subscriptions?${subscriptionsQuery}`
+    : "/admin/subscriptions";
+
+  useEffect(() => {
+    const query = buildSubscriptionsSearchParams().toString();
+    router.replace(query ? `/admin/subscriptions?${query}` : "/admin/subscriptions", { scroll: false });
+  }, [buildSubscriptionsSearchParams, router]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        seasonYear: String(seasonYear),
-        status,
-        ageTier,
-        page: String(page),
-        pageSize: String(pageSize),
-      });
-      if (xeroContactGroup !== "all") {
-        params.set("xeroContactGroup", xeroContactGroup);
-      }
+      const params = buildSubscriptionsSearchParams();
+      params.set("status", status);
+      params.set("ageTier", ageTier);
+      params.set("page", String(page));
+      params.set("pageSize", String(pageSize));
+      params.set("sortBy", sortBy);
+      params.set("sortDir", sortDir);
       const res = await fetch(`/api/admin/subscriptions?${params}`);
       if (res.ok) {
         const json = await res.json();
@@ -136,10 +220,55 @@ export default function SubscriptionsPage() {
         setXeroContactGroupsLoaded(json.xeroContactGroupsLoaded !== false);
       }
     } finally { setLoading(false); }
-  }, [seasonYear, status, ageTier, xeroContactGroup, page, pageSize]);
+  }, [ageTier, buildSubscriptionsSearchParams, page, pageSize, sortBy, sortDir, status]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
   const totalPages = Math.ceil(total / pageSize);
+
+  function toggleSort(column: SubscriptionSortBy) {
+    setPage(1);
+    if (sortBy === column) {
+      setSortDir((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+
+    setSortBy(column);
+    setSortDir(getDefaultSortDir(column));
+  }
+
+  function SortIcon({ column }: { column: SubscriptionSortBy }) {
+    if (sortBy !== column) {
+      return <ArrowUpDown className="ml-1 h-3 w-3 opacity-40" />;
+    }
+
+    return sortDir === "asc" ? (
+      <ArrowUp className="ml-1 h-3 w-3" />
+    ) : (
+      <ArrowDown className="ml-1 h-3 w-3" />
+    );
+  }
+
+  function SortHeader({
+    column,
+    children,
+  }: {
+    column: SubscriptionSortBy;
+    children: ReactNode;
+  }) {
+    return (
+      <TableHead>
+        <button
+          type="button"
+          onClick={() => toggleSort(column)}
+          className="inline-flex items-center whitespace-nowrap text-left"
+        >
+          {children}
+          <SortIcon column={column} />
+        </button>
+      </TableHead>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -169,6 +298,7 @@ export default function SubscriptionsPage() {
               <SelectItem value="UNPAID">Unpaid</SelectItem>
               <SelectItem value="OVERDUE">Overdue</SelectItem>
               <SelectItem value="NOT_INVOICED">Not Invoiced</SelectItem>
+              <SelectItem value="NOT_REQUIRED">Not Required</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -241,18 +371,25 @@ export default function SubscriptionsPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Total</CardTitle><Users className="h-4 w-4 text-slate-400" /></CardHeader><CardContent><div className="text-2xl font-bold">{summary.total}</div></CardContent></Card>
         <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Paid</CardTitle><CheckCircle className="h-4 w-4 text-green-500" /></CardHeader><CardContent><div className="text-2xl font-bold text-green-700">{summary.paid}</div></CardContent></Card>
         <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Unpaid</CardTitle><Clock className="h-4 w-4 text-yellow-500" /></CardHeader><CardContent><div className="text-2xl font-bold text-yellow-700">{summary.unpaid}</div></CardContent></Card>
         <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Overdue</CardTitle><AlertCircle className="h-4 w-4 text-red-500" /></CardHeader><CardContent><div className="text-2xl font-bold text-red-700">{summary.overdue}</div></CardContent></Card>
+        <Card><CardHeader className="flex flex-row items-center justify-between pb-2"><CardTitle className="text-sm font-medium text-slate-500">Not Required</CardTitle><ShieldCheck className="h-4 w-4 text-blue-500" /></CardHeader><CardContent><div className="text-2xl font-bold text-blue-700">{summary.notRequired}</div></CardContent></Card>
       </div>
 
       <Card>
         <CardContent className="p-0">
           <Table>
             <TableHeader><TableRow>
-              <TableHead>Member</TableHead><TableHead>Email</TableHead><TableHead>Age Group</TableHead><TableHead>Xero Contact Group</TableHead><TableHead>Status</TableHead><TableHead>Xero Invoice</TableHead><TableHead>Paid Date</TableHead>
+              <SortHeader column="member">Member</SortHeader>
+              <SortHeader column="email">Email</SortHeader>
+              <SortHeader column="ageTier">Age Group</SortHeader>
+              <SortHeader column="xeroContactGroup">Xero Contact Group</SortHeader>
+              <SortHeader column="status">Status</SortHeader>
+              <SortHeader column="xeroInvoice">Xero Invoice</SortHeader>
+              <SortHeader column="paidAt">Paid Date</SortHeader>
             </TableRow></TableHeader>
             <TableBody>
               {loading ? (
@@ -264,7 +401,7 @@ export default function SubscriptionsPage() {
                   <TableRow key={sub.id}>
                     <TableCell className="font-medium">
                       <Link
-                        href={`/admin/members/${sub.memberId}?edit=true`}
+                        href={buildHrefWithReturnTo(`/admin/members/${sub.memberId}?edit=true`, currentSubscriptionsPath)}
                         className="text-blue-600 hover:underline"
                       >
                         {sub.member.lastName}, {sub.member.firstName}
@@ -287,7 +424,7 @@ export default function SubscriptionsPage() {
                         "—"
                       )}
                     </TableCell>
-                    <TableCell><Badge className={subscriptionStatusClass(sub.status)}>{sub.status.replace("_", " ")}</Badge></TableCell>
+                    <TableCell><Badge className={subscriptionStatusClass(sub.status)}>{subscriptionStatusLabel(sub.status)}</Badge></TableCell>
                     <TableCell>
                       {sub.xeroInvoiceId ? (
                         <a

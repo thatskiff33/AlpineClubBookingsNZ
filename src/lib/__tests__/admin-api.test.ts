@@ -56,6 +56,7 @@ describe("Admin Subscriptions API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.member.count).mockResolvedValue(1 as any);
+    vi.mocked(prisma.member.findMany).mockResolvedValue([] as any);
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
     mockGetXeroContactIdsForGroup.mockResolvedValue([]);
   });
@@ -84,12 +85,13 @@ describe("Admin Subscriptions API", () => {
     const mockData = [
       {
         id: "sub1", memberId: "m1", seasonYear: 2026, status: "PAID",
-        xeroInvoiceId: "inv-1", paidAt: new Date("2026-04-01"),
+        xeroInvoiceId: "inv-1", xeroInvoiceNumber: null, paidAt: new Date("2026-04-01"),
         member: {
           firstName: "Alice",
           lastName: "Smith",
           email: "alice@test.com",
           ageTier: "ADULT",
+          role: "MEMBER",
           xeroContactId: "xc-1",
         },
       },
@@ -99,12 +101,6 @@ describe("Admin Subscriptions API", () => {
       "xc-1": [{ id: "cg-1", name: "Adult Members" }],
     });
     vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue(mockData as any);
-    vi.mocked(prisma.memberSubscription.count).mockResolvedValue(1);
-    vi.mocked(prisma.memberSubscription.groupBy).mockResolvedValue([
-      { status: "PAID", _count: 5 },
-      { status: "UNPAID", _count: 3 },
-      { status: "OVERDUE", _count: 1 },
-    ] as any);
 
     const req = new NextRequest("http://localhost/api/admin/subscriptions?page=1&pageSize=10");
     const res = await getSubscriptions(req);
@@ -115,10 +111,11 @@ describe("Admin Subscriptions API", () => {
     expect(body.total).toBe(1);
     expect(body.page).toBe(1);
     expect(body.pageSize).toBe(10);
-    expect(body.summary.paid).toBe(5);
-    expect(body.summary.unpaid).toBe(3);
-    expect(body.summary.overdue).toBe(1);
-    expect(body.summary.total).toBe(9);
+    expect(body.summary.paid).toBe(1);
+    expect(body.summary.unpaid).toBe(0);
+    expect(body.summary.overdue).toBe(0);
+    expect(body.summary.notRequired).toBe(0);
+    expect(body.summary.total).toBe(1);
     expect(body.data[0].member.ageTier).toBe("ADULT");
     expect(body.data[0].xeroContactGroups).toEqual([
       { id: "cg-1", name: "Adult Members" },
@@ -128,40 +125,85 @@ describe("Admin Subscriptions API", () => {
 
   it("filters by status", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
-    vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.memberSubscription.count).mockResolvedValue(0);
-    vi.mocked(prisma.memberSubscription.groupBy).mockResolvedValue([] as any);
+    vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([
+      {
+        id: "sub1",
+        memberId: "m1",
+        seasonYear: 2026,
+        status: "PAID",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        paidAt: null,
+        member: {
+          firstName: "Alice",
+          lastName: "Smith",
+          email: "alice@test.com",
+          ageTier: "ADULT",
+          role: "MEMBER",
+          xeroContactId: null,
+        },
+      },
+      {
+        id: "sub2",
+        memberId: "m2",
+        seasonYear: 2026,
+        status: "UNPAID",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        paidAt: null,
+        member: {
+          firstName: "Bob",
+          lastName: "Jones",
+          email: "bob@test.com",
+          ageTier: "ADULT",
+          role: "MEMBER",
+          xeroContactId: null,
+        },
+      },
+    ] as any);
 
     const req = new NextRequest("http://localhost/api/admin/subscriptions?status=PAID");
-    await getSubscriptions(req);
+    const res = await getSubscriptions(req);
+    const body = await res.json();
 
-    expect(prisma.memberSubscription.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { seasonYear: 2026, status: "PAID" },
-      })
-    );
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0].status).toBe("PAID");
   });
 
-  it("applies pagination skip and take", async () => {
+  it("applies pagination after sorting", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
-    vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.memberSubscription.count).mockResolvedValue(0);
-    vi.mocked(prisma.memberSubscription.groupBy).mockResolvedValue([] as any);
+    vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue(
+      Array.from({ length: 25 }, (_, index) => ({
+        id: `sub${index + 1}`,
+        memberId: `m${index + 1}`,
+        seasonYear: 2026,
+        status: "PAID",
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        paidAt: null,
+        member: {
+          firstName: `Member ${String(index + 1).padStart(2, "0")}`,
+          lastName: "Test",
+          email: `m${index + 1}@test.com`,
+          ageTier: "ADULT",
+          role: "MEMBER",
+          xeroContactId: null,
+        },
+      })) as any
+    );
 
     const req = new NextRequest("http://localhost/api/admin/subscriptions?page=3&pageSize=10");
-    await getSubscriptions(req);
+    const res = await getSubscriptions(req);
+    const body = await res.json();
 
-    expect(prisma.memberSubscription.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ skip: 20, take: 10 })
-    );
+    expect(body.data).toHaveLength(5);
+    expect(body.total).toBe(25);
   });
 
   it("filters by age tier and xero contact group", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
     mockGetXeroContactIdsForGroup.mockResolvedValue(["xc-1", "xc-2"]);
     vi.mocked(prisma.memberSubscription.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.memberSubscription.count).mockResolvedValue(0);
-    vi.mocked(prisma.memberSubscription.groupBy).mockResolvedValue([] as any);
 
     const req = new NextRequest(
       "http://localhost/api/admin/subscriptions?ageTier=YOUTH&xeroContactGroup=cg-youth"

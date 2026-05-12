@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { bookingStatusLabel } from "@/lib/status-colors";
+import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 
 interface CalendarBooking {
   id: string;
@@ -70,6 +71,9 @@ export function AdminBookingCalendar() {
   const [enabledStatuses, setEnabledStatuses] = useState<Set<string>>(new Set(ALL_STATUSES));
 
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const currentPageParams = new URLSearchParams(searchParams.toString());
+  currentPageParams.set("month", monthKey);
+  const currentBookingsPath = buildPathWithSearch("/admin/bookings", currentPageParams);
 
   const fetchBookings = useCallback(async () => {
     setLoading(true);
@@ -309,7 +313,7 @@ export function AdminBookingCalendar() {
                       height: `${BAR_HEIGHT}px`,
                     }}
                     title={`${booking.memberName} (${booking.status}) — ${booking.checkIn} to ${booking.checkOut}, ${booking.guestCount} guest(s)`}
-                    onClick={() => router.push(`/bookings/${booking.id}`)}
+                    onClick={() => router.push(buildHrefWithReturnTo(`/bookings/${booking.id}`, currentBookingsPath))}
                   >
                     {seg.isFirst && (
                       <span className="text-white text-[11px] font-medium leading-none truncate px-1.5">

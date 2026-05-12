@@ -68,6 +68,37 @@ export function resolveInternalReturnPath(
   );
 }
 
+export function buildPathWithSearch(
+  pathname: string,
+  searchParams?: URLSearchParams | string | null,
+) {
+  const query =
+    typeof searchParams === "string"
+      ? searchParams
+      : searchParams?.toString();
+
+  return query ? `${pathname}?${query}` : pathname;
+}
+
+export function buildHrefWithReturnTo(
+  href: InternalReturnPathCandidate,
+  returnTo: InternalReturnPathCandidate,
+) {
+  const safeHref = getSafeInternalReturnPath(href);
+  if (!safeHref) {
+    return "#";
+  }
+
+  const safeReturnTo = getSafeInternalReturnPath(returnTo);
+  if (!safeReturnTo) {
+    return safeHref;
+  }
+
+  const url = new URL(safeHref, INTERNAL_RETURN_ORIGIN);
+  url.searchParams.set("returnTo", safeReturnTo);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 export function buildProfilePathWithReturnTo(
   returnTo: InternalReturnPathCandidate,
   fragment?: string,

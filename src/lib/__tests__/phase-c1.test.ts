@@ -22,7 +22,8 @@ const mockPrisma = {
   },
   member: {
     count: vi.fn(),
-findUnique: vi.fn(),
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
   },
 };
 
@@ -256,6 +257,7 @@ describe("#32: Admin Subscriptions API includes Xero invoice number", () => {
     vi.clearAllMocks();
     mockGetXeroContactGroupMemberships.mockResolvedValue({});
     mockGetXeroContactIdsForGroup.mockResolvedValue([]);
+    mockPrisma.member.findMany.mockResolvedValue([]);
   });
 
   it("GET returns subscription data (Prisma includes xeroInvoiceNumber by default)", async () => {
@@ -277,13 +279,10 @@ describe("#32: Admin Subscriptions API includes Xero invoice number", () => {
           lastName: "Smith",
           email: "alice@test.com",
           ageTier: "ADULT",
+          role: "MEMBER",
           xeroContactId: "xc-1",
         },
       },
-    ]);
-    mockPrisma.memberSubscription.count.mockResolvedValue(1);
-    mockPrisma.memberSubscription.groupBy.mockResolvedValue([
-      { status: "PAID", _count: 1 },
     ]);
 
     const { GET } = await import("@/app/api/admin/subscriptions/route");

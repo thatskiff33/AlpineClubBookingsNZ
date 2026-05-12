@@ -78,7 +78,7 @@ interface PriceQuote {
 }
 
 interface SubscriptionStatus {
-  status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED" | "UNKNOWN";
+  status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED" | "NOT_REQUIRED" | "UNKNOWN";
   seasonDisplay: string;
   invoiceUrl: string | null;
   invoiceNumber: string | null;

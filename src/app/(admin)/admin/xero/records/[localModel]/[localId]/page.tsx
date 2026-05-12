@@ -5,13 +5,17 @@ import { Button } from "@/components/ui/button";
 import { XeroRecordActivityPanel } from "@/components/admin/xero-record-activity-panel";
 import { getXeroRecordActivity } from "@/lib/xero-record-activity";
 import { isXeroLocalModel } from "@/lib/xero-record-links";
+import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 
 export default async function XeroRecordActivityPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ localModel: string; localId: string }>;
+  searchParams?: Promise<{ returnTo?: string | string[] }>;
 }) {
   const { localModel, localId } = await params;
+  const query = searchParams ? await searchParams : {};
 
   if (!isXeroLocalModel(localModel)) {
     notFound();
@@ -21,12 +25,16 @@ export default async function XeroRecordActivityPage({
   if (!data) {
     notFound();
   }
+  const backHref = resolveInternalReturnPath(
+    query.returnTo,
+    data.backLink?.href ?? "/admin/xero"
+  );
 
   return (
     <div className="space-y-6">
       <div className="space-y-3">
         <Button variant="ghost" size="sm" asChild className="-ml-2 w-fit">
-          <Link href={data.backLink?.href ?? "/admin/xero"}>
+          <Link href={backHref}>
             <ArrowLeft className="h-4 w-4" />
             {data.backLink?.label ?? "Back to Xero"}
           </Link>

@@ -2,6 +2,7 @@
 
 import type { AgeTier } from "@prisma/client"
 import { useEffect, useState, useCallback } from "react"
+import { usePathname, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -14,6 +15,7 @@ import {
   formatRedactedJson,
   redactSensitiveText,
 } from "@/lib/redact-sensitive-json"
+import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path"
 import type { XeroAccount, XeroItem } from "@/lib/xero-admin-cache"
 
 interface XeroStatus {
@@ -497,7 +499,7 @@ function SyncReportSection({
   )
 }
 
-function SyncReportView({ report }: { report: SyncReport }) {
+function SyncReportView({ report, returnTo }: { report: SyncReport; returnTo: string }) {
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
@@ -508,7 +510,12 @@ function SyncReportView({ report }: { report: SyncReport }) {
         {report.updated.map((u, i) => (
           <div key={i} className="flex items-start justify-between text-xs py-1 border-b last:border-0">
             <div>
-              <a href={`/admin/members/${u.memberId}`} className="text-blue-600 hover:underline font-medium">{u.name}</a>
+              <a
+                href={buildHrefWithReturnTo(`/admin/members/${u.memberId}`, returnTo)}
+                className="text-blue-600 hover:underline font-medium"
+              >
+                {u.name}
+              </a>
               <ul className="mt-0.5 text-slate-500 list-disc list-inside">
                 {u.changes.map((c, j) => <li key={j}>{c}</li>)}
               </ul>
@@ -526,7 +533,10 @@ function SyncReportView({ report }: { report: SyncReport }) {
         {report.skippedNameMismatch.map((mismatch, i) => (
           <div key={i} className="flex items-start justify-between gap-3 text-xs py-1 border-b last:border-0">
             <div>
-              <a href={`/admin/members/${mismatch.memberId}`} className="text-blue-600 hover:underline font-medium">
+              <a
+                href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, returnTo)}
+                className="text-blue-600 hover:underline font-medium"
+              >
                 {mismatch.memberName}
               </a>
               <p className="text-slate-500">{mismatch.memberEmail}</p>
@@ -695,6 +705,8 @@ function HealthStatCard({
 }
 
 export default function XeroPage() {
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [status, setStatus] = useState<XeroStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState<string | null>(null)
@@ -775,6 +787,7 @@ export default function XeroPage() {
   const [savedHutFeeItemCodes, setSavedHutFeeItemCodes] = useState<HutFeeMap>({})
   const [entranceFeeItemCodes, setEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
   const [savedEntranceFeeItemCodes, setSavedEntranceFeeItemCodes] = useState<EntranceFeeMap>({})
+  const currentXeroPath = buildPathWithSearch(pathname, searchParams.toString())
 
   const scrollToSection = useCallback((section: SectionKey) => {
     setSectionOpen((prev) => ({ ...prev, [section]: true }))
@@ -2106,7 +2119,7 @@ export default function XeroPage() {
                                   <div className="space-y-1">
                                     <div className="flex flex-wrap items-center gap-2">
                                       <a
-                                        href={`/admin/bookings/${booking.bookingId}`}
+                                        href={buildHrefWithReturnTo(`/bookings/${booking.bookingId}`, currentXeroPath)}
                                         className="text-sm font-medium text-blue-600 hover:underline"
                                       >
                                         Booking {shortId(booking.bookingId)}
@@ -2114,7 +2127,10 @@ export default function XeroPage() {
                                       <Badge variant="outline">{booking.status}</Badge>
                                     </div>
                                     <p className="text-sm">
-                                      <a href={`/admin/members/${booking.memberId}`} className="text-blue-600 hover:underline">
+                                      <a
+                                        href={buildHrefWithReturnTo(`/admin/members/${booking.memberId}`, currentXeroPath)}
+                                        className="text-blue-600 hover:underline"
+                                      >
                                         {booking.memberName}
                                       </a>
                                       <span className="ml-2 text-muted-foreground">{booking.memberEmail}</span>
@@ -2235,7 +2251,7 @@ export default function XeroPage() {
                           <div className="space-y-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <a
-                                href={`/admin/members/${mismatch.memberId}`}
+                                href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)}
                                 className="text-sm font-medium text-blue-600 hover:underline"
                               >
                                 {mismatch.memberName}
@@ -2369,7 +2385,7 @@ export default function XeroPage() {
                           <div className="space-y-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <a
-                                href={`/admin/members/${mismatch.memberId}`}
+                                href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)}
                                 className="text-sm font-medium text-blue-600 hover:underline"
                               >
                                 {mismatch.memberName}
@@ -2389,7 +2405,7 @@ export default function XeroPage() {
                           </div>
                           <div className="flex flex-wrap gap-2">
                             <a
-                              href={`/admin/members/${mismatch.memberId}`}
+                              href={buildHrefWithReturnTo(`/admin/members/${mismatch.memberId}`, currentXeroPath)}
                               className="inline-flex"
                             >
                               <Button variant="outline" size="sm">Open Member</Button>
@@ -3263,7 +3279,7 @@ export default function XeroPage() {
                     </>
                   )}
 
-                  {syncResult.syncReport && <SyncReportView report={syncResult.syncReport} />}
+                  {syncResult.syncReport && <SyncReportView report={syncResult.syncReport} returnTo={currentXeroPath} />}
 
                   {syncResult.checked !== undefined && (
                     <>

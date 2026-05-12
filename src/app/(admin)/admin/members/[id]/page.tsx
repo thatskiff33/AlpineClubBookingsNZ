@@ -31,7 +31,8 @@ import {
   type MemberAddressValues,
 } from "@/lib/member-address"
 import { formatAgeYearsMonths } from "@/lib/member-age"
-import { bookingStatusClass, bookingStatusLabel, subscriptionStatusClass } from "@/lib/status-colors"
+import { bookingStatusClass, bookingStatusLabel, subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-colors"
+import { buildHrefWithReturnTo, resolveInternalReturnPath } from "@/lib/internal-return-path"
 
 type FinanceAccessLevel = "NONE" | "VIEWER" | "MANAGER"
 
@@ -219,6 +220,15 @@ function isCollapsibleMemberSection(
   value: string
 ): value is CollapsibleMemberSection {
   return collapsibleMemberSections.includes(value as CollapsibleMemberSection)
+}
+
+function getMemberDetailBackLabel(returnTo: string) {
+  if (returnTo.startsWith("/admin/bookings")) return "Back to Bookings"
+  if (returnTo.startsWith("/admin/payments")) return "Back to Payments"
+  if (returnTo.startsWith("/admin/subscriptions")) return "Back to Subscriptions"
+  if (returnTo.startsWith("/admin/refund-requests")) return "Back to Refund Requests"
+  if (returnTo.startsWith("/admin/xero")) return "Back to Xero"
+  return "Back to Members"
 }
 
 function formatAdminName(admin: AdminActor | null | undefined) {
@@ -458,6 +468,12 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const isAdultMember = member?.ageTier === "ADULT"
   const memberId = member?.id
   const shouldAutoOpenEdit = searchParams.get("edit") === "true"
+  const backHref = resolveInternalReturnPath(searchParams.get("returnTo"), "/admin/members")
+  const backLabel = getMemberDetailBackLabel(backHref)
+  const currentMemberQuery = searchParams.toString()
+  const currentMemberPath = currentMemberQuery
+    ? `/admin/members/${id}?${currentMemberQuery}`
+    : `/admin/members/${id}`
 
   const resetXeroEntranceFeeDecision = () => {
     setXeroCreateEntranceFeeInvoice(false)
@@ -1490,7 +1506,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   if (loading) return <div className="py-12 text-center"><p className="text-sm text-slate-500">Loading member details...</p></div>
   if (pageError || !member) return (
     <div className="space-y-4">
-      <Button variant="outline" onClick={() => router.push("/admin/members")}><ArrowLeft className="h-4 w-4 mr-2" />Back to Members</Button>
+      <Button variant="outline" onClick={() => router.push(backHref)}><ArrowLeft className="h-4 w-4 mr-2" />{backLabel}</Button>
       <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{pageError || "Member not found"}</div>
     </div>
   )
@@ -1502,7 +1518,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   return (
     <div className="space-y-6">
       <div>
-        <Button variant="ghost" size="sm" className="mb-2 -ml-2" onClick={() => router.push("/admin/members")}><ArrowLeft className="h-4 w-4 mr-1" /> Back to Members</Button>
+        <Button variant="ghost" size="sm" className="mb-2 -ml-2" onClick={() => router.push(backHref)}><ArrowLeft className="h-4 w-4 mr-1" /> {backLabel}</Button>
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">{member.firstName} {member.lastName}</h1>
@@ -1661,7 +1677,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => router.push(`/admin/members/${parent.id}`)}
+                      onClick={() => router.push(buildHrefWithReturnTo(`/admin/members/${parent.id}`, currentMemberPath))}
                     >
                       View Parent
                     </Button>
@@ -1834,7 +1850,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => router.push(`/admin/members/${dependent.id}`)}
+                          onClick={() => router.push(buildHrefWithReturnTo(`/admin/members/${dependent.id}`, currentMemberPath))}
                         >
                           View
                         </Button>
@@ -1876,7 +1892,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           <AccordionContent className="px-6 pb-6">
             {member.subscriptions.length === 0 ? <p className="text-sm text-slate-500">No subscription records</p> : (
               <Table><TableHeader><TableRow><TableHead>Season Year</TableHead><TableHead>Status</TableHead><TableHead>Paid At</TableHead><TableHead>Xero Invoice</TableHead></TableRow></TableHeader><TableBody>{member.subscriptions.map((sub) => (
-                <TableRow key={sub.id}><TableCell className="font-medium">{sub.seasonYear}/{sub.seasonYear + 1}</TableCell><TableCell><Badge variant="secondary" className={subscriptionStatusClass(sub.status)}>{sub.status.replace("_", " ")}</Badge></TableCell><TableCell>{sub.paidAt ? fmtDate(sub.paidAt) : "-"}</TableCell><TableCell>{sub.xeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">View <ExternalLink className="h-3 w-3" /></a> : "-"}</TableCell></TableRow>
+                <TableRow key={sub.id}><TableCell className="font-medium">{sub.seasonYear}/{sub.seasonYear + 1}</TableCell><TableCell><Badge variant="secondary" className={subscriptionStatusClass(sub.status)}>{subscriptionStatusLabel(sub.status)}</Badge></TableCell><TableCell>{sub.paidAt ? fmtDate(sub.paidAt) : "-"}</TableCell><TableCell>{sub.xeroInvoiceId ? <a href={`https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${sub.xeroInvoiceId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline inline-flex items-center gap-1">View <ExternalLink className="h-3 w-3" /></a> : "-"}</TableCell></TableRow>
               ))}</TableBody></Table>)}
           </AccordionContent>
         </AccordionItem>
