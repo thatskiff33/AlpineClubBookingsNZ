@@ -184,6 +184,64 @@ describe("Admin Subscriptions API", () => {
 });
 
 describe("Admin Payments API", () => {
+  function makePaymentCandidate(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "pay1",
+      bookingId: "b1",
+      amountCents: 5000,
+      refundedAmountCents: 0,
+      status: "SUCCEEDED",
+      stripePaymentIntentId: "pi_123",
+      xeroInvoiceId: null,
+      xeroInvoiceNumber: null,
+      updatedAt: new Date("2026-04-01T09:00:00.000Z"),
+      transactions: [],
+      refunds: [],
+      booking: {
+        id: "b1",
+        status: "PAID",
+        checkIn: new Date("2026-04-10"),
+        creditsFromCancellation: [],
+        member: {
+          id: "m1",
+          firstName: "Bob",
+          lastName: "Jones",
+          email: "bob@test.com",
+        },
+      },
+      ...overrides,
+    };
+  }
+
+  function makePaymentRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "pay1",
+      bookingId: "b1",
+      amountCents: 5000,
+      refundedAmountCents: 0,
+      status: "SUCCEEDED",
+      stripePaymentIntentId: "pi_123",
+      xeroInvoiceId: null,
+      xeroInvoiceNumber: null,
+      createdAt: new Date("2026-04-01T08:00:00.000Z"),
+      updatedAt: new Date("2026-04-01T09:00:00.000Z"),
+      booking: {
+        id: "b1",
+        status: "PAID",
+        checkIn: new Date("2026-04-10"),
+        checkOut: new Date("2026-04-12"),
+        creditsFromCancellation: [],
+        member: {
+          id: "m1",
+          firstName: "Bob",
+          lastName: "Jones",
+          email: "bob@test.com",
+        },
+      },
+      ...overrides,
+    };
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.member.count).mockResolvedValue(1 as any);
@@ -210,24 +268,13 @@ describe("Admin Payments API", () => {
   it("returns payments data and summary for admin", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
 
-    const mockPayments = [
-      {
-        id: "pay1", bookingId: "b1", amountCents: 5000, refundedAmountCents: 0,
-        status: "SUCCEEDED", stripePaymentIntentId: "pi_123",
-        createdAt: new Date("2026-04-01"),
-        booking: {
-          checkIn: new Date("2026-04-10"), checkOut: new Date("2026-04-12"),
-          member: { firstName: "Bob", lastName: "Jones", email: "bob@test.com" },
-        },
-      },
-    ];
-
-    vi.mocked(prisma.payment.findMany).mockResolvedValue(mockPayments as any);
-    vi.mocked(prisma.payment.count).mockResolvedValue(1);
-    vi.mocked(prisma.payment.aggregate).mockResolvedValue({
-      _sum: { amountCents: 10000, refundedAmountCents: 500 },
-      _count: 3,
-    } as any);
+    vi.mocked(prisma.payment.findMany)
+      .mockResolvedValueOnce([
+        makePaymentCandidate({
+          transactions: [{ updatedAt: new Date("2026-04-03T11:00:00.000Z") }],
+        }),
+      ] as any)
+      .mockResolvedValueOnce([makePaymentRow()] as any);
 
     const req = new NextRequest("http://localhost/api/admin/payments?page=1&pageSize=10");
     const res = await getPayments(req);
@@ -238,18 +285,16 @@ describe("Admin Payments API", () => {
     expect(body.total).toBe(1);
     expect(body.page).toBe(1);
     expect(body.pageSize).toBe(10);
-    expect(body.summary.totalRevenueCents).toBe(10000);
-    expect(body.summary.refundedCents).toBe(500);
-    expect(body.summary.count).toBe(3);
+    expect(body.summary.totalRevenueCents).toBe(5000);
+    expect(body.summary.refundedCents).toBe(0);
+    expect(body.summary.count).toBe(1);
+    expect(body.data[0].lastUpdatedAt).toBe("2026-04-03T11:00:00.000Z");
   });
 
   it("filters by status", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
     vi.mocked(prisma.payment.findMany).mockResolvedValue([]);
     vi.mocked(prisma.payment.count).mockResolvedValue(0);
-    vi.mocked(prisma.payment.aggregate).mockResolvedValue({
-      _sum: { amountCents: 0, refundedAmountCents: 0 }, _count: 0,
-    } as any);
 
     const req = new NextRequest("http://localhost/api/admin/payments?status=SUCCEEDED");
     await getPayments(req);
@@ -261,20 +306,68 @@ describe("Admin Payments API", () => {
     );
   });
 
-  it("filters by date range", async () => {
+  it("filters by legacy last-updated date range aliases", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    vi.mocked(prisma.payment.findMany)
+      .mockResolvedValueOnce([
+        makePaymentCandidate({
+          id: "outside",
+          updatedAt: new Date("2026-04-01T09:00:00.000Z"),
+        }),
+        makePaymentCandidate({
+          id: "inside",
+          updatedAt: new Date("2026-04-01T09:00:00.000Z"),
+          transactions: [{ updatedAt: new Date("2026-04-20T09:00:00.000Z") }],
+        }),
+      ] as any)
+      .mockResolvedValueOnce([makePaymentRow({ id: "inside" })] as any);
+
+    const req = new NextRequest("http://localhost/api/admin/payments?from=2026-04-15&to=2026-04-30");
+    const res = await getPayments(req);
+
+    const body = await res.json();
+    expect(body.total).toBe(1);
+    expect(body.data[0].id).toBe("inside");
+    expect(body.data[0].lastUpdatedAt).toBe("2026-04-20T09:00:00.000Z");
+  });
+
+  it("applies member, check-in, amount, and sort filters", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
     vi.mocked(prisma.payment.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.payment.count).mockResolvedValue(0);
-    vi.mocked(prisma.payment.aggregate).mockResolvedValue({
-      _sum: { amountCents: 0, refundedAmountCents: 0 }, _count: 0,
-    } as any);
 
-    const req = new NextRequest("http://localhost/api/admin/payments?from=2026-04-01&to=2026-04-30");
+    const req = new NextRequest(
+      "http://localhost/api/admin/payments?search=Alice%20Jones&amountMin=50&amountMax=75&checkInFrom=2026-07-01&checkInTo=2026-07-31&sortBy=amount&sortDir=asc"
+    );
     await getPayments(req);
 
     const callArgs = vi.mocked(prisma.payment.findMany).mock.calls[0][0] as any;
-    expect(callArgs.where.createdAt.gte).toEqual(new Date("2026-04-01T00:00:00"));
-    expect(callArgs.where.createdAt.lte).toEqual(new Date("2026-04-30T23:59:59"));
+    expect(callArgs.where.amountCents).toEqual({ gte: 5000, lte: 7500 });
+    expect(callArgs.where.booking.is.checkIn.gte).toEqual(new Date("2026-07-01T00:00:00"));
+    expect(callArgs.where.booking.is.checkIn.lte).toEqual(new Date("2026-07-31T23:59:59"));
+    expect(callArgs.where.booking.is.member.is.AND).toHaveLength(2);
+  });
+
+  it("lets exact amount take precedence over min and max", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+    vi.mocked(prisma.payment.findMany).mockResolvedValue([]);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/payments?amountExact=123.45&amountMin=1&amountMax=999"
+    );
+    await getPayments(req);
+
+    const callArgs = vi.mocked(prisma.payment.findMany).mock.calls[0][0] as any;
+    expect(callArgs.where.amountCents).toBe(12345);
+  });
+
+  it("rejects invalid amount ranges", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } } as any);
+
+    const req = new NextRequest("http://localhost/api/admin/payments?amountMin=75&amountMax=50");
+    const res = await getPayments(req);
+
+    expect(res.status).toBe(400);
+    expect(prisma.payment.findMany).not.toHaveBeenCalled();
   });
 });
 

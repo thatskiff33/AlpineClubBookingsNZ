@@ -75,30 +75,61 @@ describe("#26: Admin Payments API includes booking ID and Xero invoice number", 
 
   it("GET returns payment data with booking.id field", async () => {
     mockAuth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
-    mockPrisma.payment.findMany.mockResolvedValue([
-      {
-        id: "pay-1",
-        bookingId: "book-1",
-        amountCents: 5000,
-        status: "SUCCEEDED",
-        stripePaymentIntentId: "pi_test_123",
-        xeroInvoiceId: "xero-inv-1",
-        xeroInvoiceNumber: "INV-0001",
-        refundedAmountCents: 0,
-        createdAt: new Date(),
-        booking: {
-          id: "book-1",
-          checkIn: new Date("2026-04-10"),
-          checkOut: new Date("2026-04-12"),
-          member: { firstName: "John", lastName: "Doe", email: "john@test.com" },
+    mockPrisma.payment.findMany
+      .mockResolvedValueOnce([
+        {
+          id: "pay-1",
+          bookingId: "book-1",
+          amountCents: 5000,
+          status: "SUCCEEDED",
+          stripePaymentIntentId: "pi_test_123",
+          xeroInvoiceId: "xero-inv-1",
+          xeroInvoiceNumber: "INV-0001",
+          refundedAmountCents: 0,
+          updatedAt: new Date("2026-04-01T00:00:00.000Z"),
+          transactions: [],
+          refunds: [],
+          booking: {
+            id: "book-1",
+            status: "PAID",
+            checkIn: new Date("2026-04-10"),
+            creditsFromCancellation: [],
+            member: {
+              id: "member-1",
+              firstName: "John",
+              lastName: "Doe",
+              email: "john@test.com",
+            },
+          },
         },
-      },
-    ]);
-    mockPrisma.payment.count.mockResolvedValue(1);
-    mockPrisma.payment.aggregate.mockResolvedValue({
-      _sum: { amountCents: 5000, refundedAmountCents: 0 },
-      _count: 1,
-    });
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "pay-1",
+          bookingId: "book-1",
+          amountCents: 5000,
+          status: "SUCCEEDED",
+          stripePaymentIntentId: "pi_test_123",
+          xeroInvoiceId: "xero-inv-1",
+          xeroInvoiceNumber: "INV-0001",
+          refundedAmountCents: 0,
+          createdAt: new Date("2026-04-01T00:00:00.000Z"),
+          updatedAt: new Date("2026-04-01T00:00:00.000Z"),
+          booking: {
+            id: "book-1",
+            status: "PAID",
+            checkIn: new Date("2026-04-10"),
+            checkOut: new Date("2026-04-12"),
+            creditsFromCancellation: [],
+            member: {
+              id: "member-1",
+              firstName: "John",
+              lastName: "Doe",
+              email: "john@test.com",
+            },
+          },
+        },
+      ]);
 
     const { GET } = await import("@/app/api/admin/payments/route");
     const { NextRequest } = await import("next/server");
