@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
+import { getParentEmailSourceId } from "@/lib/member-parent-links";
 import logger from "@/lib/logger";
 
 class UnlinkDependentError extends Error {
@@ -49,14 +50,23 @@ export async function DELETE(
           active: true,
           canLogin: true,
           parentMemberId: true,
+          secondaryParentId: true,
           inheritParentEmail: true,
           inheritEmailFromId: true,
+          parent: {
+            select: { id: true, inheritEmailFromId: true },
+          },
+          secondaryParent: {
+            select: { id: true, inheritEmailFromId: true },
+          },
         },
       });
       if (!dependent) {
         throw new UnlinkDependentError("Dependent member not found", 404);
       }
-      if (dependent.parentMemberId !== parent.id) {
+      const isPrimaryParent = dependent.parentMemberId === parent.id;
+      const isSecondaryParent = dependent.secondaryParentId === parent.id;
+      if (!isPrimaryParent && !isSecondaryParent) {
         throw new UnlinkDependentError(
           "This member is not linked as a dependant of that parent",
           422
@@ -70,16 +80,38 @@ export async function DELETE(
         dependent.inheritParentEmail &&
         dependent.inheritEmailFromId !== null &&
         parentEmailSourceIds.includes(dependent.inheritEmailFromId);
+      const remainingParent = isPrimaryParent
+        ? dependent.secondaryParent
+        : dependent.parent;
+      const nextEmailSourceId = shouldClearEmailInheritance
+        ? getParentEmailSourceId(remainingParent)
+        : dependent.inheritEmailFromId;
+
+      const updateData = {
+        ...(isPrimaryParent
+          ? dependent.secondaryParentId
+            ? {
+                parent: { connect: { id: dependent.secondaryParentId } },
+                secondaryParent: { disconnect: true },
+              }
+            : { parent: { disconnect: true } }
+          : { secondaryParent: { disconnect: true } }),
+        ...(shouldClearEmailInheritance
+          ? nextEmailSourceId
+            ? {
+                inheritParentEmail: true,
+                inheritEmailFrom: { connect: { id: nextEmailSourceId } },
+              }
+            : {
+                inheritParentEmail: false,
+                inheritEmailFrom: { disconnect: true },
+              }
+          : {}),
+      };
 
       const updated = await tx.member.update({
         where: { id: dependent.id },
-        data: {
-          parent: { disconnect: true },
-          inheritParentEmail: false,
-          ...(shouldClearEmailInheritance
-            ? { inheritEmailFrom: { disconnect: true } }
-            : {}),
-        },
+        data: updateData,
         select: {
           id: true,
           firstName: true,
@@ -89,6 +121,7 @@ export async function DELETE(
           active: true,
           canLogin: true,
           parentMemberId: true,
+          secondaryParentId: true,
           inheritParentEmail: true,
           inheritEmailFromId: true,
         },
@@ -101,17 +134,25 @@ export async function DELETE(
           targetId: dependent.id,
           details: JSON.stringify({
             parentMemberId: parent.id,
+            linkType: isPrimaryParent ? "PRIMARY" : "SECONDARY",
+            promotedSecondaryParent: isPrimaryParent && Boolean(dependent.secondaryParentId),
             clearedEmailInheritance: shouldClearEmailInheritance,
+            nextEmailSourceId,
           }),
         },
       });
 
-      return { updated, clearedEmailInheritance: shouldClearEmailInheritance };
+      return {
+        updated,
+        clearedEmailInheritance: shouldClearEmailInheritance,
+        promotedSecondaryParent: isPrimaryParent && Boolean(dependent.secondaryParentId),
+      };
     });
 
     return NextResponse.json({
       member: result.updated,
       clearedEmailInheritance: result.clearedEmailInheritance,
+      promotedSecondaryParent: result.promotedSecondaryParent,
     });
   } catch (error) {
     if (error instanceof UnlinkDependentError) {

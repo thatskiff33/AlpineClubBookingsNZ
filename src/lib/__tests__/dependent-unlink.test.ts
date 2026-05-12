@@ -30,6 +30,7 @@ type MockMember = {
   ageTier: "INFANT" | "CHILD" | "YOUTH" | "ADULT";
   active: boolean;
   parentMemberId: string | null;
+  secondaryParentId: string | null;
   inheritParentEmail: boolean;
   inheritEmailFromId: string | null;
   canLogin: boolean;
@@ -52,6 +53,7 @@ function makeParent(overrides: Partial<MockMember> = {}): MockMember {
     ageTier: "ADULT",
     active: true,
     parentMemberId: null,
+    secondaryParentId: null,
     inheritParentEmail: false,
     inheritEmailFromId: null,
     canLogin: true,
@@ -68,6 +70,7 @@ function makeDependent(overrides: Partial<MockMember> = {}): MockMember {
     ageTier: "CHILD",
     active: true,
     parentMemberId: "parent-1",
+    secondaryParentId: null,
     inheritParentEmail: true,
     inheritEmailFromId: "parent-1",
     canLogin: false,
@@ -89,6 +92,7 @@ function setupTransaction(members: MockMember[]) {
         return {
           ...member,
           parentMemberId: data.parent?.disconnect ? null : member.parentMemberId,
+          secondaryParentId: data.secondaryParent?.disconnect ? null : member.secondaryParentId,
           inheritParentEmail: data.inheritParentEmail ?? member.inheritParentEmail,
           inheritEmailFromId: data.inheritEmailFrom?.disconnect
             ? null
@@ -162,7 +166,6 @@ describe("DELETE /api/admin/members/[id]/dependents/[dependentId]", () => {
       expect.objectContaining({
         data: {
           parent: { disconnect: true },
-          inheritParentEmail: false,
         },
       })
     );

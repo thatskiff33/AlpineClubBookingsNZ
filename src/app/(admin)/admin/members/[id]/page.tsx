@@ -80,7 +80,10 @@ interface MemberDetail {
   active: boolean; forcePasswordChange: boolean; xeroContactId: string | null; joinedDate: string | null; createdAt: string
   canLogin: boolean
   parentMemberId: string | null
+  secondaryParentId: string | null
   parent: ParentMemberSummary | null
+  secondaryParent: ParentMemberSummary | null
+  parentLinks: ParentLinkSummary[]
   xeroContactGroupsLoaded: boolean
   xeroContactGroups: Array<{ id: string; name: string }>
   inheritEmailFromId: string | null
@@ -113,7 +116,7 @@ interface MemberDetail {
   }>
   auditLogs: AuditLogEntry[]
   stats: { totalBookings: number; totalSpendCents: number; lastStay: string | null }
-  dependents: Array<{ id: string; firstName: string; lastName: string; ageTier: string; active: boolean; dateOfBirth: string | null; canLogin: boolean }>
+  dependents: Array<{ id: string; firstName: string; lastName: string; ageTier: string; active: boolean; dateOfBirth: string | null; canLogin: boolean; parentLinkType?: "PRIMARY" | "SECONDARY" }>
   streetAddressLine1: string | null; streetAddressLine2: string | null; streetCity: string | null
   streetRegion: string | null; streetPostalCode: string | null; streetCountry: string | null
   postalAddressLine1: string | null; postalAddressLine2: string | null; postalCity: string | null
@@ -128,6 +131,11 @@ interface ParentMemberSummary {
   ageTier: string
   active: boolean
   canLogin: boolean
+  inheritEmailFromId?: string | null
+}
+
+interface ParentLinkSummary extends ParentMemberSummary {
+  parentLinkType: "PRIMARY" | "SECONDARY"
 }
 
 interface AuditActor {
@@ -275,6 +283,7 @@ interface LinkDependentSearchResult {
   active: boolean
   canLogin: boolean
   dateOfBirth: string | null
+  parentLinks: ParentLinkSummary[]
 }
 
 interface LinkParentSearchResult extends ParentMemberSummary {
@@ -284,6 +293,19 @@ interface LinkParentSearchResult extends ParentMemberSummary {
 
 function shouldDefaultLinkSideEffects(ageTier: string) {
   return ageTier !== "ADULT"
+}
+
+function parentLinkTypeLabel(type?: "PRIMARY" | "SECONDARY") {
+  return type === "SECONDARY" ? "Second parent" : "Primary parent"
+}
+
+function dedupeParentOptions(parents: ParentLinkSummary[]) {
+  const seen = new Set<string>()
+  return parents.filter((parent) => {
+    if (seen.has(parent.id)) return false
+    seen.add(parent.id)
+    return true
+  })
 }
 
 function formatPromoBenefit(promo: MemberDetail["promoCodes"][number]) {
@@ -383,6 +405,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [linkDependentSearching, setLinkDependentSearching] = useState(false)
   const [selectedLinkDependent, setSelectedLinkDependent] = useState<LinkDependentSearchResult | null>(null)
   const [linkDependentInheritEmail, setLinkDependentInheritEmail] = useState(false)
+  const [linkDependentNotificationParentId, setLinkDependentNotificationParentId] = useState("")
   const [linkDependentDisableLogin, setLinkDependentDisableLogin] = useState(false)
   const [linkDependentFamilyGroupIds, setLinkDependentFamilyGroupIds] = useState<string[]>([])
   const [parentLinkOpen, setParentLinkOpen] = useState(false)
@@ -391,6 +414,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [parentLinkSearching, setParentLinkSearching] = useState(false)
   const [selectedLinkParent, setSelectedLinkParent] = useState<LinkParentSearchResult | null>(null)
   const [parentLinkInheritEmail, setParentLinkInheritEmail] = useState(false)
+  const [parentLinkNotificationParentId, setParentLinkNotificationParentId] = useState("")
   const [parentLinkDisableLogin, setParentLinkDisableLogin] = useState(false)
   const [parentLinkFamilyGroupIds, setParentLinkFamilyGroupIds] = useState<string[]>([])
   const [parentLinkSaving, setParentLinkSaving] = useState(false)
@@ -721,6 +745,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 active: candidate.active,
                 canLogin: candidate.canLogin,
                 dateOfBirth: candidate.dateOfBirth,
+                parentLinks: candidate.parentLinks ?? [],
               }))
               .filter((candidate: LinkDependentSearchResult) => candidate.id !== selectedLinkDependent?.id)
           )
@@ -744,7 +769,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   }, [dependentMode, dependentOpen, linkDependentSearch, memberId, selectedLinkDependent?.id])
 
   useEffect(() => {
-    if (!parentLinkOpen || !memberId || member?.parent?.id) {
+    if (!parentLinkOpen || !memberId || (member?.parentLinks?.length ?? 0) >= 2) {
       setParentLinkSearchResults([])
       setParentLinkSearching(false)
       return
@@ -808,7 +833,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       cancelled = true
       clearTimeout(timer)
     }
-  }, [member?.parent?.id, memberId, parentLinkOpen, parentLinkSearch, selectedLinkParent?.id])
+  }, [member?.parentLinks?.length, memberId, parentLinkOpen, parentLinkSearch, selectedLinkParent?.id])
 
   const openEditDialog = useCallback(() => {
     if (!member) return
@@ -935,6 +960,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     setLinkDependentSearching(false)
     setSelectedLinkDependent(null)
     setLinkDependentInheritEmail(false)
+    setLinkDependentNotificationParentId("")
     setLinkDependentDisableLogin(false)
     setLinkDependentFamilyGroupIds(member.familyGroups.map((group) => group.id))
     setDependentOpen(true)
@@ -1033,6 +1059,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           parentMemberId: member.id,
           inheritParentEmail: true,
           inheritEmailFromId: inheritedEmailSourceId,
+          familyGroupIds: member.familyGroups.map((group) => group.id),
           streetAddressLine1: dependentForm.streetAddressLine1 || null,
           streetAddressLine2: dependentForm.streetAddressLine2 || null,
           streetCity: dependentForm.streetCity || null,
@@ -1070,6 +1097,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     const defaultSideEffects = shouldDefaultLinkSideEffects(candidate.ageTier)
     setSelectedLinkDependent(candidate)
     setLinkDependentInheritEmail(defaultSideEffects)
+    setLinkDependentNotificationParentId(defaultSideEffects ? member?.id ?? "" : "")
     setLinkDependentDisableLogin(defaultSideEffects)
     setLinkDependentFamilyGroupIds(member?.familyGroups.map((group) => group.id) ?? [])
     setLinkDependentSearch("")
@@ -1080,6 +1108,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const clearLinkDependent = () => {
     setSelectedLinkDependent(null)
     setLinkDependentInheritEmail(false)
+    setLinkDependentNotificationParentId("")
     setLinkDependentDisableLogin(false)
     setLinkDependentFamilyGroupIds(member?.familyGroups.map((group) => group.id) ?? [])
     setLinkDependentSearch("")
@@ -1107,7 +1136,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           memberId: selectedLinkDependent.id,
-          inheritEmail: linkDependentInheritEmail,
+          inheritEmail: Boolean(linkDependentNotificationParentId) || linkDependentInheritEmail,
+          inheritEmailFromId: linkDependentNotificationParentId || null,
           disableLogin: linkDependentDisableLogin,
           addToFamilyGroupIds: linkDependentFamilyGroupIds,
         }),
@@ -1138,6 +1168,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     setParentLinkSearching(false)
     setSelectedLinkParent(null)
     setParentLinkInheritEmail(defaultSideEffects)
+    setParentLinkNotificationParentId(defaultSideEffects ? "" : "")
     setParentLinkDisableLogin(defaultSideEffects)
     setParentLinkFamilyGroupIds([])
     setParentLinkError("")
@@ -1149,6 +1180,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     const defaultSideEffects = shouldDefaultLinkSideEffects(member.ageTier)
     setSelectedLinkParent(candidate)
     setParentLinkInheritEmail(defaultSideEffects)
+    setParentLinkNotificationParentId(defaultSideEffects ? candidate.id : "")
     setParentLinkDisableLogin(defaultSideEffects)
     setParentLinkFamilyGroupIds(candidate.familyGroups.map((group) => group.id))
     setParentLinkSearch("")
@@ -1161,6 +1193,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     const defaultSideEffects = shouldDefaultLinkSideEffects(member.ageTier)
     setSelectedLinkParent(null)
     setParentLinkInheritEmail(defaultSideEffects)
+    setParentLinkNotificationParentId(defaultSideEffects ? "" : "")
     setParentLinkDisableLogin(defaultSideEffects)
     setParentLinkFamilyGroupIds([])
     setParentLinkSearch("")
@@ -1189,7 +1222,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           memberId: member.id,
-          inheritEmail: parentLinkInheritEmail,
+          inheritEmail: Boolean(parentLinkNotificationParentId) || parentLinkInheritEmail,
+          inheritEmailFromId: parentLinkNotificationParentId || null,
           disableLogin: parentLinkDisableLogin,
           addToFamilyGroupIds: parentLinkFamilyGroupIds,
         }),
@@ -1558,24 +1592,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-base font-medium">Parent Link</CardTitle>
-          {member.parent ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                handleUnlinkDependent(
-                  member.parent!.id,
-                  member.id,
-                  `${member.firstName} ${member.lastName}`
-                )
-              }
-              disabled={unlinkingDependentId === member.id}
-            >
-              <Trash2 className="h-4 w-4 mr-1" />
-              {unlinkingDependentId === member.id ? "Removing..." : "Remove Parent"}
-            </Button>
-          ) : (
+          <CardTitle className="text-base font-medium">Parent Links</CardTitle>
+          {(member.parentLinks?.length ?? 0) < 2 ? (
             <Button
               variant="outline"
               size="sm"
@@ -1584,44 +1602,75 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               title={member.dependents.length > 0 ? "Members with dependants cannot be linked under another parent." : undefined}
             >
               <Link2 className="h-4 w-4 mr-1" />
-              Add Parent
+              {(member.parentLinks?.length ?? 0) === 0 ? "Add Parent" : "Add Second Parent"}
             </Button>
+          ) : (
+            <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
+              Two parents linked
+            </Badge>
           )}
         </CardHeader>
         <CardContent>
-          {member.parent ? (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-medium text-slate-900">
-                    {member.parent.firstName} {member.parent.lastName}
-                  </p>
-                  <Badge variant="secondary">{member.parent.ageTier}</Badge>
-                  <Badge
-                    variant={member.parent.active ? "default" : "destructive"}
-                    className={member.parent.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}
-                  >
-                    {member.parent.active ? "Active" : "Inactive"}
-                  </Badge>
-                  {member.parent.canLogin ? (
-                    <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
-                      Can Login
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">
-                      Non-Login
-                    </Badge>
-                  )}
+          {(member.parentLinks?.length ?? 0) > 0 ? (
+            <div className="space-y-3">
+              {member.parentLinks.map((parent) => (
+                <div key={parent.id} className="flex flex-col gap-3 rounded-md border border-slate-200 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium text-slate-900">
+                        {parent.firstName} {parent.lastName}
+                      </p>
+                      <Badge variant="secondary">{parentLinkTypeLabel(parent.parentLinkType)}</Badge>
+                      <Badge variant="secondary">{parent.ageTier}</Badge>
+                      <Badge
+                        variant={parent.active ? "default" : "destructive"}
+                        className={parent.active ? "bg-green-100 text-green-800 hover:bg-green-200 border-green-200" : ""}
+                      >
+                        {parent.active ? "Active" : "Inactive"}
+                      </Badge>
+                      {member.inheritEmailFromId === parent.id || member.inheritEmailFromId === parent.inheritEmailFromId ? (
+                        <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
+                          Notification email
+                        </Badge>
+                      ) : null}
+                      {parent.canLogin ? (
+                        <Badge variant="secondary" className="bg-slate-100 text-slate-700 border-slate-200">
+                          Can Login
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="bg-purple-100 text-purple-800 border-purple-200">
+                          Non-Login
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-1 text-sm text-slate-500">{parent.email}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => router.push(`/admin/members/${parent.id}`)}
+                    >
+                      View Parent
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        handleUnlinkDependent(
+                          parent.id,
+                          member.id,
+                          `${member.firstName} ${member.lastName}`
+                        )
+                      }
+                      disabled={unlinkingDependentId === member.id}
+                    >
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      {unlinkingDependentId === member.id ? "Removing..." : "Remove"}
+                    </Button>
+                  </div>
                 </div>
-                <p className="mt-1 text-sm text-slate-500">{member.parent.email}</p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => router.push(`/admin/members/${member.parent!.id}`)}
-              >
-                View Parent
-              </Button>
+              ))}
             </div>
           ) : (
             <div className="space-y-2">
@@ -1728,6 +1777,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Link</TableHead>
                   <TableHead>Age Tier</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Date of Birth</TableHead>
@@ -1740,6 +1790,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                   <TableRow key={dependent.id}>
                     <TableCell className="font-medium">
                       {dependent.firstName} {dependent.lastName}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{parentLinkTypeLabel(dependent.parentLinkType)}</Badge>
                     </TableCell>
                     <TableCell>
                       {dependent.ageTier.charAt(0) + dependent.ageTier.slice(1).toLowerCase()}
@@ -2216,16 +2269,31 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             {selectedLinkParent && (
               <div className="space-y-4">
                 <div className="space-y-3 rounded-md border border-slate-200 p-3">
-                  <div className="flex items-start gap-2">
-                    <Checkbox
-                      id="link-parent-inherit-email"
-                      checked={parentLinkInheritEmail}
-                      onCheckedChange={(checked) => setParentLinkInheritEmail(checked === true)}
+                  <div className="space-y-2">
+                    <Label htmlFor="link-parent-notification-source">Notification email recipient</Label>
+                    <select
+                      id="link-parent-notification-source"
+                      value={parentLinkNotificationParentId}
+                      onChange={(event) => {
+                        setParentLinkNotificationParentId(event.target.value)
+                        setParentLinkInheritEmail(Boolean(event.target.value))
+                      }}
                       disabled={parentLinkSaving}
-                    />
-                    <Label htmlFor="link-parent-inherit-email" className="text-sm font-normal">
-                      Inherit email from this parent
-                    </Label>
+                      className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                    >
+                      <option value="">Use {member.firstName}&apos;s own email</option>
+                      {dedupeParentOptions([
+                        ...(member.parentLinks ?? []),
+                        {
+                          ...selectedLinkParent,
+                          parentLinkType: ((member.parentLinks?.length ?? 0) === 0 ? "PRIMARY" : "SECONDARY") as "PRIMARY" | "SECONDARY",
+                        },
+                      ]).map((parent) => (
+                        <option key={parent.id} value={parent.id}>
+                          {parent.firstName} {parent.lastName} ({parentLinkTypeLabel(parent.parentLinkType)})
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="flex items-start gap-2">
                     <Checkbox
@@ -2432,16 +2500,38 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                 {selectedLinkDependent && (
                   <div className="space-y-4">
                     <div className="space-y-3 rounded-md border border-slate-200 p-3">
-                      <div className="flex items-start gap-2">
-                        <Checkbox
-                          id="link-dependent-inherit-email"
-                          checked={linkDependentInheritEmail}
-                          onCheckedChange={(checked) => setLinkDependentInheritEmail(checked === true)}
+                      <div className="space-y-2">
+                        <Label htmlFor="link-dependent-notification-source">Notification email recipient</Label>
+                        <select
+                          id="link-dependent-notification-source"
+                          value={linkDependentNotificationParentId}
+                          onChange={(event) => {
+                            setLinkDependentNotificationParentId(event.target.value)
+                            setLinkDependentInheritEmail(Boolean(event.target.value))
+                          }}
                           disabled={dependentSaving}
-                        />
-                        <Label htmlFor="link-dependent-inherit-email" className="text-sm font-normal">
-                          Inherit email from this parent
-                        </Label>
+                          className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                        >
+                          <option value="">Use {selectedLinkDependent.firstName}&apos;s own email</option>
+                          {dedupeParentOptions([
+                            ...(selectedLinkDependent.parentLinks ?? []),
+                            {
+                              id: member.id,
+                              firstName: member.firstName,
+                              lastName: member.lastName,
+                              email: member.email,
+                              ageTier: member.ageTier,
+                              active: member.active,
+                              canLogin: member.canLogin,
+                              inheritEmailFromId: member.inheritEmailFromId,
+                              parentLinkType: ((selectedLinkDependent.parentLinks?.length ?? 0) === 0 ? "PRIMARY" : "SECONDARY") as "PRIMARY" | "SECONDARY",
+                            },
+                          ]).map((parent) => (
+                            <option key={parent.id} value={parent.id}>
+                              {parent.firstName} {parent.lastName} ({parentLinkTypeLabel(parent.parentLinkType)})
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div className="flex items-start gap-2">
                         <Checkbox

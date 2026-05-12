@@ -30,9 +30,11 @@ type MockMember = {
   ageTier: "INFANT" | "CHILD" | "YOUTH" | "ADULT";
   active: boolean;
   parentMemberId: string | null;
+  secondaryParentId: string | null;
   inheritEmailFromId: string | null;
   canLogin: boolean;
   dependents: Array<{ id: string }>;
+  secondaryDependents: Array<{ id: string }>;
   familyGroupMemberships: Array<{ familyGroupId: string }>;
 };
 
@@ -55,9 +57,11 @@ function makeParent(overrides: Partial<MockMember> = {}): MockMember {
     ageTier: "ADULT",
     active: true,
     parentMemberId: null,
+    secondaryParentId: null,
     inheritEmailFromId: null,
     canLogin: true,
     dependents: [],
+    secondaryDependents: [],
     familyGroupMemberships: [{ familyGroupId: "fg-1" }, { familyGroupId: "fg-2" }],
     ...overrides,
   };
@@ -72,9 +76,11 @@ function makeMember(overrides: Partial<MockMember> = {}): MockMember {
     ageTier: "CHILD",
     active: true,
     parentMemberId: null,
+    secondaryParentId: null,
     inheritEmailFromId: null,
     canLogin: true,
     dependents: [],
+    secondaryDependents: [],
     familyGroupMemberships: [],
     ...overrides,
   };
@@ -109,6 +115,7 @@ function setupTransaction(members: MockMember[]) {
           email: member.email,
           ageTier: member.ageTier,
           parentMemberId: data.parent?.connect?.id ?? member.parentMemberId,
+          secondaryParentId: data.secondaryParent?.connect?.id ?? member.secondaryParentId,
           inheritEmailFromId: data.inheritEmailFrom?.connect?.id ?? member.inheritEmailFromId,
           canLogin: data.canLogin ?? member.canLogin,
         };
@@ -194,7 +201,7 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
     expect(tx.familyGroupMember.upsert).not.toHaveBeenCalled();
   });
 
-  it("rejects a target that already has a parent", async () => {
+  it("links a target that already has one parent as a second parent", async () => {
     const tx = setupTransaction([
       makeParent(),
       makeMember({ parentMemberId: "other-parent" }),
@@ -207,8 +214,34 @@ describe("POST /api/admin/members/[id]/dependents/link", () => {
       addToFamilyGroupIds: [],
     });
 
+    expect(res.status).toBe(200);
+    expect(tx.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "target-1" },
+        data: expect.objectContaining({
+          secondaryParent: { connect: { id: "parent-1" } },
+          inheritParentEmail: true,
+          inheritEmailFrom: { connect: { id: "parent-1" } },
+        }),
+      })
+    );
+  });
+
+  it("rejects a target that already has two parents", async () => {
+    const tx = setupTransaction([
+      makeParent(),
+      makeMember({ parentMemberId: "other-parent", secondaryParentId: "second-parent" }),
+    ]);
+
+    const res = await linkDependent({
+      memberId: "target-1",
+      inheritEmail: true,
+      disableLogin: true,
+      addToFamilyGroupIds: [],
+    });
+
     expect(res.status).toBe(422);
-    expect((await res.json()).error).toMatch(/already linked/i);
+    expect((await res.json()).error).toMatch(/two parents/i);
     expect(tx.member.update).not.toHaveBeenCalled();
   });
 

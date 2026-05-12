@@ -9,6 +9,7 @@ import {
   type MemberProfileCompletenessInput,
   type MemberProfileCompletenessResult,
 } from "@/lib/member-profile-completeness";
+import { buildParentLinks } from "@/lib/member-parent-links";
 import type { BookingGuestProfileAction } from "@/lib/booking-guests";
 
 const FAMILY_MEMBER_PROFILE_SELECT = {
@@ -39,6 +40,31 @@ const FAMILY_MEMBER_PROFILE_SELECT = {
   detailsConfirmedAt: true,
   detailsConfirmedByMemberId: true,
   onboardingConfirmedAt: true,
+  inheritEmailFromId: true,
+  parent: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      ageTier: true,
+      active: true,
+      canLogin: true,
+      inheritEmailFromId: true,
+    },
+  },
+  secondaryParent: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      ageTier: true,
+      active: true,
+      canLogin: true,
+      inheritEmailFromId: true,
+    },
+  },
   familyGroupMemberships: {
     select: {
       familyGroupId: true,
@@ -55,6 +81,9 @@ type FamilyMemberRecord = MemberProfileCompletenessInput & {
   active: boolean;
   canLogin: boolean;
   role: string;
+  inheritEmailFromId?: string | null;
+  parent?: Parameters<typeof buildParentLinks>[0]["parent"];
+  secondaryParent?: Parameters<typeof buildParentLinks>[0]["secondaryParent"];
   familyGroupMemberships?: Array<{
     familyGroupId: string;
     familyGroup?: { id: string; name: string | null } | null;
@@ -321,6 +350,8 @@ export async function GET() {
     action: BookingGuestProfileAction | null;
     dateOfBirth: string | null;
     familyGroupIds: string[];
+    parentLinks: ReturnType<typeof buildParentLinks>;
+    notificationEmailFromId: string | null;
   }> = [];
 
   function addMember(member: FamilyMemberRecord, relationship: FamilyMemberRelationship) {
@@ -395,6 +426,8 @@ export async function GET() {
       action,
       dateOfBirth: toDateInputValue(member.dateOfBirth),
       familyGroupIds: sharedFamilyGroupIds,
+      parentLinks: buildParentLinks(member),
+      notificationEmailFromId: member.inheritEmailFromId ?? null,
     });
   }
 

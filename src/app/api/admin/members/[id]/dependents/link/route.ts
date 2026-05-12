@@ -5,12 +5,17 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
+import {
+  getParentEmailSourceId,
+  resolveParentNotificationSourceId,
+} from "@/lib/member-parent-links";
 import logger from "@/lib/logger";
 
 const linkDependentSchema = z.object({
   memberId: z.string().min(1, "Member is required"),
   inheritEmail: z.boolean(),
   disableLogin: z.boolean(),
+  inheritEmailFromId: z.string().optional().nullable().or(z.literal("")),
   addToFamilyGroupIds: z.array(z.string()).default([]),
 });
 
@@ -27,27 +32,33 @@ type TransactionClient = Prisma.TransactionClient;
 
 async function hasAncestorMember(
   tx: TransactionClient,
-  parentMemberId: string | null,
+  parentMemberIds: Array<string | null>,
   possibleAncestorId: string
 ) {
   const seen = new Set<string>();
-  let currentParentId = parentMemberId;
+  const stack = parentMemberIds.filter((id): id is string => Boolean(id));
 
-  while (currentParentId) {
+  while (stack.length > 0) {
+    const currentParentId = stack.pop()!;
     if (currentParentId === possibleAncestorId) {
       return true;
     }
 
     if (seen.has(currentParentId)) {
-      return false;
+      continue;
     }
     seen.add(currentParentId);
 
     const parent = await tx.member.findUnique({
       where: { id: currentParentId },
-      select: { parentMemberId: true },
+      select: { parentMemberId: true, secondaryParentId: true },
     });
-    currentParentId = parent?.parentMemberId ?? null;
+    if (parent?.parentMemberId) {
+      stack.push(parent.parentMemberId);
+    }
+    if (parent?.secondaryParentId) {
+      stack.push(parent.secondaryParentId);
+    }
   }
 
   return false;
@@ -130,6 +141,7 @@ export async function POST(
           ageTier: true,
           active: true,
           parentMemberId: true,
+          secondaryParentId: true,
           inheritEmailFromId: true,
           familyGroupMemberships: {
             select: { familyGroupId: true },
@@ -156,9 +168,20 @@ export async function POST(
           email: true,
           ageTier: true,
           parentMemberId: true,
+          secondaryParentId: true,
           inheritEmailFromId: true,
+          parent: {
+            select: { id: true, inheritEmailFromId: true },
+          },
+          secondaryParent: {
+            select: { id: true, inheritEmailFromId: true },
+          },
           canLogin: true,
           dependents: {
+            select: { id: true },
+            take: 1,
+          },
+          secondaryDependents: {
             select: { id: true },
             take: 1,
           },
@@ -171,13 +194,25 @@ export async function POST(
       if (target.id === parent.id) {
         throw new LinkDependentError("A member cannot be their own dependant", 422);
       }
-      if (target.parentMemberId) {
-        throw new LinkDependentError("This member is already linked as a dependant", 422);
+      if (
+        target.parentMemberId === parent.id ||
+        target.secondaryParentId === parent.id
+      ) {
+        throw new LinkDependentError("This member is already linked to that parent", 422);
       }
-      if (await hasAncestorMember(tx, parent.parentMemberId, target.id)) {
+      if (target.parentMemberId && target.secondaryParentId) {
+        throw new LinkDependentError("This member already has two parents linked", 422);
+      }
+      if (
+        await hasAncestorMember(
+          tx,
+          [parent.parentMemberId, parent.secondaryParentId],
+          target.id
+        )
+      ) {
         throw new LinkDependentError("Cannot link a parent or ancestor as a dependant", 422);
       }
-      if (target.dependents.length > 0) {
+      if ((target.dependents?.length ?? 0) > 0 || (target.secondaryDependents?.length ?? 0) > 0) {
         throw new LinkDependentError("This member already has dependants and cannot be linked under another member", 422);
       }
 
@@ -198,16 +233,68 @@ export async function POST(
         );
       }
 
-      const updateData: Prisma.MemberUpdateInput = {
-        parent: { connect: { id: parent.id } },
-      };
+      const linkType = target.parentMemberId ? "SECONDARY" : "PRIMARY";
+      const updateData: Prisma.MemberUpdateInput =
+        linkType === "PRIMARY"
+          ? { parent: { connect: { id: parent.id } } }
+          : { secondaryParent: { connect: { id: parent.id } } };
 
-      if (data.inheritEmail) {
-        const inheritEmailFromId = parent.inheritEmailFromId || parent.id;
+      const explicitInheritEmailFromId =
+        Object.prototype.hasOwnProperty.call(data, "inheritEmailFromId")
+          ? data.inheritEmailFromId?.trim() || null
+          : undefined;
+      const parentLinksAfterSave = [
+        ...(target.parent ? [target.parent] : []),
+        ...(target.secondaryParent ? [target.secondaryParent] : []),
+        parent,
+      ];
+      const resolvedExplicitInheritEmailFromId =
+        explicitInheritEmailFromId !== undefined
+          ? resolveParentNotificationSourceId(
+              parentLinksAfterSave,
+              explicitInheritEmailFromId
+            )
+          : undefined;
+
+      if (resolvedExplicitInheritEmailFromId === undefined && explicitInheritEmailFromId) {
+        throw new LinkDependentError(
+          "Notification email recipient must be one of this member's linked parents",
+          422
+        );
+      }
+
+      const inheritEmailFromId =
+        resolvedExplicitInheritEmailFromId !== undefined
+          ? resolvedExplicitInheritEmailFromId
+          : data.inheritEmail
+            ? getParentEmailSourceId(parent)
+            : undefined;
+
+      if (inheritEmailFromId !== undefined) {
+        if (inheritEmailFromId) {
+          const validation = await validateInheritEmailSource(
+            {
+              memberId: target.id,
+              inheritEmailFromId,
+            },
+            tx
+          );
+          if (!validation.ok) {
+            throw new LinkDependentError(validation.error, validation.status);
+          }
+
+          updateData.inheritParentEmail = true;
+          updateData.inheritEmailFrom = { connect: { id: inheritEmailFromId } };
+        } else {
+          updateData.inheritParentEmail = false;
+          updateData.inheritEmailFrom = { disconnect: true };
+        }
+      } else if (data.inheritEmail) {
+        const fallbackInheritEmailFromId = getParentEmailSourceId(parent);
         const validation = await validateInheritEmailSource(
           {
             memberId: target.id,
-            inheritEmailFromId,
+            inheritEmailFromId: fallbackInheritEmailFromId!,
           },
           tx
         );
@@ -216,7 +303,7 @@ export async function POST(
         }
 
         updateData.inheritParentEmail = true;
-        updateData.inheritEmailFrom = { connect: { id: inheritEmailFromId } };
+        updateData.inheritEmailFrom = { connect: { id: fallbackInheritEmailFromId! } };
       }
 
       if (data.disableLogin) {
@@ -233,6 +320,7 @@ export async function POST(
           email: true,
           ageTier: true,
           parentMemberId: true,
+          secondaryParentId: true,
           inheritEmailFromId: true,
           canLogin: true,
         },
@@ -264,7 +352,9 @@ export async function POST(
           targetId: target.id,
           details: JSON.stringify({
             parentMemberId: parent.id,
+            linkType,
             inheritEmail: data.inheritEmail,
+            inheritEmailFromId: inheritEmailFromId ?? target.inheritEmailFromId,
             disableLogin: data.disableLogin,
             addToFamilyGroupIds,
           }),
