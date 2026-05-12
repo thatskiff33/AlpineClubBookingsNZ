@@ -73,8 +73,46 @@ export function sanitizeForJson(value: unknown): Prisma.InputJsonValue | undefin
   ) as Prisma.InputJsonValue;
 }
 
+function normalizePayloadHashValue(value: unknown): unknown {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizePayloadHashValue(entry));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, entryValue]) => [key, normalizePayloadHashValue(entryValue)] as const)
+      .filter(([, entryValue]) => entryValue !== undefined)
+  );
+}
+
 export function buildXeroPayloadHash(payload: unknown): string {
-  const json = JSON.stringify(sanitizeForJson(payload) ?? null);
+  // Idempotency keys must change when the outbound request changes, including
+  // fields that are redacted before storage such as email addresses and phone numbers.
+  const json = JSON.stringify(normalizePayloadHashValue(payload) ?? null);
   return createHash("sha256").update(json).digest("hex").slice(0, 12);
 }
 

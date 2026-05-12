@@ -4283,14 +4283,17 @@ export async function updateXeroContact(
 
     return contact;
   };
+  const buildRequestPayload = (contactId: string) => ({
+    contacts: [buildContact(contactId)],
+  });
   const buildOperationKeys = (contactId: string) => {
-    const payloadHash = buildXeroPayloadHash(buildContact(contactId));
+    const payloadHash = buildXeroPayloadHash(buildRequestPayload(contactId));
     const idempotencyKey = buildXeroIdempotencyKey(
       "contact",
       contactId,
       "update",
       payloadHash,
-      "v1"
+      "v2"
     );
 
     return {
@@ -4299,6 +4302,7 @@ export async function updateXeroContact(
     };
   };
 
+  const initialPayload = buildRequestPayload(xeroContactId);
   const initialKeys = buildOperationKeys(xeroContactId);
   const operation = await startXeroSyncOperation({
     direction: "OUTBOUND",
@@ -4308,7 +4312,7 @@ export async function updateXeroContact(
     localId: options?.localId,
     idempotencyKey: initialKeys.idempotencyKey,
     correlationKey: initialKeys.correlationKey,
-    requestPayload: { contacts: [buildContact(xeroContactId)] },
+    requestPayload: initialPayload,
     createdByMemberId: options?.createdByMemberId ?? null,
   });
 
@@ -4324,9 +4328,7 @@ export async function updateXeroContact(
       repairExistingLink:
         options?.localModel !== "Member" || !options.localId,
       createdByMemberId: options?.createdByMemberId,
-      buildRequestPayload: (contactId) => ({
-        contacts: [buildContact(contactId)],
-      }),
+      buildRequestPayload,
       buildOperationKeys,
       run: ({ contactId, idempotencyKey }) =>
         callXeroApi(
@@ -4334,7 +4336,7 @@ export async function updateXeroContact(
             xero.accountingApi.updateContact(
               tenantId,
               contactId,
-              { contacts: [buildContact(contactId)] },
+              buildRequestPayload(contactId),
               idempotencyKey ?? undefined
             ),
           {

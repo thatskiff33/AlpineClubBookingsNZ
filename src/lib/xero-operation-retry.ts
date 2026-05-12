@@ -1,6 +1,10 @@
 import type { XeroContactUpdateData } from "@/lib/xero";
 import type { XeroSyncOperation } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  buildXeroContactUpdatePayload,
+  shouldRepairXeroContactNameOrder,
+} from "@/lib/xero-contact-sync";
 import { buildXeroIdempotencyKey, completeXeroSyncOperation } from "@/lib/xero-sync";
 
 type RetryableOperation = Pick<
@@ -36,6 +40,30 @@ export interface XeroOperationRetryMeta {
 
 const REFUND_CREDIT_NOTE_ALLOCATION_SKIP_REASON =
   "Refund credit notes are settled via a credit-note payment instead of invoice allocation.";
+const REDACTED_SECRET = "[REDACTED]";
+
+const MEMBER_CONTACT_RETRY_SELECT = {
+  xeroContactId: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  dateOfBirth: true,
+  phoneCountryCode: true,
+  phoneAreaCode: true,
+  phoneNumber: true,
+  streetAddressLine1: true,
+  streetAddressLine2: true,
+  streetCity: true,
+  streetRegion: true,
+  streetPostalCode: true,
+  streetCountry: true,
+  postalAddressLine1: true,
+  postalAddressLine2: true,
+  postalCity: true,
+  postalRegion: true,
+  postalPostalCode: true,
+  postalCountry: true,
+} as const;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -135,6 +163,35 @@ function parseContactUpdateRetryInput(
     },
     preserveXeroName,
   };
+}
+
+async function buildCurrentMemberContactUpdateRetryInput(
+  operation: Pick<RetryableOperation, "localModel" | "localId">
+): Promise<{ xeroContactId: string; data: XeroContactUpdateData; preserveXeroName: boolean } | null> {
+  if (operation.localModel !== "Member" || !operation.localId) {
+    return null;
+  }
+
+  const member = await prisma.member.findUnique({
+    where: { id: operation.localId },
+    select: MEMBER_CONTACT_RETRY_SELECT,
+  });
+
+  if (!member?.xeroContactId) {
+    return null;
+  }
+
+  const shouldRepairContactNameOrder = await shouldRepairXeroContactNameOrder(member);
+
+  return {
+    xeroContactId: member.xeroContactId,
+    data: buildXeroContactUpdatePayload(member),
+    preserveXeroName: !shouldRepairContactNameOrder,
+  };
+}
+
+function containsRedactedContactRetryData(input: { data: XeroContactUpdateData }) {
+  return Object.values(input.data).some((value) => value === REDACTED_SECRET);
 }
 
 function parsePaymentCreditNoteRetryInput(
@@ -444,6 +501,10 @@ export function getXeroOperationRetryMeta(operation: RetryableOperation): XeroOp
   }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "UPDATE") {
+    if (operation.localModel === "Member" && operation.localId) {
+      return { supported: true, reason: null };
+    }
+
     return parseContactUpdateRetryInput(operation)
       ? { supported: true, reason: null }
       : { supported: false, reason: "Stored contact update payload is incomplete." };
@@ -664,9 +725,16 @@ export async function retryXeroSyncOperation(
   }
 
   if (operation.entityType === "CONTACT" && operation.operationType === "UPDATE") {
-    const retryInput = parseContactUpdateRetryInput(operation);
+    const retryInput =
+      (await buildCurrentMemberContactUpdateRetryInput(operation)) ??
+      parseContactUpdateRetryInput(operation);
     if (!retryInput) {
       throw new XeroOperationRetryError("Stored contact update payload is incomplete.");
+    }
+    if (containsRedactedContactRetryData(retryInput)) {
+      throw new XeroOperationRetryError(
+        "Stored contact update payload is redacted and the current member contact could not be used for retry."
+      );
     }
 
     await xero.updateXeroContact(retryInput.xeroContactId, retryInput.data, {
