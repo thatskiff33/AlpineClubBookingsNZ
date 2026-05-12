@@ -19,6 +19,7 @@ export async function validateInheritEmailSource(input: {
       id: true,
       ageTier: true,
       parentMemberId: true,
+      secondaryParentId: true,
       inheritEmailFromId: true,
     },
   });
@@ -47,7 +48,7 @@ export async function validateInheritEmailSource(input: {
     };
   }
 
-  if (inheritEmailFrom.parentMemberId) {
+  if (inheritEmailFrom.parentMemberId || inheritEmailFrom.secondaryParentId) {
     return {
       ok: false,
       status: 422,

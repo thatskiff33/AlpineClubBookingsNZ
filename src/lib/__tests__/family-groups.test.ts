@@ -950,19 +950,37 @@ describe("Admin Family Group Join Requests", () => {
         type: "CHILD_REQUEST",
         childFirstName: "Sam",
         childLastName: "Smith",
-        requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
+        requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true, ageTier: "ADULT", inheritEmailFromId: null },
         familyGroup: { id: "fg1", name: "Smith Family" },
       } as any);
       mockedPrisma.member.findUnique.mockResolvedValue({
         id: "child-1",
         active: true,
         ageTier: "INFANT",
+        parentMemberId: null,
+        secondaryParentId: null,
+        inheritEmailFromId: null,
+        parent: null,
+        secondaryParent: null,
+        dependents: [],
+        secondaryDependents: [],
       } as any);
 
       const txUpsert = vi.fn();
       const txUpdate = vi.fn();
+      const txMemberUpdate = vi.fn();
       mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
         callback({
+          member: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: "parent-1",
+              ageTier: "ADULT",
+              parentMemberId: null,
+              secondaryParentId: null,
+              inheritEmailFromId: null,
+            }),
+            update: txMemberUpdate,
+          },
           familyGroupMember: { upsert: txUpsert },
           familyGroupJoinRequest: { update: txUpdate },
         })
@@ -978,6 +996,14 @@ describe("Admin Family Group Join Requests", () => {
       );
 
       expect(res.status).toBe(200);
+      expect(txMemberUpdate).toHaveBeenCalledWith({
+        where: { id: "child-1" },
+        data: expect.objectContaining({
+          parent: { connect: { id: "parent-1" } },
+          inheritParentEmail: true,
+          inheritEmailFrom: { connect: { id: "parent-1" } },
+        }),
+      });
       expect(txUpsert).toHaveBeenCalledWith({
         where: {
           familyGroupId_memberId: {

@@ -24,6 +24,7 @@ import {
   POSTAL_ADDRESS_FIELDS,
 } from "@/lib/member-address";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
+import { buildParentLinks } from "@/lib/member-parent-links";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 import { getAssignedPromoCodeSummariesForMember } from "@/lib/promo";
 import {
@@ -220,6 +221,7 @@ export async function GET(
         canLogin: true,
         forcePasswordChange: true,
         parentMemberId: true,
+        secondaryParentId: true,
         inheritParentEmail: true,
         inheritEmailFromId: true,
         parent: {
@@ -231,6 +233,19 @@ export async function GET(
             ageTier: true,
             active: true,
             canLogin: true,
+            inheritEmailFromId: true,
+          },
+        },
+        secondaryParent: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            ageTier: true,
+            active: true,
+            canLogin: true,
+            inheritEmailFromId: true,
           },
         },
         inheritEmailFrom: {
@@ -266,6 +281,18 @@ export async function GET(
           orderBy: { seasonYear: "desc" },
         },
         dependents: {
+          orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            ageTier: true,
+            active: true,
+            dateOfBirth: true,
+            canLogin: true,
+          },
+        },
+        secondaryDependents: {
           orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
           select: {
             id: true,
@@ -362,6 +389,23 @@ export async function GET(
 
   return NextResponse.json({
     ...member,
+    parentLinks: buildParentLinks(member),
+    dependents: [
+      ...(member.dependents ?? []).map((dependent) => ({
+        ...dependent,
+        parentLinkType: "PRIMARY" as const,
+      })),
+      ...(member.secondaryDependents ?? [])
+        .filter(
+          (dependent) =>
+            !(member.dependents ?? []).some((primary) => primary.id === dependent.id)
+        )
+        .map((dependent) => ({
+          ...dependent,
+          parentLinkType: "SECONDARY" as const,
+        })),
+    ],
+    secondaryDependents: undefined,
     familyGroups: member.familyGroupMemberships.map((fg) => ({
       id: fg.familyGroup.id,
       name: fg.familyGroup.name,
@@ -584,6 +628,7 @@ export async function PUT(
           active: true,
           canLogin: true,
           parentMemberId: true,
+          secondaryParentId: true,
           inheritParentEmail: true,
           inheritEmailFromId: true,
           xeroContactId: true,

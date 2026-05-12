@@ -36,6 +36,11 @@ interface RequestMemberMatch extends MemberOption {
   canLogin?: boolean;
   dateOfBirth: string | null;
   alreadyInGroup: boolean;
+  parentLinks?: ParentLinkSummary[];
+}
+
+interface ParentLinkSummary extends MemberOption {
+  parentLinkType: "PRIMARY" | "SECONDARY";
 }
 
 interface FamilyGroupRequest {
@@ -93,6 +98,15 @@ function AgeTierBadge({ tier }: { tier: string }) {
   );
 }
 
+function dedupeParentOptions(parents: ParentLinkSummary[]) {
+  const seen = new Set<string>();
+  return parents.filter((parent) => {
+    if (seen.has(parent.id)) return false;
+    seen.add(parent.id);
+    return true;
+  });
+}
+
 export default function FamilyGroupsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -119,6 +133,7 @@ export default function FamilyGroupsPage() {
   const [requestSearchResults, setRequestSearchResults] = useState<Record<string, RequestMemberMatch[]>>({});
   const [requestSearchFeedback, setRequestSearchFeedback] = useState<Record<string, string>>({});
   const [requestNotes, setRequestNotes] = useState<Record<string, string>>({});
+  const [requestNotificationParents, setRequestNotificationParents] = useState<Record<string, string>>({});
   const [requestErrors, setRequestErrors] = useState<Record<string, string>>({});
   const [requestSearchingId, setRequestSearchingId] = useState<string | null>(null);
   const [requestSubmittingId, setRequestSubmittingId] = useState<string | null>(null);
@@ -156,6 +171,15 @@ export default function FamilyGroupsPage() {
             }
           }
 
+          return nextSelections;
+        });
+        setRequestNotificationParents((current) => {
+          const nextSelections: Record<string, string> = {};
+          for (const request of fetchedRequests) {
+            if (request.type === "CHILD_REQUEST") {
+              nextSelections[request.id] = current[request.id] ?? request.requester.id;
+            }
+          }
           return nextSelections;
         });
       }
@@ -431,6 +455,7 @@ export default function FamilyGroupsPage() {
         active: boolean;
         canLogin?: boolean;
         dateOfBirth?: string | null;
+        parentLinks?: ParentLinkSummary[];
       }[])
         .filter((member) =>
           request.type !== "CHILD_REQUEST" || CHILD_REQUEST_AGE_TIERS.has(member.ageTier)
@@ -444,6 +469,7 @@ export default function FamilyGroupsPage() {
           active: member.active,
           canLogin: member.canLogin,
           dateOfBirth: member.dateOfBirth ?? null,
+          parentLinks: member.parentLinks ?? [],
           alreadyInGroup: request.familyGroup.members.some(
             (groupMember) => groupMember.id === member.id
           ),
@@ -550,7 +576,12 @@ export default function FamilyGroupsPage() {
           ...(action === "approve" && needsMemberSelection && linkedMemberId
             ? linkedMemberId === "__create__"
               ? { createNewMember: true }
-              : { linkedMemberId }
+              : {
+                  linkedMemberId,
+                  ...(request.type === "CHILD_REQUEST"
+                    ? { inheritEmailFromId: requestNotificationParents[request.id] ?? request.requester.id }
+                    : {}),
+                }
             : {}),
           ...(action === "reject" && requestNotes[request.id]?.trim()
             ? { rejectionReason: requestNotes[request.id].trim() }
@@ -977,6 +1008,37 @@ export default function FamilyGroupsPage() {
                         {selectedCandidate.alreadyInGroup ? " • already in this group" : ""}
                         {!selectedCandidate.active ? " • inactive" : ""}
                       </p>
+                      {request.type === "CHILD_REQUEST" && (
+                        <div className="mt-3 space-y-2">
+                          <Label htmlFor={`request-notification-${request.id}`}>
+                            Notification email recipient
+                          </Label>
+                          <select
+                            id={`request-notification-${request.id}`}
+                            value={requestNotificationParents[request.id] ?? request.requester.id}
+                            onChange={(event) =>
+                              setRequestNotificationParents((current) => ({
+                                ...current,
+                                [request.id]: event.target.value,
+                              }))
+                            }
+                            className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                          >
+                            <option value="">Use child&apos;s own email</option>
+                            {dedupeParentOptions([
+                              ...(selectedCandidate.parentLinks ?? []),
+                              {
+                                ...request.requester,
+                                parentLinkType: ((selectedCandidate.parentLinks?.length ?? 0) === 0 ? "PRIMARY" : "SECONDARY") as "PRIMARY" | "SECONDARY",
+                              },
+                            ]).map((parent) => (
+                              <option key={parent.id} value={parent.id}>
+                                {parent.firstName} {parent.lastName}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   )}
 

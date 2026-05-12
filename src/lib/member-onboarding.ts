@@ -2,6 +2,7 @@ import {
   getMemberProfileCompleteness,
   type MemberProfileCompletenessInput,
 } from "@/lib/member-profile-completeness";
+import { buildParentLinks } from "@/lib/member-parent-links";
 
 export const MEMBER_ONBOARDING_PROFILE_SELECT = {
   id: true,
@@ -32,6 +33,31 @@ export const MEMBER_ONBOARDING_PROFILE_SELECT = {
   detailsConfirmedAt: true,
   detailsConfirmedByMemberId: true,
   onboardingConfirmedAt: true,
+  inheritEmailFromId: true,
+  parent: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      ageTier: true,
+      active: true,
+      canLogin: true,
+      inheritEmailFromId: true,
+    },
+  },
+  secondaryParent: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      ageTier: true,
+      active: true,
+      canLogin: true,
+      inheritEmailFromId: true,
+    },
+  },
 } as const;
 
 export const MEMBER_ONBOARDING_GATE_SELECT = {
@@ -50,6 +76,9 @@ export type MemberOnboardingProfile = MemberProfileCompletenessInput & {
   ageTier?: string | null;
   profileCompletedAt?: Date | string | null;
   onboardingConfirmedAt?: Date | string | null;
+  inheritEmailFromId?: string | null;
+  parent?: Parameters<typeof buildParentLinks>[0]["parent"];
+  secondaryParent?: Parameters<typeof buildParentLinks>[0]["secondaryParent"];
   forcePasswordChange?: boolean | null;
   financeAccessLevel?: string | null;
 };

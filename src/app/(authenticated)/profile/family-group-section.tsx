@@ -44,6 +44,13 @@ interface FamilyMemberStatus {
   bookableFamilyGroupIds?: string[];
   action: string | null;
   dateOfBirth: string | null;
+  parentLinks?: Array<{
+    id: string;
+    firstName: string;
+    lastName: string;
+    parentLinkType: "PRIMARY" | "SECONDARY";
+  }>;
+  notificationEmailFromId?: string | null;
 }
 
 interface PendingFamilyRequest {
@@ -517,6 +524,16 @@ export function FamilyGroupSection({ familyGroups, canManage = false }: FamilyGr
                               {status?.confirmationMode !== "not_allowed" && status?.missingFields && status.missingFields.length > 0 && (
                                 <p className="text-xs text-slate-500">
                                   Missing: {status.missingFields.join(", ")}
+                                </p>
+                              )}
+                              {status?.parentLinks && status.parentLinks.length > 0 && (
+                                <p className="text-xs text-slate-500">
+                                  Parents: {status.parentLinks.map((parent) => {
+                                    const label = `${parent.firstName} ${parent.lastName}`.trim();
+                                    return parent.id === status.notificationEmailFromId
+                                      ? `${label} (notifications)`
+                                      : label;
+                                  }).join(", ")}
                                 </p>
                               )}
                             </div>

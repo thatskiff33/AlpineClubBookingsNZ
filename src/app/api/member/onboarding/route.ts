@@ -11,6 +11,7 @@ import {
   shouldShowMemberOnboarding,
   type MemberOnboardingProfile,
 } from "@/lib/member-onboarding";
+import { buildParentLinks } from "@/lib/member-parent-links";
 import { getMissingMemberProfileFieldDetails } from "@/lib/member-profile-completeness";
 
 function serializeStatus(member: MemberOnboardingProfile) {
@@ -60,6 +61,8 @@ function serializeFamilyMember(
     isCurrentUser,
     status,
     nextAction,
+    parentLinks: buildParentLinks(member),
+    notificationEmailFromId: member.inheritEmailFromId ?? null,
   };
 }
 

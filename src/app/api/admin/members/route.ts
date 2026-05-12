@@ -19,6 +19,7 @@ import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { getXeroApiErrorInfo } from "@/lib/xero-api-errors";
 import { copyStreetAddressToPostal } from "@/lib/member-address";
 import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
+import { buildParentLinks } from "@/lib/member-parent-links";
 import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
 import { issueActionToken } from "@/lib/action-tokens";
@@ -165,6 +166,7 @@ export async function GET(req: NextRequest) {
     andConditions.push(
       { ageTier: "ADULT" },
       { parentMemberId: null },
+      { secondaryParentId: null },
       { inheritEmailFromId: null },
     );
   }
@@ -178,15 +180,27 @@ export async function GET(req: NextRequest) {
   if (dependentLinkEligibleFor) {
     andConditions.push(
       { id: { not: dependentLinkEligibleFor } },
-      { parentMemberId: null },
+      { parentMemberId: { not: dependentLinkEligibleFor } },
+      { secondaryParentId: { not: dependentLinkEligibleFor } },
+      { OR: [{ parentMemberId: null }, { secondaryParentId: null }] },
       { dependents: { none: {} } },
+      { secondaryDependents: { none: {} } },
     );
   }
 
   const parentLinkEligibleFor = sp.get("parentLinkEligibleFor");
   if (parentLinkEligibleFor) {
+    const target = await prisma.member.findUnique({
+      where: { id: parentLinkEligibleFor },
+      select: { parentMemberId: true, secondaryParentId: true },
+    });
+    const excludedParentIds = [
+      parentLinkEligibleFor,
+      target?.parentMemberId,
+      target?.secondaryParentId,
+    ].filter((memberId): memberId is string => Boolean(memberId));
     andConditions.push(
-      { id: { not: parentLinkEligibleFor } },
+      { id: { notIn: excludedParentIds } },
       { active: true },
       { ageTier: "ADULT" },
     );
@@ -352,6 +366,32 @@ export async function GET(req: NextRequest) {
     ageTier: true,
     active: true,
     canLogin: true,
+    parentMemberId: true,
+    secondaryParentId: true,
+    parent: {
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        ageTier: true,
+        active: true,
+        canLogin: true,
+        inheritEmailFromId: true,
+      },
+    },
+    secondaryParent: {
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        ageTier: true,
+        active: true,
+        canLogin: true,
+        inheritEmailFromId: true,
+      },
+    },
     xeroContactId: true,
     joinedDate: true,
     createdAt: true,
@@ -438,6 +478,7 @@ export async function GET(req: NextRequest) {
         id: fg.familyGroup.id,
         name: fg.familyGroup.name,
       })),
+      parentLinks: buildParentLinks(m),
       subscriptions: undefined,
       familyGroupMemberships: undefined,
       passwordResetTokens: undefined,

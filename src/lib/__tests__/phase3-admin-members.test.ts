@@ -361,6 +361,7 @@ describe("Phase 3: Admin Member Management", () => {
         expect.arrayContaining([
           { ageTier: "ADULT" },
           { parentMemberId: null },
+          { secondaryParentId: null },
           { inheritEmailFromId: null },
           { id: { not: "child-1" } },
         ])
@@ -381,7 +382,7 @@ describe("Phase 3: Admin Member Management", () => {
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
       expect(call.where?.AND).toEqual(
         expect.arrayContaining([
-          { id: { not: "child-1" } },
+          { id: { notIn: ["child-1"] } },
           { active: true },
           { ageTier: "ADULT" },
         ])
