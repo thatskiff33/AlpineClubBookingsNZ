@@ -83,6 +83,12 @@ vi.mock("@/lib/xero", () => ({
 vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
+  getAgeTierSettings: vi.fn().mockResolvedValue([
+    { tier: "INFANT", label: "Infant", minAge: 0, maxAge: 4, sortOrder: 0, subscriptionRequiredForBooking: false, xeroAcceptedContactGroups: [] },
+    { tier: "CHILD", label: "Child", minAge: 5, maxAge: 9, sortOrder: 1, subscriptionRequiredForBooking: false, xeroAcceptedContactGroups: [] },
+    { tier: "YOUTH", label: "Youth", minAge: 10, maxAge: 17, sortOrder: 2, subscriptionRequiredForBooking: true, xeroAcceptedContactGroups: [] },
+    { tier: "ADULT", label: "Adult", minAge: 18, maxAge: null, sortOrder: 3, subscriptionRequiredForBooking: true, xeroAcceptedContactGroups: [] },
+  ]),
 }));
 
 import { prisma } from "@/lib/prisma";

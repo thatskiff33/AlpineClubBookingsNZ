@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 
 interface SourceBooking {
   id: string;
@@ -138,7 +139,7 @@ export function AccountCreditSection() {
                     <td className="py-2 whitespace-nowrap">
                       {booking ? (
                         <Link
-                          href={`/bookings/${booking.id}`}
+                          href={buildHrefWithReturnTo(`/bookings/${booking.id}`, "/profile")}
                           className="text-blue-600 hover:underline"
                         >
                           {formatDateRange(booking.checkIn, booking.checkOut)}

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronDown,
   ChevronLeft,
@@ -40,6 +41,7 @@ import {
   type AuditTimelineEntry,
   type AuditTimelineResponse,
 } from "@/lib/audit-query";
+import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 
 type AuditFacets = {
   eventTypes: string[];
@@ -131,7 +133,30 @@ function sortedUnique(values: string[]) {
   );
 }
 
-function PrimaryDrilldowns({ links }: { links: AuditDrilldownLink[] }) {
+function parsePositivePage(value: string | null) {
+  const page = Number(value);
+  return Number.isInteger(page) && page > 0 ? page : 1;
+}
+
+function initialSelectedMember(searchParams: Pick<URLSearchParams, "get">): PickedMember | null {
+  const id = searchParams.get("memberId");
+  if (!id) return null;
+
+  return {
+    id,
+    firstName: searchParams.get("memberName") || "Selected member",
+    lastName: "",
+    email: searchParams.get("memberEmail") || "",
+  };
+}
+
+function PrimaryDrilldowns({
+  links,
+  returnTo,
+}: {
+  links: AuditDrilldownLink[];
+  returnTo: string;
+}) {
   if (links.length === 0) {
     return <span className="text-xs text-slate-400">No direct target</span>;
   }
@@ -143,7 +168,10 @@ function PrimaryDrilldowns({ links }: { links: AuditDrilldownLink[] }) {
     <div className="flex flex-wrap gap-1.5">
       {visibleLinks.map((link) => (
         <Button key={link.href} asChild variant="outline" size="sm" className="h-7 px-2">
-          <Link href={link.href} onClick={(event) => event.stopPropagation()}>
+          <Link
+            href={buildHrefWithReturnTo(link.href, returnTo)}
+            onClick={(event) => event.stopPropagation()}
+          >
             <ExternalLink className="mr-1 h-3.5 w-3.5" />
             {link.label}
           </Link>
@@ -216,7 +244,7 @@ function MemberSearchFilter({
         <Label className="text-xs">Member</Label>
         <div className="flex h-9 items-center gap-2 rounded-md border px-3 text-sm">
           <span className="min-w-0 flex-1 truncate">
-            {selected.firstName} {selected.lastName}
+            {[selected.firstName, selected.lastName].filter(Boolean).join(" ")}
           </span>
           {selected.role ? (
             <Badge variant="secondary" className="text-[10px]">
@@ -284,17 +312,21 @@ function MemberSearchFilter({
 }
 
 export default function AuditLogPage() {
-  const [eventType, setEventType] = useState("all");
-  const [category, setCategory] = useState("all");
-  const [selectedMember, setSelectedMember] = useState<PickedMember | null>(null);
-  const [memberScope, setMemberScope] = useState("involves");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [outcome, setOutcome] = useState("all");
-  const [severity, setSeverity] = useState("all");
-  const [entityType, setEntityType] = useState("all");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [eventType, setEventType] = useState(searchParams.get("eventType") || "all");
+  const [category, setCategory] = useState(searchParams.get("category") || "all");
+  const [selectedMember, setSelectedMember] = useState<PickedMember | null>(() =>
+    initialSelectedMember(searchParams)
+  );
+  const [memberScope, setMemberScope] = useState(searchParams.get("memberScope") || "involves");
+  const [from, setFrom] = useState(searchParams.get("from") || "");
+  const [to, setTo] = useState(searchParams.get("to") || "");
+  const [outcome, setOutcome] = useState(searchParams.get("outcome") || "all");
+  const [severity, setSeverity] = useState(searchParams.get("severity") || "all");
+  const [entityType, setEntityType] = useState(searchParams.get("entityType") || "all");
+  const [search, setSearch] = useState(searchParams.get("q") || "");
+  const [page, setPage] = useState(() => parsePositivePage(searchParams.get("page")));
   const [pageSize] = useState(25);
   const [entries, setEntries] = useState<AuditTimelineEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -304,26 +336,52 @@ export default function AuditLogPage() {
   const [error, setError] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  const buildAuditSearchParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (eventType !== "all") params.set("eventType", eventType);
+    if (category !== "all") params.set("category", category);
+    if (selectedMember) {
+      params.set("memberId", selectedMember.id);
+      params.set("memberName", [selectedMember.firstName, selectedMember.lastName].filter(Boolean).join(" "));
+      if (selectedMember.email) params.set("memberEmail", selectedMember.email);
+    }
+    if (selectedMember && memberScope !== "involves") params.set("memberScope", memberScope);
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (outcome !== "all") params.set("outcome", outcome);
+    if (severity !== "all") params.set("severity", severity);
+    if (entityType !== "all") params.set("entityType", entityType);
+    if (search.trim()) params.set("q", search.trim());
+    if (page > 1) params.set("page", String(page));
+    return params;
+  }, [
+    category,
+    entityType,
+    eventType,
+    from,
+    memberScope,
+    outcome,
+    page,
+    search,
+    selectedMember,
+    severity,
+    to,
+  ]);
+
+  const auditQuery = buildAuditSearchParams().toString();
+  const currentAuditPath = auditQuery ? `/admin/audit-log?${auditQuery}` : "/admin/audit-log";
+
+  useEffect(() => {
+    router.replace(currentAuditPath, { scroll: false });
+  }, [currentAuditPath, router]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageSize),
-      });
-      if (eventType !== "all") params.set("eventType", eventType);
-      if (category !== "all") params.set("category", category);
-      if (selectedMember) params.set("memberId", selectedMember.id);
-      if (selectedMember && memberScope !== "involves") {
-        params.set("memberScope", memberScope);
-      }
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
-      if (outcome !== "all") params.set("outcome", outcome);
-      if (severity !== "all") params.set("severity", severity);
-      if (entityType !== "all") params.set("entityType", entityType);
-      if (search.trim()) params.set("q", search.trim());
+      const params = buildAuditSearchParams();
+      params.set("page", String(page));
+      params.set("pageSize", String(pageSize));
 
       const res = await fetch(`/api/admin/audit-log?${params.toString()}`);
       const json = (await res.json().catch(() => ({}))) as AdminAuditResponse & {
@@ -347,18 +405,9 @@ export default function AuditLogPage() {
       setLoading(false);
     }
   }, [
-    category,
-    entityType,
-    eventType,
-    from,
-    memberScope,
-    outcome,
+    buildAuditSearchParams,
     page,
     pageSize,
-    search,
-    selectedMember,
-    severity,
-    to,
   ]);
 
   useEffect(() => {
@@ -695,7 +744,10 @@ export default function AuditLogPage() {
                         <TableCell className="align-top text-sm">
                           {entry.subject?.id ? (
                             <Link
-                              href={`/admin/members/${entry.subject.id}`}
+                              href={buildHrefWithReturnTo(
+                                `/admin/members/${entry.subject.id}`,
+                                currentAuditPath
+                              )}
                               className="text-blue-600 hover:underline"
                               onClick={(event) => event.stopPropagation()}
                             >
@@ -730,7 +782,7 @@ export default function AuditLogPage() {
                           )}
                         </TableCell>
                         <TableCell className="align-top">
-                          <PrimaryDrilldowns links={entry.drilldowns} />
+                          <PrimaryDrilldowns links={entry.drilldowns} returnTo={currentAuditPath} />
                         </TableCell>
                       </TableRow>
                       {expanded ? (

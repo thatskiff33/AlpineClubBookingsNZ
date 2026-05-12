@@ -26,6 +26,7 @@ import {
   getAdminPasswordResetExpiryLabel,
   type AdminPasswordResetExpiryWindow,
 } from "@/lib/password-reset"
+import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 
 interface Member {
   id: string; firstName: string; lastName: string; email: string
@@ -284,16 +285,25 @@ export default function MembersPage() {
       .catch(() => setXeroConnected(false))
   }, [])
 
-  useEffect(() => {
+  const buildMembersSearchParams = useCallback(() => {
     const params = new URLSearchParams()
     if (debouncedSearch) params.set("q", debouncedSearch)
     if (page > 1) params.set("page", String(page))
     if (sortBy !== "name") params.set("sortBy", sortBy)
     if (sortDir !== "asc") params.set("sortDir", sortDir)
     Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v) })
+    return params
+  }, [debouncedSearch, page, sortBy, sortDir, filters])
+
+  const buildMembersListPath = useCallback(() => {
+    const params = buildMembersSearchParams()
     const qs = params.toString()
-    router.replace(qs ? `/admin/members?${qs}` : "/admin/members", { scroll: false })
-  }, [debouncedSearch, page, sortBy, sortDir, filters, router])
+    return qs ? `/admin/members?${qs}` : "/admin/members"
+  }, [buildMembersSearchParams])
+
+  useEffect(() => {
+    router.replace(buildMembersListPath(), { scroll: false })
+  }, [buildMembersListPath, router])
 
   const fetchMembers = useCallback(async () => {
     try {
@@ -600,7 +610,7 @@ export default function MembersPage() {
   }
 
   const openEditDialog = (member: Member) => {
-    router.push(`/admin/members/${member.id}?edit=true`)
+    router.push(buildHrefWithReturnTo(`/admin/members/${member.id}?edit=true`, buildMembersListPath()))
   }
 
   const closePendingXeroCreateDecision = () => {
@@ -1059,7 +1069,7 @@ export default function MembersPage() {
           </TableRow></TableHeader><TableBody>
             {members.map(member => <TableRow key={member.id} className="hover:bg-slate-50">
               <TableCell><input type="checkbox" checked={selectedIds.has(member.id)} onChange={() => toggleSelect(member.id)} className="h-4 w-4 rounded border-gray-300" /></TableCell>
-              <TableCell className="font-medium"><Link href={`/admin/members/${member.id}`} className="text-blue-600 hover:underline">{member.firstName} {member.lastName}</Link>{member.forcePasswordChange && <Badge variant="destructive" className="ml-2 text-xs">PW Reset</Badge>}</TableCell>
+              <TableCell className="font-medium"><Link href={buildHrefWithReturnTo(`/admin/members/${member.id}`, buildMembersListPath())} className="text-blue-600 hover:underline">{member.firstName} {member.lastName}</Link>{member.forcePasswordChange && <Badge variant="destructive" className="ml-2 text-xs">PW Reset</Badge>}</TableCell>
               <TableCell className="text-slate-600">{member.email}</TableCell>
               <TableCell><Badge variant={member.role === "ADMIN" ? "default" : "secondary"} className={member.role === "ADMIN" ? "bg-blue-600 text-white hover:bg-blue-700" : ""}>{member.role}</Badge></TableCell>
               <TableCell><Badge variant="secondary" className={financeAccessBadgeClass[member.financeAccessLevel]}>{financeAccessLabels[member.financeAccessLevel]}</Badge></TableCell>

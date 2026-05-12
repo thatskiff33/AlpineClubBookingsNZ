@@ -29,7 +29,7 @@ import { Separator } from "@/components/ui/separator";
 import { MEMBER_AUDIT_TIMELINE_CATEGORY_OPTIONS } from "@/lib/audit-query";
 import { getSafeInternalReturnPath } from "@/lib/internal-return-path";
 import { getAvailablePromoCodesForMember } from "@/lib/promo";
-import { subscriptionStatusClass } from "@/lib/status-colors";
+import { subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-colors";
 
 function singleSearchParam(value?: string | string[]) {
   return Array.isArray(value) ? value[0] : value;
@@ -244,7 +244,7 @@ export default async function ProfilePage({
               Subscription ({seasonLabel})
             </span>
             <Badge className={subscriptionStatusClass(subscriptionStatus ?? "NOT_INVOICED")}>
-              {subscriptionStatus === "PAID" ? "Paid" : subscriptionStatus === "UNPAID" ? "Unpaid" : subscriptionStatus === "OVERDUE" ? "Overdue" : "Not Invoiced"}
+              {subscriptionStatusLabel(subscriptionStatus ?? "NOT_INVOICED")}
             </Badge>
           </div>
         </CardContent>
@@ -309,7 +309,7 @@ export default async function ProfilePage({
                     )}
                   </span>
                   <Badge className={subscriptionStatusClass(sub.status)}>
-                    {sub.status === "PAID" ? "Paid" : sub.status === "UNPAID" ? "Unpaid" : sub.status === "OVERDUE" ? "Overdue" : sub.status.replace("_", " ")}
+                    {subscriptionStatusLabel(sub.status)}
                   </Badge>
                 </div>
               );

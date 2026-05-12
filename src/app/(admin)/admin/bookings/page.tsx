@@ -9,6 +9,7 @@ import { BookingFilters } from "@/components/admin/booking-filters";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { AdminBookingCalendar } from "@/components/admin-booking-calendar";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
+import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -109,6 +110,13 @@ export default async function AdminBookingsPage({
     ? params.sortDir
     : getDefaultSortDir(sortBy);
   const monthFilter = params.month;
+  const currentSearchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string" && value) {
+      currentSearchParams.set(key, value);
+    }
+  }
+  const currentBookingsPath = buildPathWithSearch("/admin/bookings", currentSearchParams);
 
   const where: Prisma.BookingWhereInput = {};
   const checkInFilter: Prisma.DateTimeFilter = {};
@@ -302,7 +310,10 @@ export default async function AdminBookingsPage({
                   return (
                     <tr key={booking.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3">
-                        <Link href={`/admin/members/${booking.member.id}`} className="hover:underline">
+                        <Link
+                          href={buildHrefWithReturnTo(`/admin/members/${booking.member.id}`, currentBookingsPath)}
+                          className="hover:underline"
+                        >
                           <p className="font-medium text-sm text-blue-600">
                             {booking.member.firstName} {booking.member.lastName}
                           </p>
@@ -320,7 +331,10 @@ export default async function AdminBookingsPage({
                       <td className="px-4 py-3 text-sm font-medium">{formatCents(booking.finalPriceCents)}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-2">
-                          <Link href={`/bookings/${booking.id}`} className="inline-flex">
+                          <Link
+                            href={buildHrefWithReturnTo(`/bookings/${booking.id}`, currentBookingsPath)}
+                            className="inline-flex"
+                          >
                             <Badge variant="secondary" className={`${bookingStatusClass(booking.status)} cursor-pointer`}>
                               {bookingStatusLabel(booking.status)}
                             </Badge>
@@ -337,7 +351,7 @@ export default async function AdminBookingsPage({
                       </td>
                       <td className="px-4 py-3 text-sm">
                         <Link
-                          href={buildXeroRecordActivityUrl("Booking", booking.id)}
+                          href={buildXeroRecordActivityUrl("Booking", booking.id, currentBookingsPath)}
                           className="text-blue-600 hover:underline"
                         >
                           Activity

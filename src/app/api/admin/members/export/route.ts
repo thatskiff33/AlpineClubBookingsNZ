@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
 import { AgeTier } from "@prisma/client";
 import logger from "@/lib/logger";
+import { getAgeTierSettings } from "@/lib/age-tier";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
 const SUBSCRIPTION_STATUS_FILTERS = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"] as const;
@@ -39,6 +40,18 @@ export async function GET(req: NextRequest) {
   const q = sp.get("q") || undefined;
   const now = new Date();
   const currentSeasonYear = getSeasonYear(now);
+  const ageTierSettings = await getAgeTierSettings();
+  const notRequiredAgeTiers = new Set(
+    ageTierSettings
+      .filter((setting) => setting.subscriptionRequiredForBooking === false)
+      .map((setting) => setting.tier)
+  );
+  const notRequiredSubscriptionConditions = [
+    { role: "ADMIN" },
+    ...(notRequiredAgeTiers.size > 0
+      ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
+      : []),
+  ];
 
   // Build where clause (same logic as list endpoint)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -120,7 +133,7 @@ export async function GET(req: NextRequest) {
 
   const subscriptionFilter = sp.get("subscription");
   if (subscriptionFilter === "NOT_REQUIRED") {
-    andConditions.push({ role: "ADMIN" });
+    andConditions.push({ OR: notRequiredSubscriptionConditions });
   } else if (subscriptionFilter === "NONE") {
     andConditions.push(
       { role: { not: "ADMIN" } },
@@ -211,7 +224,9 @@ export async function GET(req: NextRequest) {
       m.ageTier,
       m.active ? "Yes" : "No",
       m.xeroContactId || "",
-      m.role === "ADMIN" ? "NOT_REQUIRED" : m.subscriptions[0]?.status || "NONE",
+      m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
+        ? "NOT_REQUIRED"
+        : m.subscriptions[0]?.status || "NONE",
       new Date(m.createdAt).toISOString(),
     ]);
 

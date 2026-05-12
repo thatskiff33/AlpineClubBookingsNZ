@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getSeasonYear } from "@/lib/utils";
+import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
 
 export async function GET() {
   const session = await auth();
@@ -24,17 +25,29 @@ export async function GET() {
     xeroOnlineInvoiceUrl: true,
   } as const;
 
-  const sub = await prisma.memberSubscription.findFirst({
-    where: { memberId: session.user.id, seasonYear },
-    select: subscriptionSelect,
+  const member = await prisma.member.findUnique({
+    where: { id: session.user.id },
+    select: {
+      role: true,
+      ageTier: true,
+      subscriptions: {
+        where: { seasonYear },
+        select: subscriptionSelect,
+        take: 1,
+      },
+    },
   });
 
+  const sub = member?.subscriptions[0] ?? null;
+  const subscriptionRequired =
+    member?.role !== "ADMIN" &&
+    await requiresPaidSubscriptionForAgeTierFromSettings(member?.ageTier);
   const status = sub?.status ?? "NOT_INVOICED";
 
   return NextResponse.json({
-    status,
+    status: subscriptionRequired ? status : "NOT_REQUIRED",
     seasonDisplay,
-    invoiceUrl: sub?.xeroOnlineInvoiceUrl ?? null,
-    invoiceNumber: sub?.xeroInvoiceNumber ?? null,
+    invoiceUrl: subscriptionRequired ? sub?.xeroOnlineInvoiceUrl ?? null : null,
+    invoiceNumber: subscriptionRequired ? sub?.xeroInvoiceNumber ?? null : null,
   });
 }

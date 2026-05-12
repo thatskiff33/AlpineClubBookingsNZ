@@ -7,7 +7,7 @@ import { randomBytes } from "crypto";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { computeAgeTier, getSeasonStartDate } from "@/lib/age-tier";
+import { computeAgeTier, getAgeTierSettings, getSeasonStartDate } from "@/lib/age-tier";
 import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
@@ -128,6 +128,18 @@ export async function GET(req: NextRequest) {
 
   const now = new Date();
   const currentSeasonYear = getSeasonYear(now);
+  const ageTierSettings = await getAgeTierSettings();
+  const notRequiredAgeTiers = new Set(
+    ageTierSettings
+      .filter((setting) => setting.subscriptionRequiredForBooking === false)
+      .map((setting) => setting.tier)
+  );
+  const notRequiredSubscriptionConditions = [
+    { role: "ADMIN" },
+    ...(notRequiredAgeTiers.size > 0
+      ? [{ ageTier: { in: Array.from(notRequiredAgeTiers) } }]
+      : []),
+  ];
 
   // Build where clause
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -292,7 +304,7 @@ export async function GET(req: NextRequest) {
   // Filter: subscription
   const subscriptionFilter = sp.get("subscription");
   if (subscriptionFilter === "NOT_REQUIRED") {
-    andConditions.push({ role: "ADMIN" });
+    andConditions.push({ OR: notRequiredSubscriptionConditions });
   } else if (subscriptionFilter === "NONE") {
     andConditions.push(
       { role: { not: "ADMIN" } },
@@ -472,8 +484,14 @@ export async function GET(req: NextRequest) {
 
     return {
       ...m,
-      subscriptionStatus: m.role === "ADMIN" ? "NOT_REQUIRED" : m.subscriptions[0]?.status ?? null,
-      subscriptionXeroInvoiceId: m.role === "ADMIN" ? null : m.subscriptions[0]?.xeroInvoiceId ?? null,
+      subscriptionStatus:
+        m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
+          ? "NOT_REQUIRED"
+          : m.subscriptions[0]?.status ?? null,
+      subscriptionXeroInvoiceId:
+        m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
+          ? null
+          : m.subscriptions[0]?.xeroInvoiceId ?? null,
       familyGroups: m.familyGroupMemberships.map((fg) => ({
         id: fg.familyGroup.id,
         name: fg.familyGroup.name,

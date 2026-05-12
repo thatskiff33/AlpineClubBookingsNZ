@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { format, subMonths } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,7 @@ import Link from "next/link";
 import { DateRangeControls } from "@/components/admin/date-range-controls";
 import { auditAndPaymentsDateRangePresets } from "@/lib/date-range-presets";
 import { buildXeroRecordActivityUrl } from "@/lib/xero-record-links";
+import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 
 function formatCents(cents: number): string {
   return "$" + (cents / 100).toFixed(2);
@@ -61,6 +63,32 @@ type PaymentSortBy =
   | "settlement";
 
 type SortDir = "asc" | "desc";
+const paymentSortColumns = new Set<PaymentSortBy>([
+  "lastUpdated",
+  "checkIn",
+  "member",
+  "booking",
+  "amount",
+  "status",
+  "stripe",
+  "xeroInvoice",
+  "settlement",
+]);
+
+function parsePageParam(value: string | null) {
+  const page = Number(value);
+  return Number.isInteger(page) && page > 0 ? page : 1;
+}
+
+function getSortBy(value: string | null): PaymentSortBy {
+  return paymentSortColumns.has(value as PaymentSortBy)
+    ? (value as PaymentSortBy)
+    : "lastUpdated";
+}
+
+function getSortDir(value: string | null): SortDir {
+  return value === "asc" ? "asc" : "desc";
+}
 
 interface PaymentRow {
   id: string;
@@ -88,52 +116,49 @@ interface PaymentRow {
 }
 
 export default function PaymentsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [generatingInvoice, setGeneratingInvoice] = useState<string | null>(null);
   const [invoiceError, setInvoiceError] = useState<string | null>(null);
   const [invoiceNotice, setInvoiceNotice] = useState<string | null>(null);
   const [queuedInvoicePaymentIds, setQueuedInvoicePaymentIds] = useState<Record<string, true>>({});
-  const [status, setStatus] = useState("all");
-  const [lastUpdatedFrom, setLastUpdatedFrom] = useState(format(subMonths(new Date(), 3), "yyyy-MM-dd"));
-  const [lastUpdatedTo, setLastUpdatedTo] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [checkInFrom, setCheckInFrom] = useState("");
-  const [checkInTo, setCheckInTo] = useState("");
-  const [search, setSearch] = useState("");
-  const [amountExact, setAmountExact] = useState("");
-  const [amountMin, setAmountMin] = useState("");
-  const [amountMax, setAmountMax] = useState("");
-  const [sortBy, setSortBy] = useState<PaymentSortBy>("lastUpdated");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [page, setPage] = useState(1);
+  const [status, setStatus] = useState(searchParams.get("status") || "all");
+  const [lastUpdatedFrom, setLastUpdatedFrom] = useState(
+    searchParams.get("lastUpdatedFrom") || format(subMonths(new Date(), 3), "yyyy-MM-dd")
+  );
+  const [lastUpdatedTo, setLastUpdatedTo] = useState(
+    searchParams.get("lastUpdatedTo") || format(new Date(), "yyyy-MM-dd")
+  );
+  const [checkInFrom, setCheckInFrom] = useState(searchParams.get("checkInFrom") || "");
+  const [checkInTo, setCheckInTo] = useState(searchParams.get("checkInTo") || "");
+  const [search, setSearch] = useState(searchParams.get("search") || "");
+  const [amountExact, setAmountExact] = useState(searchParams.get("amountExact") || "");
+  const [amountMin, setAmountMin] = useState(searchParams.get("amountMin") || "");
+  const [amountMax, setAmountMax] = useState(searchParams.get("amountMax") || "");
+  const [sortBy, setSortBy] = useState<PaymentSortBy>(() => getSortBy(searchParams.get("sortBy")));
+  const [sortDir, setSortDir] = useState<SortDir>(() => getSortDir(searchParams.get("sortDir")));
+  const [page, setPage] = useState(() => parsePageParam(searchParams.get("page")));
   const [pageSize] = useState(25);
   const [data, setData] = useState<PaymentRow[]>([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState({ totalRevenueCents: 0, refundedCents: 0, count: 0 });
   const [loading, setLoading] = useState(false);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({
-        status,
-        page: String(page),
-        pageSize: String(pageSize),
-        sortBy,
-        sortDir,
-      });
-      if (lastUpdatedFrom) params.set("lastUpdatedFrom", lastUpdatedFrom);
-      if (lastUpdatedTo) params.set("lastUpdatedTo", lastUpdatedTo);
-      if (checkInFrom) params.set("checkInFrom", checkInFrom);
-      if (checkInTo) params.set("checkInTo", checkInTo);
-      if (search.trim()) params.set("search", search.trim());
-      if (amountExact) params.set("amountExact", amountExact);
-      if (amountMin) params.set("amountMin", amountMin);
-      if (amountMax) params.set("amountMax", amountMax);
-      const res = await fetch(`/api/admin/payments?${params}`);
-      if (res.ok) {
-        const json = await res.json();
-        setData(json.data); setTotal(json.total); setSummary(json.summary);
-      }
-    } finally { setLoading(false); }
+  const buildPaymentsSearchParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (status !== "all") params.set("status", status);
+    if (lastUpdatedFrom) params.set("lastUpdatedFrom", lastUpdatedFrom);
+    if (lastUpdatedTo) params.set("lastUpdatedTo", lastUpdatedTo);
+    if (checkInFrom) params.set("checkInFrom", checkInFrom);
+    if (checkInTo) params.set("checkInTo", checkInTo);
+    if (search.trim()) params.set("search", search.trim());
+    if (amountExact) params.set("amountExact", amountExact);
+    if (amountMin) params.set("amountMin", amountMin);
+    if (amountMax) params.set("amountMax", amountMax);
+    if (sortBy !== "lastUpdated") params.set("sortBy", sortBy);
+    if (sortDir !== "desc") params.set("sortDir", sortDir);
+    if (page > 1) params.set("page", String(page));
+    return params;
   }, [
     status,
     lastUpdatedFrom,
@@ -147,7 +172,38 @@ export default function PaymentsPage() {
     sortBy,
     sortDir,
     page,
+  ]);
+
+  const paymentsQuery = buildPaymentsSearchParams().toString();
+  const currentPaymentsPath = paymentsQuery ? `/admin/payments?${paymentsQuery}` : "/admin/payments";
+
+  useEffect(() => {
+    const query = buildPaymentsSearchParams().toString();
+    router.replace(query ? `/admin/payments?${query}` : "/admin/payments", { scroll: false });
+  }, [buildPaymentsSearchParams, router]);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = buildPaymentsSearchParams();
+      params.set("status", status);
+      params.set("page", String(page));
+      params.set("pageSize", String(pageSize));
+      params.set("sortBy", sortBy);
+      params.set("sortDir", sortDir);
+      const res = await fetch(`/api/admin/payments?${params}`);
+      if (res.ok) {
+        const json = await res.json();
+        setData(json.data); setTotal(json.total); setSummary(json.summary);
+      }
+    } finally { setLoading(false); }
+  }, [
+    status,
+    sortBy,
+    sortDir,
+    page,
     pageSize,
+    buildPaymentsSearchParams,
   ]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -440,19 +496,25 @@ export default function PaymentsPage() {
                       <TableCell>{format(new Date(p.lastUpdatedAt), "d MMM yyyy")}</TableCell>
                       <TableCell>{format(new Date(p.booking.checkIn), "d MMM yyyy")}</TableCell>
                       <TableCell className="font-medium">
-                        <Link href={`/admin/members/${p.booking.member.id}`} className="text-blue-600 hover:underline">
+                        <Link
+                          href={buildHrefWithReturnTo(`/admin/members/${p.booking.member.id}`, currentPaymentsPath)}
+                          className="text-blue-600 hover:underline"
+                        >
                           {p.booking.member.lastName}, {p.booking.member.firstName}
                         </Link>
                       </TableCell>
                       <TableCell>
-                        <Link href={`/bookings/${p.booking.id}`} className="text-xs text-blue-600 hover:underline">
+                        <Link
+                          href={buildHrefWithReturnTo(`/bookings/${p.booking.id}`, currentPaymentsPath)}
+                          className="text-xs text-blue-600 hover:underline"
+                        >
                           View
                         </Link>
                       </TableCell>
                       <TableCell>{formatCents(p.amountCents)}</TableCell>
                       <TableCell>
                         <div className="space-y-1">
-                          <Link href={buildXeroRecordActivityUrl("Payment", p.id)} className="inline-flex">
+                          <Link href={buildXeroRecordActivityUrl("Payment", p.id, currentPaymentsPath)} className="inline-flex">
                             <Badge className={`${paymentStatusClass(displayStatus.toneStatus)} cursor-pointer`}>
                               {displayStatus.label}
                             </Badge>
@@ -508,7 +570,7 @@ export default function PaymentsPage() {
                             <span>—</span>
                           )}
                           <Link
-                            href={buildXeroRecordActivityUrl("Payment", p.id)}
+                            href={buildXeroRecordActivityUrl("Payment", p.id, currentPaymentsPath)}
                             className="inline-flex text-xs text-slate-600 hover:text-slate-900 hover:underline"
                           >
                             View activity

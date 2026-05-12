@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildHrefWithReturnTo,
+  buildPathWithSearch,
   buildProfilePathWithReturnTo,
   getSafeInternalReturnPath,
   resolveInternalReturnPath,
@@ -52,5 +54,26 @@ describe("internal return path helpers", () => {
     expect(buildProfilePathWithReturnTo("https://example.com", "family-group")).toBe(
       "/profile#family-group",
     );
+  });
+
+  it("builds internal links with a safe return path", () => {
+    expect(
+      buildHrefWithReturnTo(
+        "/admin/members/member-1?edit=true",
+        "/admin/bookings?page=2&sortBy=member#top",
+      ),
+    ).toBe(
+      "/admin/members/member-1?edit=true&returnTo=%2Fadmin%2Fbookings%3Fpage%3D2%26sortBy%3Dmember%23top",
+    );
+    expect(buildHrefWithReturnTo("/admin/members/member-1", "https://example.com")).toBe(
+      "/admin/members/member-1",
+    );
+  });
+
+  it("builds paths with query strings", () => {
+    expect(buildPathWithSearch("/admin/bookings", "page=2")).toBe(
+      "/admin/bookings?page=2",
+    );
+    expect(buildPathWithSearch("/admin/bookings", "")).toBe("/admin/bookings");
   });
 });

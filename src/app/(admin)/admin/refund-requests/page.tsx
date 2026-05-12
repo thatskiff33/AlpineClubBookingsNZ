@@ -3,14 +3,21 @@
 import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 import { useSession } from "next-auth/react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { getCancellationSettlementBreakdown } from "@/lib/payment-status-display"
+import { buildHrefWithReturnTo } from "@/lib/internal-return-path"
 
 type ReviewFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL"
+const reviewFilters = new Set<ReviewFilter>(["PENDING", "APPROVED", "REJECTED", "ALL"])
+
+function isReviewFilter(value: string | null): value is ReviewFilter {
+  return reviewFilters.has(value as ReviewFilter)
+}
 
 interface RefundRequestData {
   id: string
@@ -98,11 +105,16 @@ function formatDateTime(value: string | null) {
 }
 
 export default function RefundRequestsPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialFilter = searchParams.get("status")
   const { data: session } = useSession()
   const [refundRequests, setRefundRequests] = useState<RefundRequestData[]>([])
   const [creditApprovals, setCreditApprovals] = useState<CreditApprovalRequestData[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<ReviewFilter>("PENDING")
+  const [filter, setFilter] = useState<ReviewFilter>(
+    isReviewFilter(initialFilter) ? initialFilter : "PENDING"
+  )
   const [reviewingRefundId, setReviewingRefundId] = useState<string | null>(null)
   const [reviewingCreditId, setReviewingCreditId] = useState<string | null>(null)
   const [adminNotes, setAdminNotes] = useState("")
@@ -110,6 +122,12 @@ export default function RefundRequestsPage() {
   const [processingRefund, setProcessingRefund] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const currentRefundRequestsPath =
+    filter === "PENDING" ? "/admin/refund-requests" : `/admin/refund-requests?status=${filter}`
+
+  useEffect(() => {
+    router.replace(currentRefundRequestsPath, { scroll: false })
+  }, [currentRefundRequestsPath, router])
 
   const fetchRequests = useCallback(async () => {
     setLoading(true)
@@ -506,7 +524,7 @@ export default function RefundRequestsPage() {
                           <div>
                             <CardTitle className="text-lg">
                               <Link
-                                href={`/admin/members/${request.member.id}`}
+                                href={buildHrefWithReturnTo(`/admin/members/${request.member.id}`, currentRefundRequestsPath)}
                                 className="hover:underline"
                               >
                                 {request.member.firstName} {request.member.lastName}
@@ -555,7 +573,7 @@ export default function RefundRequestsPage() {
                           <div>
                             <span className="text-muted-foreground">Member:</span>{" "}
                             <Link
-                              href={`/admin/members/${request.member.id}`}
+                              href={buildHrefWithReturnTo(`/admin/members/${request.member.id}`, currentRefundRequestsPath)}
                               className="text-blue-600 hover:underline"
                             >
                               Open member

@@ -43,6 +43,12 @@ vi.mock("@/lib/rate-limit", () => ({ applyRateLimit: vi.fn().mockReturnValue(nul
 vi.mock("@/lib/age-tier", () => ({
   computeAgeTier: vi.fn().mockResolvedValue("ADULT"),
   getSeasonStartDate: vi.fn().mockReturnValue(new Date("2026-04-01")),
+  getAgeTierSettings: vi.fn().mockResolvedValue([
+    { tier: "INFANT", label: "Infant", minAge: 0, maxAge: 4, sortOrder: 0, subscriptionRequiredForBooking: false, xeroAcceptedContactGroups: [] },
+    { tier: "CHILD", label: "Child", minAge: 5, maxAge: 9, sortOrder: 1, subscriptionRequiredForBooking: false, xeroAcceptedContactGroups: [] },
+    { tier: "YOUTH", label: "Youth", minAge: 10, maxAge: 17, sortOrder: 2, subscriptionRequiredForBooking: true, xeroAcceptedContactGroups: [] },
+    { tier: "ADULT", label: "Adult", minAge: 18, maxAge: null, sortOrder: 3, subscriptionRequiredForBooking: true, xeroAcceptedContactGroups: [] },
+  ]),
 }));
 const {
   mockIsXeroConnected,
@@ -508,7 +514,14 @@ describe("Phase 3: Admin Member Management", () => {
 
       await getMembers(new NextRequest("http://localhost/api/admin/members?subscription=NOT_REQUIRED"));
       const call = vi.mocked(prisma.member.findMany).mock.calls[0][0]!;
-      expect(call.where?.AND).toEqual(expect.arrayContaining([{ role: "ADMIN" }]));
+      expect(call.where?.AND).toEqual(expect.arrayContaining([
+        {
+          OR: expect.arrayContaining([
+            { role: "ADMIN" },
+            { ageTier: { in: expect.arrayContaining(["INFANT", "CHILD"]) } },
+          ]),
+        },
+      ]));
     });
 
     it("returns admin users with subscription not required", async () => {
@@ -638,7 +651,12 @@ describe("Phase 3: Admin Member Management", () => {
         { passwordChangedAt: null },
         { lastLoginAt: null },
         { passwordResetTokens: { some: { used: false, expiresAt: { gt: expect.any(Date) } } } },
-        { role: "ADMIN" },
+        {
+          OR: expect.arrayContaining([
+            { role: "ADMIN" },
+            { ageTier: { in: expect.arrayContaining(["INFANT", "CHILD"]) } },
+          ]),
+        },
       ]));
     });
 

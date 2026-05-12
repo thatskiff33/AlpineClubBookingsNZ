@@ -67,6 +67,7 @@ enum ApplicationStatus {
 
 enum SubscriptionStatus {
   NOT_INVOICED
+  NOT_REQUIRED
   UNPAID
   PAID
   OVERDUE
