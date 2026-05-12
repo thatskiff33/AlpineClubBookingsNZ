@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   findUniqueOperation: vi.fn(),
   findUniquePayment: vi.fn(),
+  findUniqueMember: vi.fn(),
   updatePayment: vi.fn(),
   findUniqueBookingModification: vi.fn(),
   completeXeroSyncOperation: vi.fn(),
+  buildXeroContactUpdatePayload: vi.fn(),
+  shouldRepairXeroContactNameOrder: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
   updateXeroContact: vi.fn(),
   createXeroInvoiceForBooking: vi.fn(),
@@ -30,10 +33,18 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.findUniquePayment,
       update: mocks.updatePayment,
     },
+    member: {
+      findUnique: mocks.findUniqueMember,
+    },
     bookingModification: {
       findUnique: mocks.findUniqueBookingModification,
     },
   },
+}));
+
+vi.mock("@/lib/xero-contact-sync", () => ({
+  buildXeroContactUpdatePayload: mocks.buildXeroContactUpdatePayload,
+  shouldRepairXeroContactNameOrder: mocks.shouldRepairXeroContactNameOrder,
 }));
 
 vi.mock("@/lib/xero", () => ({
@@ -131,13 +142,30 @@ describe("getXeroOperationRetryMeta", () => {
     );
   });
 
-  it("requires a complete stored payload for contact updates", () => {
+  it("allows member contact updates to be rebuilt from the current member record", () => {
     const result = getXeroOperationRetryMeta(
       makeOperation({
         entityType: "CONTACT",
         operationType: "UPDATE",
         localModel: "Member",
         localId: "mem_123",
+        requestPayload: null,
+      })
+    );
+
+    expect(result).toEqual({
+      supported: true,
+      reason: null,
+    });
+  });
+
+  it("requires a complete stored payload for non-member contact updates", () => {
+    const result = getXeroOperationRetryMeta(
+      makeOperation({
+        entityType: "CONTACT",
+        operationType: "UPDATE",
+        localModel: "ExternalContact",
+        localId: "external_123",
         requestPayload: { contacts: [{}] },
       })
     );
@@ -152,6 +180,29 @@ describe("getXeroOperationRetryMeta", () => {
 describe("retryXeroSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.findUniqueMember.mockResolvedValue(null);
+    mocks.shouldRepairXeroContactNameOrder.mockResolvedValue(false);
+    mocks.buildXeroContactUpdatePayload.mockImplementation((member) => ({
+      firstName: member.firstName,
+      lastName: member.lastName,
+      email: member.email,
+      dateOfBirth: member.dateOfBirth,
+      phoneCountryCode: member.phoneCountryCode,
+      phoneAreaCode: member.phoneAreaCode,
+      phoneNumber: member.phoneNumber,
+      streetAddressLine1: member.streetAddressLine1,
+      streetAddressLine2: member.streetAddressLine2,
+      streetCity: member.streetCity,
+      streetRegion: member.streetRegion,
+      streetPostalCode: member.streetPostalCode,
+      streetCountry: member.streetCountry,
+      postalAddressLine1: member.postalAddressLine1,
+      postalAddressLine2: member.postalAddressLine2,
+      postalCity: member.postalCity,
+      postalRegion: member.postalRegion,
+      postalPostalCode: member.postalPostalCode,
+      postalCountry: member.postalCountry,
+    }));
   });
 
   it("replays booking invoice creation through the booking payment relationship", async () => {
@@ -270,6 +321,74 @@ describe("retryXeroSyncOperation", () => {
         streetAddressLine1: "1 Test Street",
         postalAddressLine1: "PO Box 99",
         dateOfBirth: new Date(Date.UTC(1990, 2, 2)),
+      }),
+      expect.objectContaining({
+        localModel: "Member",
+        localId: "mem_123",
+        createdByMemberId: "admin_1",
+        preserveXeroName: false,
+      })
+    );
+  });
+
+  it("rebuilds member contact updates from the current member when the stored payload is redacted", async () => {
+    const currentMember = {
+      xeroContactId: "xero_contact_current",
+      firstName: "Janet",
+      lastName: "Doe",
+      email: "janet@example.com",
+      dateOfBirth: new Date(Date.UTC(1991, 4, 6)),
+      phoneCountryCode: "64",
+      phoneAreaCode: "27",
+      phoneNumber: "7654321",
+      streetAddressLine1: "2 Current Street",
+      streetAddressLine2: null,
+      streetCity: "Rotorua",
+      streetRegion: "Bay of Plenty",
+      streetPostalCode: "3010",
+      streetCountry: "NZ",
+      postalAddressLine1: "PO Box 100",
+      postalAddressLine2: null,
+      postalCity: "Rotorua",
+      postalRegion: "Bay of Plenty",
+      postalPostalCode: "3040",
+      postalCountry: "NZ",
+    };
+    mocks.findUniqueMember.mockResolvedValue(currentMember);
+    mocks.shouldRepairXeroContactNameOrder.mockResolvedValue(true);
+    mocks.findUniqueOperation.mockResolvedValue(
+      makeOperation({
+        entityType: "CONTACT",
+        operationType: "UPDATE",
+        localModel: "Member",
+        localId: "mem_123",
+        requestPayload: {
+          contacts: [
+            {
+              contactID: "xero_contact_old",
+              firstName: "Jane",
+              lastName: "Doe",
+              emailAddress: "[REDACTED]",
+              phones: [{ phoneNumber: "[REDACTED]" }],
+            },
+          ],
+        },
+      })
+    );
+
+    await retryXeroSyncOperation("op_123", { createdByMemberId: "admin_1" });
+
+    expect(mocks.updateXeroContact).toHaveBeenCalledWith(
+      "xero_contact_current",
+      expect.objectContaining({
+        firstName: "Janet",
+        lastName: "Doe",
+        email: "janet@example.com",
+        phoneCountryCode: "64",
+        phoneAreaCode: "27",
+        phoneNumber: "7654321",
+        streetAddressLine1: "2 Current Street",
+        postalAddressLine1: "PO Box 100",
       }),
       expect.objectContaining({
         localModel: "Member",

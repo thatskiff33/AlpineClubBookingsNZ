@@ -162,6 +162,7 @@ import {
   importMembersFromXeroGroups,
   refreshXeroContactGroupCache,
   syncContactsFromXero,
+  updateXeroContact,
 } from "@/lib/xero";
 
 describe("Phase 4 contact sync and cached import", () => {
@@ -214,6 +215,52 @@ describe("Phase 4 contact sync and cached import", () => {
     mocks.accountingApi.updateContact.mockResolvedValue({
       body: { contacts: [{ contactID: "contact_1" }] },
     });
+  });
+
+  it("builds contact update idempotency keys from the exact outbound request payload", async () => {
+    await updateXeroContact(
+      "contact_1",
+      {
+        firstName: "Jane",
+        lastName: "Doe",
+        email: "jane@example.com",
+        phoneCountryCode: "64",
+        phoneAreaCode: "21",
+        phoneNumber: "1234567",
+      },
+      {
+        localModel: "Member",
+        localId: "member_1",
+        preserveXeroName: false,
+      }
+    );
+
+    const hashPayload = mocks.buildXeroPayloadHash.mock.calls[0][0] as {
+      contacts: Array<Record<string, unknown>>;
+    };
+    expect(hashPayload.contacts[0]).toEqual(
+      expect.objectContaining({
+        contactID: "contact_1",
+        name: "Jane Doe",
+        firstName: "Jane",
+        lastName: "Doe",
+        emailAddress: "jane@example.com",
+        phones: [
+          {
+            phoneType: "MOBILE",
+            phoneCountryCode: "64",
+            phoneAreaCode: "21",
+            phoneNumber: "1234567",
+          },
+        ],
+      })
+    );
+    expect(mocks.accountingApi.updateContact).toHaveBeenCalledWith(
+      "tenant_1",
+      "contact_1",
+      hashPayload,
+      "contact:contact_1:update:payload-hash:v2"
+    );
   });
 
   it("repairs missing contact snapshots when refreshing Xero contact groups", async () => {

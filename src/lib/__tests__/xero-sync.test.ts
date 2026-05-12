@@ -59,10 +59,40 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import {
+  buildXeroPayloadHash,
   findCanonicalPaymentRefundCreditNote,
   recordXeroInboundEvent,
+  sanitizeForJson,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
+
+describe("buildXeroPayloadHash", () => {
+  it("hashes the unredacted outbound payload while stored JSON remains redacted", () => {
+    const firstPayload = {
+      contacts: [
+        {
+          contactID: "contact_1",
+          emailAddress: "first@example.com",
+          phones: [{ phoneType: "MOBILE", phoneNumber: "0211234567" }],
+        },
+      ],
+    };
+    const secondPayload = {
+      contacts: [
+        {
+          contactID: "contact_1",
+          emailAddress: "second@example.com",
+          phones: [{ phoneType: "MOBILE", phoneNumber: "0217654321" }],
+        },
+      ],
+    };
+
+    expect(sanitizeForJson(firstPayload)).toEqual(sanitizeForJson(secondPayload));
+    expect(buildXeroPayloadHash(firstPayload)).not.toBe(
+      buildXeroPayloadHash(secondPayload)
+    );
+  });
+});
 
 describe("recordXeroInboundEvent", () => {
   beforeEach(() => {
