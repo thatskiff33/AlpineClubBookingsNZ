@@ -436,7 +436,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const shouldAutoOpenEdit = searchParams.get("edit") === "true"
 
   const resetXeroEntranceFeeDecision = () => {
-    resetXeroEntranceFeeDecision()
+    setXeroCreateEntranceFeeInvoice(false)
     setXeroEntranceFeeSkipReason("")
     setXeroEntranceFeeAmount("")
     setXeroEntranceFeeNarration("")
