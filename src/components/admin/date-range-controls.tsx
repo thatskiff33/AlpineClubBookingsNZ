@@ -18,6 +18,7 @@ interface DateRangeControlsProps {
   presetLabel?: string;
   fromLabel?: string;
   toLabel?: string;
+  idPrefix?: string;
 }
 
 export function DateRangeControls({
@@ -29,6 +30,7 @@ export function DateRangeControls({
   presetLabel = "Quick Range",
   fromLabel = "From",
   toLabel = "To",
+  idPrefix = "date-range",
 }: DateRangeControlsProps) {
   const selectedPreset =
     findMatchingDateRangePreset(from, to, presets) ?? CUSTOM_DATE_RANGE_KEY;
@@ -68,11 +70,11 @@ export function DateRangeControls({
         </select>
       </div>
       <div className="space-y-1">
-        <Label className="text-xs" htmlFor="date-range-from">
+        <Label className="text-xs" htmlFor={`${idPrefix}-from`}>
           {fromLabel}
         </Label>
         <Input
-          id="date-range-from"
+          id={`${idPrefix}-from`}
           type="date"
           value={from}
           onChange={(event) => onFromChange(event.target.value)}
@@ -80,11 +82,11 @@ export function DateRangeControls({
         />
       </div>
       <div className="space-y-1">
-        <Label className="text-xs" htmlFor="date-range-to">
+        <Label className="text-xs" htmlFor={`${idPrefix}-to`}>
           {toLabel}
         </Label>
         <Input
-          id="date-range-to"
+          id={`${idPrefix}-to`}
           type="date"
           value={to}
           onChange={(event) => onToChange(event.target.value)}

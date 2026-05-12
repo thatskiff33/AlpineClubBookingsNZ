@@ -13,11 +13,14 @@ export function BookingFilters() {
   const searchParams = useSearchParams();
 
   const [status, setStatus] = useState(searchParams.get("status") || "all");
-  const [from, setFrom] = useState(searchParams.get("from") || "");
-  const [to, setTo] = useState(searchParams.get("to") || "");
+  const [updatedFrom, setUpdatedFrom] = useState(searchParams.get("updatedFrom") || "");
+  const [updatedTo, setUpdatedTo] = useState(searchParams.get("updatedTo") || "");
+  const [checkInFrom, setCheckInFrom] = useState(searchParams.get("checkInFrom") || searchParams.get("from") || "");
+  const [checkInTo, setCheckInTo] = useState(searchParams.get("checkInTo") || searchParams.get("to") || "");
   const [search, setSearch] = useState(searchParams.get("search") || "");
-  const [sort, setSort] = useState(searchParams.get("sort") || "updatedAt");
   const [month, setMonth] = useState(searchParams.get("month") || "");
+  const sortBy = searchParams.get("sortBy") || searchParams.get("sort") || "updatedAt";
+  const sortDir = searchParams.get("sortDir") || "desc";
   const bookingStatuses = ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED", "CANCELLED", "BUMPED", "COMPLETED", "DRAFT"] as const;
 
   // Generate month options: current year ±1
@@ -34,20 +37,24 @@ export function BookingFilters() {
   function applyFilters() {
     const params = new URLSearchParams();
     if (status !== "all") params.set("status", status);
-    if (from) params.set("from", from);
-    if (to) params.set("to", to);
+    if (updatedFrom) params.set("updatedFrom", updatedFrom);
+    if (updatedTo) params.set("updatedTo", updatedTo);
+    if (checkInFrom) params.set("checkInFrom", checkInFrom);
+    if (checkInTo) params.set("checkInTo", checkInTo);
     if (search) params.set("search", search);
-    if (sort !== "updatedAt") params.set("sort", sort);
+    if (sortBy !== "updatedAt") params.set("sortBy", sortBy);
+    if (sortDir !== "desc") params.set("sortDir", sortDir);
     if (month) params.set("month", month);
     router.push(`/admin/bookings?${params.toString()}`);
   }
 
   function clearFilters() {
     setStatus("all");
-    setFrom("");
-    setTo("");
+    setUpdatedFrom("");
+    setUpdatedTo("");
+    setCheckInFrom("");
+    setCheckInTo("");
     setSearch("");
-    setSort("updatedAt");
     setMonth("");
     router.push("/admin/bookings");
   }
@@ -84,10 +91,25 @@ export function BookingFilters() {
       </div>
       <DateRangeControls
         presets={bookingFilterDateRangePresets}
-        from={from}
-        to={to}
-        onFromChange={setFrom}
-        onToChange={setTo}
+        from={updatedFrom}
+        to={updatedTo}
+        presetLabel="Updated Range"
+        fromLabel="Updated From"
+        toLabel="Updated To"
+        idPrefix="bookings-updated"
+        onFromChange={setUpdatedFrom}
+        onToChange={setUpdatedTo}
+      />
+      <DateRangeControls
+        presets={bookingFilterDateRangePresets}
+        from={checkInFrom}
+        to={checkInTo}
+        presetLabel="Check In Range"
+        fromLabel="Check In From"
+        toLabel="Check In To"
+        idPrefix="bookings-check-in"
+        onFromChange={setCheckInFrom}
+        onToChange={setCheckInTo}
       />
       <div className="space-y-1">
         <label className="text-xs font-medium text-gray-500">Search member</label>
@@ -96,17 +118,6 @@ export function BookingFilters() {
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Name or email..."
         />
-      </div>
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">Sort by</label>
-        <select
-          value={sort}
-          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSort(e.target.value)}
-          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
-        >
-          <option value="updatedAt">Last Updated</option>
-          <option value="checkIn">Check-in Date</option>
-        </select>
       </div>
       <Button onClick={applyFilters} size="sm">
         Filter

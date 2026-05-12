@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import type { ReactNode } from "react";
 import { format, subMonths } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -21,7 +23,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { DollarSign, CreditCard, TrendingUp, BarChart2, ExternalLink, FileText } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  DollarSign,
+  CreditCard,
+  TrendingUp,
+  BarChart2,
+  ExternalLink,
+  FileText,
+  X,
+} from "lucide-react";
 import { paymentStatusClass } from "@/lib/status-colors";
 import {
   getCancellationSettlementBreakdown,
@@ -36,6 +49,19 @@ function formatCents(cents: number): string {
   return "$" + (cents / 100).toFixed(2);
 }
 
+type PaymentSortBy =
+  | "lastUpdated"
+  | "checkIn"
+  | "member"
+  | "booking"
+  | "amount"
+  | "status"
+  | "stripe"
+  | "xeroInvoice"
+  | "settlement";
+
+type SortDir = "asc" | "desc";
+
 interface PaymentRow {
   id: string;
   bookingId: string;
@@ -46,6 +72,8 @@ interface PaymentRow {
   xeroInvoiceNumber: string | null;
   refundedAmountCents: number;
   createdAt: string;
+  updatedAt: string;
+  lastUpdatedAt: string;
   booking: {
     id: string;
     status: string;
@@ -55,7 +83,7 @@ interface PaymentRow {
       amountCents: number;
       description: string | null;
     }>;
-    member: { firstName: string; lastName: string; email: string };
+    member: { id: string; firstName: string; lastName: string; email: string };
   };
 }
 
@@ -65,8 +93,16 @@ export default function PaymentsPage() {
   const [invoiceNotice, setInvoiceNotice] = useState<string | null>(null);
   const [queuedInvoicePaymentIds, setQueuedInvoicePaymentIds] = useState<Record<string, true>>({});
   const [status, setStatus] = useState("all");
-  const [from, setFrom] = useState(format(subMonths(new Date(), 3), "yyyy-MM-dd"));
-  const [to, setTo] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [lastUpdatedFrom, setLastUpdatedFrom] = useState(format(subMonths(new Date(), 3), "yyyy-MM-dd"));
+  const [lastUpdatedTo, setLastUpdatedTo] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [checkInFrom, setCheckInFrom] = useState("");
+  const [checkInTo, setCheckInTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [amountExact, setAmountExact] = useState("");
+  const [amountMin, setAmountMin] = useState("");
+  const [amountMax, setAmountMax] = useState("");
+  const [sortBy, setSortBy] = useState<PaymentSortBy>("lastUpdated");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(25);
   const [data, setData] = useState<PaymentRow[]>([]);
@@ -77,16 +113,42 @@ export default function PaymentsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ status, page: String(page), pageSize: String(pageSize) });
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
+      const params = new URLSearchParams({
+        status,
+        page: String(page),
+        pageSize: String(pageSize),
+        sortBy,
+        sortDir,
+      });
+      if (lastUpdatedFrom) params.set("lastUpdatedFrom", lastUpdatedFrom);
+      if (lastUpdatedTo) params.set("lastUpdatedTo", lastUpdatedTo);
+      if (checkInFrom) params.set("checkInFrom", checkInFrom);
+      if (checkInTo) params.set("checkInTo", checkInTo);
+      if (search.trim()) params.set("search", search.trim());
+      if (amountExact) params.set("amountExact", amountExact);
+      if (amountMin) params.set("amountMin", amountMin);
+      if (amountMax) params.set("amountMax", amountMax);
       const res = await fetch(`/api/admin/payments?${params}`);
       if (res.ok) {
         const json = await res.json();
         setData(json.data); setTotal(json.total); setSummary(json.summary);
       }
     } finally { setLoading(false); }
-  }, [status, from, to, page, pageSize]);
+  }, [
+    status,
+    lastUpdatedFrom,
+    lastUpdatedTo,
+    checkInFrom,
+    checkInTo,
+    search,
+    amountExact,
+    amountMin,
+    amountMax,
+    sortBy,
+    sortDir,
+    page,
+    pageSize,
+  ]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -138,6 +200,70 @@ export default function PaymentsPage() {
     ? Math.round((data.filter((p) => p.status === "SUCCEEDED").length / Math.max(data.length, 1)) * 100)
     : 0;
 
+  function resetPage() {
+    setPage(1);
+  }
+
+  function clearFilters() {
+    setStatus("all");
+    setLastUpdatedFrom("");
+    setLastUpdatedTo("");
+    setCheckInFrom("");
+    setCheckInTo("");
+    setSearch("");
+    setAmountExact("");
+    setAmountMin("");
+    setAmountMax("");
+    setSortBy("lastUpdated");
+    setSortDir("desc");
+    setPage(1);
+  }
+
+  function toggleSort(column: PaymentSortBy) {
+    setPage(1);
+    if (sortBy === column) {
+      setSortDir((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortBy(column);
+    setSortDir(column === "member" || column === "booking" || column === "status" ? "asc" : "desc");
+  }
+
+  function SortIcon({ column }: { column: PaymentSortBy }) {
+    if (sortBy !== column) {
+      return <ArrowUpDown className="ml-1 h-3 w-3 opacity-40" />;
+    }
+
+    return sortDir === "asc" ? (
+      <ArrowUp className="ml-1 h-3 w-3" />
+    ) : (
+      <ArrowDown className="ml-1 h-3 w-3" />
+    );
+  }
+
+  function SortHeader({
+    column,
+    children,
+    className = "",
+  }: {
+    column: PaymentSortBy;
+    children: ReactNode;
+    className?: string;
+  }) {
+    return (
+      <TableHead className={className}>
+        <button
+          type="button"
+          onClick={() => toggleSort(column)}
+          className="inline-flex items-center whitespace-nowrap text-left"
+        >
+          {children}
+          <SortIcon column={column} />
+        </button>
+      </TableHead>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -148,7 +274,7 @@ export default function PaymentsPage() {
       <div className="flex flex-wrap gap-3 items-end">
         <div>
           <Label className="text-xs">Status</Label>
-          <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
+          <Select value={status} onValueChange={(v) => { setStatus(v); resetPage(); }}>
             <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
@@ -161,19 +287,99 @@ export default function PaymentsPage() {
             </SelectContent>
           </Select>
         </div>
+        <div className="space-y-1">
+          <Label className="text-xs" htmlFor="payment-member-search">Member name</Label>
+          <Input
+            id="payment-member-search"
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              resetPage();
+            }}
+            placeholder="Name or email..."
+            className="w-52"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs" htmlFor="payment-amount-exact">Amount exact</Label>
+          <Input
+            id="payment-amount-exact"
+            inputMode="decimal"
+            value={amountExact}
+            onChange={(event) => {
+              setAmountExact(event.target.value);
+              resetPage();
+            }}
+            placeholder="125.00"
+            className="w-32"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs" htmlFor="payment-amount-min">Amount min</Label>
+          <Input
+            id="payment-amount-min"
+            inputMode="decimal"
+            value={amountMin}
+            onChange={(event) => {
+              setAmountMin(event.target.value);
+              resetPage();
+            }}
+            placeholder="50.00"
+            className="w-32"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-xs" htmlFor="payment-amount-max">Amount max</Label>
+          <Input
+            id="payment-amount-max"
+            inputMode="decimal"
+            value={amountMax}
+            onChange={(event) => {
+              setAmountMax(event.target.value);
+              resetPage();
+            }}
+            placeholder="250.00"
+            className="w-32"
+          />
+        </div>
         <DateRangeControls
           presets={auditAndPaymentsDateRangePresets}
-          from={from}
-          to={to}
+          from={lastUpdatedFrom}
+          to={lastUpdatedTo}
+          presetLabel="Updated Range"
+          fromLabel="Updated From"
+          toLabel="Updated To"
+          idPrefix="payments-updated"
           onFromChange={(value) => {
-            setFrom(value);
-            setPage(1);
+            setLastUpdatedFrom(value);
+            resetPage();
           }}
           onToChange={(value) => {
-            setTo(value);
-            setPage(1);
+            setLastUpdatedTo(value);
+            resetPage();
           }}
         />
+        <DateRangeControls
+          presets={auditAndPaymentsDateRangePresets}
+          from={checkInFrom}
+          to={checkInTo}
+          presetLabel="Check In Range"
+          fromLabel="Check In From"
+          toLabel="Check In To"
+          idPrefix="payments-check-in"
+          onFromChange={(value) => {
+            setCheckInFrom(value);
+            resetPage();
+          }}
+          onToChange={(value) => {
+            setCheckInTo(value);
+            resetPage();
+          }}
+        />
+        <Button onClick={clearFilters} variant="outline" size="sm">
+          <X className="mr-1 h-4 w-4" />
+          Clear
+        </Button>
       </div>
 
       {invoiceError && (
@@ -201,13 +407,21 @@ export default function PaymentsPage() {
         <CardContent className="p-0">
           <Table>
             <TableHeader><TableRow>
-              <TableHead>Date</TableHead><TableHead>Member</TableHead><TableHead>Booking</TableHead><TableHead>Amount</TableHead><TableHead>Status</TableHead><TableHead>Stripe</TableHead><TableHead>Xero Invoice</TableHead><TableHead>Settlement</TableHead>
+              <SortHeader column="lastUpdated">Last Updated</SortHeader>
+              <SortHeader column="checkIn">Check In</SortHeader>
+              <SortHeader column="member">Member</SortHeader>
+              <SortHeader column="booking">Booking</SortHeader>
+              <SortHeader column="amount">Amount</SortHeader>
+              <SortHeader column="status">Status</SortHeader>
+              <SortHeader column="stripe">Stripe</SortHeader>
+              <SortHeader column="xeroInvoice">Xero Invoice</SortHeader>
+              <SortHeader column="settlement">Settlement</SortHeader>
             </TableRow></TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={8} className="text-center py-8 text-slate-500">Loading...</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center py-8 text-slate-500">Loading...</TableCell></TableRow>
               ) : data.length === 0 ? (
-                <TableRow><TableCell colSpan={8} className="text-center py-8 text-slate-500">No payments found</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="text-center py-8 text-slate-500">No payments found</TableCell></TableRow>
               ) : (
                 data.map((p) => {
                   const displayStatus = getPaymentDisplayStatus({
@@ -223,8 +437,13 @@ export default function PaymentsPage() {
 
                   return (
                     <TableRow key={p.id}>
+                      <TableCell>{format(new Date(p.lastUpdatedAt), "d MMM yyyy")}</TableCell>
                       <TableCell>{format(new Date(p.booking.checkIn), "d MMM yyyy")}</TableCell>
-                      <TableCell className="font-medium">{p.booking.member.lastName}, {p.booking.member.firstName}</TableCell>
+                      <TableCell className="font-medium">
+                        <Link href={`/admin/members/${p.booking.member.id}`} className="text-blue-600 hover:underline">
+                          {p.booking.member.lastName}, {p.booking.member.firstName}
+                        </Link>
+                      </TableCell>
                       <TableCell>
                         <Link href={`/bookings/${p.booking.id}`} className="text-xs text-blue-600 hover:underline">
                           View
@@ -233,9 +452,11 @@ export default function PaymentsPage() {
                       <TableCell>{formatCents(p.amountCents)}</TableCell>
                       <TableCell>
                         <div className="space-y-1">
-                          <Badge className={paymentStatusClass(displayStatus.toneStatus)}>
-                            {displayStatus.label}
-                          </Badge>
+                          <Link href={buildXeroRecordActivityUrl("Payment", p.id)} className="inline-flex">
+                            <Badge className={`${paymentStatusClass(displayStatus.toneStatus)} cursor-pointer`}>
+                              {displayStatus.label}
+                            </Badge>
+                          </Link>
                           {displayStatus.detail && (
                             <p className="max-w-56 text-xs text-slate-500">
                               {displayStatus.detail}
