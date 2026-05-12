@@ -497,6 +497,15 @@ describe("F9: PUT /api/lodge/guests/[date]/depart", () => {
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
     expect(data.departedAt).toBeTruthy();
+    expect(mockPrisma.bookingGuest.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          booking: expect.objectContaining({
+            checkOut: new Date("2026-07-10T00:00:00.000Z"),
+          }),
+        }),
+      })
+    );
     expect(mockPrisma.choreAssignment.deleteMany).toHaveBeenCalledWith({
       where: {
         bookingGuestId: "g1",

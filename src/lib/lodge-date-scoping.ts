@@ -32,6 +32,36 @@ export async function findLodgeGuestForDate(bookingGuestId: string, date: Date) 
   });
 }
 
+export async function findLodgeGuestDepartingOnDate(
+  bookingGuestId: string,
+  date: Date
+) {
+  return prisma.bookingGuest.findFirst({
+    where: {
+      id: bookingGuestId,
+      booking: {
+        status: { in: [...LODGE_VISIBLE_BOOKING_STATUSES] },
+        checkIn: { lte: date },
+        checkOut: date,
+      },
+    },
+    select: {
+      id: true,
+      bookingId: true,
+      firstName: true,
+      lastName: true,
+      memberId: true,
+      arrivedAt: true,
+      departedAt: true,
+      booking: {
+        select: {
+          memberId: true,
+        },
+      },
+    },
+  });
+}
+
 export async function assignmentExistsForDate(assignmentId: string, date: Date) {
   const assignment = await prisma.choreAssignment.findFirst({
     where: {
