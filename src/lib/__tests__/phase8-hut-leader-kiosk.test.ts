@@ -21,6 +21,7 @@ const {
       create: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      update: vi.fn(),
     },
     member: {
       count: vi.fn(),
@@ -65,6 +66,11 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     process.env.AUTH_SECRET = "test-auth-secret";
     process.env.NEXTAUTH_SECRET = "test-auth-secret";
     mockPrisma.member.count.mockResolvedValue(1);
+    mockPrisma.member.findUnique.mockResolvedValue({
+      id: "admin-1",
+      active: true,
+      forcePasswordChange: false,
+    });
     mockSendHutLeaderAssignmentEmail.mockResolvedValue(undefined);
     mockPrisma.auditLog.create.mockResolvedValue({});
     mockPrisma.choreAssignment.deleteMany.mockResolvedValue({ count: 0 });
@@ -154,6 +160,155 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.bookings[0].guests[0].phone).toBe("+64 27 4224115");
+  });
+
+  it("hides non-adult phone numbers in the kiosk guest list API", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+    });
+    mockPrisma.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-1",
+        checkIn: new Date("2026-07-10T00:00:00.000Z"),
+        checkOut: new Date("2026-07-11T00:00:00.000Z"),
+        expectedArrivalTime: "15:00",
+        member: { firstName: "Booking", lastName: "Owner" },
+        guests: [
+          {
+            id: "guest-1",
+            firstName: "Young",
+            lastName: "Guest",
+            ageTier: "YOUTH",
+            isMember: true,
+            arrivedAt: null,
+            departedAt: null,
+            member: {
+              ageTier: "YOUTH",
+              phoneCountryCode: "64",
+              phoneAreaCode: "27",
+              phoneNumber: "4224115",
+            },
+          },
+        ],
+      },
+    ]);
+
+    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
+    const res = await GET(
+      new Request("http://localhost/api/lodge/guests/2026-07-10") as any,
+      { params: Promise.resolve({ date: "2026-07-10" }) }
+    );
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.bookings[0].guests[0].ageTier).toBe("YOUTH");
+    expect(data.bookings[0].guests[0].phone).toBeNull();
+  });
+
+  it("includes checkout-day guests only in lodge-list guest scope", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+    });
+    mockPrisma.booking.findMany.mockResolvedValue([
+      {
+        id: "booking-1",
+        checkIn: new Date("2026-07-10T00:00:00.000Z"),
+        checkOut: new Date("2026-07-11T00:00:00.000Z"),
+        expectedArrivalTime: null,
+        member: { firstName: "Booking", lastName: "Owner" },
+        guests: [
+          {
+            id: "guest-1",
+            firstName: "Alice",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: true,
+            arrivedAt: null,
+            departedAt: null,
+            member: { ageTier: "ADULT" },
+          },
+        ],
+      },
+    ]);
+
+    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
+    const res = await GET(
+      new Request(
+        "http://localhost/api/lodge/guests/2026-07-11?scope=lodge-list"
+      ) as any,
+      { params: Promise.resolve({ date: "2026-07-11" }) }
+    );
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(mockPrisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          checkOut: { gte: new Date("2026-07-11T00:00:00.000Z") },
+        }),
+      })
+    );
+    expect(data.bookings[0].guests[0].isArriving).toBe(false);
+    expect(data.bookings[0].guests[0].isDeparting).toBe(true);
+  });
+
+  it("keeps the default lodge guest API scope stay-night compatible", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+    });
+    mockPrisma.booking.findMany.mockResolvedValue([]);
+
+    const { GET } = await import("@/app/api/lodge/guests/[date]/route");
+    const res = await GET(
+      new Request("http://localhost/api/lodge/guests/2026-07-11") as any,
+      { params: Promise.resolve({ date: "2026-07-11" }) }
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          checkOut: { gt: new Date("2026-07-11T00:00:00.000Z") },
+        }),
+      })
+    );
+  });
+
+  it("rotates hut leader PINs and returns the new PIN once for admins", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+    });
+    mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
+      id: "assign-1",
+      memberId: "member-1",
+      startDate: new Date("2026-07-10T00:00:00.000Z"),
+      endDate: new Date("2026-07-12T00:00:00.000Z"),
+      member: {
+        id: "member-1",
+        active: true,
+        email: "alice@example.com",
+        firstName: "Alice",
+      },
+    });
+    mockPrisma.hutLeaderAssignment.update.mockResolvedValue({ id: "assign-1" });
+    mockSendHutLeaderAssignmentEmail.mockResolvedValue(undefined);
+
+    const { POST } = await import("@/app/api/admin/hut-leaders/[id]/pin/route");
+    const res = await POST(new Request("http://localhost") as any, {
+      params: Promise.resolve({ id: "assign-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.pin).toMatch(/^\d{6}$/);
+    expect(data.emailSent).toBe(true);
+
+    const updateCall = mockPrisma.hutLeaderAssignment.update.mock.calls[0][0];
+    const emailCall = mockSendHutLeaderAssignmentEmail.mock.calls[0][0];
+    expect(updateCall.data.hutLeaderPin).toEqual(expect.any(String));
+    expect(updateCall.data.hutLeaderPin).not.toBe(data.pin);
+    expect(await bcrypt.compare(data.pin, updateCall.data.hutLeaderPin)).toBe(true);
+    expect(emailCall.pin).toBe(data.pin);
   });
 
   it("rejects unauthenticated lodge read-only access", async () => {
@@ -472,5 +627,31 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
       '{(effectiveTier === "none" || effectiveTier === "staying-guest") && ('
     );
     expect(content).toContain("unlock hut leader controls on");
+  });
+
+  it("renders the updated lodge kiosk list controls and refresh behavior", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const kioskPath = path.resolve(
+      process.cwd(),
+      "src",
+      "app",
+      "(lodge)",
+      "lodge",
+      "kiosk",
+      "page.tsx"
+    );
+    const content = fs.readFileSync(kioskPath, "utf-8");
+
+    expect(content).toContain("scope=lodge-list");
+    expect(content).toContain("Guests Arriving Today");
+    expect(content).toContain("Guests Staying");
+    expect(content).toContain("Guests Departing Today");
+    expect(content).toContain("guest.ageTier === \"ADULT\"");
+    expect(content).toContain("canMarkAttendance && guest.isArriving");
+    expect(content).toContain("canMarkAttendance && guest.isDeparting");
+    expect(content).toContain("120000");
+    expect(content).toContain("Manage Today's Roster");
+    expect(content).not.toContain("Manage Today&apos;s Roster");
   });
 });

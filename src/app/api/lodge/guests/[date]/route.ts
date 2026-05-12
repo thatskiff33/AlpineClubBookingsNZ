@@ -11,6 +11,7 @@ import { z } from "zod";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const LODGE_LIST_SCOPE = "lodge-list";
 
 /**
  * GET /api/lodge/guests/[date]
@@ -40,13 +41,16 @@ export async function GET(
   }
 
   const nextDay = addDaysDateOnly(date, 1);
+  const scope = new URL(req.url).searchParams.get("scope");
+  const isLodgeListScope = scope === LODGE_LIST_SCOPE;
 
-  // Guests staying on this date: checkIn <= date < checkOut
+  // Default scope is stay-night compatible for roster allocation.
+  // Lodge-list scope also includes guests on their checkout/departure date.
   const bookings = await prisma.booking.findMany({
     where: {
       status: { in: [...OPERATIONAL_STAY_BOOKING_STATUSES] },
       checkIn: { lte: date },
-      checkOut: { gt: date },
+      checkOut: isLodgeListScope ? { gte: date } : { gt: date },
     },
     include: {
       guests: {
@@ -70,18 +74,24 @@ export async function GET(
     bookingId: b.id,
     memberName: `${b.member.firstName} ${b.member.lastName}`,
     expectedArrivalTime: b.expectedArrivalTime,
-    guests: b.guests.map((g) => ({
-      id: g.id,
-      firstName: g.firstName,
-      lastName: g.lastName,
-      ageTier: getBookingGuestDisplayAgeTier(g),
-      isMember: g.isMember,
-      isArriving: b.checkIn.getTime() === date.getTime(),
-      isDeparting: b.checkOut.getTime() === nextDay.getTime(),
-      arrivedAt: g.arrivedAt?.toISOString() ?? null,
-      departedAt: g.departedAt?.toISOString() ?? null,
-      phone: g.member ? formatXeroPhone(g.member) : null,
-    })),
+    guests: b.guests.map((g) => {
+      const ageTier = getBookingGuestDisplayAgeTier(g);
+
+      return {
+        id: g.id,
+        firstName: g.firstName,
+        lastName: g.lastName,
+        ageTier,
+        isMember: g.isMember,
+        isArriving: b.checkIn.getTime() === date.getTime(),
+        isDeparting: isLodgeListScope
+          ? b.checkOut.getTime() === date.getTime()
+          : b.checkOut.getTime() === nextDay.getTime(),
+        arrivedAt: g.arrivedAt?.toISOString() ?? null,
+        departedAt: g.departedAt?.toISOString() ?? null,
+        phone: ageTier === "ADULT" && g.member ? formatXeroPhone(g.member) : null,
+      };
+    }),
   }));
 
   return NextResponse.json({

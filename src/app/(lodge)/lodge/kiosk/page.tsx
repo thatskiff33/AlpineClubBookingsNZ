@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { RefreshCw } from "lucide-react";
 import type { KioskTier } from "@/lib/kiosk-access";
 
 interface Guest {
@@ -78,6 +79,7 @@ export default function KioskPage() {
   const [access, setAccess] = useState<AccessInfo | null>(null);
   const [viewAs, setViewAs] = useState<KioskTier | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -115,7 +117,7 @@ export default function KioskPage() {
       setAuthRequired(false);
 
       const [guestsRes, rosterRes] = await Promise.all([
-        fetch(`/api/lodge/guests/${date}`),
+        fetch(`/api/lodge/guests/${date}?scope=lodge-list`),
         fetch(`/api/lodge/roster/${date}`),
       ]);
 
@@ -150,10 +152,19 @@ export default function KioskPage() {
 
   // Auto-refresh: backs off to 5 min after 3 consecutive failures
   useEffect(() => {
-    const interval = failCount >= 3 ? 300000 : 60000;
+    const interval = failCount >= 3 ? 300000 : 120000;
     const timer = setInterval(fetchData, interval);
     return () => clearInterval(timer);
   }, [failCount, fetchData]);
+
+  const refreshNow = async () => {
+    setRefreshing(true);
+    try {
+      await fetchData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const canNavigateBack = () => {
     if (!access?.dateRange) return true;
@@ -301,6 +312,33 @@ export default function KioskPage() {
   };
 
   const totalGuests = bookings.reduce((sum, b) => sum + b.guests.length, 0);
+  const filterBookingsByGuest = (predicate: (guest: Guest) => boolean) =>
+    bookings
+      .map((booking) => ({
+        ...booking,
+        guests: booking.guests.filter(predicate),
+      }))
+      .filter((booking) => booking.guests.length > 0);
+
+  const lodgeListSections = [
+    {
+      title: "Guests Arriving Today",
+      emptyText: "No guests arriving today",
+      bookings: filterBookingsByGuest((guest) => guest.isArriving),
+    },
+    {
+      title: "Guests Staying",
+      emptyText: "No continuing guests staying today",
+      bookings: filterBookingsByGuest(
+        (guest) => !guest.isArriving && !guest.isDeparting
+      ),
+    },
+    {
+      title: "Guests Departing Today",
+      emptyText: "No guests departing today",
+      bookings: filterBookingsByGuest((guest) => guest.isDeparting),
+    },
+  ];
 
   // Group assignments by time of day
   const timeGroups = ["MORNING", "EVENING", "ANYTIME"] as const;
@@ -364,11 +402,19 @@ export default function KioskPage() {
         <div className="text-center">
           <h1 className="text-2xl font-bold">{displayDate(date)}</h1>
           <p className="text-slate-400 text-lg">
-            {totalGuests} guest{totalGuests !== 1 ? "s" : ""} staying
+            {totalGuests} guest{totalGuests !== 1 ? "s" : ""} on lodge list
           </p>
           {(effectiveTier === "staying-guest" || effectiveTier === "none") && (
             <p className="text-blue-400 text-sm mt-1">Read-only view</p>
           )}
+          <button
+            onClick={refreshNow}
+            disabled={refreshing}
+            className="mt-3 inline-flex min-h-[40px] items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200 transition-colors hover:bg-slate-700 active:bg-slate-600 disabled:cursor-wait disabled:text-slate-400"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
         </div>
         <button
           onClick={() => changeDate(1)}
@@ -484,107 +530,125 @@ export default function KioskPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Lodge List Panel */}
         <section>
-          <h2 className="text-xl font-semibold mb-3 text-slate-300">
-            Lodge List
-          </h2>
+          <div className="flex min-h-[44px] items-center justify-between gap-3 mb-3">
+            <h2 className="text-xl font-semibold text-slate-300">
+              Lodge List
+            </h2>
+          </div>
           {bookings.length === 0 ? (
             <div className="bg-slate-800 rounded-xl p-6 text-center text-slate-400 text-lg">
-              No guests staying on this date
+              No guests on the lodge list for this date
             </div>
           ) : (
-            <div className="space-y-3">
-              {bookings.map((booking) => (
-                <div
-                  key={booking.bookingId}
-                  className="bg-slate-800 rounded-xl p-4"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm text-slate-400">
-                      Booked by {booking.memberName}
-                    </p>
-                    {booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
-                      <span className="text-sm text-blue-300 font-medium">
-                        Arriving {formatArrivalTime(booking.expectedArrivalTime)}
-                      </span>
-                    )}
-                    {!booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
-                      <span className="text-sm text-slate-500">
-                        Arrival time: Not specified
-                      </span>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    {booking.guests.map((guest) => (
-                      <div
-                        key={guest.id}
-                        className={`flex items-center justify-between rounded-lg px-4 py-3 min-h-[56px] ${
-                          guest.departedAt
-                            ? "bg-slate-700/30 opacity-60"
-                            : guest.arrivedAt
-                              ? "bg-green-900/30 border border-green-700/50"
-                              : "bg-slate-700/50"
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center gap-3 flex-wrap">
-                            <span className="text-lg font-medium">
-                              {guest.firstName} {guest.lastName}
-                            </span>
-                            <span className="text-sm text-slate-400">
-                              {guest.ageTier}
-                            </span>
+            <div className="space-y-6">
+              {lodgeListSections.map((section) => (
+                <div key={section.title}>
+                  <h3 className="mb-2 text-base font-medium text-slate-400">
+                    {section.title} ({section.bookings.reduce((sum, booking) => sum + booking.guests.length, 0)})
+                  </h3>
+                  {section.bookings.length === 0 ? (
+                    <div className="rounded-xl bg-slate-800/70 p-4 text-center text-sm text-slate-500">
+                      {section.emptyText}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {section.bookings.map((booking) => (
+                        <div
+                          key={`${section.title}-${booking.bookingId}`}
+                          className="bg-slate-800 rounded-xl p-4"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-sm text-slate-400">
+                              Booked by {booking.memberName}
+                            </p>
+                            {booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
+                              <span className="text-sm text-blue-300 font-medium">
+                                Arriving {formatArrivalTime(booking.expectedArrivalTime)}
+                              </span>
+                            )}
+                            {!booking.expectedArrivalTime && booking.guests.some((g) => g.isArriving) && (
+                              <span className="text-sm text-slate-500">
+                                Arrival time: Not specified
+                              </span>
+                            )}
                           </div>
-                          <p className="text-sm text-slate-400 mt-1">
-                            {guest.phone
-                              ? `Phone ${guest.phone}`
-                              : "Phone not available"}
-                          </p>
+                          <div className="space-y-2">
+                            {booking.guests.map((guest) => (
+                              <div
+                                key={guest.id}
+                                className={`flex items-center justify-between rounded-lg px-4 py-3 min-h-[56px] ${
+                                  guest.departedAt
+                                    ? "bg-slate-700/30 opacity-60"
+                                    : guest.arrivedAt
+                                      ? "bg-green-900/30 border border-green-700/50"
+                                      : "bg-slate-700/50"
+                                }`}
+                              >
+                                <div>
+                                  <div className="flex items-center gap-3 flex-wrap">
+                                    <span className="text-lg font-medium">
+                                      {guest.firstName} {guest.lastName}
+                                    </span>
+                                    <span className="text-sm text-slate-400">
+                                      {guest.ageTier}
+                                    </span>
+                                  </div>
+                                  {guest.ageTier === "ADULT" && (
+                                    <p className="text-sm text-slate-400 mt-1">
+                                      {guest.phone
+                                        ? `Phone ${guest.phone}`
+                                        : "Phone not available"}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="flex gap-2 items-center">
+                                  {guest.isArriving && (
+                                    <span className="bg-green-700 text-green-100 text-sm font-medium px-3 py-1 rounded-full">
+                                      Arriving
+                                    </span>
+                                  )}
+                                  {guest.isDeparting && (
+                                    <span className="bg-amber-700 text-amber-100 text-sm font-medium px-3 py-1 rounded-full">
+                                      Departing
+                                    </span>
+                                  )}
+                                  {!guest.isMember && (
+                                    <span className="bg-slate-600 text-slate-300 text-sm px-3 py-1 rounded-full">
+                                      Non-member
+                                    </span>
+                                  )}
+                                  {canMarkAttendance && guest.isArriving && !guest.departedAt && (
+                                    <button
+                                      onClick={() => toggleArrival(guest.id)}
+                                      className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
+                                        guest.arrivedAt
+                                          ? "bg-green-600 text-white"
+                                          : "bg-slate-600 hover:bg-slate-500 active:bg-slate-400 text-slate-200"
+                                      }`}
+                                    >
+                                      {guest.arrivedAt ? "Arrived" : "Mark Arrived"}
+                                    </button>
+                                  )}
+                                  {canMarkAttendance && guest.isDeparting && (
+                                    <button
+                                      onClick={() => toggleDeparture(guest.id)}
+                                      className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
+                                        guest.departedAt
+                                          ? "bg-amber-600 text-white"
+                                          : "bg-slate-600 hover:bg-slate-500 active:bg-slate-400 text-slate-200"
+                                      }`}
+                                    >
+                                      {guest.departedAt ? "Departed" : "Mark Departed"}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                        <div className="flex gap-2 items-center">
-                          {guest.isArriving && (
-                            <span className="bg-green-700 text-green-100 text-sm font-medium px-3 py-1 rounded-full">
-                              Arriving
-                            </span>
-                          )}
-                          {guest.isDeparting && (
-                            <span className="bg-amber-700 text-amber-100 text-sm font-medium px-3 py-1 rounded-full">
-                              Departing
-                            </span>
-                          )}
-                          {!guest.isMember && (
-                            <span className="bg-slate-600 text-slate-300 text-sm px-3 py-1 rounded-full">
-                              Non-member
-                            </span>
-                          )}
-                          {/* Arrival/Departure toggle buttons - hidden for staying-guest tier */}
-                          {canMarkAttendance && !guest.departedAt && (
-                            <button
-                              onClick={() => toggleArrival(guest.id)}
-                              className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
-                                guest.arrivedAt
-                                  ? "bg-green-600 text-white"
-                                  : "bg-slate-600 hover:bg-slate-500 active:bg-slate-400 text-slate-200"
-                              }`}
-                            >
-                              {guest.arrivedAt ? "Arrived" : "Mark Arrived"}
-                            </button>
-                          )}
-                          {canMarkAttendance && (guest.arrivedAt || guest.departedAt) && (
-                            <button
-                              onClick={() => toggleDeparture(guest.id)}
-                              className={`text-sm font-medium px-4 py-2 rounded-lg min-h-[44px] transition-colors ${
-                                guest.departedAt
-                                  ? "bg-amber-600 text-white"
-                                  : "bg-slate-600 hover:bg-slate-500 active:bg-slate-400 text-slate-200"
-                              }`}
-                            >
-                              {guest.departedAt ? "Departed" : "Mark Departed"}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -593,7 +657,7 @@ export default function KioskPage() {
 
         {/* Chore Roster Panel */}
         <section>
-          <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex min-h-[44px] items-center justify-between gap-3 mb-3">
             <h2 className="text-xl font-semibold text-slate-300">
               Chore Roster
             </h2>
@@ -602,7 +666,7 @@ export default function KioskPage() {
                 href={`/lodge/roster/${date}/setup`}
                 className="inline-block bg-blue-600 hover:bg-blue-500 active:bg-blue-400 text-white text-sm font-semibold px-4 py-2 rounded-xl min-h-[44px] transition-colors whitespace-nowrap"
               >
-                {hasAssignments ? "Manage Today&apos;s Roster" : "Set Up Today&apos;s Roster"}
+                {hasAssignments ? "Manage Today's Roster" : "Set Up Today's Roster"}
               </a>
             )}
           </div>

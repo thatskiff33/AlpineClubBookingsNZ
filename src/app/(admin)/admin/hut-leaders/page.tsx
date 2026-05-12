@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, UserCheck, CalendarDays, Check, Pencil } from "lucide-react";
+import { Trash2, Plus, UserCheck, CalendarDays, Check, Pencil, KeyRound } from "lucide-react";
 
 interface HutLeaderAssignment {
   id: string;
@@ -45,6 +45,12 @@ export default function HutLeadersPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingMember, setEditingMember] = useState<string | null>(null);
   const [editDates, setEditDates] = useState({ startDate: "", endDate: "" });
+  const [resettingPinId, setResettingPinId] = useState<string | null>(null);
+  const [pinMessage, setPinMessage] = useState<{
+    memberName: string;
+    pin: string;
+    emailSent: boolean;
+  } | null>(null);
   const [formData, setFormData] = useState({
     memberId: "",
     startDate: "",
@@ -183,6 +189,39 @@ export default function HutLeadersPage() {
     if (res.ok) {
       fetchAssignments();
       fetchUnassignedDates();
+    }
+  }
+
+  async function handleResetPin(assignment: HutLeaderAssignment) {
+    if (
+      !confirm(
+        `Generate a new kiosk PIN for ${assignment.memberName}? Their existing PIN will stop working.`
+      )
+    ) {
+      return;
+    }
+
+    setError("");
+    setPinMessage(null);
+    setResettingPinId(assignment.id);
+    try {
+      const res = await fetch(`/api/admin/hut-leaders/${assignment.id}/pin`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to reset PIN");
+        return;
+      }
+
+      setPinMessage({
+        memberName: assignment.memberName,
+        pin: data.pin,
+        emailSent: Boolean(data.emailSent),
+      });
+      fetchAssignments();
+    } finally {
+      setResettingPinId(null);
     }
   }
 
@@ -393,6 +432,34 @@ export default function HutLeadersPage() {
         </Card>
       )}
 
+      {pinMessage && (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium text-blue-900">
+                New kiosk PIN for {pinMessage.memberName}
+              </p>
+              <p className="mt-1 font-mono text-2xl font-semibold tracking-[0.25em] text-blue-950">
+                {pinMessage.pin}
+              </p>
+              <p className="mt-1 text-xs text-blue-800">
+                This PIN is shown once.{" "}
+                {pinMessage.emailSent
+                  ? "It has also been emailed to the hut leader."
+                  : "Email delivery failed, so provide it directly."}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPinMessage(null)}
+            >
+              Dismiss
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardContent className="p-0">
           {loading ? (
@@ -440,14 +507,29 @@ export default function HutLeadersPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDelete(a.id)}
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleResetPin(a)}
+                              disabled={resettingPinId === a.id}
+                              className="text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                              title="Reset kiosk PIN"
+                            >
+                              <KeyRound className="h-4 w-4" />
+                              <span className="sr-only">Reset kiosk PIN</span>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDelete(a.id)}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                              title="Delete assignment"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              <span className="sr-only">Delete assignment</span>
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     );
