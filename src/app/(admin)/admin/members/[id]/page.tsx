@@ -1417,7 +1417,11 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   }
 
   const handleXeroPush = async (forceCreate = false) => {
-    setXeroPushing(true); setXeroError("")
+    setXeroPushing(true)
+    setXeroError("")
+    if (forceCreate) {
+      setXeroDecisionError("")
+    }
     try {
       const entranceFeeInvoiceOptions = getXeroEntranceFeeInvoiceOptions()
       const result = await requestXeroPush({
@@ -1436,8 +1440,16 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       }
 
       await applyXeroPushSuccess(result.data, entranceFeeInvoiceOptions.createEntranceFeeInvoice)
-    } catch (err) { setXeroError(err instanceof Error ? err.message : "Push failed") }
-    finally { setXeroPushing(false) }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Push failed"
+      if (forceCreate) {
+        setXeroDecisionError(message)
+      } else {
+        setXeroError(message)
+      }
+    } finally {
+      setXeroPushing(false)
+    }
   }
 
   const handleXeroDecisionLink = async () => {
@@ -2049,6 +2061,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               Create a brand-new Xero contact for {member.firstName} {member.lastName}. We&apos;ll check for similar existing contacts before the new contact is created.
             </DialogDescription>
           </DialogHeader>
+          {xeroError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{xeroError}</div>}
           <div className="space-y-4">
             <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
               Use this only when you&apos;re confident the member should not be linked to an existing Xero contact.
