@@ -118,7 +118,7 @@ import {
   postalMatchesPhysical,
   withDefaultNzCountry,
   normalizeAddressValue,
-  NZ_COUNTRY_CODE,
+  NZ_COUNTRY_NAME,
 } from "@/lib/member-address";
 
 const adminSession = { user: { id: "admin1", role: "ADMIN" } } as any;
@@ -215,14 +215,16 @@ describe("member-address utilities", () => {
     })).toBe(true);
   });
 
-  it("withDefaultNzCountry returns NZ for null/empty", () => {
-    expect(withDefaultNzCountry(null)).toBe(NZ_COUNTRY_CODE);
-    expect(withDefaultNzCountry("")).toBe(NZ_COUNTRY_CODE);
-    expect(withDefaultNzCountry(undefined)).toBe(NZ_COUNTRY_CODE);
+  it("withDefaultNzCountry returns New Zealand for null/empty", () => {
+    expect(withDefaultNzCountry(null)).toBe(NZ_COUNTRY_NAME);
+    expect(withDefaultNzCountry("")).toBe(NZ_COUNTRY_NAME);
+    expect(withDefaultNzCountry(undefined)).toBe(NZ_COUNTRY_NAME);
   });
 
-  it("withDefaultNzCountry preserves existing value", () => {
-    expect(withDefaultNzCountry("AU")).toBe("AU");
+  it("withDefaultNzCountry normalizes NZ codes and preserves other countries", () => {
+    expect(withDefaultNzCountry("NZ")).toBe("New Zealand");
+    expect(withDefaultNzCountry("NZL")).toBe("New Zealand");
+    expect(withDefaultNzCountry("Australia")).toBe("Australia");
   });
 
   it("normalizeAddressValue handles various inputs", () => {
