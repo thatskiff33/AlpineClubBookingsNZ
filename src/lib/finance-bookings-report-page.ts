@@ -60,11 +60,14 @@ export interface FinanceBookingsReportDailyRow {
 
 export interface FinanceBookingsReportStatusRow {
   pipeline: string;
+  pipelineKey: "realized" | "committed" | "at-risk";
   status: string;
+  statusCode: string;
   bookingCount: string;
   bookingNights: string;
   guestNights: string;
   bookedRevenue: string;
+  drilldownHref: string;
 }
 
 export interface FinanceBookingsReportSection {
@@ -117,6 +120,24 @@ export function buildFinanceBookingsReportHref(
   filters: FinanceBookingsReportFilters
 ) {
   return `/finance/bookings?${buildFinanceBookingsReportQueryString(filters)}`;
+}
+
+export function buildFinanceBookingsSourceHref(input: {
+  filters: FinanceBookingsReportFilters;
+  section: "realized" | "forward";
+  pipeline: "realized" | "committed" | "at-risk";
+  status: string;
+  returnTo?: string;
+}) {
+  const params = new URLSearchParams(
+    Object.entries(input.filters)
+  );
+  params.set("section", input.section);
+  params.set("pipeline", input.pipeline);
+  params.set("status", input.status);
+  params.set("returnTo", input.returnTo ?? buildFinanceBookingsReportHref(input.filters));
+
+  return `/finance/bookings/source?${params.toString()}`;
 }
 
 export function resolveFinanceBookingsReportFilters(input: {
@@ -269,8 +290,8 @@ export async function buildFinanceBookingsReportPageModel(input: {
       rawMetricsHref: `/api/finance/bookings/metrics?${queryString}`,
       filterWarnings: warnings,
       sourceNotes: buildSourceNotes(),
-      realized: mapRealizedSection(metrics),
-      forward: mapForwardSection(metrics),
+      realized: mapRealizedSection(metrics, filters),
+      forward: mapForwardSection(metrics, filters),
     };
   } catch (error) {
     console.error("Failed to load finance bookings report metrics", error);
@@ -302,9 +323,14 @@ export async function buildFinanceBookingsReportPageModel(input: {
 function buildSourceNotes() {
   return [
     {
+      label: "Drill-down scope",
+      description:
+        "Status breakdown rows link to finance-scoped source booking lists. Daily detail rows and summary cards remain aggregate-only because they combine multiple booking statuses or payment contexts.",
+    },
+    {
       label: "Booked revenue",
       description:
-        "Booked revenue on this page comes from TACBookings booking totals allocated across stay nights. It is separate from Xero finance snapshots.",
+        "Booked revenue on this page comes from live TACBookings booking totals allocated across stay nights. It is separate from Xero finance snapshots.",
     },
     {
       label: "Net collected cash",
@@ -320,7 +346,8 @@ function buildSourceNotes() {
 }
 
 function mapRealizedSection(
-  metrics: FinanceBookingMetricsResult
+  metrics: FinanceBookingMetricsResult,
+  filters: FinanceBookingsReportFilters
 ): FinanceBookingsReportSection {
   const realized = metrics.realized;
 
@@ -387,11 +414,19 @@ function mapRealizedSection(
     statusRows: Object.entries(realized.statusBreakdown).map(
       ([status, summary]) => ({
         pipeline: "Realized",
+        pipelineKey: "realized" as const,
         status: humanizeStatus(status),
+        statusCode: status,
         bookingCount: formatWholeNumber(summary.bookingCount),
         bookingNights: formatWholeNumber(summary.bookingNights),
         guestNights: formatWholeNumber(summary.guestNights),
         bookedRevenue: formatCents(summary.bookedRevenueCents),
+        drilldownHref: buildFinanceBookingsSourceHref({
+          filters,
+          section: "realized",
+          pipeline: "realized",
+          status,
+        }),
       })
     ),
     emptyMessage:
@@ -402,7 +437,8 @@ function mapRealizedSection(
 }
 
 function mapForwardSection(
-  metrics: FinanceBookingMetricsResult
+  metrics: FinanceBookingMetricsResult,
+  filters: FinanceBookingsReportFilters
 ): FinanceBookingsReportSection {
   const forward = metrics.forward;
 
@@ -418,21 +454,37 @@ function mapForwardSection(
     ...Object.entries(forward.totals.committed.statusBreakdown).map(
       ([status, summary]) => ({
         pipeline: "Committed",
+        pipelineKey: "committed" as const,
         status: humanizeStatus(status),
+        statusCode: status,
         bookingCount: formatWholeNumber(summary.bookingCount),
         bookingNights: formatWholeNumber(summary.bookingNights),
         guestNights: formatWholeNumber(summary.guestNights),
         bookedRevenue: formatCents(summary.bookedRevenueCents),
+        drilldownHref: buildFinanceBookingsSourceHref({
+          filters,
+          section: "forward",
+          pipeline: "committed",
+          status,
+        }),
       })
     ),
     ...Object.entries(forward.totals.atRisk.statusBreakdown).map(
       ([status, summary]) => ({
         pipeline: "At risk",
+        pipelineKey: "at-risk" as const,
         status: humanizeStatus(status),
+        statusCode: status,
         bookingCount: formatWholeNumber(summary.bookingCount),
         bookingNights: formatWholeNumber(summary.bookingNights),
         guestNights: formatWholeNumber(summary.guestNights),
         bookedRevenue: formatCents(summary.bookedRevenueCents),
+        drilldownHref: buildFinanceBookingsSourceHref({
+          filters,
+          section: "forward",
+          pipeline: "at-risk",
+          status,
+        }),
       })
     ),
   ];

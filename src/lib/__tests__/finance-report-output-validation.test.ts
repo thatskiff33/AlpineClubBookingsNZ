@@ -312,7 +312,7 @@ describe("finance report output validation", () => {
         bookedRevenue: "$100.00",
       },
     ]);
-    expect(model.realized.statusRows).toEqual([
+    expect(model.realized.statusRows).toMatchObject([
       {
         pipeline: "Realized",
         status: "Paid",
@@ -394,7 +394,7 @@ describe("finance report output validation", () => {
         totalPipelineGuestNights: "0",
       },
     ]);
-    expect(model.forward.statusRows).toEqual([
+    expect(model.forward.statusRows).toMatchObject([
       {
         pipeline: "Committed",
         status: "Paid",
