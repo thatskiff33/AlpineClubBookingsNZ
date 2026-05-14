@@ -17,14 +17,13 @@ export function buildContentSecurityPolicy(nonce: string) {
       `'nonce-${nonce}'`,
       ...(isDev ? ["'unsafe-eval'"] : []),
       "https://js.stripe.com",
-      "https://api.addressfinder.io",
     ].join(" "),
     // Keep inline styles during the script nonce rollout; Tailwind/Radix and
     // third-party widgets can still emit runtime style attributes.
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "font-src 'self' data:",
-    "connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io https://api.addressfinder.io",
+    "connect-src 'self' https://api.stripe.com https://js.stripe.com https://*.ingest.sentry.io",
     "frame-src https://js.stripe.com https://hooks.stripe.com",
     "base-uri 'self'",
     "form-action 'self'",

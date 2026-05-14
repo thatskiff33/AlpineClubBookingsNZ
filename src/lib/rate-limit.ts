@@ -166,6 +166,8 @@ export const rateLimiters = {
   bookingCreate: { id: "booking-create", limit: 20, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Booking quote / availability / promo validate: 60 per minute */
   bookingQuery: { id: "booking-query", limit: 60, windowSeconds: 60 } as RateLimitConfig,
+  /** Public address autocomplete proxy: 90 requests per minute */
+  addressAutocomplete: { id: "address-autocomplete", limit: 90, windowSeconds: 60 } as RateLimitConfig,
   /** Contact form: 10 per hour */
   contact: { id: "contact", limit: 10, windowSeconds: 60 * 60 } as RateLimitConfig,
   /** Lodge hut leader PIN login: 5 attempts per minute */

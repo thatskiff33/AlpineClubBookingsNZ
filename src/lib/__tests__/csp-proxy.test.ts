@@ -30,7 +30,7 @@ function expectStrictScriptSrc(policy: string) {
 
   expect(scriptSrc).toContain("'self'");
   expect(scriptSrc).toContain("https://js.stripe.com");
-  expect(scriptSrc).toContain("https://api.addressfinder.io");
+  expect(scriptSrc).not.toContain("https://api-nz.addysolutions.com");
   expect(scriptSrc).not.toContain("'unsafe-inline'");
   expect(nonceFromScriptSrc(policy)).toMatch(/^[A-Za-z0-9+/=]+$/);
 }
