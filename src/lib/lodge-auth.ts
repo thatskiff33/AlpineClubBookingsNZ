@@ -8,9 +8,22 @@ interface CheckLodgeAuthOptions {
   request?: Request;
 }
 
+export function getLodgeAuthActorMemberId(authResult: {
+  tier: KioskTier;
+  session?: { user?: { id?: string } } | null;
+  pinSession?: { memberId: string } | null;
+}) {
+  if (authResult.tier === "hut-leader" && authResult.pinSession) {
+    return authResult.pinSession.memberId;
+  }
+
+  return authResult.session?.user?.id ?? null;
+}
+
 /**
  * Shared auth check for lodge API endpoints.
- * Allows ADMIN, LODGE, MEMBER with kiosk access, or a valid hut leader PIN session.
+ * Allows ADMIN, LODGE, MEMBER with kiosk access, or a valid hut leader PIN
+ * session attached to an authenticated lodge/admin account.
  */
 export async function checkLodgeAuth(
   dateStr?: string,
@@ -29,29 +42,29 @@ export async function checkLodgeAuth(
 
   const date = dateStr ? parseDateOnly(dateStr) : getTodayDateOnly();
 
-  if (session?.user) {
-    const inactiveResponse = await requireActiveSessionUser(session.user.id);
-    if (inactiveResponse) {
-      return {
-        session: null,
-        tier: "none" as KioskTier,
-        error: "Account is deactivated" as const,
-        status: 403 as const,
-      };
-    }
-
-    const tier = await getKioskAccessTier(
-      session.user.id,
-      session.user.role,
-      date
-    );
-
-    if (tier !== "none") {
-      return { session, tier, error: null, status: null };
-    }
+  if (!session?.user) {
+    return {
+      session: null,
+      tier: "none" as KioskTier,
+      error: "Unauthorised" as const,
+      status: 401 as const,
+    };
   }
 
-  if (options.request) {
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return {
+      session: null,
+      tier: "none" as KioskTier,
+      error: "Account is deactivated" as const,
+      status: 403 as const,
+    };
+  }
+
+  if (
+    options.request &&
+    (session.user.role === "LODGE" || session.user.role === "ADMIN")
+  ) {
     const pinSession = await getActiveLodgePinSessionForRequest(
       options.request,
       date
@@ -59,7 +72,7 @@ export async function checkLodgeAuth(
 
     if (pinSession) {
       return {
-        session: null,
+        session,
         tier: "hut-leader" as KioskTier,
         error: null,
         status: null,
@@ -68,13 +81,14 @@ export async function checkLodgeAuth(
     }
   }
 
-  if (!session?.user) {
-    return {
-      session: null,
-      tier: "none" as KioskTier,
-      error: "Unauthorised" as const,
-      status: 401 as const,
-    };
+  const tier = await getKioskAccessTier(
+    session.user.id,
+    session.user.role,
+    date
+  );
+
+  if (tier !== "none") {
+    return { session, tier, error: null, status: null };
   }
 
   return {

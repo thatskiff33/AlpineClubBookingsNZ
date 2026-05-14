@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { _testStore } from "../rate-limit";
 import {
+  HUT_LEADER_PIN_SESSION_COOKIE,
   _testLodgePinFailureStore,
   clearLodgePinFailures,
   createLodgePinSessionWithVersion,
@@ -322,7 +323,82 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(result.status).toBe(401);
   });
 
+  it("rejects anonymous lodge API access even with a valid PIN cookie", async () => {
+    const pinHash = await bcrypt.hash("123456", 12);
+    const pinSession = createLodgePinSessionWithVersion(
+      "assign-1",
+      "member-1",
+      pinHash
+    );
+    mockAuth.mockResolvedValue(null);
+
+    const { checkLodgeAuth } = await import("@/lib/lodge-auth");
+    const result = await checkLodgeAuth("2026-04-13", {
+      request: new Request("http://localhost/api/lodge/access", {
+        headers: {
+          cookie: `${HUT_LEADER_PIN_SESSION_COOKIE}=${pinSession.value}`,
+        },
+      }),
+    });
+
+    expect(result.error).toBe("Unauthorised");
+    expect(result.tier).toBe("none");
+    expect(result.status).toBe(401);
+    expect(mockPrisma.hutLeaderAssignment.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns hut leader access for a lodge session with a valid PIN cookie", async () => {
+    const pinHash = await bcrypt.hash("123456", 12);
+    const pinSession = createLodgePinSessionWithVersion(
+      "assign-1",
+      "member-1",
+      pinHash
+    );
+    mockAuth.mockResolvedValue({
+      user: { id: "lodge-1", role: "LODGE", email: "lodge@tokoroa.org.nz" },
+    });
+    mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
+      id: "assign-1",
+      memberId: "member-1",
+      startDate: new Date("2026-04-13T00:00:00.000Z"),
+      endDate: new Date("2026-04-16T00:00:00.000Z"),
+      hutLeaderPin: pinHash,
+      member: {
+        id: "member-1",
+        active: true,
+        firstName: "Alice",
+        lastName: "Smith",
+        email: "alice@example.com",
+      },
+    });
+
+    const { NextRequest } = await import("next/server");
+    const { GET } = await import("@/app/api/lodge/access/route");
+    const res = await GET(
+      new NextRequest("http://localhost/api/lodge/access?date=2026-04-13", {
+        headers: {
+          cookie: `${HUT_LEADER_PIN_SESSION_COOKIE}=${pinSession.value}`,
+        },
+      })
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      tier: "hut-leader",
+      dateRange: {
+        minDate: "2026-04-12",
+        maxDate: "2026-04-16",
+      },
+      canManageRoster: true,
+      canMarkAttendance: true,
+      canCompleteChores: true,
+    });
+  });
+
   it("creates a signed hut leader PIN session cookie on successful PIN login", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "lodge-1", role: "LODGE", email: "lodge@tokoroa.org.nz" },
+    });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
       {
         id: "assign-1",
@@ -372,6 +448,42 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
         ipAddress: "10.0.0.1",
       }),
     });
+  });
+
+  it("rejects anonymous PIN login attempts", async () => {
+    mockAuth.mockResolvedValue(null);
+
+    const { POST } = await import("@/app/api/lodge/pin-login/route");
+    const res = await POST(
+      new Request("http://localhost/api/lodge/pin-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: "123456" }),
+      }) as any
+    );
+
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toEqual({ error: "Unauthorised" });
+    expect(mockPrisma.hutLeaderAssignment.findMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects member sessions from PIN login", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "member-1", role: "MEMBER", email: "member@example.com" },
+    });
+
+    const { POST } = await import("@/app/api/lodge/pin-login/route");
+    const res = await POST(
+      new Request("http://localhost/api/lodge/pin-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: "123456" }),
+      }) as any
+    );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "Forbidden" });
+    expect(mockPrisma.hutLeaderAssignment.findMany).not.toHaveBeenCalled();
   });
 
   it("writes member-linked audit rows when marking lodge guests arrived and departed", async () => {
@@ -464,7 +576,77 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     });
   });
 
+  it("attributes lodge-session PIN actions to the hut leader member", async () => {
+    const pinHash = await bcrypt.hash("123456", 12);
+    const pinSession = createLodgePinSessionWithVersion(
+      "assign-1",
+      "hut-leader-1",
+      pinHash
+    );
+
+    mockAuth.mockResolvedValue({
+      user: { id: "lodge-1", role: "LODGE", email: "lodge@tokoroa.org.nz" },
+    });
+    mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
+      id: "assign-1",
+      memberId: "hut-leader-1",
+      startDate: new Date("2026-04-13T00:00:00.000Z"),
+      endDate: new Date("2026-04-16T00:00:00.000Z"),
+      hutLeaderPin: pinHash,
+      member: {
+        id: "hut-leader-1",
+        active: true,
+        firstName: "Alice",
+        lastName: "Leader",
+        email: "alice@example.com",
+      },
+    });
+    mockPrisma.bookingGuest.findFirst.mockResolvedValue({
+      id: "guest-1",
+      bookingId: "booking-1",
+      firstName: "Guest",
+      lastName: "One",
+      memberId: null,
+      arrivedAt: null,
+      departedAt: null,
+      booking: {
+        memberId: "booking-owner-1",
+      },
+    });
+    mockPrisma.bookingGuest.update.mockResolvedValue({});
+
+    const { PUT } = await import("@/app/api/lodge/guests/[date]/arrive/route");
+    const res = await PUT(
+      new Request("http://localhost/api/lodge/guests/2026-04-13/arrive", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          cookie: `${HUT_LEADER_PIN_SESSION_COOKIE}=${pinSession.value}`,
+        },
+        body: JSON.stringify({ bookingGuestId: "guest-1" }),
+      }) as any,
+      { params: Promise.resolve({ date: "2026-04-13" }) }
+    );
+
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: "lodge.guest.arrived",
+          memberId: "hut-leader-1",
+          category: "lodge",
+          metadata: expect.objectContaining({
+            tier: "hut-leader",
+          }),
+        }),
+      });
+    });
+  });
+
   it("rate limits PIN login after 5 failed attempts per minute", async () => {
+    mockAuth.mockResolvedValue({
+      user: { id: "lodge-1", role: "LODGE", email: "lodge@tokoroa.org.nz" },
+    });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     const { POST } = await import("@/app/api/lodge/pin-login/route");
 

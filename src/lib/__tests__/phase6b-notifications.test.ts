@@ -536,6 +536,62 @@ describe("Email templates - Phase 6b", () => {
         issueCategoryCount: 11,
         issueTotalCount: 19,
       },
+      issueSections: [
+        {
+          id: "unsupported-partials",
+          title: "Unsupported partial Xero repairs",
+          severity: "critical",
+          count: 1,
+          whatWentWrong: "Xero accepted part of an operation.",
+          howToFix: "Open the linked record activity and inspect the payloads.",
+          items: [
+            {
+              label: "Member mem_1",
+              localModel: "Member",
+              localId: "mem_1",
+              localUrl: "/admin/xero/records/Member/mem_1",
+              xeroObjectType: "CONTACT",
+              xeroObjectId: "contact_1",
+              xeroObjectNumber: null,
+              xeroObjectUrl: "https://go.xero.com/Contacts/View/contact_1",
+              operationId: "op_partial_gap",
+              operationStatus: "PARTIAL",
+              operationType: "CONTACT CREATE",
+              correlationKey: null,
+              detail: "This partial <script>alert(1)</script> operation does not have a repair handler yet.",
+              latestErrorMessage: null,
+              createdAt: new Date("2026-04-13T10:05:00Z"),
+            },
+          ],
+        },
+        {
+          id: "repeated-failures",
+          title: "Repeated Xero operation failures",
+          severity: "critical",
+          count: 1,
+          whatWentWrong: "The same correlation key keeps failing.",
+          howToFix: "Open TACBookings and retry after checking the record.",
+          items: [
+            {
+              label: "Payment pay_1",
+              localModel: "Payment",
+              localId: "pay_1",
+              localUrl: "/admin/xero/records/Payment/pay_1",
+              xeroObjectType: "INVOICE",
+              xeroObjectId: "inv_1",
+              xeroObjectNumber: "INV-001",
+              xeroObjectUrl: "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv_1",
+              operationId: "op_failed_1",
+              operationStatus: "FAILED",
+              operationType: "INVOICE CREATE",
+              correlationKey: "payment:pay_1:invoice:v1",
+              detail: "3 failures for this correlation key.",
+              latestErrorMessage: "Rate limit exceeded",
+              createdAt: new Date("2026-04-13T10:10:00Z"),
+            },
+          ],
+        },
+      ],
       repeatedFailures: [
         {
           correlationKey: "payment:pay_1:invoice:v1",
@@ -566,8 +622,14 @@ describe("Email templates - Phase 6b", () => {
     expect(html).toContain("Missing member contact links");
     expect(html).toContain("Mismatched canonical links");
     expect(html).toContain("Unsupported partial operations");
+    expect(html).toContain("Action needed");
+    expect(html).toContain("What went wrong");
+    expect(html).toContain("How to fix");
     expect(html).toContain("19");
     expect(html).toContain("payment:pay_1:invoice:v1");
     expect(html).toContain("op_partial_gap");
+    expect(html).toMatch(/https?:\/\/[^"]+\/admin\/xero\/records\/Member\/mem_1/);
+    expect(html).toContain("https://go.xero.com/Contacts/View/contact_1");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
   });
 });

@@ -172,7 +172,7 @@ describe("buildXeroReconciliationReport", () => {
         role: "SUBSCRIPTION_INVOICE",
       },
     ]);
-    mocks.operationFindMany.mockResolvedValue([
+    mocks.operationFindMany.mockResolvedValueOnce([
       {
         id: "op_4",
         direction: "OUTBOUND",
@@ -186,8 +186,12 @@ describe("buildXeroReconciliationReport", () => {
         requestPayload: null,
         responsePayload: null,
         status: "PARTIAL",
+        xeroObjectType: "CONTACT",
         xeroObjectId: "contact_1",
         createdAt: new Date("2026-04-13T10:15:00Z"),
+        startedAt: null,
+        xeroObjectNumber: null,
+        xeroObjectUrl: null,
       },
       {
         id: "op_3",
@@ -202,8 +206,12 @@ describe("buildXeroReconciliationReport", () => {
         requestPayload: null,
         responsePayload: null,
         status: "FAILED",
+        xeroObjectType: "INVOICE",
         xeroObjectId: "inv_1",
         createdAt: new Date("2026-04-13T10:10:00Z"),
+        startedAt: null,
+        xeroObjectNumber: "INV-001",
+        xeroObjectUrl: null,
       },
       {
         id: "op_2",
@@ -222,8 +230,12 @@ describe("buildXeroReconciliationReport", () => {
           },
         },
         status: "PARTIAL",
+        xeroObjectType: "INVOICE",
         xeroObjectId: "inv_1",
         createdAt: new Date("2026-04-13T10:00:00Z"),
+        startedAt: null,
+        xeroObjectNumber: "INV-001",
+        xeroObjectUrl: null,
       },
       {
         id: "op_1",
@@ -238,11 +250,34 @@ describe("buildXeroReconciliationReport", () => {
         requestPayload: null,
         responsePayload: null,
         status: "FAILED",
+        xeroObjectType: "INVOICE",
         xeroObjectId: "inv_1",
         createdAt: new Date("2026-04-13T09:55:00Z"),
+        startedAt: null,
+        xeroObjectNumber: "INV-001",
+        xeroObjectUrl: null,
       },
     ]);
     mocks.operationCount.mockResolvedValue(2);
+    mocks.operationFindMany.mockResolvedValueOnce([
+      {
+        id: "op_pending_1",
+        direction: "OUTBOUND",
+        correlationKey: "payment:pay_1:invoice:v1",
+        entityType: "INVOICE",
+        operationType: "CREATE",
+        localModel: "Payment",
+        localId: "pay_1",
+        status: "PENDING",
+        lastErrorMessage: null,
+        xeroObjectType: "INVOICE",
+        xeroObjectId: "inv_1",
+        xeroObjectNumber: "INV-001",
+        xeroObjectUrl: null,
+        startedAt: null,
+        createdAt: new Date("2026-04-13T11:00:00Z"),
+      },
+    ]);
 
     const report = await buildXeroReconciliationReport({
       now: new Date("2026-04-13T12:00:00Z"),
@@ -269,13 +304,61 @@ describe("buildXeroReconciliationReport", () => {
         correlationKey: "payment:pay_1:invoice:v1",
         failureCount: 3,
         localUrl: "/admin/xero/records/Payment/pay_1",
+        latestOperationId: "op_3",
+        xeroObjectUrl: "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv_1",
       }),
     ]);
     expect(report.unsupportedPartials).toEqual([
       expect.objectContaining({
         operationId: "op_4",
         localUrl: "/admin/members/mem_1",
+        xeroObjectUrl: "https://go.xero.com/Contacts/View/contact_1",
         reason: "This partial Xero operation does not have a repair handler yet.",
+      }),
+    ]);
+    expect(report.issueSections).toEqual([
+      expect.objectContaining({
+        id: "unsupported-partials",
+        severity: "critical",
+        count: 1,
+        items: [
+          expect.objectContaining({
+            operationId: "op_4",
+            localUrl: "/admin/members/mem_1",
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        id: "repeated-failures",
+        severity: "critical",
+        count: 1,
+        items: [
+          expect.objectContaining({
+            operationId: "op_3",
+            latestErrorMessage: "Timeout",
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        id: "stale-pending-operations",
+        severity: "warning",
+        count: 2,
+        items: [
+          expect.objectContaining({
+            operationId: "op_pending_1",
+            operationStatus: "PENDING",
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        id: "canonical-link-drift",
+        severity: "warning",
+        count: 5,
+      }),
+      expect.objectContaining({
+        id: "recent-failed-partial-operations",
+        severity: "info",
+        count: 4,
       }),
     ]);
   });

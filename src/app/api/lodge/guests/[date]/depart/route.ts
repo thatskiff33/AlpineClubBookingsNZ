@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { checkLodgeAuth, getLodgeAuthActorMemberId } from "@/lib/lodge-auth";
 import { findLodgeGuestDepartingOnDate } from "@/lib/lodge-date-scoping";
 import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
@@ -88,11 +88,7 @@ export async function PUT(
       }
     });
 
-    const actorMemberId =
-      authResult.session?.user.id ??
-      ("pinSession" in authResult
-        ? authResult.pinSession?.memberId ?? null
-        : null);
+    const actorMemberId = getLodgeAuthActorMemberId(authResult);
     const auditRequest = getAuditRequestContext(req);
     const markedDeparted = Boolean(departedAt);
     logAudit({

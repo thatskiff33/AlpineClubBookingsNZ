@@ -62,6 +62,67 @@ describe("Admin booking search route", () => {
     expect(mocks.prisma.booking.findMany).not.toHaveBeenCalled();
   });
 
+  it("searches bookings by booking reference number", async () => {
+    mocks.prisma.booking.findMany.mockResolvedValue([
+      {
+        id: "cmnn0xljabc123",
+        status: "PAID",
+        checkIn: new Date("2026-05-01"),
+        checkOut: new Date("2026-05-03"),
+        updatedAt: new Date("2026-04-27T10:00:00.000Z"),
+        member: {
+          firstName: "Alice",
+          lastName: "Example",
+          email: "alice@example.com",
+        },
+        payment: {
+          id: "payment-123",
+          xeroInvoiceId: null,
+        },
+        _count: {
+          guests: 2,
+        },
+      },
+    ]);
+
+    const response = await searchBookings(
+      new NextRequest(
+        "http://localhost/api/admin/bookings/search?q=Booking%20CMNN0XLJ&limit=8"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.prisma.booking.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { not: "DRAFT" },
+          OR: expect.arrayContaining([
+            { id: { startsWith: "cmnn0xlj" } },
+          ]),
+        }),
+        take: 8,
+      })
+    );
+
+    await expect(response.json()).resolves.toEqual({
+      bookings: [
+        {
+          id: "cmnn0xljabc123",
+          memberName: "Alice Example",
+          memberEmail: "alice@example.com",
+          checkIn: "2026-05-01",
+          checkOut: "2026-05-03",
+          status: "PAID",
+          guestCount: 2,
+          paymentId: "payment-123",
+          xeroInvoiceId: null,
+          canForceSyncInvoice: true,
+          forceSyncInvoiceReason: null,
+        },
+      ],
+    });
+  });
+
   it("searches bookings by booking ID or member identity and returns invoice-sync hints", async () => {
     mocks.prisma.booking.findMany.mockResolvedValue([
       {

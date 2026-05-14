@@ -1,3 +1,16 @@
+const CRON_TIMEZONE = "Pacific/Auckland";
+
+function sentryCronMonitorConfig(
+  schedule: string,
+  options: { checkinMargin?: number; maxRuntime?: number } = {}
+) {
+  return {
+    schedule: { type: "crontab" as const, value: schedule },
+    timezone: CRON_TIMEZONE,
+    ...options,
+  };
+}
+
 /**
  * Next.js instrumentation hook.
  * Runs once when the server starts.
@@ -87,7 +100,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "confirm-pending-bookings", status: "in_progress" },
-        { schedule: { type: "crontab", value: "0 */3 * * *" }, checkinMargin: 10, maxRuntime: 30 }
+        sentryCronMonitorConfig("0 */3 * * *", { checkinMargin: 10, maxRuntime: 30 })
       );
 
       try {
@@ -112,7 +125,7 @@ export async function register() {
       } finally {
         isPendingCronRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "confirm-pending" }, "Scheduled pending booking confirmation (every 3 hours)");
 
@@ -132,7 +145,7 @@ export async function register() {
 
         const checkInId = Sentry.captureCheckIn(
           { monitorSlug: "xero-membership-refresh", status: "in_progress" },
-          { schedule: { type: "crontab", value: "0 2 * * *" }, checkinMargin: 10, maxRuntime: 60 }
+          sentryCronMonitorConfig("0 2 * * *", { checkinMargin: 10, maxRuntime: 60 })
         );
 
         try {
@@ -164,7 +177,7 @@ export async function register() {
         } finally {
           isXeroCronRunning = false;
         }
-      }, { timezone: "Pacific/Auckland" });
+      }, { timezone: CRON_TIMEZONE });
 
       logger.info(
         { job: "xero-membership-refresh" },
@@ -189,7 +202,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "xero-link-backfill", status: "in_progress" },
-        { schedule: { type: "crontab", value: "20 2 * * *" }, checkinMargin: 10, maxRuntime: 30 }
+        sentryCronMonitorConfig("20 2 * * *", { checkinMargin: 10, maxRuntime: 30 })
       );
 
       try {
@@ -216,7 +229,7 @@ export async function register() {
       } finally {
         isXeroBackfillCronRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "xero-link-backfill" }, "Scheduled Xero link backfill (daily at 2:20 AM NZST)");
 
@@ -232,7 +245,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "xero-reconciliation-report", status: "in_progress" },
-        { schedule: { type: "crontab", value: "35 2 * * *" }, checkinMargin: 10, maxRuntime: 30 }
+        sentryCronMonitorConfig("35 2 * * *", { checkinMargin: 10, maxRuntime: 30 })
       );
 
       try {
@@ -268,7 +281,7 @@ export async function register() {
       } finally {
         isXeroReportCronRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info(
       { job: "xero-reconciliation-report" },
@@ -290,7 +303,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "xero-operation-replay", status: "in_progress" },
-        { schedule: { type: "crontab", value: "*/15 * * * *" }, checkinMargin: 10, maxRuntime: 30 }
+        sentryCronMonitorConfig("*/15 * * * *", { checkinMargin: 10, maxRuntime: 30 })
       );
 
       try {
@@ -333,7 +346,7 @@ export async function register() {
       } finally {
         isXeroReplayCronRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info(
       { job: "xero-operation-replay" },
@@ -355,7 +368,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "xero-inbound-reconcile", status: "in_progress" },
-        { schedule: { type: "crontab", value: "*/15 * * * *" }, checkinMargin: 10, maxRuntime: 30 }
+        sentryCronMonitorConfig("*/15 * * * *", { checkinMargin: 10, maxRuntime: 30 })
       );
 
       try {
@@ -394,7 +407,7 @@ export async function register() {
       } finally {
         isXeroInboundCronRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info(
       { job: "xero-inbound-reconcile" },
@@ -422,7 +435,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "database-backup", status: "in_progress" },
-        { schedule: { type: "crontab", value: backupSchedule }, checkinMargin: 10, maxRuntime: 30 }
+        sentryCronMonitorConfig(backupSchedule, { checkinMargin: 10, maxRuntime: 30 })
       );
 
       try {
@@ -458,7 +471,7 @@ export async function register() {
       } finally {
         isBackupRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "backup", schedule: backupSchedule }, "Scheduled database backup");
 
@@ -509,7 +522,7 @@ export async function register() {
       } finally {
         isPruningRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "data-pruning" }, "Scheduled data pruning (daily at 3:30 AM NZST)");
 
@@ -550,7 +563,7 @@ export async function register() {
       } finally {
         isDraftCleanupRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "draft-cleanup" }, "Scheduled draft cleanup (daily at 4:00 AM NZST)");
 
@@ -567,7 +580,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "pending-deadline-alerts", status: "in_progress" },
-        { schedule: { type: "crontab", value: "0 8 * * *" }, checkinMargin: 10, maxRuntime: 10 }
+        sentryCronMonitorConfig("0 8 * * *", { checkinMargin: 10, maxRuntime: 10 })
       );
 
       try {
@@ -585,7 +598,7 @@ export async function register() {
       } finally {
         isPendingDeadlineRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "pending-deadline-alerts" }, "Scheduled pending deadline alerts (daily at 8:00 AM NZST)");
 
@@ -602,7 +615,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "checkin-reminders", status: "in_progress" },
-        { schedule: { type: "crontab", value: "0 9 * * *" }, checkinMargin: 10, maxRuntime: 15 }
+        sentryCronMonitorConfig("0 9 * * *", { checkinMargin: 10, maxRuntime: 15 })
       );
 
       try {
@@ -620,7 +633,7 @@ export async function register() {
       } finally {
         isCheckinReminderRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "checkin-reminders" }, "Scheduled check-in reminders (daily at 9:00 AM NZST)");
 
@@ -637,7 +650,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "capacity-warnings", status: "in_progress" },
-        { schedule: { type: "crontab", value: "0 7 * * *" }, checkinMargin: 10, maxRuntime: 10 }
+        sentryCronMonitorConfig("0 7 * * *", { checkinMargin: 10, maxRuntime: 10 })
       );
 
       try {
@@ -655,7 +668,7 @@ export async function register() {
       } finally {
         isCapacityWarningRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "capacity-warnings" }, "Scheduled capacity warnings (daily at 7:00 AM NZST)");
 
@@ -683,7 +696,7 @@ export async function register() {
       } finally {
         isAdminDigestRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "admin-digest" }, "Scheduled admin daily digest (daily at 7:30 AM NZST)");
 
@@ -701,7 +714,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "email-retry", status: "in_progress" },
-        { schedule: { type: "crontab", value: "*/30 * * * *" }, checkinMargin: 10, maxRuntime: 10 }
+        sentryCronMonitorConfig("*/30 * * * *", { checkinMargin: 10, maxRuntime: 10 })
       );
 
       try {
@@ -748,7 +761,7 @@ export async function register() {
       } finally {
         isCompleteBookingsRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "complete-bookings" }, "Scheduled complete bookings (daily at 1:00 AM NZST)");
 
@@ -776,7 +789,7 @@ export async function register() {
       } finally {
         isHutLeaderAutoAssignRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "hut-leader-auto-assign" }, "Scheduled hut leader auto-assign (daily at 6:00 AM NZST)");
 
@@ -804,7 +817,7 @@ export async function register() {
       } finally {
         isAgeUpRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "age-up" }, "Scheduled age-up check (daily at 6:30 AM NZST)");
 
@@ -834,7 +847,7 @@ export async function register() {
       } finally {
         isCreditReconRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "credit-reconciliation" }, "Scheduled credit reconciliation (daily at 5:00 AM NZST)");
 
@@ -850,7 +863,7 @@ export async function register() {
 
       const checkInId = Sentry.captureCheckIn(
         { monitorSlug: "waitlist-processor", status: "in_progress" },
-        { schedule: { type: "crontab", value: "*/30 * * * *" } }
+        sentryCronMonitorConfig("*/30 * * * *")
       );
 
       try {
@@ -868,7 +881,7 @@ export async function register() {
       } finally {
         isWaitlistCronRunning = false;
       }
-    }, { timezone: "Pacific/Auckland" });
+    }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "waitlist-processor" }, "Scheduled waitlist processor (every 30 minutes)");
   }

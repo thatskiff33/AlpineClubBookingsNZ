@@ -10,6 +10,25 @@ const adminBookingSearchQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(20).default(8),
 });
 
+const bookingReferencePattern =
+  /\bbooking(?:\s+(?:id|ref(?:erence)?(?:\s+number)?))?[\s:#-]+([a-z0-9][a-z0-9_-]{1,})\b/i;
+
+function getBookingIdSearchTerms(query: string) {
+  const terms = new Set<string>([query]);
+  const lowerQuery = query.toLowerCase();
+
+  terms.add(lowerQuery);
+
+  const referenceMatch = query.match(bookingReferencePattern);
+  if (referenceMatch) {
+    const referenceTerm = referenceMatch[1];
+    terms.add(referenceTerm);
+    terms.add(referenceTerm.toLowerCase());
+  }
+
+  return Array.from(terms).filter((term) => term.length >= 2);
+}
+
 function getInvoiceSyncEligibility(booking: {
   status: string;
   payment: { id: string; xeroInvoiceId: string | null } | null;
@@ -58,7 +77,7 @@ function getInvoiceSyncEligibility(booking: {
 
 /**
  * GET /api/admin/bookings/search?q=searchterm
- * Search bookings by booking ID prefix or member identity.
+ * Search bookings by booking ID/reference prefix or member identity.
  */
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -93,13 +112,16 @@ export async function GET(request: NextRequest) {
   }
 
   const { q, limit } = parsed.data;
+  const bookingIdSearchTerms = getBookingIdSearchTerms(q);
 
   try {
     const bookings = await prisma.booking.findMany({
       where: {
         status: { not: "DRAFT" },
         OR: [
-          { id: { startsWith: q } },
+          ...bookingIdSearchTerms.map((term) => ({
+            id: { startsWith: term },
+          })),
           {
             member: {
               is: {
