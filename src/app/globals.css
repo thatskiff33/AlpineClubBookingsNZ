@@ -164,6 +164,13 @@
   font-family: var(--font-sans);
 }
 
+.website-mobile-menu {
+  --background: var(--brand-charcoal);
+  --foreground: var(--brand-snow);
+  background: var(--brand-charcoal);
+  color: var(--brand-snow);
+}
+
 .website-theme :is(h1, h2, h3, h4, [data-website-heading="true"]) {
   font-family: var(--website-heading-font);
   letter-spacing: -0.035em;

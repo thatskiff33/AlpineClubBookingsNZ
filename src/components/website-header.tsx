@@ -124,7 +124,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
           </SheetTrigger>
           <SheetContent
             side="right"
-            className="website-theme w-72 border-brand-ridge/25 bg-brand-charcoal text-brand-snow"
+            className="website-theme website-mobile-menu w-72 border-brand-ridge/25"
           >
             <SheetHeader>
               <SheetTitle className="flex items-center gap-2 text-left font-heading text-brand-snow">
