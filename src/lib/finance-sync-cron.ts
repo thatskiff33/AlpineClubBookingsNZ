@@ -15,6 +15,7 @@ export const FINANCE_SYNC_CRON_SCHEDULE = "15 10 * * *";
 export const FINANCE_SYNC_CRON_TIMEZONE = "Pacific/Auckland";
 export const FINANCE_SYNC_CRON_CHECKIN_CONFIG = {
   schedule: { type: "crontab" as const, value: FINANCE_SYNC_CRON_SCHEDULE },
+  timezone: FINANCE_SYNC_CRON_TIMEZONE,
   checkinMargin: 10,
   maxRuntime: 60,
 };

@@ -807,7 +807,37 @@ export function adminDailyDigestTemplate(sections: {
   `);
 }
 
-export function adminXeroReconciliationReportTemplate(report: {
+export type XeroReconciliationIssueSeverityEmail = "critical" | "warning" | "info";
+
+export interface XeroReconciliationIssueItemEmail {
+  label: string;
+  localModel: string | null;
+  localId: string | null;
+  localUrl: string | null;
+  xeroObjectType: string | null;
+  xeroObjectId: string | null;
+  xeroObjectNumber: string | null;
+  xeroObjectUrl: string | null;
+  operationId: string | null;
+  operationStatus: string | null;
+  operationType: string | null;
+  correlationKey: string | null;
+  detail: string | null;
+  latestErrorMessage: string | null;
+  createdAt: Date | null;
+}
+
+export interface XeroReconciliationIssueSectionEmail {
+  id: string;
+  title: string;
+  severity: XeroReconciliationIssueSeverityEmail;
+  count: number;
+  whatWentWrong: string;
+  howToFix: string;
+  items: XeroReconciliationIssueItemEmail[];
+}
+
+export interface XeroReconciliationReportEmail {
   generatedAt: Date;
   lookbackHours: number;
   stalePendingMinutes: number;
@@ -827,6 +857,7 @@ export function adminXeroReconciliationReportTemplate(report: {
     issueCategoryCount: number;
     issueTotalCount: number;
   };
+  issueSections?: XeroReconciliationIssueSectionEmail[];
   repeatedFailures: Array<{
     correlationKey: string;
     failureCount: number;
@@ -836,6 +867,13 @@ export function adminXeroReconciliationReportTemplate(report: {
     localId: string | null;
     localUrl: string | null;
     latestErrorMessage: string | null;
+    latestOperationId?: string;
+    latestOperationStatus?: string;
+    latestOperationCreatedAt?: Date;
+    xeroObjectType?: string | null;
+    xeroObjectId?: string | null;
+    xeroObjectNumber?: string | null;
+    xeroObjectUrl?: string | null;
   }>;
   unsupportedPartials: Array<{
     operationId: string;
@@ -844,10 +882,116 @@ export function adminXeroReconciliationReportTemplate(report: {
     localModel: string | null;
     localId: string | null;
     localUrl: string | null;
+    xeroObjectType?: string | null;
+    xeroObjectId?: string | null;
+    xeroObjectNumber?: string | null;
+    xeroObjectUrl?: string | null;
     reason: string;
     createdAt: Date;
   }>;
-}): string {
+}
+
+function formatEmailDateTime(value: Date | null): string {
+  if (!value) {
+    return "";
+  }
+
+  return value.toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" });
+}
+
+function formatXeroObjectLabel(item: {
+  xeroObjectType: string | null;
+  xeroObjectId: string | null;
+  xeroObjectNumber: string | null;
+}): string | null {
+  if (!item.xeroObjectId) {
+    return null;
+  }
+
+  return `${item.xeroObjectType ?? "Xero"} ${item.xeroObjectNumber ?? item.xeroObjectId}`;
+}
+
+function issueSeverityStyle(severity: XeroReconciliationIssueSeverityEmail) {
+  switch (severity) {
+    case "critical":
+      return { bg: "#fef2f2", border: "#fecaca", text: "#991b1b", label: "Action needed" };
+    case "warning":
+      return { bg: "#fffbeb", border: "#fcd34d", text: "#92400e", label: "Review" };
+    case "info":
+      return { bg: "#eff6ff", border: "#bfdbfe", text: "#1e40af", label: "Context" };
+    default:
+      return { bg: "#f8fafc", border: BORDER_COLOR, text: TEXT_COLOR, label: "Review" };
+  }
+}
+
+function issueLink(text: string, url: string, sameOrigin = false): string {
+  const safeUrl = sanitizeEmailHref(url, {
+    baseUrl: BASE_URL,
+    sameOrigin,
+  });
+
+  return `<a href="${escapeHtml(safeUrl)}" target="_blank" style="color: ${BRAND_CHARCOAL}; font-weight: 700; text-decoration: underline;">${escapeHtml(text)}</a>`;
+}
+
+function renderIssueItem(item: XeroReconciliationIssueItemEmail): string {
+  const recordLink = item.localUrl
+    ? issueLink("Open TACBookings", item.localUrl, true)
+    : null;
+  const xeroLabel = formatXeroObjectLabel(item);
+  const xeroLink = item.xeroObjectUrl
+    ? issueLink(xeroLabel ?? "Open Xero", item.xeroObjectUrl)
+    : null;
+  const links = [recordLink, xeroLink].filter((value): value is string => Boolean(value));
+  const metadata = [
+    item.operationId ? `Operation ${item.operationId}` : null,
+    item.operationStatus ? `Status ${item.operationStatus}` : null,
+    item.operationType,
+    item.correlationKey ? `Correlation ${item.correlationKey}` : null,
+    formatEmailDateTime(item.createdAt),
+  ].filter((value): value is string => Boolean(value));
+  const detailRows = [
+    item.detail,
+    item.latestErrorMessage ? `Latest error: ${item.latestErrorMessage}` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return `
+    <div style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; padding: 12px; margin: 10px 0; background-color: ${WHITE};">
+      <p style="margin: 0 0 6px 0; color: ${TEXT_COLOR}; font-size: 14px; font-weight: 700;">${escapeHtml(item.label)}</p>
+      ${
+        metadata.length > 0
+          ? `<p style="margin: 0 0 6px 0; color: ${TEXT_MUTED}; font-size: 12px; line-height: 1.5;">${metadata.map(escapeHtml).join(" &bull; ")}</p>`
+          : ""
+      }
+      ${
+        detailRows.length > 0
+          ? `<p style="margin: 0 0 8px 0; color: ${TEXT_COLOR}; font-size: 13px; line-height: 1.5;">${detailRows.map(escapeHtml).join("<br>")}</p>`
+          : ""
+      }
+      ${
+        links.length > 0
+          ? `<p style="margin: 0; color: ${TEXT_MUTED}; font-size: 13px; line-height: 1.5;">${links.join(" &nbsp; ")}</p>`
+          : ""
+      }
+    </div>`;
+}
+
+function renderIssueSection(section: XeroReconciliationIssueSectionEmail): string {
+  const style = issueSeverityStyle(section.severity);
+  const itemHtml = section.items.length > 0
+    ? section.items.map(renderIssueItem).join("")
+    : `<p style="margin: 0; color: ${TEXT_MUTED}; font-size: 13px; line-height: 1.5;">Open the Xero admin area to review the affected records.</p>`;
+
+  return `
+    <div style="background-color: ${style.bg}; border: 1px solid ${style.border}; border-radius: 8px; padding: 16px; margin: 18px 0;">
+      <p style="margin: 0 0 8px 0; color: ${style.text}; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;">${escapeHtml(style.label)} &bull; ${section.count}</p>
+      <h3 style="margin: 0 0 10px 0; color: ${TEXT_COLOR}; font-size: 17px; line-height: 1.35;">${escapeHtml(section.title)}</h3>
+      <p style="margin: 0 0 8px 0; color: ${TEXT_COLOR}; font-size: 14px; line-height: 1.5;"><strong>What went wrong:</strong> ${escapeHtml(section.whatWentWrong)}</p>
+      <p style="margin: 0 0 12px 0; color: ${TEXT_COLOR}; font-size: 14px; line-height: 1.5;"><strong>How to fix:</strong> ${escapeHtml(section.howToFix)}</p>
+      ${itemHtml}
+    </div>`;
+}
+
+export function adminXeroReconciliationReportTemplate(report: XeroReconciliationReportEmail): string {
   const summaryRows = [
     { label: "Generated", value: report.generatedAt.toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" }) },
     { label: "Lookback Window", value: `${report.lookbackHours} hour${report.lookbackHours === 1 ? "" : "s"}` },
@@ -871,6 +1015,8 @@ export function adminXeroReconciliationReportTemplate(report: {
     { label: "Repeated-failure correlations", value: String(report.summary.repeatedFailureCorrelations) },
   ];
 
+  const issueSections = report.issueSections ?? [];
+  const issueSectionHtml = issueSections.map(renderIssueSection).join("");
   const repeatedFailureRows = report.repeatedFailures
     .map((failure) => `
       <tr>
@@ -904,12 +1050,16 @@ export function adminXeroReconciliationReportTemplate(report: {
     ${
       report.summary.issueCategoryCount === 0
         ? alertBox("No open reconciliation gaps were detected in this report window.", "success")
-        : alertBox("Reconciliation gaps were detected and should be reviewed.", "warning")
+        : alertBox("Reconciliation gaps were detected. Start with the action sections below, then use the diagnostic totals for context.", "warning")
     }
     ${infoTable(summaryRows)}
-    ${infoTable(categoryRows)}
     ${
-      report.repeatedFailures.length > 0
+      issueSections.length > 0
+        ? issueSectionHtml
+        : ""
+    }
+    ${
+      issueSections.length === 0 && report.repeatedFailures.length > 0
         ? `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
@@ -920,10 +1070,10 @@ export function adminXeroReconciliationReportTemplate(report: {
       </tr>
       ${repeatedFailureRows}
     </table>`
-        : paragraph("No repeated-failure correlations met the alert threshold in this window.")
+        : ""
     }
     ${
-      report.unsupportedPartials.length > 0
+      issueSections.length === 0 && report.unsupportedPartials.length > 0
         ? `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid ${BORDER_COLOR}; border-radius: 6px; border-collapse: collapse; margin: 16px 0;">
       <tr>
@@ -934,7 +1084,12 @@ export function adminXeroReconciliationReportTemplate(report: {
       </tr>
       ${unsupportedPartialRows}
     </table>`
-        : paragraph("No unsupported partial-operation repair gaps were detected in this window.")
+        : ""
+    }
+    ${
+      report.summary.issueCategoryCount > 0
+        ? `${paragraph("Diagnostic totals")}${infoTable(categoryRows)}`
+        : ""
     }
     ${button("Open Xero Admin", BASE_URL + "/admin/xero")}
   `);

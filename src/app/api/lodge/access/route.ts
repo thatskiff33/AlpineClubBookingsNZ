@@ -28,16 +28,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: authResult.error }, { status: authResult.status! });
   }
 
-  if (authResult.session?.user) {
-    const access = await getKioskAccessInfo(
-      authResult.session.user.id,
-      authResult.session.user.role,
-      date
-    );
-
-    return NextResponse.json(access);
-  }
-
   if ("pinSession" in authResult && authResult.pinSession) {
     return NextResponse.json({
       tier: "hut-leader",
@@ -46,6 +36,16 @@ export async function GET(req: NextRequest) {
       canMarkAttendance: true,
       canCompleteChores: true,
     });
+  }
+
+  if (authResult.session?.user) {
+    const access = await getKioskAccessInfo(
+      authResult.session.user.id,
+      authResult.session.user.role,
+      date
+    );
+
+    return NextResponse.json(access);
   }
 
   return NextResponse.json({

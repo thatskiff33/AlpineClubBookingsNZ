@@ -45,6 +45,7 @@ import {
   joinRequestConfirmationTemplate,
   adminRefundRequestTemplate,
   adminIssueReportTemplate,
+  type XeroReconciliationReportEmail,
 } from "./email-templates";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "./member-setup-invite";
 import {
@@ -880,51 +881,13 @@ export async function sendAdminDailyDigestAlert(sections: {
   });
 }
 
-export async function sendAdminXeroReconciliationReportAlert(report: {
-  generatedAt: Date;
-  lookbackHours: number;
-  stalePendingMinutes: number;
-  summary: {
-    missingMemberContactLinks: number;
-    missingPaymentInvoiceLinks: number;
-    missingPaymentRefundCreditNoteLinks: number;
-    missingSubscriptionInvoiceLinks: number;
-    mismatchedCanonicalLinks: number;
-    staleCanonicalLinks: number;
-    duplicateActiveCanonicalLinks: number;
-    stalePendingOperations: number;
-    recentFailedOperations: number;
-    recentPartialOperations: number;
-    unsupportedPartialOperations: number;
-    repeatedFailureCorrelations: number;
-    issueCategoryCount: number;
-    issueTotalCount: number;
-  };
-  repeatedFailures: Array<{
-    correlationKey: string;
-    failureCount: number;
-    entityType: string;
-    operationType: string;
-    localModel: string | null;
-    localId: string | null;
-    localUrl: string | null;
-    latestErrorMessage: string | null;
-  }>;
-  unsupportedPartials: Array<{
-    operationId: string;
-    entityType: string;
-    operationType: string;
-    localModel: string | null;
-    localId: string | null;
-    localUrl: string | null;
-    reason: string;
-    createdAt: Date;
-  }>;
-}) {
+export async function sendAdminXeroReconciliationReportAlert(
+  report: XeroReconciliationReportEmail
+) {
   const subject =
     report.summary.issueCategoryCount === 0
       ? "Xero Reconciliation Report - clean"
-      : `Xero Reconciliation Report - ${report.summary.issueCategoryCount} issue categor${report.summary.issueCategoryCount === 1 ? "y" : "ies"}, ${report.summary.issueTotalCount} item${report.summary.issueTotalCount === 1 ? "" : "s"}`;
+      : `Xero Reconciliation Report - action needed: ${report.summary.issueCategoryCount} categor${report.summary.issueCategoryCount === 1 ? "y" : "ies"}, ${report.summary.issueTotalCount} item${report.summary.issueTotalCount === 1 ? "" : "s"}`;
 
   await sendToAdmins({
     subject,

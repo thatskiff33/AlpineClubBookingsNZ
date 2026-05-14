@@ -2848,7 +2848,7 @@ export default function XeroPage() {
                               setError("")
                               setForceSyncBookingSearch(event.target.value)
                             }}
-                            placeholder="Search by booking ID, member name, or email"
+                            placeholder="Search by booking reference, ID, member name, or email"
                           />
                           {forceSyncBookingSearching ? (
                             <div className="absolute right-3 top-2.5 text-xs text-slate-400">

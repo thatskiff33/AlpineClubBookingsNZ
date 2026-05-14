@@ -14,6 +14,8 @@ import {
   rateLimiters,
 } from "@/lib/rate-limit";
 import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
+import { auth } from "@/lib/auth";
+import { requireActiveSessionUser } from "@/lib/session-guards";
 
 const bodySchema = z.object({
   pin: z.string().regex(/^\d{6}$/),
@@ -32,6 +34,20 @@ function rateLimitResponse(message: string, retryAfter: number) {
 }
 
 export async function POST(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+  }
+
+  const inactiveResponse = await requireActiveSessionUser(session.user.id);
+  if (inactiveResponse) {
+    return inactiveResponse;
+  }
+
+  if (session.user.role !== "ADMIN" && session.user.role !== "LODGE") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const ip = getClientIp(req);
   const auditRequest = getAuditRequestContext(req);
   const lockout = getLodgePinLockout(ip);
@@ -137,7 +153,7 @@ export async function POST(req: NextRequest) {
     retentionClass: "sensitive_access",
   });
 
-  const session = createLodgePinSessionWithVersion(
+  const pinSession = createLodgePinSessionWithVersion(
     assignment.id,
     assignment.memberId,
     assignment.hutLeaderPin
@@ -150,12 +166,12 @@ export async function POST(req: NextRequest) {
 
   response.cookies.set({
     name: HUT_LEADER_PIN_SESSION_COOKIE,
-    value: session.value,
+    value: pinSession.value,
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
-    expires: session.expiresAt,
-    maxAge: session.maxAge,
+    expires: pinSession.expiresAt,
+    maxAge: pinSession.maxAge,
     path: "/",
   });
 

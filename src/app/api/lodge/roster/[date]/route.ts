@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkLodgeAuth } from "@/lib/lodge-auth";
+import { checkLodgeAuth, getLodgeAuthActorMemberId } from "@/lib/lodge-auth";
 import { getBookingGuestDisplayAgeTier } from "@/lib/booking-guests";
 import { parseDateOnly } from "@/lib/date-only";
 import { prisma } from "@/lib/prisma";
@@ -180,7 +180,7 @@ export async function PUT(
     const completed = data.action === "complete";
     logAudit({
       action: completed ? "lodge.chore.completed" : "lodge.chore.uncompleted",
-      memberId: authResult.session?.user.id ?? null,
+      memberId: getLodgeAuthActorMemberId(authResult),
       targetId: data.assignmentId,
       subjectMemberId: assignment.bookingGuest?.memberId ?? null,
       entityType: "ChoreAssignment",
