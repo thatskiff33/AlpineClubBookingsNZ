@@ -1,10 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
+import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-return-path";
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
 interface WaitlistEntry {
   id: string;
@@ -16,12 +23,75 @@ interface WaitlistEntry {
   guestCount: number;
   status: string;
   waitlistPosition: number | null;
+  waitlistOfferedAt: string | null;
   waitlistOfferExpiresAt: string | null;
+  requiresAdminReview: boolean;
+  adminReviewReason: string | null;
   finalPriceCents: number;
   createdAt: string;
 }
 
+function parsePositiveInteger(value: string | null, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parsePageSize(value: string | null) {
+  const parsed = parsePositiveInteger(value, 25);
+  return PAGE_SIZE_OPTIONS.includes(parsed as (typeof PAGE_SIZE_OPTIONS)[number])
+    ? parsed
+    : 25;
+}
+
+function numberOrFallback(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  return new Date(value).toLocaleString("en-NZ", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+function getErrorMessage(data: unknown, fallback: string) {
+  if (data && typeof data === "object" && "error" in data) {
+    const message = (data as { error?: unknown }).error;
+    if (typeof message === "string" && message.trim()) {
+      return message;
+    }
+  }
+
+  return fallback;
+}
+
+function getWaitlistActionContext(entry: WaitlistEntry) {
+  if (entry.status === "WAITLIST_OFFERED") {
+    const expires = formatDateTime(entry.waitlistOfferExpiresAt);
+    return expires ? `Offer expires ${expires}` : "Offer sent; no expiry recorded";
+  }
+
+  if (entry.waitlistPosition) {
+    return `Position #${entry.waitlistPosition} waiting for capacity`;
+  }
+
+  return "Waiting for capacity";
+}
+
 export default function AdminWaitlistPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryString = searchParams.toString();
+  const queryPage = parsePositiveInteger(searchParams.get("page"), 1);
+  const queryPageSize = parsePageSize(searchParams.get("pageSize"));
+  const fromParam = searchParams.get("from") ?? "";
+  const toParam = searchParams.get("to") ?? "";
+  const currentWaitlistPath = buildPathWithSearch("/admin/waitlist", queryString);
   const [entries, setEntries] = useState<WaitlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [forceConfirming, setForceConfirming] = useState<string | null>(null);
@@ -30,34 +100,67 @@ export default function AdminWaitlistPage() {
     dates: string[];
   } | null>(null);
   const [error, setError] = useState("");
+  const [from, setFrom] = useState(fromParam);
+  const [to, setTo] = useState(toParam);
+  const [pagination, setPagination] = useState({
+    page: queryPage,
+    pageSize: queryPageSize,
+    total: 0,
+  });
+
+  const totalPages = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
+  const resultStart =
+    pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1;
+  const resultEnd = Math.min(pagination.page * pagination.pageSize, pagination.total);
+
+  useEffect(() => {
+    setFrom(fromParam);
+    setTo(toParam);
+  }, [fromParam, toParam]);
 
   const loadEntries = useCallback(async () => {
-    const res = await fetch("/api/admin/waitlist");
-    if (res.ok) {
-      const data = await res.json();
-      setEntries(data.entries);
+    setLoading(true);
+
+    try {
+      const res = await fetch(buildPathWithSearch("/api/admin/waitlist", queryString));
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(getErrorMessage(data, "Failed to load waitlist"));
+      }
+
+      const nextEntries = Array.isArray(data.entries)
+        ? data.entries
+        : Array.isArray(data.data)
+          ? data.data
+          : [];
+
+      setEntries(nextEntries);
+      setPagination({
+        page: numberOrFallback(data.page, queryPage),
+        pageSize: numberOrFallback(data.pageSize, queryPageSize),
+        total: numberOrFallback(data.total, nextEntries.length),
+      });
+      setError("");
+    } catch (err) {
+      setEntries([]);
+      setPagination({
+        page: queryPage,
+        pageSize: queryPageSize,
+        total: 0,
+      });
+      setError(err instanceof Error ? err.message : "Failed to load waitlist");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, []);
+  }, [queryPage, queryPageSize, queryString]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function initialLoad() {
-      try {
-        const res = await fetch("/api/admin/waitlist");
-        if (!res.ok || cancelled) {
-          return;
-        }
-
-        const data = await res.json();
-        if (!cancelled) {
-          setEntries(data.entries);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+      if (!cancelled) {
+        await loadEntries();
       }
     }
 
@@ -66,7 +169,61 @@ export default function AdminWaitlistPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadEntries]);
+
+  function updateQuery(mutator: (params: URLSearchParams) => void) {
+    const nextParams = new URLSearchParams(queryString);
+    mutator(nextParams);
+    router.replace(buildPathWithSearch("/admin/waitlist", nextParams), {
+      scroll: false,
+    });
+  }
+
+  function handleApplyFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    updateQuery((params) => {
+      if (from) {
+        params.set("from", from);
+      } else {
+        params.delete("from");
+      }
+
+      if (to) {
+        params.set("to", to);
+      } else {
+        params.delete("to");
+      }
+
+      params.set("page", "1");
+      params.set("pageSize", String(pagination.pageSize));
+    });
+  }
+
+  function handleClearFilters() {
+    setFrom("");
+    setTo("");
+    updateQuery((params) => {
+      params.delete("from");
+      params.delete("to");
+      params.set("page", "1");
+      params.set("pageSize", String(pagination.pageSize));
+    });
+  }
+
+  function handlePageSizeChange(nextPageSize: string) {
+    updateQuery((params) => {
+      params.set("page", "1");
+      params.set("pageSize", nextPageSize);
+    });
+  }
+
+  function handlePageChange(nextPage: number) {
+    updateQuery((params) => {
+      params.set("page", String(Math.max(1, Math.min(totalPages, nextPage))));
+      params.set("pageSize", String(pagination.pageSize));
+    });
+  }
 
   async function handleForceConfirm(bookingId: string, allowOverbook = false) {
     setForceConfirming(bookingId);
@@ -98,14 +255,63 @@ export default function AdminWaitlistPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">Waitlist</h1>
-        <Badge variant="secondary">{entries.length} entries</Badge>
+        <Badge variant="secondary">{pagination.total} total</Badge>
       </div>
 
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
       )}
+
+      <Card>
+        <CardContent className="pt-6">
+          <form
+            onSubmit={handleApplyFilters}
+            className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_160px_auto] md:items-end"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="waitlist-from">From</Label>
+              <Input
+                id="waitlist-from"
+                type="date"
+                value={from}
+                onChange={(event) => setFrom(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="waitlist-to">To</Label>
+              <Input
+                id="waitlist-to"
+                type="date"
+                value={to}
+                onChange={(event) => setTo(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="waitlist-page-size">Page size</Label>
+              <select
+                id="waitlist-page-size"
+                value={pagination.pageSize}
+                onChange={(event) => handlePageSizeChange(event.target.value)}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                {PAGE_SIZE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit">Apply</Button>
+              <Button type="button" variant="outline" onClick={handleClearFilters}>
+                Clear
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
       {overbookDialog && (
         <Card className="border-amber-200 bg-amber-50">
@@ -142,73 +348,121 @@ export default function AdminWaitlistPage() {
       {entries.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-gray-500">
-            No waitlisted bookings
+            No waitlisted bookings match the current filters
           </CardContent>
         </Card>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="border-b bg-gray-50 text-left">
-                <th className="px-3 py-2 font-medium">#</th>
-                <th className="px-3 py-2 font-medium">Member</th>
-                <th className="px-3 py-2 font-medium">Check-in</th>
-                <th className="px-3 py-2 font-medium">Check-out</th>
-                <th className="px-3 py-2 font-medium">Guests</th>
-                <th className="px-3 py-2 font-medium">Price</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Offer Expires</th>
-                <th className="px-3 py-2 font-medium">Created</th>
-                <th className="px-3 py-2 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((entry) => (
-                <tr key={entry.id} className="border-b hover:bg-gray-50">
-                  <td className="px-3 py-2">{entry.waitlistPosition ?? "-"}</td>
-                  <td className="px-3 py-2">
-                    <div className="font-medium">{entry.memberName}</div>
-                    <div className="text-xs text-gray-500">{entry.memberEmail}</div>
-                  </td>
-                  <td className="px-3 py-2">{entry.checkIn}</td>
-                  <td className="px-3 py-2">{entry.checkOut}</td>
-                  <td className="px-3 py-2">{entry.guestCount}</td>
-                  <td className="px-3 py-2">
-                    ${(entry.finalPriceCents / 100).toFixed(2)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <Badge variant="secondary" className={bookingStatusClass(entry.status)}>
-                      {bookingStatusLabel(entry.status)}
-                    </Badge>
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    {entry.waitlistOfferExpiresAt
-                      ? new Date(entry.waitlistOfferExpiresAt).toLocaleString("en-NZ", {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })
-                      : "-"}
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    {new Date(entry.createdAt).toLocaleString("en-NZ", {
-                      dateStyle: "short",
-                      timeStyle: "short",
-                    })}
-                  </td>
-                  <td className="px-3 py-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleForceConfirm(entry.id)}
-                      disabled={forceConfirming === entry.id}
-                    >
-                      {forceConfirming === entry.id ? "..." : "Force Confirm"}
-                    </Button>
-                  </td>
+        <div className="space-y-3">
+          <p className="text-sm text-gray-500">
+            Showing {resultStart}-{resultEnd} of {pagination.total}
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b bg-gray-50 text-left">
+                  <th className="px-3 py-2 font-medium">#</th>
+                  <th className="px-3 py-2 font-medium">Member</th>
+                  <th className="px-3 py-2 font-medium">Stay</th>
+                  <th className="px-3 py-2 font-medium">Guests</th>
+                  <th className="px-3 py-2 font-medium">Price</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  <th className="px-3 py-2 font-medium">Source</th>
+                  <th className="px-3 py-2 font-medium">Created</th>
+                  <th className="px-3 py-2 font-medium">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {entries.map((entry) => (
+                  <tr key={entry.id} className="border-b hover:bg-gray-50">
+                    <td className="px-3 py-2">{entry.waitlistPosition ?? "-"}</td>
+                    <td className="px-3 py-2">
+                      <Link
+                        href={buildHrefWithReturnTo(
+                          `/admin/members/${entry.memberId}`,
+                          currentWaitlistPath
+                        )}
+                        className="hover:underline"
+                      >
+                        <div className="font-medium text-blue-600">{entry.memberName}</div>
+                        <div className="text-xs text-gray-500">{entry.memberEmail}</div>
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div>{entry.checkIn}</div>
+                      <div className="text-xs text-gray-500">to {entry.checkOut}</div>
+                    </td>
+                    <td className="px-3 py-2">{entry.guestCount}</td>
+                    <td className="px-3 py-2">
+                      ${(entry.finalPriceCents / 100).toFixed(2)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="space-y-1">
+                        <Badge variant="secondary" className={bookingStatusClass(entry.status)}>
+                          {bookingStatusLabel(entry.status)}
+                        </Badge>
+                        {entry.requiresAdminReview && (
+                          <p className="text-xs text-amber-800">
+                            {entry.adminReviewReason || "Admin review required"}
+                          </p>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <Link
+                        href={buildHrefWithReturnTo(
+                          `/bookings/${entry.id}`,
+                          currentWaitlistPath
+                        )}
+                        className="text-blue-600 hover:underline"
+                      >
+                        View booking
+                      </Link>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {getWaitlistActionContext(entry)}
+                      </p>
+                    </td>
+                    <td className="px-3 py-2 text-xs">{formatDateTime(entry.createdAt)}</td>
+                    <td className="px-3 py-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleForceConfirm(entry.id)}
+                        disabled={forceConfirming === entry.id}
+                      >
+                        {forceConfirming === entry.id ? "..." : "Force Confirm"}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {pagination.total > 0 && (
+        <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-gray-500">
+            Page {pagination.page} of {totalPages}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pagination.page <= 1}
+              onClick={() => handlePageChange(pagination.page - 1)}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pagination.page >= totalPages}
+              onClick={() => handlePageChange(pagination.page + 1)}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       )}
     </div>

@@ -1909,7 +1909,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           </AccordionContent>
         </AccordionItem>
 
-        <Card><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-base font-medium">Account Credit</CardTitle><div className="flex items-center gap-3"><span className={`text-lg font-semibold ${creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"}`}>{`$${(creditBalance / 100).toFixed(2)}`}</span><Button size="sm" variant="outline" onClick={toggleAdjustmentForm}>{showAdjustmentForm ? "Cancel" : "Request Adjustment"}</Button></div></CardHeader><CardContent>
+        <Card id="account-credit"><CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2"><CardTitle className="text-base font-medium">Account Credit</CardTitle><div className="flex items-center gap-3"><span className={`text-lg font-semibold ${creditBalance > 0 ? "text-green-700" : creditBalance < 0 ? "text-red-700" : "text-slate-700"}`}>{`$${(creditBalance / 100).toFixed(2)}`}</span><Button size="sm" variant="outline" onClick={toggleAdjustmentForm}>{showAdjustmentForm ? "Cancel" : "Request Adjustment"}</Button></div></CardHeader><CardContent>
           {adjustmentError && <div className="mb-4 p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{adjustmentError}</div>}
           {showAdjustmentForm && (
             <div className="mb-4 p-4 border border-slate-200 rounded-md bg-slate-50 space-y-3">

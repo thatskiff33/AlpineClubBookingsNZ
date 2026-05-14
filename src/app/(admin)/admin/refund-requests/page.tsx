@@ -516,6 +516,10 @@ export default function RefundRequestsPage() {
                 {creditApprovals.map((request) => {
                   const isOwnRequest = session?.user?.id === request.requestedBy.id
                   const isReviewing = reviewingCreditId === request.id
+                  const creditLedgerHref = buildHrefWithReturnTo(
+                    `/admin/members/${request.member.id}#account-credit`,
+                    currentRefundRequestsPath
+                  )
 
                   return (
                     <Card key={request.id}>
@@ -603,7 +607,18 @@ export default function RefundRequestsPage() {
                             {request.approvedCredit && (
                               <p>
                                 <span className="text-muted-foreground">Applied credit:</span>{" "}
-                                {request.approvedCredit.id}
+                                <Link
+                                  href={creditLedgerHref}
+                                  className="text-blue-600 hover:underline"
+                                >
+                                  View credit ledger
+                                </Link>
+                                {request.approvedCredit.createdAt && (
+                                  <span className="text-muted-foreground">
+                                    {" "}
+                                    ({formatDateTime(request.approvedCredit.createdAt)})
+                                  </span>
+                                )}
                               </p>
                             )}
                           </div>
