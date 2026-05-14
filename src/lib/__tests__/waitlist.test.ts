@@ -446,6 +446,37 @@ describe("expireStaleOffers", () => {
   });
 });
 
+describe("processWaitlistCron", () => {
+  it("retries transient Prisma transaction-start failures", async () => {
+    const originalDelay = process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS;
+    process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS = "0";
+    try {
+      const { processWaitlistCron } = await import("@/lib/cron-waitlist");
+
+      mockPrismaTransaction
+        .mockRejectedValueOnce(
+          new Error("Transaction API error: Unable to start a transaction in the given time.")
+        )
+        .mockImplementationOnce(async (fn: (tx: unknown) => Promise<unknown>) => fn(mockTx));
+      mockTx.booking.findMany.mockResolvedValueOnce([]);
+      mockBookingFindMany.mockResolvedValueOnce([]);
+
+      await expect(processWaitlistCron()).resolves.toEqual({
+        expiredOffers: 0,
+        newOffers: 0,
+        autoCancelled: 0,
+      });
+      expect(mockPrismaTransaction).toHaveBeenCalledTimes(2);
+    } finally {
+      if (originalDelay === undefined) {
+        delete process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS;
+      } else {
+        process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS = originalDelay;
+      }
+    }
+  });
+});
+
 // ─── Status Colors Tests ───
 
 describe("status colors include waitlist statuses", () => {

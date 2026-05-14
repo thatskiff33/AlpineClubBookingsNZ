@@ -10,8 +10,13 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
       create: vi.fn().mockResolvedValue({ id: "log-1" }),
       update: vi.fn().mockResolvedValue({}),
       findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
+    },
+    auditLog: {
+      create: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([]),
     },
     emailSuppression: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -376,6 +381,97 @@ describe("N-11: retryFailedEmails", () => {
     const result = await retryFailedEmails();
 
     expect(result).toEqual({ retried: 0, succeeded: 0, failed: 0 });
+  });
+});
+
+describe("exhausted email failure review", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  it("keeps reviewed exhausted failures out of the active recovery queue", async () => {
+    mockPrisma.emailLog.findMany.mockResolvedValue([
+      {
+        id: "active-failure",
+        to: "member@example.com",
+        subject: "Booking confirmation",
+        templateName: "booking-confirmation",
+        attempts: 3,
+        lastAttemptAt: new Date("2026-05-15T01:00:00.000Z"),
+        errorMessage: "SMTP rejected",
+        createdAt: new Date("2026-05-15T00:00:00.000Z"),
+      },
+      {
+        id: "reviewed-failure",
+        to: "admin@example.com",
+        subject: "Email delivery permanently failed",
+        templateName: "admin-email-failure",
+        attempts: 3,
+        lastAttemptAt: new Date("2026-05-14T01:00:00.000Z"),
+        errorMessage: "SMTP rejected",
+        createdAt: new Date("2026-05-14T00:00:00.000Z"),
+      },
+    ]);
+    mockPrisma.auditLog.findMany.mockResolvedValue([
+      {
+        targetId: "reviewed-failure",
+        actorMemberId: "admin_1",
+        memberId: "admin_1",
+        createdAt: new Date("2026-05-15T02:00:00.000Z"),
+        metadata: { reason: "Old alert reviewed" },
+      },
+    ]);
+
+    const { getExhaustedEmailFailureReviewQueue } = await import("../email-failure-review");
+    const queue = await getExhaustedEmailFailureReviewQueue();
+
+    expect(queue.summary).toMatchObject({
+      activeCount: 1,
+      reviewedCount: 1,
+      scannedCount: 2,
+      maxAttempts: 3,
+    });
+    expect(queue.failures.map((failure) => failure.id)).toEqual(["active-failure"]);
+    expect(queue.recentlyReviewed[0]).toMatchObject({
+      id: "reviewed-failure",
+      reviewedById: "admin_1",
+      reviewNote: "Old alert reviewed",
+    });
+  });
+
+  it("archives exhausted failures by writing an audit record without changing EmailLog status", async () => {
+    mockPrisma.emailLog.findUnique.mockResolvedValue({
+      id: "log_1",
+      to: "member@example.com",
+      subject: "Booking confirmation",
+      templateName: "booking-confirmation",
+      status: "FAILED",
+      attempts: 3,
+      errorMessage: "SMTP rejected",
+    });
+
+    const { markExhaustedEmailFailureReviewed } = await import("../email-failure-review");
+    await expect(
+      markExhaustedEmailFailureReviewed("log_1", {
+        reviewedByMemberId: "admin_1",
+        reason: "Confirmed recipient was already contacted manually",
+      })
+    ).resolves.toEqual({
+      id: "log_1",
+      reviewed: true,
+      reason: "Confirmed recipient was already contacted manually",
+    });
+
+    expect(mockPrisma.emailLog.update).not.toHaveBeenCalled();
+    expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "email.failure.reviewed",
+        targetId: "log_1",
+        actorMemberId: "admin_1",
+        category: "communication",
+      }),
+    });
   });
 });
 

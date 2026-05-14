@@ -7,7 +7,7 @@ import {
   type Payment as XeroPayment,
   type XeroClient,
 } from "xero-node";
-import { CreditType, PaymentStatus } from "@prisma/client";
+import { CreditType, PaymentStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
 import { getSeasonYear } from "@/lib/utils";
@@ -41,6 +41,8 @@ interface StoredXeroInboundEvent {
   resourceId: string | null;
   correlationKey: string;
   payload: unknown;
+  status: string;
+  updatedAt?: Date | null;
 }
 
 interface MemberBackfillCandidate {
@@ -103,6 +105,7 @@ const DEFAULT_XERO_SYNC_SCOPE = "default";
 const DEFAULT_XERO_SYNC_SCOPE_PREFIX = "season:";
 const DEFAULT_XERO_INBOUND_BATCH_SIZE = 10;
 const DEFAULT_XERO_INBOUND_MAX_BATCHES = 5;
+const DEFAULT_XERO_INBOUND_FAILED_RETRY_BACKOFF_MS = 15 * 60 * 1000;
 const DEFAULT_CONTACT_RECONCILE_MIN_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_MEMBERSHIP_RECONCILE_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -178,6 +181,19 @@ function isPrismaUniqueConstraintError(error: unknown): boolean {
       "code" in error &&
       error.code === "P2002"
   );
+}
+
+function getXeroInboundFailedRetryBackoffMs() {
+  const configured = Number.parseInt(
+    process.env.XERO_INBOUND_FAILED_RETRY_BACKOFF_MS ?? "",
+    10
+  );
+
+  if (Number.isFinite(configured) && configured >= 0) {
+    return configured;
+  }
+
+  return DEFAULT_XERO_INBOUND_FAILED_RETRY_BACKOFF_MS;
 }
 
 function buildProcessedWebhookEventType(event: Pick<StoredXeroInboundEvent, "eventCategory" | "eventType">) {
@@ -2642,11 +2658,31 @@ export async function processStoredXeroInboundEvents(options?: {
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const eventIds =
     options?.eventIds?.filter((value): value is string => typeof value === "string" && value.trim().length > 0) ?? [];
+  const retryThreshold = new Date(
+    Date.now() - getXeroInboundFailedRetryBackoffMs()
+  );
+  const statusWhere: Prisma.XeroInboundEventWhereInput =
+    eventIds.length > 0
+      ? {
+          status: {
+            in: ["RECEIVED", "FAILED"],
+          },
+        }
+      : {
+          OR: [
+            { status: "RECEIVED" },
+            {
+              status: "FAILED",
+              updatedAt: {
+                lte: retryThreshold,
+              },
+            },
+          ],
+        };
+
   const events = await prisma.xeroInboundEvent.findMany({
     where: {
-      status: {
-        in: ["RECEIVED", "FAILED"],
-      },
+      ...statusWhere,
       ...(eventIds.length > 0
         ? {
             id: {
@@ -2713,14 +2749,18 @@ export async function processStoredXeroInboundEvents(options?: {
       await markStoredInboundEventProcessed(event.id);
       result.succeeded += 1;
     } catch (error) {
+      const retryAfterMs = getXeroInboundFailedRetryBackoffMs();
+      const retryEligibleAt = new Date(Date.now() + retryAfterMs);
       logger.error(
         {
           err: error,
           inboundEventId: event.id,
           correlationKey: event.correlationKey,
           resourceId: event.resourceId,
+          retryBackoffMs: retryAfterMs,
+          retryEligibleAt: retryEligibleAt.toISOString(),
         },
-        "Failed to process stored Xero inbound event"
+        "Failed to process stored Xero inbound event; automatic retry is deferred"
       );
 
       if (operationId) {

@@ -193,12 +193,37 @@ describe("backup", () => {
     execFileSyncMock.mockReturnValue(Buffer.from("-- database dump") as never);
     statSyncMock.mockReturnValue({ size: 20, mtimeMs: Date.now() } as never);
 
-    await expect(runDatabaseBackup()).resolves.toEqual({
+    await expect(runDatabaseBackup()).resolves.toMatchObject({
       success: false,
       error: "Backup file is suspiciously small",
+      sizeBytes: 20,
+      minSizeBytes: 128,
+      healthSignal: "backup-suspiciously-small",
     });
 
     expect(unlinkSyncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces suspicious backup size as operator-visible cron metadata", () => {
+    expect(
+      buildBackupCronOutcome({
+        success: false,
+        error: "Backup file is suspiciously small",
+        filename: "backup.sql.gz",
+        sizeBytes: 20,
+        minSizeBytes: 128,
+        healthSignal: "backup-suspiciously-small",
+      })
+    ).toEqual({
+      status: "FAILURE",
+      error: "Backup file is suspiciously small",
+      resultSummary: {
+        healthSignal: "backup-suspiciously-small",
+        filename: "backup.sql.gz",
+        sizeBytes: 20,
+        minSizeBytes: 128,
+      },
+    });
   });
 
   it("strips Prisma-only query parameters before invoking pg_dump", async () => {

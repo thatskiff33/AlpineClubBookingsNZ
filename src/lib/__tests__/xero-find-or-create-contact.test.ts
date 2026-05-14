@@ -302,6 +302,9 @@ describe("findOrCreateXeroContact", () => {
       "Jordan Hartley-Smith",
       20
     );
+    const createPayload =
+      mocks.xeroClientInstance.accountingApi.createContacts.mock.calls[0][1];
+    expect(createPayload.contacts[0]).not.toHaveProperty("companyNumber");
     expect(mocks.tx.member.update).toHaveBeenCalledWith({
       where: { id: "mem_1" },
       data: { xeroContactId: "xero_existing_by_name" },
