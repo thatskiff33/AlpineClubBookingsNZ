@@ -1,4 +1,4 @@
-export const NZ_COUNTRY_CODE = "NZ";
+export const NZ_COUNTRY_NAME = "New Zealand";
 
 export const STREET_ADDRESS_FIELDS = [
   "streetAddressLine1",
@@ -50,8 +50,19 @@ export function normalizeAddressValue(value: AddressValue) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+export function normalizeCountryName(value: AddressValue) {
+  const country = normalizeAddressValue(value);
+  const upperCountry = country.toUpperCase();
+
+  if (!country || upperCountry === "NZ" || upperCountry === "NZL") {
+    return NZ_COUNTRY_NAME;
+  }
+
+  return country;
+}
+
 export function withDefaultNzCountry(value: AddressValue) {
-  return normalizeAddressValue(value) || NZ_COUNTRY_CODE;
+  return normalizeCountryName(value);
 }
 
 export function copyStreetAddressToPostal<T>(

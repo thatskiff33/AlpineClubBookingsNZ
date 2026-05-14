@@ -20,7 +20,25 @@ describe("mapAddyAddressToSelection", () => {
       city: "Auckland",
       region: "Auckland",
       postalCode: "1010",
-      country: "NZ",
+      country: "New Zealand",
+    });
+  });
+
+  it("normalizes Addy country codes into the full country name", () => {
+    expect(
+      mapAddyAddressToSelection({
+        country: "NZ",
+      }),
+    ).toMatchObject({
+      country: "New Zealand",
+    });
+
+    expect(
+      mapAddyAddressToSelection({
+        country: "NZL",
+      }),
+    ).toMatchObject({
+      country: "New Zealand",
     });
   });
 

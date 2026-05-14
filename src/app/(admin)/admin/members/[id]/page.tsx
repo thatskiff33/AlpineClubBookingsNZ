@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/accordion"
 import { ArrowLeft, ExternalLink, User, Calendar, CreditCard, Clock, Pencil, Search, Link2, Plus, Trash2 } from "lucide-react"
 import {
-  NZ_COUNTRY_CODE,
+  NZ_COUNTRY_NAME,
   postalMatchesPhysical,
   withDefaultNzCountry,
   type MemberAddressValues,
@@ -405,7 +405,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [inheritEmailSearching, setInheritEmailSearching] = useState(false)
   const [selectedInheritEmailSource, setSelectedInheritEmailSource] = useState<EmailInheritanceSearchResult | null>(null)
   const [dependentOpen, setDependentOpen] = useState(false)
-  const [dependentForm, setDependentForm] = useState<DependentForm>({ firstName: "", lastName: "", email: "", dateOfBirth: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: NZ_COUNTRY_CODE, postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: NZ_COUNTRY_CODE })
+  const [dependentForm, setDependentForm] = useState<DependentForm>({ firstName: "", lastName: "", email: "", dateOfBirth: "", phoneCountryCode: "", phoneAreaCode: "", phoneNumber: "", streetAddressLine1: "", streetAddressLine2: "", streetCity: "", streetRegion: "", streetPostalCode: "", streetCountry: NZ_COUNTRY_NAME, postalAddressLine1: "", postalAddressLine2: "", postalCity: "", postalRegion: "", postalPostalCode: "", postalCountry: NZ_COUNTRY_NAME })
   const [dependentPostalSameAsPhysical, setDependentPostalSameAsPhysical] = useState(false)
   const [dependentSaving, setDependentSaving] = useState(false)
   const [dependentFormError, setDependentFormError] = useState("")

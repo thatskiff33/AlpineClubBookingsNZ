@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  NZ_COUNTRY_CODE,
+  NZ_COUNTRY_NAME,
   type MemberAddressValues,
 } from "@/lib/member-address";
 
@@ -99,13 +99,13 @@ export default function JoinApplyPage() {
     streetCity: "",
     streetRegion: "",
     streetPostalCode: "",
-    streetCountry: NZ_COUNTRY_CODE,
+    streetCountry: NZ_COUNTRY_NAME,
     postalAddressLine1: "",
     postalAddressLine2: "",
     postalCity: "",
     postalRegion: "",
     postalPostalCode: "",
-    postalCountry: NZ_COUNTRY_CODE,
+    postalCountry: NZ_COUNTRY_NAME,
   });
   const [sameAsPhysical, setSameAsPhysical] = useState(true);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});

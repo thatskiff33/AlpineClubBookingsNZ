@@ -1,3 +1,5 @@
+import { normalizeCountryName } from "@/lib/member-address";
+
 export interface AddressSelection {
   addressLine1: string;
   addressLine2: string;
@@ -47,6 +49,6 @@ export function mapAddyAddressToSelection(
     city: firstNonEmpty(address.mailtown, address.city),
     region: firstNonEmpty(address.region),
     postalCode: firstNonEmpty(address.postcode),
-    country: firstNonEmpty(address.country, "NZ"),
+    country: normalizeCountryName(address.country),
   };
 }
