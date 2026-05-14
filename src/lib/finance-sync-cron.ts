@@ -2,6 +2,13 @@ import { FinanceSyncRunStatus, FinanceSyncRunTrigger } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { getFinanceSyncDatasets } from "@/lib/finance-sync-datasets";
 import {
+  FINANCE_SYNC_CRON_CHECKIN_CONFIG,
+  FINANCE_SYNC_CRON_JOB_NAME,
+  FINANCE_SYNC_CRON_MONITOR_SLUG,
+  FINANCE_SYNC_CRON_SCHEDULE,
+  FINANCE_SYNC_CRON_TIMEZONE,
+} from "@/lib/finance-sync-cron-config";
+import {
   type FinanceSyncDatasetDefinition,
   type FinanceSyncExecutionResult,
   runFinanceSync,
@@ -9,16 +16,13 @@ import {
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 
-export const FINANCE_SYNC_CRON_JOB_NAME = "finance-daily-sync";
-export const FINANCE_SYNC_CRON_MONITOR_SLUG = "finance-daily-sync";
-export const FINANCE_SYNC_CRON_SCHEDULE = "15 10 * * *";
-export const FINANCE_SYNC_CRON_TIMEZONE = "Pacific/Auckland";
-export const FINANCE_SYNC_CRON_CHECKIN_CONFIG = {
-  schedule: { type: "crontab" as const, value: FINANCE_SYNC_CRON_SCHEDULE },
-  timezone: FINANCE_SYNC_CRON_TIMEZONE,
-  checkinMargin: 10,
-  maxRuntime: 60,
-};
+export {
+  FINANCE_SYNC_CRON_CHECKIN_CONFIG,
+  FINANCE_SYNC_CRON_JOB_NAME,
+  FINANCE_SYNC_CRON_MONITOR_SLUG,
+  FINANCE_SYNC_CRON_SCHEDULE,
+  FINANCE_SYNC_CRON_TIMEZONE,
+} from "@/lib/finance-sync-cron-config";
 
 type CronRunStatus = "SUCCESS" | "FAILURE" | "SKIPPED";
 type FinanceSyncLogger = Pick<typeof logger, "error" | "info" | "warn">;
