@@ -131,7 +131,6 @@ jobs:
       STRIPE_SECRET_KEY: sk_test_fake
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
       NEXT_PUBLIC_CONTACT_EMAIL: bookings@example.com
-      NEXT_PUBLIC_ADDRESSFINDER_KEY: ci-addressfinder-key
       XERO_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false"
       XERO_ENABLE_LIVE_MEMBER_GROUP_LOOKUPS: "false"
@@ -171,7 +170,6 @@ jobs:
     env:
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_fake
       NEXT_PUBLIC_CONTACT_EMAIL: bookings@example.com
-      NEXT_PUBLIC_ADDRESSFINDER_KEY: ci-addressfinder-key
       NEXT_PUBLIC_SENTRY_DSN: ""
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
     steps:
@@ -184,7 +182,6 @@ jobs:
             --build-arg NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}" \
             --build-arg NEXT_PUBLIC_SENTRY_DSN="${NEXT_PUBLIC_SENTRY_DSN}" \
             --build-arg NEXT_PUBLIC_CONTACT_EMAIL="${NEXT_PUBLIC_CONTACT_EMAIL}" \
-            --build-arg NEXT_PUBLIC_ADDRESSFINDER_KEY="${NEXT_PUBLIC_ADDRESSFINDER_KEY}" \
             --tag "${IMAGE_REF}" \
             .
 

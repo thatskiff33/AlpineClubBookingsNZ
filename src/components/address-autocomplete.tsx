@@ -1,51 +1,29 @@
 "use client";
 
-import { useEffect, useEffectEvent, useRef } from "react";
-import { useCspNonce } from "@/components/security/csp-nonce-provider";
+import {
+  type KeyboardEvent,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { Input, type InputProps } from "@/components/ui/input";
+import { type AddressSelection } from "@/lib/addy-address";
+import { cn } from "@/lib/utils";
 
-declare global {
-  interface Window {
-    AddressFinder?: {
-      Widget: new (
-        input: HTMLElement,
-        apiKey: string,
-        countryCode: string,
-        options?: Record<string, unknown>,
-      ) => AddressFinderWidget;
-    };
-  }
+export type { AddressSelection } from "@/lib/addy-address";
+
+interface AddySuggestion {
+  id: string;
+  label: string;
 }
 
-interface AddressFinderWidget {
-  on(eventName: string, callback: (value: string, metadata: AddressMetadata) => void): void;
-  enable?: () => void;
-  disable?: () => void;
+interface SearchResponse {
+  suggestions?: AddySuggestion[];
 }
 
-export interface AddressSelection {
-  addressLine1: string;
-  addressLine2: string;
-  city: string;
-  region: string;
-  postalCode: string;
-  country: string;
-}
-
-interface AddressMetadata {
-  address_line_1?: string;
-  address_line_2?: string;
-  suburb?: string;
-  locality_name?: string;
-  city?: string;
-  region?: string;
-  state?: string;
-  state_territory?: string;
-  postcode?: string;
-  postal_code?: string;
-  post_code?: string;
-  country?: string;
-  country_code?: string;
+interface DetailsResponse {
+  selection?: AddressSelection;
 }
 
 interface AddressAutocompleteProps
@@ -57,200 +35,334 @@ interface AddressAutocompleteProps
   countryCode?: string;
 }
 
-const ADDRESSFINDER_SCRIPT_URL =
-  "https://api.addressfinder.io/assets/v3/widget.js";
+const MIN_SEARCH_CHARS = 3;
+const SEARCH_DEBOUNCE_MS = 250;
 
-let addressfinderScriptPromise: Promise<void> | null = null;
-let hasWarnedAboutMissingKey = false;
-let hasWarnedAboutLoadFailure = false;
-
-function loadAddressfinderScript(nonce?: string) {
-  if (typeof window === "undefined") {
-    return Promise.resolve();
-  }
-
-  if (window.AddressFinder?.Widget) {
-    return Promise.resolve();
-  }
-
-  if (!addressfinderScriptPromise) {
-    addressfinderScriptPromise = new Promise((resolve, reject) => {
-      const existing = document.querySelector<HTMLScriptElement>(
-        `script[src="${ADDRESSFINDER_SCRIPT_URL}"]`,
-      );
-
-      if (existing) {
-        if (nonce && !existing.nonce) {
-          existing.nonce = nonce;
-        }
-
-        if (window.AddressFinder?.Widget) {
-          resolve();
-          return;
-        }
-
-        existing.addEventListener("load", () => resolve(), { once: true });
-        existing.addEventListener(
-          "error",
-          () => reject(new Error("Failed to load Addressfinder")),
-          { once: true },
-        );
-        return;
-      }
-
-      const script = document.createElement("script");
-      script.src = ADDRESSFINDER_SCRIPT_URL;
-      script.async = true;
-      if (nonce) {
-        script.nonce = nonce;
-      }
-      script.onload = () => resolve();
-      script.onerror = () =>
-        reject(new Error("Failed to load Addressfinder"));
-      document.body.appendChild(script);
-    });
-  }
-
-  return addressfinderScriptPromise;
+function createSessionId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 }
 
-function firstNonEmpty(...values: Array<string | undefined>) {
-  return values.find((value) => value && value.trim())?.trim() ?? "";
+function addressParamsFromKey(key: string) {
+  try {
+    return JSON.parse(key) as Record<string, string>;
+  } catch {
+    return {};
+  }
 }
 
-function mapMetadataToSelection(metadata: AddressMetadata): AddressSelection {
-  return {
-    addressLine1: firstNonEmpty(metadata.address_line_1),
-    addressLine2: firstNonEmpty(metadata.address_line_2),
-    city: firstNonEmpty(metadata.city, metadata.locality_name, metadata.suburb),
-    region: firstNonEmpty(
-      metadata.region,
-      metadata.state,
-      metadata.state_territory,
-    ),
-    postalCode: firstNonEmpty(
-      metadata.postcode,
-      metadata.postal_code,
-      metadata.post_code,
-    ),
-    country: firstNonEmpty(metadata.country_code, metadata.country, "NZ"),
-  };
+function isTruthy(value: string | undefined) {
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function appendAddressFilters(
+  params: URLSearchParams,
+  addressParamsKey: string,
+) {
+  const addressParams = addressParamsFromKey(addressParamsKey);
+
+  if (addressParams.post_box === "0" || isTruthy(addressParams.expostbox)) {
+    params.set("expostbox", "true");
+  }
+
+  if (isTruthy(addressParams.exrural)) {
+    params.set("exrural", "true");
+  }
+
+  if (isTruthy(addressParams.exundeliver)) {
+    params.set("exundeliver", "true");
+  }
 }
 
 export function AddressAutocomplete({
   addressParams,
   autoComplete = "disable-autocomplete",
+  className,
   countryCode = "NZ",
   disabled,
   onAddressSelected,
   onChange,
+  readOnly,
   value,
   ...props
 }: AddressAutocompleteProps) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const widgetRef = useRef<AddressFinderWidget | null>(null);
-  const cspNonce = useCspNonce();
-  const addressfinderKey = process.env.NEXT_PUBLIC_ADDRESSFINDER_KEY;
+  const generatedId = useId();
+  const inputId = props.id ?? generatedId;
+  const listboxId = `${inputId}-addy-listbox`;
   const addressParamsKey = JSON.stringify(addressParams ?? {});
+  const [hasFocus, setHasFocus] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [isOpen, setIsOpen] = useState(false);
+  const [loadingAddressId, setLoadingAddressId] = useState<string | null>(null);
+  const [searchStatus, setSearchStatus] = useState<
+    "idle" | "loading" | "error"
+  >("idle");
+  const [suggestions, setSuggestions] = useState<AddySuggestion[]>([]);
+  const detailsAbortRef = useRef<AbortController | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
 
-  const applyDisabledState = useEffectEvent((widget: AddressFinderWidget | null) => {
-    if (!widget) {
-      return;
+  function getSessionId() {
+    if (!sessionIdRef.current) {
+      sessionIdRef.current = createSessionId();
     }
 
-    if (disabled) {
-      widget.disable?.();
-      return;
-    }
+    return sessionIdRef.current;
+  }
 
-    widget.enable?.();
-  });
-
-  const handleSelect = useEffectEvent(
-    (_selectedAddress: string, metadata: AddressMetadata) => {
-      const selection = mapMetadataToSelection(metadata);
-      onChange(selection.addressLine1);
-      onAddressSelected(selection);
-    },
-  );
+  const trimmedValue = value.trim();
+  const canSearch =
+    !disabled &&
+    !readOnly &&
+    countryCode.toUpperCase() === "NZ" &&
+    trimmedValue.length >= MIN_SEARCH_CHARS;
+  const showPanel =
+    hasFocus &&
+    isOpen &&
+    (searchStatus === "loading" ||
+      searchStatus === "error" ||
+      suggestions.length > 0 ||
+      (hasSearched && canSearch));
 
   useEffect(() => {
-    if (!addressfinderKey) {
-      if (!hasWarnedAboutMissingKey) {
-        hasWarnedAboutMissingKey = true;
-        console.warn(
-          "Addressfinder autocomplete is disabled because NEXT_PUBLIC_ADDRESSFINDER_KEY is not set at build time.",
-        );
-      }
-      return;
-    }
-
-    if (!inputRef.current || widgetRef.current) {
+    if (!canSearch) {
+      setHasSearched(false);
+      setHighlightedIndex(-1);
+      setSearchStatus("idle");
+      setSuggestions([]);
       return;
     }
 
     let cancelled = false;
+    let controller: AbortController | null = null;
 
-    loadAddressfinderScript(cspNonce)
-      .then(() => {
-        if (
-          cancelled ||
-          !inputRef.current ||
-          !window.AddressFinder?.Widget
-        ) {
-          return;
-        }
+    const timeout = window.setTimeout(async () => {
+      controller = new AbortController();
+      setSearchStatus("loading");
+      setHasSearched(true);
 
-        const widgetAddressParams =
-          addressParamsKey === "{}"
-            ? undefined
-            : (JSON.parse(addressParamsKey) as Record<string, string>);
+      const params = new URLSearchParams({
+        q: trimmedValue,
+        session: getSessionId(),
+      });
+      appendAddressFilters(params, addressParamsKey);
 
-        const widget = new window.AddressFinder.Widget(
-          inputRef.current,
-          addressfinderKey,
-          countryCode,
+      try {
+        const response = await fetch(
+          `/api/address-autocomplete/search?${params.toString()}`,
           {
-            address_params: widgetAddressParams,
-            container: document.body,
+            signal: controller.signal,
           },
         );
 
-        widget.on("address:select", handleSelect);
-
-        widgetRef.current = widget;
-        applyDisabledState(widget);
-      })
-      .catch((error) => {
-        if (!hasWarnedAboutLoadFailure) {
-          hasWarnedAboutLoadFailure = true;
-          console.warn(
-            "Addressfinder autocomplete failed to initialise. Check CSP and outbound access to api.addressfinder.io.",
-            error,
-          );
+        if (!response.ok) {
+          throw new Error("Address search failed");
         }
-        widgetRef.current = null;
-      });
+
+        const data = (await response.json()) as SearchResponse;
+
+        if (cancelled) {
+          return;
+        }
+
+        setSuggestions(data.suggestions ?? []);
+        setHighlightedIndex(-1);
+        setSearchStatus("idle");
+        setIsOpen(true);
+      } catch (error) {
+        if (cancelled || controller.signal.aborted) {
+          return;
+        }
+
+        console.warn("Addy address search failed.", error);
+        setSuggestions([]);
+        setHighlightedIndex(-1);
+        setSearchStatus("error");
+        setIsOpen(true);
+      }
+    }, SEARCH_DEBOUNCE_MS);
 
     return () => {
       cancelled = true;
-      widgetRef.current?.disable?.();
-      widgetRef.current = null;
+      window.clearTimeout(timeout);
+      controller?.abort();
     };
-  }, [addressParamsKey, addressfinderKey, countryCode, cspNonce]);
+  }, [addressParamsKey, canSearch, trimmedValue]);
 
   useEffect(() => {
-    applyDisabledState(widgetRef.current);
-  }, [disabled]);
+    return () => {
+      detailsAbortRef.current?.abort();
+    };
+  }, []);
+
+  async function selectSuggestion(suggestion: AddySuggestion) {
+    detailsAbortRef.current?.abort();
+    const controller = new AbortController();
+    detailsAbortRef.current = controller;
+    setLoadingAddressId(suggestion.id);
+
+    const params = new URLSearchParams({ session: getSessionId() });
+
+    try {
+      const response = await fetch(
+        `/api/address-autocomplete/details/${encodeURIComponent(
+          suggestion.id,
+        )}?${params.toString()}`,
+        { signal: controller.signal },
+      );
+
+      if (!response.ok) {
+        throw new Error("Address details failed");
+      }
+
+      const data = (await response.json()) as DetailsResponse;
+
+      if (!data.selection) {
+        throw new Error("Address details were missing");
+      }
+
+      onChange(data.selection.addressLine1);
+      onAddressSelected(data.selection);
+      setSuggestions([]);
+      setHighlightedIndex(-1);
+      setIsOpen(false);
+      setSearchStatus("idle");
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        console.warn("Addy address details failed.", error);
+        setSearchStatus("error");
+        setIsOpen(true);
+      }
+    } finally {
+      if (detailsAbortRef.current === controller) {
+        detailsAbortRef.current = null;
+      }
+      setLoadingAddressId(null);
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    props.onKeyDown?.(event);
+
+    if (event.defaultPrevented || !showPanel || suggestions.length === 0) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setHighlightedIndex((current) =>
+        Math.min(current + 1, suggestions.length - 1),
+      );
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setHighlightedIndex((current) =>
+        current <= 0 ? suggestions.length - 1 : current - 1,
+      );
+      return;
+    }
+
+    if (event.key === "Enter" && highlightedIndex >= 0) {
+      event.preventDefault();
+      void selectSuggestion(suggestions[highlightedIndex]);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setIsOpen(false);
+    }
+  }
 
   return (
-    <Input
-      {...props}
-      autoComplete={autoComplete}
-      disabled={disabled}
-      onChange={(event) => onChange(event.target.value)}
-      ref={inputRef}
-      value={value}
-    />
+    <div className="relative">
+      <Input
+        {...props}
+        aria-activedescendant={
+          showPanel && highlightedIndex >= 0
+            ? `${listboxId}-${highlightedIndex}`
+            : undefined
+        }
+        aria-autocomplete="list"
+        aria-controls={
+          showPanel && suggestions.length > 0 ? listboxId : undefined
+        }
+        aria-expanded={showPanel}
+        aria-haspopup="listbox"
+        autoComplete={autoComplete}
+        className={className}
+        disabled={disabled}
+        id={inputId}
+        onBlur={(event) => {
+          props.onBlur?.(event);
+          setHasFocus(false);
+          setIsOpen(false);
+        }}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setIsOpen(true);
+        }}
+        onFocus={(event) => {
+          props.onFocus?.(event);
+          setHasFocus(true);
+          if (canSearch || suggestions.length > 0) {
+            setIsOpen(true);
+          }
+        }}
+        onKeyDown={handleKeyDown}
+        readOnly={readOnly}
+        role="combobox"
+        value={value}
+      />
+
+      {showPanel ? (
+        <div
+          className="absolute z-50 mt-1 w-full overflow-hidden rounded-md border bg-background text-sm shadow-lg"
+          onMouseDown={(event) => event.preventDefault()}
+        >
+          {suggestions.length > 0 ? (
+            <ul
+              aria-busy={Boolean(loadingAddressId)}
+              className="max-h-60 overflow-y-auto py-1"
+              id={listboxId}
+              role="listbox"
+            >
+              {suggestions.map((suggestion, index) => (
+                <li
+                  aria-selected={highlightedIndex === index}
+                  id={`${listboxId}-${index}`}
+                  key={suggestion.id}
+                  role="option"
+                >
+                  <button
+                    className={cn(
+                      "block w-full px-3 py-2 text-left",
+                      highlightedIndex === index
+                        ? "bg-accent text-accent-foreground"
+                        : "hover:bg-accent hover:text-accent-foreground",
+                    )}
+                    disabled={loadingAddressId !== null}
+                    onClick={() => void selectSuggestion(suggestion)}
+                    onMouseEnter={() => setHighlightedIndex(index)}
+                    type="button"
+                  >
+                    {suggestion.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="px-3 py-2 text-muted-foreground">
+              {searchStatus === "loading"
+                ? "Searching addresses..."
+                : searchStatus === "error"
+                  ? "Address lookup unavailable; enter address manually."
+                  : "No matching addresses found."}
+            </p>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
