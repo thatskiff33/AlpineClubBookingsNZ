@@ -33,7 +33,7 @@ jobs:
       STAGING_A11Y_OUT_DIR: reports/lighthouse/staging
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
