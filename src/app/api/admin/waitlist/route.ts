@@ -114,7 +114,10 @@ export async function GET(request: NextRequest) {
     guests: b.guests,
     status: b.status,
     waitlistPosition: b.waitlistPosition,
+    waitlistOfferedAt: b.waitlistOfferedAt?.toISOString() || null,
     waitlistOfferExpiresAt: b.waitlistOfferExpiresAt?.toISOString() || null,
+    requiresAdminReview: b.requiresAdminReview,
+    adminReviewReason: b.adminReviewReason,
     finalPriceCents: b.finalPriceCents,
     createdAt: b.createdAt.toISOString(),
   }));
