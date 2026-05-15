@@ -70,6 +70,16 @@ function healthResponse() {
       },
       suppressions: [],
     },
+    emailFailures: {
+      summary: {
+        activeCount: 0,
+        reviewedCount: 0,
+        scannedCount: 0,
+        maxAttempts: 3,
+      },
+      failures: [],
+      recentlyReviewed: [],
+    },
     systemInfo: {
       version: "0.1.0",
       nodeVersion: "v20.0.0",
