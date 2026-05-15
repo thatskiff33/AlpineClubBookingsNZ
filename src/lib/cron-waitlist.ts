@@ -3,12 +3,49 @@ import { BookingStatus } from "@prisma/client";
 import { expireStaleOffers } from "./waitlist";
 import logger from "@/lib/logger";
 
-/**
- * Waitlist processor cron job.
- * - Expires stale WAITLIST_OFFERED bookings and re-offers to next candidates
- * - Auto-cancels WAITLISTED bookings where all dates are in the past
- */
-export async function processWaitlistCron(): Promise<{
+const DEFAULT_WAITLIST_TRANSACTION_RETRY_ATTEMPTS = 3;
+const DEFAULT_WAITLIST_TRANSACTION_RETRY_DELAY_MS = 500;
+
+function getWaitlistTransactionRetryAttempts() {
+  const configured = Number.parseInt(
+    process.env.WAITLIST_TRANSACTION_RETRY_ATTEMPTS ?? "",
+    10
+  );
+
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_WAITLIST_TRANSACTION_RETRY_ATTEMPTS;
+}
+
+function getWaitlistTransactionRetryDelayMs() {
+  const configured = Number.parseInt(
+    process.env.WAITLIST_TRANSACTION_RETRY_DELAY_MS ?? "",
+    10
+  );
+
+  return Number.isFinite(configured) && configured >= 0
+    ? configured
+    : DEFAULT_WAITLIST_TRANSACTION_RETRY_DELAY_MS;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransactionStartFailure(error: unknown) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+
+  return /unable to start a transaction|transaction api error|pool_timeout|timed out fetching a new connection/i.test(
+    message
+  );
+}
+
+async function processWaitlistCronOnce(): Promise<{
   expiredOffers: number;
   newOffers: number;
   autoCancelled: number;
@@ -52,4 +89,41 @@ export async function processWaitlistCron(): Promise<{
     newOffers: reofferedCount,
     autoCancelled: pastWaitlisted.length,
   };
+}
+
+/**
+ * Waitlist processor cron job.
+ * - Expires stale WAITLIST_OFFERED bookings and re-offers to next candidates
+ * - Auto-cancels WAITLISTED bookings where all dates are in the past
+ * - Retries transient Prisma transaction-start failures; each attempt is safe
+ *   because waitlist mutations are guarded by statuses and advisory locks.
+ */
+export async function processWaitlistCron(): Promise<{
+  expiredOffers: number;
+  newOffers: number;
+  autoCancelled: number;
+}> {
+  const maxAttempts = getWaitlistTransactionRetryAttempts();
+  const delayMs = getWaitlistTransactionRetryDelayMs();
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await processWaitlistCronOnce();
+    } catch (error) {
+      if (!isTransactionStartFailure(error) || attempt >= maxAttempts) {
+        throw error;
+      }
+
+      logger.warn(
+        { err: error, attempt, maxAttempts, delayMs, job: "processWaitlistCron" },
+        "Waitlist cron transaction start failed; retrying"
+      );
+
+      if (delayMs > 0) {
+        await wait(delayMs);
+      }
+    }
+  }
+
+  return processWaitlistCronOnce();
 }

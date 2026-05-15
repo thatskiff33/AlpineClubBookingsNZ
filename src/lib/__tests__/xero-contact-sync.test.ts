@@ -45,12 +45,11 @@ describe("xero-contact-sync helpers", () => {
     vi.clearAllMocks();
   });
 
-  it("builds a Xero contact update payload including date of birth", () => {
+  it("builds a Xero contact update payload without date of birth", () => {
     expect(buildXeroContactUpdatePayload(baseContactSnapshot)).toEqual({
       firstName: "Alice",
       lastName: "Smith",
       email: "alice@example.com",
-      dateOfBirth: new Date("1990-01-15T00:00:00.000Z"),
       phoneCountryCode: "64",
       phoneAreaCode: "27",
       phoneNumber: "4224115",
@@ -67,6 +66,15 @@ describe("xero-contact-sync helpers", () => {
       postalPostalCode: "6140",
       postalCountry: "NZ",
     });
+  });
+
+  it("does not treat date-of-birth-only changes as Xero contact changes", () => {
+    expect(
+      hasMemberXeroContactChanges(baseContactSnapshot, {
+        ...baseContactSnapshot,
+        dateOfBirth: new Date("1991-01-15T00:00:00.000Z"),
+      })
+    ).toBe(false);
   });
 
   it("treats whitespace and null-only differences as unchanged", () => {

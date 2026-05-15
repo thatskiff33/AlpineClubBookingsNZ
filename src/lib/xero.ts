@@ -1030,7 +1030,6 @@ export async function findOrCreateXeroContact(
       firstName: member.firstName,
       lastName: member.lastName,
       emailAddress: member.email,
-      companyNumber: formatDateOfBirthForXero(member.dateOfBirth),
       phones: member.phoneNumber
         ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneCountryCode: member.phoneCountryCode || "", phoneAreaCode: member.phoneAreaCode || "", phoneNumber: member.phoneNumber }]
         : [],
@@ -1199,7 +1198,6 @@ export async function createXeroContactForMember(
       firstName: member.firstName,
       lastName: member.lastName,
       emailAddress: member.email,
-      companyNumber: formatDateOfBirthForXero(member.dateOfBirth),
       phones: [
         {
           phoneType: Phone.PhoneTypeEnum.MOBILE,
@@ -3164,16 +3162,6 @@ function buildXeroAddresses(member: {
   return addresses;
 }
 
-function formatDateOfBirthForXero(dateOfBirth?: Date | null): string | undefined {
-  if (!dateOfBirth) return undefined;
-
-  const day = String(dateOfBirth.getUTCDate()).padStart(2, "0");
-  const month = String(dateOfBirth.getUTCMonth() + 1).padStart(2, "0");
-  const year = dateOfBirth.getUTCFullYear();
-
-  return `${day}/${month}/${year}`;
-}
-
 function getMissingFieldsForXeroContactCreate(member: {
   firstName?: string | null;
   lastName?: string | null;
@@ -4265,7 +4253,6 @@ export async function updateXeroContact(
     const contact: Contact = {
       contactID: contactId,
       emailAddress: data.email,
-      companyNumber: formatDateOfBirthForXero(data.dateOfBirth),
       phones: data.phoneNumber
         ? [{ phoneType: Phone.PhoneTypeEnum.MOBILE, phoneCountryCode: data.phoneCountryCode || "", phoneAreaCode: data.phoneAreaCode || "", phoneNumber: data.phoneNumber }]
         : [],

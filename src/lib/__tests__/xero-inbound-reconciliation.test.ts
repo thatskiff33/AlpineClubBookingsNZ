@@ -235,6 +235,34 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.subscriptionFindMany.mockResolvedValue([]);
   });
 
+  it("only automatically retries failed inbound events after the retry backoff window", async () => {
+    mocks.inboundFindMany.mockResolvedValue([]);
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 0,
+      processed: 0,
+      succeeded: 0,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.inboundFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { status: "RECEIVED" },
+            {
+              status: "FAILED",
+              updatedAt: {
+                lte: expect.any(Date),
+              },
+            },
+          ],
+        }),
+      })
+    );
+  });
+
   it("marks duplicate inbound events as processed without re-running reconciliation", async () => {
     mocks.inboundFindMany.mockResolvedValue([
       {

@@ -255,6 +255,7 @@ describe("Phase 4 contact sync and cached import", () => {
         ],
       })
     );
+    expect(hashPayload.contacts[0]).not.toHaveProperty("companyNumber");
     expect(mocks.accountingApi.updateContact).toHaveBeenCalledWith(
       "tenant_1",
       "contact_1",

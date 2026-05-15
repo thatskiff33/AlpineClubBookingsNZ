@@ -57,6 +57,20 @@ interface EmailSuppressionEntry {
   lastSesMessageId: string | null;
 }
 
+interface ExhaustedEmailFailure {
+  id: string;
+  to: string;
+  subject: string;
+  templateName: string;
+  attempts: number;
+  lastAttemptAt: string;
+  errorMessage: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  reviewedById: string | null;
+  reviewNote: string | null;
+}
+
 interface HealthData {
   health: {
     status: string;
@@ -81,6 +95,16 @@ interface HealthData {
       eventsLast24h: number;
     };
     suppressions: EmailSuppressionEntry[];
+  };
+  emailFailures: {
+    summary: {
+      activeCount: number;
+      reviewedCount: number;
+      scannedCount: number;
+      maxAttempts: number;
+    };
+    failures: ExhaustedEmailFailure[];
+    recentlyReviewed: ExhaustedEmailFailure[];
   };
   systemInfo: {
     version: string;
@@ -169,12 +193,36 @@ function CronError({ error }: { error: string }) {
   );
 }
 
+function CronResultSummary({ summary }: { summary: Record<string, unknown> }) {
+  const healthSignal = typeof summary.healthSignal === "string" ? summary.healthSignal : null;
+  const sizeBytes = typeof summary.sizeBytes === "number" ? summary.sizeBytes : null;
+  const minSizeBytes = typeof summary.minSizeBytes === "number" ? summary.minSizeBytes : null;
+  const reason = typeof summary.reason === "string" ? summary.reason : null;
+
+  if (healthSignal || sizeBytes !== null) {
+    return (
+      <span className="text-xs text-slate-500">
+        {healthSignal ? `${healthSignal}` : "backup"}{" "}
+        {sizeBytes !== null ? `${sizeBytes} bytes` : ""}
+        {minSizeBytes !== null ? ` / min ${minSizeBytes}` : ""}
+      </span>
+    );
+  }
+
+  if (reason) {
+    return <span className="text-xs text-slate-500">{reason}</span>;
+  }
+
+  return null;
+}
+
 export default function AdminHealthPage() {
   const [data, setData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [clearingSuppressionId, setClearingSuppressionId] = useState<string | null>(null);
+  const [reviewingEmailFailureId, setReviewingEmailFailureId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -210,6 +258,34 @@ export default function AdminHealthPage() {
         setError(err instanceof Error ? err.message : "Unknown error");
       } finally {
         setClearingSuppressionId(null);
+      }
+    },
+    [fetchData]
+  );
+
+  const archiveEmailFailure = useCallback(
+    async (id: string, to: string) => {
+      const reason = window.prompt(
+        `Archive exhausted email failure for ${to}?`,
+        "Reviewed from admin health dashboard"
+      );
+      if (reason === null) {
+        return;
+      }
+
+      setReviewingEmailFailureId(id);
+      try {
+        const res = await fetch(`/api/admin/email-failures/${id}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason }),
+        });
+        if (!res.ok) throw new Error("Failed to archive exhausted email failure");
+        await fetchData();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unknown error");
+      } finally {
+        setReviewingEmailFailureId(null);
       }
     },
     [fetchData]
@@ -254,6 +330,7 @@ export default function AdminHealthPage() {
     webhookStats,
     recentWebhooks,
     emailDeliverability,
+    emailFailures,
     systemInfo,
   } = data;
   const checkEntries = Object.entries(health.checks) as [string, HealthCheck][];
@@ -405,6 +482,89 @@ export default function AdminHealthPage() {
         )}
       </div>
 
+      {/* Exhausted Email Failures */}
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+          <Mail className="h-5 w-5" />
+          Exhausted Email Failures
+        </h2>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Active failures</p>
+            <p className="text-2xl font-bold text-red-600">
+              {emailFailures.summary.activeCount}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Archived</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {emailFailures.summary.reviewedCount}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Retry limit</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {emailFailures.summary.maxAttempts}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Scanned</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {emailFailures.summary.scannedCount}
+            </p>
+          </div>
+        </div>
+
+        {emailFailures.failures.length === 0 ? (
+          <div className="bg-white border rounded-lg p-4 text-slate-500">
+            No active exhausted email failures.
+          </div>
+        ) : (
+          <div className="bg-white border rounded-lg overflow-x-auto">
+            <div className="min-w-[900px]">
+              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-b">
+                <span>Recipient</span>
+                <span>Subject</span>
+                <span>Template</span>
+                <span>Attempts</span>
+                <span>Last attempt</span>
+                <span className="text-right">Action</span>
+              </div>
+              <div className="divide-y">
+                {emailFailures.failures.map((failure) => (
+                  <div
+                    key={failure.id}
+                    className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-3 text-sm items-center"
+                  >
+                    <span className="font-medium text-slate-900 truncate">
+                      {failure.to}
+                    </span>
+                    <span className="text-slate-700 truncate" title={failure.subject}>
+                      {failure.subject}
+                    </span>
+                    <span className="text-slate-600 truncate">
+                      {failure.templateName}
+                    </span>
+                    <span className="text-slate-600">{failure.attempts}</span>
+                    <span className="text-slate-500">
+                      {formatDate(failure.lastAttemptAt)}
+                    </span>
+                    <button
+                      onClick={() => archiveEmailFailure(failure.id, failure.to)}
+                      disabled={reviewingEmailFailureId === failure.id}
+                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
+                    >
+                      <CheckCircle className="h-3.5 w-3.5" />
+                      Archive
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* System Info */}
       <div>
         <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
@@ -480,6 +640,7 @@ export default function AdminHealthPage() {
                       <div className="flex items-center gap-4 text-slate-500">
                         {run.durationMs != null && <span>{run.durationMs}ms</span>}
                         {run.error && <CronError error={run.error} />}
+                        {run.resultSummary && <CronResultSummary summary={run.resultSummary} />}
                       </div>
                     </div>
                   ))}
