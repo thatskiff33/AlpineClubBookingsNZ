@@ -1,6 +1,6 @@
 # Finance Sync Service Contract
 
-This document defines the Phase 3 service scaffold that sits on top of the durable `FinanceSnapshot` and `FinanceSyncRun` storage seam.
+This document defines the service boundary that sits on top of durable `FinanceSnapshot` and `FinanceSyncRun` storage.
 
 It is intentionally narrow. The service owns finance-only sync orchestration, but it does not register cron jobs, add overlap guards, or build diagnostics UI.
 

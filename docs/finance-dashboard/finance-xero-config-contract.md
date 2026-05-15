@@ -1,10 +1,10 @@
 # Finance Xero Config Contract
 
-This document defines the Phase 2 finance Xero boundary introduced by tasks `#105` and `#108`.
+This document defines the finance-only Xero boundary.
 
 ## Goal
 
-Reserve a finance-only Xero OAuth and persistence surface before finance connect/status routes or sync jobs land.
+Maintain a finance-only Xero OAuth and persistence surface that remains separate from operational Xero.
 
 ## Finance Env Names
 
@@ -62,9 +62,9 @@ finance manager must reconnect Xero to create fresh tokens.
 
 ## Not In Scope Yet
 
-Tasks `#105` and `#108` do not add:
+This contract does not add:
 
 - finance connect, callback, status, or disconnect routes
 - finance sync jobs
 
-Those belong to later Phase 2 tasks once the config, token storage, and metering boundaries are in place.
+Those belong in separate route, sync, and reporting contracts.

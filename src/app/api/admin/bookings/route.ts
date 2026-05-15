@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getMonthAvailability, LODGE_CAPACITY } from "@/lib/capacity";
+import { formatDateOnlyForTimeZone, parseDateOnly } from "@/lib/date-only";
 import logger from "@/lib/logger";
 
 /**
@@ -28,8 +29,14 @@ export async function GET(request: NextRequest) {
   const [yearStr, monthStr] = calendarMonth.split("-");
   const year = parseInt(yearStr, 10);
   const month = parseInt(monthStr, 10);
-  const monthStart = new Date(year, month - 1, 1);
-  const monthEnd = new Date(year, month, 0); // last day of month
+  if (month < 1 || month > 12) {
+    return NextResponse.json({ error: "calendarMonth must use a month from 01 to 12" }, { status: 400 });
+  }
+
+  const monthStart = parseDateOnly(`${yearStr}-${monthStr}-01`);
+  const nextMonthStart = month === 12
+    ? parseDateOnly(`${year + 1}-01-01`)
+    : parseDateOnly(`${yearStr}-${String(month + 1).padStart(2, "0")}-01`);
 
   const VALID_STATUSES = new Set(["DRAFT", "PENDING", "PAYMENT_PENDING", "CONFIRMED", "PAID", "COMPLETED", "CANCELLED", "BUMPED", "WAITLISTED", "WAITLIST_OFFERED"]);
   const statusParam = request.nextUrl.searchParams.get("status");
@@ -49,8 +56,8 @@ export async function GET(request: NextRequest) {
       prisma.booking.findMany({
         where: {
           ...statusFilter,
-          checkIn: { lte: monthEnd },
-          checkOut: { gte: monthStart },
+          checkIn: { lt: nextMonthStart },
+          checkOut: { gt: monthStart },
         },
         include: {
           member: { select: { firstName: true, lastName: true } },
@@ -64,8 +71,8 @@ export async function GET(request: NextRequest) {
     const result = bookings.map((b) => ({
       id: b.id,
       memberName: `${b.member.firstName} ${b.member.lastName}`,
-      checkIn: b.checkIn.toISOString().split("T")[0],
-      checkOut: b.checkOut.toISOString().split("T")[0],
+      checkIn: formatDateOnlyForTimeZone(b.checkIn),
+      checkOut: formatDateOnlyForTimeZone(b.checkOut),
       status: b.status,
       guestCount: b._count.guests,
     }));

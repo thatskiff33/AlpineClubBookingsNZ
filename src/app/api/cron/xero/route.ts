@@ -6,6 +6,7 @@ import { processQueuedXeroOperationRetries } from "@/lib/xero-operation-queue";
 import { runXeroInboundReconciliationCycle } from "@/lib/xero-inbound-reconciliation";
 import {
   backfillHistoricalXeroObjectLinks,
+  cleanupStaleCanonicalXeroObjectLinks,
   sendXeroReconciliationReport,
 } from "@/lib/xero-hardening";
 import logger from "@/lib/logger";
@@ -29,9 +30,9 @@ export async function POST(request: NextRequest) {
   }
 
   const task = request.nextUrl.searchParams.get("task") ?? "memberships";
-  if (!["memberships", "outbox", "retries", "inbound", "backfill", "report", "all"].includes(task)) {
+  if (!["memberships", "outbox", "retries", "inbound", "backfill", "link-cleanup", "report", "all"].includes(task)) {
     return NextResponse.json(
-      { error: "Invalid task. Expected memberships, outbox, retries, inbound, backfill, report, or all." },
+      { error: "Invalid task. Expected memberships, outbox, retries, inbound, backfill, link-cleanup, report, or all." },
       { status: 400 }
     );
   }
@@ -73,6 +74,10 @@ export async function POST(request: NextRequest) {
       task === "backfill" || task === "all"
         ? await backfillHistoricalXeroObjectLinks()
         : null;
+    const linkCleanup =
+      task === "backfill" || task === "link-cleanup" || task === "all"
+        ? await cleanupStaleCanonicalXeroObjectLinks()
+        : null;
     const reconciliationReport =
       task === "report" || task === "all"
         ? await sendXeroReconciliationReport()
@@ -85,7 +90,9 @@ export async function POST(request: NextRequest) {
           : task === "report"
             ? "Xero reconciliation report completed"
             : task === "backfill"
-              ? "Historical Xero link backfill completed"
+              ? "Historical Xero link maintenance completed"
+              : task === "link-cleanup"
+                ? "Stale Xero canonical links cleaned up"
               : task === "inbound"
                 ? "Xero inbound reconciliation cycle completed"
                 : task === "outbox"
@@ -100,6 +107,7 @@ export async function POST(request: NextRequest) {
       queuedRetries,
       inboundReconciliation,
       linkBackfill,
+      linkCleanup,
       reconciliationReport,
     });
   } catch (error) {

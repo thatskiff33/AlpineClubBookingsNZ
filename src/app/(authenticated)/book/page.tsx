@@ -17,6 +17,7 @@ import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
 } from "@/lib/booking-error-payment-targets";
+import { formatLocalDateOnly } from "@/lib/date-only";
 import Link from "next/link";
 import {
   getFamilyMemberBookingActionLabel,
@@ -229,10 +230,12 @@ export default function BookPage() {
     setCheckOut(co);
     setError("");
     setGuestProfileBlocks([]);
+    const ciStr = formatLocalDateOnly(ci);
+    const coStr = formatLocalDateOnly(co);
 
     // Fetch availability for selected range
     const res = await fetch(
-      `/api/availability/check?checkIn=${ci.toISOString()}&checkOut=${co.toISOString()}`
+      `/api/availability/check?checkIn=${ciStr}&checkOut=${coStr}`
     );
     if (res.ok) {
       const data = await res.json();
@@ -240,8 +243,6 @@ export default function BookPage() {
     }
 
     // Check minimum stay policies
-    const ciStr = ci.toISOString().split("T")[0];
-    const coStr = co.toISOString().split("T")[0];
     const policyRes = await fetch(`/api/booking-policies/check?checkIn=${ciStr}&checkOut=${coStr}`);
     if (policyRes.ok) {
       const policyData = await policyRes.json();
@@ -278,12 +279,14 @@ export default function BookPage() {
     setPriceLoading(true);
 
     // Fetch price quote
+    const checkInStr = formatLocalDateOnly(checkIn!);
+    const checkOutStr = formatLocalDateOnly(checkOut!);
     const res = await fetch("/api/bookings/quote", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        checkIn: checkIn!.toISOString(),
-        checkOut: checkOut!.toISOString(),
+        checkIn: checkInStr,
+        checkOut: checkOutStr,
         guests: guests.map((g) => ({
           ageTier: g.ageTier,
           isMember: g.isMember,
@@ -315,13 +318,15 @@ export default function BookPage() {
     setErrorPaymentTargets([]);
     setGuestProfileBlocks([]);
     setShowWaitlistPrompt(false);
+    const checkInStr = formatLocalDateOnly(checkIn!);
+    const checkOutStr = formatLocalDateOnly(checkOut!);
 
     const res = await fetch("/api/bookings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        checkIn: checkIn!.toISOString(),
-        checkOut: checkOut!.toISOString(),
+        checkIn: checkInStr,
+        checkOut: checkOutStr,
         guests,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
@@ -351,13 +356,15 @@ export default function BookPage() {
     setError("");
     setErrorPaymentTargets([]);
     setGuestProfileBlocks([]);
+    const checkInStr = formatLocalDateOnly(checkIn!);
+    const checkOutStr = formatLocalDateOnly(checkOut!);
 
     const res = await fetch("/api/bookings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        checkIn: checkIn!.toISOString(),
-        checkOut: checkOut!.toISOString(),
+        checkIn: checkInStr,
+        checkOut: checkOutStr,
         guests,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
@@ -381,13 +388,15 @@ export default function BookPage() {
     setError("");
     setErrorPaymentTargets([]);
     setGuestProfileBlocks([]);
+    const checkInStr = formatLocalDateOnly(checkIn!);
+    const checkOutStr = formatLocalDateOnly(checkOut!);
 
     const res = await fetch("/api/bookings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        checkIn: checkIn!.toISOString(),
-        checkOut: checkOut!.toISOString(),
+        checkIn: checkInStr,
+        checkOut: checkOutStr,
         guests,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,

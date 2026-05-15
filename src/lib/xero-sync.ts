@@ -51,6 +51,12 @@ export interface CanonicalPaymentRefundCreditNoteLink {
   source: "payment" | "refund_payment" | "operation" | "link";
 }
 
+const SINGLE_ACTIVE_CANONICAL_LINK_SCOPES = [
+  { localModel: "Member", role: "CONTACT" },
+  { localModel: "Payment", role: "PRIMARY_INVOICE" },
+  { localModel: "MemberSubscription", role: "SUBSCRIPTION_INVOICE" },
+] as const;
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -381,11 +387,51 @@ async function normalizePaymentRefundLinkWithClient(
   return link;
 }
 
+function isSingleActiveCanonicalLinkScope(link: XeroObjectLinkInput) {
+  return SINGLE_ACTIVE_CANONICAL_LINK_SCOPES.some(
+    (scope) => scope.localModel === link.localModel && scope.role === link.role
+  );
+}
+
+async function deactivateOtherCanonicalLinksWithClient(
+  client: Prisma.TransactionClient,
+  link: XeroObjectLinkInput
+) {
+  if (!(link.active ?? true) || !isSingleActiveCanonicalLinkScope(link)) {
+    return;
+  }
+
+  await client.xeroObjectLink.updateMany({
+    where: {
+      localModel: link.localModel,
+      localId: link.localId,
+      role: link.role,
+      active: true,
+      OR: [
+        {
+          xeroObjectType: {
+            not: link.xeroObjectType,
+          },
+        },
+        {
+          xeroObjectId: {
+            not: link.xeroObjectId,
+          },
+        },
+      ],
+    },
+    data: {
+      active: false,
+    },
+  });
+}
+
 async function upsertXeroObjectLinkWithClient(
   client: Prisma.TransactionClient,
   link: XeroObjectLinkInput
 ) {
   const normalizedLink = await normalizePaymentRefundLinkWithClient(client, link);
+  await deactivateOtherCanonicalLinksWithClient(client, normalizedLink);
   const xeroObjectUrl =
     normalizedLink.xeroObjectUrl ??
     buildXeroObjectUrl(normalizedLink.xeroObjectType, normalizedLink.xeroObjectId);

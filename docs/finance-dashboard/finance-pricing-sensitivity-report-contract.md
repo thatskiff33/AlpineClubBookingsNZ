@@ -1,6 +1,6 @@
 # Finance Pricing Sensitivity Report Contract
 
-This document defines the native `/finance/pricing-sensitivity` report page added for task `#151` under phase `#99`.
+This document defines the native `/finance/pricing-sensitivity` report page.
 
 ## Surface Area
 

@@ -13,6 +13,7 @@ import { LODGE_CAPACITY } from "@/lib/capacity";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
+import { formatLocalDateOnly } from "@/lib/date-only";
 
 interface FamilyMember {
   id: string;
@@ -136,9 +137,11 @@ export default function AdminBookPage() {
     setCheckIn(ci);
     setCheckOut(co);
     setError("");
+    const ciStr = formatLocalDateOnly(ci);
+    const coStr = formatLocalDateOnly(co);
 
     const res = await fetch(
-      `/api/availability/check?checkIn=${ci.toISOString()}&checkOut=${co.toISOString()}`
+      `/api/availability/check?checkIn=${ciStr}&checkOut=${coStr}`
     );
     if (res.ok) {
       const data = await res.json();
@@ -169,13 +172,15 @@ export default function AdminBookPage() {
 
     setError("");
     setPriceLoading(true);
+    const checkInStr = formatLocalDateOnly(checkIn!);
+    const checkOutStr = formatLocalDateOnly(checkOut!);
 
     const res = await fetch("/api/bookings/quote", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        checkIn: checkIn!.toISOString(),
-        checkOut: checkOut!.toISOString(),
+        checkIn: checkInStr,
+        checkOut: checkOutStr,
         guests: guests.map((g) => ({
           ageTier: g.ageTier,
           isMember: g.isMember,
@@ -199,13 +204,15 @@ export default function AdminBookPage() {
   async function handleSubmit() {
     setSubmitting(true);
     setError("");
+    const checkInStr = formatLocalDateOnly(checkIn!);
+    const checkOutStr = formatLocalDateOnly(checkOut!);
 
     const res = await fetch("/api/bookings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        checkIn: checkIn!.toISOString(),
-        checkOut: checkOut!.toISOString(),
+        checkIn: checkInStr,
+        checkOut: checkOutStr,
         guests,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
@@ -228,13 +235,15 @@ export default function AdminBookPage() {
   async function handleSaveAsDraft() {
     setSavingDraft(true);
     setError("");
+    const checkInStr = formatLocalDateOnly(checkIn!);
+    const checkOutStr = formatLocalDateOnly(checkOut!);
 
     const res = await fetch("/api/bookings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        checkIn: checkIn!.toISOString(),
-        checkOut: checkOut!.toISOString(),
+        checkIn: checkInStr,
+        checkOut: checkOutStr,
         guests,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,

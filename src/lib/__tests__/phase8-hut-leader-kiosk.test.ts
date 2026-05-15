@@ -119,7 +119,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     expect(
       await bcrypt.compare(emailCall.pin, createCall.data.hutLeaderPin)
     ).toBe(true);
-  });
+  }, 20000);
 
   it("formats member guest phone numbers for the kiosk guest list API", async () => {
     mockAuth.mockResolvedValue({

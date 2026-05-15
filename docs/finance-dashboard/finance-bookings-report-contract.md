@@ -1,6 +1,6 @@
 # Finance Bookings Report Contract
 
-This document defines the native `/finance/bookings` report page added for phase `#98`.
+This document defines the native `/finance/bookings` report page.
 
 It is intentionally small. The page turns the landed TACBookings finance booking metrics boundary into a native bookings report with realized stay detail and forward pipeline detail, but it does not add charts, finance snapshot-backed revenue pages, or broader balance-sheet reporting.
 

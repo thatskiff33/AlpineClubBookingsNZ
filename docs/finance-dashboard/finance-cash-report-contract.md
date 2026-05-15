@@ -1,6 +1,6 @@
 # Finance Cash Report Contract
 
-This document defines the native `/finance/cash` report page added for phase `#99`.
+This document defines the native `/finance/cash` report page.
 
 It is intentionally small. The page turns the landed `BANK_BALANCES` finance snapshot storage into a native cash balances report, but it does not add working-capital rollups, balance-sheet views, costs reporting, or live Xero read paths.
 

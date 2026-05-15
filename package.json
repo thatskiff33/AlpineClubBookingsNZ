@@ -1,7 +1,30 @@
 {
   "name": "tacbookings",
   "version": "0.1.0",
+  "description": "Tokoroa Alpine Club booking, membership, payment, and finance platform.",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thatskiff33/TACBookings.git"
+  },
+  "homepage": "https://github.com/thatskiff33/TACBookings#readme",
+  "bugs": {
+    "url": "https://github.com/thatskiff33/TACBookings/issues"
+  },
+  "engines": {
+    "node": ">=20.9.0",
+    "npm": ">=10"
+  },
+  "keywords": [
+    "booking-system",
+    "club-management",
+    "nextjs",
+    "postgresql",
+    "prisma",
+    "stripe",
+    "xero"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",

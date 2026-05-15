@@ -1,6 +1,6 @@
 # Finance Balance-Sheet Report Contract
 
-This document defines the native `/finance/balance-sheet` report page added for task `#143` under phase `#99`.
+This document defines the native `/finance/balance-sheet` report page.
 
 ## Surface Area
 

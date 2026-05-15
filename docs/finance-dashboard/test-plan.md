@@ -58,17 +58,17 @@ Every finance PR should include:
 - note on whether docs changed
 - explicit statement of remaining risks
 
-## Phase-Level Exit Gates
+## Release Exit Gates
 
-### Before Phase 5
+### Access And Xero Boundary
 
 - permissions and finance Xero boundary are implemented and tested
 
-### Before Phase 6
+### Data Pipeline
 
 - snapshot pipeline and booking metric contracts are stable
 
-### Before Phase 8
+### UAT
 
 - full UAT across access, sync, and reports is complete
 - cutover checklist is prepared

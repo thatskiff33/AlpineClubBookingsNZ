@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { LODGE_CAPACITY } from "@/lib/capacity";
+import { formatLocalDateOnly } from "@/lib/date-only";
 
 interface SeasonInfo {
   name: string;
@@ -174,7 +175,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
         {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
           const date = new Date(currentMonth.year, currentMonth.month, day);
           date.setHours(0, 0, 0, 0);
-          const dateStr = date.toISOString().split("T")[0];
+          const dateStr = formatLocalDateOnly(date);
           const occupied = availability[dateStr] ?? 0;
           const available = LODGE_CAPACITY - occupied;
           const isPast = date < today;

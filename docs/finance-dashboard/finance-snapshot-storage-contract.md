@@ -1,6 +1,6 @@
 # Finance Snapshot Storage Contract
 
-This document defines the Phase 3 storage seam added for finance snapshots and finance sync-run history.
+This document defines the storage boundary for finance snapshots and finance sync-run history.
 
 Future sync services, cron registration, and diagnostics must build on this contract instead of introducing CSV files, local disk state, or ad hoc production tables.
 

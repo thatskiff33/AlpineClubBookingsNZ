@@ -1,6 +1,6 @@
 # Finance Revenue Report Contract
 
-This document defines the native `/finance/revenue` report page added for phase `#98`.
+This document defines the native `/finance/revenue` report page.
 
 It is intentionally small. The page turns the landed `PROFIT_AND_LOSS_MONTHLY` finance snapshot storage into a native monthly revenue report, but it does not add charts, balance-sheet views, cash reporting, or live Xero read paths.
 

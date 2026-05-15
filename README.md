@@ -1,12 +1,45 @@
 # TACBookings
 
-TACBookings is the Tokoroa Alpine Club booking and membership platform. It is a Next.js 16 App Router application with PostgreSQL, Prisma, NextAuth/Auth.js credentials sessions, Stripe payments, Xero integration, AWS SES email, finance reporting, and Docker Compose deployment for the production Lightsail host.
+TACBookings is the Tokoroa Alpine Club booking, membership, payment, lodge, and
+finance platform. It is published as a real-world reference implementation for
+a small club running a production Next.js application with payments,
+accounting, email, scheduled jobs, and Docker-based deployment.
+
+The code is MIT licensed. Tokoroa Alpine Club branding, logos, copy, domains,
+and operational content are included for context only; replace them before
+using a fork for another organisation. See `NOTICE.md`.
+
+## What It Does
+
+- Member registration, profile management, family/dependent relationships, and
+  membership nomination workflows
+- Bed-capacity booking flow with date-only New Zealand lodge nights, waitlist,
+  non-member holds, booking changes, cancellation rules, refunds, credits,
+  promo codes, and Stripe payments
+- Admin tools for members, bookings, payments, seasons, policies, reports,
+  email, audit logs, issue reports, waitlist, lodge, and hut leaders
+- Lodge kiosk with PIN access, arrivals/departures, chores, and issue reporting
+- Xero integrations for operational accounting plus a separate finance Xero
+  boundary and finance reports
+- AWS SES email, SES SNS suppression feedback, Sentry/pino observability, cron
+  jobs, PostgreSQL backups, and blue/green Docker deployment
+
+## Stack
+
+- Next.js 16 App Router, React 19, TypeScript
+- PostgreSQL 16 and Prisma 6
+- Auth.js / NextAuth credentials sessions
+- Stripe PaymentIntents, SetupIntents, and webhooks
+- Xero OAuth, webhooks, retry queues, local caches, and metering
+- AWS SES email and S3 backup storage
+- Tailwind CSS, Radix UI, Recharts, Vitest, ESLint
+- Docker Compose and Caddy for production-style deployment
 
 ## Requirements
 
 - Node.js 20.9 or newer
-- npm
-- Docker and Docker Compose for local PostgreSQL and production-style builds
+- npm 10 or newer
+- Docker and Docker Compose for local PostgreSQL or production-style runs
 
 ## Fresh Clone Setup
 
@@ -18,7 +51,10 @@ npm ci
 npx prisma generate
 ```
 
-Edit `.env` before running the app. For local development, the minimum values are `DATABASE_URL`, `NEXTAUTH_SECRET`, `AUTH_SECRET`, `CRON_SECRET`, and any integration keys required for the feature you are testing. The default `.env.example` database URL targets PostgreSQL on `localhost:5432`.
+Edit `.env` before running the app. For a local database-backed setup, set at
+least `DATABASE_URL`, `DB_PASSWORD`, `AUTH_SECRET`, `NEXTAUTH_SECRET`,
+`NEXTAUTH_URL`, and `CRON_SECRET`. External integrations can use test/demo
+credentials or remain blank unless the feature under test requires them.
 
 Start PostgreSQL, apply migrations, and seed local data:
 
@@ -28,22 +64,32 @@ npm run db:migrate
 npm run db:seed
 ```
 
-Run the development server:
+The seed data includes a local admin account:
+
+```text
+support@tokoroa.org.nz / admin123
+```
+
+Change that password immediately in any shared or persistent environment.
+
+Start the app only in local or non-production environments:
 
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:3000`. The seed account is `support@tokoroa.org.nz` / `admin123`; change the password immediately in any shared or persistent environment.
-
 ## Daily Commands
 
 ```bash
-npm test          # Vitest unit and route coverage
-npm run lint     # ESLint
-npm run build    # Prisma generate + Next production build
 npm audit --audit-level=high
+npm run lint
+DATABASE_URL=postgresql://user:pass@localhost:5432/tacbookings npx prisma validate
+npm test
+npm run build
 ```
+
+This repository uses a current Next.js version. Before changing framework APIs,
+read the relevant versioned guide in `node_modules/next/dist/docs/`.
 
 ## Docker
 
@@ -61,9 +107,8 @@ docker compose run --rm migrate
 docker compose ps
 ```
 
-The production Compose model includes `app` as the cron leader and warm fallback, `app_blue` / `app_green` as web-only blue/green slots, `postgres`, `caddy`, and a `migrate` profile service.
-
-For accessibility or release-review checks, use the non-production staging target:
+For accessibility or release-review checks, use the non-production staging
+target:
 
 ```bash
 cp .env.staging.example .env.staging
@@ -71,25 +116,40 @@ docker compose --env-file .env.staging -p tacbookings-staging \
   -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app
 ```
 
-See `docs/STAGING_ACCESSIBILITY.md` for the staging URL, auth path, and Lighthouse workflow.
+See `docs/STAGING_ACCESSIBILITY.md` for the staging URL, auth path, and
+Lighthouse workflow.
 
 ## Deployment
 
-Production deploys use the blue/green wrapper documented in `DEPLOYMENT.md`:
+Production deployment is documented as a reference in `DEPLOYMENT.md`.
+The supported TACBookings deployment path uses the blue/green wrapper:
 
 ```bash
 ./scripts/run-production-blue-green-deploy.sh
 ```
 
-Do not deploy production by running a plain `docker compose up -d --build` on the live host unless you are intentionally bypassing the blue/green process for an incident response.
+Do not use live Stripe, Xero, SES, Sentry, or production database credentials in
+forks or public CI. Configure your own service accounts and secrets.
 
-## Key Documentation
+## Documentation
 
-- `DEPLOYMENT.md` - Lightsail, Caddy, Docker Compose, blue/green deploy, and recovery
-- `docs/STAGING_ACCESSIBILITY_RUNBOOK.md` - staging target, auth path, and Lighthouse/print accessibility evidence flow
-- `docs/ARCHITECTURE.md` - system architecture, core data model, integrations, cron, deployment
-- `docs/STAGING_ACCESSIBILITY.md` - non-production staging target and accessibility verification workflow
-- `docs/CI_SECURITY_GATES.md` - CI security controls and GHAS risk acceptance
-- `docs/PRODUCTION_DEPENDENCY_AUDIT.md` - dependency audit state and accepted Auth.js/Nodemailer peer mismatch
-- `docs/HASHED_TOKEN_MIGRATION.md` - token hash-at-rest migration
-- `docs/finance-dashboard/README.md` - finance dashboard operator and agent handoff
+- `docs/ARCHITECTURE.md` - system structure, data model, business logic,
+  integrations, cron, and deployment shape
+- `DEPLOYMENT.md` - reference Lightsail, Docker Compose, Caddy, blue/green, and
+  recovery guide
+- `docs/MAINTENANCE.md` - public maintenance, validation, CI, and release
+  checklist
+- `docs/STAGING_ACCESSIBILITY.md` - non-production staging and accessibility
+  verification workflow
+- `docs/BLUE_GREEN_MIGRATION_POLICY.md` - migration safety policy for
+  blue/green deploys
+- `docs/AUDIT_RETENTION_ARCHIVE_RUNBOOK.md` - audit-log retention and optional
+  archive database behaviour
+- `docs/finance-dashboard/README.md` - finance reporting architecture and
+  contract index
+
+## Contributing and Security
+
+Read `CONTRIBUTING.md` before opening a PR. Report suspected vulnerabilities
+privately using `SECURITY.md`; do not post secrets, personal data, payment
+details, or accounting records in public issues.
