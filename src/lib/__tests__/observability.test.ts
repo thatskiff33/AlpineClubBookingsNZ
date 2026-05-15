@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock prisma
 vi.mock("@/lib/prisma", () => ({
@@ -12,6 +12,12 @@ vi.mock("@/lib/prisma", () => ({
     },
     emailSuppression: {
       count: vi.fn(),
+      findMany: vi.fn(),
+    },
+    emailLog: {
+      findMany: vi.fn(),
+    },
+    auditLog: {
       findMany: vi.fn(),
     },
     cronJobRun: {
@@ -294,8 +300,67 @@ describe("OBS-05: API request logging", () => {
 // ============================================================================
 
 describe("OBS-07: GET /api/admin/health", () => {
+  const ENV_KEYS = [
+    "SENTRY_DSN",
+    "SENTRY_ORG",
+    "SENTRY_PROJECT",
+    "CRON_ENABLED",
+    "XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH",
+    "BACKUP_CRON_SCHEDULE",
+  ] as const;
+  const originalEnv = Object.fromEntries(
+    ENV_KEYS.map((key) => [key, process.env[key]])
+  );
+
+  function resetHealthEnv() {
+    for (const key of ENV_KEYS) {
+      const value = originalEnv[key];
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+
+  function mockAdminSession() {
+    vi.mocked(auth).mockResolvedValue({
+      user: { id: "1", email: "admin@test.com", name: "Admin", role: "ADMIN", forcePasswordChange: false, isEmailVerified: true },
+      expires: "",
+    } as any);
+  }
+
+  function mockAdminHealthDependencies(cronRuns: any[] = []) {
+    vi.mocked(prisma.cronJobRun.findMany).mockResolvedValue(cronRuns);
+    vi.mocked(prisma.webhookLog.groupBy).mockResolvedValue([] as any);
+    vi.mocked(prisma.webhookLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
+    vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
+    vi.mocked(getDetailedHealthReport).mockResolvedValue({
+      httpStatus: 200,
+      report: {
+        status: "healthy",
+        version: "0.1.0",
+        uptime: 1000,
+        checks: {
+          db: { status: "ok", latencyMs: 5 },
+          stripe: { status: "ok", latencyMs: 1 },
+          xero: { status: "ok", latencyMs: 1 },
+          smtp: { status: "ok", latencyMs: 1 },
+        },
+      },
+    });
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
+    for (const key of ENV_KEYS) {
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    resetHealthEnv();
   });
 
   it("returns 401 for non-admin users", async () => {
@@ -330,6 +395,8 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.webhookLog.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
       httpStatus: 200,
       report: {
@@ -362,9 +429,71 @@ describe("OBS-07: GET /api/admin/health", () => {
       },
       suppressions: [],
     });
+    expect(data.emailFailures).toEqual({
+      summary: {
+        activeCount: 0,
+        reviewedCount: 0,
+        scannedCount: 0,
+        maxAttempts: 3,
+      },
+      failures: [],
+      recentlyReviewed: [],
+    });
     expect(data.systemInfo).toBeDefined();
     expect(data.systemInfo.nodeVersion).toBeTruthy();
     expect(data.systemInfo.memoryMb).toBeDefined();
+    expect(data.systemInfo.sentryDashboardUrl).toBeNull();
+    expect(data.systemInfo.sentryConfigWarning).toContain("SENTRY_DSN");
+    expect(data.cronHealth.jobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          jobName: "finance-daily-sync",
+          schedule: "15 10 * * *",
+          timezone: "Pacific/Auckland",
+          expectedLocalTime: "10:15 NZT/NZDT daily",
+        }),
+        expect.objectContaining({
+          jobName: "xero-membership-refresh",
+          status: "disabled",
+        }),
+      ])
+    );
+  });
+
+  it("returns a real Sentry dashboard link only when the dashboard config is complete", async () => {
+    process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/123";
+    process.env.SENTRY_ORG = "tokoroa-alpine-club";
+    process.env.SENTRY_PROJECT = "456";
+    mockAdminSession();
+    mockAdminHealthDependencies();
+
+    const { GET } = await import("@/app/api/admin/health/route");
+    const response = await GET();
+    const data = await response.json();
+
+    expect(data.systemInfo.sentryConfigured).toBe(true);
+    expect(data.systemInfo.sentryDashboardUrl).toBe(
+      "https://sentry.io/organizations/tokoroa-alpine-club/issues/?project=456"
+    );
+    expect(data.systemInfo.sentryConfigWarning).toBeNull();
+  });
+
+  it("reports partial Sentry dashboard config as a warning instead of placeholder links", async () => {
+    process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/123";
+    process.env.SENTRY_ORG = "tokoroa-alpine-club";
+    delete process.env.SENTRY_PROJECT;
+    mockAdminSession();
+    mockAdminHealthDependencies();
+
+    const { GET } = await import("@/app/api/admin/health/route");
+    const response = await GET();
+    const data = await response.json();
+
+    expect(data.systemInfo.sentryConfigured).toBe(true);
+    expect(data.systemInfo.sentryDashboardUrl).toBeNull();
+    expect(data.systemInfo.sentryConfigWarning).toContain("SENTRY_PROJECT");
+    expect(JSON.stringify(data.systemInfo)).not.toContain("your-org");
+    expect(JSON.stringify(data.systemInfo)).not.toContain("your-project");
   });
 
   it("groups cron runs by job name with max 5 per job", async () => {
@@ -390,6 +519,8 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.webhookLog.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.emailLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
       httpStatus: 200,
       report: {

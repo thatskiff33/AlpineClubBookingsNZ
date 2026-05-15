@@ -58,6 +58,8 @@ export interface BackupResult {
   error?: string;
   reason?: string;
   sizeBytes?: number;
+  minSizeBytes?: number;
+  healthSignal?: "backup-empty" | "backup-suspiciously-small";
 }
 
 export interface BackupCronOutcome {
@@ -115,11 +117,27 @@ export async function runDatabaseBackup(): Promise<BackupResult> {
     const stats = statSync(filepath);
     if (stats.size === 0) {
       unlinkSync(filepath);
-      return { success: false, error: "Backup file is empty" };
+      return {
+        success: false,
+        filename,
+        filepath,
+        sizeBytes: stats.size,
+        minSizeBytes: MIN_BACKUP_SIZE_BYTES,
+        healthSignal: "backup-empty",
+        error: "Backup file is empty",
+      };
     }
     if (stats.size < MIN_BACKUP_SIZE_BYTES) {
       unlinkSync(filepath);
-      return { success: false, error: "Backup file is suspiciously small" };
+      return {
+        success: false,
+        filename,
+        filepath,
+        sizeBytes: stats.size,
+        minSizeBytes: MIN_BACKUP_SIZE_BYTES,
+        healthSignal: "backup-suspiciously-small",
+        error: "Backup file is suspiciously small",
+      };
     }
 
     let uploadedToS3 = false;
@@ -249,10 +267,21 @@ export function buildBackupCronOutcome(result: BackupResult): BackupCronOutcome 
     };
   }
 
-  return {
+  const failure: BackupCronOutcome = {
     status: "FAILURE",
     error: result.error ?? "Unknown backup failure",
   };
+
+  if (result.healthSignal || result.sizeBytes !== undefined) {
+    failure.resultSummary = {
+      healthSignal: result.healthSignal,
+      filename: result.filename,
+      sizeBytes: result.sizeBytes,
+      minSizeBytes: result.minSizeBytes ?? MIN_BACKUP_SIZE_BYTES,
+    };
+  }
+
+  return failure;
 }
 
 export function sanitizePostgresUrlForPgDump(databaseUrl: string): string {

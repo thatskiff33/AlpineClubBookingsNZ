@@ -8,8 +8,12 @@ const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   requireActiveSessionUser: vi.fn(),
   logAudit: vi.fn(),
+  createAuditLog: vi.fn(),
+  xeroOperationFindUnique: vi.fn(),
+  xeroOperationUpdate: vi.fn(),
   enqueueXeroSyncOperationRetry: vi.fn(),
   processQueuedXeroOperationRetries: vi.fn(),
+  getXeroOperationRetryMeta: vi.fn(),
   getXeroApiErrorInfo: vi.fn(),
 }));
 
@@ -32,6 +36,16 @@ vi.mock("@/lib/session-guards", () => ({
 
 vi.mock("@/lib/audit", () => ({
   logAudit: mocks.logAudit,
+  createAuditLog: mocks.createAuditLog,
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    xeroSyncOperation: {
+      findUnique: mocks.xeroOperationFindUnique,
+      update: mocks.xeroOperationUpdate,
+    },
+  },
 }));
 
 vi.mock("@/lib/xero-operation-queue", () => ({
@@ -52,6 +66,7 @@ vi.mock("@/lib/xero-operation-retry", () => {
 
   return {
     XeroOperationRetryError: TestXeroOperationRetryError,
+    getXeroOperationRetryMeta: mocks.getXeroOperationRetryMeta,
   };
 });
 
@@ -70,6 +85,7 @@ vi.mock("@/lib/logger", () => ({
 
 import { POST as retryOperation } from "@/app/api/admin/xero/operations/[id]/retry/route";
 import { POST as requeueOperation } from "@/app/api/admin/xero/operations/[id]/requeue/route";
+import { POST as markNonReplayableOperation } from "@/app/api/admin/xero/operations/[id]/mark-non-replayable/route";
 import { XeroOperationRetryError } from "@/lib/xero-operation-retry";
 
 describe("Xero operation admin retry routes", () => {
@@ -93,6 +109,22 @@ describe("Xero operation admin retry routes", () => {
       status: 503,
       message: "Xero unavailable",
     });
+    mocks.getXeroOperationRetryMeta.mockReturnValue({
+      supported: true,
+      reason: null,
+    });
+    mocks.xeroOperationFindUnique.mockResolvedValue({
+      id: "op_failed",
+      direction: "OUTBOUND",
+      entityType: "CONTACT",
+      operationType: "UPDATE",
+      localModel: "Member",
+      localId: "member_1",
+      status: "FAILED",
+      replayable: true,
+    });
+    mocks.xeroOperationUpdate.mockResolvedValue({});
+    mocks.createAuditLog.mockResolvedValue(undefined);
   });
 
   it("queues retry requests through the background worker route", async () => {
@@ -152,5 +184,35 @@ describe("Xero operation admin retry routes", () => {
     });
     expect(mocks.processQueuedXeroOperationRetries).not.toHaveBeenCalled();
     expect(mocks.logAudit).not.toHaveBeenCalled();
+  });
+
+  it("marks failed operations non-replayable with an audit reason", async () => {
+    const response = await markNonReplayableOperation(
+      new NextRequest("http://localhost", {
+        method: "POST",
+        body: JSON.stringify({ reason: "Payload was manually repaired in Xero." }),
+      }),
+      {
+        params: Promise.resolve({ id: "op_failed" }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.xeroOperationUpdate).toHaveBeenCalledWith({
+      where: { id: "op_failed" },
+      data: { replayable: false },
+    });
+    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "xero.operation.marked_non_replayable",
+        actorMemberId: "admin-1",
+        targetId: "op_failed",
+        details: "Payload was manually repaired in Xero.",
+      })
+    );
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      message: "Xero operation marked non-replayable with an audit record.",
+    });
   });
 });

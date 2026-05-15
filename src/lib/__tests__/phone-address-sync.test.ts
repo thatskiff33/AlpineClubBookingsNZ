@@ -354,7 +354,6 @@ describe("Profile API: structured phone and address fields", () => {
       expect.objectContaining({
         phoneCountryCode: "64",
         phoneNumber: "9999999",
-        dateOfBirth: new Date("1990-01-15"),
       }),
       expect.objectContaining({
         localModel: "Member",

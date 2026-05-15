@@ -20,19 +20,6 @@ function normalizeOptionalString(value: string | null | undefined): string | nul
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeDateOnly(value: Date | string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  return date.toISOString().slice(0, 10);
-}
-
 export function buildXeroContactUpdatePayload(
   member: MemberXeroContactSnapshot
 ): XeroContactUpdateData {
@@ -40,7 +27,6 @@ export function buildXeroContactUpdatePayload(
     firstName: member.firstName,
     lastName: member.lastName,
     email: member.email,
-    dateOfBirth: member.dateOfBirth ?? null,
     phoneCountryCode: member.phoneCountryCode ?? null,
     phoneAreaCode: member.phoneAreaCode ?? null,
     phoneNumber: member.phoneNumber ?? null,
@@ -65,7 +51,6 @@ export function hasMemberXeroContactChanges(
 ): boolean {
   return (
     normalizeOptionalString(previous.email) !== normalizeOptionalString(next.email) ||
-    normalizeDateOnly(previous.dateOfBirth) !== normalizeDateOnly(next.dateOfBirth) ||
     normalizeOptionalString(previous.phoneCountryCode) !== normalizeOptionalString(next.phoneCountryCode) ||
     normalizeOptionalString(previous.phoneAreaCode) !== normalizeOptionalString(next.phoneAreaCode) ||
     normalizeOptionalString(previous.phoneNumber) !== normalizeOptionalString(next.phoneNumber) ||

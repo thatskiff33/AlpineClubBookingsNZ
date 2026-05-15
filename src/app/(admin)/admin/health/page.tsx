@@ -43,6 +43,44 @@ interface WebhookLogEntry {
   createdAt: string;
 }
 
+type CronHealthStatus =
+  | "current"
+  | "stale"
+  | "failed"
+  | "skipped"
+  | "missing"
+  | "disabled"
+  | "untracked"
+  | "unknown";
+
+interface CronHealthJob {
+  jobName: string;
+  label: string;
+  schedule: string;
+  timezone: string;
+  expectedLocalTime: string;
+  staleAfterMinutes: number | null;
+  enabled: boolean;
+  disabledReason: string | null;
+  recordsRuns: boolean;
+  note?: string;
+  status: CronHealthStatus;
+  severity: "ok" | "warning" | "error" | "info";
+  summary: string;
+  staleThreshold: string | null;
+  latestRunAt: string | null;
+  latestRunStatus: string | null;
+  latestSuccessAt: string | null;
+  latestFailureAt: string | null;
+}
+
+interface CronHealthReport {
+  generatedAt: string;
+  cronEnabled: boolean;
+  defaultTimezone: string;
+  jobs: CronHealthJob[];
+}
+
 interface EmailSuppressionEntry {
   id: string;
   email: string;
@@ -55,6 +93,20 @@ interface EmailSuppressionEntry {
   lastBounceSubType: string | null;
   lastComplaintFeedbackType: string | null;
   lastSesMessageId: string | null;
+}
+
+interface ExhaustedEmailFailure {
+  id: string;
+  to: string;
+  subject: string;
+  templateName: string;
+  attempts: number;
+  lastAttemptAt: string;
+  errorMessage: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  reviewedById: string | null;
+  reviewNote: string | null;
 }
 
 interface HealthData {
@@ -71,6 +123,7 @@ interface HealthData {
     };
   };
   cronJobs: Record<string, CronRun[]>;
+  cronHealth?: CronHealthReport;
   webhookStats: Record<string, { success: number; failure: number; total: number }>;
   recentWebhooks: WebhookLogEntry[];
   emailDeliverability: {
@@ -82,6 +135,16 @@ interface HealthData {
     };
     suppressions: EmailSuppressionEntry[];
   };
+  emailFailures: {
+    summary: {
+      activeCount: number;
+      reviewedCount: number;
+      scannedCount: number;
+      maxAttempts: number;
+    };
+    failures: ExhaustedEmailFailure[];
+    recentlyReviewed: ExhaustedEmailFailure[];
+  };
   systemInfo: {
     version: string;
     nodeVersion: string;
@@ -89,6 +152,7 @@ interface HealthData {
     memoryMb: { rss: number; heapUsed: number; heapTotal: number };
     sentryConfigured: boolean;
     sentryDashboardUrl: string | null;
+    sentryConfigWarning: string | null;
   };
 }
 
@@ -98,14 +162,21 @@ function StatusBadge({ status }: { status: string }) {
     healthy: "bg-green-100 text-green-800",
     SUCCESS: "bg-green-100 text-green-800",
     success: "bg-green-100 text-green-800",
+    current: "bg-green-100 text-green-800",
     degraded: "bg-yellow-100 text-yellow-800",
     SKIPPED: "bg-yellow-100 text-yellow-800",
+    skipped: "bg-yellow-100 text-yellow-800",
+    stale: "bg-yellow-100 text-yellow-800",
+    missing: "bg-yellow-100 text-yellow-800",
     error: "bg-red-100 text-red-800",
     unhealthy: "bg-red-100 text-red-800",
     FAILURE: "bg-red-100 text-red-800",
     failure: "bg-red-100 text-red-800",
+    failed: "bg-red-100 text-red-800",
     BOUNCE: "bg-red-100 text-red-800",
     COMPLAINT: "bg-red-100 text-red-800",
+    disabled: "bg-slate-100 text-slate-700",
+    untracked: "bg-slate-100 text-slate-700",
     unknown: "bg-gray-100 text-gray-800",
   };
 
@@ -147,6 +218,10 @@ function formatDate(dateStr: string) {
   });
 }
 
+function formatOptionalDate(dateStr: string | null) {
+  return dateStr ? formatDate(dateStr) : "Not recorded";
+}
+
 function CronError({ error }: { error: string }) {
   const [expanded, setExpanded] = useState(false);
   const isLong = error.length > 80;
@@ -169,12 +244,36 @@ function CronError({ error }: { error: string }) {
   );
 }
 
+function CronResultSummary({ summary }: { summary: Record<string, unknown> }) {
+  const healthSignal = typeof summary.healthSignal === "string" ? summary.healthSignal : null;
+  const sizeBytes = typeof summary.sizeBytes === "number" ? summary.sizeBytes : null;
+  const minSizeBytes = typeof summary.minSizeBytes === "number" ? summary.minSizeBytes : null;
+  const reason = typeof summary.reason === "string" ? summary.reason : null;
+
+  if (healthSignal || sizeBytes !== null) {
+    return (
+      <span className="text-xs text-slate-500">
+        {healthSignal ? `${healthSignal}` : "backup"}{" "}
+        {sizeBytes !== null ? `${sizeBytes} bytes` : ""}
+        {minSizeBytes !== null ? ` / min ${minSizeBytes}` : ""}
+      </span>
+    );
+  }
+
+  if (reason) {
+    return <span className="text-xs text-slate-500">{reason}</span>;
+  }
+
+  return null;
+}
+
 export default function AdminHealthPage() {
   const [data, setData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [clearingSuppressionId, setClearingSuppressionId] = useState<string | null>(null);
+  const [reviewingEmailFailureId, setReviewingEmailFailureId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -210,6 +309,34 @@ export default function AdminHealthPage() {
         setError(err instanceof Error ? err.message : "Unknown error");
       } finally {
         setClearingSuppressionId(null);
+      }
+    },
+    [fetchData]
+  );
+
+  const archiveEmailFailure = useCallback(
+    async (id: string, to: string) => {
+      const reason = window.prompt(
+        `Archive exhausted email failure for ${to}?`,
+        "Reviewed from admin health dashboard"
+      );
+      if (reason === null) {
+        return;
+      }
+
+      setReviewingEmailFailureId(id);
+      try {
+        const res = await fetch(`/api/admin/email-failures/${id}/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason }),
+        });
+        if (!res.ok) throw new Error("Failed to archive exhausted email failure");
+        await fetchData();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unknown error");
+      } finally {
+        setReviewingEmailFailureId(null);
       }
     },
     [fetchData]
@@ -251,9 +378,11 @@ export default function AdminHealthPage() {
   const {
     health,
     cronJobs,
+    cronHealth,
     webhookStats,
     recentWebhooks,
     emailDeliverability,
+    emailFailures,
     systemInfo,
   } = data;
   const checkEntries = Object.entries(health.checks) as [string, HealthCheck][];
@@ -405,6 +534,89 @@ export default function AdminHealthPage() {
         )}
       </div>
 
+      {/* Exhausted Email Failures */}
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+          <Mail className="h-5 w-5" />
+          Exhausted Email Failures
+        </h2>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Active failures</p>
+            <p className="text-2xl font-bold text-red-600">
+              {emailFailures.summary.activeCount}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Archived</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {emailFailures.summary.reviewedCount}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Retry limit</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {emailFailures.summary.maxAttempts}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Scanned</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {emailFailures.summary.scannedCount}
+            </p>
+          </div>
+        </div>
+
+        {emailFailures.failures.length === 0 ? (
+          <div className="bg-white border rounded-lg p-4 text-slate-500">
+            No active exhausted email failures.
+          </div>
+        ) : (
+          <div className="bg-white border rounded-lg overflow-x-auto">
+            <div className="min-w-[900px]">
+              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-b">
+                <span>Recipient</span>
+                <span>Subject</span>
+                <span>Template</span>
+                <span>Attempts</span>
+                <span>Last attempt</span>
+                <span className="text-right">Action</span>
+              </div>
+              <div className="divide-y">
+                {emailFailures.failures.map((failure) => (
+                  <div
+                    key={failure.id}
+                    className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_140px_90px_140px_88px] gap-3 px-4 py-3 text-sm items-center"
+                  >
+                    <span className="font-medium text-slate-900 truncate">
+                      {failure.to}
+                    </span>
+                    <span className="text-slate-700 truncate" title={failure.subject}>
+                      {failure.subject}
+                    </span>
+                    <span className="text-slate-600 truncate">
+                      {failure.templateName}
+                    </span>
+                    <span className="text-slate-600">{failure.attempts}</span>
+                    <span className="text-slate-500">
+                      {formatDate(failure.lastAttemptAt)}
+                    </span>
+                    <button
+                      onClick={() => archiveEmailFailure(failure.id, failure.to)}
+                      disabled={reviewingEmailFailureId === failure.id}
+                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
+                    >
+                      <CheckCircle className="h-3.5 w-3.5" />
+                      Archive
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* System Info */}
       <div>
         <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
@@ -450,6 +662,12 @@ export default function AdminHealthPage() {
               </a>
             </div>
           )}
+          {systemInfo.sentryConfigWarning && (
+            <div className="mt-3 pt-3 border-t text-sm text-amber-700 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>{systemInfo.sentryConfigWarning}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -459,33 +677,116 @@ export default function AdminHealthPage() {
           <Clock className="h-5 w-5" />
           Cron Jobs
         </h2>
-        {Object.keys(cronJobs).length === 0 ? (
+        {(cronHealth
+          ? cronHealth.jobs.length === 0
+          : Object.keys(cronJobs).length === 0) ? (
           <div className="bg-white border rounded-lg p-4 text-slate-500">
             No cron job runs recorded yet.
           </div>
         ) : (
           <div className="space-y-4">
-            {Object.entries(cronJobs).map(([jobName, runs]) => (
-              <div key={jobName} className="bg-white border rounded-lg">
-                <div className="p-4 border-b bg-slate-50">
-                  <h3 className="font-medium text-slate-900">{jobName}</h3>
-                </div>
-                <div className="divide-y">
-                  {runs.map((run) => (
-                    <div key={run.id} className="p-3 flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-3">
-                        <StatusBadge status={run.status} />
-                        <span className="text-slate-600">{formatDate(run.startedAt)}</span>
+            {cronHealth?.jobs.map((job) => {
+              const runs = cronJobs[job.jobName] ?? [];
+
+              return (
+                <div key={job.jobName} className="bg-white border rounded-lg">
+                  <div className="p-4 border-b bg-slate-50">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-medium text-slate-900">{job.label}</h3>
+                          <span className="font-mono text-xs text-slate-500">
+                            {job.jobName}
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-600 mt-1">{job.summary}</p>
                       </div>
-                      <div className="flex items-center gap-4 text-slate-500">
-                        {run.durationMs != null && <span>{run.durationMs}ms</span>}
-                        {run.error && <CronError error={run.error} />}
+                      <StatusBadge status={job.status} />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3 text-sm">
+                      <div>
+                        <p className="text-xs text-slate-500">Schedule</p>
+                        <p className="font-mono text-slate-700 break-words">
+                          {job.schedule}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500">Expected</p>
+                        <p className="text-slate-700">{job.expectedLocalTime}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500">Timezone</p>
+                        <p className="text-slate-700">{job.timezone}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500">Stale threshold</p>
+                        <p className="text-slate-700">
+                          {job.staleThreshold ?? "Not tracked"}
+                        </p>
                       </div>
                     </div>
-                  ))}
+                    {(job.disabledReason || job.note) && (
+                      <div className="mt-3 text-sm text-slate-600 space-y-1">
+                        {job.disabledReason && <p>{job.disabledReason}</p>}
+                        {job.note && <p>{job.note}</p>}
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 text-xs text-slate-500">
+                      <p>Latest run: {formatOptionalDate(job.latestRunAt)}</p>
+                      <p>Latest success: {formatOptionalDate(job.latestSuccessAt)}</p>
+                      <p>Latest failure: {formatOptionalDate(job.latestFailureAt)}</p>
+                    </div>
+                  </div>
+                  <div className="divide-y">
+                    {!job.recordsRuns ? (
+                      <div className="p-3 text-sm text-slate-500">
+                        CronJobRun history is not recorded for this scheduled job.
+                      </div>
+                    ) : runs.length === 0 ? (
+                      <div className="p-3 text-sm text-slate-500">
+                        No cron runs recorded yet.
+                      </div>
+                    ) : (
+                      runs.map((run) => (
+                        <div key={run.id} className="p-3 flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-3">
+                            <StatusBadge status={run.status} />
+                            <span className="text-slate-600">{formatDate(run.startedAt)}</span>
+                          </div>
+                          <div className="flex items-center gap-4 text-slate-500">
+                            {run.durationMs != null && <span>{run.durationMs}ms</span>}
+                            {run.error && <CronError error={run.error} />}
+                            {run.resultSummary && <CronResultSummary summary={run.resultSummary} />}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            }) ??
+              Object.entries(cronJobs).map(([jobName, runs]) => (
+                <div key={jobName} className="bg-white border rounded-lg">
+                  <div className="p-4 border-b bg-slate-50">
+                    <h3 className="font-medium text-slate-900">{jobName}</h3>
+                  </div>
+                  <div className="divide-y">
+                    {runs.map((run) => (
+                      <div key={run.id} className="p-3 flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-3">
+                          <StatusBadge status={run.status} />
+                          <span className="text-slate-600">{formatDate(run.startedAt)}</span>
+                        </div>
+                        <div className="flex items-center gap-4 text-slate-500">
+                          {run.durationMs != null && <span>{run.durationMs}ms</span>}
+                          {run.error && <CronError error={run.error} />}
+                          {run.resultSummary && <CronResultSummary summary={run.resultSummary} />}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
           </div>
         )}
       </div>

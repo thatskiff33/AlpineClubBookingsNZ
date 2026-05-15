@@ -772,6 +772,7 @@ export default function XeroPage() {
   const [operationStatusFilter, setOperationStatusFilter] = useState("all")
   const [operationEntityFilter, setOperationEntityFilter] = useState("all")
   const [retryingOperationId, setRetryingOperationId] = useState<string | null>(null)
+  const [markingNonReplayableOperationId, setMarkingNonReplayableOperationId] = useState<string | null>(null)
   const [inboundEvents, setInboundEvents] = useState<XeroInboundEvent[]>([])
   const [loadingInboundEvents, setLoadingInboundEvents] = useState(false)
   const [inboundEventStatusFilter, setInboundEventStatusFilter] = useState("all")
@@ -1302,6 +1303,40 @@ export default function XeroPage() {
       setError(err instanceof Error ? err.message : "Failed to retry Xero operation")
     } finally {
       setRetryingOperationId(null)
+    }
+  }
+
+  const handleMarkOperationNonReplayable = async (operationId: string) => {
+    const reason = window.prompt(
+      "Why is this Xero operation not safe to replay?",
+      "Reviewed from Xero operations dashboard"
+    )
+    if (reason === null) {
+      return
+    }
+
+    setMarkingNonReplayableOperationId(operationId)
+    setOperationMessage("")
+    setError("")
+    try {
+      const res = await fetch(`/api/admin/xero/operations/${operationId}/mark-non-replayable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to mark Xero operation non-replayable")
+      }
+      setOperationMessage(data.message || "Xero operation marked non-replayable.")
+      await Promise.all([
+        fetchOperations(operationStatusFilter, operationEntityFilter),
+        fetchHealth(),
+      ])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to mark Xero operation non-replayable")
+    } finally {
+      setMarkingNonReplayableOperationId(null)
     }
   }
 
@@ -2611,6 +2646,16 @@ export default function XeroPage() {
                           </Button>
                         ) : operation.reason && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
                           <p className="text-xs text-muted-foreground">{operation.reason}</p>
+                        ) : null}
+                        {operation.replayable && (operation.status === "FAILED" || operation.status === "PARTIAL") ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleMarkOperationNonReplayable(operation.id)}
+                            disabled={markingNonReplayableOperationId === operation.id}
+                          >
+                            {markingNonReplayableOperationId === operation.id ? "Archiving..." : "Mark non-replayable"}
+                          </Button>
                         ) : null}
                       </div>
 
