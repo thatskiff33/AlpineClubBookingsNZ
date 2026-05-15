@@ -120,4 +120,22 @@ describe("finance auth helpers", () => {
       "redirect:/finance"
     );
   });
+
+  it("redirects non-finance members away from finance booking source drill-downs", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    mockFindUnique.mockResolvedValue({
+      id: "member-1",
+      email: "member@example.com",
+      firstName: "No",
+      lastName: "Finance",
+      role: "MEMBER",
+      financeAccessLevel: "NONE",
+      active: true,
+      forcePasswordChange: false,
+    });
+
+    await expect(requireFinanceViewer("/finance/bookings/source")).rejects.toThrow(
+      "redirect:/dashboard"
+    );
+  });
 });

@@ -158,6 +158,25 @@ function StatusBreakdownTable({
   rows: FinanceBookingsReportStatusRow[];
   includePipeline: boolean;
 }) {
+  function DrilldownLink({
+    href,
+    children,
+    className = "",
+  }: {
+    href: string;
+    children: React.ReactNode;
+    className?: string;
+  }) {
+    return (
+      <Link
+        href={href}
+        className={`block rounded-sm text-blue-700 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 ${className}`}
+      >
+        {children}
+      </Link>
+    );
+  }
+
   return (
     <Table>
       <TableHeader>
@@ -173,13 +192,29 @@ function StatusBreakdownTable({
       <TableBody>
         {rows.map((row) => (
           <TableRow key={`${row.pipeline}-${row.status}`}>
-            {includePipeline ? <TableCell>{row.pipeline}</TableCell> : null}
-            <TableCell className="font-medium text-slate-900">{row.status}</TableCell>
-            <TableCell className="text-right">{row.bookingCount}</TableCell>
-            <TableCell className="text-right">{row.bookingNights}</TableCell>
-            <TableCell className="text-right">{row.guestNights}</TableCell>
+            {includePipeline ? (
+              <TableCell>
+                <DrilldownLink href={row.drilldownHref}>{row.pipeline}</DrilldownLink>
+              </TableCell>
+            ) : null}
+            <TableCell className="font-medium">
+              <DrilldownLink href={row.drilldownHref} className="text-slate-900">
+                {row.status}
+              </DrilldownLink>
+            </TableCell>
+            <TableCell className="text-right">
+              <DrilldownLink href={row.drilldownHref}>{row.bookingCount}</DrilldownLink>
+            </TableCell>
+            <TableCell className="text-right">
+              <DrilldownLink href={row.drilldownHref}>{row.bookingNights}</DrilldownLink>
+            </TableCell>
+            <TableCell className="text-right">
+              <DrilldownLink href={row.drilldownHref}>{row.guestNights}</DrilldownLink>
+            </TableCell>
             <TableCell className="text-right font-medium text-slate-900">
-              {row.bookedRevenue}
+              <DrilldownLink href={row.drilldownHref} className="text-slate-900">
+                {row.bookedRevenue}
+              </DrilldownLink>
             </TableCell>
           </TableRow>
         ))}
@@ -225,7 +260,8 @@ function DetailTables({
           </CardTitle>
           <CardDescription className="text-sm text-slate-600">
             Status totals stay explicit so realized and pipeline views can be
-            reconciled back to Tokoroa Alpine Club booking states.
+            reconciled back to Tokoroa Alpine Club booking states. Open a row
+            to view the finance-scoped source bookings behind it.
           </CardDescription>
         </CardHeader>
         <CardContent>{statusTable}</CardContent>
@@ -265,8 +301,10 @@ export default async function FinanceBookingsPage({
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Generated {model.generatedOn}. Booked revenue comes from
-              TACBookings bookings. Net collected cash comes from TACBookings payments. Xero-backed finance snapshots do not appear on this page.
+              Generated {model.generatedOn} from a live TACBookings query.
+              Booked revenue comes from TACBookings bookings. Net collected cash
+              comes from TACBookings payments. Xero-backed finance snapshots do
+              not appear on this page.
             </div>
 
             <form action="/finance/bookings" className="space-y-4">
