@@ -1,4 +1,4 @@
-FROM node:20.20-alpine AS base
+FROM node:26.1-alpine AS base
 RUN npm install -g npm@11.14.0 && npm cache clean --force
 
 # Install dependencies only when needed
