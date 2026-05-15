@@ -13,8 +13,8 @@
     "url": "https://github.com/thatskiff33/TACBookings/issues"
   },
   "engines": {
-    "node": ">=20.9.0",
-    "npm": ">=10"
+    "node": ">=24.0.0 <25",
+    "npm": ">=11"
   },
   "keywords": [
     "booking-system",
@@ -89,7 +89,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/bcryptjs": "^2.4.6",
-    "@types/node": "^20",
+    "@types/node": "^24",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^8.0.0",
     "@types/react": "^19",

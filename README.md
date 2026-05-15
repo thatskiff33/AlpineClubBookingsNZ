@@ -37,8 +37,8 @@ using a fork for another organisation. See `NOTICE.md`.
 
 ## Requirements
 
-- Node.js 20.9 or newer
-- npm 10 or newer
+- Node.js 24 LTS
+- npm 11 or newer
 - Docker and Docker Compose for local PostgreSQL or production-style runs
 
 ## Fresh Clone Setup
