@@ -1,0 +1,6 @@
+title = "TACBookings Gitleaks config"
+
+[[allowlists]]
+description = "Allow documented Stripe test placeholder in the example env file"
+paths = ['''^\.env\.example$''']
+regexes = ['''sk_test_placeholder''']
