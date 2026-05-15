@@ -1,8 +1,7 @@
 # Hashed Token Migration
 
-Issue `#175` moved password reset, email verification/change, and guest chore
-bearer tokens to hash-at-rest storage. Issue `#290` extends the same storage
-contract to membership nomination tokens.
+Password reset, email verification/change, guest chore, and membership
+nomination bearer tokens use hash-at-rest storage.
 
 ## Migration approach
 

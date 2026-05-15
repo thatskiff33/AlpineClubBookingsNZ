@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   subscriptionFindMany: vi.fn(),
   linkFindMany: vi.fn(),
   linkCreateMany: vi.fn(),
+  linkUpdateMany: vi.fn(),
   operationCount: vi.fn(),
   operationFindMany: vi.fn(),
   operationCreateMany: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("@/lib/prisma", () => ({
     xeroObjectLink: {
       findMany: mocks.linkFindMany,
       createMany: mocks.linkCreateMany,
+      updateMany: mocks.linkUpdateMany,
     },
     xeroSyncOperation: {
       count: mocks.operationCount,
@@ -57,6 +59,7 @@ vi.mock("@/lib/logger", () => ({
 import {
   backfillHistoricalXeroObjectLinks,
   buildXeroReconciliationReport,
+  cleanupStaleCanonicalXeroObjectLinks,
   maybeNotifyXeroRepeatedFailure,
 } from "@/lib/xero-hardening";
 
@@ -427,5 +430,80 @@ describe("backfillHistoricalXeroObjectLinks", () => {
         ]),
       })
     );
+  });
+});
+
+describe("cleanupStaleCanonicalXeroObjectLinks", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.linkUpdateMany.mockResolvedValue({ count: 2 });
+  });
+
+  it("deactivates active canonical links that no longer match the local canonical fields", async () => {
+    mocks.memberFindMany.mockResolvedValue([
+      { id: "mem_1", xeroContactId: "contact_new" },
+    ]);
+    mocks.paymentFindMany.mockResolvedValue([
+      {
+        id: "pay_1",
+        xeroInvoiceId: "inv_1",
+        xeroRefundCreditNoteId: null,
+      },
+    ]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.linkFindMany.mockResolvedValue([
+      {
+        id: "link_keep_contact",
+        localModel: "Member",
+        localId: "mem_1",
+        xeroObjectType: "CONTACT",
+        xeroObjectId: "contact_new",
+        role: "CONTACT",
+      },
+      {
+        id: "link_old_contact",
+        localModel: "Member",
+        localId: "mem_1",
+        xeroObjectType: "CONTACT",
+        xeroObjectId: "contact_old",
+        role: "CONTACT",
+      },
+      {
+        id: "link_old_invoice",
+        localModel: "Payment",
+        localId: "pay_1",
+        xeroObjectType: "INVOICE",
+        xeroObjectId: "inv_old",
+        role: "PRIMARY_INVOICE",
+      },
+    ]);
+
+    const result = await cleanupStaleCanonicalXeroObjectLinks();
+
+    expect(result).toEqual({
+      completedAt: expect.any(Date),
+      scannedActiveLinks: 3,
+      keptActiveLinks: 1,
+      deactivatedLinks: 2,
+      byCategory: {
+        memberContacts: 1,
+        paymentInvoices: 1,
+        paymentRefundCreditNotes: 0,
+        subscriptionInvoices: 0,
+        otherCanonicalLinks: 0,
+      },
+      deactivatedLinkIds: ["link_old_contact", "link_old_invoice"],
+    });
+    expect(mocks.linkUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: {
+          in: ["link_old_contact", "link_old_invoice"],
+        },
+        active: true,
+      },
+      data: {
+        active: false,
+      },
+    });
   });
 });

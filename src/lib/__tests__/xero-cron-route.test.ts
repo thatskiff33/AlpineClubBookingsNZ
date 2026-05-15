@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   processQueuedXeroOperationRetries: vi.fn(),
   runXeroInboundReconciliationCycle: vi.fn(),
   backfillHistoricalXeroObjectLinks: vi.fn(),
+  cleanupStaleCanonicalXeroObjectLinks: vi.fn(),
   sendXeroReconciliationReport: vi.fn(),
 }));
 
@@ -30,6 +31,7 @@ vi.mock("@/lib/xero-inbound-reconciliation", () => ({
 
 vi.mock("@/lib/xero-hardening", () => ({
   backfillHistoricalXeroObjectLinks: mocks.backfillHistoricalXeroObjectLinks,
+  cleanupStaleCanonicalXeroObjectLinks: mocks.cleanupStaleCanonicalXeroObjectLinks,
   sendXeroReconciliationReport: mocks.sendXeroReconciliationReport,
 }));
 
@@ -156,6 +158,10 @@ describe("POST /api/cron/xero", () => {
         createdOperations: 2,
       },
     });
+    mocks.cleanupStaleCanonicalXeroObjectLinks.mockResolvedValue({
+      scannedActiveLinks: 5,
+      deactivatedLinks: 1,
+    });
     mocks.sendXeroReconciliationReport.mockResolvedValue({
       sent: true,
       report: {
@@ -231,6 +237,10 @@ describe("POST /api/cron/xero", () => {
         createdLinks: 2,
         createdOperations: 2,
       },
+    });
+    expect(body.linkCleanup).toEqual({
+      scannedActiveLinks: 5,
+      deactivatedLinks: 1,
     });
     expect(body.reconciliationReport).toEqual({
       sent: true,

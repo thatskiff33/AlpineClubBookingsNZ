@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   processQueuedXeroOutboxOperations: vi.fn(),
   enqueueXeroSyncOperationRetry: vi.fn(),
   processQueuedXeroOperationRetries: vi.fn(),
+  backfillHistoricalXeroObjectLinks: vi.fn(),
+  cleanupStaleCanonicalXeroObjectLinks: vi.fn(),
   findOrCreateXeroContact: vi.fn(),
   checkMembershipStatus: vi.fn(),
   buildXeroInvoiceUrl: vi.fn((invoiceId: string) => `https://xero.test/invoices/${invoiceId}`),
@@ -85,6 +87,11 @@ vi.mock("@/lib/xero-operation-queue", () => ({
   processQueuedXeroOperationRetries: mocks.processQueuedXeroOperationRetries,
 }));
 
+vi.mock("@/lib/xero-hardening", () => ({
+  backfillHistoricalXeroObjectLinks: mocks.backfillHistoricalXeroObjectLinks,
+  cleanupStaleCanonicalXeroObjectLinks: mocks.cleanupStaleCanonicalXeroObjectLinks,
+}));
+
 vi.mock("@/lib/xero-operation-retry", () => {
   class TestXeroOperationRetryError extends Error {
     status: number;
@@ -124,6 +131,7 @@ vi.mock("@/lib/xero", () => {
 });
 
 import { GET as getHealth } from "@/app/api/admin/xero/health/route";
+import { POST as runLinkMaintenance } from "@/app/api/admin/xero/link-maintenance/route";
 import { POST as triggerMissingInvoices } from "@/app/api/admin/xero/missing-invoices/route";
 import { POST as retryAllFailedOperations } from "@/app/api/admin/xero/operations/retry-all/route";
 import { POST as forceSync } from "@/app/api/admin/xero/force-sync/route";
@@ -159,6 +167,14 @@ describe("Xero admin bulk routes", () => {
       succeeded: 1,
       failed: 0,
       skipped: 0,
+    });
+    mocks.backfillHistoricalXeroObjectLinks.mockResolvedValue({
+      totals: {
+        createdLinks: 1,
+      },
+    });
+    mocks.cleanupStaleCanonicalXeroObjectLinks.mockResolvedValue({
+      deactivatedLinks: 2,
     });
   });
 
@@ -310,6 +326,31 @@ describe("Xero admin bulk routes", () => {
         },
       ],
       message: "Queued 1 active failed Xero operation for background retry.",
+    });
+  });
+
+  it("runs Xero link ledger maintenance for admins", async () => {
+    const response = await runLinkMaintenance();
+
+    expect(response.status).toBe(200);
+    expect(mocks.backfillHistoricalXeroObjectLinks).toHaveBeenCalled();
+    expect(mocks.cleanupStaleCanonicalXeroObjectLinks).toHaveBeenCalled();
+    expect(mocks.logAudit).toHaveBeenCalledWith({
+      action: "XERO_LINK_LEDGER_MAINTENANCE",
+      memberId: "admin-1",
+      details: "Backfilled 1 canonical Xero links and deactivated 2 stale canonical links",
+    });
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      backfill: {
+        totals: {
+          createdLinks: 1,
+        },
+      },
+      cleanup: {
+        deactivatedLinks: 2,
+      },
+      message: "Backfilled 1 missing canonical Xero link and deactivated 2 stale canonical links.",
     });
   });
 

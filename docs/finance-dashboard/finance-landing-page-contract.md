@@ -1,6 +1,6 @@
 # Finance Landing Page Contract
 
-This document defines the native `/finance` landing page shell added for phase `#97`.
+This document defines the native `/finance` landing page shell.
 
 It is intentionally small. The landing page surfaces live finance sync health and TACBookings booking summaries for finance viewers and managers, and it may expose finance-manager Xero connection controls, a manual sync trigger, and diagnostics deep links, but it does not implement charts or report-specific data loaders.
 

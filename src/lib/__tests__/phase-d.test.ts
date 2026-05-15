@@ -74,6 +74,14 @@ describe("#33: Admin Bookings Calendar API", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects calendarMonth values outside real month numbers", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
+    const { GET } = await import("@/app/api/admin/bookings/route");
+    const req = new NextRequest("http://localhost/api/admin/bookings?calendarMonth=2026-13");
+    const res = await GET(req);
+    expect(res.status).toBe(400);
+  });
+
   it("returns bookings overlapping the given month", async () => {
     mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
     mockPrisma.booking.findMany.mockResolvedValue([
@@ -129,7 +137,7 @@ describe("#33: Admin Bookings Calendar API", () => {
     expect(call.where.status).toEqual({ not: "DRAFT" });
   });
 
-  it("queries bookings overlapping month boundaries", async () => {
+  it("queries bookings overlapping month boundaries with an exclusive month end", async () => {
     mockAuth.mockResolvedValue({ user: { id: "a1", role: "ADMIN" } });
     mockPrisma.booking.findMany.mockResolvedValue([]);
 
@@ -138,14 +146,8 @@ describe("#33: Admin Bookings Calendar API", () => {
     await GET(req);
 
     const call = mockPrisma.booking.findMany.mock.calls[0][0];
-    // checkIn should be <= last day of April (30th)
-    const checkInLte = call.where.checkIn.lte;
-    expect(checkInLte.getDate()).toBe(30);
-    expect(checkInLte.getMonth()).toBe(3); // 0-indexed April
-    // checkOut should be >= first day of April
-    const checkOutGte = call.where.checkOut.gte;
-    expect(checkOutGte.getDate()).toBe(1);
-    expect(checkOutGte.getMonth()).toBe(3);
+    expect(call.where.checkIn.lt).toEqual(new Date("2026-05-01T00:00:00.000Z"));
+    expect(call.where.checkOut.gt).toEqual(new Date("2026-04-01T00:00:00.000Z"));
   });
 });
 

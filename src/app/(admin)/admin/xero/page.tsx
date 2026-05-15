@@ -724,6 +724,7 @@ export default function XeroPage() {
   const [loadingMissingInvoices, setLoadingMissingInvoices] = useState(false)
   const [showMissingInvoices, setShowMissingInvoices] = useState(false)
   const [triggeringMissingInvoices, setTriggeringMissingInvoices] = useState(false)
+  const [repairingXeroLinks, setRepairingXeroLinks] = useState(false)
   const [unlinkingMismatchMemberId, setUnlinkingMismatchMemberId] = useState<string | null>(null)
   const [retryingAllFailed, setRetryingAllFailed] = useState(false)
   const [forceSyncType, setForceSyncType] = useState<"CONTACT" | "INVOICE" | "MEMBERSHIP">("CONTACT")
@@ -1383,6 +1384,31 @@ export default function XeroPage() {
       setError(err instanceof Error ? err.message : "Failed to queue missing invoices")
     } finally {
       setTriggeringMissingInvoices(false)
+    }
+  }
+
+  const handleRepairXeroLinks = async () => {
+    setRepairingXeroLinks(true)
+    setOperationMessage("")
+    setError("")
+    try {
+      const res = await fetch("/api/admin/xero/link-maintenance", {
+        method: "POST",
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to repair Xero link ledger")
+      }
+
+      setOperationMessage(data.message || "Xero link ledger maintenance completed.")
+      await Promise.all([
+        fetchHealth(),
+        fetchOperations(operationStatusFilter, operationEntityFilter),
+      ])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to repair Xero link ledger")
+    } finally {
+      setRepairingXeroLinks(false)
     }
   }
 
@@ -3946,6 +3972,21 @@ export default function XeroPage() {
                   </div>
                 </>
               )}
+            </div>
+
+            <Separator />
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold">Xero Link Ledger Repair</h3>
+                <p className="text-sm text-muted-foreground">
+                  Backfill missing canonical links and deactivate stale duplicate links that no longer match TACBookings records.
+                </p>
+              </div>
+
+              <Button onClick={handleRepairXeroLinks} disabled={repairingXeroLinks}>
+                {repairingXeroLinks ? "Repairing..." : "Repair Canonical Links"}
+              </Button>
             </div>
 
             <Separator />

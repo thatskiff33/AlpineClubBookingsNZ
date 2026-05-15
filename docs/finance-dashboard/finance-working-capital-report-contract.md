@@ -1,6 +1,6 @@
 # Finance Working-Capital Report Contract
 
-This document defines the native `/finance/working-capital` report page added for task `#153` under phase `#99`.
+This document defines the native `/finance/working-capital` report page.
 
 ## Surface Area
 

@@ -1,6 +1,6 @@
 # Finance Costs Report Contract
 
-This document defines the native `/finance/costs` report page added for task `#144` under phase `#99`.
+This document defines the native `/finance/costs` report page.
 
 ## Surface Area
 

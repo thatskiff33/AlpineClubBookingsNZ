@@ -1,6 +1,6 @@
 # Finance Booking Metrics Contract
 
-This document defines the finance-only booking metrics query boundary added for phase `#96`.
+This document defines the finance-only booking metrics query boundary.
 
 It is intentionally narrow. The finance booking metrics boundary exposes TACBookings booking-derived stay and pipeline metrics as JSON for later finance reporting work, but it does not add finance UI pages, reporting-page components, or booking type schema changes.
 

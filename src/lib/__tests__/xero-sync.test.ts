@@ -301,4 +301,50 @@ describe("upsertXeroObjectLink", () => {
       })
     );
   });
+
+  it("deactivates older active canonical contact links before recording a new contact link", async () => {
+    await upsertXeroObjectLink({
+      localModel: "Member",
+      localId: "member_1",
+      xeroObjectType: "CONTACT",
+      xeroObjectId: "contact_new",
+      role: "CONTACT",
+    });
+
+    expect(mocks.txPaymentFindUnique).not.toHaveBeenCalled();
+    expect(mocks.txLinkUpdateMany).toHaveBeenCalledWith({
+      where: {
+        localModel: "Member",
+        localId: "member_1",
+        role: "CONTACT",
+        active: true,
+        OR: [
+          {
+            xeroObjectType: {
+              not: "CONTACT",
+            },
+          },
+          {
+            xeroObjectId: {
+              not: "contact_new",
+            },
+          },
+        ],
+      },
+      data: {
+        active: false,
+      },
+    });
+    expect(mocks.txLinkUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          active: true,
+          xeroObjectId: "contact_new",
+        }),
+        update: expect.objectContaining({
+          active: true,
+        }),
+      })
+    );
+  });
 });

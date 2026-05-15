@@ -1,0 +1,29 @@
+name: Feature Request
+description: Suggest a focused improvement.
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or operator problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the desired behaviour, not just an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks or Constraints
+      description: Note payment, accounting, privacy, deployment, or migration concerns.

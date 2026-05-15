@@ -1,6 +1,12 @@
 import { prisma } from "./prisma";
-import { eachDayOfInterval, subDays } from "date-fns";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
+import {
+  eachDateOnlyInRange,
+  formatDateOnly,
+  formatDateOnlyForTimeZone,
+  normalizeDateOnlyForTimeZone,
+  parseDateOnly,
+} from "@/lib/date-only";
 
 type PrismaClient = typeof prisma;
 type TransactionClient = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
@@ -13,6 +19,43 @@ export interface NightAvailability {
   availableBeds: number;
 }
 
+function getMonthStartDateOnly(year: number, month: number): Date {
+  const date = parseDateOnly(
+    `${year}-${String(month + 1).padStart(2, "0")}-01`
+  );
+
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid month for availability: ${year}-${month + 1}`);
+  }
+
+  return date;
+}
+
+function getNextMonthStartDateOnly(year: number, month: number): Date {
+  const nextMonth = month === 11 ? 0 : month + 1;
+  const nextMonthYear = month === 11 ? year + 1 : year;
+  return getMonthStartDateOnly(nextMonthYear, nextMonth);
+}
+
+function getOccupiedBedsForNight(
+  night: Date,
+  bookings: Array<{ checkIn: Date; checkOut: Date; guests: unknown[] }>
+): number {
+  const nightKey = formatDateOnly(night);
+  let occupiedBeds = 0;
+
+  for (const booking of bookings) {
+    const bookingCheckInKey = formatDateOnlyForTimeZone(booking.checkIn);
+    const bookingCheckOutKey = formatDateOnlyForTimeZone(booking.checkOut);
+
+    if (nightKey >= bookingCheckInKey && nightKey < bookingCheckOutKey) {
+      occupiedBeds += booking.guests.length;
+    }
+  }
+
+  return occupiedBeds;
+}
+
 /**
  * Get the number of occupied beds for each night in a date range.
  * A booking occupies beds from checkIn to checkOut-1 (nights).
@@ -22,15 +65,14 @@ export async function getAvailability(
   checkIn: Date,
   checkOut: Date
 ): Promise<NightAvailability[]> {
-  const nights = eachDayOfInterval({
-    start: checkIn,
-    end: subDays(checkOut, 1),
-  });
+  const start = normalizeDateOnlyForTimeZone(checkIn);
+  const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
+  const nights = eachDateOnlyInRange(start, exclusiveEnd);
 
   const overlappingBookings = await prisma.booking.findMany({
     where: {
-      checkIn: { lt: checkOut },
-      checkOut: { gt: checkIn },
+      checkIn: { lt: exclusiveEnd },
+      checkOut: { gt: start },
       status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
     },
     include: {
@@ -39,17 +81,7 @@ export async function getAvailability(
   });
 
   return nights.map((night) => {
-    const nightTime = night.getTime();
-    let occupiedBeds = 0;
-
-    for (const booking of overlappingBookings) {
-      const bookingCheckIn = new Date(booking.checkIn).getTime();
-      const bookingCheckOut = new Date(booking.checkOut).getTime();
-
-      if (nightTime >= bookingCheckIn && nightTime < bookingCheckOut) {
-        occupiedBeds += booking.guests.length;
-      }
-    }
+    const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
 
     return {
       date: night,
@@ -70,15 +102,14 @@ export async function checkCapacity(
   tx?: TransactionClient
 ): Promise<{ available: boolean; minAvailable: number; nightDetails: NightAvailability[] }> {
   const db = tx ?? prisma;
-  const nights = eachDayOfInterval({
-    start: checkIn,
-    end: subDays(checkOut, 1),
-  });
+  const start = normalizeDateOnlyForTimeZone(checkIn);
+  const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
+  const nights = eachDateOnlyInRange(start, exclusiveEnd);
 
   const overlappingBookings = await db.booking.findMany({
     where: {
-      checkIn: { lt: checkOut },
-      checkOut: { gt: checkIn },
+      checkIn: { lt: exclusiveEnd },
+      checkOut: { gt: start },
       status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
       ...(excludeBookingId ? { id: { not: excludeBookingId } } : {}),
     },
@@ -88,16 +119,7 @@ export async function checkCapacity(
   });
 
   const nightDetails: NightAvailability[] = nights.map((night) => {
-    const nightTime = night.getTime();
-    let occupiedBeds = 0;
-
-    for (const booking of overlappingBookings) {
-      const bookingCheckIn = new Date(booking.checkIn).getTime();
-      const bookingCheckOut = new Date(booking.checkOut).getTime();
-      if (nightTime >= bookingCheckIn && nightTime < bookingCheckOut) {
-        occupiedBeds += booking.guests.length;
-      }
-    }
+    const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
 
     return {
       date: night,
@@ -122,8 +144,8 @@ export async function getMonthAvailability(
   year: number,
   month: number
 ): Promise<Map<string, number>> {
-  const startDate = new Date(year, month, 1);
-  const endDate = new Date(year, month + 1, 1);
+  const startDate = getMonthStartDateOnly(year, month);
+  const endDate = getNextMonthStartDateOnly(year, month);
 
   const overlappingBookings = await prisma.booking.findMany({
     where: {
@@ -137,24 +159,12 @@ export async function getMonthAvailability(
   });
 
   const availability = new Map<string, number>();
-  const nights = eachDayOfInterval({
-    start: startDate,
-    end: subDays(endDate, 1),
-  });
+  const nights = eachDateOnlyInRange(startDate, endDate);
 
   for (const night of nights) {
-    const nightTime = night.getTime();
-    let occupiedBeds = 0;
+    const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
 
-    for (const booking of overlappingBookings) {
-      const bookingCheckIn = new Date(booking.checkIn).getTime();
-      const bookingCheckOut = new Date(booking.checkOut).getTime();
-      if (nightTime >= bookingCheckIn && nightTime < bookingCheckOut) {
-        occupiedBeds += booking.guests.length;
-      }
-    }
-
-    const key = night.toISOString().split("T")[0];
+    const key = formatDateOnly(night);
     availability.set(key, occupiedBeds);
   }
 

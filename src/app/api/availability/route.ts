@@ -1,16 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { eachDayOfInterval, subDays } from "date-fns";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
-import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
+import { getMonthAvailability } from "@/lib/capacity";
+import {
+  eachDateOnlyInRange,
+  formatDateOnly,
+  formatDateOnlyForTimeZone,
+  parseDateOnly,
+} from "@/lib/date-only";
 
 const availabilityQuerySchema = z.object({
   year: z.coerce.number().int().min(2000).max(2100),
   month: z.coerce.number().int().min(0).max(11),
 });
+
+function getMonthStartDateOnly(year: number, month: number): Date {
+  return parseDateOnly(`${year}-${String(month + 1).padStart(2, "0")}-01`);
+}
+
+function getNextMonthStartDateOnly(year: number, month: number): Date {
+  const nextMonth = month === 11 ? 0 : month + 1;
+  const nextMonthYear = month === 11 ? year + 1 : year;
+  return getMonthStartDateOnly(nextMonthYear, nextMonth);
+}
 
 export async function GET(request: NextRequest) {
   const rateLimited = applyRateLimit(rateLimiters.bookingQuery, request);
@@ -38,21 +53,14 @@ export async function GET(request: NextRequest) {
   }
   const { year, month } = parsed.data;
 
-  const startDate = new Date(year, month, 1);
-  const endDate = new Date(year, month + 1, 1);
+  const startDate = getMonthStartDateOnly(year, month);
+  const endDate = getNextMonthStartDateOnly(year, month);
 
-  const [overlappingBookings, activeSeasons] = await Promise.all([
-    prisma.booking.findMany({
-      where: {
-        checkIn: { lt: endDate },
-        checkOut: { gt: startDate },
-        status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
-      },
-      include: { guests: true },
-    }),
+  const [occupancyMap, activeSeasons] = await Promise.all([
+    getMonthAvailability(year, month),
     prisma.season.findMany({
       where: {
-        startDate: { lte: endDate },
+        startDate: { lt: endDate },
         endDate: { gte: startDate },
         active: true,
       },
@@ -63,30 +71,18 @@ export async function GET(request: NextRequest) {
   const availability: Record<string, number> = {};
   const seasons: Record<string, { name: string; type: string }> = {};
 
-  const nights = eachDayOfInterval({
-    start: startDate,
-    end: subDays(endDate, 1),
-  });
+  for (const [date, occupiedBeds] of occupancyMap.entries()) {
+    availability[date] = occupiedBeds;
+  }
 
+  const nights = eachDateOnlyInRange(startDate, endDate);
   for (const night of nights) {
-    const nightTime = night.getTime();
-    let occupiedBeds = 0;
-
-    for (const booking of overlappingBookings) {
-      const bookingCheckIn = new Date(booking.checkIn).getTime();
-      const bookingCheckOut = new Date(booking.checkOut).getTime();
-      if (nightTime >= bookingCheckIn && nightTime < bookingCheckOut) {
-        occupiedBeds += booking.guests.length;
-      }
-    }
-
-    const key = night.toISOString().split("T")[0];
-    availability[key] = occupiedBeds;
+    const key = formatDateOnly(night);
 
     // Determine which season this date falls in
     for (const season of activeSeasons) {
-      const sStart = new Date(season.startDate).toISOString().split("T")[0];
-      const sEnd = new Date(season.endDate).toISOString().split("T")[0];
+      const sStart = formatDateOnlyForTimeZone(season.startDate);
+      const sEnd = formatDateOnlyForTimeZone(season.endDate);
       if (key >= sStart && key <= sEnd) {
         seasons[key] = { name: season.name, type: season.type };
         break;

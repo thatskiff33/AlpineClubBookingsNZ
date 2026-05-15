@@ -3,6 +3,7 @@ import { checkCapacity } from "@/lib/capacity";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { z } from "zod";
+import { formatDateOnly } from "@/lib/date-only";
 
 const availabilityCheckQuerySchema = z.object({
   checkIn: z.string().date(),
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     minAvailable: result.minAvailable,
     nightDetails: result.nightDetails.map((n) => ({
-      date: n.date.toISOString().split("T")[0],
+      date: formatDateOnly(n.date),
       occupiedBeds: n.occupiedBeds,
       availableBeds: n.availableBeds,
     })),

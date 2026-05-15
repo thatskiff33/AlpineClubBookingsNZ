@@ -1,6 +1,8 @@
 # Staging And Accessibility Verification
 
-This is the repo-visible non-production target for accessibility and other web verification. Use it whenever an audit, release review, or manual QA step says not to run browser checks against production.
+This is the non-production target for accessibility and other browser
+verification. Use it whenever a release review or manual QA step should not run
+against production.
 
 ## Target
 
@@ -10,13 +12,15 @@ Default local staging origin:
 http://localhost:3001
 ```
 
-For shared staging, set `NEXTAUTH_URL` in `.env.staging` to the exact HTTPS origin users will open, for example:
+For shared staging, set `NEXTAUTH_URL` in `.env.staging` to the exact HTTPS
+origin users will open, for example:
 
 ```text
-https://staging.tokoroa.org.nz
+https://staging.example.org
 ```
 
-Record the actual origin used in the issue or PR that requested verification. Do not infer a staging host from production DNS guesses.
+Record the actual origin used in the issue or PR that requested verification.
+Do not infer a staging host from production DNS guesses.
 
 ## Auth Path
 
@@ -81,7 +85,8 @@ Add `-v` to the final command only when you intentionally want to delete the sta
 
 ## Accessibility Run
 
-Run checks against the staging origin, not production. The minimum release-review sweep is:
+Run checks against the staging origin, not production. The minimum
+release-review sweep is:
 
 ```bash
 STAGING_BASE_URL=http://localhost:3001
@@ -95,7 +100,8 @@ For authenticated pages:
 1. Sign in at `/login`.
 2. Open each target page manually in the same browser profile.
 3. Run Lighthouse or the browser accessibility tool against that staging URL.
-4. Record the page URL, user role, tool, result, and any exception in the linked issue or PR.
+4. Record the page URL, user role, tool, result, and any exception in the linked
+   issue or PR.
 
 Recommended route set for formal review:
 
@@ -111,7 +117,10 @@ Recommended route set for formal review:
 - `/lodge`
 - `/finance`
 
-Only include authenticated routes that the staging test account is allowed to access. If a page depends on Stripe, Xero, SES, or finance data that is not configured in staging, record the dependency and use seeded or demo data instead of production credentials.
+Only include authenticated routes that the staging test account is allowed to
+access. If a page depends on Stripe, Xero, SES, or finance data that is not
+configured in staging, record the dependency and use seeded or demo data instead
+of production credentials.
 
 ## Shared Staging Notes
 
@@ -123,4 +132,4 @@ When promoting this target from local staging to a shared host:
 4. Keep `CRON_ENABLED=false` unless the test explicitly needs scheduled jobs.
 5. Keep `BACKUP_ENABLED=false` unless the test explicitly covers backup behavior.
 6. Verify `/api/health` and `/api/health/ready` before starting browser checks.
-7. Record the staging origin and auth path in the review issue before closing the finding.
+7. Record the staging origin and auth path in the review issue or release notes.
