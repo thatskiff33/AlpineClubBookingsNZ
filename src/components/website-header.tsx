@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import {
   Sheet,
   SheetContent,
@@ -30,6 +31,7 @@ const navLinks = [
 ];
 
 export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
+  const club = useClubIdentity();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -51,7 +53,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
         >
           <Image
             src="/images/tac-logo.png"
-            alt="Tokoroa Alpine Club"
+            alt={club.name}
             width={140}
             height={48}
             className="h-10 w-auto"
@@ -130,7 +132,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
               <SheetTitle className="flex items-center gap-2 text-left font-heading text-brand-snow">
                 <Image
                   src="/images/tac-logo.png"
-                  alt="Tokoroa Alpine Club"
+                  alt={club.name}
                   width={120}
                   height={40}
                   className="h-8 w-auto"

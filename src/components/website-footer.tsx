@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { CLUB_NAME } from "@/config/club-identity";
 
 export function WebsiteFooter() {
   return (
@@ -11,7 +12,7 @@ export function WebsiteFooter() {
             <div className="mb-3">
               <Image
                 src="/images/tac-logo.png"
-                alt="Tokoroa Alpine Club"
+                alt={CLUB_NAME}
                 width={140}
                 height={48}
                 className="h-10 w-auto brightness-110"
@@ -104,7 +105,7 @@ export function WebsiteFooter() {
 
         <div className="mt-10 border-t border-brand-ridge/30 pt-6 text-center text-sm text-brand-mist/80">
           <p>
-            &copy; {new Date().getFullYear()} Tokoroa Alpine Club Incorporated. All
+            &copy; {new Date().getFullYear()} {CLUB_NAME} Incorporated. All
             rights reserved.
           </p>
           <p className="mt-2 space-x-4">

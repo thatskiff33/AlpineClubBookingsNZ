@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CLUB_NAME } from "@/config/club-identity";
 import { prisma } from "@/lib/prisma";
 
 export const metadata: Metadata = {
   title: "Club Rules & Info",
   description:
-    "Tokoroa Alpine Club membership classes, lodge booking rules, tramping party rules, hut leader instructions, cancellation policy, and general information for members and guests.",
+    `${CLUB_NAME} membership classes, lodge booking rules, tramping party rules, hut leader instructions, cancellation policy, and general information for members and guests.`,
 };
 
 function formatPolicyRow(

@@ -1,7 +1,8 @@
 import type { MetadataRoute } from "next";
+import { CLUB_PUBLIC_URL } from "@/config/club-identity";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = process.env.NEXTAUTH_URL || "https://tokoroa.org.nz";
+  const baseUrl = process.env.NEXTAUTH_URL || CLUB_PUBLIC_URL;
 
   return [
     {

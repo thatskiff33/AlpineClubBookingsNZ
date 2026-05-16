@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CLUB_NAME } from "@/config/club-identity";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description:
-    "How the Tokoroa Alpine Club collects, uses, and protects your personal information under the New Zealand Privacy Act 2020.",
+    `How the ${CLUB_NAME} collects, uses, and protects your personal information under the New Zealand Privacy Act 2020.`,
 };
 
 const LAST_UPDATED = "1 April 2026";
@@ -35,7 +36,7 @@ export default function PrivacyPage() {
             <div>
               <h2>1. Who We Are</h2>
               <p>
-                The Tokoroa Alpine Club Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit
+                The {CLUB_NAME} Incorporated (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) is a not-for-profit
                 incorporated society registered in New Zealand. We operate Waldvogel Lodge at Iwikau
                 Village, Mt Ruapehu, and this booking and membership management system (&ldquo;the
                 System&rdquo;).
@@ -321,7 +322,7 @@ export default function PrivacyPage() {
               </p>
               <div className="website-legal-callout">
                 <p className="font-semibold text-brand-charcoal">Privacy Officer</p>
-                <p className="text-brand-deep">Tokoroa Alpine Club Incorporated</p>
+                <p className="text-brand-deep">{CLUB_NAME} Incorporated</p>
                 <p className="mt-2">
                   Please use our{" "}
                   <Link href="/contact?recipient=secretary" className="website-link">

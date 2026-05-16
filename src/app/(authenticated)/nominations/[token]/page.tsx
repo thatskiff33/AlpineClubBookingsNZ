@@ -8,6 +8,7 @@ import {
 } from "@/lib/nomination";
 import { prisma } from "@/lib/prisma";
 import { NominationConfirmCard } from "@/components/nomination-confirm-card";
+import { CLUB_NAME } from "@/config/club-identity";
 
 function statusLabel(status: string) {
   switch (status) {
@@ -155,7 +156,7 @@ export default async function NominationPage({
             <p className="text-sm text-slate-700">
               Confirming this nomination records that you support this
               application progressing to committee review. Committee approval is
-              still required before any Tokoroa Alpine Club account is created.
+              still required before any {CLUB_NAME} account is created.
             </p>
           </div>
 

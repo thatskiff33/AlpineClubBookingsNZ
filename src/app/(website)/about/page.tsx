@@ -2,11 +2,12 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import { Mountain, Hammer, Users, Calendar } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { CLUB_NAME } from "@/config/club-identity";
 
 export const metadata: Metadata = {
   title: "About the Club",
   description:
-    "Learn about the Tokoroa Alpine Club, established in 1969 to encourage tramping, mountaineering, climbing, skiing, and alpine activities in New Zealand.",
+    `Learn about the ${CLUB_NAME}, established in 1969 to encourage tramping, mountaineering, climbing, skiing, and alpine activities in New Zealand.`,
 };
 
 export default function AboutPage() {
@@ -28,7 +29,7 @@ export default function AboutPage() {
             About the Club
           </h1>
           <p className="mt-4 max-w-2xl text-lg text-brand-snow/82">
-            The Tokoroa Alpine Club has been connecting people with New
+            The {CLUB_NAME} has been connecting people with New
             Zealand&apos;s mountains since 1969.
           </p>
         </div>
@@ -88,7 +89,7 @@ export default function AboutPage() {
             <div className="relative aspect-[4/3] overflow-hidden rounded-xl shadow-lg">
               <Image
                 src="/images/lodge.jpg"
-                alt="Tokoroa Alpine Club lodge on Mt Ruapehu"
+                alt={`${CLUB_NAME} lodge on Mt Ruapehu`}
                 fill
                 className="object-cover"
               />

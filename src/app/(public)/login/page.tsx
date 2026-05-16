@@ -5,6 +5,7 @@ import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { resolvePostLoginPath } from "@/lib/auth-redirect";
 
 function LoginForm() {
+  const club = useClubIdentity();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
@@ -83,7 +85,7 @@ function LoginForm() {
       <CardHeader className="space-y-1 items-center">
         <Image
           src="/images/tac-logo.png"
-          alt="Tokoroa Alpine Club"
+          alt={club.name}
           width={180}
           height={60}
           className="h-14 w-auto mb-2"
@@ -201,13 +203,15 @@ function LoginForm() {
 }
 
 export default function LoginPage() {
+  const club = useClubIdentity();
+
   return (
     <Suspense fallback={
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 items-center">
           <Image
             src="/images/tac-logo.png"
-            alt="Tokoroa Alpine Club"
+            alt={club.name}
             width={180}
             height={60}
             className="h-14 w-auto"

@@ -41,6 +41,7 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
+import { CLUB_NAME } from "@/config/club-identity";
 import {
   getMemberXeroContactLinkMismatch,
   getXeroContactNameOrderRepair,
@@ -5471,7 +5472,7 @@ function buildRefundCreditNotePayment(params: {
     account: { code: params.bankCode },
     amount: params.refundAmountCents / 100,
     date: formatDate(new Date()),
-    reference: `Stripe Refund - Tokoroa Alpine Club payment ${params.paymentId.slice(0, 8)}`,
+    reference: `Stripe Refund - ${CLUB_NAME} payment ${params.paymentId.slice(0, 8)}`,
     isReconciled: false,
   };
 }

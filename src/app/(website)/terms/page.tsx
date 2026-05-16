@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CLUB_NAME } from "@/config/club-identity";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
   description:
-    "Terms of service for the Tokoroa Alpine Club booking and membership system, covering booking rules, payment, cancellation, and liability.",
+    `Terms of service for the ${CLUB_NAME} booking and membership system, covering booking rules, payment, cancellation, and liability.`,
 };
 
 const LAST_UPDATED = "1 April 2026";
@@ -35,7 +36,7 @@ export default function TermsPage() {
             <div>
               <h2>1. Agreement to Terms</h2>
               <p>
-                By registering an account or using the Tokoroa Alpine Club Incorporated
+                By registering an account or using the {CLUB_NAME} Incorporated
                 (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;) booking and membership system (&ldquo;the System&rdquo;), you agree to be bound
                 by these Terms of Service. If you do not agree, do not use the System.
               </p>
@@ -54,7 +55,7 @@ export default function TermsPage() {
                   account.
                 </li>
                 <li>
-                  Membership is subject to approval by the Tokoroa Alpine Club committee. Creating an account does not
+                  Membership is subject to approval by the {CLUB_NAME} committee. Creating an account does not
                   constitute membership.
                 </li>
                 <li>
@@ -126,7 +127,7 @@ export default function TermsPage() {
                   All prices are in New Zealand dollars (NZD) inclusive of GST where applicable.
                 </li>
                 <li>
-                  Payment processing is handled by Stripe. Tokoroa Alpine Club does not store credit card details.
+                  Payment processing is handled by Stripe. {CLUB_NAME} does not store credit card details.
                 </li>
               </ul>
             </div>
@@ -134,7 +135,7 @@ export default function TermsPage() {
             <div>
               <h2>5. Non-Member Priority System</h2>
               <p>
-                The Tokoroa Alpine Club is a members&apos; club. Members have priority access to the lodge.
+                The {CLUB_NAME} is a members&apos; club. Members have priority access to the lodge.
                 The following rules apply to bookings that include non-member guests:
               </p>
               <ul className="list-disc pl-6 mt-3 space-y-2">
@@ -151,7 +152,7 @@ export default function TermsPage() {
                   Bumped bookings receive a full refund and immediate email notification.
                 </li>
                 <li>
-                  Tokoroa Alpine Club accepts no liability for costs incurred by guests (e.g. travel, equipment hire)
+                  {CLUB_NAME} accepts no liability for costs incurred by guests (e.g. travel, equipment hire)
                   as a result of a booking being bumped.
                 </li>
               </ul>
@@ -160,7 +161,7 @@ export default function TermsPage() {
             <div>
               <h2>6. Cancellation and Refunds</h2>
               <p>
-                Refunds are calculated based on the cancellation policy set by the Tokoroa Alpine Club committee.
+                Refunds are calculated based on the cancellation policy set by the {CLUB_NAME} committee.
                 Current tiers are shown on the{" "}
                 <Link href="/rules" className="website-link">
                   Club Rules
@@ -178,7 +179,7 @@ export default function TermsPage() {
                   Refunds are processed to the original payment method within 5&ndash;10 business days.
                 </li>
                 <li>
-                  Tokoroa Alpine Club reserves the right to cancel a booking due to circumstances beyond our control
+                  {CLUB_NAME} reserves the right to cancel a booking due to circumstances beyond our control
                   (e.g. natural disaster, lodge damage) and will provide a full refund in such cases.
                 </li>
               </ul>
@@ -219,7 +220,7 @@ export default function TermsPage() {
                   contact us.
                 </li>
                 <li>
-                  Tokoroa Alpine Club accepts no liability for losses resulting from unauthorised access to your account
+                  {CLUB_NAME} accepts no liability for losses resulting from unauthorised access to your account
                   due to your failure to maintain credential security.
                 </li>
               </ul>
@@ -228,7 +229,7 @@ export default function TermsPage() {
             <div>
               <h2>9. Limitation of Liability</h2>
               <p>
-                The Tokoroa Alpine Club is a volunteer-run, not-for-profit organisation. To the maximum
+                The {CLUB_NAME} is a volunteer-run, not-for-profit organisation. To the maximum
                 extent permitted by New Zealand law:
               </p>
               <ul className="list-disc pl-6 mt-3 space-y-2">
@@ -236,11 +237,11 @@ export default function TermsPage() {
                   The System is provided &ldquo;as is&rdquo; without warranties of any kind, express or implied.
                 </li>
                 <li>
-                  Tokoroa Alpine Club is not liable for any indirect, incidental, or consequential losses arising from
+                  {CLUB_NAME} is not liable for any indirect, incidental, or consequential losses arising from
                   use of the System or the lodge.
                 </li>
                 <li>
-                  Tokoroa Alpine Club is not responsible for personal injury, loss of property, or other incidents
+                  {CLUB_NAME} is not responsible for personal injury, loss of property, or other incidents
                   occurring during your lodge stay. All guests are advised to hold appropriate personal
                   insurance.
                 </li>
@@ -255,7 +256,7 @@ export default function TermsPage() {
               <h2>10. Account Suspension and Termination</h2>
               <ul className="list-disc pl-6 space-y-2">
                 <li>
-                  Tokoroa Alpine Club may suspend or terminate an account for breach of these terms, unpaid membership
+                  {CLUB_NAME} may suspend or terminate an account for breach of these terms, unpaid membership
                   fees, or conduct that is harmful to the club or other members.
                 </li>
                 <li>
@@ -273,7 +274,7 @@ export default function TermsPage() {
             <div>
               <h2>11. Changes to These Terms</h2>
               <p>
-                Tokoroa Alpine Club may update these Terms of Service from time to time. We will update the &ldquo;Last
+                {CLUB_NAME} may update these Terms of Service from time to time. We will update the &ldquo;Last
                 updated&rdquo; date at the top of this page. Continued use of the System after any changes
                 constitutes acceptance of the updated terms.
               </p>

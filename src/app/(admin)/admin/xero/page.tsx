@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import { useClubIdentity } from "@/components/club-identity-provider"
 import { loadAdminXeroContactGroups } from "@/lib/admin-xero-contact-groups"
 import {
   formatRedactedJson,
@@ -705,6 +706,7 @@ function HealthStatCard({
 }
 
 export default function XeroPage() {
+  const club = useClubIdentity()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const [status, setStatus] = useState<XeroStatus | null>(null)
@@ -2831,7 +2833,7 @@ export default function XeroPage() {
           >
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Link existing Tokoroa Alpine Club members to their Xero contacts by email address, or push a single member or booking without running a full sweep.
+                Link existing {club.name} members to their Xero contacts by email address, or push a single member or booking without running a full sweep.
               </p>
 
               <div className="rounded-lg border p-4">
@@ -3529,7 +3531,7 @@ export default function XeroPage() {
           <SectionCard
             id="xero-section-mappings"
             title="Account Mappings"
-            description="Map Tokoroa Alpine Club booking transactions to Xero accounts and items."
+            description={`Map ${club.name} booking transactions to Xero accounts and items.`}
             open={sectionOpen.mappings}
             onToggle={(nextOpen) => setSectionState("mappings", nextOpen)}
           >
@@ -3912,7 +3914,7 @@ export default function XeroPage() {
               <div className="space-y-1">
                 <h3 className="text-sm font-semibold">Import Members from Xero</h3>
                 <p className="text-sm text-muted-foreground">
-                  Import members from Xero contact groups into Tokoroa Alpine Club - Bookings and map each group to an age tier.
+                  Import members from Xero contact groups into {club.bookingsName} and map each group to an age tier.
                 </p>
               </div>
 
@@ -4106,7 +4108,7 @@ export default function XeroPage() {
                                   <span className="font-medium">{contact.name}</span>
                                   {contact.memberId && (
                                     <Badge variant="outline" className="ml-2 border-green-300 text-xs text-green-700">
-                                      Tokoroa Alpine Club member
+                                      {club.name} member
                                     </Badge>
                                   )}
                                   {contact.invoiceCount > 0 ? (
@@ -4133,7 +4135,7 @@ export default function XeroPage() {
                           </div>
                           <p className="text-xs text-muted-foreground">
                             {group.canCreateFamilyGroup
-                              ? "These contacts match Tokoroa Alpine Club members. Create a family group to link them, or merge them in Xero."
+                              ? `These contacts match ${club.name} members. Create a family group to link them, or merge them in Xero.`
                               : "Merge into the contact with invoices. Open each in Xero, then use Xero’s merge option from the contact with no invoices."}
                           </p>
                         </div>

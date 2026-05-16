@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
+import { useClubIdentity } from "@/components/club-identity-provider"
 
 interface Assignment {
   id: string
@@ -23,6 +24,7 @@ interface RosterData {
 }
 
 export default function PrintRosterPage() {
+  const club = useClubIdentity()
   const params = useParams()
   const dateStr = params.date as string
   const [roster, setRoster] = useState<RosterData | null>(null)
@@ -105,7 +107,7 @@ export default function PrintRosterPage() {
 
         {/* Header */}
         <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold">Tokoroa Alpine Club</h1>
+          <h1 className="text-2xl font-bold">{club.name}</h1>
           <h2 className="text-xl mt-1">Chore Roster</h2>
           <p className="text-lg mt-1">{formattedDate}</p>
           <p className="text-sm text-gray-600 mt-1">

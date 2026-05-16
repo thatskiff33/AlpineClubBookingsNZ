@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { CLUB_CONTACT_EMAIL, CLUB_SUPPORT_EMAIL, clubDomainEmail } from "../src/config/club-identity";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 
 const prisma = new PrismaClient({
@@ -199,7 +200,7 @@ async function main() {
     const passwordHash = await bcrypt.hash("admin123", 12);
     await prisma.member.create({
       data: {
-        email: "support@tokoroa.org.nz",
+        email: CLUB_SUPPORT_EMAIL,
         passwordHash,
         firstName: "Admin",
         lastName: "User",
@@ -209,19 +210,20 @@ async function main() {
         forcePasswordChange: true,
       },
     });
-    console.log("Admin user seeded: support@tokoroa.org.nz / admin123 (password change required on first login)");
+    console.log(`Admin user seeded: ${CLUB_SUPPORT_EMAIL} / admin123 (password change required on first login)`);
   }
 
   // Seed lodge account (shared iPad in lodge)
+  const lodgeAccountEmail = clubDomainEmail("lodge");
   const existingLodge = await prisma.member.findFirst({
-    where: { email: "lodge@tokoroa.org.nz" },
+    where: { email: lodgeAccountEmail },
   });
 
   if (!existingLodge) {
     const lodgePasswordHash = await bcrypt.hash("lodge123", 12);
     await prisma.member.create({
       data: {
-        email: "lodge@tokoroa.org.nz",
+        email: lodgeAccountEmail,
         passwordHash: lodgePasswordHash,
         firstName: "Lodge",
         lastName: "Kiosk",
@@ -231,7 +233,7 @@ async function main() {
         forcePasswordChange: false,
       },
     });
-    console.log("Lodge account seeded: lodge@tokoroa.org.nz / lodge123");
+    console.log(`Lodge account seeded: ${lodgeAccountEmail} / lodge123`);
   }
 
   // Seed Winter 2026 season (June - September) with rates
@@ -327,7 +329,7 @@ async function main() {
       role: "President",
       name: "Michael Higgins",
       phone: "+64 20 4079 4310",
-      email: "president@tokoroa.org.nz",
+      email: clubDomainEmail("president"),
       contactKey: "president",
       description: "Chairs meetings and oversees club operations.",
       sortOrder: 0,
@@ -336,7 +338,7 @@ async function main() {
       role: "Secretary",
       name: "Sally Woodfield",
       phone: "+64 21 686 020",
-      email: "secretary@tokoroa.org.nz",
+      email: clubDomainEmail("secretary"),
       contactKey: "secretary",
       description: "Manages club correspondence and meeting minutes.",
       sortOrder: 1,
@@ -345,7 +347,7 @@ async function main() {
       role: "Treasurer",
       name: "Jordan Hartley-Smith",
       phone: "+64 27 422 4115",
-      email: "treasurer@tokoroa.org.nz",
+      email: clubDomainEmail("treasurer"),
       contactKey: "treasurer",
       description: "Manages club finances, subscriptions, and accounts.",
       sortOrder: 2,
@@ -354,7 +356,7 @@ async function main() {
       role: "Booking Officer",
       name: "Chris Duyvestyn",
       phone: "+64 27 472 1328",
-      email: "bookings@tokoroa.org.nz",
+      email: CLUB_CONTACT_EMAIL,
       contactKey: "bookings",
       description: "Manages lodge bookings, confirms non-member stays, and handles booking enquiries.",
       sortOrder: 3,
@@ -363,7 +365,7 @@ async function main() {
       role: "Communications Officer",
       name: "Wayne Peterson",
       phone: "+64 21 832 118",
-      email: "communications@tokoroa.org.nz",
+      email: clubDomainEmail("communications"),
       contactKey: "communications",
       description: "Manages club communications, newsletters, and public information.",
       sortOrder: 4,

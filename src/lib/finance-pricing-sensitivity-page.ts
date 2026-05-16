@@ -21,6 +21,7 @@ import {
 } from "@/lib/finance-sync-storage";
 import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { formatCents } from "@/lib/utils";
+import { CLUB_NAME } from "@/config/club-identity";
 
 const FINANCE_TIMEZONE = "Pacific/Auckland";
 const DEFAULT_FINANCE_PRICING_SENSITIVITY_PERIODS = 6;
@@ -312,7 +313,7 @@ export async function buildFinancePricingSensitivityPageModel(input: {
           title: "Average realized guest nights",
           value: formatDecimal(averageGuestNights),
           description:
-            "Average Tokoroa Alpine Club guest nights across the same selected monthly windows.",
+            `Average ${CLUB_NAME} guest nights across the same selected monthly windows.`,
           footnote: `Average realized occupancy ${formatOccupancyRate(averageOccupancyRate)}.`,
         },
         {
@@ -322,7 +323,7 @@ export async function buildFinancePricingSensitivityPageModel(input: {
               ? "Unavailable"
               : formatFinanceAmount(averageRevenuePerGuestNightCents),
           description:
-            "Booked revenue per guest night from Tokoroa Alpine Club booking metrics, not payment-derived cash.",
+            `Booked revenue per guest night from ${CLUB_NAME} booking metrics, not payment-derived cash.`,
           footnote:
             averageRevenuePerGuestNightCents === null
               ? "No guest nights were present in the selected realized booking windows."

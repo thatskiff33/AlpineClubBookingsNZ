@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { MapPin, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,6 +27,7 @@ interface CommitteeMember {
 }
 
 export default function ContactPage() {
+  const club = useClubIdentity();
   const searchParams = useSearchParams();
   const initialRecipient = searchParams.get("recipient") || "general";
   const [form, setForm] = useState({ name: "", email: "", message: "" });
@@ -268,7 +270,7 @@ export default function ContactPage() {
                     rel="noopener noreferrer"
                     className="website-link text-sm"
                   >
-                    Facebook — Tokoroa Alpine Club
+                    Facebook — {club.name}
                   </a>
                 </CardContent>
               </Card>

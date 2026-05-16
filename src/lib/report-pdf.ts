@@ -3,7 +3,8 @@ import html2canvas from "html2canvas";
 
 export async function generateReportPDF(
   reportElement: HTMLElement,
-  dateRange: { from: string; to: string }
+  dateRange: { from: string; to: string },
+  options?: { title?: string }
 ): Promise<void> {
   // Capture the report content area as a high-res canvas
   // Use foreignObjectRendering: false to avoid SVG/foreignObject issues with Recharts
@@ -26,7 +27,7 @@ export async function generateReportPDF(
 
   // Header
   pdf.setFontSize(16);
-  pdf.text("Tokoroa Alpine Club — Reports", margin, margin + 5);
+  pdf.text(options?.title ?? "Reports", margin, margin + 5);
   pdf.setFontSize(10);
   pdf.setTextColor(100, 100, 100);
   pdf.text(`Date range: ${dateRange.from} to ${dateRange.to}`, margin, margin + 12);
