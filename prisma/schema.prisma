@@ -1,4 +1,4 @@
-// TACBookings - Tokoroa Alpine Club Booking System
+// TACBookings - club booking system
 // Single source of truth for all database models
 
 generator client {

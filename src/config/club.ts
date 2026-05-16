@@ -63,5 +63,5 @@ function formatZodError(error: { issues: Array<{ path: PropertyKey[]; message: s
     .join("\n");
 }
 
-/** Eagerly loaded singleton — Phase 2 will wire call sites to this. */
+/** Eagerly loaded singleton for server-side config consumers. */
 export const clubConfig: ClubConfig = loadClubConfig();

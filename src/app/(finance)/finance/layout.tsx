@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { NavBar } from "@/components/nav-bar";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
+import { CLUB_NAME } from "@/config/club-identity";
 import {
   hasFinanceManagerAccess,
   requireFinanceViewer,
@@ -32,7 +33,7 @@ export default async function FinanceLayout({
               Finance
             </p>
             <h1 className="text-3xl font-semibold text-slate-900">
-              Tokoroa Alpine Club finance workspace
+              {CLUB_NAME} finance workspace
             </h1>
             <p className="text-sm text-slate-600">
               Review finance reports, booking performance, and sync status in

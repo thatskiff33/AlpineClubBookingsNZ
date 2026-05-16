@@ -14,6 +14,7 @@ import { refundRequestResolvedTemplate } from "@/lib/email-templates";
 import logger from "@/lib/logger";
 import { getRemainingRefundableCents } from "@/lib/booking-payment-state";
 import { refundPaymentTransactions } from "@/lib/payment-transactions";
+import { CLUB_BOOKINGS_NAME } from "@/config/club-identity";
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
@@ -182,7 +183,7 @@ export async function PUT(
     if (memberEmail) {
       sendEmail({
         to: memberEmail,
-        subject: "Refund Appeal Approved — Tokoroa Alpine Club - Bookings",
+        subject: `Refund Appeal Approved — ${CLUB_BOOKINGS_NAME}`,
         html: refundRequestResolvedTemplate({
           firstName: refundRequest.member.firstName,
           status: "APPROVED",
@@ -241,7 +242,7 @@ export async function PUT(
     if (memberEmail) {
       sendEmail({
         to: memberEmail,
-        subject: "Refund Appeal Update — Tokoroa Alpine Club - Bookings",
+        subject: `Refund Appeal Update — ${CLUB_BOOKINGS_NAME}`,
         html: refundRequestResolvedTemplate({
           firstName: refundRequest.member.firstName,
           status: "REJECTED",

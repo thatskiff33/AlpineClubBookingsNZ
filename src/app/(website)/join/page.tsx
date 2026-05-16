@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Users, UserPlus, Hammer, ClipboardCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CLUB_NAME } from "@/config/club-identity";
 import { prisma } from "@/lib/prisma";
 import { formatCents } from "@/lib/utils";
 import { AGE_TIER_DEFAULTS } from "@/lib/age-tier";
@@ -10,7 +11,7 @@ import { AGE_TIER_DEFAULTS } from "@/lib/age-tier";
 export const metadata: Metadata = {
   title: "Join the Club",
   description:
-    "How to become a member of the Tokoroa Alpine Club. Nomination by two existing members, entrance fee, induction process, and membership details.",
+    `How to become a member of the ${CLUB_NAME}. Nomination by two existing members, entrance fee, induction process, and membership details.`,
 };
 
 const membershipTypes = [
@@ -120,7 +121,7 @@ export default async function JoinPage() {
             Becoming a Member
           </h1>
           <p className="mt-4 max-w-2xl text-lg text-brand-snow/80">
-            The Tokoroa Alpine Club is a members&apos; club. New members are
+            The {CLUB_NAME} is a members&apos; club. New members are
             nominated by existing members and welcomed into the club community.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">

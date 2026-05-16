@@ -21,6 +21,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +53,7 @@ export function getAuthenticatedBrandHref() {
 }
 
 export function NavBar({ user }: NavBarProps) {
+  const club = useClubIdentity();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const profileHref =
@@ -84,8 +86,8 @@ export function NavBar({ user }: NavBarProps) {
           <span className="app-brand-mark h-9 w-9">
             <Mountain className="h-5 w-5" />
           </span>
-          <span className="hidden sm:block">Tokoroa Alpine Club - Bookings</span>
-          <span className="sm:hidden text-sm">Tokoroa Alpine Club</span>
+          <span className="hidden sm:block">{club.bookingsName}</span>
+          <span className="sm:hidden text-sm">{club.name}</span>
         </Link>
 
         {/* Desktop nav links */}
@@ -162,7 +164,7 @@ export function NavBar({ user }: NavBarProps) {
                 <span className="app-brand-mark h-8 w-8">
                   <Mountain className="h-4 w-4" />
                 </span>
-                Tokoroa Alpine Club
+                {club.name}
               </SheetTitle>
             </SheetHeader>
 

@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/email";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { escapeHtml } from "@/lib/email-templates";
 import { prisma } from "@/lib/prisma";
+import { CLUB_CONTACT_EMAIL } from "@/config/club-identity";
 
 const noEmailHeaderCrlf = (value: string) => !/[\r\n]/.test(value);
 
@@ -21,7 +22,7 @@ const contactSchema = z.object({
 });
 
 const CONTACT_EMAIL =
-  process.env.CONTACT_EMAIL || "bookings@tokoroa.org.nz";
+  process.env.CONTACT_EMAIL || CLUB_CONTACT_EMAIL;
 
 export async function POST(request: Request) {
   // Rate limit: 5 per hour

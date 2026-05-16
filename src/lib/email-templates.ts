@@ -4,6 +4,10 @@
  */
 
 import { getAppBaseUrl, sanitizeEmailHref } from "./app-url";
+import {
+  CLUB_EMAIL_FROM_NAME,
+  CLUB_NAME,
+} from "@/config/club-identity";
 import { LODGE_CAPACITY } from "./capacity";
 import { SUPPORT_EMAIL } from "./email-sender";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "./member-setup-invite";
@@ -21,7 +25,7 @@ export function escapeHtml(str: string): string {
     .replace(/'/g, "&#39;");
 }
 
-const BRAND_COLOR = "#ffcb05"; // Tokoroa Yellow
+const BRAND_COLOR = "#ffcb05";
 const BRAND_CHARCOAL = "#4d4d46";
 const BRAND_DEEP = "#2f2f2b";
 const BRAND_MIST = "#d9d5c2";
@@ -41,7 +45,7 @@ function layout(content: string): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tokoroa Alpine Club - Online Booking System</title>
+  <title>${escapeHtml(CLUB_EMAIL_FROM_NAME)}</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: ${BG_COLOR}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color: ${BG_COLOR};">
@@ -53,7 +57,7 @@ function layout(content: string): string {
             <td style="background-color: ${BRAND_CHARCOAL}; padding: 28px 32px 24px; border-top: 4px solid ${BRAND_COLOR}; border-radius: 8px 8px 0 0; text-align: center;">
               <img
                 src="${BRAND_LOGO_URL}"
-                alt="Tokoroa Alpine Club"
+                alt="${escapeHtml(CLUB_NAME)}"
                 width="176"
                 style="display: block; margin: 0 auto 14px; width: 176px; max-width: 100%; height: auto;"
               />
@@ -72,7 +76,7 @@ function layout(content: string): string {
           <tr>
             <td style="background-color: ${WHITE}; padding: 20px 32px; border-top: 1px solid ${BORDER_COLOR}; border-radius: 0 0 8px 8px; border-left: 1px solid ${BORDER_COLOR}; border-right: 1px solid ${BORDER_COLOR}; border-bottom: 1px solid ${BORDER_COLOR};">
               <p style="margin: 0; color: ${TEXT_MUTED}; font-size: 12px; text-align: center;">
-                Tokoroa Alpine Club &bull; Online Booking System<br>
+                ${escapeHtml(CLUB_NAME)} &bull; Online Booking System<br>
                 <a href="${BASE_URL}" style="color: ${BRAND_CHARCOAL}; font-weight: 600; text-decoration: none;">${BASE_URL.replace(/^https?:\/\//, "")}</a>
               </p>
             </td>
@@ -91,7 +95,7 @@ function supportEmailLink(): string {
 }
 
 function supportContactMuted(): string {
-  return muted(`Tokoroa Alpine Club — ${supportEmailLink()}`);
+  return muted(`${escapeHtml(CLUB_NAME)} — ${supportEmailLink()}`);
 }
 
 function supportContactSentence(prefix: string): string {
@@ -179,7 +183,7 @@ export function welcomeTemplate(firstName: string): string {
   const name = escapeHtml(firstName);
   return layout(`
     ${heading("Welcome, " + name + "!")}
-    ${paragraph("Your Tokoroa Alpine Club booking account has been created successfully.")}
+    ${paragraph(`Your ${escapeHtml(CLUB_NAME)} booking account has been created successfully.`)}
     ${paragraph("You can now log in to book stays at the lodge, manage your bookings, and view your upcoming trips.")}
     ${button("Log In to Your Account", BASE_URL + "/login")}
     ${muted("If you did not create this account, please ignore this email.")}
@@ -189,7 +193,7 @@ export function welcomeTemplate(firstName: string): string {
 export function passwordResetTemplate(resetUrl: string): string {
   return layout(`
     ${heading("Password Reset")}
-    ${paragraph("You requested a password reset for your Tokoroa Alpine Club booking account.")}
+    ${paragraph(`You requested a password reset for your ${escapeHtml(CLUB_NAME)} booking account.`)}
     ${paragraph("Click the button below to set a new password. This link expires in <strong>1 hour</strong>.")}
     ${button("Reset Password", resetUrl)}
     ${muted("If you didn't request this, you can safely ignore this email. Your password will remain unchanged.")}
@@ -202,7 +206,7 @@ export function adminPasswordResetTemplate(
 ): string {
   return layout(`
     ${heading("Password Reset")}
-    ${paragraph("An administrator has requested a password reset for your Tokoroa Alpine Club booking account.")}
+    ${paragraph(`An administrator has requested a password reset for your ${escapeHtml(CLUB_NAME)} booking account.`)}
     ${paragraph("Click the button below to set a new password. This link expires in <strong>" + escapeHtml(expiryLabel) + "</strong>.")}
     ${button("Reset Password", resetUrl)}
     ${muted("If you believe this was sent in error, please contact the club administrator.")}
@@ -216,7 +220,7 @@ export function memberSetupInviteTemplate(
   return layout(`
     ${heading("Set Up Your Account")}
     ${paragraph("Hi " + escapeHtml(firstName) + ",")}
-    ${paragraph("An administrator has created your Tokoroa Alpine Club booking account.")}
+    ${paragraph(`An administrator has created your ${escapeHtml(CLUB_NAME)} booking account.`)}
     ${paragraph(
       "Use the button below to set your password and activate your login. This link expires in <strong>" +
         String(MEMBER_SETUP_INVITE_TTL_DAYS) +
@@ -367,7 +371,7 @@ export function emailVerificationTemplate(
   const name = escapeHtml(firstName);
   return layout(`
     ${heading("Verify Your Email")}
-    ${paragraph("Hi " + name + ", thanks for creating your Tokoroa Alpine Club booking account!")}
+    ${paragraph(`Hi ${name}, thanks for creating your ${escapeHtml(CLUB_NAME)} booking account!`)}
     ${paragraph("Please verify your email address by clicking the button below.")}
     ${button("Verify Email", verifyUrl)}
     ${muted("This link expires on " + escapeHtml(formatNZDateTime(expiresAt)) + ". If you did not create this account, please ignore this email.")}
@@ -392,7 +396,7 @@ export function nominationRequestTemplate(params: {
     ${paragraph(
       "<strong>" +
         escapeHtml(params.applicantName) +
-        "</strong> has listed you as one of their Tokoroa Alpine Club nominators."
+        `</strong> has listed you as one of their ${escapeHtml(CLUB_NAME)} nominators.`
     )}
     ${dependentLine}
     ${paragraph("Please review the application and confirm whether you agree to nominate this person for membership.")}
@@ -409,7 +413,7 @@ export function emailChangeVerificationTemplate(
 ): string {
   return layout(`
     ${heading("Confirm Your New Email")}
-    ${paragraph("You requested to change the email address on your Tokoroa Alpine Club account to <strong>" + escapeHtml(newEmail) + "</strong>.")}
+    ${paragraph(`You requested to change the email address on your ${escapeHtml(CLUB_NAME)} account to <strong>${escapeHtml(newEmail)}</strong>.`)}
     ${paragraph("Click the button below to confirm this change.")}
     ${button("Confirm Email Change", verifyUrl)}
     ${muted("This link expires on " + escapeHtml(formatNZDateTime(expiresAt)) + ". If you did not request this change, please ignore this email.")}
@@ -419,7 +423,7 @@ export function emailChangeVerificationTemplate(
 export function emailChangeNotificationTemplate(newEmail: string): string {
   return layout(`
     ${heading("Email Change Requested")}
-    ${paragraph("Someone requested to change the email address on your Tokoroa Alpine Club account to <strong>" + escapeHtml(newEmail) + "</strong>.")}
+    ${paragraph(`Someone requested to change the email address on your ${escapeHtml(CLUB_NAME)} account to <strong>${escapeHtml(newEmail)}</strong>.`)}
     ${alertBox("If this wasn't you, please contact the club immediately.", "warning")}
     ${muted("If you made this request, you can safely ignore this email. The change will only take effect after verification.")}
   `);
@@ -749,7 +753,7 @@ export function bulkCommunicationTemplate(
   return layout(`
     ${heading(escapeHtml(subject))}
     <div style="color: ${TEXT_COLOR}; font-size: 15px; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(body)}</div>
-    ${muted("This email was sent to you by the Tokoroa Alpine Club administration. You can update your email preferences in your account settings.")}
+    ${muted(`This email was sent to you by the ${escapeHtml(CLUB_NAME)} administration. You can update your email preferences in your account settings.`)}
     ${button("Manage Preferences", BASE_URL + "/profile")}
   `);
 }
@@ -1360,7 +1364,7 @@ export function membershipApplicationApprovedTemplate(
 
   return layout(`
     ${heading("Membership Approved")}
-    ${paragraph("Hi " + escapeHtml(firstName) + ", your Tokoroa Alpine Club membership application has been approved.")}
+    ${paragraph(`Hi ${escapeHtml(firstName)}, your ${escapeHtml(CLUB_NAME)} membership application has been approved.`)}
     ${paragraph("Your account is ready. Use the button below to set your password and access the bookings system.")}
     ${button("Set Up My Account", resetUrl)}
     ${notes}
@@ -1379,7 +1383,7 @@ export function membershipApplicationRejectedTemplate(
 
   return layout(`
     ${heading("Membership Application Update")}
-    ${paragraph("Hi " + escapeHtml(firstName) + ", your Tokoroa Alpine Club membership application has been reviewed.")}
+    ${paragraph(`Hi ${escapeHtml(firstName)}, your ${escapeHtml(CLUB_NAME)} membership application has been reviewed.`)}
     ${paragraph("The committee has decided not to approve the application at this time.")}
     ${notes}
     ${paragraph("If you would like more information, please contact the club directly.")}
@@ -1392,7 +1396,7 @@ export function ageUpInvitationTemplate(firstName: string, resetUrl: string): st
   const name = escapeHtml(firstName);
   return layout(`
     ${heading("Welcome to Your Own Account, " + name + "!")}
-    ${paragraph("Congratulations — you've turned 18! As an adult member of the Tokoroa Alpine Club, you can now log in and book stays at the lodge yourself.")}
+    ${paragraph(`Congratulations — you've turned 18! As an adult member of the ${escapeHtml(CLUB_NAME)}, you can now log in and book stays at the lodge yourself.`)}
     ${paragraph(
       "Click the button below to set up your password and activate your account. This link expires in <strong>" +
         String(MEMBER_SETUP_INVITE_TTL_DAYS) +

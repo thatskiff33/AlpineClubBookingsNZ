@@ -26,6 +26,7 @@ import {
   processQueuedXeroOutboxOperations,
 } from "@/lib/xero-operation-outbox";
 import { nameField } from "@/lib/zod-helpers";
+import { CLUB_NAME } from "@/config/club-identity";
 
 const maxStr = (len: number) => z.string().max(len).optional().nullable();
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD format");
@@ -279,7 +280,7 @@ async function verifyNominator(email: string): Promise<VerifiedNominator> {
 
   if (!nominator || nominator.subscriptions.length === 0) {
     throw new MembershipApplicationError(
-      `${normalizedEmail} is not an active, paid-up Tokoroa Alpine Club member`,
+      `${normalizedEmail} is not an active, paid-up ${CLUB_NAME} member`,
       422
     );
   }
@@ -319,7 +320,7 @@ async function ensureApplicationCanBeCreated(
 
   if (existingMember) {
     throw new MembershipApplicationError(
-      "An active Tokoroa Alpine Club account already exists for this email address",
+      `An active ${CLUB_NAME} account already exists for this email address`,
       409
     );
   }
@@ -726,7 +727,7 @@ export async function approveMemberApplication(
 
     if (existing) {
       throw new MembershipApplicationError(
-        "A Tokoroa Alpine Club login already exists for this applicant email address",
+        `A ${CLUB_NAME} login already exists for this applicant email address`,
         409
       );
     }

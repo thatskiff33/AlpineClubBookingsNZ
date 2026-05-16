@@ -34,6 +34,7 @@ import {
   type FinanceBookingsReportStatusRow,
 } from "@/lib/finance-bookings-report-page";
 import { requireFinanceViewer } from "@/lib/finance-auth";
+import { CLUB_NAME } from "@/config/club-identity";
 
 type FinanceBookingsPageSearchParams = Promise<
   Record<string, string | string[] | undefined>
@@ -260,7 +261,7 @@ function DetailTables({
           </CardTitle>
           <CardDescription className="text-sm text-slate-600">
             Status totals stay explicit so realized and pipeline views can be
-            reconciled back to Tokoroa Alpine Club booking states. Open a row
+            reconciled back to {CLUB_NAME} booking states. Open a row
             to view the finance-scoped source bookings behind it.
           </CardDescription>
         </CardHeader>

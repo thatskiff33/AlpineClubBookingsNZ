@@ -3,6 +3,7 @@ import { sendCheckinReminderEmail } from "./email";
 import { getNZSTTomorrow } from "./nzst-date";
 import logger from "@/lib/logger";
 import { OPERATIONAL_STAY_BOOKING_STATUSES } from "@/lib/booking-status";
+import { CLUB_LODGE_NAME } from "@/config/club-identity";
 
 /**
  * N-01: Send check-in reminder emails for bookings checking in tomorrow.
@@ -50,7 +51,7 @@ export async function sendCheckinReminders(): Promise<{ sent: number; skipped: n
       where: {
         templateName: "checkin-reminder",
         to: booking.member.email,
-        subject: "Check-in Reminder - Tokoroa Alpine Club Lodge",
+        subject: `Check-in Reminder - ${CLUB_LODGE_NAME}`,
         status: "SENT",
         // Only check within the last 48h to avoid false matches from old bookings
         createdAt: { gte: new Date(now.getTime() - 48 * 60 * 60 * 1000) },

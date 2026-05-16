@@ -7,6 +7,9 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
 import { nameField } from "@/lib/zod-helpers";
+import { clubDomainEmail } from "@/config/club-identity";
+
+const LODGE_ACCOUNT_EMAIL = clubDomainEmail("lodge");
 
 /**
  * GET /api/admin/lodge
@@ -40,7 +43,7 @@ export async function GET() {
     const passwordHash = await bcrypt.hash(randomPassword, 12);
     lodge = await prisma.member.create({
       data: {
-        email: "lodge@tokoroa.org.nz",
+        email: LODGE_ACCOUNT_EMAIL,
         passwordHash,
         firstName: "Lodge",
         lastName: "Kiosk",

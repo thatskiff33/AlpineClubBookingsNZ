@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { CheckCircle2, Circle, AlertTriangle, Mountain, Lock } from "lucide-react";
+import { useClubIdentity } from "@/components/club-identity-provider";
 
 interface Assignment {
   id: string;
@@ -22,6 +23,7 @@ interface GuestChoreData {
 }
 
 export default function GuestChorePage() {
+  const club = useClubIdentity();
   const { token } = useParams<{ token: string }>();
   const [data, setData] = useState<GuestChoreData | null>(null);
   const [error, setError] = useState("");
@@ -90,7 +92,7 @@ export default function GuestChorePage() {
       <header className="bg-blue-800 text-white px-4 py-4">
         <div className="max-w-lg mx-auto flex items-center gap-2">
           <Mountain className="h-5 w-5" />
-          <span className="font-bold">Tokoroa Alpine Club Lodge Chores</span>
+          <span className="font-bold">{club.lodgeName} Chores</span>
         </div>
       </header>
 

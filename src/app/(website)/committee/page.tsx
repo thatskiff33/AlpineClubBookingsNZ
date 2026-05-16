@@ -3,12 +3,13 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Phone, Mail } from "lucide-react";
+import { CLUB_NAME } from "@/config/club-identity";
 import { prisma } from "@/lib/prisma";
 
 export const metadata: Metadata = {
   title: "Committee",
   description:
-    "Meet the Tokoroa Alpine Club committee members who volunteer their time to run the club and maintain the lodge.",
+    `Meet the ${CLUB_NAME} committee members who volunteer their time to run the club and maintain the lodge.`,
 };
 
 export const dynamic = "force-dynamic";

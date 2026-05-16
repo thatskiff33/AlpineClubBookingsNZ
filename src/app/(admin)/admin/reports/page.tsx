@@ -21,6 +21,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import {
   CalendarRange,
   DollarSign,
@@ -130,6 +131,7 @@ function StatCard({
 }
 
 export default function ReportsPage() {
+  const club = useClubIdentity();
   const defaultFrom = format(startOfMonth(subMonths(new Date(), 3)), "yyyy-MM-dd");
   const defaultTo = format(endOfMonth(new Date()), "yyyy-MM-dd");
 
@@ -192,7 +194,7 @@ export default function ReportsPage() {
 
     const revenueGranularityLabel = getRevenueGranularityLabel(data.revenueGranularity);
     const rows: string[][] = [];
-    rows.push(["Tokoroa Alpine Club - Bookings Report", `${from} to ${to}`]);
+    rows.push([`${club.bookingsName} Report`, `${from} to ${to}`]);
     rows.push([]);
     rows.push(["Summary"]);
     rows.push(["Total Bookings", String(data.summary.totalBookings)]);
@@ -272,7 +274,9 @@ export default function ReportsPage() {
     setGeneratingPDF(true);
     try {
       const { generateReportPDF } = await import("@/lib/report-pdf");
-      await generateReportPDF(reportRef.current, { from, to });
+      await generateReportPDF(reportRef.current, { from, to }, {
+        title: `${club.name} — Reports`,
+      });
     } catch (err) {
       console.error("PDF generation failed:", err);
       window.print();

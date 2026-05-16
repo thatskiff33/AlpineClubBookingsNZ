@@ -23,6 +23,7 @@ import {
   TicketPercent,
 } from "lucide-react";
 import { formatCents } from "@/lib/utils";
+import { CLUB_NAME } from "@/config/club-identity";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
 import { isHutLeader } from "@/lib/hut-leader";
 import { getMemberCreditBalance } from "@/lib/member-credit";
@@ -157,7 +158,7 @@ export default async function DashboardPage() {
             Welcome back, {firstName}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Tokoroa Alpine Club — Member Portal
+            {CLUB_NAME} — Member Portal
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

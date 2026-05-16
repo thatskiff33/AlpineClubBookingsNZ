@@ -6,12 +6,13 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { CLUB_NAME } from "@/config/club-identity";
 import faqSections from "@/data/faq";
 
 export const metadata: Metadata = {
   title: "Frequently Asked Questions",
   description:
-    "Answers to common questions about the Tokoroa Alpine Club lodge, bookings, membership, and general club information.",
+    `Answers to common questions about the ${CLUB_NAME} lodge, bookings, membership, and general club information.`,
 };
 
 export default function FaqPage() {

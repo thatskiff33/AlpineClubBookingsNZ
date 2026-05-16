@@ -6,6 +6,7 @@ import {
   shouldRepairXeroContactNameOrder,
 } from "@/lib/xero-contact-sync";
 import { buildXeroIdempotencyKey, completeXeroSyncOperation } from "@/lib/xero-sync";
+import { CLUB_NAME } from "@/config/club-identity";
 
 type RetryableOperation = Pick<
   XeroSyncOperation,
@@ -320,7 +321,7 @@ function parsePartialInvoiceRepairInput(
       ),
       reference:
         amountCents > 0
-          ? `Tokoroa Alpine Club invoice payment ${operation.localId.slice(0, 8)}`
+          ? `${CLUB_NAME} invoice payment ${operation.localId.slice(0, 8)}`
           : "Zero-dollar booking (100% promo discount)",
     };
   }
@@ -337,7 +338,7 @@ function parsePartialInvoiceRepairInput(
         amountCents,
         "v1"
       ),
-      reference: `Tokoroa Alpine Club supplementary payment ${operation.localId.slice(0, 8)}`,
+      reference: `${CLUB_NAME} supplementary payment ${operation.localId.slice(0, 8)}`,
     };
   }
 

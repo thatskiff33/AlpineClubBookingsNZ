@@ -23,6 +23,7 @@ import {
 import { eachDayOfInterval, addDays } from "date-fns";
 import { formatCents } from "@/lib/utils";
 import { bookingStatusClass, bookingStatusLabel } from "@/lib/status-colors";
+import { CLUB_NAME } from "@/config/club-identity";
 import {
   ACTIVE_BOOKING_STATUSES,
   OPERATIONAL_STAY_BOOKING_STATUSES,
@@ -158,7 +159,7 @@ export default async function AdminDashboardPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Admin Dashboard</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Tokoroa Alpine Club — Administration
+          {CLUB_NAME} — Administration
         </p>
       </div>
 

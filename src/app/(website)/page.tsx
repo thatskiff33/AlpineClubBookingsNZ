@@ -13,11 +13,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { CLUB_NAME } from "@/config/club-identity";
 
 export const metadata: Metadata = {
-  title: "Tokoroa Alpine Club — Mt Ruapehu Lodge",
+  title: `${CLUB_NAME} — Mt Ruapehu Lodge`,
   description:
-    "The Tokoroa Alpine Club operates a 29-bed lodge on Mt Ruapehu, Whakapapa. A members' club est. 1969 — join us on the mountain.",
+    `The ${CLUB_NAME} operates a 29-bed lodge on Mt Ruapehu, Whakapapa. A members' club est. 1969 — join us on the mountain.`,
 };
 
 const highlights = [
@@ -63,7 +64,7 @@ export default function HomePage() {
       <section className="relative overflow-hidden text-brand-snow">
         <Image
           src="/images/lodge.jpg"
-          alt="Tokoroa Alpine Club lodge on Mt Ruapehu"
+          alt={`${CLUB_NAME} lodge on Mt Ruapehu`}
           fill
           className="object-cover"
           priority
@@ -75,14 +76,14 @@ export default function HomePage() {
             <span className="website-eyebrow mb-5">Mt Ruapehu lodge since 1969</span>
             <Image
               src="/images/tac-logo.png"
-              alt="Tokoroa Alpine Club logo"
+              alt={`${CLUB_NAME} logo`}
               width={200}
               height={68}
               className="mb-6 h-16 w-auto"
               priority
             />
             <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl lg:text-6xl">
-              Tokoroa Alpine Club
+              {CLUB_NAME}
             </h1>
             <p className="mt-4 max-w-xl text-lg text-brand-snow/86 sm:text-xl">
               A members&apos; club on Mt Ruapehu. We operate a 29-bed lodge in
@@ -114,7 +115,7 @@ export default function HomePage() {
               About the Club
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-brand-deep/80">
-              The Tokoroa Alpine Club has been connecting people with New
+              The {CLUB_NAME} has been connecting people with New
               Zealand&apos;s mountains since 1969. We&apos;re a community of
               outdoor enthusiasts who share a love of the alpine environment.
             </p>
@@ -212,7 +213,7 @@ export default function HomePage() {
             </h2>
             <div className="space-y-4 text-brand-deep/80">
               <p>
-                The Tokoroa Alpine Club is a members&apos; club. To stay at the
+                The {CLUB_NAME} is a members&apos; club. To stay at the
                 lodge, you need to either be a member or be invited as a guest
                 by an existing member. Non-member guests must be accompanied by
                 the member who booked them.
