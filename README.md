@@ -126,6 +126,26 @@ npm run build
 This repository uses a current Next.js version. Before changing framework APIs,
 read the relevant versioned guide in `node_modules/next/dist/docs/`.
 
+## For Maintainers
+
+Use the public repository for generic TACBookings work and a private deployment
+fork for club-specific configuration, branding, and production release work.
+
+- Generic feature or fix: branch from public `main`, open a public PR, merge
+  after CI, then pull public `main` into the private deployment fork and deploy
+  from that fork.
+- Club-specific change: branch, review, merge, and deploy inside the private
+  fork. Keep private configuration, operational copy, service identifiers, and
+  club data out of the public upstream.
+- Production hotfix: fix and deploy from the private fork first, then port any
+  generic part back to the public upstream in a separate PR.
+
+CI should run in both repositories. Public CI should use
+`config/club.example.json` and placeholder assets; private CI should use the
+private fork's real `config/club.json`, private assets, and private CI secrets.
+
+See `docs/ONGOING-DEVELOPMENT-WORKFLOW.md` for the full maintainer workflow.
+
 ## Docker
 
 Build the production image locally:
@@ -181,6 +201,8 @@ forks or public CI. Configure your own service accounts and secrets.
   recovery guide
 - `docs/MAINTENANCE.md` - public maintenance, validation, CI, and release
   checklist
+- `docs/ONGOING-DEVELOPMENT-WORKFLOW.md` - public upstream and private fork
+  development workflow
 - `docs/STAGING_ACCESSIBILITY.md` - non-production staging and accessibility
   verification workflow
 - `docs/BLUE_GREEN_MIGRATION_POLICY.md` - migration safety policy for
