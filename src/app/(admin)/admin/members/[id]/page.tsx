@@ -31,6 +31,7 @@ import {
   type MemberAddressValues,
 } from "@/lib/member-address"
 import { formatAgeYearsMonths } from "@/lib/member-age"
+import { formatCents } from "@/lib/utils"
 import { bookingStatusClass, bookingStatusLabel, subscriptionStatusClass, subscriptionStatusLabel } from "@/lib/status-colors"
 import { buildHrefWithReturnTo, resolveInternalReturnPath } from "@/lib/internal-return-path"
 
@@ -324,7 +325,7 @@ function formatPromoBenefit(promo: MemberDetail["promoCodes"][number]) {
   }
   if (promo.type === "FIXED_AMOUNT") {
     return promo.valueCents !== null
-      ? new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(promo.valueCents / 100) + " off"
+      ? `${formatCents(promo.valueCents)} off`
       : "Fixed discount"
   }
   if (promo.freeNights !== null) {
@@ -1511,7 +1512,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     </div>
   )
 
-  const fmt = (cents: number) => new Intl.NumberFormat("en-NZ", { style: "currency", currency: "NZD" }).format(cents / 100)
+  const fmt = formatCents
   const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-NZ", { day: "numeric", month: "short", year: "numeric" })
   const memberExactAge = member.dateOfBirth ? formatAgeYearsMonths(member.dateOfBirth) : null
 

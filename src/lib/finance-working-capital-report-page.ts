@@ -1,4 +1,5 @@
 import { FinanceSnapshotType } from "@prisma/client";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import {
   type FinanceAccessMember,
   hasFinanceManagerAccess,
@@ -16,7 +17,7 @@ import {
   buildFinanceSnapshotMissingMessage,
 } from "@/lib/finance-report-availability";
 
-const FINANCE_TIMEZONE = "Pacific/Auckland";
+const FINANCE_TIMEZONE = APP_TIME_ZONE;
 const DEFAULT_FINANCE_WORKING_CAPITAL_PERIODS = 6;
 const MAX_FINANCE_WORKING_CAPITAL_PERIODS = 24;
 const MIN_FINANCE_WORKING_CAPITAL_PERIODS = 1;
@@ -398,13 +399,13 @@ function readSearchParam(
 }
 
 function formatWholeNumber(value: number) {
-  return new Intl.NumberFormat("en-NZ", {
+  return new Intl.NumberFormat(APP_LOCALE, {
     maximumFractionDigits: 0,
   }).format(value);
 }
 
 function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("en-NZ", {
+  return new Intl.DateTimeFormat(APP_LOCALE, {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: FINANCE_TIMEZONE,

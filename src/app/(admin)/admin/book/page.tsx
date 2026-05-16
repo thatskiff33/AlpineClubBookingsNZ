@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
 import { MemberPicker } from "@/components/admin/member-picker";
@@ -44,6 +44,7 @@ interface SelectedMember {
 
 export default function AdminBookPage() {
   const router = useRouter();
+  const { lodgeCapacity } = useClubIdentity();
   const [selectedMember, setSelectedMember] = useState<SelectedMember | null>(null);
   const [step, setStep] = useState<"member" | "dates" | "guests" | "review">("member");
   const [checkIn, setCheckIn] = useState<Date | null>(null);
@@ -55,7 +56,7 @@ export default function AdminBookPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
-  const [availableBeds, setAvailableBeds] = useState(LODGE_CAPACITY);
+  const [availableBeds, setAvailableBeds] = useState(lodgeCapacity);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);

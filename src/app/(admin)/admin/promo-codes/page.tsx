@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { APP_CURRENCY } from "@/config/operational";
 import { formatCents } from "@/lib/pricing";
 
 interface MemberOption {
@@ -564,7 +565,7 @@ export default function PromoCodesPage() {
 
                 {type === "FIXED_AMOUNT" && (
                   <div className="space-y-2">
-                    <Label htmlFor="valueDollars">Amount Off (NZD)</Label>
+                    <Label htmlFor="valueDollars">Amount Off ({APP_CURRENCY})</Label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                         $

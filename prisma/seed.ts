@@ -1,11 +1,62 @@
-import { PrismaClient } from "@prisma/client";
+import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { clubConfig } from "../src/config/club";
 import { CLUB_CONTACT_EMAIL, CLUB_SUPPORT_EMAIL, clubDomainEmail } from "../src/config/club-identity";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 
 const prisma = new PrismaClient({
   adapter: createPrismaPgAdapter(),
 });
+
+function seedRatesForSeason(season: "winter" | "summer") {
+  return clubConfig.ageTiers.flatMap((tier) => [
+    {
+      ageTier: tier.id as AgeTier,
+      isMember: true,
+      pricePerNightCents: tier.nightlyRates[season].memberCents,
+    },
+    {
+      ageTier: tier.id as AgeTier,
+      isMember: false,
+      pricePerNightCents: tier.nightlyRates[season].nonMemberCents,
+    },
+  ]);
+}
+
+function seedAgeTierSettings() {
+  return clubConfig.ageTiers.map((tier, sortOrder) => ({
+    tier: tier.id as AgeTier,
+    minAge: tier.minAge,
+    maxAge: tier.maxAge,
+    label: tier.label,
+    subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
+    sortOrder,
+  }));
+}
+
+async function upsertSeasonRates(
+  seasonId: string,
+  season: "winter" | "summer",
+) {
+  for (const rate of seedRatesForSeason(season)) {
+    await prisma.seasonRate.upsert({
+      where: {
+        seasonId_ageTier_isMember: {
+          seasonId,
+          ageTier: rate.ageTier,
+          isMember: rate.isMember,
+        },
+      },
+      update: {
+        pricePerNightCents: rate.pricePerNightCents,
+      },
+      create: {
+        seasonId,
+        ...rate,
+      },
+    });
+  }
+}
 
 async function main() {
   console.log("Seeding database...");
@@ -248,19 +299,11 @@ async function main() {
       endDate: new Date("2026-09-30"),
       active: true,
       rates: {
-        create: [
-          { ageTier: "INFANT", isMember: true, pricePerNightCents: 0 },
-          { ageTier: "INFANT", isMember: false, pricePerNightCents: 0 },
-          { ageTier: "CHILD", isMember: true, pricePerNightCents: 1500 },
-          { ageTier: "CHILD", isMember: false, pricePerNightCents: 2500 },
-          { ageTier: "YOUTH", isMember: true, pricePerNightCents: 3000 },
-          { ageTier: "YOUTH", isMember: false, pricePerNightCents: 4500 },
-          { ageTier: "ADULT", isMember: true, pricePerNightCents: 4500 },
-          { ageTier: "ADULT", isMember: false, pricePerNightCents: 6500 },
-        ],
+        create: seedRatesForSeason("winter"),
       },
     },
   });
+  await upsertSeasonRates(winter2026.id, "winter");
   console.log(`Season seeded: ${winter2026.name}`);
 
   // Seed Summer 2026-27 season (November - March) with rates
@@ -275,19 +318,11 @@ async function main() {
       endDate: new Date("2027-03-31"),
       active: true,
       rates: {
-        create: [
-          { ageTier: "INFANT", isMember: true, pricePerNightCents: 0 },
-          { ageTier: "INFANT", isMember: false, pricePerNightCents: 0 },
-          { ageTier: "CHILD", isMember: true, pricePerNightCents: 1000 },
-          { ageTier: "CHILD", isMember: false, pricePerNightCents: 2000 },
-          { ageTier: "YOUTH", isMember: true, pricePerNightCents: 2500 },
-          { ageTier: "YOUTH", isMember: false, pricePerNightCents: 3500 },
-          { ageTier: "ADULT", isMember: true, pricePerNightCents: 3500 },
-          { ageTier: "ADULT", isMember: false, pricePerNightCents: 5000 },
-        ],
+        create: seedRatesForSeason("summer"),
       },
     },
   });
+  await upsertSeasonRates(summer2026.id, "summer");
   console.log(`Season seeded: ${summer2026.name}`);
 
   // Seed Xero account mappings with current defaults (XAM-01)
@@ -308,16 +343,17 @@ async function main() {
   console.log("Xero account mappings seeded");
 
   // Seed age tier settings with correct TAC boundaries (Issue 14)
-  const ageTierSettings = [
-    { tier: "INFANT" as const, minAge: 0, maxAge: 4, label: "Infant (under 5)", subscriptionRequiredForBooking: false, sortOrder: 0 },
-    { tier: "CHILD" as const, minAge: 5, maxAge: 9, label: "Child (5-9)", subscriptionRequiredForBooking: false, sortOrder: 1 },
-    { tier: "YOUTH" as const, minAge: 10, maxAge: 17, label: "Youth (10-17)", subscriptionRequiredForBooking: true, sortOrder: 2 },
-    { tier: "ADULT" as const, minAge: 18, maxAge: null, label: "Adult (18+)", subscriptionRequiredForBooking: true, sortOrder: 3 },
-  ];
+  const ageTierSettings = seedAgeTierSettings();
   for (const setting of ageTierSettings) {
     await prisma.ageTierSetting.upsert({
       where: { tier: setting.tier },
-      update: {},
+      update: {
+        minAge: setting.minAge,
+        maxAge: setting.maxAge,
+        label: setting.label,
+        subscriptionRequiredForBooking: setting.subscriptionRequiredForBooking,
+        sortOrder: setting.sortOrder,
+      },
       create: setting,
     });
   }

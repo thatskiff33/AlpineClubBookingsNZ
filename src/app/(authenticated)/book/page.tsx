@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { useClubIdentity } from "@/components/club-identity-provider";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
 import {
@@ -101,6 +101,7 @@ const PROFILE_FAMILY_GROUP_RETURN_TO_BOOK = buildProfilePathWithReturnTo(
 export default function BookPage() {
   const router = useRouter();
   const { data: session } = useSession();
+  const { lodgeCapacity } = useClubIdentity();
   const [step, setStep] = useState<"dates" | "guests" | "review">("dates");
   const [checkIn, setCheckIn] = useState<Date | null>(null);
   const [checkOut, setCheckOut] = useState<Date | null>(null);
@@ -119,7 +120,7 @@ export default function BookPage() {
   const [showWaitlistPrompt, setShowWaitlistPrompt] = useState(false);
   const [waitlistFullNights, setWaitlistFullNights] = useState<string[]>([]);
   const [joiningWaitlist, setJoiningWaitlist] = useState(false);
-  const [availableBeds, setAvailableBeds] = useState(LODGE_CAPACITY);
+  const [availableBeds, setAvailableBeds] = useState(lodgeCapacity);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);

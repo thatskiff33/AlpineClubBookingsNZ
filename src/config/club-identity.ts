@@ -1,5 +1,6 @@
 import { clubConfig } from "@/config/club";
 import type { ClubIdentity } from "@/config/club-identity-types";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 export const CLUB_NAME = clubConfig.name;
 export const CLUB_SHORT_NAME = clubConfig.shortName ?? clubConfig.name;
@@ -22,6 +23,7 @@ export const clubIdentity: ClubIdentity = {
   bookingsName: CLUB_BOOKINGS_NAME,
   lodgeName: CLUB_LODGE_NAME,
   publicHost: CLUB_PUBLIC_HOST,
+  lodgeCapacity: LODGE_CAPACITY,
 };
 
 export function clubDomainEmail(localPart: string): string {

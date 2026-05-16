@@ -1,10 +1,11 @@
+import { APP_TIME_ZONE } from "@/config/operational";
 import {
   FINANCE_SYNC_CRON_JOB_NAME,
   FINANCE_SYNC_CRON_SCHEDULE,
   FINANCE_SYNC_CRON_TIMEZONE,
 } from "@/lib/finance-sync-cron-config";
 
-export const ADMIN_CRON_DEFAULT_TIMEZONE = "Pacific/Auckland";
+export const ADMIN_CRON_DEFAULT_TIMEZONE = APP_TIME_ZONE;
 
 const DAILY_STALE_AFTER_MINUTES = 36 * 60;
 const THREE_HOURLY_STALE_AFTER_MINUTES = 6 * 60 + 30;

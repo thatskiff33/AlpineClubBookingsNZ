@@ -1,4 +1,5 @@
 import { FinanceSnapshotType } from "@prisma/client";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import {
   type FinanceAccessMember,
   hasFinanceManagerAccess,
@@ -23,7 +24,7 @@ import { formatDateOnly, parseDateOnly } from "@/lib/date-only";
 import { formatCents } from "@/lib/utils";
 import { CLUB_NAME } from "@/config/club-identity";
 
-const FINANCE_TIMEZONE = "Pacific/Auckland";
+const FINANCE_TIMEZONE = APP_TIME_ZONE;
 const DEFAULT_FINANCE_PRICING_SENSITIVITY_PERIODS = 6;
 const MAX_FINANCE_PRICING_SENSITIVITY_PERIODS = 24;
 const MIN_FINANCE_PRICING_SENSITIVITY_PERIODS = 1;
@@ -559,7 +560,7 @@ function formatSignedFinanceAmount(cents: number) {
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("en-NZ", {
+  return new Date(value).toLocaleString(APP_LOCALE, {
     timeZone: FINANCE_TIMEZONE,
     dateStyle: "medium",
     timeStyle: "short",
@@ -567,7 +568,7 @@ function formatDateTime(value: string) {
 }
 
 function formatDisplayDate(value: string) {
-  return new Date(`${value}T00:00:00.000Z`).toLocaleDateString("en-NZ", {
+  return new Date(`${value}T00:00:00.000Z`).toLocaleDateString(APP_LOCALE, {
     timeZone: FINANCE_TIMEZONE,
     day: "numeric",
     month: "short",
@@ -580,13 +581,13 @@ function formatSnapshotWindowFromDateOnly(from: string, to: string) {
 }
 
 function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-NZ", {
+  return new Intl.NumberFormat(APP_LOCALE, {
     maximumFractionDigits: 0,
   }).format(value);
 }
 
 function formatDecimal(value: number) {
-  return new Intl.NumberFormat("en-NZ", {
+  return new Intl.NumberFormat(APP_LOCALE, {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
   }).format(value);

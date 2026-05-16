@@ -16,12 +16,12 @@ export const metadata: Metadata = {
     default: `${CLUB_NAME} — Mt Ruapehu Lodge`,
   },
   description:
-    `${CLUB_NAME} — 29-bed lodge on Mt Ruapehu, Whakapapa. Book a stay, join the club, and explore New Zealand's mountains. Est. 1969.`,
+    `${CLUB_NAME} — ${clubIdentity.lodgeCapacity}-bed lodge on Mt Ruapehu, Whakapapa. Book a stay, join the club, and explore New Zealand's mountains. Est. 1969.`,
   metadataBase: new URL(baseUrl),
   openGraph: {
     title: `${CLUB_NAME} — Mt Ruapehu Lodge`,
     description:
-      "29-bed lodge in the Whakapapa ski area. Book a stay, join the club, and explore New Zealand's mountains. Est. 1969.",
+      `${clubIdentity.lodgeCapacity}-bed lodge in the Whakapapa ski area. Book a stay, join the club, and explore New Zealand's mountains. Est. 1969.`,
     url: baseUrl,
     siteName: CLUB_NAME,
     images: [

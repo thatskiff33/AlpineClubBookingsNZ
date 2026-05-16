@@ -8,4 +8,5 @@ export interface ClubIdentity {
   bookingsName: string;
   lodgeName: string;
   publicHost: string;
+  lodgeCapacity: number;
 }

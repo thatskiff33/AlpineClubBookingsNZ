@@ -1,11 +1,13 @@
-export const NZ_TIME_ZONE = "Pacific/Auckland";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 
-const NZ_DATE_FORMATTER = new Intl.DateTimeFormat("en-NZ", {
+export const NZ_TIME_ZONE = APP_TIME_ZONE;
+
+const NZ_DATE_FORMATTER = new Intl.DateTimeFormat(APP_LOCALE, {
   timeZone: NZ_TIME_ZONE,
   dateStyle: "medium",
 });
 
-const NZ_DATE_TIME_FORMATTER = new Intl.DateTimeFormat("en-NZ", {
+const NZ_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(APP_LOCALE, {
   timeZone: NZ_TIME_ZONE,
   dateStyle: "medium",
   timeStyle: "short",
@@ -24,7 +26,7 @@ export function formatNZDateTime(date: Date): string {
  * Used by cron jobs that need NZ-local date boundaries.
  */
 export function getNZSTToday(): Date {
-  const nzFormatter = new Intl.DateTimeFormat("en-NZ", {
+  const nzFormatter = new Intl.DateTimeFormat(APP_LOCALE, {
     timeZone: NZ_TIME_ZONE,
     year: "numeric",
     month: "2-digit",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const bedTypeSchema = z.enum(["dormitory", "private", "shared"]);
+const ageTierIdSchema = z.enum(["INFANT", "CHILD", "YOUTH", "ADULT"]);
 
 const bedSchema = z
   .object({
@@ -11,9 +12,23 @@ const bedSchema = z
   })
   .strict();
 
+const nightlyRateSchema = z
+  .object({
+    memberCents: z.number().int().min(0, "memberCents must be >= 0"),
+    nonMemberCents: z.number().int().min(0, "nonMemberCents must be >= 0"),
+  })
+  .strict();
+
+const ageTierNightlyRatesSchema = z
+  .object({
+    winter: nightlyRateSchema,
+    summer: nightlyRateSchema,
+  })
+  .strict();
+
 const ageTierSchema = z
   .object({
-    id: z.string().trim().min(1, "age tier id is required"),
+    id: ageTierIdSchema,
     label: z.string().trim().min(1, "age tier label is required"),
     minAge: z.number().int().min(0, "minAge must be >= 0"),
     maxAge: z
@@ -22,6 +37,7 @@ const ageTierSchema = z
       .min(0, "maxAge must be >= 0 when set")
       .nullable(),
     subscriptionRequiredForBooking: z.boolean(),
+    nightlyRates: ageTierNightlyRatesSchema,
   })
   .strict()
   .refine(

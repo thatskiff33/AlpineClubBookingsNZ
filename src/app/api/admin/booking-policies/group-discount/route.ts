@@ -4,9 +4,10 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 const groupDiscountSchema = z.object({
-  minGroupSize: z.number().int().min(2).max(29),
+  minGroupSize: z.number().int().min(2).max(LODGE_CAPACITY),
   summerOnly: z.boolean(),
   enabled: z.boolean(),
 });

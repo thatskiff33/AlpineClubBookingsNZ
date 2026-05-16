@@ -1,4 +1,5 @@
 import type { BadgeProps } from "@/components/ui/badge";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { addDaysDateOnly, formatDateOnly, getTodayDateOnly } from "@/lib/date-only";
 import {
   type FinanceAccessMember,
@@ -16,7 +17,7 @@ import {
 import { getFinanceXeroRouteStatus } from "@/lib/finance-xero";
 import { formatCents } from "@/lib/utils";
 
-const FINANCE_TIMEZONE = "Pacific/Auckland";
+const FINANCE_TIMEZONE = APP_TIME_ZONE;
 const FINANCE_LANDING_FORWARD_DAY_COUNT = 90;
 const FINANCE_SYNC_STALE_AFTER_MS = 36 * 60 * 60 * 1000;
 
@@ -640,7 +641,7 @@ function mapForwardSection(
 }
 
 function formatDisplayDate(dateOnly: string): string {
-  return new Date(`${dateOnly}T00:00:00.000Z`).toLocaleDateString("en-NZ", {
+  return new Date(`${dateOnly}T00:00:00.000Z`).toLocaleDateString(APP_LOCALE, {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -649,7 +650,7 @@ function formatDisplayDate(dateOnly: string): string {
 }
 
 function formatDateTime(value: string): string {
-  return new Date(value).toLocaleString("en-NZ", {
+  return new Date(value).toLocaleString(APP_LOCALE, {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: FINANCE_TIMEZONE,
@@ -680,13 +681,13 @@ function humanizeStatus(status: string): string {
 }
 
 function formatWholeNumber(value: number): string {
-  return new Intl.NumberFormat("en-NZ", { maximumFractionDigits: 0 }).format(
+  return new Intl.NumberFormat(APP_LOCALE, { maximumFractionDigits: 0 }).format(
     value
   );
 }
 
 function formatPercent(value: number): string {
-  return new Intl.NumberFormat("en-NZ", {
+  return new Intl.NumberFormat(APP_LOCALE, {
     style: "percent",
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,

@@ -1,4 +1,5 @@
 import { FinanceSnapshotType } from "@prisma/client";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import {
   type FinanceAccessMember,
   hasFinanceManagerAccess,
@@ -13,7 +14,7 @@ import {
 } from "@/lib/finance-report-availability";
 import { formatCents } from "@/lib/utils";
 
-const FINANCE_TIMEZONE = "Pacific/Auckland";
+const FINANCE_TIMEZONE = APP_TIME_ZONE;
 const DEFAULT_FINANCE_CASH_PERIODS = 7;
 const MAX_FINANCE_CASH_PERIODS = 31;
 const MIN_FINANCE_CASH_PERIODS = 1;
@@ -671,7 +672,7 @@ function formatSnapshotWindow(periodStart: Date | null, periodEnd: Date | null) 
 }
 
 function formatDisplayDate(date: Date) {
-  return date.toLocaleDateString("en-NZ", {
+  return date.toLocaleDateString(APP_LOCALE, {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -680,7 +681,7 @@ function formatDisplayDate(date: Date) {
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("en-NZ", {
+  return new Date(value).toLocaleString(APP_LOCALE, {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: FINANCE_TIMEZONE,
@@ -688,7 +689,7 @@ function formatDateTime(value: string) {
 }
 
 function formatWholeNumber(value: number) {
-  return new Intl.NumberFormat("en-NZ", {
+  return new Intl.NumberFormat(APP_LOCALE, {
     maximumFractionDigits: 0,
   }).format(value);
 }

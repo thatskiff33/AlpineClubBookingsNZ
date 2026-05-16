@@ -6,6 +6,7 @@
  */
 
 import { AgeTier, AgeRestriction } from "@prisma/client";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,7 +57,6 @@ export interface ChoreAllocation {
 // Constants
 // ---------------------------------------------------------------------------
 
-const FULL_LODGE_CAPACITY = 29;
 const HIGH_OCCUPANCY_THRESHOLD = 20;
 const AGE_FOR_ADULT = 18;
 const AGE_FOR_YOUTH = 10;
@@ -121,7 +121,7 @@ export function scalePeopleCount(
   min: number,
   max: number,
   guestCount: number,
-  capacity: number = FULL_LODGE_CAPACITY
+  capacity: number = LODGE_CAPACITY
 ): number {
   if (guestCount >= capacity) return max;
   if (min === max) return min;

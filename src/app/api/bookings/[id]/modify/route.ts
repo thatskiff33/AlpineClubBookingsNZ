@@ -3,6 +3,7 @@ import { PaymentStatus, PaymentTransactionKind, type AgeTier } from "@prisma/cli
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import {
   calculateBookingPrice,
   type SeasonRateData,
@@ -231,8 +232,8 @@ export async function PUT(
         ? ADULT_SUPERVISION_REVIEW_REASON
         : null;
 
-      if (totalGuestCount > 29) {
-        throw new ApiError("A booking cannot exceed 29 guests", 400);
+      if (totalGuestCount > LODGE_CAPACITY) {
+        throw new ApiError(`A booking cannot exceed ${LODGE_CAPACITY} guests`, 400);
       }
 
       if (session.user.role !== "ADMIN") {

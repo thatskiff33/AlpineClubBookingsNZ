@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CLUB_NAME } from "@/config/club-identity";
+import { APP_CURRENCY } from "@/config/operational";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -70,7 +72,7 @@ export default function TermsPage() {
               <ul className="list-disc pl-6 space-y-2">
                 <li>
                   Lodge bookings are for accommodation at Waldvogel Lodge, Iwikau Village, Mt Ruapehu.
-                  The lodge sleeps a maximum of 29 guests.
+                  The lodge sleeps a maximum of {LODGE_CAPACITY} guests.
                 </li>
                 <li>
                   Bookings must be made through the System. Verbal or informal bookings are not accepted.
@@ -124,7 +126,7 @@ export default function TermsPage() {
                   current to access member booking rates.
                 </li>
                 <li>
-                  All prices are in New Zealand dollars (NZD) inclusive of GST where applicable.
+                  All prices are in {APP_CURRENCY} inclusive of GST where applicable.
                 </li>
                 <li>
                   Payment processing is handled by Stripe. {CLUB_NAME} does not store credit card details.
