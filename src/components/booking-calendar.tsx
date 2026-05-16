@@ -161,9 +161,9 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
         {selecting === "checkIn" ? "Select check-in date" : "Select check-out date"}
       </div>
 
-      <div className="grid grid-cols-7 gap-1 text-center">
+      <div className="grid grid-cols-7 justify-items-center gap-1 text-center">
         {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-          <div key={d} className="text-xs font-medium text-gray-500 py-2">
+          <div key={d} className="w-10 py-2 text-xs font-medium text-gray-500">
             {d}
           </div>
         ))}
