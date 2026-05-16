@@ -39,11 +39,14 @@ Production Compose services:
 
 ## Environment
 
-Start from `.env.example`:
+Start from `.env.example` and the configuration reference:
 
 ```bash
 cp .env.example .env
 ```
+
+See `CONFIGURATION.md` for every supported environment variable and
+`config/club.json` field.
 
 Generate unique secrets:
 
@@ -82,8 +85,8 @@ Do not commit `.env` files or production secrets.
 GitHub Actions publishes production images after CI passes on `main`:
 
 ```text
-ghcr.io/thatskiff33/tacbookings-app:<commit-sha>
-ghcr.io/thatskiff33/tacbookings-migrate:<commit-sha>
+ghcr.io/<owner>/tacbookings-app:<commit-sha>
+ghcr.io/<owner>/tacbookings-migrate:<commit-sha>
 ```
 
 If those packages are private, log in to GHCR once on the production host as
@@ -91,7 +94,7 @@ the same Linux user that runs deployments. Use a token with only
 `read:packages` access:
 
 ```bash
-echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u thatskiff33 --password-stdin
+echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u <owner> --password-stdin
 ```
 
 Do not store that token in the repository or `.env`.
@@ -101,10 +104,12 @@ Do not store that token in the repository or `.env`.
 From the target host:
 
 ```bash
-git clone https://github.com/thatskiff33/TACBookings.git TACBookings
+git clone https://github.com/<owner>/TACBookings.git TACBookings
 cd TACBookings
 cp .env.example .env
+cp config/club.example.json config/club.json
 # edit .env with your own values
+# edit config/club.json with your club identity, beds, and rates
 docker compose up -d --build postgres
 docker compose run --rm migrate
 docker compose up -d --build app app_blue app_green caddy
@@ -112,8 +117,9 @@ docker compose ps
 ```
 
 Create or seed accounts only for the intended environment. The demo seed admin
-from `prisma/seed.ts` is for local and staging use and must be changed before
-any shared environment is exposed.
+from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
+`SEED_ADMIN_PASSWORD`; it is for local and staging use and must be changed
+before any shared environment is exposed.
 
 ## Routine Production Deploy
 
@@ -127,6 +133,9 @@ The wrapper snapshots the resolved `origin/main` commit into a clean deployment
 workspace, selects the matching GHCR image tags, copies the environment file,
 preserves Caddy upstream state, runs the blue/green deployment, then
 fast-forwards the clean checkout after success.
+
+For a fork, set `GHCR_APP_IMAGE_REPOSITORY` and
+`GHCR_MIGRATE_IMAGE_REPOSITORY` if your image names differ from the defaults.
 
 The low-level deployment runner:
 

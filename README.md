@@ -44,12 +44,35 @@ fork for another organisation. See `NOTICE.md`.
 - npm 11 or newer
 - Docker and Docker Compose for local PostgreSQL or production-style runs
 
+## Adopting This For Your Club
+
+1. Copy `.env.example` to `.env` and set the required local variables listed in
+   `CONFIGURATION.md`.
+2. Copy `config/club.example.json` to `config/club.json` and replace the club
+   name, contact emails, public URL, beds, age tiers, and integer-cent rates.
+   If `config/club.json` is absent, the app falls back to
+   `config/club.example.json`.
+3. Replace the images in `public/branding/` with your own logo, favicon, Open
+   Graph image, and public website photos. Keep the `*.example.*` files as
+   reusable placeholders for forks.
+4. Choose feature flags in `.env`: `FEATURE_KIOSK`, `FEATURE_CHORES`,
+   `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, and
+   `FEATURE_XERO_INTEGRATION`. Only the literal value `true` enables a feature.
+5. Set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`, run the seed command, then
+   change the seeded admin password on first login.
+6. Use test/demo credentials for Stripe, Xero, SES, and Sentry until you are
+   ready for a controlled deployment of your own environment.
+
+See `CONFIGURATION.md` for the full environment and `config/club.json` schema
+reference.
+
 ## Fresh Clone Setup
 
 ```bash
 git clone https://github.com/thatskiff33/TACBookings.git
 cd TACBookings
 cp .env.example .env
+cp config/club.example.json config/club.json
 npm ci
 npx prisma generate
 ```
@@ -60,23 +83,33 @@ least `DATABASE_URL`, `DB_PASSWORD`, `AUTH_SECRET`, `NEXTAUTH_SECRET`,
 `SEED_ADMIN_PASSWORD`. External integrations can use test/demo credentials or
 remain blank unless the feature under test requires them.
 
-Start PostgreSQL, apply migrations, and seed local data:
+For a Docker-only local boot using example config, use the staging Compose
+target:
 
 ```bash
-docker compose up -d postgres
-npm run db:migrate
-SEED_ADMIN_EMAIL=admin@example.org \
-SEED_ADMIN_PASSWORD=replace-with-a-local-password \
-  npm run db:seed
+cp .env.staging.example .env.staging
+docker compose --env-file .env.staging -p tacbookings-staging \
+  -f docker-compose.yml -f docker-compose.staging.yml up -d --build postgres app
+docker compose --env-file .env.staging -p tacbookings-staging \
+  -f docker-compose.yml -f docker-compose.staging.yml run --rm migrate
+docker compose --env-file .env.staging -p tacbookings-staging \
+  -f docker-compose.yml -f docker-compose.staging.yml exec app npx tsx prisma/seed.ts
 ```
 
 The seed data creates the first admin account from those `SEED_ADMIN_*`
 variables and marks it for password change on first login. Change that password
 immediately in any shared or persistent environment.
 
-Start the app only in local or non-production environments:
+The Docker-only app listens on `http://localhost:3001` by default.
+
+If you prefer `npm run dev`, run a local PostgreSQL server that matches
+`DATABASE_URL`, then apply migrations and seed from the host:
 
 ```bash
+npm run db:migrate
+SEED_ADMIN_EMAIL=admin@example.org \
+SEED_ADMIN_PASSWORD=replace-with-a-local-password \
+  npm run db:seed
 npm run dev
 ```
 
@@ -142,6 +175,8 @@ forks or public CI. Configure your own service accounts and secrets.
 
 - `docs/ARCHITECTURE.md` - system structure, data model, business logic,
   integrations, cron, and deployment shape
+- `CONFIGURATION.md` - environment variables, feature flags, branding assets,
+  and `config/club.json` schema
 - `DEPLOYMENT.md` - reference Lightsail, Docker Compose, Caddy, blue/green, and
   recovery guide
 - `docs/MAINTENANCE.md` - public maintenance, validation, CI, and release
