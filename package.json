@@ -78,6 +78,7 @@
     "zod": "^4.4.3"
   },
   "overrides": {
+    "@hono/node-server": "1.19.13",
     "axios": "1.15.2",
     "dompurify": "3.4.1",
     "follow-redirects": "1.16.0",
