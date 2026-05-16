@@ -1,0 +1,17 @@
+{
+  "name": "Tokoroa Alpine Club",
+  "shortName": "TAC",
+  "supportEmail": "support@tokoroa.org.nz",
+  "contactEmail": "bookings@tokoroa.org.nz",
+  "publicUrl": "https://tokoroa.org.nz",
+  "emailFromName": "Tokoroa Alpine Club - Online Booking System",
+  "beds": [
+    { "id": "lodge", "name": "Mt Ruapehu Lodge", "capacity": 29, "type": "dormitory" }
+  ],
+  "ageTiers": [
+    { "id": "INFANT", "label": "Infant (under 5)", "minAge": 0, "maxAge": 4, "subscriptionRequiredForBooking": false },
+    { "id": "CHILD", "label": "Child (5-9)", "minAge": 5, "maxAge": 9, "subscriptionRequiredForBooking": false },
+    { "id": "YOUTH", "label": "Youth (10-17)", "minAge": 10, "maxAge": 17, "subscriptionRequiredForBooking": true },
+    { "id": "ADULT", "label": "Adult (18+)", "minAge": 18, "maxAge": null, "subscriptionRequiredForBooking": true }
+  ]
+}
