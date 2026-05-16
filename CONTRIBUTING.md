@@ -6,18 +6,25 @@ safe for real operational use while remaining understandable for public readers.
 
 ## Local Setup
 
+These commands assume PostgreSQL is reachable at `DATABASE_URL`. For a
+Docker-only boot, use the staging Compose path in `README.md`.
+
 ```bash
 npm ci
 npx prisma generate
 cp .env.example .env
-docker compose up -d postgres
+cp config/club.example.json config/club.json
+# start or point DATABASE_URL at your local PostgreSQL before migration
 npm run db:migrate
-npm run db:seed
+SEED_ADMIN_EMAIL=admin@example.org \
+SEED_ADMIN_PASSWORD=replace-with-a-local-password \
+  npm run db:seed
 ```
 
 Use test or demo credentials for external services. Do not connect local work to
 live Stripe, Xero, SES, Sentry, or production database resources unless you own
-that deployment and have a written change plan.
+that deployment and have a written change plan. `CONFIGURATION.md` documents
+the full environment and club config contract.
 
 ## Development Rules
 
@@ -51,6 +58,16 @@ For UI and accessibility changes, use the staging workflow described in
 live production site.
 
 ## Pull Requests
+
+For public contributions:
+
+1. Fork the repository or create a branch in a clone you control.
+2. Keep changes focused on one bug, feature, or documentation task.
+3. Do not include real member data, payment data, accounting exports, tokens,
+   credentials, production logs, or screenshots containing private information.
+4. Run the validation commands below and include the results in the PR body.
+5. Call out any migration, environment, deployment, or external-service changes
+   explicitly.
 
 Each PR should include:
 
