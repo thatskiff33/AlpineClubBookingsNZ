@@ -18,6 +18,10 @@ export const metadata: Metadata = {
   description:
     `${CLUB_NAME} — ${clubIdentity.lodgeCapacity}-bed lodge on Mt Ruapehu, Whakapapa. Book a stay, join the club, and explore New Zealand's mountains. Est. 1969.`,
   metadataBase: new URL(baseUrl),
+  icons: {
+    icon: "/branding/favicon.ico",
+    shortcut: "/branding/favicon.ico",
+  },
   openGraph: {
     title: `${CLUB_NAME} — Mt Ruapehu Lodge`,
     description:
@@ -26,7 +30,7 @@ export const metadata: Metadata = {
     siteName: CLUB_NAME,
     images: [
       {
-        url: "/logo.png",
+        url: "/branding/og-image.png",
         width: 1200,
         height: 630,
         alt: `${CLUB_NAME} Logo`,

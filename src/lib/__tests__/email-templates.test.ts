@@ -32,7 +32,7 @@ describe("email-templates", () => {
     it("includes Tokoroa Alpine Club branding", () => {
       const html = welcomeTemplate("Test");
       expect(html).toContain("Tokoroa Alpine Club");
-      expect(html).toContain("/images/tac-logo.png");
+      expect(html).toContain("/branding/logo.png");
       expect(html).toContain("#ffcb05");
     });
 

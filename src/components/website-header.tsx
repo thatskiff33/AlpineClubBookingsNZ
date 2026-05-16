@@ -52,7 +52,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
           className="flex items-center gap-2 font-bold text-brand-snow transition-opacity hover:opacity-85"
         >
           <Image
-            src="/images/tac-logo.png"
+            src="/branding/logo.png"
             alt={club.name}
             width={140}
             height={48}
@@ -131,7 +131,7 @@ export function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
             <SheetHeader>
               <SheetTitle className="flex items-center gap-2 text-left font-heading text-brand-snow">
                 <Image
-                  src="/images/tac-logo.png"
+                  src="/branding/logo.png"
                   alt={club.name}
                   width={120}
                   height={40}
