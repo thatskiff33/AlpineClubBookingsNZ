@@ -613,8 +613,7 @@ validate_prisma_schema_matches_migrations() {
       ./node_modules/.bin/prisma migrate diff \
       --exit-code \
       --from-migrations prisma/migrations \
-      --to-schema-datamodel prisma/schema.prisma \
-      --shadow-database-url "$shadow_database_url" 2>&1
+      --to-schema prisma/schema.prisma 2>&1
   )"; then
     printf '%s\n' "$diff_output" >&2
     echo "Prisma schema does not match the committed migration history." >&2
