@@ -22,18 +22,22 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useClubIdentity } from "@/components/club-identity-provider";
+import type { FeatureFlags } from "@/config/schema";
 import { buildProfilePathWithReturnTo } from "@/lib/internal-return-path";
 import { cn } from "@/lib/utils";
 
+interface NavBarUser {
+  name: string;
+  email: string;
+  role: string;
+  canAccessFinance?: boolean;
+  isHutLeader?: boolean;
+  isStayingGuest?: boolean;
+}
+
 interface NavBarProps {
-  user: {
-    name: string;
-    email: string;
-    role: string;
-    canAccessFinance?: boolean;
-    isHutLeader?: boolean;
-    isStayingGuest?: boolean;
-  };
+  user: NavBarUser;
+  features: FeatureFlags;
 }
 
 const memberLinks = [
@@ -52,7 +56,22 @@ export function getAuthenticatedBrandHref() {
   return "/dashboard";
 }
 
-export function NavBar({ user }: NavBarProps) {
+export function getNavBarLinks(user: NavBarUser, features: FeatureFlags) {
+  return [
+    ...memberLinks,
+    ...(user.canAccessFinance && features.financeDashboard ? [financeLink] : []),
+    ...(features.kiosk
+      ? user.isHutLeader
+        ? [hutLeaderLink]
+        : user.isStayingGuest
+          ? [viewLodgeLink]
+          : []
+      : []),
+    ...(user.role === "ADMIN" ? [adminLink] : []),
+  ];
+}
+
+export function NavBar({ user, features }: NavBarProps) {
   const club = useClubIdentity();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -61,12 +80,7 @@ export function NavBar({ user }: NavBarProps) {
       ? "/profile"
       : buildProfilePathWithReturnTo(pathname);
 
-  const links = [
-    ...memberLinks,
-    ...(user.canAccessFinance ? [financeLink] : []),
-    ...(user.isHutLeader ? [hutLeaderLink] : user.isStayingGuest ? [viewLodgeLink] : []),
-    ...(user.role === "ADMIN" ? [adminLink] : []),
-  ];
+  const links = getNavBarLinks(user, features);
 
   const isActive = (href: string) => {
     if (href === "/") return pathname === "/";

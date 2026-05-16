@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NavBar } from "@/components/nav-bar";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
+import { featureFlags } from "@/config/features";
 import { hasActiveHutLeaderAssignment } from "@/lib/hut-leader";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { hasFinanceViewerAccess } from "@/lib/finance-auth";
@@ -79,7 +80,7 @@ export default async function AuthenticatedLayout({
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
-      <NavBar user={user} />
+      <NavBar user={user} features={featureFlags} />
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {children}
       </main>
