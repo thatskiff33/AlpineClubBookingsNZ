@@ -45,6 +45,7 @@ x-app-environment: &app-environment
   SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
 
 x-app-service: &app-service
+  image: ${APP_IMAGE:-${COMPOSE_PROJECT_NAME:-tacbookings}-app:local}
   build:
     context: .
     dockerfile: Dockerfile
@@ -157,6 +158,7 @@ services:
       - caddy_config:/config
 
   migrate:
+    image: ${MIGRATE_IMAGE:-${COMPOSE_PROJECT_NAME:-tacbookings}-migrate:local}
     build:
       context: .
       dockerfile: Dockerfile

@@ -6,6 +6,8 @@ HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-180}"
 PRUNE_UNTIL="${PRUNE_UNTIL:-12h}"
 FORCE_NO_CACHE="${FORCE_NO_CACHE:-0}"
 SKIP_APP_IMAGE_BUILD="${SKIP_APP_IMAGE_BUILD:-0}"
+APP_IMAGE="${APP_IMAGE:-}"
+MIGRATE_IMAGE="${MIGRATE_IMAGE:-}"
 BLUE_GREEN_DRAIN_SECONDS="${BLUE_GREEN_DRAIN_SECONDS:-30}"
 ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS="${ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS:-0}"
 BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
@@ -330,6 +332,33 @@ validate_env_contract() {
   fi
 }
 
+using_prebuilt_images() {
+  [ -n "$APP_IMAGE" ] || [ -n "$MIGRATE_IMAGE" ]
+}
+
+validate_image_reference_contract() {
+  local image_ref
+
+  if ! using_prebuilt_images; then
+    return 0
+  fi
+
+  if [ -z "$APP_IMAGE" ] || [ -z "$MIGRATE_IMAGE" ]; then
+    echo "APP_IMAGE and MIGRATE_IMAGE must both be set when deploying prebuilt images." >&2
+    return 1
+  fi
+
+  for image_ref in "$APP_IMAGE" "$MIGRATE_IMAGE"; do
+    if ! printf '%s\n' "$image_ref" | grep -Eq '^[^[:space:]]+(:[^[:space:]]+|@sha256:[[:xdigit:]]{64})$'; then
+      echo "APP_IMAGE and MIGRATE_IMAGE must be tagged or digest-pinned image references without whitespace." >&2
+      return 1
+    fi
+  done
+
+  info "Using prebuilt app image: $APP_IMAGE"
+  info "Using prebuilt migration image: $MIGRATE_IMAGE"
+}
+
 validate_repo_contract() {
   [ -f docker-compose.yml ] || {
     echo "docker-compose.yml not found in $PROJECT_DIR" >&2
@@ -484,10 +513,16 @@ maybe_pull_latest() {
   info "Deploying commit $(git rev-parse --short HEAD)."
 }
 
-build_images() {
+prepare_application_images() {
   local cron_image_ref
   local target_image_ref
   local migrate_image_ref
+
+  if using_prebuilt_images; then
+    info "Pulling prebuilt application images from the registry."
+    docker compose pull "$CRON_SERVICE" "$TARGET_SERVICE" "$MIGRATE_SERVICE"
+    return 0
+  fi
 
   if [ "$SKIP_APP_IMAGE_BUILD" = "1" ]; then
     cron_image_ref="$(get_service_image_ref "$CRON_SERVICE")"
@@ -537,7 +572,17 @@ get_service_image_ref() {
   local image_ref
 
   project_name="${COMPOSE_PROJECT_NAME:-$(basename "$PROJECT_DIR" | tr '[:upper:]' '[:lower:]')}"
-  image_ref="${project_name}-${service}:latest"
+  case "$service" in
+    "$CRON_SERVICE"|"$BLUE_SERVICE"|"$GREEN_SERVICE")
+      image_ref="${APP_IMAGE:-${project_name}-app:local}"
+      ;;
+    "$MIGRATE_SERVICE")
+      image_ref="${MIGRATE_IMAGE:-${project_name}-migrate:local}"
+      ;;
+    *)
+      image_ref="${project_name}-${service}:latest"
+      ;;
+  esac
   docker image inspect "$image_ref" >/dev/null 2>&1 || {
     echo "Unable to inspect image: $image_ref" >&2
     return 1
@@ -1022,6 +1067,7 @@ info "Host has the required deployment commands."
 
 step "3/19" "Validating deployment environment contract"
 validate_env_contract
+validate_image_reference_contract
 info ".env contains the required production settings."
 
 step "4/19" "Validating repository deployment files"
@@ -1037,18 +1083,18 @@ step "6/19" "Selecting target web service"
 info "Current live upstream: ${ACTIVE_SERVICE}"
 info "Target web service: ${TARGET_SERVICE}"
 
-step "7/19" "Pruning stale Docker cache before build"
-prune_stale_docker_assets "before build"
+step "7/19" "Pruning stale Docker cache before image preparation"
+prune_stale_docker_assets "before image preparation"
 
 step "8/19" "Pulling infrastructure images"
 docker compose pull "$POSTGRES_SERVICE" "$CADDY_SERVICE"
 
-step "9/19" "Building app, target web, and migration images"
-build_images
+step "9/19" "Preparing app, target web, and migration images"
+prepare_application_images
 
-step "10/19" "Validating built runtime image contract"
+step "10/19" "Validating runtime image contract"
 validate_runtime_image_contract
-info "Built app image contains the expected runtime artifacts."
+info "App image contains the expected runtime artifacts."
 
 step "11/19" "Ensuring postgres is healthy"
 docker compose up -d "$POSTGRES_SERVICE"

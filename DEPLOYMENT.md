@@ -12,7 +12,7 @@ fork. Create your own service accounts and secrets.
 - Ubuntu 24.04 host with Docker and Docker Compose
 - Caddy reverse proxy on ports 80 and 443
 - PostgreSQL 16 in Docker
-- Next.js app containers built from this repository
+- Next.js app and migration images built by GitHub Actions and pulled from GHCR
 - Optional S3-compatible storage for PostgreSQL backups
 - Stripe, Xero, SES, and Sentry configured through environment variables
 
@@ -26,9 +26,11 @@ Production Compose services:
 
 ## Prerequisites
 
-- A host sized for your traffic and build memory needs
+- A host sized for your traffic and runtime memory needs
 - DNS control for your deployment domain
 - Docker and Docker Compose installed
+- GHCR read access for private image packages, unless the image packages are
+  public
 - A PostgreSQL backup and restore plan
 - Stripe live or test account, depending on environment
 - Xero app or demo tenant, depending on environment
@@ -75,6 +77,25 @@ Minimum production categories:
 
 Do not commit `.env` files or production secrets.
 
+## GitHub Container Registry
+
+GitHub Actions publishes production images after CI passes on `main`:
+
+```text
+ghcr.io/thatskiff33/tacbookings-app:<commit-sha>
+ghcr.io/thatskiff33/tacbookings-migrate:<commit-sha>
+```
+
+If those packages are private, log in to GHCR once on the production host as
+the same Linux user that runs deployments. Use a token with only
+`read:packages` access:
+
+```bash
+echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u thatskiff33 --password-stdin
+```
+
+Do not store that token in the repository or `.env`.
+
 ## First Bootstrap
 
 From the target host:
@@ -103,12 +124,14 @@ The supported TACBookings deploy path is:
 ```
 
 The wrapper snapshots the resolved `origin/main` commit into a clean deployment
-workspace, copies the environment file, preserves Caddy upstream state, runs the
-blue/green deployment, then fast-forwards the clean checkout after success.
+workspace, selects the matching GHCR image tags, copies the environment file,
+preserves Caddy upstream state, runs the blue/green deployment, then
+fast-forwards the clean checkout after success.
 
 The low-level deployment runner:
 
-- builds the target app image unless `SKIP_APP_IMAGE_BUILD=1` is set
+- pulls the app and migration images for the resolved commit SHA
+- skips local Docker builds when `APP_IMAGE` and `MIGRATE_IMAGE` are supplied
 - validates pending migrations against the blue/green migration policy
 - runs Prisma migrations through the `migrate` service
 - starts the inactive color slot with `CRON_ENABLED=false`
@@ -116,6 +139,9 @@ The low-level deployment runner:
 - updates Caddy upstream routing
 - verifies the public domain against the target color
 - drains the previous slot
+
+If `APP_IMAGE` and `MIGRATE_IMAGE` are not supplied, the low-level runner keeps
+the old local-build path for bootstrap, staging, and recovery work.
 
 ## Migration Safety
 

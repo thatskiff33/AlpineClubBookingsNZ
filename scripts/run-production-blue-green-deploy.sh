@@ -8,6 +8,10 @@ DEPLOY_WORKSPACE_ROOT="${DEPLOY_WORKSPACE_ROOT:-$HOME/tacbookings-deployments}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$SOURCE_REPO" | tr '[:upper:]' '[:lower:]')}"
 SYNC_SOURCE_REPO_AFTER_DEPLOY="${SYNC_SOURCE_REPO_AFTER_DEPLOY:-1}"
 PRUNE_STALE_DEPLOY_WORKSPACES="${PRUNE_STALE_DEPLOY_WORKSPACES:-1}"
+GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/tacbookings-app}"
+GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/tacbookings-migrate}"
+APP_IMAGE="${APP_IMAGE:-}"
+MIGRATE_IMAGE="${MIGRATE_IMAGE:-}"
 
 ACTIVE_UPSTREAM_FILE_REL="deploy/caddy/tacbookings-active.caddy"
 CADDY_CONFIG_CONTAINER_PATH="/etc/caddy/Caddyfile"
@@ -95,6 +99,19 @@ resolve_ref() {
 
   RESOLVED_REF="$(git -C "$SOURCE_REPO" rev-parse "${DEPLOY_REF}^{commit}")"
   info "Resolved ${DEPLOY_REF} to commit ${RESOLVED_REF}"
+}
+
+resolve_image_refs() {
+  if [ -z "$APP_IMAGE" ] && [ -z "$MIGRATE_IMAGE" ]; then
+    APP_IMAGE="${GHCR_APP_IMAGE_REPOSITORY}:${RESOLVED_REF}"
+    MIGRATE_IMAGE="${GHCR_MIGRATE_IMAGE_REPOSITORY}:${RESOLVED_REF}"
+  elif [ -z "$APP_IMAGE" ] || [ -z "$MIGRATE_IMAGE" ]; then
+    echo "APP_IMAGE and MIGRATE_IMAGE must both be set when overriding deployment images." >&2
+    return 1
+  fi
+
+  info "App image: $APP_IMAGE"
+  info "Migration image: $MIGRATE_IMAGE"
 }
 
 create_workspace() {
@@ -260,6 +277,8 @@ run_deploy() {
     cd "$WORKSPACE"
     PROJECT_DIR="$WORKSPACE" \
     COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" \
+    APP_IMAGE="$APP_IMAGE" \
+    MIGRATE_IMAGE="$MIGRATE_IMAGE" \
     ./scripts/blue-green-deploy.sh
   )
 }
@@ -356,8 +375,9 @@ git -C "$SOURCE_REPO" rev-parse --is-inside-work-tree >/dev/null
 validate_source_repo_state
 info "Source repository contract looks valid."
 
-step "3/8" "Resolving deploy commit"
+step "3/8" "Resolving deploy commit and image references"
 resolve_ref
+resolve_image_refs
 
 step "4/8" "Creating deployment workspace"
 create_workspace

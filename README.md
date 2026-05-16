@@ -128,6 +128,11 @@ The supported TACBookings deployment path uses the blue/green wrapper:
 ./scripts/run-production-blue-green-deploy.sh
 ```
 
+On `main`, GitHub Actions builds and publishes the app and migration images to
+GHCR with commit-SHA tags. The production wrapper resolves `origin/main`, pulls
+those exact images, runs migrations, and switches Caddy after health checks
+pass.
+
 Do not use live Stripe, Xero, SES, Sentry, or production database credentials in
 forks or public CI. Configure your own service accounts and secrets.
 
