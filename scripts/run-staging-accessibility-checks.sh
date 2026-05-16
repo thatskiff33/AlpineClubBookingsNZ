@@ -7,7 +7,7 @@ OUT_DIR="${STAGING_A11Y_OUT_DIR:-reports/lighthouse/staging}"
 LIGHTHOUSE_BIN="${LIGHTHOUSE_BIN:-}"
 
 if [ -z "$BASE_URL" ]; then
-  echo "STAGING_APP_URL is required, for example https://staging.tokoroa.org.nz" >&2
+  echo "STAGING_APP_URL is required, for example https://staging.example.org" >&2
   exit 1
 fi
 
@@ -19,12 +19,15 @@ case "$BASE_URL" in
     ;;
 esac
 
-case "$BASE_URL" in
-  http://tokoroa.org.nz*|https://tokoroa.org.nz*|http://www.tokoroa.org.nz*|https://www.tokoroa.org.nz*)
-    echo "Refusing to run staging accessibility checks against production: $BASE_URL" >&2
-    exit 1
-    ;;
-esac
+PRODUCTION_APP_URL="${PRODUCTION_APP_URL:-}"
+if [ -n "$PRODUCTION_APP_URL" ]; then
+  case "$BASE_URL" in
+    "$PRODUCTION_APP_URL"*)
+      echo "Refusing to run staging accessibility checks against the configured app origin: $BASE_URL" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 if [ -z "$LIGHTHOUSE_BIN" ]; then
   if command -v lighthouse >/dev/null 2>&1; then

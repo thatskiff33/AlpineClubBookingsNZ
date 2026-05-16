@@ -161,7 +161,7 @@ describe("finance booking metrics route", () => {
 
   it("returns metrics for a finance viewer", async () => {
     const request = new NextRequest(
-      "https://tokoroa.org.nz/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10&realizedCutoff=2026-04-10&forwardFrom=2026-04-11&forwardTo=2026-04-20&forwardAsOf=2026-04-10"
+      "https://example.org/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10&realizedCutoff=2026-04-10&forwardFrom=2026-04-11&forwardTo=2026-04-20&forwardAsOf=2026-04-10"
     );
 
     const response = await getFinanceBookingMetricsRoute(request);
@@ -194,7 +194,7 @@ describe("finance booking metrics route", () => {
 
     const response = await getFinanceBookingMetricsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10"
+        "https://example.org/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10"
       )
     );
 
@@ -211,7 +211,7 @@ describe("finance booking metrics route", () => {
 
     const response = await getFinanceBookingMetricsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10"
+        "https://example.org/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10"
       )
     );
 
@@ -225,7 +225,7 @@ describe("finance booking metrics route", () => {
   it("returns 400 when the query is incomplete", async () => {
     const response = await getFinanceBookingMetricsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/bookings/metrics?realizedFrom=2026-04-01"
+        "https://example.org/api/finance/bookings/metrics?realizedFrom=2026-04-01"
       )
     );
 
@@ -240,7 +240,7 @@ describe("finance booking metrics route", () => {
   it("returns 400 when a requested metrics window is too large", async () => {
     const response = await getFinanceBookingMetricsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/bookings/metrics?realizedFrom=2020-01-01&realizedTo=2026-12-31"
+        "https://example.org/api/finance/bookings/metrics?realizedFrom=2020-01-01&realizedTo=2026-12-31"
       )
     );
 
@@ -259,7 +259,7 @@ describe("finance booking metrics route", () => {
 
     const response = await getFinanceBookingMetricsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10"
+        "https://example.org/api/finance/bookings/metrics?realizedFrom=2026-04-01&realizedTo=2026-04-10"
       )
     );
 

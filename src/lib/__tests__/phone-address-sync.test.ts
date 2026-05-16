@@ -83,9 +83,9 @@ const baseMember = {
   active: true, forcePasswordChange: false, xeroContactId: null,
   joinedDate: null, createdAt: new Date("2025-01-01"), canLogin: true,
   profileCompletedAt: null,
-  streetAddressLine1: "123 Main St", streetAddressLine2: null, streetCity: "Tokoroa",
+  streetAddressLine1: "123 Main St", streetAddressLine2: null, streetCity: "Example",
   streetRegion: "Waikato", streetPostalCode: "3420", streetCountry: "NZ",
-  postalAddressLine1: "PO Box 42", postalAddressLine2: null, postalCity: "Tokoroa",
+  postalAddressLine1: "PO Box 42", postalAddressLine2: null, postalCity: "Example",
   postalRegion: "Waikato", postalPostalCode: "3420", postalCountry: "NZ",
 };
 
@@ -220,12 +220,12 @@ describe("Profile API: structured phone and address fields", () => {
     phoneCountryCode: "64", phoneAreaCode: "27", phoneNumber: "4224115",
     dateOfBirth: "1990-01-15",
     streetAddressLine1: "123 Main St",
-    streetCity: "Tokoroa",
+    streetCity: "Example",
     streetRegion: "Waikato",
     streetPostalCode: "3420",
     streetCountry: "NZ",
     postalAddressLine1: "PO Box 42",
-    postalCity: "Tokoroa",
+    postalCity: "Example",
     postalRegion: "Waikato",
     postalPostalCode: "3420",
     postalCountry: "NZ",
@@ -269,18 +269,18 @@ describe("Profile API: structured phone and address fields", () => {
     const res = await updateProfile(makeProfilePut({
       ...validProfileBody,
       streetAddressLine1: "123 Main St",
-      streetCity: "Tokoroa",
+      streetCity: "Example",
       streetRegion: "Waikato",
       streetPostalCode: "3420",
       streetCountry: "NZ",
       postalAddressLine1: "PO Box 42",
-      postalCity: "Tokoroa",
+      postalCity: "Example",
     }));
     expect(res.status).toBe(200);
     expect(prisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         streetAddressLine1: "123 Main St",
-        streetCity: "Tokoroa",
+        streetCity: "Example",
         postalAddressLine1: "PO Box 42",
       }),
     }));

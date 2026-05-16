@@ -25,8 +25,10 @@ Do not infer a staging host from production DNS guesses.
 ## Auth Path
 
 - Sign-in path: `/login`
-- Seeded admin account after `prisma/seed.ts`: `support@tokoroa.org.nz` / `admin123`
-- Required post-seed action for shared staging: change that password before sharing the environment.
+- Seeded admin account after `prisma/seed.ts`: the `SEED_ADMIN_EMAIL` value
+  from `.env.staging`.
+- Required post-seed action for shared staging: change the seed admin password
+  before sharing the environment.
 
 For role-specific checks, create or update test members through `Admin > Members` after signing in as the staging admin. Do not copy production user credentials into staging.
 

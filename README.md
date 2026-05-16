@@ -1,13 +1,16 @@
 # TACBookings
 
-TACBookings is the Tokoroa Alpine Club booking, membership, payment, lodge, and
-finance platform. It is published as a real-world reference implementation for
-a small club running a production Next.js application with payments,
-accounting, email, scheduled jobs, and Docker-based deployment.
+TACBookings is an open-source booking, membership, payment, lodge, and finance
+platform for small clubs. It is published as a real-world reference
+implementation for a production Next.js application with payments, accounting,
+email, scheduled jobs, and Docker-based deployment.
 
-The code is MIT licensed. Tokoroa Alpine Club branding, logos, copy, domains,
-and operational content are included for context only; replace them before
-using a fork for another organisation. See `NOTICE.md`.
+TACBookings is the open-source booking system originally built for and deployed
+at [Tokoroa Alpine Club](https://tokoroa.org.nz).
+
+The code is MIT licensed. Project branding, logos, copy, domains, and
+operational content are included for context only; replace them before using a
+fork for another organisation. See `NOTICE.md`.
 
 ## What It Does
 
@@ -53,24 +56,23 @@ npx prisma generate
 
 Edit `.env` before running the app. For a local database-backed setup, set at
 least `DATABASE_URL`, `DB_PASSWORD`, `AUTH_SECRET`, `NEXTAUTH_SECRET`,
-`NEXTAUTH_URL`, and `CRON_SECRET`. External integrations can use test/demo
-credentials or remain blank unless the feature under test requires them.
+`NEXTAUTH_URL`, `CRON_SECRET`, `SEED_ADMIN_EMAIL`, and
+`SEED_ADMIN_PASSWORD`. External integrations can use test/demo credentials or
+remain blank unless the feature under test requires them.
 
 Start PostgreSQL, apply migrations, and seed local data:
 
 ```bash
 docker compose up -d postgres
 npm run db:migrate
-npm run db:seed
+SEED_ADMIN_EMAIL=admin@example.org \
+SEED_ADMIN_PASSWORD=replace-with-a-local-password \
+  npm run db:seed
 ```
 
-The seed data includes a local admin account:
-
-```text
-support@tokoroa.org.nz / admin123
-```
-
-Change that password immediately in any shared or persistent environment.
+The seed data creates the first admin account from those `SEED_ADMIN_*`
+variables and marks it for password change on first login. Change that password
+immediately in any shared or persistent environment.
 
 Start the app only in local or non-production environments:
 

@@ -48,7 +48,7 @@ describe("admin lodge route", () => {
     } as any);
     vi.mocked(prisma.member.findFirst).mockResolvedValue({
       id: "lodge-1",
-      email: "lodge@tokoroa.org.nz",
+      email: "lodge@example.org",
       firstName: "Lodge",
       lastName: "Kiosk",
       role: "LODGE",
@@ -56,7 +56,7 @@ describe("admin lodge route", () => {
     } as any);
     vi.mocked(prisma.member.update).mockResolvedValue({
       id: "lodge-1",
-      email: "lodge@tokoroa.org.nz",
+      email: "lodge@example.org",
       firstName: "Lodge Desk",
       lastName: "Kiosk",
       updatedAt: new Date("2026-04-11"),

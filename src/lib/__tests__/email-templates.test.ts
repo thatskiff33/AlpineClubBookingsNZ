@@ -16,6 +16,7 @@ import {
 } from "../email-templates";
 import { getAppBaseUrl } from "../app-url";
 import { formatNZDateTime } from "../nzst-date";
+import { CLUB_NAME } from "@/config/club-identity";
 
 describe("email-templates", () => {
   describe("welcomeTemplate", () => {
@@ -29,9 +30,9 @@ describe("email-templates", () => {
       expect(html).toContain("/login");
     });
 
-    it("includes Tokoroa Alpine Club branding", () => {
+    it("includes club branding", () => {
       const html = welcomeTemplate("Test");
-      expect(html).toContain("Tokoroa Alpine Club");
+      expect(html).toContain(CLUB_NAME);
       expect(html).toContain("/branding/logo.png");
       expect(html).toContain("#ffcb05");
     });
@@ -239,7 +240,7 @@ describe("email-templates", () => {
       const html = accountDeletionApprovedTemplate("Alice");
 
       expect(html).toContain("help@example.com");
-      expect(html).not.toContain("support@tokoroa.org.nz");
+      expect(html).not.toContain("support@example.org");
 
       vi.unstubAllEnvs();
     });

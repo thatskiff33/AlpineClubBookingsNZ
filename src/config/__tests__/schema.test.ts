@@ -63,7 +63,7 @@ describe("clubConfigSchema", () => {
   });
 
   it("rejects publicUrl that is not a URL", () => {
-    const result = clubConfigSchema.safeParse({ ...validClub, publicUrl: "tokoroa.org.nz" });
+    const result = clubConfigSchema.safeParse({ ...validClub, publicUrl: "example.org" });
     expect(result.success).toBe(false);
   });
 

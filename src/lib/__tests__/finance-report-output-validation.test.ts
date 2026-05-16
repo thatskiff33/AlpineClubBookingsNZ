@@ -123,7 +123,7 @@ function representativeRevenueSnapshots() {
         reportDate: "2026-04-30",
         reportTitles: [
           "Profit and Loss",
-          "Tokoroa Alpine Club",
+          "Example Alpine Club",
           "April 2026",
         ],
         fields: [
@@ -182,7 +182,7 @@ function representativeRevenueSnapshots() {
         reportDate: "2026-03-31",
         reportTitles: [
           "Profit and Loss",
-          "Tokoroa Alpine Club",
+          "Example Alpine Club",
           "March 2026",
         ],
         fields: [

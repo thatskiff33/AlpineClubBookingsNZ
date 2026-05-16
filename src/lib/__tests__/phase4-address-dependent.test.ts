@@ -133,10 +133,10 @@ const baseMember = {
   profileCompletedAt: null,
   parentMemberId: null, parent: null, inheritParentEmail: false, inheritEmailFromId: null,
   streetAddressLine1: "123 Main St", streetAddressLine2: null,
-  streetCity: "Tokoroa", streetRegion: "Waikato",
+  streetCity: "Example", streetRegion: "Waikato",
   streetPostalCode: "3420", streetCountry: "NZ",
   postalAddressLine1: "PO Box 42", postalAddressLine2: null,
-  postalCity: "Tokoroa", postalRegion: "Waikato",
+  postalCity: "Example", postalRegion: "Waikato",
   postalPostalCode: "3420", postalCountry: "NZ",
   familyGroupMemberships: [],
   subscriptions: [],
@@ -167,7 +167,7 @@ describe("member-address utilities", () => {
     const result = copyStreetAddressToPostal({
       streetAddressLine1: "123 Main",
       streetAddressLine2: "Unit 4",
-      streetCity: "Tokoroa",
+      streetCity: "Example",
       streetRegion: "Waikato",
       streetPostalCode: "3420",
       streetCountry: "NZ",
@@ -175,7 +175,7 @@ describe("member-address utilities", () => {
     expect(result).toEqual({
       postalAddressLine1: "123 Main",
       postalAddressLine2: "Unit 4",
-      postalCity: "Tokoroa",
+      postalCity: "Example",
       postalRegion: "Waikato",
       postalPostalCode: "3420",
       postalCountry: "NZ",
@@ -186,7 +186,7 @@ describe("member-address utilities", () => {
     expect(postalMatchesPhysical({
       streetAddressLine1: "123 Main", postalAddressLine1: "123 Main",
       streetAddressLine2: null, postalAddressLine2: null,
-      streetCity: "Tokoroa", postalCity: "Tokoroa",
+      streetCity: "Example", postalCity: "Example",
       streetRegion: "Waikato", postalRegion: "Waikato",
       streetPostalCode: "3420", postalPostalCode: "3420",
       streetCountry: "NZ", postalCountry: "NZ",
@@ -197,7 +197,7 @@ describe("member-address utilities", () => {
     expect(postalMatchesPhysical({
       streetAddressLine1: "123 Main", postalAddressLine1: "PO Box 42",
       streetAddressLine2: null, postalAddressLine2: null,
-      streetCity: "Tokoroa", postalCity: "Tokoroa",
+      streetCity: "Example", postalCity: "Example",
       streetRegion: "Waikato", postalRegion: "Waikato",
       streetPostalCode: "3420", postalPostalCode: "3420",
       streetCountry: "NZ", postalCountry: "NZ",
@@ -208,7 +208,7 @@ describe("member-address utilities", () => {
     expect(postalMatchesPhysical({
       streetAddressLine1: "123 Main ", postalAddressLine1: "123 Main",
       streetAddressLine2: "", postalAddressLine2: " ",
-      streetCity: "Tokoroa", postalCity: "Tokoroa",
+      streetCity: "Example", postalCity: "Example",
       streetRegion: "Waikato", postalRegion: "Waikato",
       streetPostalCode: "3420", postalPostalCode: "3420",
       streetCountry: "NZ", postalCountry: "NZ",
@@ -342,7 +342,7 @@ describe("Admin: Create dependent member", () => {
       inheritEmailFromId: "parent1",
       canLogin: false,
       streetAddressLine1: "123 Main St",
-      streetCity: "Tokoroa",
+      streetCity: "Example",
       postalSameAsPhysical: true,
     }));
     expect(res.status).toBe(201);

@@ -80,7 +80,7 @@ function profitAndLossSnapshot(input: {
       reportDate: input.asOfDate,
       reportTitles: [
         "Profit and Loss",
-        "Tokoroa Alpine Club",
+        "Example Alpine Club",
         input.periodLabel,
       ],
       fields: [

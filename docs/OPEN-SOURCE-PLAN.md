@@ -4,7 +4,7 @@ This is the canonical plan for making TACBookings publicly available on GitHub w
 
 ## Context
 
-We are making TACBookings public so other small clubs can adopt it, while continuing to deploy and develop for Tokoroa Alpine Club. The chosen approach:
+We are making TACBookings public so other small clubs can adopt it, while continuing to deploy and develop for the reference club. The chosen approach:
 
 - **Path B**: properly refactor before publishing so the public repo is genuinely adoptable, not a stripped-down dump.
 - **Dev workflow**: public repo is the source of truth; TAC's actual deployment lives in a private fork that pulls from public upstream and adds a thin TAC-specific overlay (branding, config, seed data).
@@ -21,17 +21,17 @@ GitHub: thatskiff33/TACBookings  (PUBLIC — generic, MIT, config-driven)
   ├── public/branding/           default placeholder logo/favicon
   └── docs/                      generic documentation
 
-GitHub: thatskiff33/TACBookings-tokoroa  (PRIVATE — TAC deploy fork)
+GitHub: thatskiff33/TACBookings-private  (PRIVATE — TAC deploy fork)
   ├── (everything above, via `git pull upstream main`)
   ├── config/club.json           TAC's actual config (gitignored upstream)
   ├── config/features.json       TAC's feature flags
   ├── public/branding/logo.png   TAC's real logo (gitignored upstream)
-  ├── seeds/tokoroa/             TAC's seed data (gitignored upstream)
+  ├── seeds/private-club/             TAC's seed data (gitignored upstream)
   ├── .env                       TAC's real secrets (already gitignored)
   └── deploy/                    TAC-specific deploy scripts if any
 ```
 
-Production at tokoroa.org.nz deploys from `TACBookings-tokoroa`. Every generic improvement flows: develop in `TACBookings` (public) → merge → `cd TACBookings-tokoroa && git pull upstream main` → deploy.
+Production deploys from `TACBookings-private`. Every generic improvement flows: develop in `TACBookings` (public) → merge → `cd TACBookings-private && git pull upstream main` → deploy.
 
 ## Governance
 
@@ -93,11 +93,11 @@ Set the patterns. No behavior changes; just scaffolding.
 
 Migrate hardcoded TAC strings to config. Touch one area at a time so each commit is reviewable.
 
-Audit found ~157 hardcoded "Tokoroa Alpine Club" + ~159 "tokoroa" references. Group them:
+Audit found hardcoded reference-club names and domain references. Group them:
 
 - **Display strings** (emails, pages, error messages): replace with `clubConfig.name` / `clubConfig.supportEmail` etc.
 - **Email sender**: `src/lib/email-sender.ts` `DEFAULT_EMAIL_FROM` → config-driven. Likely partly done.
-- **Email templates** (`src/lib/email-templates.ts`): every "Tokoroa Alpine Club" → `clubConfig.name`; every `tokoroa.org.nz` URL → `clubConfig.publicUrl`.
+- **Email templates** (`src/lib/email-templates.ts`): reference-club names → `clubConfig.name`; reference-club URLs → `clubConfig.publicUrl`.
 - **Seed file** (`prisma/seed.ts:209`): use `clubConfig.supportEmail`.
 - **Domain/Sentry references**: most are already env-driven; verify.
 
@@ -144,11 +144,11 @@ Database tables for disabled features can exist but stay empty — simpler than 
 
 After the structural work, the remaining string-level cleanups:
 
-- `src/lib/__tests__/xero-find-or-create-contact.test.ts` — replace `jordan.hartleysmith@gmail.com` with `test.contact@example.org`.
-- `prisma/seed.ts` — read admin email/password from `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD` env, fail loudly if unset. Remove `admin123` and `support@tokoroa.org.nz` from `README.md`.
+- `src/lib/__tests__/xero-find-or-create-contact.test.ts` — replace personal contact fixtures with `test.contact@example.org`.
+- `prisma/seed.ts` — read admin email/password from `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD` env, fail loudly if unset. Remove legacy default seed credentials from `README.md`.
 - Verify "password change required on first login" enforcement actually works in the auth code (not just claimed in the seed log).
 - `LICENSE` — confirm copyright holder.
-- Final grep: only acceptable remaining `tokoroa`/`Tokoroa Alpine Club` references should be in (a) README's "reference deployment" line, (b) `config/club.json` (TAC's private values).
+- Final grep: only acceptable remaining reference-club domain/name references should be in (a) README's "reference deployment" line, (b) `config/club.json` (TAC's private values).
 
 ### Phase 7 — Issue triage (a few hours)
 
@@ -164,7 +164,7 @@ Edit/redact anything sensitive. Most issues look like technical task tracking an
 The public repo needs a "deploy this for your club" path:
 
 - **README**: rewrite intro for generic audience. Add "Adopting this for your club" section listing: what env vars are required, where to put `config/club.json`, where to put branding, how to seed initial admin, how to flip feature flags.
-- **Reference deployment note**: "TACBookings is the open-source booking system originally built for and deployed at [Tokoroa Alpine Club](https://tokoroa.org.nz)."
+- **Reference deployment note**: add the reference deployment line from the public README.
 - **CONTRIBUTING.md**: confirm it makes sense for outside contributors (PR workflow, test requirements).
 - **CONFIGURATION.md** (new): full env var reference + `config/club.json` schema.
 - **DEPLOYMENT.md**: ensure deploy docs are generic, not TAC-specific.
@@ -179,13 +179,13 @@ cp -r /home/ubuntu/TACBookings /home/ubuntu/TACBookings.backup-pre-split
 ```
 
 **9b. Create the private TAC overlay repo**
-- On GitHub, create `thatskiff33/TACBookings-tokoroa` (private, empty).
+- On GitHub, create `thatskiff33/TACBookings-private` (private, empty).
 - In a fresh clone of the current `TACBookings` repo, this becomes TAC's working dir going forward.
 - Push the current state (with all TAC config/branding) to the new private remote:
   ```bash
-  cd /home/ubuntu/TACBookings-tokoroa  # fresh clone
+  cd /home/ubuntu/TACBookings-private  # fresh clone
   git remote rename origin upstream
-  git remote add origin git@github.com:thatskiff33/TACBookings-tokoroa.git
+  git remote add origin git@github.com:thatskiff33/TACBookings-private.git
   git push -u origin main
   ```
 
@@ -194,21 +194,21 @@ cp -r /home/ubuntu/TACBookings /home/ubuntu/TACBookings.backup-pre-split
   ```bash
   git rm --cached config/club.json
   git rm --cached public/branding/logo.png
-  git rm -r --cached seeds/tokoroa/  # if present
+  git rm -r --cached seeds/private-club/  # if present
   ```
 - Add to `.gitignore`:
   ```
   config/club.json
   config/features.json
   public/branding/logo.png
-  seeds/tokoroa/
+  seeds/private-club/
   ```
 - Keep `.example` versions tracked: `config/club.example.json`, `public/branding/logo.example.png`.
 - Commit: "chore: separate TAC overlay from public-bound code"
 
 **9d. Verify upstream/downstream sync works**
 ```bash
-cd /home/ubuntu/TACBookings-tokoroa
+cd /home/ubuntu/TACBookings-private
 git pull upstream main
 # Confirm: TAC's club.json/branding/etc. still present locally; upstream changes merged
 npm test
@@ -227,7 +227,7 @@ gh api users/thatskiff33 --jq .id
 For **each repo** (public-bound first, then private fork):
 ```bash
 sudo apt install git-filter-repo
-echo "Jordan <ID+thatskiff33@users.noreply.github.com> <jordan.hartleysmith@gmail.com>" > /tmp/mailmap.txt
+echo "Jordan <ID+thatskiff33@users.noreply.github.com> <old-personal-email>" > /tmp/mailmap.txt
 git filter-repo --mailmap /tmp/mailmap.txt --force
 git remote add origin <repo-url>  # filter-repo removes remotes; re-add
 git push --force-with-lease origin main
@@ -244,11 +244,11 @@ Verify with `git shortlog -sne --all` — no personal email.
 
 ### Phase 12 — Document the ongoing dev workflow (1 day)
 
-A short doc in `TACBookings-tokoroa/README.md` (or the main public README's "For maintainers" section) explaining the future workflow:
+A short doc in `TACBookings-private/README.md` (or the main public README's "For maintainers" section) explaining the future workflow:
 
-- **Generic feature/fix**: branch off `TACBookings` (public) → PR → merge to public main → `cd TACBookings-tokoroa && git pull upstream main` → deploy to TAC.
-- **TAC-specific change** (config, branding, TAC-only data fix): branch off `TACBookings-tokoroa` (private) → PR → merge → deploy.
-- **Hotfix in production**: branch off `TACBookings-tokoroa`, fix, deploy, then port the generic part back to public.
+- **Generic feature/fix**: branch off `TACBookings` (public) → PR → merge to public main → `cd TACBookings-private && git pull upstream main` → deploy to TAC.
+- **TAC-specific change** (config, branding, TAC-only data fix): branch off `TACBookings-private` (private) → PR → merge → deploy.
+- **Hotfix in production**: branch off `TACBookings-private`, fix, deploy, then port the generic part back to public.
 
 CI runs in both repos. Both should run tests. The private repo's CI tests with TAC's real `club.json`; the public repo's CI tests with `club.example.json`.
 
@@ -276,10 +276,10 @@ Per phase:
 
 End-to-end before flipping public:
 1. Fresh clone of (what will be) the public `TACBookings` in `/tmp/`. With only `config/club.example.json` + placeholder branding, can you boot the app, seed an admin, make a booking? **This is the adopter experience test.**
-2. `grep -ri --exclude-dir=node_modules --exclude-dir=.next "jordan.hartleysmith\|admin123" .` — zero hits in the public-bound repo.
-3. `grep -ri --exclude-dir=node_modules --exclude-dir=.next "tokoroa\|Tokoroa Alpine Club" .` — only matches in README "reference deployment" line.
+2. Grep for personal author email and legacy default seed password — zero hits in the public-bound repo.
+3. Grep for reference-club domain/name strings — only matches in README "reference deployment" line.
 4. `git shortlog -sne --all` (after Phase 10) — no personal email.
-5. From the private `TACBookings-tokoroa` repo, run `git pull upstream main` and confirm TAC config/branding files survive the merge as untracked-but-present local files.
+5. From the private `TACBookings-private` repo, run `git pull upstream main` and confirm TAC config/branding files survive the merge as untracked-but-present local files.
 6. After Phase 11: open the public repo in an incognito browser — confirm what an outsider sees matches expectations.
 
 ## Risks

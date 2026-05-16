@@ -70,7 +70,7 @@ function bankBalanceSnapshot(input: {
       reportDate: input.asOfDate,
       reportTitles: [
         "Bank Summary",
-        "Tokoroa Alpine Club",
+        "Example Alpine Club",
         `As at ${input.asOfDate}`,
       ],
       fields: [

@@ -1,7 +1,7 @@
 {
   "name": "tacbookings",
   "version": "0.1.0",
-  "description": "Tokoroa Alpine Club booking, membership, payment, and finance platform.",
+  "description": "Open-source club booking, membership, payment, and finance platform.",
   "private": true,
   "license": "MIT",
   "repository": {

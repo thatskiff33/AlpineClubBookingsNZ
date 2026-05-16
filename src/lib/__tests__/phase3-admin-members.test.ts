@@ -1306,12 +1306,12 @@ create: vi.fn().mockResolvedValue({
           dateOfBirth: "1990-01-15",
           joinedDate: "2026-03-01",
           streetAddressLine1: "12 Main St",
-          streetCity: "Tokoroa",
+          streetCity: "Example",
           streetRegion: "Waikato",
           streetPostalCode: "3420",
           streetCountry: "NZ",
           postalAddressLine1: "PO Box 10",
-          postalCity: "Tokoroa",
+          postalCity: "Example",
           postalRegion: "Waikato",
           postalPostalCode: "3420",
           postalCountry: "NZ",
@@ -1323,12 +1323,12 @@ create: vi.fn().mockResolvedValue({
       expect(createArgs.data.joinedDate).toBeInstanceOf(Date);
       expect(createArgs.data.joinedDate.toISOString().startsWith("2026-03-01")).toBe(true);
       expect(createArgs.data.streetAddressLine1).toBe("12 Main St");
-      expect(createArgs.data.streetCity).toBe("Tokoroa");
+      expect(createArgs.data.streetCity).toBe("Example");
       expect(createArgs.data.streetRegion).toBe("Waikato");
       expect(createArgs.data.streetPostalCode).toBe("3420");
       expect(createArgs.data.streetCountry).toBe("NZ");
       expect(createArgs.data.postalAddressLine1).toBe("PO Box 10");
-      expect(createArgs.data.postalCity).toBe("Tokoroa");
+      expect(createArgs.data.postalCity).toBe("Example");
       expect(createArgs.data.postalRegion).toBe("Waikato");
       expect(createArgs.data.postalPostalCode).toBe("3420");
       expect(createArgs.data.postalCountry).toBe("NZ");

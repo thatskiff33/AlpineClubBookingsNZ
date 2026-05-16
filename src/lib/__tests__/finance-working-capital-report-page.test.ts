@@ -78,7 +78,7 @@ function balanceSheetSnapshot(input: {
       reportDate: input.asOfDate,
       reportTitles: [
         "Balance Sheet",
-        "Tokoroa Alpine Club",
+        "Example Alpine Club",
         `As at ${input.asOfDate}`,
       ],
       fields: [

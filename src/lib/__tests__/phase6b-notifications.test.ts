@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  CLUB_EMAIL_FROM_NAME,
+  CLUB_SUPPORT_EMAIL,
+} from "@/config/club-identity";
 
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter } = vi.hoisted(() => {
@@ -154,7 +158,7 @@ describe("N-03: checkCapacityWarnings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
@@ -205,7 +209,7 @@ describe("N-05: notifyXeroSyncError", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
     mockPrisma.emailLog.findFirst.mockResolvedValue(null);
@@ -282,7 +286,7 @@ describe("N-11: retryFailedEmails", () => {
     });
     expect(mockTransporter.sendMail).toHaveBeenCalledWith(
       expect.objectContaining({
-        from: '"Tokoroa Alpine Club - Online Booking System" <support@tokoroa.org.nz>',
+        from: `"${CLUB_EMAIL_FROM_NAME}" <${CLUB_SUPPORT_EMAIL}>`,
       })
     );
   });
@@ -325,7 +329,7 @@ describe("N-11: retryFailedEmails", () => {
     mockPrisma.emailLog.findMany.mockResolvedValue([
       {
         id: "log-fail-3",
-        to: "secretary@tokoroa.org.nz",
+        to: "secretary@example.org",
         subject: "Email delivery permanently failed",
         templateName: "admin-email-failure",
         htmlBody: "<p>Alert</p>",
@@ -483,7 +487,7 @@ describe("N-13: sendAdminDigest", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });

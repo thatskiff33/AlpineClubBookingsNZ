@@ -47,16 +47,16 @@ describe("mapAddyAddressToSelection", () => {
       mapAddyAddressToSelection({
         address1: "12 Alpine Road",
         address2: "RD 1",
-        city: "Tokoroa",
+        city: "Example",
         displayline: "12 Alpine Road",
-        mailtown: "Tokoroa",
+        mailtown: "Example",
         postcode: "3491",
         region: "Waikato",
       }),
     ).toMatchObject({
       addressLine1: "12 Alpine Road",
       addressLine2: "RD 1",
-      city: "Tokoroa",
+      city: "Example",
       postalCode: "3491",
     });
   });

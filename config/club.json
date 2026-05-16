@@ -5,6 +5,10 @@
   "contactEmail": "bookings@tokoroa.org.nz",
   "publicUrl": "https://tokoroa.org.nz",
   "emailFromName": "Tokoroa Alpine Club - Online Booking System",
+  "lodgeTravelNote": "The lodge is located at Mt Pureora, Tokoroa. Please allow adequate travel time.",
+  "socialLinks": {
+    "facebook": "https://www.facebook.com/TokoroaAlpineClub/"
+  },
   "beds": [
     { "id": "lodge", "name": "Mt Ruapehu Lodge", "capacity": 29, "type": "dormitory" }
   ],
