@@ -5,6 +5,7 @@ import { AdminSidebar } from "@/components/admin-sidebar";
 import { NavBar } from "@/components/nav-bar";
 import { MemberOnboardingWizard } from "@/components/member-onboarding-wizard";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
+import { featureFlags } from "@/config/features";
 import { hasFinanceViewerAccess } from "@/lib/finance-auth";
 import {
   MEMBER_ONBOARDING_GATE_SELECT,
@@ -52,9 +53,9 @@ export default async function AdminLayout({
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
-      <NavBar user={user} />
+      <NavBar user={user} features={featureFlags} />
       <div className="flex flex-1">
-        <AdminSidebar />
+        <AdminSidebar features={featureFlags} />
         <div className="flex flex-1 flex-col md:overflow-hidden">
           <main className="flex-1 overflow-y-auto p-6 print:overflow-visible print:p-0 md:p-8">
             {children}

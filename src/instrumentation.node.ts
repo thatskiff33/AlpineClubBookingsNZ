@@ -1,6 +1,16 @@
+import { featureFlags } from "@/config/features";
 import { APP_TIME_ZONE } from "@/config/operational";
+import type { FeatureFlags } from "@/config/schema";
 
 const CRON_TIMEZONE = APP_TIME_ZONE;
+
+export function getOptionalCronRegistrationState(flags: FeatureFlags = featureFlags) {
+  return {
+    financeDailySync: flags.financeDashboard,
+    waitlistProcessor: flags.waitlist,
+    xeroIntegration: flags.xeroIntegration,
+  };
+}
 
 function sentryCronMonitorConfig(
   schedule: string,
@@ -44,6 +54,7 @@ export async function register() {
     const Sentry = await import("@sentry/nextjs");
     const { prisma } = await import("./lib/prisma");
     const { isXeroDailyMembershipRefreshEnabled } = await import("./lib/xero-feature-flags");
+    const optionalCron = getOptionalCronRegistrationState();
 
     // Verify Prisma client is ready before starting cron jobs
     try {
@@ -131,6 +142,7 @@ export async function register() {
 
     logger.info({ job: "confirm-pending" }, "Scheduled pending booking confirmation (every 3 hours)");
 
+    if (optionalCron.xeroIntegration) {
     // OBS-03: Cron job 2 - Xero membership refresh safety net (daily at 2 AM)
     if (isXeroDailyMembershipRefreshEnabled()) {
       cron.default.schedule("0 2 * * *", async () => {
@@ -415,12 +427,25 @@ export async function register() {
       { job: "xero-inbound-reconcile" },
       "Scheduled stored Xero inbound reconciliation (every 15 minutes)"
     );
+    } else {
+      logger.info(
+        { featureFlag: "FEATURE_XERO_INTEGRATION" },
+        "Xero cron registration skipped because the feature flag is off"
+      );
+    }
 
-    const { registerDailyFinanceSyncCron } = await import(
-      "./lib/finance-sync-cron"
-    );
+    if (optionalCron.financeDailySync) {
+      const { registerDailyFinanceSyncCron } = await import(
+        "./lib/finance-sync-cron"
+      );
 
-    registerDailyFinanceSyncCron(cron.default, { logger });
+      registerDailyFinanceSyncCron(cron.default, { logger });
+    } else {
+      logger.info(
+        { featureFlag: "FEATURE_FINANCE_DASHBOARD", job: "finance-sync" },
+        "Finance sync cron registration skipped because the feature flag is off"
+      );
+    }
 
     // OBS-03: Cron job 3 - Database backup (daily at 3 AM)
     let isBackupRunning = false;
@@ -853,6 +878,7 @@ export async function register() {
 
     logger.info({ job: "credit-reconciliation" }, "Scheduled credit reconciliation (daily at 5:00 AM NZST)");
 
+    if (optionalCron.waitlistProcessor) {
     // Waitlist processor (every 30 minutes)
     cron.default.schedule("*/30 * * * *", async () => {
       if (isWaitlistCronRunning) {
@@ -886,6 +912,12 @@ export async function register() {
     }, { timezone: CRON_TIMEZONE });
 
     logger.info({ job: "waitlist-processor" }, "Scheduled waitlist processor (every 30 minutes)");
+    } else {
+      logger.info(
+        { featureFlag: "FEATURE_WAITLIST", job: "waitlist-processor" },
+        "Waitlist cron registration skipped because the feature flag is off"
+      );
+    }
   }
 }
 

@@ -1,5 +1,7 @@
 import { featureFlagsSchema, type FeatureFlags } from "./schema";
 
+export type FeatureFlagKey = keyof FeatureFlags;
+
 /** Maps each feature flag to the env var that toggles it on. */
 const FEATURE_ENV_VARS = {
   kiosk: "FEATURE_KIOSK",
@@ -32,3 +34,10 @@ export function loadFeatureFlags(env: NodeJS.ProcessEnv = process.env): FeatureF
 
 /** Eagerly loaded singleton — Phase 4 will wire call sites to this. */
 export const featureFlags: FeatureFlags = loadFeatureFlags();
+
+export function isFeatureEnabled(
+  flag: FeatureFlagKey,
+  flags: FeatureFlags = featureFlags
+): boolean {
+  return flags[flag];
+}

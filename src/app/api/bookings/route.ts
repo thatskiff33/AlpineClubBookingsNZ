@@ -46,6 +46,7 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { nameField } from "@/lib/zod-helpers";
+import { isFeatureEnabled } from "@/config/features";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -94,6 +95,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const xeroIntegrationEnabled = isFeatureEnabled("xeroIntegration");
+
   // Resolve effective member: admin booking on behalf of another member
   let effectiveMemberId = session.user.id;
   let isOnBehalf = false;
@@ -138,8 +141,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Email not verified" }, { status: 403 });
     }
 
-    // Gate: member must be linked to a Xero contact
-    if (!member?.xeroContactId && session.user.role !== "ADMIN") {
+    // Gate: member must be linked to a Xero contact when Xero is enabled.
+    if (xeroIntegrationEnabled && !member?.xeroContactId && session.user.role !== "ADMIN") {
       return NextResponse.json(
         {
           error: "Your account is not yet linked to Xero. Please contact the club administrator to link your membership before booking.",
@@ -906,22 +909,24 @@ export async function POST(request: NextRequest) {
               : undefined
           ).catch((err) => logger.error({ err, bookingId: booking.id }, "Failed to send confirmation email for $0 booking"));
 
-          void enqueueXeroBookingInvoiceOperation(booking.id, {
-            createdByMemberId: session.user.id,
-          })
-            .then(async (queuedInvoice) => {
-              if (!queuedInvoice.queueOperationId) {
-                return;
-              }
-
-              await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+          if (xeroIntegrationEnabled) {
+            void enqueueXeroBookingInvoiceOperation(booking.id, {
+              createdByMemberId: session.user.id,
             })
-            .catch((err) =>
-              logger.error(
-                { err, bookingId: booking.id },
-                "Failed to queue Xero invoice for $0 booking"
-              )
-            );
+              .then(async (queuedInvoice) => {
+                if (!queuedInvoice.queueOperationId) {
+                  return;
+                }
+
+                await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+              })
+              .catch((err) =>
+                logger.error(
+                  { err, bookingId: booking.id },
+                  "Failed to queue Xero invoice for $0 booking"
+                )
+              );
+          }
         }
       } catch (err) {
         logger.error({ err, bookingId: booking.id }, "Error in post-creation handling for $0 booking");

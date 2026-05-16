@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { NavBar } from "@/components/nav-bar";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { CLUB_NAME } from "@/config/club-identity";
+import { featureFlags } from "@/config/features";
 import {
   hasFinanceManagerAccess,
   requireFinanceViewer,
@@ -19,6 +20,7 @@ export default async function FinanceLayout({
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
       <NavBar
+        features={featureFlags}
         user={{
           name: fullName,
           email: member.email,

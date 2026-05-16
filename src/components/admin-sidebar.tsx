@@ -41,6 +41,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { isFeatureHrefVisible } from "@/config/feature-routes";
+import type { FeatureFlags } from "@/config/schema";
 
 interface NavSection {
   label?: string;
@@ -105,6 +107,19 @@ const navSections: NavSection[] = [
     ],
   },
 ];
+
+export function getVisibleAdminNavSections(
+  features: FeatureFlags
+): NavSection[] {
+  return navSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) =>
+        isFeatureHrefVisible(item.href, features)
+      ),
+    }))
+    .filter((section) => section.items.length > 0);
+}
 
 /** Fetch pending family group request count for sidebar badge. */
 function usePendingFamilyRequests(): number {
@@ -197,12 +212,19 @@ function usePendingCreditApprovals(): number {
   return count;
 }
 
-function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarLinks({
+  features,
+  onNavigate,
+}: {
+  features: FeatureFlags;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const pendingFamilyRequests = usePendingFamilyRequests();
   const pendingApplications = usePendingApplications();
   const pendingRefundAppeals = usePendingRefundAppeals();
   const pendingCreditApprovals = usePendingCreditApprovals();
+  const visibleNavSections = getVisibleAdminNavSections(features);
 
   // Map href -> badge count
   const badges: Record<string, number> = {};
@@ -228,7 +250,7 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
         Member Dashboard
       </Link>
       <div className="my-1.5 border-t border-slate-100" />
-      {navSections.map((section, sIdx) => (
+      {visibleNavSections.map((section, sIdx) => (
         <div key={sIdx}>
           {section.label && (
             <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
@@ -279,7 +301,7 @@ function SidebarLinks({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-export function AdminSidebar() {
+export function AdminSidebar({ features }: { features: FeatureFlags }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -293,7 +315,7 @@ export function AdminSidebar() {
           <span>Admin Panel</span>
         </div>
         <div className="flex-1 overflow-y-auto p-3">
-          <SidebarLinks />
+          <SidebarLinks features={features} />
         </div>
       </aside>
 
@@ -313,7 +335,10 @@ export function AdminSidebar() {
               <SheetTitle>Admin Panel</SheetTitle>
             </SheetHeader>
             <div className="p-3">
-              <SidebarLinks onNavigate={() => setMobileOpen(false)} />
+              <SidebarLinks
+                features={features}
+                onNavigate={() => setMobileOpen(false)}
+              />
             </div>
           </SheetContent>
         </Sheet>

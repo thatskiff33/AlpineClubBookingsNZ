@@ -9,7 +9,16 @@ import {
   CSP_NONCE_HEADER,
   CSP_REPORT_ONLY_HEADER,
 } from "@/lib/csp";
-import proxy, { config } from "../../proxy";
+import proxy, { config, getFeatureFlagBlockResponse } from "../../proxy";
+import type { FeatureFlags } from "@/config/schema";
+
+const allFeaturesOn: FeatureFlags = {
+  kiosk: true,
+  chores: true,
+  financeDashboard: true,
+  waitlist: true,
+  xeroIntegration: true,
+};
 
 function directive(policy: string, name: string) {
   const match = policy
@@ -67,6 +76,13 @@ describe("CSP proxy", () => {
       unstable_doesProxyMatch({
         config,
         nextConfig: {},
+        url: "/api/admin/waitlist",
+      })
+    ).toBe(true);
+    expect(
+      unstable_doesProxyMatch({
+        config,
+        nextConfig: {},
         url: "/_next/static/chunks/app.js",
       })
     ).toBe(false);
@@ -107,5 +123,22 @@ describe("CSP proxy", () => {
     expect(nonceA).toBeTruthy();
     expect(nonceB).toBeTruthy();
     expect(nonceA).not.toEqual(nonceB);
+  });
+
+  it("returns 404 for disabled feature page and API paths", async () => {
+    const pageResponse = getFeatureFlagBlockResponse("/admin/waitlist", {
+      ...allFeaturesOn,
+      waitlist: false,
+    });
+    const apiResponse = getFeatureFlagBlockResponse("/api/admin/waitlist", {
+      ...allFeaturesOn,
+      waitlist: false,
+    });
+
+    expect(pageResponse).not.toBeNull();
+    expect(apiResponse).not.toBeNull();
+    expect(pageResponse?.status).toBe(404);
+    expect(apiResponse?.status).toBe(404);
+    await expect(apiResponse!.json()).resolves.toEqual({ error: "Not found" });
   });
 });
