@@ -22,7 +22,7 @@ If any metric definition changes, update this file in the same PR.
 
 ## Xero Boundary Contract
 
-- Finance Xero uses a separate OAuth app/client from operational TACBookings Xero.
+- Finance Xero uses a separate OAuth app/client from operational AlpineClubBookingsNZ Xero.
 - Finance tokens, refresh state, usage metering, and sync history are stored separately.
 - Finance usage budget must be observable independently from operational Xero usage.
 
@@ -85,7 +85,7 @@ The minimum dataset surface is:
 
 ## Booking Metrics Contract
 
-Booking-derived finance metrics come from TACBookings `Booking`, `BookingGuest`, and `Payment`.
+Booking-derived finance metrics come from AlpineClubBookingsNZ `Booking`, `BookingGuest`, and `Payment`.
 
 ### Realized Stay Metrics
 
@@ -126,28 +126,28 @@ For each booking guest:
 - booking guest nights are the sum across all guests and nights
 - if a booking spans a realized cutoff or forward `asOfDate`, the same booking may contribute realized nights before the boundary and forward nights after it
 
-Do not infer guest counts from external system summaries if TACBookings guest rows exist.
+Do not infer guest counts from external system summaries if AlpineClubBookingsNZ guest rows exist.
 
 ## Revenue Contract
 
-- Booking revenue uses TACBookings stored amounts for operational booking-facing totals.
+- Booking revenue uses AlpineClubBookingsNZ stored amounts for operational booking-facing totals.
 - When booking revenue is exposed at nightly granularity, allocate `Booking.finalPriceCents` evenly across stay nights from `checkIn` inclusive to `checkOut` exclusive.
 - Financial statement revenue uses finance Xero snapshots.
-- Payment-derived cash summaries come from TACBookings `Payment` rows and must remain distinct from booking-derived revenue metrics.
+- Payment-derived cash summaries come from AlpineClubBookingsNZ `Payment` rows and must remain distinct from booking-derived revenue metrics.
 - Any page combining booking-derived and Xero-derived metrics must state which source owns each number.
 
 ## Costs Reporting Contract
 
 - Native costs reporting uses stored `PROFIT_AND_LOSS_MONTHLY` finance snapshots synced through the finance-only Xero boundary.
-- Costs report figures represent stored expense detail from those snapshots and must remain distinct from TACBookings booking revenue, payment-derived cash summaries, and native balance-sheet totals.
+- Costs report figures represent stored expense detail from those snapshots and must remain distinct from AlpineClubBookingsNZ booking revenue, payment-derived cash summaries, and native balance-sheet totals.
 - The smallest native costs report page may compare stored monthly expense snapshots across selected periods and surface grouped line-item detail, but it must not add pricing-sensitivity modelling, working-capital rollups, charts, or live Xero reads.
 
 ## Pricing Sensitivity Contract
 
-- Native pricing sensitivity uses stored `PROFIT_AND_LOSS_MONTHLY` finance snapshots plus TACBookings realized booking metrics for the same monthly windows.
+- Native pricing sensitivity uses stored `PROFIT_AND_LOSS_MONTHLY` finance snapshots plus AlpineClubBookingsNZ realized booking metrics for the same monthly windows.
 - Pricing sensitivity must keep source ownership explicit:
   - monthly costs come from finance snapshots
-  - guest nights, occupancy, and booked revenue come from TACBookings booking metrics
+  - guest nights, occupancy, and booked revenue come from AlpineClubBookingsNZ booking metrics
   - payment-derived cash totals remain out of scope
 - A matched monthly window uses the snapshot `periodStart` and the earlier of `periodEnd` or `asOfDate`.
 - Actual revenue per guest night is `bookedRevenueCents / guestNights` for the matched monthly window.
@@ -158,13 +158,13 @@ Do not infer guest counts from external system summaries if TACBookings guest ro
 ## Cash Reporting Contract
 
 - Native cash reporting uses stored `BANK_BALANCES` finance snapshots synced through the finance-only Xero boundary.
-- Cash report figures represent stored bank position detail from those snapshots and must remain distinct from TACBookings payment-derived cash summaries.
+- Cash report figures represent stored bank position detail from those snapshots and must remain distinct from AlpineClubBookingsNZ payment-derived cash summaries.
 - The smallest native cash report page may compare stored bank-balance snapshots across selected periods, but it must not add working-capital rollups or live Xero reads.
 
 ## Balance-Sheet Reporting Contract
 
 - Native balance-sheet reporting uses stored `BALANCE_SHEET` finance snapshots synced through the finance-only Xero boundary.
-- Balance-sheet figures represent stored assets, liabilities, and equity positions from those snapshots and must remain distinct from TACBookings booking metrics, payment-derived cash summaries, and the separate native cash report totals.
+- Balance-sheet figures represent stored assets, liabilities, and equity positions from those snapshots and must remain distinct from AlpineClubBookingsNZ booking metrics, payment-derived cash summaries, and the separate native cash report totals.
 - The smallest native balance-sheet report page may compare stored balance-sheet snapshots across selected periods and surface stored line-item detail, but it must not add costs reporting, working-capital rollups, charts, or live Xero reads.
 
 ## Working-Capital Reporting Contract
@@ -175,12 +175,12 @@ Do not infer guest counts from external system summaries if TACBookings guest ro
   - current liabilities come from stored balance-sheet sections explicitly labelled as current liabilities
   - working capital is `currentAssetsCents - currentLiabilitiesCents`
   - current ratio is `currentAssetsCents / currentLiabilitiesCents` only when current liabilities are greater than zero
-- Working-capital figures remain distinct from TACBookings booking metrics, payment-derived cash summaries, and the separate native cash report totals.
+- Working-capital figures remain distinct from AlpineClubBookingsNZ booking metrics, payment-derived cash summaries, and the separate native cash report totals.
 - The smallest native working-capital page may surface summary cards and a period comparison table across selected stored balance-sheet snapshots, but it must not add liquidity forecasting, charts, live Xero reads, or manual sync actions.
 
 ## Booking Type Note
 
-`TACBookings` does not currently have a first-class `bookingType` field.
+`AlpineClubBookingsNZ` does not currently have a first-class `bookingType` field.
 
 If finance reporting requires explicit booking type segmentation, define:
 

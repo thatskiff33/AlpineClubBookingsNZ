@@ -38,7 +38,7 @@ This initiative needs both automated and manual verification. Finance changes ar
 ### Data Validation
 
 - compare a representative period against the legacy dashboard
-- verify guest nights and forward bookings against TACBookings records
+- verify guest nights and forward bookings against AlpineClubBookingsNZ records
 - verify finance Xero sync row counts and last sync timestamps
 
 ### Operational Checks

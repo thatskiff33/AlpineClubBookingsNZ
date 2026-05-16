@@ -1,6 +1,6 @@
 # Notice
 
-The TACBookings source code is licensed under the MIT License.
+The AlpineClubBookingsNZ source code is licensed under the MIT License.
 
 Project names, club names, logos, photos, copy, domain names, and other
 reference club identity or operational content are included only to make this

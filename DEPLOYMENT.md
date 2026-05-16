@@ -1,6 +1,6 @@
 # Deployment Reference
 
-This guide describes the TACBookings production deployment shape. It is a
+This guide describes the AlpineClubBookingsNZ production deployment shape. It is a
 reference for operators adapting the project to their own infrastructure.
 
 Do not reuse another club's credentials, domains, payment accounts, accounting
@@ -104,8 +104,8 @@ Do not store that token in the repository or `.env`.
 From the target host:
 
 ```bash
-git clone https://github.com/<owner>/TACBookings.git TACBookings
-cd TACBookings
+git clone https://github.com/<owner>/AlpineClubBookingsNZ.git AlpineClubBookingsNZ
+cd AlpineClubBookingsNZ
 cp .env.example .env
 cp config/club.example.json config/club.json
 # edit .env with your own values
@@ -123,7 +123,7 @@ before any shared environment is exposed.
 
 ## Routine Production Deploy
 
-The supported TACBookings deploy path is:
+The supported AlpineClubBookingsNZ deploy path is:
 
 ```bash
 ./scripts/run-production-blue-green-deploy.sh

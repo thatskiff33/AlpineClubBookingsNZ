@@ -1,4 +1,4 @@
-# ADR-001: Implement the Finance Dashboard Natively in TACBookings
+# ADR-001: Implement the Finance Dashboard Natively in AlpineClubBookingsNZ
 
 ## Status
 
@@ -13,7 +13,7 @@ The current finance dashboard is a separate Streamlit application with:
 - CSV snapshot assumptions
 - a Python runtime and subprocess-based refresh flow
 
-TACBookings production is a Node/Next.js application with:
+AlpineClubBookingsNZ production is a Node/Next.js application with:
 
 - first-party authentication
 - role-aware layouts and APIs
@@ -22,15 +22,15 @@ TACBookings production is a Node/Next.js application with:
 
 ## Decision
 
-Implement the finance dashboard natively inside TACBookings under a dedicated `/finance` surface.
+Implement the finance dashboard natively inside AlpineClubBookingsNZ under a dedicated `/finance` surface.
 
-Do not embed, proxy, or iframe the Streamlit dashboard into production TACBookings.
+Do not embed, proxy, or iframe the Streamlit dashboard into production AlpineClubBookingsNZ.
 
 ## Consequences
 
 ### Positive
 
-- reuse TACBookings authentication and session model
+- reuse AlpineClubBookingsNZ authentication and session model
 - remove shared password risk
 - remove Python runtime dependency from production dashboard delivery
 - use first-party booking and guest data directly

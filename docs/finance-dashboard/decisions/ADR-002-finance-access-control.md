@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-`TACBookings` currently uses coarse roles such as `MEMBER`, `ADMIN`, and `LODGE`.
+`AlpineClubBookingsNZ` currently uses coarse roles such as `MEMBER`, `ADMIN`, and `LODGE`.
 
 The finance dashboard must be available to selected members and selected admins, without granting broad administrative power to all finance viewers.
 

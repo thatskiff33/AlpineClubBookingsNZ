@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-$HOME/TACBookings}"
+DEFAULT_PROJECT_DIR="$HOME/AlpineClubBookingsNZ"
+if [[ ! -d "$DEFAULT_PROJECT_DIR" && -d "$HOME/TACBookings" ]]; then
+  DEFAULT_PROJECT_DIR="$HOME/TACBookings"
+fi
+PROJECT_DIR="${PROJECT_DIR:-$DEFAULT_PROJECT_DIR}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-180}"
 PRUNE_UNTIL="${PRUNE_UNTIL:-12h}"
 FORCE_NO_CACHE="${FORCE_NO_CACHE:-0}"
@@ -1062,7 +1066,7 @@ remove_compose_orphans() {
 }
 
 echo "============================================"
-echo "  TACBookings: Blue/Green Deploy Script"
+echo "  AlpineClubBookingsNZ: Blue/Green Deploy Script"
 echo "============================================"
 
 cd "$PROJECT_DIR"

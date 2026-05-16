@@ -34,7 +34,7 @@ The page must keep source ownership explicit:
 
 - revenue figures come from stored `FinanceSnapshot` rows with `snapshotType = PROFIT_AND_LOSS_MONTHLY`
 - those snapshots are synced through the finance-only Xero boundary
-- the page does not use TACBookings booking metrics or payment rows for its revenue totals
+- the page does not use AlpineClubBookingsNZ booking metrics or payment rows for its revenue totals
 - the page does not trigger live Xero reads or manual sync mutations while rendering
 
 ## Page Content

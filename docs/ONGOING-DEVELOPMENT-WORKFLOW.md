@@ -1,15 +1,15 @@
 # Ongoing Development Workflow
 
-TACBookings uses a public upstream repository for generic product work and a
+AlpineClubBookingsNZ uses a public upstream repository for generic product work and a
 private deployment fork for club-specific operations. Keep deploy-only
 configuration, branding, service secrets, and club data in the private fork or
 its deployment environment.
 
 ## Repository Roles
 
-- `TACBookings` is the public upstream. Use it for generic product fixes,
+- `AlpineClubBookingsNZ` is the public upstream. Use it for generic product fixes,
   reusable feature work, framework upgrades, and adopter documentation.
-- `TACBookings-private` is the private deployment fork. Use it for club-specific
+- `AlpineClubBookingsNZ-private` is the private deployment fork. Use it for club-specific
   configuration, private branding, operational data fixes, and production
   release coordination.
 

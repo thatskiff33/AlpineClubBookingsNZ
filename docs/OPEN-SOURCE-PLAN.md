@@ -1,10 +1,10 @@
-# Open-source TACBookings via full extraction (upstream/downstream)
+# Open-source AlpineClubBookingsNZ via full extraction (upstream/downstream)
 
-This is the canonical plan for making TACBookings publicly available on GitHub while continuing to run TAC's production deployment. It is the source of truth: when this doc and any issue, comment, or commit disagree, this doc wins. Pivots require a Decision log entry at the bottom of this file *before* code changes.
+This is the canonical plan for making AlpineClubBookingsNZ publicly available on GitHub while continuing to run TAC's production deployment. It is the source of truth: when this doc and any issue, comment, or commit disagree, this doc wins. Pivots require a Decision log entry at the bottom of this file *before* code changes.
 
 ## Context
 
-We are making TACBookings public so other small clubs can adopt it, while continuing to deploy and develop for the reference club. The chosen approach:
+We are making AlpineClubBookingsNZ public so other small clubs can adopt it, while continuing to deploy and develop for the reference club. The chosen approach:
 
 - **Path B**: properly refactor before publishing so the public repo is genuinely adoptable, not a stripped-down dump.
 - **Dev workflow**: public repo is the source of truth; TAC's actual deployment lives in a private fork that pulls from public upstream and adds a thin TAC-specific overlay (branding, config, seed data).
@@ -14,14 +14,14 @@ This is a multi-week effort, sequenced so TAC's production never breaks. Each ph
 ## Target architecture
 
 ```
-GitHub: thatskiff33/TACBookings  (PUBLIC — generic, MIT, config-driven)
+GitHub: thatskiff33/AlpineClubBookingsNZ  (PUBLIC — generic, MIT, config-driven)
   ├── src/                       generic application code
   ├── prisma/                    schema + generic migrations
   ├── config/                    *.example.json (templates only)
   ├── public/branding/           default placeholder logo/favicon
   └── docs/                      generic documentation
 
-GitHub: thatskiff33/TACBookings-private  (PRIVATE — TAC deploy fork)
+GitHub: thatskiff33/AlpineClubBookingsNZ-private  (PRIVATE — TAC deploy fork)
   ├── (everything above, via `git pull upstream main`)
   ├── config/club.json           TAC's actual config (gitignored upstream)
   ├── config/features.json       TAC's feature flags
@@ -31,14 +31,14 @@ GitHub: thatskiff33/TACBookings-private  (PRIVATE — TAC deploy fork)
   └── deploy/                    TAC-specific deploy scripts if any
 ```
 
-Production deploys from `TACBookings-private`. Every generic improvement flows: develop in `TACBookings` (public) → merge → `cd TACBookings-private && git pull upstream main` → deploy.
+Production deploys from `AlpineClubBookingsNZ-private`. Every generic improvement flows: develop in `AlpineClubBookingsNZ` (public) → merge → `cd AlpineClubBookingsNZ-private && git pull upstream main` → deploy.
 
 ## Governance
 
 Four artifacts work together:
 
 - **`docs/OPEN-SOURCE-PLAN.md`** (this file) — canonical plan + decision log.
-- **GitHub Epic issue** in `thatskiff33/TACBookings` — high-level tracker, pinned, links to all phase sub-issues.
+- **GitHub Epic issue** in `thatskiff33/AlpineClubBookingsNZ` — high-level tracker, pinned, links to all phase sub-issues.
 - **GitHub sub-issues** — one per phase, with acceptance criteria from this plan as a checklist. PRs reference them.
 - **`MEMORY.md` entry** in Claude's auto-memory — pointer so every future Claude session in this repo auto-loads context.
 
@@ -59,7 +59,7 @@ Four artifacts work together:
 Done before any refactor work begins.
 
 - Create `docs/OPEN-SOURCE-PLAN.md` (this file).
-- Create the GitHub Epic issue with title "Epic: Open-source TACBookings via full extraction (upstream/downstream)". Body: link to this doc + checklist of phase sub-issue references.
+- Create the GitHub Epic issue with title "Epic: Open-source AlpineClubBookingsNZ via full extraction (upstream/downstream)". Body: link to this doc + checklist of phase sub-issue references.
 - Create 13 phase sub-issues (Phases 0–12), each with the phase section copied in and an acceptance-criteria checklist. Labels: `area: open-source`, `type: phase`.
 - Update `.github/pull_request_template.md` to add a "Plan adherence" line.
 - Save a memory entry pointing future Claude sessions at the epic.
@@ -175,21 +175,21 @@ This is the architectural cutover. Sequence matters.
 
 **9a. Backup**
 ```bash
-cp -r /home/ubuntu/TACBookings /home/ubuntu/TACBookings.backup-pre-split
+cp -r /home/ubuntu/AlpineClubBookingsNZ /home/ubuntu/AlpineClubBookingsNZ.backup-pre-split
 ```
 
 **9b. Create the private TAC overlay repo**
-- On GitHub, create `thatskiff33/TACBookings-private` (private, empty).
-- In a fresh clone of the current `TACBookings` repo, this becomes TAC's working dir going forward.
+- On GitHub, create `thatskiff33/AlpineClubBookingsNZ-private` (private, empty).
+- In a fresh clone of the current `AlpineClubBookingsNZ` repo, this becomes TAC's working dir going forward.
 - Push the current state (with all TAC config/branding) to the new private remote:
   ```bash
-  cd /home/ubuntu/TACBookings-private  # fresh clone
+  cd /home/ubuntu/AlpineClubBookingsNZ-private  # fresh clone
   git remote rename origin upstream
-  git remote add origin git@github.com:thatskiff33/TACBookings-private.git
+  git remote add origin git@github.com:thatskiff33/AlpineClubBookingsNZ-private.git
   git push -u origin main
   ```
 
-**9c. Strip TAC-specific files from the public-bound `TACBookings`**
+**9c. Strip TAC-specific files from the public-bound `AlpineClubBookingsNZ`**
 - Remove TAC overlay files from tracking (they stay in the private fork from 9b):
   ```bash
   git rm --cached config/club.json
@@ -208,7 +208,7 @@ cp -r /home/ubuntu/TACBookings /home/ubuntu/TACBookings.backup-pre-split
 
 **9d. Verify upstream/downstream sync works**
 ```bash
-cd /home/ubuntu/TACBookings-private
+cd /home/ubuntu/AlpineClubBookingsNZ-private
 git pull upstream main
 # Confirm: TAC's club.json/branding/etc. still present locally; upstream changes merged
 npm test
@@ -235,26 +235,26 @@ git push --force-with-lease origin main
 
 Verify with `git shortlog -sne --all` — no personal email.
 
-### Phase 11 — Flip TACBookings to public (15 minutes)
+### Phase 11 — Flip AlpineClubBookingsNZ to public (15 minutes)
 
-- GitHub UI: `TACBookings` → Settings → "Change visibility" → Public.
+- GitHub UI: `AlpineClubBookingsNZ` → Settings → "Change visibility" → Public.
 - Enable: secret scanning + push protection (free on public), CodeQL default config, Dependabot already on.
 - Add topics: `nextjs`, `prisma`, `stripe`, `xero`, `booking-system`, `nonprofit-software`.
 - Write a description + homepage URL.
 
 ### Phase 12 — Document the ongoing dev workflow (1 day)
 
-A short doc in `TACBookings-private/README.md` (or the main public README's "For maintainers" section) explaining the future workflow:
+A short doc in `AlpineClubBookingsNZ-private/README.md` (or the main public README's "For maintainers" section) explaining the future workflow:
 
-- **Generic feature/fix**: branch off `TACBookings` (public) → PR → merge to public main → `cd TACBookings-private && git pull upstream main` → deploy to TAC.
-- **TAC-specific change** (config, branding, TAC-only data fix): branch off `TACBookings-private` (private) → PR → merge → deploy.
-- **Hotfix in production**: branch off `TACBookings-private`, fix, deploy, then port the generic part back to public.
+- **Generic feature/fix**: branch off `AlpineClubBookingsNZ` (public) → PR → merge to public main → `cd AlpineClubBookingsNZ-private && git pull upstream main` → deploy to TAC.
+- **TAC-specific change** (config, branding, TAC-only data fix): branch off `AlpineClubBookingsNZ-private` (private) → PR → merge → deploy.
+- **Hotfix in production**: branch off `AlpineClubBookingsNZ-private`, fix, deploy, then port the generic part back to public.
 
 CI runs in both repos. Both should run tests. The private repo's CI tests with TAC's real `club.json`; the public repo's CI tests with `club.example.json`.
 
 ## Critical files to modify (across phases)
 
-Phase 1–6 (in `TACBookings` before split):
+Phase 1–6 (in `AlpineClubBookingsNZ` before split):
 - `config/club.example.json`, `config/club.json` — new
 - `src/config/club.ts`, `src/config/features.ts` — new
 - `src/lib/email-sender.ts`, `src/lib/email-templates.ts` — config-driven
@@ -275,11 +275,11 @@ Per phase:
 - Deploy to TAC prod, smoke test booking + payment + email flows
 
 End-to-end before flipping public:
-1. Fresh clone of (what will be) the public `TACBookings` in `/tmp/`. With only `config/club.example.json` + placeholder branding, can you boot the app, seed an admin, make a booking? **This is the adopter experience test.**
+1. Fresh clone of (what will be) the public `AlpineClubBookingsNZ` in `/tmp/`. With only `config/club.example.json` + placeholder branding, can you boot the app, seed an admin, make a booking? **This is the adopter experience test.**
 2. Grep for personal author email and legacy default seed password — zero hits in the public-bound repo.
 3. Grep for reference-club domain/name strings — only matches in README "reference deployment" line.
 4. `git shortlog -sne --all` (after Phase 10) — no personal email.
-5. From the private `TACBookings-private` repo, run `git pull upstream main` and confirm TAC config/branding files survive the merge as untracked-but-present local files.
+5. From the private `AlpineClubBookingsNZ-private` repo, run `git pull upstream main` and confirm TAC config/branding files survive the merge as untracked-but-present local files.
 6. After Phase 11: open the public repo in an incognito browser — confirm what an outsider sees matches expectations.
 
 ## Risks

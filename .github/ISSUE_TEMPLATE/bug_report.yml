@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a reproducible problem in the TACBookings codebase.
+description: Report a reproducible problem in the AlpineClubBookingsNZ codebase.
 title: "[Bug] "
 labels:
   - bug

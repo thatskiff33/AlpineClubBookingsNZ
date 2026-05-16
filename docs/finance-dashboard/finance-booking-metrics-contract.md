@@ -2,11 +2,11 @@
 
 This document defines the finance-only booking metrics query boundary.
 
-It is intentionally narrow. The finance booking metrics boundary exposes TACBookings booking-derived stay and pipeline metrics as JSON for later finance reporting work, but it does not add finance UI pages, reporting-page components, or booking type schema changes.
+It is intentionally narrow. The finance booking metrics boundary exposes AlpineClubBookingsNZ booking-derived stay and pipeline metrics as JSON for later finance reporting work, but it does not add finance UI pages, reporting-page components, or booking type schema changes.
 
 ## Boundary
 
-- `src/lib/finance-booking-metrics.ts` is the canonical finance query layer for TACBookings booking metrics.
+- `src/lib/finance-booking-metrics.ts` is the canonical finance query layer for AlpineClubBookingsNZ booking metrics.
 - `src/app/api/finance/bookings/metrics/route.ts` exposes that query layer through a finance-viewer read route.
 - `src/lib/finance-api-auth.ts` remains the finance API authorization boundary and now distinguishes finance viewer read access from finance manager-only mutations.
 
@@ -32,8 +32,8 @@ At least one complete window is required. Partial realized or forward parameter 
 The booking metrics response includes:
 
 - `generatedAt`
-- `bookingCount`: distinct TACBookings bookings contributing to any requested metrics section
-- `paymentSummary`: distinct-booking summary derived from TACBookings `Payment` rows
+- `bookingCount`: distinct AlpineClubBookingsNZ bookings contributing to any requested metrics section
+- `paymentSummary`: distinct-booking summary derived from AlpineClubBookingsNZ `Payment` rows
 - optional `realized`
 - optional `forward`
 
@@ -70,7 +70,7 @@ The booking metrics response includes:
 ## Metric Rules
 
 - Booking and guest inclusion rules come from `docs/finance-dashboard/data-contracts.md`.
-- Booked revenue always comes from TACBookings `Booking.finalPriceCents`, not `Payment`.
+- Booked revenue always comes from AlpineClubBookingsNZ `Booking.finalPriceCents`, not `Payment`.
 - When revenue is exposed at nightly granularity, `Booking.finalPriceCents` is allocated evenly across stay nights from `checkIn` inclusive to `checkOut` exclusive.
 - A booking can contribute to both realized and forward sections when its stay spans the realized cutoff or forward `asOfDate`.
 - Forward metrics count only stay dates strictly after `forwardAsOf`.

@@ -12,4 +12,4 @@ All notable public reference-release changes should be recorded here.
 
 ## 0.1.0
 
-- Initial TACBookings production application baseline.
+- Initial AlpineClubBookingsNZ production application baseline.

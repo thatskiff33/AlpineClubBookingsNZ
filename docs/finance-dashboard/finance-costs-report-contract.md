@@ -16,7 +16,7 @@ This document defines the native `/finance/costs` report page.
 ## Data Source Contract
 
 - all figures on the page come from stored `PROFIT_AND_LOSS_MONTHLY` `FinanceSnapshot` rows
-- costs remain explicitly finance-snapshot-backed and distinct from TACBookings booking metrics, payment-derived cash summaries, and the separate native cash and balance-sheet report totals
+- costs remain explicitly finance-snapshot-backed and distinct from AlpineClubBookingsNZ booking metrics, payment-derived cash summaries, and the separate native cash and balance-sheet report totals
 - the page reads durable stored snapshots only; it does not trigger live Xero report reads, manual sync mutations, pricing-sensitivity analysis, or working-capital calculations
 
 ## Report Behavior Contract

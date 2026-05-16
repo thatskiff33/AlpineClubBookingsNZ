@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-SOURCE_REPO="${SOURCE_REPO:-$HOME/TACBookings}"
+DEFAULT_SOURCE_REPO="$HOME/AlpineClubBookingsNZ"
+if [[ ! -d "$DEFAULT_SOURCE_REPO" && -d "$HOME/TACBookings" ]]; then
+  DEFAULT_SOURCE_REPO="$HOME/TACBookings"
+fi
+SOURCE_REPO="${SOURCE_REPO:-$DEFAULT_SOURCE_REPO}"
 DEPLOY_REF="${DEPLOY_REF:-origin/main}"
 FETCH_LATEST="${FETCH_LATEST:-1}"
 DEPLOY_WORKSPACE_ROOT="${DEPLOY_WORKSPACE_ROOT:-$HOME/tacbookings-deployments}"
@@ -341,7 +345,7 @@ prune_stale_deploy_workspaces() {
 }
 
 echo "====================================================="
-echo "  TACBookings: Production Blue/Green Deploy Wrapper"
+echo "  AlpineClubBookingsNZ: Production Blue/Green Deploy Wrapper"
 echo "====================================================="
 
 step "1/8" "Validating host prerequisites"

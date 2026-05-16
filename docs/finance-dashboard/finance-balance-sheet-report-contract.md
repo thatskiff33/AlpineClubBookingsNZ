@@ -16,7 +16,7 @@ This document defines the native `/finance/balance-sheet` report page.
 ## Data Source Contract
 
 - all figures on the page come from stored `BALANCE_SHEET` `FinanceSnapshot` rows
-- assets, liabilities, and net assets stay explicitly finance-snapshot-backed and distinct from TACBookings operational booking metrics, payment-derived cash summaries, and the separate native cash report
+- assets, liabilities, and net assets stay explicitly finance-snapshot-backed and distinct from AlpineClubBookingsNZ operational booking metrics, payment-derived cash summaries, and the separate native cash report
 - the page reads durable stored snapshots only; it does not trigger live Xero report reads, manual sync mutations, costs rollups, or working-capital calculations
 
 ## Report Behavior Contract

@@ -7,7 +7,7 @@ This document defines the native `/finance/pricing-sensitivity` report page.
 - `src/app/(finance)/finance/pricing-sensitivity/page.tsx` renders the native pricing-sensitivity report page.
 - `src/lib/finance-pricing-sensitivity-page.ts` is the loader and view-model boundary for the page.
 - `src/lib/finance-sync-storage.ts` provides the finance-only monthly cost snapshot read helper used by the report page.
-- `src/lib/finance-booking-metrics.ts` provides the realized TACBookings booking metrics used to compare demand against the selected monthly cost periods.
+- `src/lib/finance-booking-metrics.ts` provides the realized AlpineClubBookingsNZ booking metrics used to compare demand against the selected monthly cost periods.
 
 ## Access and Routing Contract
 
@@ -17,8 +17,8 @@ This document defines the native `/finance/pricing-sensitivity` report page.
 ## Data Source Contract
 
 - monthly costs come from stored `PROFIT_AND_LOSS_MONTHLY` `FinanceSnapshot` rows
-- guest nights, occupancy, and booked revenue come from TACBookings realized booking metrics for the same monthly windows
-- booked revenue remains explicitly TACBookings booking-derived and distinct from payment-derived cash totals
+- guest nights, occupancy, and booked revenue come from AlpineClubBookingsNZ realized booking metrics for the same monthly windows
+- booked revenue remains explicitly AlpineClubBookingsNZ booking-derived and distinct from payment-derived cash totals
 - the page reads durable stored data only; it does not trigger live Xero reads or manual sync mutations
 
 ## Pricing Sensitivity Contract

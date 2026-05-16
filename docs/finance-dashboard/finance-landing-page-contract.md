@@ -2,7 +2,7 @@
 
 This document defines the native `/finance` landing page shell.
 
-It is intentionally small. The landing page surfaces live finance sync health and TACBookings booking summaries for finance viewers and managers, and it may expose finance-manager Xero connection controls, a manual sync trigger, and diagnostics deep links, but it does not implement charts or report-specific data loaders.
+It is intentionally small. The landing page surfaces live finance sync health and AlpineClubBookingsNZ booking summaries for finance viewers and managers, and it may expose finance-manager Xero connection controls, a manual sync trigger, and diagnostics deep links, but it does not implement charts or report-specific data loaders.
 
 ## Boundary
 
@@ -19,7 +19,7 @@ It is intentionally small. The landing page surfaces live finance sync health an
 
 The landing page must keep those source boundaries explicit in the UI:
 
-- booking summary cards are TACBookings-derived metrics
+- booking summary cards are AlpineClubBookingsNZ-derived metrics
 - sync cards describe finance snapshot freshness and failures
 
 ## Default Windows

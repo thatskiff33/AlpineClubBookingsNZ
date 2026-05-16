@@ -1,16 +1,16 @@
 {
-  "name": "tacbookings",
+  "name": "alpine-club-bookings-nz",
   "version": "0.1.0",
   "description": "Open-source club booking, membership, payment, and finance platform.",
   "private": true,
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/thatskiff33/TACBookings.git"
+    "url": "git+https://github.com/thatskiff33/AlpineClubBookingsNZ.git"
   },
-  "homepage": "https://github.com/thatskiff33/TACBookings#readme",
+  "homepage": "https://github.com/thatskiff33/AlpineClubBookingsNZ#readme",
   "bugs": {
-    "url": "https://github.com/thatskiff33/TACBookings/issues"
+    "url": "https://github.com/thatskiff33/AlpineClubBookingsNZ/issues"
   },
   "engines": {
     "node": ">=24.0.0 <25",

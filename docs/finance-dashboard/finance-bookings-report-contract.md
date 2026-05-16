@@ -2,13 +2,13 @@
 
 This document defines the native `/finance/bookings` report page.
 
-It is intentionally small. The page turns the landed TACBookings finance booking metrics boundary into a native bookings report with realized stay detail and forward pipeline detail, but it does not add charts, finance snapshot-backed revenue pages, or broader balance-sheet reporting.
+It is intentionally small. The page turns the landed AlpineClubBookingsNZ finance booking metrics boundary into a native bookings report with realized stay detail and forward pipeline detail, but it does not add charts, finance snapshot-backed revenue pages, or broader balance-sheet reporting.
 
 ## Boundary
 
 - `src/app/(finance)/finance/bookings/page.tsx` renders the native bookings report page.
 - `src/lib/finance-bookings-report-page.ts` is the loader and view-model boundary for the page.
-- `src/lib/finance-booking-metrics.ts` remains the canonical finance query layer for TACBookings booking metrics.
+- `src/lib/finance-booking-metrics.ts` remains the canonical finance query layer for AlpineClubBookingsNZ booking metrics.
 
 ## Access
 
@@ -44,8 +44,8 @@ Invalid or incomplete page filters must fall back safely to the default report w
 
 The page must keep source ownership explicit:
 
-- booked revenue comes from TACBookings `Booking.finalPriceCents` allocated across stay nights
-- net collected cash comes from TACBookings `Payment` rows
+- booked revenue comes from AlpineClubBookingsNZ `Booking.finalPriceCents` allocated across stay nights
+- net collected cash comes from AlpineClubBookingsNZ `Payment` rows
 - the page does not show finance snapshot-backed or Xero-only revenue figures
 
 The page renders:

@@ -11,10 +11,10 @@ removal. It refuses to run unless called with:
   bash scripts/phase-9-split.sh --execute
 
 Environment overrides:
-  PUBLIC_REPO_DIR=/home/ubuntu/TACBookings
-  PRIVATE_REPO=thatskiff33/TACBookings-tokoroa
-  PRIVATE_REPO_DIR=/home/ubuntu/TACBookings-tokoroa
-  BACKUP_DIR=/home/ubuntu/TACBookings.backup-pre-split
+  PUBLIC_REPO_DIR=/home/ubuntu/AlpineClubBookingsNZ
+  PRIVATE_REPO=thatskiff33/AlpineClubBookingsNZ-tokoroa
+  PRIVATE_REPO_DIR=/home/ubuntu/AlpineClubBookingsNZ-tokoroa
+  BACKUP_DIR=/home/ubuntu/AlpineClubBookingsNZ.backup-pre-split
   PUBLIC_BRANCH=main
 USAGE
 }
@@ -24,10 +24,10 @@ if [[ "${1:-}" != "--execute" ]]; then
   exit 64
 fi
 
-PUBLIC_REPO_DIR="${PUBLIC_REPO_DIR:-/home/ubuntu/TACBookings}"
-PRIVATE_REPO="${PRIVATE_REPO:-thatskiff33/TACBookings-tokoroa}"
-PRIVATE_REPO_DIR="${PRIVATE_REPO_DIR:-/home/ubuntu/TACBookings-tokoroa}"
-BACKUP_DIR="${BACKUP_DIR:-/home/ubuntu/TACBookings.backup-pre-split}"
+PUBLIC_REPO_DIR="${PUBLIC_REPO_DIR:-/home/ubuntu/AlpineClubBookingsNZ}"
+PRIVATE_REPO="${PRIVATE_REPO:-thatskiff33/AlpineClubBookingsNZ-tokoroa}"
+PRIVATE_REPO_DIR="${PRIVATE_REPO_DIR:-/home/ubuntu/AlpineClubBookingsNZ-tokoroa}"
+BACKUP_DIR="${BACKUP_DIR:-/home/ubuntu/AlpineClubBookingsNZ.backup-pre-split}"
 PUBLIC_BRANCH="${PUBLIC_BRANCH:-main}"
 PRIVATE_REMOTE_URL="${PRIVATE_REMOTE_URL:-}"
 
@@ -116,7 +116,7 @@ if [[ -z "$PRIVATE_REMOTE_URL" ]]; then
 fi
 
 printf 'Creating private repository %s\n' "$PRIVATE_REPO"
-run gh repo create "$PRIVATE_REPO" --private --description "Private deployment fork for TACBookings"
+run gh repo create "$PRIVATE_REPO" --private --description "Private deployment fork for AlpineClubBookingsNZ"
 
 printf 'Cloning public repository into private deployment directory\n'
 run git clone "$public_remote_url" "$PRIVATE_REPO_DIR"

@@ -8,7 +8,7 @@ Accepted
 
 The legacy finance dashboard reads CSV snapshots from disk and refreshes them through local scripts.
 
-TACBookings production runs in a read-only application container with Postgres already available as the system database.
+AlpineClubBookingsNZ production runs in a read-only application container with Postgres already available as the system database.
 
 ## Decision
 
@@ -20,7 +20,7 @@ CSV files may be used during one-off migration or validation work, but they are 
 
 ### Positive
 
-- works with TACBookings production runtime and deployment model
+- works with AlpineClubBookingsNZ production runtime and deployment model
 - enables proper authorization, querying, and observability
 - removes ad hoc file transfer and local HTTP export patterns
 

@@ -1,6 +1,6 @@
 # Audit Retention And Archive Runbook
 
-This runbook covers the production audit-log retention job and the optional archive database used by TACBookings.
+This runbook covers the production audit-log retention job and the optional archive database used by AlpineClubBookingsNZ.
 
 ## Runtime
 

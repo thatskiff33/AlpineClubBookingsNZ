@@ -1,6 +1,6 @@
 # Contributing
 
-TACBookings is a production-shaped reference implementation for a club booking,
+AlpineClubBookingsNZ is a production-shaped reference implementation for a club booking,
 membership, payment, and finance platform. Contributions should keep the app
 safe for real operational use while remaining understandable for public readers.
 

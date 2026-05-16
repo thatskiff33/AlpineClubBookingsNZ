@@ -1,6 +1,6 @@
 # Configuration
 
-This reference covers the public configuration contract for TACBookings.
+This reference covers the public configuration contract for AlpineClubBookingsNZ.
 Start from `.env.example` and `config/club.example.json`, then replace values
 for your club before running a shared or production deployment.
 

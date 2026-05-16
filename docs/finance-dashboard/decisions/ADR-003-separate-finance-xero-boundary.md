@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The existing TACBookings Xero integration serves operational workflows such as:
+The existing AlpineClubBookingsNZ Xero integration serves operational workflows such as:
 
 - member contacts
 - subscriptions
@@ -18,7 +18,7 @@ The finance dashboard has its own API-usage concerns and should not consume the 
 
 ## Decision
 
-Implement finance reporting against a separate Xero OAuth client/app and separate persistence boundary inside the TACBookings codebase.
+Implement finance reporting against a separate Xero OAuth client/app and separate persistence boundary inside the AlpineClubBookingsNZ codebase.
 
 This means separate:
 

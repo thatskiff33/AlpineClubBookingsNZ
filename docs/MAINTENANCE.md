@@ -1,6 +1,6 @@
 # Maintenance
 
-This document describes the public maintenance baseline for TACBookings.
+This document describes the public maintenance baseline for AlpineClubBookingsNZ.
 
 ## Required Gates
 

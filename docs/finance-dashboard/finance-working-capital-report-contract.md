@@ -19,7 +19,7 @@ This document defines the native `/finance/working-capital` report page.
 - all figures on the page come from stored `BALANCE_SHEET` `FinanceSnapshot` rows
 - current assets are derived only from stored balance-sheet sections explicitly labelled as current assets
 - current liabilities are derived only from stored balance-sheet sections explicitly labelled as current liabilities
-- working-capital figures stay explicitly finance-snapshot-backed and distinct from TACBookings booking metrics, payment-derived cash summaries, and the separate native cash report
+- working-capital figures stay explicitly finance-snapshot-backed and distinct from AlpineClubBookingsNZ booking metrics, payment-derived cash summaries, and the separate native cash report
 - the page reads durable stored snapshots only; it does not trigger live Xero report reads, manual sync mutations, or liquidity forecasts
 
 ## Report Behavior Contract

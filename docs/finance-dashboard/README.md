@@ -1,7 +1,7 @@
 # Finance Dashboard
 
-The finance dashboard is the native TACBookings reporting workspace under
-`/finance`. It uses TACBookings credentials, explicit finance access levels,
+The finance dashboard is the native AlpineClubBookingsNZ reporting workspace under
+`/finance`. It uses AlpineClubBookingsNZ credentials, explicit finance access levels,
 first-party booking data, and a separate finance Xero integration.
 
 ## Access Model
@@ -21,7 +21,7 @@ tenant linkage, encryption key/versioning, usage metering, callback route, and
 sync services.
 
 Normal finance report navigation reads stored snapshots or first-party
-TACBookings booking/payment data. It should not make live Xero calls on page
+AlpineClubBookingsNZ booking/payment data. It should not make live Xero calls on page
 render.
 
 ## Data Model
@@ -29,7 +29,7 @@ render.
 - Xero-derived accounting datasets are persisted as `FinanceSnapshot` rows.
 - Daily sync is handled by the finance sync cron and durable service layer.
 - Booking, occupancy, guest-night, and pricing-sensitivity reports use
-  TACBookings booking/payment data directly.
+  AlpineClubBookingsNZ booking/payment data directly.
 - Finance API and page contracts are described in this directory so report
   definitions stay explicit.
 
@@ -55,7 +55,7 @@ render.
 
 ## ADRs
 
-- [ADR-001: Native finance dashboard in TACBookings](decisions/ADR-001-native-finance-dashboard-in-tacbookings.md)
+- [ADR-001: Native finance dashboard in AlpineClubBookingsNZ](decisions/ADR-001-native-finance-dashboard-in-tacbookings.md)
 - [ADR-002: Finance access control](decisions/ADR-002-finance-access-control.md)
 - [ADR-003: Separate finance Xero boundary](decisions/ADR-003-separate-finance-xero-boundary.md)
 - [ADR-004: PostgreSQL snapshots over CSV](decisions/ADR-004-postgres-snapshots-over-csv.md)
@@ -67,5 +67,5 @@ render.
   the access model changes.
 - Do not reuse operational Xero token storage, OAuth clients, or API budget for
   finance reporting.
-- Keep report pages backed by snapshots or first-party TACBookings data unless a
+- Keep report pages backed by snapshots or first-party AlpineClubBookingsNZ data unless a
   contract explicitly allows a live integration call.

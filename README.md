@@ -1,11 +1,11 @@
-# TACBookings
+# AlpineClubBookingsNZ
 
-TACBookings is an open-source booking, membership, payment, lodge, and finance
+AlpineClubBookingsNZ is an open-source booking, membership, payment, lodge, and finance
 platform for small clubs. It is published as a real-world reference
 implementation for a production Next.js application with payments, accounting,
 email, scheduled jobs, and Docker-based deployment.
 
-TACBookings is the open-source booking system originally built for and deployed
+AlpineClubBookingsNZ is the open-source booking system originally built for and deployed
 at [Tokoroa Alpine Club](https://tokoroa.org.nz).
 
 The code is MIT licensed. Project branding, logos, copy, domains, and
@@ -69,8 +69,8 @@ reference.
 ## Fresh Clone Setup
 
 ```bash
-git clone https://github.com/thatskiff33/TACBookings.git
-cd TACBookings
+git clone https://github.com/thatskiff33/AlpineClubBookingsNZ.git
+cd AlpineClubBookingsNZ
 cp .env.example .env
 cp config/club.example.json config/club.json
 npm ci
@@ -128,7 +128,7 @@ read the relevant versioned guide in `node_modules/next/dist/docs/`.
 
 ## For Maintainers
 
-Use the public repository for generic TACBookings work and a private deployment
+Use the public repository for generic AlpineClubBookingsNZ work and a private deployment
 fork for club-specific configuration, branding, and production release work.
 
 - Generic feature or fix: branch from public `main`, open a public PR, merge
@@ -177,7 +177,7 @@ Lighthouse workflow.
 ## Deployment
 
 Production deployment is documented as a reference in `DEPLOYMENT.md`.
-The supported TACBookings deployment path uses the blue/green wrapper:
+The supported AlpineClubBookingsNZ deployment path uses the blue/green wrapper:
 
 ```bash
 ./scripts/run-production-blue-green-deploy.sh

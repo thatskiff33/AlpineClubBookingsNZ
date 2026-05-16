@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 // Parent/dependent management tests removed — parent/dependent model replaced by family groups.
-// See: https://github.com/thatskiff33/TACBookings/issues/35
+// See: https://github.com/thatskiff33/AlpineClubBookingsNZ/issues/35
 
 describe("Joined Date Display Logic", () => {
   it("uses joinedDate when available", () => {

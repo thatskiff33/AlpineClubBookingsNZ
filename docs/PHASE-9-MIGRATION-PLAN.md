@@ -26,11 +26,11 @@ repository visibility, or deploy production.
 - Phases 2 through 8 and Phase 12 have merged to `origin/main`.
 - GitHub CLI authentication has permission to create the private repository
   under `thatskiff33`.
-- `/home/ubuntu/TACBookings` is a clean checkout of the latest `origin/main`.
+- `/home/ubuntu/AlpineClubBookingsNZ` is a clean checkout of the latest `origin/main`.
 - The private repository name and local private worktree path have been
   confirmed with the repository owner.
-- There is enough local disk space to copy `/home/ubuntu/TACBookings` to
-  `/home/ubuntu/TACBookings.backup-pre-split`.
+- There is enough local disk space to copy `/home/ubuntu/AlpineClubBookingsNZ` to
+  `/home/ubuntu/AlpineClubBookingsNZ.backup-pre-split`.
 - A human has approved the production deploy window that happens after the split
   verification, if a deploy is required.
 
@@ -71,7 +71,7 @@ The script also prepares ignore entries for future private-only paths:
 1. Confirm the public checkout is clean and current:
 
    ```bash
-   cd /home/ubuntu/TACBookings
+   cd /home/ubuntu/AlpineClubBookingsNZ
    git fetch origin main
    git status --short --branch
    ```
@@ -99,7 +99,7 @@ The script also prepares ignore entries for future private-only paths:
 6. In the private fork, verify upstream sync:
 
    ```bash
-   cd /home/ubuntu/TACBookings-tokoroa
+   cd /home/ubuntu/AlpineClubBookingsNZ-tokoroa
    git fetch upstream main
    git pull upstream main
    git status --short
@@ -119,11 +119,11 @@ The script also prepares ignore entries for future private-only paths:
 ## Rollback Plan
 
 - If the private repository push fails before public changes are committed,
-  stop and keep using the original `/home/ubuntu/TACBookings` checkout.
+  stop and keep using the original `/home/ubuntu/AlpineClubBookingsNZ` checkout.
 - If the public overlay-removal commit is wrong, revert that commit before any
   visibility change.
 - If the local working tree is damaged, restore from
-  `/home/ubuntu/TACBookings.backup-pre-split`.
+  `/home/ubuntu/AlpineClubBookingsNZ.backup-pre-split`.
 - If production verification fails, keep the public repository private and
   continue deploying from the known-good checkout until the private fork is
   repaired.

@@ -34,7 +34,7 @@ The page must keep source ownership explicit:
 
 - cash figures come from stored `FinanceSnapshot` rows with `snapshotType = BANK_BALANCES`
 - those snapshots are synced through the finance-only Xero boundary
-- the page does not use TACBookings payment rows for its cash totals
+- the page does not use AlpineClubBookingsNZ payment rows for its cash totals
 - the page does not trigger live Xero reads or manual sync mutations while rendering
 
 ## Page Content
@@ -58,7 +58,7 @@ This report page does not implement:
 
 - working-capital rollups
 - costs or balance-sheet report pages
-- TACBookings payment-derived cash summaries
+- AlpineClubBookingsNZ payment-derived cash summaries
 - charts
 - manual sync actions
 - finance Xero connection work
