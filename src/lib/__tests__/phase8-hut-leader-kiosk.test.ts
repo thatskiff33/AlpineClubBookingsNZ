@@ -83,7 +83,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("creates hut leader assignments with a bcrypt-hashed PIN and emails the plaintext PIN", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+      user: { id: "admin-1", role: "ADMIN", email: "support@example.org" },
     });
     mockPrisma.member.findUnique.mockResolvedValue({
       id: "member-1",
@@ -123,7 +123,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("formats member guest phone numbers for the kiosk guest list API", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+      user: { id: "admin-1", role: "ADMIN", email: "support@example.org" },
     });
     mockPrisma.booking.findMany.mockResolvedValue([
       {
@@ -165,7 +165,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("hides non-adult phone numbers in the kiosk guest list API", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+      user: { id: "admin-1", role: "ADMIN", email: "support@example.org" },
     });
     mockPrisma.booking.findMany.mockResolvedValue([
       {
@@ -208,7 +208,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("includes checkout-day guests only in lodge-list guest scope", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+      user: { id: "admin-1", role: "ADMIN", email: "support@example.org" },
     });
     mockPrisma.booking.findMany.mockResolvedValue([
       {
@@ -255,7 +255,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("keeps the default lodge guest API scope stay-night compatible", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+      user: { id: "admin-1", role: "ADMIN", email: "support@example.org" },
     });
     mockPrisma.booking.findMany.mockResolvedValue([]);
 
@@ -277,7 +277,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("rotates hut leader PINs and returns the new PIN once for admins", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+      user: { id: "admin-1", role: "ADMIN", email: "support@example.org" },
     });
     mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
       id: "assign-1",
@@ -355,7 +355,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
       pinHash
     );
     mockAuth.mockResolvedValue({
-      user: { id: "lodge-1", role: "LODGE", email: "lodge@tokoroa.org.nz" },
+      user: { id: "lodge-1", role: "LODGE", email: "lodge@example.org" },
     });
     mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
       id: "assign-1",
@@ -397,7 +397,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("creates a signed hut leader PIN session cookie on successful PIN login", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "lodge-1", role: "LODGE", email: "lodge@tokoroa.org.nz" },
+      user: { id: "lodge-1", role: "LODGE", email: "lodge@example.org" },
     });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([
       {
@@ -488,7 +488,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("writes member-linked audit rows when marking lodge guests arrived and departed", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN", email: "support@tokoroa.org.nz" },
+      user: { id: "admin-1", role: "ADMIN", email: "support@example.org" },
     });
     mockPrisma.bookingGuest.findFirst
       .mockResolvedValueOnce({
@@ -585,7 +585,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
     );
 
     mockAuth.mockResolvedValue({
-      user: { id: "lodge-1", role: "LODGE", email: "lodge@tokoroa.org.nz" },
+      user: { id: "lodge-1", role: "LODGE", email: "lodge@example.org" },
     });
     mockPrisma.hutLeaderAssignment.findUnique.mockResolvedValue({
       id: "assign-1",
@@ -645,7 +645,7 @@ describe("Phase 8: Hut Leader & Kiosk Improvements", () => {
 
   it("rate limits PIN login after 5 failed attempts per minute", async () => {
     mockAuth.mockResolvedValue({
-      user: { id: "lodge-1", role: "LODGE", email: "lodge@tokoroa.org.nz" },
+      user: { id: "lodge-1", role: "LODGE", email: "lodge@example.org" },
     });
     mockPrisma.hutLeaderAssignment.findMany.mockResolvedValue([]);
     const { POST } = await import("@/app/api/lodge/pin-login/route");

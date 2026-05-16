@@ -1,4 +1,4 @@
-tokoroa.org.nz, www.tokoroa.org.nz {
+example.org, www.example.org {
 	header {
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
@@ -21,13 +21,13 @@ tokoroa.org.nz, www.tokoroa.org.nz {
 	import /etc/caddy/deploy/tacbookings-active.caddy
 }
 
-bookings.tokoroa.org.nz {
+bookings.example.org {
 	@root path /
-	redir @root https://tokoroa.org.nz/dashboard permanent
-	redir * https://tokoroa.org.nz{uri} permanent
+	redir @root https://example.org/dashboard permanent
+	redir * https://example.org{uri} permanent
 }
 
-dashboard.tokoroa.org.nz {
+dashboard.example.org {
 	header {
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
@@ -36,9 +36,9 @@ dashboard.tokoroa.org.nz {
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 	}
-	redir * https://tokoroa.org.nz/finance-legacy{uri} permanent
+	redir * https://example.org/finance-legacy{uri} permanent
 }
 
-xero-mcp.tokoroa.org.nz {
+xero-mcp.example.org {
 	reverse_proxy xero-mcp-auth:8080
 }

@@ -94,7 +94,7 @@ function createReport(overrides?: {
     reportName: overrides?.reportName ?? "Profit and Loss",
     reportType: overrides?.reportType ?? "ProfitLoss",
     reportTitle: "Demo Finance Report",
-    reportTitles: ["Demo Finance Report", "Tokoroa Alpine Club", "April 2026"],
+    reportTitles: ["Demo Finance Report", "Example Alpine Club", "April 2026"],
     reportDate: overrides?.reportDate ?? "2026-04-20",
     updatedDateUTC:
       overrides?.updatedDateUTC ?? new Date("2026-04-20T00:05:00.000Z"),
@@ -658,7 +658,7 @@ describe("finance-sync-datasets", () => {
           currencyCode: NZD,
           contact: {
             contactID: "customer-1",
-            name: "Tokoroa High School",
+            name: "Example High School",
             contactStatus: ACTIVE,
           },
           updatedDateUTC: new Date("2026-04-20T00:08:00.000Z"),
@@ -674,7 +674,7 @@ describe("finance-sync-datasets", () => {
           currencyCode: NZD,
           contact: {
             contactID: "customer-1",
-            name: "Tokoroa High School",
+            name: "Example High School",
             contactStatus: ACTIVE,
           },
           updatedDateUTC: new Date("2026-04-20T00:09:00.000Z"),
@@ -738,7 +738,7 @@ describe("finance-sync-datasets", () => {
         contacts: [
           {
             contactId: "customer-1",
-            contactName: "Tokoroa High School",
+            contactName: "Example High School",
             currency: "NZD",
             invoiceCount: 2,
             totalAmountDue: 240,

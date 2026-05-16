@@ -39,7 +39,7 @@ const adminSession = { user: { id: "admin-1", role: "ADMIN" } } as const;
 describe("Xero OAuth admin routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv("NEXTAUTH_URL", "https://tokoroa.org.nz");
+    vi.stubEnv("NEXTAUTH_URL", "https://example.org");
     mockAuth.mockResolvedValue(adminSession);
     mockGetXeroConsentUrl.mockImplementation(async (state?: string) => {
       const url = new URL("https://login.xero.com/identity/connect/authorize");
@@ -53,7 +53,7 @@ describe("Xero OAuth admin routes", () => {
 
   it("sets a scoped OAuth state cookie before redirecting to Xero", async () => {
     const response = await connectXero(
-      new Request("https://www.tokoroa.org.nz/api/admin/xero/connect")
+      new Request("https://www.example.org/api/admin/xero/connect")
     );
 
     expect(response.status).toBe(307);
@@ -70,7 +70,7 @@ describe("Xero OAuth admin routes", () => {
     expect(setCookie).toContain("HttpOnly");
     expect(setCookie).toContain("SameSite=lax");
     expect(setCookie).toContain("Path=/api/admin/xero");
-    expect(setCookie).toContain("Domain=tokoroa.org.nz");
+    expect(setCookie).toContain("Domain=example.org");
     expect(setCookie).toContain("Secure");
   });
 
@@ -88,15 +88,15 @@ describe("Xero OAuth admin routes", () => {
     const response = await handleXeroConnectCallback(request);
 
     expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe("https://tokoroa.org.nz/admin/xero?connected=true");
+    expect(response.headers.get("location")).toBe("https://example.org/admin/xero?connected=true");
     expect(mockHandleXeroCallback).toHaveBeenCalledWith(
-      `https://tokoroa.org.nz/api/admin/xero/callback?code=test-code&state=${state}`,
+      `https://example.org/api/admin/xero/callback?code=test-code&state=${state}`,
       state
     );
 
     const setCookie = response.headers.get("set-cookie");
     expect(setCookie).toContain("xero_oauth_state=");
-    expect(setCookie).toContain("Domain=tokoroa.org.nz");
+    expect(setCookie).toContain("Domain=example.org");
     expect(setCookie).toContain("Max-Age=0");
     expect(setCookie).toContain("Path=/api/admin/xero");
   });
@@ -115,13 +115,13 @@ describe("Xero OAuth admin routes", () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "https://tokoroa.org.nz/admin/xero?error=Invalid%20Xero%20OAuth%20state.%20Please%20reconnect%20from%20the%20admin%20page."
+      "https://example.org/admin/xero?error=Invalid%20Xero%20OAuth%20state.%20Please%20reconnect%20from%20the%20admin%20page."
     );
     expect(mockHandleXeroCallback).not.toHaveBeenCalled();
 
     const setCookie = response.headers.get("set-cookie");
     expect(setCookie).toContain("xero_oauth_state=");
-    expect(setCookie).toContain("Domain=tokoroa.org.nz");
+    expect(setCookie).toContain("Domain=example.org");
     expect(setCookie).toContain("Max-Age=0");
   });
 });

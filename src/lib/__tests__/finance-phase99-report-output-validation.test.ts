@@ -56,7 +56,7 @@ function bankBalanceSnapshot(input: {
       reportDate: input.asOfDate,
       reportTitles: [
         "Bank Summary",
-        "Tokoroa Alpine Club",
+        "Example Alpine Club",
         `As at ${input.asOfDate}`,
       ],
       fields: [
@@ -135,7 +135,7 @@ function balanceSheetSnapshot(input: {
       reportDate: input.asOfDate,
       reportTitles: [
         "Balance Sheet",
-        "Tokoroa Alpine Club",
+        "Example Alpine Club",
         `As at ${input.asOfDate}`,
       ],
       fields: [
@@ -324,7 +324,7 @@ function profitAndLossSnapshot(input: {
       reportDate: input.asOfDate,
       reportTitles: [
         "Profit and Loss",
-        "Tokoroa Alpine Club",
+        "Example Alpine Club",
         input.periodLabel,
       ],
       fields: [

@@ -14,9 +14,8 @@ Before opening an issue, check:
 
 ## Production Support
 
-This public repository is not the support channel for any live Tokoroa Alpine
-Club service. Production users should contact the club through its normal
-support channels.
+This public repository is not the support channel for any live club service.
+Production users should contact their club through its normal support channels.
 
 Do not post personal information, payment details, accounting data, logs with
 secrets, or live customer records in public issues.

@@ -39,7 +39,7 @@ function viewerMember() {
 
 describe("finance legacy dashboard auth route", () => {
   beforeEach(() => {
-    vi.stubEnv("NEXTAUTH_URL", "https://tokoroa.org.nz");
+    vi.stubEnv("NEXTAUTH_URL", "https://example.org");
     vi.clearAllMocks();
     mockAuth.mockResolvedValue(viewerSession());
     mockFindUnique.mockResolvedValue(viewerMember());
@@ -51,7 +51,7 @@ describe("finance legacy dashboard auth route", () => {
 
   it("returns 204 for finance viewers", async () => {
     const response = await getFinanceLegacyDashboardAuthRoute(
-      new NextRequest("https://tokoroa.org.nz/api/finance/legacy-dashboard/auth")
+      new NextRequest("https://example.org/api/finance/legacy-dashboard/auth")
     );
 
     expect(response.status).toBe(204);
@@ -61,12 +61,12 @@ describe("finance legacy dashboard auth route", () => {
     mockAuth.mockResolvedValue(null);
 
     const response = await getFinanceLegacyDashboardAuthRoute(
-      new NextRequest("https://tokoroa.org.nz/api/finance/legacy-dashboard/auth")
+      new NextRequest("https://example.org/api/finance/legacy-dashboard/auth")
     );
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "https://tokoroa.org.nz/login?callbackUrl=%2Ffinance-legacy%2F"
+      "https://example.org/login?callbackUrl=%2Ffinance-legacy%2F"
     );
   });
 
@@ -77,12 +77,12 @@ describe("finance legacy dashboard auth route", () => {
     });
 
     const response = await getFinanceLegacyDashboardAuthRoute(
-      new NextRequest("https://tokoroa.org.nz/api/finance/legacy-dashboard/auth")
+      new NextRequest("https://example.org/api/finance/legacy-dashboard/auth")
     );
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "https://tokoroa.org.nz/dashboard"
+      "https://example.org/dashboard"
     );
   });
 
@@ -93,12 +93,12 @@ describe("finance legacy dashboard auth route", () => {
     });
 
     const response = await getFinanceLegacyDashboardAuthRoute(
-      new NextRequest("https://tokoroa.org.nz/api/finance/legacy-dashboard/auth")
+      new NextRequest("https://example.org/api/finance/legacy-dashboard/auth")
     );
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "https://tokoroa.org.nz/change-password"
+      "https://example.org/change-password"
     );
   });
 });

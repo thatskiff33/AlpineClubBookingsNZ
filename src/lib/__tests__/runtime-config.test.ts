@@ -58,7 +58,7 @@ describe("runtime-config", () => {
 
   it("returns an ok check when the critical runtime config is present", () => {
     process.env.AUTH_SECRET = "secret";
-    process.env.NEXTAUTH_URL = "https://tokoroa.org.nz";
+    process.env.NEXTAUTH_URL = "https://example.org";
     process.env.CRON_SECRET = "cron-secret";
     process.env.AUTH_TRUST_HOST = "true";
 
@@ -72,7 +72,7 @@ describe("runtime-config", () => {
   it("returns an error check when critical runtime config is missing", () => {
     delete process.env.AUTH_SECRET;
     delete process.env.NEXTAUTH_SECRET;
-    process.env.NEXTAUTH_URL = "https://tokoroa.org.nz";
+    process.env.NEXTAUTH_URL = "https://example.org";
     delete process.env.CRON_SECRET;
 
     expect(getRuntimeConfigCheck()).toEqual({

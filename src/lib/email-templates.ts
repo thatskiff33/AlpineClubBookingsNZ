@@ -6,6 +6,7 @@
 import { getAppBaseUrl, sanitizeEmailHref } from "./app-url";
 import {
   CLUB_EMAIL_FROM_NAME,
+  CLUB_LODGE_TRAVEL_NOTE,
   CLUB_NAME,
 } from "@/config/club-identity";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
@@ -517,7 +518,7 @@ export function checkinReminderTemplate(
     <ul style="margin: 0 0 16px 0; padding-left: 20px;">${guestListHtml}</ul>
     ${choreSection}
     ${alertBox("Please ensure you arrive prepared for alpine conditions. Check the weather forecast before departing.", "info")}
-    ${paragraph("The lodge is located at Mt Pureora, Tokoroa. Please allow adequate travel time.")}
+    ${paragraph(CLUB_LODGE_TRAVEL_NOTE)}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
 }

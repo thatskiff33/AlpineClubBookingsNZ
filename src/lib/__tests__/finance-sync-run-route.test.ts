@@ -73,7 +73,7 @@ function managerMember() {
 describe("finance manual sync route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv("NEXTAUTH_URL", "https://tokoroa.org.nz");
+    vi.stubEnv("NEXTAUTH_URL", "https://example.org");
     mockAuth.mockResolvedValue(managerSession());
     mockFindUnique.mockResolvedValue(managerMember());
   });
@@ -82,13 +82,13 @@ describe("finance manual sync route", () => {
     mockAuth.mockResolvedValue(null);
 
     const response = await runFinanceSyncRoute(
-      new Request("https://tokoroa.org.nz/api/finance/sync/run", {
+      new Request("https://example.org/api/finance/sync/run", {
         method: "POST",
       }) as never
     );
 
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe("https://tokoroa.org.nz/login");
+    expect(response.headers.get("location")).toBe("https://example.org/login");
     expect(mockRunManualFinanceSync).not.toHaveBeenCalled();
   });
 
@@ -96,13 +96,13 @@ describe("finance manual sync route", () => {
     mockFindUnique.mockResolvedValue(viewerMember());
 
     const response = await runFinanceSyncRoute(
-      new Request("https://tokoroa.org.nz/api/finance/sync/run", {
+      new Request("https://example.org/api/finance/sync/run", {
         method: "POST",
       }) as never
     );
 
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe("https://tokoroa.org.nz/finance");
+    expect(response.headers.get("location")).toBe("https://example.org/finance");
     expect(mockRunManualFinanceSync).not.toHaveBeenCalled();
   });
 
@@ -124,14 +124,14 @@ describe("finance manual sync route", () => {
     });
 
     const response = await runFinanceSyncRoute(
-      new Request("https://tokoroa.org.nz/api/finance/sync/run", {
+      new Request("https://example.org/api/finance/sync/run", {
         method: "POST",
       }) as never
     );
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      "https://tokoroa.org.nz/finance?sync=completed"
+      "https://example.org/finance?sync=completed"
     );
     expect(mockRunManualFinanceSync).toHaveBeenCalledWith({
       requestedByMemberId: "finance-manager-1",
@@ -148,14 +148,14 @@ describe("finance manual sync route", () => {
     });
 
     const response = await runFinanceSyncRoute(
-      new Request("https://tokoroa.org.nz/api/finance/sync/run", {
+      new Request("https://example.org/api/finance/sync/run", {
         method: "POST",
       }) as never
     );
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      "https://tokoroa.org.nz/finance?sync=running"
+      "https://example.org/finance?sync=running"
     );
     expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
@@ -178,14 +178,14 @@ describe("finance manual sync route", () => {
     });
 
     const response = await runFinanceSyncRoute(
-      new Request("https://tokoroa.org.nz/api/finance/sync/run", {
+      new Request("https://example.org/api/finance/sync/run", {
         method: "POST",
       }) as never
     );
 
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      "https://tokoroa.org.nz/finance?sync=partial"
+      "https://example.org/finance?sync=partial"
     );
   });
 
@@ -195,7 +195,7 @@ describe("finance manual sync route", () => {
     );
 
     const response = await runFinanceSyncRoute(
-      new Request("https://tokoroa.org.nz/api/finance/sync/run", {
+      new Request("https://example.org/api/finance/sync/run", {
         method: "POST",
       }) as never
     );

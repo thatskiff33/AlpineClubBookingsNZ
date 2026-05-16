@@ -217,7 +217,7 @@ describe("findOrCreateXeroContact", () => {
       id: "mem_1",
       firstName: "Jordan",
       lastName: "Hartley-Smith",
-      email: "jordan.hartleysmith@gmail.com",
+      email: "test.contact@example.org",
       xeroContactId: null,
       dateOfBirth: new Date("1987-08-30T00:00:00.000Z"),
       phoneCountryCode: "64",
@@ -287,7 +287,7 @@ describe("findOrCreateXeroContact", () => {
       1,
       "tenant_1",
       undefined,
-      'EmailAddress="jordan.hartleysmith@gmail.com"'
+      'EmailAddress="test.contact@example.org"'
     );
     expect(mocks.xeroClientInstance.accountingApi.getContacts).toHaveBeenNthCalledWith(
       2,

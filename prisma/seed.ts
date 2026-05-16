@@ -1,7 +1,7 @@
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { clubConfig } from "../src/config/club";
-import { CLUB_CONTACT_EMAIL, CLUB_SUPPORT_EMAIL, clubDomainEmail } from "../src/config/club-identity";
+import { CLUB_CONTACT_EMAIL, clubDomainEmail } from "../src/config/club-identity";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 
 const prisma = new PrismaClient({
@@ -34,6 +34,14 @@ function seedAgeTierSettings() {
   }));
 }
 
+function requireSeedEnv(name: "SEED_ADMIN_EMAIL" | "SEED_ADMIN_PASSWORD") {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} is required before running prisma/seed.ts`);
+  }
+  return value;
+}
+
 async function upsertSeasonRates(
   seasonId: string,
   season: "winter" | "summer",
@@ -60,6 +68,9 @@ async function upsertSeasonRates(
 
 async function main() {
   console.log("Seeding database...");
+
+  const seedAdminEmail = requireSeedEnv("SEED_ADMIN_EMAIL").toLowerCase();
+  const seedAdminPassword = requireSeedEnv("SEED_ADMIN_PASSWORD");
 
   // Seed default cancellation policy
   const policies = [
@@ -248,10 +259,10 @@ async function main() {
   });
 
   if (!existingAdmin) {
-    const passwordHash = await bcrypt.hash("admin123", 12);
+    const passwordHash = await bcrypt.hash(seedAdminPassword, 12);
     await prisma.member.create({
       data: {
-        email: CLUB_SUPPORT_EMAIL,
+        email: seedAdminEmail,
         passwordHash,
         firstName: "Admin",
         lastName: "User",
@@ -261,7 +272,7 @@ async function main() {
         forcePasswordChange: true,
       },
     });
-    console.log(`Admin user seeded: ${CLUB_SUPPORT_EMAIL} / admin123 (password change required on first login)`);
+    console.log(`Admin user seeded: ${seedAdminEmail} (password change required on first login)`);
   }
 
   // Seed lodge account (shared iPad in lodge)

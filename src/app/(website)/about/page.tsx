@@ -46,7 +46,7 @@ export default function AboutPage() {
             </h2>
             <div className="max-w-none space-y-4 text-brand-deep/78">
               <p>
-                The club was formed by a group of Tokoroa people of varied outdoor
+                The club was formed by a group of local people with varied outdoor
                 interests and means of employment at a time when the Tongariro
                 National Park authorities were making building sites available to
                 clubs. The primary objective of the club as stated in its

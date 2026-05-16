@@ -45,6 +45,12 @@ const ageTierSchema = z
     { message: "maxAge must be >= minAge", path: ["maxAge"] },
   );
 
+const socialLinksSchema = z
+  .object({
+    facebook: z.string().url("facebook social link must be a valid URL").optional(),
+  })
+  .strict();
+
 export const clubConfigSchema = z
   .object({
     name: z.string().trim().min(1, "club name is required"),
@@ -61,6 +67,8 @@ export const clubConfigSchema = z
         message: "publicUrl must not end with a trailing slash",
       }),
     emailFromName: z.string().trim().min(1, "emailFromName is required"),
+    lodgeTravelNote: z.string().trim().min(1).optional(),
+    socialLinks: socialLinksSchema.optional(),
     beds: z.array(bedSchema).min(1, "at least one bed is required"),
     ageTiers: z.array(ageTierSchema).min(1, "at least one age tier is required"),
   })

@@ -119,7 +119,7 @@ describe("issue reports API", () => {
   });
 
   it("normalizes relative page URLs to same-origin absolute URLs", async () => {
-    const req = new NextRequest("https://tokoroa.org.nz/api/issue-reports", {
+    const req = new NextRequest("https://example.org/api/issue-reports", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -133,14 +133,14 @@ describe("issue reports API", () => {
 
     expect(mockedIssueReportCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        pageUrl: "https://tokoroa.org.nz/book?step=review",
+        pageUrl: "https://example.org/book?step=review",
       }),
       select: { id: true },
     });
 
     expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
       expect.objectContaining({
-        pageUrl: "https://tokoroa.org.nz/book?step=review",
+        pageUrl: "https://example.org/book?step=review",
       })
     );
   });
@@ -150,10 +150,10 @@ describe("issue reports API", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Origin: "https://tokoroa.org.nz",
+        Origin: "https://example.org",
       },
       body: JSON.stringify({
-        pageUrl: "https://tokoroa.org.nz/admin/audit-log?page=2",
+        pageUrl: "https://example.org/admin/audit-log?page=2",
         pageTitle: "Audit Log",
         description: "The report should keep the public page URL from the browser.",
       }),
@@ -164,15 +164,15 @@ describe("issue reports API", () => {
 
     expect(mockedIssueReportCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        pageUrl: "https://tokoroa.org.nz/admin/audit-log?page=2",
+        pageUrl: "https://example.org/admin/audit-log?page=2",
       }),
       select: { id: true },
     });
 
     expect(mockedSendAdminIssueReportAlert).toHaveBeenCalledWith(
       expect.objectContaining({
-        pageUrl: "https://tokoroa.org.nz/admin/audit-log?page=2",
-        issueReportUrl: "https://tokoroa.org.nz/admin/issue-reports?report=issue-1",
+        pageUrl: "https://example.org/admin/audit-log?page=2",
+        issueReportUrl: "https://example.org/admin/issue-reports?report=issue-1",
       })
     );
   });
@@ -213,7 +213,7 @@ describe("issue reports API", () => {
   });
 
   it("rejects external page URLs", async () => {
-    const req = new NextRequest("https://tokoroa.org.nz/api/issue-reports", {
+    const req = new NextRequest("https://example.org/api/issue-reports", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

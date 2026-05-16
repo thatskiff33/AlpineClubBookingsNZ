@@ -3,9 +3,9 @@
 This guide describes the TACBookings production deployment shape. It is a
 reference for operators adapting the project to their own infrastructure.
 
-Do not reuse Tokoroa Alpine Club credentials, domains, payment accounts,
-accounting tenants, email identities, Sentry projects, or database backups in a
-fork. Create your own service accounts and secrets.
+Do not reuse another club's credentials, domains, payment accounts, accounting
+tenants, email identities, Sentry projects, or database backups in a fork.
+Create your own service accounts and secrets.
 
 ## Target Architecture
 

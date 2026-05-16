@@ -34,6 +34,7 @@ vi.mock("@/lib/email-templates", () => ({ escapeHtml: vi.fn((s: string) => s) })
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { sendEmail } from "@/lib/email";
+import { CLUB_CONTACT_EMAIL } from "@/config/club-identity";
 import { GET as listMembers, POST as createMember } from "@/app/api/admin/committee/route";
 import { PUT as updateMember, DELETE as deleteMember } from "@/app/api/admin/committee/[id]/route";
 
@@ -350,7 +351,7 @@ describe("Contact API - recipient lookup from database", () => {
   it("sends to committee member email when recipient matches contactKey", async () => {
     const { POST } = await import("@/app/api/contact/route");
     vi.mocked(prisma.committeeMember.findFirst).mockResolvedValue({
-      email: "president@tokoroa.org.nz",
+      email: "president@example.org",
       role: "President",
     } as any);
 
@@ -376,7 +377,7 @@ describe("Contact API - recipient lookup from database", () => {
 
     // Verify email was sent to the committee member's email
     expect(sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "president@tokoroa.org.nz" })
+      expect.objectContaining({ to: "president@example.org" })
     );
   });
 
@@ -400,7 +401,7 @@ describe("Contact API - recipient lookup from database", () => {
 
     // Falls back to default CONTACT_EMAIL
     expect(sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "bookings@tokoroa.org.nz" })
+      expect.objectContaining({ to: CLUB_CONTACT_EMAIL })
     );
   });
 
@@ -424,7 +425,7 @@ describe("Contact API - recipient lookup from database", () => {
     expect(prisma.committeeMember.findFirst).not.toHaveBeenCalled();
 
     expect(sendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "bookings@tokoroa.org.nz" })
+      expect.objectContaining({ to: CLUB_CONTACT_EMAIL })
     );
   });
 });

@@ -5,6 +5,10 @@
   "contactEmail": "bookings@example.org",
   "publicUrl": "https://example.org",
   "emailFromName": "Example Mountain Club - Online Booking System",
+  "lodgeTravelNote": "The lodge is located near the mountain. Please allow adequate travel time.",
+  "socialLinks": {
+    "facebook": "https://www.facebook.com/example"
+  },
   "beds": [
     { "id": "lodge", "name": "Main Lodge", "capacity": 20, "type": "dormitory" }
   ],

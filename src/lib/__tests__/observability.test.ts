@@ -462,7 +462,7 @@ describe("OBS-07: GET /api/admin/health", () => {
 
   it("returns a real Sentry dashboard link only when the dashboard config is complete", async () => {
     process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/123";
-    process.env.SENTRY_ORG = "tokoroa-alpine-club";
+    process.env.SENTRY_ORG = "example-alpine-club";
     process.env.SENTRY_PROJECT = "456";
     mockAdminSession();
     mockAdminHealthDependencies();
@@ -473,14 +473,14 @@ describe("OBS-07: GET /api/admin/health", () => {
 
     expect(data.systemInfo.sentryConfigured).toBe(true);
     expect(data.systemInfo.sentryDashboardUrl).toBe(
-      "https://sentry.io/organizations/tokoroa-alpine-club/issues/?project=456"
+      "https://sentry.io/organizations/example-alpine-club/issues/?project=456"
     );
     expect(data.systemInfo.sentryConfigWarning).toBeNull();
   });
 
   it("reports partial Sentry dashboard config as a warning instead of placeholder links", async () => {
     process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/123";
-    process.env.SENTRY_ORG = "tokoroa-alpine-club";
+    process.env.SENTRY_ORG = "example-alpine-club";
     delete process.env.SENTRY_PROJECT;
     mockAdminSession();
     mockAdminHealthDependencies();

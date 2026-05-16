@@ -1,9 +1,9 @@
 # Architecture
 
-TACBookings is a full-stack TypeScript monolith for Tokoroa Alpine Club's
-booking and membership operations. It is built around Next.js App Router route
-handlers, Prisma/PostgreSQL, Stripe, Xero, AWS SES, cron jobs, and Docker
-Compose deployment.
+TACBookings is a full-stack TypeScript monolith for club booking and membership
+operations. It is built around Next.js App Router route handlers,
+Prisma/PostgreSQL, Stripe, Xero, AWS SES, cron jobs, and Docker Compose
+deployment.
 
 ## Runtime Shape
 

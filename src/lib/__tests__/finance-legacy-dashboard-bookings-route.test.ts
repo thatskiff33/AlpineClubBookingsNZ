@@ -48,7 +48,7 @@ describe("finance legacy dashboard bookings route", () => {
   it("rejects requests without the export token", async () => {
     const response = await getFinanceLegacyDashboardBookingsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/legacy-dashboard/bookings"
+        "https://example.org/api/finance/legacy-dashboard/bookings"
       )
     );
 
@@ -61,7 +61,7 @@ describe("finance legacy dashboard bookings route", () => {
   it("returns the export payload when the bearer token is identical", async () => {
     const response = await getFinanceLegacyDashboardBookingsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/legacy-dashboard/bookings?historyStartDate=2020-04-01&asOfDate=2026-05-03",
+        "https://example.org/api/finance/legacy-dashboard/bookings?historyStartDate=2020-04-01&asOfDate=2026-05-03",
         {
           headers: {
             authorization: "Bearer test-export-token",
@@ -84,7 +84,7 @@ describe("finance legacy dashboard bookings route", () => {
   it("rejects a different-length bearer token", async () => {
     const response = await getFinanceLegacyDashboardBookingsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/legacy-dashboard/bookings",
+        "https://example.org/api/finance/legacy-dashboard/bookings",
         {
           headers: {
             authorization: "Bearer test-export-token-extra",
@@ -103,7 +103,7 @@ describe("finance legacy dashboard bookings route", () => {
   it("rejects a same-length one-byte-different bearer token", async () => {
     const response = await getFinanceLegacyDashboardBookingsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/legacy-dashboard/bookings",
+        "https://example.org/api/finance/legacy-dashboard/bookings",
         {
           headers: {
             authorization: "Bearer test-export-tokea",
@@ -130,7 +130,7 @@ describe("finance legacy dashboard bookings route", () => {
 
     const response = await getFinanceLegacyDashboardBookingsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/legacy-dashboard/bookings",
+        "https://example.org/api/finance/legacy-dashboard/bookings",
         {
           headers: {
             authorization: "Bearer test-export-token",
@@ -149,7 +149,7 @@ describe("finance legacy dashboard bookings route", () => {
   it("rejects invalid query parameters", async () => {
     const response = await getFinanceLegacyDashboardBookingsRoute(
       new NextRequest(
-        "https://tokoroa.org.nz/api/finance/legacy-dashboard/bookings?asOfDate=03-05-2026",
+        "https://example.org/api/finance/legacy-dashboard/bookings?asOfDate=03-05-2026",
         {
           headers: {
             authorization: "Bearer test-export-token",

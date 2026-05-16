@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { getAppBaseUrl } from "../app-url";
+import {
+  CLUB_EMAIL_FROM_NAME,
+  CLUB_SUPPORT_EMAIL,
+} from "@/config/club-identity";
 
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
@@ -108,7 +112,7 @@ describe("N-10: EmailLog tracking", () => {
     await sendEmail({
       to: "test@example.com",
       subject: "Reset your password",
-      html: '<a href="https://tokoroa.org.nz/reset-password?token=live-secret">Reset</a>',
+      html: '<a href="https://example.org/reset-password?token=live-secret">Reset</a>',
       templateName: "password-reset",
     });
 
@@ -131,7 +135,7 @@ describe("N-10: EmailLog tracking", () => {
     await sendEmail({
       to: "test@example.com",
       subject: "Reset your password",
-      html: '<a href="https://tokoroa.org.nz/reset-password?token=live-secret">Reset</a>',
+      html: '<a href="https://example.org/reset-password?token=live-secret">Reset</a>',
       templateName: "password-reset",
     });
 
@@ -171,7 +175,7 @@ describe("N-10: EmailLog tracking", () => {
     });
     expect(mockTransporter.sendMail).toHaveBeenCalledWith(
       expect.objectContaining({
-        from: '"Tokoroa Alpine Club - Online Booking System" <support@tokoroa.org.nz>',
+        from: `"${CLUB_EMAIL_FROM_NAME}" <${CLUB_SUPPORT_EMAIL}>`,
       })
     );
 
@@ -412,7 +416,7 @@ describe("N-10: EmailLog tracking", () => {
     const origEnv = process.env.NODE_ENV;
     (process.env as Record<string, string>).NODE_ENV = "production";
     mockPrisma.member.findMany.mockResolvedValue([
-      { email: "support@tokoroa.org.nz", notificationPreference: null },
+      { email: "support@example.org", notificationPreference: null },
     ]);
 
     const { sendAdminIssueReportAlert } = await import("../email");
@@ -474,7 +478,7 @@ describe("N-02: sendAdminNewBookingAlert", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
@@ -492,7 +496,7 @@ describe("N-02: sendAdminNewBookingAlert", () => {
 
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        to: "support@tokoroa.org.nz",
+        to: "support@example.org",
         templateName: "admin-new-booking",
       }),
     });
@@ -501,15 +505,15 @@ describe("N-02: sendAdminNewBookingAlert", () => {
   it("skips admins who disable new booking alerts", async () => {
     mockPrisma.member.findMany.mockResolvedValue([
       {
-        email: "enabled@tokoroa.org.nz",
+        email: "enabled@example.org",
         notificationPreference: { adminNewBooking: true },
       },
       {
-        email: "disabled@tokoroa.org.nz",
+        email: "disabled@example.org",
         notificationPreference: { adminNewBooking: false },
       },
       {
-        email: "default@tokoroa.org.nz",
+        email: "default@example.org",
         notificationPreference: null,
       },
     ]);
@@ -528,9 +532,9 @@ describe("N-02: sendAdminNewBookingAlert", () => {
       (call) => call[0].data.to
     );
 
-    expect(recipients).toContain("enabled@tokoroa.org.nz");
-    expect(recipients).toContain("default@tokoroa.org.nz");
-    expect(recipients).not.toContain("disabled@tokoroa.org.nz");
+    expect(recipients).toContain("enabled@example.org");
+    expect(recipients).toContain("default@example.org");
+    expect(recipients).not.toContain("disabled@example.org");
   });
 });
 
@@ -545,15 +549,15 @@ describe("Admin member request alerts", () => {
   it("respects the shared member request preference for membership application alerts", async () => {
     mockPrisma.member.findMany.mockResolvedValue([
       {
-        email: "enabled@tokoroa.org.nz",
+        email: "enabled@example.org",
         notificationPreference: { adminFamilyGroupRequest: true },
       },
       {
-        email: "disabled@tokoroa.org.nz",
+        email: "disabled@example.org",
         notificationPreference: { adminFamilyGroupRequest: false },
       },
       {
-        email: "default@tokoroa.org.nz",
+        email: "default@example.org",
         notificationPreference: null,
       },
     ]);
@@ -570,9 +574,9 @@ describe("Admin member request alerts", () => {
       (call) => call[0].data.to
     );
 
-    expect(recipients).toContain("enabled@tokoroa.org.nz");
-    expect(recipients).toContain("default@tokoroa.org.nz");
-    expect(recipients).not.toContain("disabled@tokoroa.org.nz");
+    expect(recipients).toContain("enabled@example.org");
+    expect(recipients).toContain("default@example.org");
+    expect(recipients).not.toContain("disabled@example.org");
   });
 });
 
@@ -662,7 +666,7 @@ describe("N-04: sendAdminPaymentFailureAlert", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
@@ -694,7 +698,7 @@ describe("N-06: checkPendingDeadlines", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
@@ -740,7 +744,7 @@ describe("N-07: sendAdminBookingBumpedAlert", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@tokoroa.org.nz" }]);
+    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });

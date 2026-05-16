@@ -88,7 +88,7 @@ function managerMember() {
 describe("finance Xero routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv("NEXTAUTH_URL", "https://tokoroa.org.nz");
+    vi.stubEnv("NEXTAUTH_URL", "https://example.org");
     vi.stubEnv("AUTH_SECRET", "test-finance-oauth-secret");
     mockAuth.mockResolvedValue(managerSession());
     mockFindUnique.mockResolvedValue(managerMember());
@@ -143,7 +143,7 @@ describe("finance Xero routes", () => {
     mockFindUnique.mockResolvedValue(viewerMember());
 
     const response = await connectFinanceXero(
-      new Request("https://tokoroa.org.nz/api/finance/xero/connect")
+      new Request("https://example.org/api/finance/xero/connect")
     );
 
     expect(response.status).toBe(403);
@@ -155,7 +155,7 @@ describe("finance Xero routes", () => {
 
   it("sets a finance-scoped OAuth state cookie before redirecting to Xero", async () => {
     const response = await connectFinanceXero(
-      new Request("https://www.tokoroa.org.nz/api/finance/xero/connect")
+      new Request("https://www.example.org/api/finance/xero/connect")
     );
 
     expect(response.status).toBe(307);
@@ -172,7 +172,7 @@ describe("finance Xero routes", () => {
     expect(setCookie).toContain("HttpOnly");
     expect(setCookie).toContain("SameSite=lax");
     expect(setCookie).toContain("Path=/api/finance/xero");
-    expect(setCookie).toContain("Domain=tokoroa.org.nz");
+    expect(setCookie).toContain("Domain=example.org");
     expect(setCookie).toContain("Secure");
   });
 
@@ -190,7 +190,7 @@ describe("finance Xero routes", () => {
     });
 
     const response = await connectFinanceXero(
-      new Request("https://tokoroa.org.nz/api/finance/xero/connect")
+      new Request("https://example.org/api/finance/xero/connect")
     );
 
     expect(response.status).toBe(503);
@@ -237,16 +237,16 @@ describe("finance Xero routes", () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "https://tokoroa.org.nz/finance?connected=true"
+      "https://example.org/finance?connected=true"
     );
     expect(mockHandleFinanceXeroCallback).toHaveBeenCalledWith(
-      `https://tokoroa.org.nz/api/finance/xero/callback?code=test-code&state=${state}`,
+      `https://example.org/api/finance/xero/callback?code=test-code&state=${state}`,
       state
     );
 
     const setCookie = response.headers.get("set-cookie");
     expect(setCookie).toContain("finance_xero_oauth_state=");
-    expect(setCookie).toContain("Domain=tokoroa.org.nz");
+    expect(setCookie).toContain("Domain=example.org");
     expect(setCookie).toContain("Max-Age=0");
     expect(setCookie).toContain("Path=/api/finance/xero");
   });
@@ -266,7 +266,7 @@ describe("finance Xero routes", () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "https://tokoroa.org.nz/finance?error=Invalid%20finance%20Xero%20OAuth%20state.%20Please%20reconnect%20from%20the%20finance%20page."
+      "https://example.org/finance?error=Invalid%20finance%20Xero%20OAuth%20state.%20Please%20reconnect%20from%20the%20finance%20page."
     );
     expect(mockHandleFinanceXeroCallback).not.toHaveBeenCalled();
   });
@@ -285,13 +285,13 @@ describe("finance Xero routes", () => {
 
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe(
-      "https://tokoroa.org.nz/finance?error=Invalid%20finance%20Xero%20OAuth%20state.%20Please%20reconnect%20from%20the%20finance%20page."
+      "https://example.org/finance?error=Invalid%20finance%20Xero%20OAuth%20state.%20Please%20reconnect%20from%20the%20finance%20page."
     );
     expect(mockHandleFinanceXeroCallback).not.toHaveBeenCalled();
 
     const setCookie = response.headers.get("set-cookie");
     expect(setCookie).toContain("finance_xero_oauth_state=");
-    expect(setCookie).toContain("Domain=tokoroa.org.nz");
+    expect(setCookie).toContain("Domain=example.org");
     expect(setCookie).toContain("Max-Age=0");
   });
 });

@@ -28,6 +28,7 @@ interface CommitteeMember {
 
 export default function ContactPage() {
   const club = useClubIdentity();
+  const facebookUrl = club.socialLinks.facebook ?? club.publicUrl;
   const searchParams = useSearchParams();
   const initialRecipient = searchParams.get("recipient") || "general";
   const [form, setForm] = useState({ name: "", email: "", message: "" });
@@ -265,7 +266,7 @@ export default function ContactPage() {
                     Follow Us
                   </h3>
                   <a
-                    href="https://www.facebook.com/TokoroaAlpineClub/"
+                    href={facebookUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="website-link text-sm"

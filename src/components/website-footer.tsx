@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { CLUB_NAME } from "@/config/club-identity";
+import { CLUB_FACEBOOK_URL, CLUB_NAME, CLUB_PUBLIC_URL } from "@/config/club-identity";
 
 export function WebsiteFooter() {
   return (
@@ -91,7 +91,7 @@ export function WebsiteFooter() {
               </li>
               <li>
                 <a
-                  href="https://www.facebook.com/TokoroaAlpineClub/"
+                  href={CLUB_FACEBOOK_URL ?? CLUB_PUBLIC_URL}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="transition-colors hover:text-brand-gold"
