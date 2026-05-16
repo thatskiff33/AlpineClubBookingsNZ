@@ -298,13 +298,13 @@ describe("#22: Hut Leader eligible members includes PAID bookings", () => {
 // #23 — Cron Prisma startup check + expandable health errors
 // ============================================================
 describe("#23: Cron Prisma startup check and health error display", () => {
-  it("instrumentation.ts contains Prisma startup verification", async () => {
+  it("Node instrumentation contains Prisma startup verification", async () => {
     const fs = await import("fs");
     const path = await import("path");
     const instrPath = path.resolve(
       process.cwd(),
       "src",
-      "instrumentation.ts"
+      "instrumentation.node.ts"
     );
     const content = fs.readFileSync(instrPath, "utf-8");
     expect(content).toContain("SELECT 1");

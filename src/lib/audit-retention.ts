@@ -1,4 +1,5 @@
 import { Prisma, PrismaClient } from "@prisma/client";
+import { createPrismaPgAdapter } from "@/lib/prisma-adapter";
 import {
   type AuditCategory,
   type AuditRetentionClass,
@@ -139,11 +140,7 @@ function resolveArchiveDatabaseUrl(
 
 function createArchiveClient(databaseUrl: string): PrismaClient {
   return new PrismaClient({
-    datasources: {
-      db: {
-        url: databaseUrl,
-      },
-    },
+    adapter: createPrismaPgAdapter(databaseUrl),
   });
 }
 

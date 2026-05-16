@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { LODGE_CAPACITY } from "@/lib/capacity";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { formatLocalDateOnly } from "@/lib/date-only";
 
 interface SeasonInfo {

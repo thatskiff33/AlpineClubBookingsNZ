@@ -1,12 +1,9 @@
-/**
- * Minimum member data needed to resolve the effective email address.
- * Include `inheritEmailFrom` in your Prisma select to avoid an extra DB lookup.
- */
-export type EmailResolvableMember = {
-  email: string;
-  inheritEmailFromId?: string | null;
-  inheritEmailFrom?: { email: string } | null;
-};
+import {
+  resolveEffectiveEmail,
+  type EmailResolvableMember,
+} from "@/lib/member-email";
+
+export { resolveEffectiveEmail, type EmailResolvableMember } from "@/lib/member-email";
 
 /**
  * Returns the effective email address for a member.
@@ -32,7 +29,7 @@ export async function getEffectiveEmail(
 
   // Use pre-loaded relation data when available (no extra round-trip)
   if (member.inheritEmailFrom) {
-    return member.inheritEmailFrom.email;
+    return resolveEffectiveEmail(member);
   }
 
   // Fallback: DB lookup

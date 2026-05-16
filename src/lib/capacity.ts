@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import {
   eachDateOnlyInRange,
   formatDateOnly,
@@ -11,7 +12,7 @@ import {
 type PrismaClient = typeof prisma;
 type TransactionClient = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
 
-export const LODGE_CAPACITY = 29;
+export { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 export interface NightAvailability {
   date: Date;
