@@ -72,6 +72,32 @@ async function callRuntimeStatusEndpoint(
   return { response, data };
 }
 
+async function callDeployRuntimeStatusEndpoint({
+  envOverrides = {},
+  headers = {},
+}: {
+  envOverrides?: Record<string, string | undefined>;
+  headers?: Record<string, string>;
+} = {}) {
+  const originalEnv = { ...process.env };
+  for (const [key, value] of Object.entries(envOverrides)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  const { GET } = await import("@/app/api/deploy/runtime-status/route");
+  const response = await GET(
+    new Request("https://example.test/api/deploy/runtime-status", { headers }) as any
+  );
+  const data = await response.json();
+
+  process.env = originalEnv;
+  return { response, data };
+}
+
 describe("GET /api/health", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -257,6 +283,58 @@ describe("GET /api/admin/runtime-status", () => {
     expect(data).toEqual({
       cronEnabled: true,
       role: "cron-leader",
+    });
+  });
+});
+
+describe("GET /api/deploy/runtime-status", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("requires the cron secret header", async () => {
+    const { response, data } = await callDeployRuntimeStatusEndpoint({
+      envOverrides: { CRON_SECRET: "deploy-secret" },
+    });
+
+    expect(response.status).toBe(401);
+    expect(data).toEqual({ error: "Unauthorized" });
+  });
+
+  it("rejects an invalid cron secret header", async () => {
+    const { response, data } = await callDeployRuntimeStatusEndpoint({
+      envOverrides: { CRON_SECRET: "deploy-secret" },
+      headers: { "x-cron-secret": "wrong-secret" },
+    });
+
+    expect(response.status).toBe(401);
+    expect(data).toEqual({ error: "Unauthorized" });
+  });
+
+  it("rejects requests when the deployment secret is not configured", async () => {
+    const { response, data } = await callDeployRuntimeStatusEndpoint({
+      envOverrides: { CRON_SECRET: undefined },
+      headers: { "x-cron-secret": "deploy-secret" },
+    });
+
+    expect(response.status).toBe(401);
+    expect(data).toEqual({ error: "Unauthorized" });
+  });
+
+  it("returns runtime status for deploy verification", async () => {
+    const { response, data } = await callDeployRuntimeStatusEndpoint({
+      envOverrides: {
+        APP_RUNTIME_ROLE: "web-green",
+        CRON_ENABLED: "false",
+        CRON_SECRET: "deploy-secret",
+      },
+      headers: { "x-cron-secret": "deploy-secret" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual({
+      cronEnabled: false,
+      role: "web-green",
     });
   });
 });

@@ -137,7 +137,9 @@ The low-level deployment runner:
 - starts the inactive color slot with `CRON_ENABLED=false`
 - waits for `/api/health/ready`
 - updates Caddy upstream routing
-- verifies the public domain against the target color
+- verifies the public domain is serving the target runtime through
+  `/api/deploy/runtime-status`, authenticated with the existing `CRON_SECRET`
+  as the `x-cron-secret` header
 - drains the previous slot
 
 If `APP_IMAGE` and `MIGRATE_IMAGE` are not supplied, the low-level runner keeps

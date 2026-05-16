@@ -12,7 +12,6 @@ BLUE_GREEN_DRAIN_SECONDS="${BLUE_GREEN_DRAIN_SECONDS:-30}"
 ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS="${ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS:-0}"
 BLUE_GREEN_MIGRATION_OVERRIDE_REASON="${BLUE_GREEN_MIGRATION_OVERRIDE_REASON:-}"
 MIGRATION_SAFETY_LEDGER="${MIGRATION_SAFETY_LEDGER:-docs/BLUE_GREEN_MIGRATION_SAFETY.tsv}"
-BLUE_GREEN_RUNTIME_STATUS_COOKIE="${BLUE_GREEN_RUNTIME_STATUS_COOKIE:-}"
 
 POSTGRES_SERVICE="postgres"
 CRON_SERVICE="app"
@@ -22,7 +21,7 @@ BLUE_SERVICE="app_blue"
 GREEN_SERVICE="app_green"
 ACTIVE_UPSTREAM_FILE_REL="deploy/caddy/tacbookings-active.caddy"
 READINESS_PATH="/api/health/ready"
-RUNTIME_STATUS_PATH="/api/admin/runtime-status"
+DEPLOY_RUNTIME_STATUS_PATH="/api/deploy/runtime-status"
 
 SHADOW_DATABASE_NAME="tacbookings_shadow_validate_$$"
 SHADOW_DATABASE_CREATED=0
@@ -768,6 +767,19 @@ assert_runtime_identity() {
   fi
 }
 
+curl_with_cron_secret_header() {
+  local url="$1"
+  local cron_secret="$2"
+
+  {
+    printf 'url = "%s"\n' "$url"
+    printf 'header = "x-cron-secret: %s"\n' "$cron_secret"
+    printf 'fail\n'
+    printf 'silent\n'
+    printf 'show-error\n'
+  } | curl --config -
+}
+
 get_expected_runtime_role() {
   local service="$1"
 
@@ -864,13 +876,13 @@ verify_external_health() {
   payload="$(curl -fsS "$url")"
   assert_readiness_payload_healthy "External" "$payload"
 
-  if [ -n "$BLUE_GREEN_RUNTIME_STATUS_COOKIE" ]; then
-    runtime_url="https://${domain}${RUNTIME_STATUS_PATH}"
-    runtime_payload="$(curl -fsS -H "Cookie: ${BLUE_GREEN_RUNTIME_STATUS_COOKIE}" "$runtime_url")"
-    assert_runtime_identity "External runtime status" "$runtime_payload" "$expected_role" "$expected_cron_enabled"
-  else
-    warn "Skipping external runtime identity check because BLUE_GREEN_RUNTIME_STATUS_COOKIE is not set; public readiness no longer exposes deployment topology."
-  fi
+  runtime_url="https://${domain}${DEPLOY_RUNTIME_STATUS_PATH}"
+  runtime_payload="$(
+    curl_with_cron_secret_header \
+      "$runtime_url" \
+      "$(trim_whitespace "$(get_env_file_value CRON_SECRET)")"
+  )"
+  assert_runtime_identity "External deploy runtime status" "$runtime_payload" "$expected_role" "$expected_cron_enabled"
 }
 
 verify_cron_registration() {
