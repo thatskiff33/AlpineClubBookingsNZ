@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getEffectiveEmail } from "@/lib/member-utils";
+import { resolveEffectiveEmail } from "@/lib/member-email";
 
 interface MemberOption {
   id: string;
@@ -203,7 +203,7 @@ export function FamilyGroupEditor({
       const members = await Promise.all(
         rawMembers.map(async (member) => ({
           ...member,
-          effectiveEmail: normalizeEmail(await getEffectiveEmail(member)),
+          effectiveEmail: normalizeEmail(resolveEffectiveEmail(member)),
         }))
       );
 
