@@ -125,7 +125,7 @@ function removeBumpedBookingFromOccupancy(
 /**
  * Most-recent-first bumping algorithm.
  *
- * When a MEMBER creates a booking that would push any night past 29 beds:
+ * When a MEMBER creates a booking that would push any night past lodge capacity:
  * 1. Find all PENDING bookings overlapping those nights
  * 2. Sort by createdAt DESC (most recently created = first bumped)
  * 3. Bump one at a time until capacity is restored

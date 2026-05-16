@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 
 interface LodgeAccount {
   id: string;
@@ -193,8 +194,8 @@ export default function AdminLodgePage() {
           )}
 
           <div className="text-xs text-slate-500">
-            <p>Created: {new Date(lodge.createdAt).toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" })}</p>
-            <p>Last updated: {new Date(lodge.updatedAt).toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" })}</p>
+            <p>Created: {new Date(lodge.createdAt).toLocaleString(APP_LOCALE, { timeZone: APP_TIME_ZONE })}</p>
+            <p>Last updated: {new Date(lodge.updatedAt).toLocaleString(APP_LOCALE, { timeZone: APP_TIME_ZONE })}</p>
           </div>
 
           {saveMessage && (

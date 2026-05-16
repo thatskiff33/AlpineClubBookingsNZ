@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
+import { useClubIdentity } from "@/components/club-identity-provider"
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const
 
@@ -234,6 +235,7 @@ function PolicyPreview({ rules }: { rules: PolicyRule[] }) {
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
 export default function BookingPoliciesPage() {
+  const { lodgeCapacity } = useClubIdentity()
   // Default policy state
   const [defaultRules, setDefaultRules] = useState<PolicyRule[]>([])
   const [defaultHoldDays, setDefaultHoldDays] = useState(7)
@@ -880,7 +882,7 @@ export default function BookingPoliciesPage() {
                 id="groupMinSize"
                 type="number"
                 min="2"
-                max="29"
+                max={String(lodgeCapacity)}
                 value={groupMinSize}
                 onChange={(e) => setGroupMinSize(parseInt(e.target.value) || 5)}
                 className={`w-20 ${!editingGroup ? "bg-slate-50 text-slate-700" : ""}`}

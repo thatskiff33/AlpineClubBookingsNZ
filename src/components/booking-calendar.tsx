@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { useClubIdentity } from "@/components/club-identity-provider";
+import { APP_LOCALE } from "@/config/operational";
 import { formatLocalDateOnly } from "@/lib/date-only";
 
 interface SeasonInfo {
@@ -17,6 +18,7 @@ interface BookingCalendarProps {
 }
 
 export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOut }: BookingCalendarProps) {
+  const { lodgeCapacity } = useClubIdentity();
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() };
@@ -137,7 +139,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
     });
   }
 
-  const monthName = new Date(currentMonth.year, currentMonth.month).toLocaleDateString("en-NZ", {
+  const monthName = new Date(currentMonth.year, currentMonth.month).toLocaleDateString(APP_LOCALE, {
     month: "long",
     year: "numeric",
   });
@@ -177,7 +179,7 @@ export function BookingCalendar({ onDateSelect, selectedCheckIn, selectedCheckOu
           date.setHours(0, 0, 0, 0);
           const dateStr = formatLocalDateOnly(date);
           const occupied = availability[dateStr] ?? 0;
-          const available = LODGE_CAPACITY - occupied;
+          const available = lodgeCapacity - occupied;
           const isPast = date < today;
 
           return (

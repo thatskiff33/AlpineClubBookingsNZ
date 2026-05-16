@@ -14,6 +14,7 @@ import {
   XCircle,
   Webhook,
 } from "lucide-react";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 
 interface HealthCheck {
   status: "ok" | "error";
@@ -209,8 +210,8 @@ function formatUptime(seconds: number) {
 }
 
 function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleString("en-NZ", {
-    timeZone: "Pacific/Auckland",
+  return new Date(dateStr).toLocaleString(APP_LOCALE, {
+    timeZone: APP_TIME_ZONE,
     day: "2-digit",
     month: "short",
     hour: "2-digit",

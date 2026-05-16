@@ -3,6 +3,7 @@ import { PaymentStatus, PaymentTransactionKind, type AgeTier } from "@prisma/cli
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import {
   calculateBookingPrice,
   type SeasonRateData,
@@ -51,7 +52,7 @@ const addGuestsSchema = z.object({
       })
     )
     .min(1)
-    .max(29),
+    .max(LODGE_CAPACITY),
 });
 
 export async function POST(

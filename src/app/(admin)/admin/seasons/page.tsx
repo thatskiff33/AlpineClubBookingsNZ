@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { APP_CURRENCY } from "@/config/operational"
 import { formatCents } from "@/lib/pricing"
 
 interface SeasonRate {
@@ -294,7 +295,7 @@ export default function SeasonsPage() {
               </div>
 
               <div className="space-y-4">
-                <Label className="text-base font-semibold">Nightly Rates (NZD)</Label>
+                <Label className="text-base font-semibold">Nightly Rates ({APP_CURRENCY})</Label>
                 <p className="text-sm text-muted-foreground">
                   Set the price per night for each guest type
                 </p>

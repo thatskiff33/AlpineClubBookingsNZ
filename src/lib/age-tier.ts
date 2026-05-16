@@ -1,4 +1,5 @@
 import type { AgeTier } from "@prisma/client";
+import { clubConfig } from "@/config/club";
 import { getSeasonYear } from "./utils";
 
 // ---------------------------------------------------------------------------
@@ -27,15 +28,8 @@ export function computeAge(dateOfBirth: Date, referenceDate: Date): number {
 }
 
 // ---------------------------------------------------------------------------
-// Hardcoded defaults (used as fallback if DB is unavailable)
+// Configured defaults (used as fallback if DB is unavailable)
 // ---------------------------------------------------------------------------
-
-export const AGE_TIER_DEFAULTS = [
-  { tier: "INFANT" as AgeTier, minAge: 0, maxAge: 4, label: "Infant (under 5)", subscriptionRequiredForBooking: false, xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 0 },
-  { tier: "CHILD" as AgeTier, minAge: 5, maxAge: 9 as number | null, label: "Child (5-9)", subscriptionRequiredForBooking: false, xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 1 },
-  { tier: "YOUTH" as AgeTier, minAge: 10, maxAge: 17 as number | null, label: "Youth (10-17)", subscriptionRequiredForBooking: true, xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 2 },
-  { tier: "ADULT" as AgeTier, minAge: 18, maxAge: null as number | null, label: "Adult (18+)", subscriptionRequiredForBooking: true, xeroContactGroupId: null, xeroContactGroupName: null, xeroAcceptedContactGroups: [], sortOrder: 3 },
-];
 
 export type AgeTierSettingData = {
   tier: AgeTier;
@@ -51,6 +45,20 @@ export type AgeTierSettingData = {
   }>;
   sortOrder: number;
 };
+
+export const AGE_TIER_DEFAULTS: AgeTierSettingData[] = clubConfig.ageTiers.map(
+  (tier, sortOrder) => ({
+    tier: tier.id as AgeTier,
+    minAge: tier.minAge,
+    maxAge: tier.maxAge,
+    label: tier.label,
+    subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
+    xeroContactGroupId: null,
+    xeroContactGroupName: null,
+    xeroAcceptedContactGroups: [],
+    sortOrder,
+  }),
+);
 
 const LEGACY_THREE_TIER_SETTINGS = [
   { tier: "CHILD" as AgeTier, minAge: 0, maxAge: 9 as number | null, sortOrder: 1 },

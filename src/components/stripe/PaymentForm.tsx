@@ -6,6 +6,7 @@ import {
   useStripe,
   useElements,
 } from "@stripe/react-stripe-js";
+import { formatCents } from "@/lib/utils";
 
 interface PaymentFormProps {
   bookingId?: string;
@@ -30,6 +31,7 @@ export default function PaymentForm({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPaid, setIsPaid] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const formattedAmount = formatCents(amountCents);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,7 +70,7 @@ export default function PaymentForm({
     return (
       <div className="rounded-md bg-green-50 p-4 text-sm text-green-700">
         <p className="font-medium">Payment successful!</p>
-        <p className="mt-1">Your payment of ${(amountCents / 100).toFixed(2)} NZD has been processed.</p>
+        <p className="mt-1">Your payment of {formattedAmount} has been processed.</p>
       </div>
     );
   }
@@ -91,7 +93,7 @@ export default function PaymentForm({
 
       <div className="flex items-center justify-between">
         <p className="text-lg font-semibold">
-          Total: ${(amountCents / 100).toFixed(2)} NZD
+          Total: {formattedAmount}
         </p>
         <button
           type="submit"

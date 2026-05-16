@@ -1,4 +1,5 @@
 import { AgeTier, PromoCodeType, SeasonType } from "@prisma/client";
+import { APP_TIME_ZONE } from "@/config/operational";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "./date-only";
 
 export interface SeasonRateData {
@@ -42,9 +43,7 @@ export interface PromoCodeInput {
   freeNights?: number | null;
 }
 
-const BOOKING_TIME_ZONE = "Pacific/Auckland";
-
-function getDateOnlyStringForTimeZone(date: Date, timeZone = BOOKING_TIME_ZONE): string {
+function getDateOnlyStringForTimeZone(date: Date, timeZone = APP_TIME_ZONE): string {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",

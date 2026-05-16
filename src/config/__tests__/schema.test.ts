@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { clubConfigSchema, featureFlagsSchema } from "@/config/schema";
 
+const nightlyRates = {
+  winter: { memberCents: 4500, nonMemberCents: 6500 },
+  summer: { memberCents: 3500, nonMemberCents: 5000 },
+};
+
 const validClub = {
   name: "Example Mountain Club",
   shortName: "EMC",
@@ -12,8 +17,8 @@ const validClub = {
     { id: "lodge", name: "Main Lodge", capacity: 20, type: "dormitory" as const },
   ],
   ageTiers: [
-    { id: "INFANT", label: "Infant", minAge: 0, maxAge: 4, subscriptionRequiredForBooking: false },
-    { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true },
+    { id: "INFANT", label: "Infant", minAge: 0, maxAge: 4, subscriptionRequiredForBooking: false, nightlyRates },
+    { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, nightlyRates },
   ],
 };
 
@@ -109,7 +114,7 @@ describe("clubConfigSchema", () => {
     const result = clubConfigSchema.safeParse({
       ...validClub,
       ageTiers: [
-        { id: "WEIRD", label: "Weird", minAge: 10, maxAge: 5, subscriptionRequiredForBooking: false },
+        { id: "WEIRD", label: "Weird", minAge: 10, maxAge: 5, subscriptionRequiredForBooking: false, nightlyRates },
       ],
     });
     expect(result.success).toBe(false);
@@ -119,8 +124,8 @@ describe("clubConfigSchema", () => {
     const result = clubConfigSchema.safeParse({
       ...validClub,
       ageTiers: [
-        { id: "ADULT", label: "A", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true },
-        { id: "ADULT", label: "B", minAge: 20, maxAge: null, subscriptionRequiredForBooking: true },
+        { id: "ADULT", label: "A", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, nightlyRates },
+        { id: "ADULT", label: "B", minAge: 20, maxAge: null, subscriptionRequiredForBooking: true, nightlyRates },
       ],
     });
     expect(result.success).toBe(false);
@@ -133,10 +138,30 @@ describe("clubConfigSchema", () => {
     const result = clubConfigSchema.safeParse({
       ...validClub,
       ageTiers: [
-        { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true },
+        { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, nightlyRates },
       ],
     });
     expect(result.success).toBe(true);
+  });
+
+  it("rejects age tier pricing below zero", () => {
+    const result = clubConfigSchema.safeParse({
+      ...validClub,
+      ageTiers: [
+        {
+          id: "ADULT",
+          label: "Adult",
+          minAge: 18,
+          maxAge: null,
+          subscriptionRequiredForBooking: true,
+          nightlyRates: {
+            ...nightlyRates,
+            winter: { memberCents: -1, nonMemberCents: 6500 },
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
   });
 });
 

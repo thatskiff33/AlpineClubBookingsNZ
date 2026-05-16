@@ -1,4 +1,6 @@
-const CRON_TIMEZONE = "Pacific/Auckland";
+import { APP_TIME_ZONE } from "@/config/operational";
+
+const CRON_TIMEZONE = APP_TIME_ZONE;
 
 function sentryCronMonitorConfig(
   schedule: string,

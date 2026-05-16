@@ -9,12 +9,13 @@ import {
   type FinanceAccessMember,
   hasFinanceManagerAccess,
 } from "@/lib/finance-auth";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
 import { buildFinanceLandingMetricsQuery } from "@/lib/finance-landing-page";
 import { formatCents } from "@/lib/utils";
 import { CLUB_NAME } from "@/config/club-identity";
 
-const FINANCE_TIMEZONE = "Pacific/Auckland";
+const FINANCE_TIMEZONE = APP_TIME_ZONE;
 
 type FinanceBookingsReportSearchParams = Record<
   string,
@@ -592,7 +593,7 @@ function readSearchParam(
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("en-NZ", {
+  return new Date(value).toLocaleString(APP_LOCALE, {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: FINANCE_TIMEZONE,
@@ -600,7 +601,7 @@ function formatDateTime(value: string) {
 }
 
 function formatDisplayDate(dateOnly: string) {
-  return new Date(`${dateOnly}T00:00:00.000Z`).toLocaleDateString("en-NZ", {
+  return new Date(`${dateOnly}T00:00:00.000Z`).toLocaleDateString(APP_LOCALE, {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -609,7 +610,7 @@ function formatDisplayDate(dateOnly: string) {
 }
 
 function formatTableDate(dateOnly: string) {
-  return new Date(`${dateOnly}T00:00:00.000Z`).toLocaleDateString("en-NZ", {
+  return new Date(`${dateOnly}T00:00:00.000Z`).toLocaleDateString(APP_LOCALE, {
     weekday: "short",
     day: "numeric",
     month: "short",
@@ -618,13 +619,13 @@ function formatTableDate(dateOnly: string) {
 }
 
 function formatWholeNumber(value: number) {
-  return new Intl.NumberFormat("en-NZ", {
+  return new Intl.NumberFormat(APP_LOCALE, {
     maximumFractionDigits: 0,
   }).format(value);
 }
 
 function formatPercent(value: number) {
-  return new Intl.NumberFormat("en-NZ", {
+  return new Intl.NumberFormat(APP_LOCALE, {
     style: "percent",
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,

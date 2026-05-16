@@ -1,4 +1,5 @@
 import { BookingStatus, PaymentStatus } from "@prisma/client";
+import { APP_LOCALE } from "@/config/operational";
 import { prisma } from "@/lib/prisma";
 import {
   FINANCE_FORWARD_AT_RISK_BOOKING_STATUSES,
@@ -454,14 +455,14 @@ function allocateCentsEvenly(totalCents: number, parts: number): number[] {
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("en-NZ", {
+  return new Date(value).toLocaleString(APP_LOCALE, {
     dateStyle: "medium",
     timeStyle: "short",
   });
 }
 
 function formatDisplayDate(value: string) {
-  return new Date(value).toLocaleDateString("en-NZ", {
+  return new Date(value).toLocaleDateString(APP_LOCALE, {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -469,7 +470,7 @@ function formatDisplayDate(value: string) {
 }
 
 function formatWholeNumber(value: number) {
-  return new Intl.NumberFormat("en-NZ", {
+  return new Intl.NumberFormat(APP_LOCALE, {
     maximumFractionDigits: 0,
   }).format(value);
 }

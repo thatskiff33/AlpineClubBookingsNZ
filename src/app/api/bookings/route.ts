@@ -4,7 +4,8 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
 import { calculateBookingPrice, type SeasonRateData, type GroupDiscountConfig } from "@/lib/pricing";
-import { checkCapacity, LODGE_CAPACITY } from "@/lib/capacity";
+import { checkCapacity } from "@/lib/capacity";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { AgeTier, BookingStatus } from "@prisma/client";
 import { eachDayOfInterval, subDays } from "date-fns";
 import { z } from "zod";
@@ -60,7 +61,7 @@ const createBookingSchema = z.object({
       })
     )
     .min(1)
-    .max(29),
+    .max(LODGE_CAPACITY),
   notes: z.string().max(500).optional(),
   promoCode: z.string().max(50).optional(),
   draft: z.boolean().optional(),

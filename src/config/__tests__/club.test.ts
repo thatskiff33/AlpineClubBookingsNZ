@@ -4,6 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { loadClubConfig } from "@/config/club";
 
+const nightlyRates = {
+  winter: { memberCents: 4500, nonMemberCents: 6500 },
+  summer: { memberCents: 3500, nonMemberCents: 5000 },
+};
+
 const validConfig = {
   name: "Example Mountain Club",
   shortName: "EMC",
@@ -15,8 +20,8 @@ const validConfig = {
     { id: "lodge", name: "Main Lodge", capacity: 20, type: "dormitory" },
   ],
   ageTiers: [
-    { id: "INFANT", label: "Infant", minAge: 0, maxAge: 4, subscriptionRequiredForBooking: false },
-    { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true },
+    { id: "INFANT", label: "Infant", minAge: 0, maxAge: 4, subscriptionRequiredForBooking: false, nightlyRates },
+    { id: "ADULT", label: "Adult", minAge: 18, maxAge: null, subscriptionRequiredForBooking: true, nightlyRates },
   ],
 };
 

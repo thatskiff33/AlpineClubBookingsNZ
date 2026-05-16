@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkCapacity } from "@/lib/capacity";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import {
   calculateBookingPrice,
   getStayNights,
@@ -190,9 +191,9 @@ export async function POST(
 
   const totalGuestCount = guestsForPricing.length;
 
-  if (totalGuestCount > 29) {
+  if (totalGuestCount > LODGE_CAPACITY) {
     return NextResponse.json(
-      { error: "A booking cannot exceed 29 guests" },
+      { error: `A booking cannot exceed ${LODGE_CAPACITY} guests` },
       { status: 400 }
     );
   }

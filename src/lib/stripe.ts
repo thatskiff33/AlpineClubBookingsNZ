@@ -1,4 +1,5 @@
 import Stripe from "stripe";
+import { APP_STRIPE_CURRENCY } from "@/config/operational";
 
 function getStripeClient(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -35,7 +36,7 @@ export const STRIPE_MINIMUM_AMOUNT_CENTS = 50; // Stripe NZD minimum charge
 
 export async function createPaymentIntent({
   amountCents,
-  currency = "nzd",
+  currency = APP_STRIPE_CURRENCY,
   customerId,
   metadata,
   idempotencyKey,
@@ -89,7 +90,7 @@ export async function createSetupIntent({
  */
 export async function chargePaymentMethod({
   amountCents,
-  currency = "nzd",
+  currency = APP_STRIPE_CURRENCY,
   customerId,
   paymentMethodId,
   metadata,

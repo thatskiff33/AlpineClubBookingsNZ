@@ -1,5 +1,6 @@
+import { APP_TIME_ZONE } from "@/config/operational";
+
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-const DEFAULT_DATE_ONLY_TIME_ZONE = "Pacific/Auckland";
 
 function buildDateOnly(dateStr: string): Date {
   return new Date(`${dateStr}T00:00:00.000Z`);
@@ -31,7 +32,7 @@ export function formatLocalDateOnly(date: Date): string {
 
 export function formatDateOnlyForTimeZone(
   date: Date,
-  timeZone = DEFAULT_DATE_ONLY_TIME_ZONE
+  timeZone = APP_TIME_ZONE
 ): string {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -54,7 +55,7 @@ export function formatDateOnlyForTimeZone(
 
 export function normalizeDateOnlyForTimeZone(
   date: Date,
-  timeZone = DEFAULT_DATE_ONLY_TIME_ZONE
+  timeZone = APP_TIME_ZONE
 ): Date {
   const normalized = parseDateOnly(formatDateOnlyForTimeZone(date, timeZone));
 
@@ -85,7 +86,7 @@ export function eachDateOnlyInRange(startInclusive: Date, endExclusive: Date): D
   return dates;
 }
 
-export function getTodayDateOnly(timeZone = "Pacific/Auckland"): Date {
+export function getTodayDateOnly(timeZone = APP_TIME_ZONE): Date {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",

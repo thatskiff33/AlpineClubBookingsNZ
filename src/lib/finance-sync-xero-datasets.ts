@@ -1,5 +1,6 @@
 import { FinanceSnapshotType, Prisma } from "@prisma/client";
 import type { Invoice, ReportCell, ReportFields, ReportWithRow } from "xero-node";
+import { APP_TIME_ZONE } from "@/config/operational";
 import { parseDateOnly } from "@/lib/date-only";
 import {
   recordFinanceXeroApiUsage,
@@ -15,7 +16,7 @@ import {
 } from "@/lib/xero-error-shape";
 import { callXeroApi, XeroDailyLimitError } from "@/lib/xero";
 
-export const FINANCE_SYNC_DATA_TIMEZONE = "Pacific/Auckland";
+export const FINANCE_SYNC_DATA_TIMEZONE = APP_TIME_ZONE;
 export const FINANCE_SYNC_XERO_PROFIT_AND_LOSS_MONTHLY_DATASET_KEY =
   "xero-profit-and-loss-monthly";
 export const FINANCE_SYNC_XERO_BALANCE_SHEET_DATASET_KEY =

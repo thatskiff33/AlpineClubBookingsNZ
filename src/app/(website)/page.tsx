@@ -14,11 +14,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CLUB_NAME } from "@/config/club-identity";
+import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 export const metadata: Metadata = {
   title: `${CLUB_NAME} — Mt Ruapehu Lodge`,
   description:
-    `The ${CLUB_NAME} operates a 29-bed lodge on Mt Ruapehu, Whakapapa. A members' club est. 1969 — join us on the mountain.`,
+    `The ${CLUB_NAME} operates a ${LODGE_CAPACITY}-bed lodge on Mt Ruapehu, Whakapapa. A members' club est. 1969 — join us on the mountain.`,
 };
 
 const highlights = [
@@ -26,7 +27,7 @@ const highlights = [
     icon: Mountain,
     title: "Mt Ruapehu Lodge",
     description:
-      "29-bed lodge in the Whakapapa ski area, built and maintained by members since 1969.",
+      `${LODGE_CAPACITY}-bed lodge in the Whakapapa ski area, built and maintained by members since 1969.`,
   },
   {
     icon: Users,
@@ -86,7 +87,7 @@ export default function HomePage() {
               {CLUB_NAME}
             </h1>
             <p className="mt-4 max-w-xl text-lg text-brand-snow/86 sm:text-xl">
-              A members&apos; club on Mt Ruapehu. We operate a 29-bed lodge in
+              A members&apos; club on Mt Ruapehu. We operate a {LODGE_CAPACITY}-bed lodge in
               the Whakapapa ski area, open year-round for members and their
               guests.
             </p>

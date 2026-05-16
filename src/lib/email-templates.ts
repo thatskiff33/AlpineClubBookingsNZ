@@ -8,6 +8,8 @@ import {
   CLUB_EMAIL_FROM_NAME,
   CLUB_NAME,
 } from "@/config/club-identity";
+import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
+import { formatCents as formatMoneyCents } from "@/lib/utils";
 import { LODGE_CAPACITY } from "./capacity";
 import { SUPPORT_EMAIL } from "./email-sender";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "./member-setup-invite";
@@ -176,7 +178,11 @@ function alertBox(
 // ---- Exported template functions ----
 
 function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+  return formatMoneyCents(cents);
+}
+
+function formatOperationalDateTime(value: Date): string {
+  return value.toLocaleString(APP_LOCALE, { timeZone: APP_TIME_ZONE });
 }
 
 export function welcomeTemplate(firstName: string): string {
@@ -646,7 +652,7 @@ export function adminXeroSyncErrorTemplate(data: {
       { label: "Error Type", value: escapeHtml(data.errorType) },
       { label: "Operation", value: escapeHtml(data.operation) },
       { label: "Error Message", value: escapeHtml(data.errorMessage) },
-      { label: "Timestamp", value: data.timestamp.toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" }) },
+      { label: "Timestamp", value: formatOperationalDateTime(data.timestamp) },
     ])}
     ${button("View Xero Status", BASE_URL + "/admin/xero")}
   `);
@@ -686,7 +692,7 @@ export function adminXeroRepeatedFailureTemplate(data: {
     },
     {
       label: "Timestamp",
-      value: data.timestamp.toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" }),
+      value: formatOperationalDateTime(data.timestamp),
     },
   ];
 
@@ -900,7 +906,7 @@ function formatEmailDateTime(value: Date | null): string {
     return "";
   }
 
-  return value.toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" });
+  return formatOperationalDateTime(value);
 }
 
 function formatXeroObjectLabel(item: {
@@ -997,7 +1003,7 @@ function renderIssueSection(section: XeroReconciliationIssueSectionEmail): strin
 
 export function adminXeroReconciliationReportTemplate(report: XeroReconciliationReportEmail): string {
   const summaryRows = [
-    { label: "Generated", value: report.generatedAt.toLocaleString("en-NZ", { timeZone: "Pacific/Auckland" }) },
+    { label: "Generated", value: formatOperationalDateTime(report.generatedAt) },
     { label: "Lookback Window", value: `${report.lookbackHours} hour${report.lookbackHours === 1 ? "" : "s"}` },
     { label: "Stale Pending Threshold", value: `${report.stalePendingMinutes} minute${report.stalePendingMinutes === 1 ? "" : "s"}` },
     { label: "Issue Categories", value: String(report.summary.issueCategoryCount) },
@@ -1595,7 +1601,7 @@ export function refundRequestResolvedTemplate(data: {
     ${paragraph("Hi " + escapeHtml(data.firstName) + ",")}
     ${isApproved
       ? alertBox(
-          "Your refund appeal for your booking (" + formatNZDate(data.checkIn) + " - " + formatNZDate(data.checkOut) + ") has been approved. A refund of $" + ((data.amountCents ?? 0) / 100).toFixed(2) + " will be processed to your original payment method.",
+          "Your refund appeal for your booking (" + formatNZDate(data.checkIn) + " - " + formatNZDate(data.checkOut) + ") has been approved. A refund of " + formatCents(data.amountCents ?? 0) + " will be processed to your original payment method.",
           "success"
         )
       : alertBox(

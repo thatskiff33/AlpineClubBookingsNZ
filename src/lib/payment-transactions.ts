@@ -1,4 +1,5 @@
 import { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
+import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { prisma } from "@/lib/prisma";
 import { processRefund } from "@/lib/stripe";
 import Stripe from "stripe";
@@ -47,7 +48,7 @@ function stripeCreatedAtToDate(created: number | null | undefined) {
 }
 
 function normalizeRefundCurrency(currency: string | null | undefined) {
-  return (currency ?? "nzd").toLowerCase();
+  return (currency ?? APP_STRIPE_CURRENCY).toLowerCase();
 }
 
 function normalizeRefundStatus(status: string | null | undefined) {
