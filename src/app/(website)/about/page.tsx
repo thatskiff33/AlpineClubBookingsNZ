@@ -17,7 +17,7 @@ export default function AboutPage() {
       {/* Header */}
       <section className="relative overflow-hidden py-16 text-brand-snow sm:py-20">
         <Image
-          src="/images/sunset.jpg"
+          src="/branding/sunset.jpg"
           alt="Sunset from Mt Ruapehu"
           fill
           className="object-cover"
@@ -89,7 +89,7 @@ export default function AboutPage() {
           <div className="lg:col-span-2">
             <div className="relative aspect-[4/3] overflow-hidden rounded-xl shadow-lg">
               <Image
-                src="/images/lodge.jpg"
+                src="/branding/lodge.jpg"
                 alt={`${CLUB_NAME} lodge on Mt Ruapehu`}
                 fill
                 className="object-cover"

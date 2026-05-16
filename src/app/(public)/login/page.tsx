@@ -84,7 +84,7 @@ function LoginForm() {
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1 items-center">
         <Image
-          src="/images/tac-logo.png"
+          src="/branding/logo.png"
           alt={club.name}
           width={180}
           height={60}
@@ -210,7 +210,7 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 items-center">
           <Image
-            src="/images/tac-logo.png"
+            src="/branding/logo.png"
             alt={club.name}
             width={180}
             height={60}

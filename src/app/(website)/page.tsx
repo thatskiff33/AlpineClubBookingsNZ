@@ -64,7 +64,7 @@ export default function HomePage() {
       {/* Hero */}
       <section className="relative overflow-hidden text-brand-snow">
         <Image
-          src="/images/lodge.jpg"
+          src="/branding/lodge.jpg"
           alt={`${CLUB_NAME} lodge on Mt Ruapehu`}
           fill
           className="object-cover"
@@ -76,7 +76,7 @@ export default function HomePage() {
           <div className="max-w-2xl">
             <span className="website-eyebrow mb-5">Mt Ruapehu lodge since 1969</span>
             <Image
-              src="/images/tac-logo.png"
+              src="/branding/logo.png"
               alt={`${CLUB_NAME} logo`}
               width={200}
               height={68}
@@ -156,7 +156,7 @@ export default function HomePage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="relative aspect-[4/3] overflow-hidden rounded-xl shadow-md">
               <Image
-                src="/images/snowboarder.jpg"
+                src="/branding/snowboarder.jpg"
                 alt="Snowboarding on Mt Ruapehu with mountain panorama"
                 fill
                 className="object-cover hover:scale-105 transition-transform duration-500"
@@ -167,7 +167,7 @@ export default function HomePage() {
             </div>
             <div className="relative aspect-[4/3] overflow-hidden rounded-xl shadow-md">
               <Image
-                src="/images/ski-field.jpg"
+                src="/branding/ski-field.jpg"
                 alt="Whakapapa ski field on Mt Ruapehu"
                 fill
                 className="object-cover hover:scale-105 transition-transform duration-500"
@@ -178,7 +178,7 @@ export default function HomePage() {
             </div>
             <div className="relative aspect-[4/3] overflow-hidden rounded-xl shadow-md sm:col-span-2 lg:col-span-1">
               <Image
-                src="/images/sunset.jpg"
+                src="/branding/sunset.jpg"
                 alt="Sunset from Mt Ruapehu"
                 fill
                 className="object-cover hover:scale-105 transition-transform duration-500"

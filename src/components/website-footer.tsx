@@ -11,7 +11,7 @@ export function WebsiteFooter() {
           <div>
             <div className="mb-3">
               <Image
-                src="/images/tac-logo.png"
+                src="/branding/logo.png"
                 alt={CLUB_NAME}
                 width={140}
                 height={48}
