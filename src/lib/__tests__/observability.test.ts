@@ -305,6 +305,9 @@ describe("OBS-07: GET /api/admin/health", () => {
     "SENTRY_ORG",
     "SENTRY_PROJECT",
     "CRON_ENABLED",
+    "CRON_LEADER_RUNTIME_STATUS_URL",
+    "CRON_SECRET",
+    "APP_RUNTIME_ROLE",
     "XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH",
     "BACKUP_CRON_SCHEDULE",
   ] as const;
@@ -361,6 +364,7 @@ describe("OBS-07: GET /api/admin/health", () => {
 
   afterEach(() => {
     resetHealthEnv();
+    vi.unstubAllGlobals();
   });
 
   it("returns 401 for non-admin users", async () => {
@@ -541,6 +545,46 @@ describe("OBS-07: GET /api/admin/health", () => {
     const data = await response.json();
 
     expect(data.cronJobs["confirm-pending"]).toHaveLength(5);
+  });
+
+  it("uses cron leader runtime status when admin health is served by a web slot", async () => {
+    process.env.APP_RUNTIME_ROLE = "web-blue";
+    process.env.CRON_ENABLED = "false";
+    process.env.CRON_SECRET = "cron-secret";
+    process.env.CRON_LEADER_RUNTIME_STATUS_URL =
+      "http://cron-leader.test/api/deploy/runtime-status";
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      expect(_url).toBe("http://cron-leader.test/api/deploy/runtime-status");
+      expect((init as RequestInit).headers).toMatchObject({
+        "x-cron-secret": "cron-secret",
+      });
+
+      return {
+        ok: true,
+        json: async () => ({
+          cronEnabled: true,
+          role: "cron-leader",
+        }),
+      } as Response;
+    }));
+    mockAdminSession();
+    mockAdminHealthDependencies();
+
+    const { GET } = await import("@/app/api/admin/health/route");
+    const response = await GET();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.cronHealth.cronEnabled).toBe(true);
+    expect(data.cronHealth.jobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          jobName: "xero-link-backfill",
+          disabledReason: null,
+          status: "missing",
+        }),
+      ])
+    );
   });
 });
 

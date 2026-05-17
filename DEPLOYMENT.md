@@ -75,6 +75,9 @@ Minimum production categories:
   `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_FROM`, `SES_SNS_TOPIC_ARN`
 - Cron and backups: `CRON_SECRET`, `BACKUP_*`, optional
   `AUDIT_ARCHIVE_DATABASE_URL`
+- Admin health: optional `CRON_LEADER_RUNTIME_STATUS_URL` when the cron leader
+  is not reachable from web containers at
+  `http://app:3000/api/deploy/runtime-status`
 - Observability: `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`,
   `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN`
 

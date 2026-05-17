@@ -8,9 +8,15 @@ import { getExhaustedEmailFailureReviewQueue } from "@/lib/email-failure-review"
 import { getEmailDeliverabilityTelemetry } from "@/lib/email-suppression";
 import {
   buildCronHealthReport,
+  getAdminCronJobDefinitions,
   groupCronRunsByJob,
 } from "@/lib/admin-cron-health";
 import logger from "@/lib/logger";
+
+interface RuntimeStatusPayload {
+  cronEnabled: boolean;
+  role: string;
+}
 
 function getTrimmedEnv(name: string): string | null {
   const value = process.env[name]?.trim();
@@ -39,6 +45,78 @@ function buildSentryDashboardInfo() {
         ? `${missingFields.join(", ")} ${missingFields.length === 1 ? "is" : "are"} not configured; admin health cannot link directly to Sentry.`
         : null,
   };
+}
+
+function isWebRuntimeRole(role: string | undefined) {
+  return role === "web-blue" || role === "web-green";
+}
+
+function getCronLeaderRuntimeStatusUrl() {
+  return (
+    getTrimmedEnv("CRON_LEADER_RUNTIME_STATUS_URL") ??
+    "http://app:3000/api/deploy/runtime-status"
+  );
+}
+
+function isRuntimeStatusPayload(value: unknown): value is RuntimeStatusPayload {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as RuntimeStatusPayload).cronEnabled === "boolean" &&
+    typeof (value as RuntimeStatusPayload).role === "string"
+  );
+}
+
+async function getCronLeaderRuntimeStatus(): Promise<RuntimeStatusPayload | null> {
+  const cronSecret = getTrimmedEnv("CRON_SECRET");
+  if (!cronSecret) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(getCronLeaderRuntimeStatusUrl(), {
+      cache: "no-store",
+      headers: {
+        "x-cron-secret": cronSecret,
+      },
+    });
+
+    if (!response.ok) {
+      logger.warn(
+        { status: response.status },
+        "Unable to read cron leader runtime status"
+      );
+      return null;
+    }
+
+    const payload: unknown = await response.json();
+    if (!isRuntimeStatusPayload(payload)) {
+      logger.warn("Cron leader runtime status response had an unexpected shape");
+      return null;
+    }
+
+    return payload;
+  } catch (err) {
+    logger.warn({ err }, "Unable to read cron leader runtime status");
+    return null;
+  }
+}
+
+async function getCronJobDefinitionsForHealthReport() {
+  if (!isWebRuntimeRole(process.env.APP_RUNTIME_ROLE)) {
+    return getAdminCronJobDefinitions();
+  }
+
+  const cronLeaderRuntimeStatus = await getCronLeaderRuntimeStatus();
+  if (!cronLeaderRuntimeStatus) {
+    return getAdminCronJobDefinitions();
+  }
+
+  return getAdminCronJobDefinitions({
+    ...process.env,
+    APP_RUNTIME_ROLE: cronLeaderRuntimeStatus.role,
+    CRON_ENABLED: cronLeaderRuntimeStatus.cronEnabled ? "true" : "false",
+  });
 }
 
 /**
@@ -71,7 +149,10 @@ export async function GET() {
 
     // Group cron runs by job name, take last 5 each
     const cronByJob = groupCronRunsByJob(cronRuns);
-    const cronHealth = buildCronHealthReport({ runs: cronRuns });
+    const cronHealth = buildCronHealthReport({
+      definitions: await getCronJobDefinitionsForHealthReport(),
+      runs: cronRuns,
+    });
 
     // Webhook stats and SES suppression telemetry
     const [webhookStats, emailDeliverability, emailFailures] = await Promise.all([
