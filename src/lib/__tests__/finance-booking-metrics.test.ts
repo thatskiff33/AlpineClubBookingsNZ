@@ -12,6 +12,18 @@ const { mockPrisma } = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 import { getFinanceBookingMetrics } from "@/lib/finance-booking-metrics";
+import { LODGE_CAPACITY } from "@/lib/capacity";
+
+function availableBeds(occupiedBeds: number): number {
+  return LODGE_CAPACITY - occupiedBeds;
+}
+
+function occupancyRate(occupiedBedNights: number, dayCount = 1): number {
+  const capacityBedNights = LODGE_CAPACITY * dayCount;
+  return capacityBedNights > 0
+    ? Number((occupiedBedNights / capacityBedNights).toFixed(4))
+    : 0;
+}
 
 describe("finance-booking-metrics", () => {
   beforeEach(() => {
@@ -167,8 +179,8 @@ describe("finance-booking-metrics", () => {
         averageNightlyRevenueCents: 6400,
         occupancy: {
           occupiedBedNights: 9,
-          capacityBedNights: 116,
-          occupancyRate: 0.0776,
+          capacityBedNights: 4 * LODGE_CAPACITY,
+          occupancyRate: occupancyRate(9, 4),
         },
       },
       statusBreakdown: {
@@ -191,8 +203,8 @@ describe("finance-booking-metrics", () => {
           bookingCount: 1,
           guestNights: 1,
           occupiedBeds: 1,
-          availableBeds: 28,
-          occupancyRate: 0.0345,
+          availableBeds: availableBeds(1),
+          occupancyRate: occupancyRate(1),
           bookedRevenueCents: 6000,
         },
         {
@@ -200,8 +212,8 @@ describe("finance-booking-metrics", () => {
           bookingCount: 2,
           guestNights: 4,
           occupiedBeds: 4,
-          availableBeds: 25,
-          occupancyRate: 0.1379,
+          availableBeds: availableBeds(4),
+          occupancyRate: occupancyRate(4),
           bookedRevenueCents: 6000,
         },
         {
@@ -209,8 +221,8 @@ describe("finance-booking-metrics", () => {
           bookingCount: 1,
           guestNights: 2,
           occupiedBeds: 2,
-          availableBeds: 27,
-          occupancyRate: 0.069,
+          availableBeds: availableBeds(2),
+          occupancyRate: occupancyRate(2),
           bookedRevenueCents: 10000,
         },
         {
@@ -218,8 +230,8 @@ describe("finance-booking-metrics", () => {
           bookingCount: 1,
           guestNights: 2,
           occupiedBeds: 2,
-          availableBeds: 27,
-          occupancyRate: 0.069,
+          availableBeds: availableBeds(2),
+          occupancyRate: occupancyRate(2),
           bookedRevenueCents: 10000,
         },
       ],
@@ -241,8 +253,8 @@ describe("finance-booking-metrics", () => {
           bookedRevenueCents: 10000,
           occupancy: {
             occupiedBedNights: 2,
-            capacityBedNights: 87,
-            occupancyRate: 0.023,
+            capacityBedNights: 3 * LODGE_CAPACITY,
+            occupancyRate: occupancyRate(2, 3),
           },
           statusBreakdown: {
             PAID: {
@@ -260,8 +272,8 @@ describe("finance-booking-metrics", () => {
           bookedRevenueCents: 8000,
           occupancy: {
             occupiedBedNights: 2,
-            capacityBedNights: 87,
-            occupancyRate: 0.023,
+            capacityBedNights: 3 * LODGE_CAPACITY,
+            occupancyRate: occupancyRate(2, 3),
           },
           statusBreakdown: {
             PENDING: {
@@ -291,8 +303,8 @@ describe("finance-booking-metrics", () => {
           bookedRevenueCents: 18000,
           occupancy: {
             occupiedBedNights: 4,
-            capacityBedNights: 87,
-            occupancyRate: 0.046,
+            capacityBedNights: 3 * LODGE_CAPACITY,
+            occupancyRate: occupancyRate(4, 3),
           },
         },
       },
@@ -304,8 +316,8 @@ describe("finance-booking-metrics", () => {
             bookingCount: 1,
             guestNights: 2,
             occupiedBeds: 2,
-            availableBeds: 27,
-            occupancyRate: 0.069,
+            availableBeds: availableBeds(2),
+            occupancyRate: occupancyRate(2),
             bookedRevenueCents: 10000,
           },
           atRisk: {
@@ -313,8 +325,8 @@ describe("finance-booking-metrics", () => {
             bookingCount: 1,
             guestNights: 1,
             occupiedBeds: 1,
-            availableBeds: 28,
-            occupancyRate: 0.0345,
+            availableBeds: availableBeds(1),
+            occupancyRate: occupancyRate(1),
             bookedRevenueCents: 4000,
           },
           totalPipeline: {
@@ -322,8 +334,8 @@ describe("finance-booking-metrics", () => {
             bookingCount: 2,
             guestNights: 3,
             occupiedBeds: 3,
-            availableBeds: 26,
-            occupancyRate: 0.1034,
+            availableBeds: availableBeds(3),
+            occupancyRate: occupancyRate(3),
             bookedRevenueCents: 14000,
           },
         },
@@ -334,7 +346,7 @@ describe("finance-booking-metrics", () => {
             bookingCount: 0,
             guestNights: 0,
             occupiedBeds: 0,
-            availableBeds: 29,
+            availableBeds: availableBeds(0),
             occupancyRate: 0,
             bookedRevenueCents: 0,
           },
@@ -343,8 +355,8 @@ describe("finance-booking-metrics", () => {
             bookingCount: 1,
             guestNights: 1,
             occupiedBeds: 1,
-            availableBeds: 28,
-            occupancyRate: 0.0345,
+            availableBeds: availableBeds(1),
+            occupancyRate: occupancyRate(1),
             bookedRevenueCents: 4000,
           },
           totalPipeline: {
@@ -352,8 +364,8 @@ describe("finance-booking-metrics", () => {
             bookingCount: 1,
             guestNights: 1,
             occupiedBeds: 1,
-            availableBeds: 28,
-            occupancyRate: 0.0345,
+            availableBeds: availableBeds(1),
+            occupancyRate: occupancyRate(1),
             bookedRevenueCents: 4000,
           },
         },
@@ -364,7 +376,7 @@ describe("finance-booking-metrics", () => {
             bookingCount: 0,
             guestNights: 0,
             occupiedBeds: 0,
-            availableBeds: 29,
+            availableBeds: availableBeds(0),
             occupancyRate: 0,
             bookedRevenueCents: 0,
           },
@@ -373,7 +385,7 @@ describe("finance-booking-metrics", () => {
             bookingCount: 0,
             guestNights: 0,
             occupiedBeds: 0,
-            availableBeds: 29,
+            availableBeds: availableBeds(0),
             occupancyRate: 0,
             bookedRevenueCents: 0,
           },
@@ -382,7 +394,7 @@ describe("finance-booking-metrics", () => {
             bookingCount: 0,
             guestNights: 0,
             occupiedBeds: 0,
-            availableBeds: 29,
+            availableBeds: availableBeds(0),
             occupancyRate: 0,
             bookedRevenueCents: 0,
           },

@@ -28,6 +28,18 @@ import {
   buildFinanceRevenueReportPageModel,
   resolveFinanceRevenueReportFilters,
 } from "@/lib/finance-revenue-report-page";
+import { LODGE_CAPACITY } from "@/lib/capacity";
+
+function occupiedBedsLabel(occupiedBeds: number): string {
+  return `${occupiedBeds} / ${LODGE_CAPACITY}`;
+}
+
+function occupancyLabel(occupiedBedNights: number, dayCount = 1): string {
+  const capacityBedNights = LODGE_CAPACITY * dayCount;
+  const rate =
+    capacityBedNights > 0 ? (occupiedBedNights / capacityBedNights) * 100 : 0;
+  return `${rate.toFixed(1)}%`;
+}
 
 function financeViewer() {
   return {
@@ -265,7 +277,7 @@ describe("finance report output validation", () => {
       },
       {
         title: "Occupancy",
-        value: "7.8%",
+        value: occupancyLabel(9, 4),
       },
       {
         title: "Booked revenue",
@@ -283,32 +295,32 @@ describe("finance report output validation", () => {
         date: "Sat, 18 Apr",
         bookingCount: "1",
         guestNights: "1",
-        occupiedBeds: "1 / 29",
-        occupancyRate: "3.5%",
+        occupiedBeds: occupiedBedsLabel(1),
+        occupancyRate: occupancyLabel(1),
         bookedRevenue: "$60.00",
       },
       {
         date: "Sun, 19 Apr",
         bookingCount: "2",
         guestNights: "4",
-        occupiedBeds: "4 / 29",
-        occupancyRate: "13.8%",
+        occupiedBeds: occupiedBedsLabel(4),
+        occupancyRate: occupancyLabel(4),
         bookedRevenue: "$60.00",
       },
       {
         date: "Mon, 20 Apr",
         bookingCount: "1",
         guestNights: "2",
-        occupiedBeds: "2 / 29",
-        occupancyRate: "6.9%",
+        occupiedBeds: occupiedBedsLabel(2),
+        occupancyRate: occupancyLabel(2),
         bookedRevenue: "$100.00",
       },
       {
         date: "Tue, 21 Apr",
         bookingCount: "1",
         guestNights: "2",
-        occupiedBeds: "2 / 29",
-        occupancyRate: "6.9%",
+        occupiedBeds: occupiedBedsLabel(2),
+        occupancyRate: occupancyLabel(2),
         bookedRevenue: "$100.00",
       },
     ]);
@@ -347,7 +359,7 @@ describe("finance report output validation", () => {
       },
       {
         title: "Pipeline occupancy",
-        value: "4.6%",
+        value: occupancyLabel(4, 3),
       },
     ]);
     expect(model.forward.dailyRows).toEqual([
@@ -355,8 +367,8 @@ describe("finance report output validation", () => {
         date: "Wed, 22 Apr",
         bookingCount: "2",
         guestNights: "3",
-        occupiedBeds: "3 / 29",
-        occupancyRate: "10.3%",
+        occupiedBeds: occupiedBedsLabel(3),
+        occupancyRate: occupancyLabel(3),
         bookedRevenue: "$140.00",
         committedBookingCount: "1",
         committedGuestNights: "2",
@@ -369,8 +381,8 @@ describe("finance report output validation", () => {
         date: "Thu, 23 Apr",
         bookingCount: "1",
         guestNights: "1",
-        occupiedBeds: "1 / 29",
-        occupancyRate: "3.5%",
+        occupiedBeds: occupiedBedsLabel(1),
+        occupancyRate: occupancyLabel(1),
         bookedRevenue: "$40.00",
         committedBookingCount: "0",
         committedGuestNights: "0",
@@ -383,8 +395,8 @@ describe("finance report output validation", () => {
         date: "Fri, 24 Apr",
         bookingCount: "0",
         guestNights: "0",
-        occupiedBeds: "0 / 29",
-        occupancyRate: "0.0%",
+        occupiedBeds: occupiedBedsLabel(0),
+        occupancyRate: occupancyLabel(0),
         bookedRevenue: "$0.00",
         committedBookingCount: "0",
         committedGuestNights: "0",

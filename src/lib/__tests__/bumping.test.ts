@@ -32,6 +32,7 @@ import {
   bumpPendingBookings,
   sendBumpedNotifications,
 } from "../bumping";
+import { LODGE_CAPACITY } from "../capacity";
 import { sendBookingBumpedEmail } from "../email";
 
 // Helper mock for promoRedemption (returns null = no promo used)
@@ -84,34 +85,34 @@ describe("Bumping Algorithm", () => {
 
   describe("wouldExceedCapacity", () => {
     it("returns false when adding guests stays within capacity", () => {
-      const occupied = new Map([["2026-07-10", 20]]);
+      const occupied = new Map([["2026-07-10", LODGE_CAPACITY - 5]]);
       expect(wouldExceedCapacity(occupied, 5)).toBe(false);
     });
 
     it("returns false when exactly at capacity", () => {
-      const occupied = new Map([["2026-07-10", 25]]);
+      const occupied = new Map([["2026-07-10", LODGE_CAPACITY - 4]]);
       expect(wouldExceedCapacity(occupied, 4)).toBe(false);
     });
 
     it("returns true when adding guests exceeds capacity", () => {
-      const occupied = new Map([["2026-07-10", 26]]);
+      const occupied = new Map([["2026-07-10", LODGE_CAPACITY - 3]]);
       expect(wouldExceedCapacity(occupied, 4)).toBe(true);
     });
 
     it("checks all nights - returns true if any night exceeds", () => {
       const occupied = new Map([
-        ["2026-07-10", 20],
-        ["2026-07-11", 28], // This night would exceed with 2+ guests
-        ["2026-07-12", 15],
+        ["2026-07-10", LODGE_CAPACITY - 9],
+        ["2026-07-11", LODGE_CAPACITY - 1],
+        ["2026-07-12", LODGE_CAPACITY - 14],
       ]);
       expect(wouldExceedCapacity(occupied, 2)).toBe(true);
     });
 
     it("returns false when all nights have room", () => {
       const occupied = new Map([
-        ["2026-07-10", 20],
-        ["2026-07-11", 25],
-        ["2026-07-12", 15],
+        ["2026-07-10", LODGE_CAPACITY - 9],
+        ["2026-07-11", LODGE_CAPACITY - 4],
+        ["2026-07-12", LODGE_CAPACITY - 14],
       ]);
       expect(wouldExceedCapacity(occupied, 4)).toBe(false);
     });
@@ -239,9 +240,8 @@ describe("Bumping Algorithm", () => {
     });
 
     it("bumps most recent PENDING booking first when capacity exceeded", async () => {
-      // Current occupancy: 27 beds on July 10. New booking wants 4 guests = 31 > 29
       const existingConfirmed = makeBooking(
-        "conf1", "2026-07-10", "2026-07-12", 25, "CONFIRMED"
+        "conf1", "2026-07-10", "2026-07-12", LODGE_CAPACITY - 4, "CONFIRMED"
       );
       const pendingOld = makeBooking(
         "pend1", "2026-07-10", "2026-07-12", 2, "PENDING", "2026-03-01"
@@ -286,7 +286,7 @@ describe("Bumping Algorithm", () => {
 
     it("bumps multiple bookings until capacity is restored", async () => {
       const existingConfirmed = makeBooking(
-        "conf1", "2026-07-10", "2026-07-12", 24, "CONFIRMED"
+        "conf1", "2026-07-10", "2026-07-12", LODGE_CAPACITY - 5, "CONFIRMED"
       );
       const pendingNew = makeBooking(
         "pend2", "2026-07-10", "2026-07-12", 3, "PENDING", "2026-03-15"
@@ -295,7 +295,6 @@ describe("Bumping Algorithm", () => {
         "pend1", "2026-07-10", "2026-07-12", 2, "PENDING", "2026-03-01"
       );
 
-      // Total: 24 + 3 + 2 = 29. New booking: 5 guests -> 34 > 29
       const findManyCallCount = { count: 0 };
       const txMock = {
         booking: {
@@ -320,15 +319,13 @@ describe("Bumping Algorithm", () => {
         txMock as never
       );
 
-      // After bumping pend2 (3 guests): 24 + 2 + 5 = 31 > 29. Still exceeded.
-      // After bumping pend1 (2 guests): 24 + 5 = 29 <= 29. Restored.
       expect(result.bumpedBookingIds).toEqual(["pend2", "pend1"]);
       expect(result.capacityRestored).toBe(true);
     });
 
     it("stops bumping once capacity is restored", async () => {
       const existingConfirmed = makeBooking(
-        "conf1", "2026-07-10", "2026-07-12", 24, "CONFIRMED"
+        "conf1", "2026-07-10", "2026-07-12", LODGE_CAPACITY - 5, "CONFIRMED"
       );
       const pendingNew = makeBooking(
         "pend2", "2026-07-10", "2026-07-12", 4, "PENDING", "2026-03-15"
@@ -337,7 +334,6 @@ describe("Bumping Algorithm", () => {
         "pend1", "2026-07-10", "2026-07-12", 2, "PENDING", "2026-03-01"
       );
 
-      // Total: 24 + 4 + 2 = 30. New booking: 3 guests -> 33 > 29
       const findManyCallCount = { count: 0 };
       const txMock = {
         booking: {
@@ -361,7 +357,6 @@ describe("Bumping Algorithm", () => {
         txMock as never
       );
 
-      // After bumping pend2 (4 guests): 24 + 2 + 3 = 29 <= 29. Stop!
       expect(result.bumpedBookingIds).toEqual(["pend2"]);
       expect(result.capacityRestored).toBe(true);
       // pend1 should NOT be bumped
@@ -370,7 +365,7 @@ describe("Bumping Algorithm", () => {
 
     it("returns capacityRestored=false when no PENDING bookings exist", async () => {
       const existingConfirmed = makeBooking(
-        "conf1", "2026-07-10", "2026-07-12", 28, "CONFIRMED"
+        "conf1", "2026-07-10", "2026-07-12", LODGE_CAPACITY - 1, "CONFIRMED"
       );
 
       const findManyCallCount = { count: 0 };
@@ -402,13 +397,12 @@ describe("Bumping Algorithm", () => {
 
     it("returns capacityRestored=false when bumping all PENDING still not enough", async () => {
       const existingConfirmed = makeBooking(
-        "conf1", "2026-07-10", "2026-07-12", 26, "CONFIRMED"
+        "conf1", "2026-07-10", "2026-07-12", LODGE_CAPACITY - 3, "CONFIRMED"
       );
       const pendingSmall = makeBooking(
         "pend1", "2026-07-10", "2026-07-12", 1, "PENDING", "2026-03-01"
       );
 
-      // 26 + 1 = 27. New booking: 5 guests. After bumping: 26 + 5 = 31 > 29.
       const findManyCallCount = { count: 0 };
       const txMock = {
         booking: {
@@ -432,16 +426,13 @@ describe("Bumping Algorithm", () => {
         txMock as never
       );
 
-      // Even after bumping pend1: 26 + 5 = 31 > 29
       expect(result.bumpedBookingIds).toEqual(["pend1"]);
       expect(result.capacityRestored).toBe(false);
     });
 
     it("handles multi-night bookings where only some nights are tight", async () => {
-      // Night 1 (July 10): 27 beds used. Night 2 (July 11): 20 beds used.
-      // New booking: 4 guests. July 10 would be 31 > 29, July 11 is 24 <= 29.
       const confFull = makeBooking(
-        "conf1", "2026-07-10", "2026-07-11", 22, "CONFIRMED"
+        "conf1", "2026-07-10", "2026-07-11", LODGE_CAPACITY - 7, "CONFIRMED"
       );
       const confPartial = makeBooking(
         "conf2", "2026-07-10", "2026-07-12", 5, "CONFIRMED"
@@ -449,8 +440,6 @@ describe("Bumping Algorithm", () => {
       const pendOverlap = makeBooking(
         "pend1", "2026-07-10", "2026-07-11", 3, "PENDING", "2026-03-01"
       );
-      // Total July 10: 22 + 5 + 3 = 30. July 11: 5 beds.
-
       const findManyCallCount = { count: 0 };
       const txMock = {
         booking: {
@@ -474,9 +463,6 @@ describe("Bumping Algorithm", () => {
         txMock as never
       );
 
-      // July 10: 30 + 4 = 34 > 29. Bump pend1 (3 guests on Jul 10 only).
-      // After: Jul 10: 27 + 4 = 31 > 29. Still exceeded!
-      // No more candidates. capacityRestored = false.
       expect(result.capacityRestored).toBe(false);
     });
   });

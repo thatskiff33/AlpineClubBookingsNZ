@@ -51,3 +51,15 @@ review-fixes.log
 
 # generated accessibility evidence
 /reports/lighthouse/
+# Private deployment overlay
+/config/club.json
+/config/features.json
+/public/branding/favicon.ico
+/public/branding/favicon.png
+/public/branding/logo.png
+/public/branding/og-image.png
+/public/branding/lodge.jpg
+/public/branding/ski-field.jpg
+/public/branding/snowboarder.jpg
+/public/branding/sunset.jpg
+/seeds/tokoroa/
