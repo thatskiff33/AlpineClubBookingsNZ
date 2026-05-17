@@ -266,6 +266,7 @@ export default function RosterPage() {
   const isConfirmed = roster?.assignments.length
     ? roster.assignments.every((a) => a.status === "CONFIRMED" || a.status === "COMPLETED")
     : false
+  const selectedDatePathSegment = encodeURIComponent(selectedDate)
 
   function getGuestHistoryDisplay(guestId: string): string {
     if (!roster?.guestHistory[guestId]) return ""
@@ -291,7 +292,7 @@ export default function RosterPage() {
         </div>
         <div className="flex items-center space-x-3">
           <a
-            href={`/admin/roster/${selectedDate}/print`}
+            href={`/admin/roster/${selectedDatePathSegment}/print`}
             target="_blank"
             rel="noopener noreferrer"
           >
