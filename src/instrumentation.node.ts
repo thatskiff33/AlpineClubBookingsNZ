@@ -561,11 +561,13 @@ export async function register() {
         return;
       }
       isDraftCleanupRunning = true;
+      const startedAt = new Date();
       try {
         const expiredDrafts = await prisma.booking.findMany({
           where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
           select: { id: true, promoRedemption: { select: { id: true, promoCodeId: true } } },
         });
+        const deletedDrafts = expiredDrafts.length;
         if (expiredDrafts.length > 0) {
           await prisma.$transaction(async (tx) => {
             const promoDecrements = expiredDrafts
@@ -583,10 +585,13 @@ export async function register() {
               where: { status: "DRAFT", draftExpiresAt: { lt: new Date() } },
             });
           });
-          logger.info({ job: "draft-cleanup", deletedDrafts: expiredDrafts.length }, "Deleted expired draft bookings");
         }
+        logger.info({ job: "draft-cleanup", deletedDrafts }, "Draft cleanup complete");
+        await recordCronRun("draft-cleanup", startedAt, "SUCCESS", { deletedDrafts });
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         logger.error({ err, job: "draft-cleanup" }, "Failed to delete expired draft bookings");
+        await recordCronRun("draft-cleanup", startedAt, "FAILURE", undefined, message);
       } finally {
         isDraftCleanupRunning = false;
       }

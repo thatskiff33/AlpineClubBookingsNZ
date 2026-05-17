@@ -175,7 +175,7 @@ export function getAdminCronJobDefinitions(
         staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
         enabled: xeroMembershipRefreshEnabled,
         disabledReason:
-          "Disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH; set it to true to schedule this safety-net job.",
+          "Optional safety-net disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=false; leave disabled when the 15-minute Xero reconciliation jobs are healthy, or set it to true to run a full daily membership refresh.",
       },
       globalDisabledReason
     ),
@@ -268,10 +268,7 @@ export function getAdminCronJobDefinitions(
         schedule: "0 4 * * *",
         timezone: nzTimezone,
         expectedLocalTime: "04:00 NZT/NZDT daily",
-        staleAfterMinutes: null,
-        recordsRuns: false,
-        note:
-          "Scheduled in instrumentation but does not currently write CronJobRun history.",
+        staleAfterMinutes: DAILY_STALE_AFTER_MINUTES,
       },
       globalDisabledReason
     ),

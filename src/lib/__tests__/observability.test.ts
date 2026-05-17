@@ -1,29 +1,70 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+const scheduledCronJobs = vi.hoisted(
+  (): Array<{
+    expression: string;
+    callback: () => Promise<void> | void;
+    options?: unknown;
+  }> => []
+);
+
+const mockPrisma = vi.hoisted(() => ({
+  $queryRawUnsafe: vi.fn(),
+  $transaction: vi.fn(),
+  member: { count: vi.fn() },
+  booking: {
+    findMany: vi.fn(),
+    deleteMany: vi.fn(),
+  },
+  promoCode: {
+    update: vi.fn(),
+  },
+  webhookLog: {
+    create: vi.fn(),
+    groupBy: vi.fn(),
+    deleteMany: vi.fn(),
+    findMany: vi.fn(),
+  },
+  emailSuppression: {
+    count: vi.fn(),
+    findMany: vi.fn(),
+  },
+  emailLog: {
+    findMany: vi.fn(),
+  },
+  auditLog: {
+    findMany: vi.fn(),
+  },
+  cronJobRun: {
+    create: vi.fn(),
+    findMany: vi.fn(),
+  },
+}));
+
 // Mock prisma
 vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    member: { count: vi.fn() },
-    webhookLog: {
-      create: vi.fn(),
-      groupBy: vi.fn(),
-      deleteMany: vi.fn(),
-      findMany: vi.fn(),
-    },
-    emailSuppression: {
-      count: vi.fn(),
-      findMany: vi.fn(),
-    },
-    emailLog: {
-      findMany: vi.fn(),
-    },
-    auditLog: {
-      findMany: vi.fn(),
-    },
-    cronJobRun: {
-      findMany: vi.fn(),
-    },
+  prisma: mockPrisma,
+}));
+
+vi.mock("node-cron", () => ({
+  default: {
+    schedule: vi.fn(
+      (
+        expression: string,
+        callback: () => Promise<void> | void,
+        options?: unknown
+      ) => {
+        scheduledCronJobs.push({ expression, callback, options });
+        return { stop: vi.fn() };
+      }
+    ),
   },
+}));
+
+vi.mock("@sentry/nextjs", () => ({
+  captureCheckIn: vi.fn(() => "check-in-id"),
+  captureException: vi.fn(),
+  init: vi.fn(),
 }));
 
 // Mock logger
@@ -292,6 +333,141 @@ describe("OBS-05: API request logging", () => {
 
     await expect(wrappedHandler(mockRequest)).rejects.toThrow("Boom");
     expect(logger.error).toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// OBS-03: Cron job run recording tests
+// ============================================================================
+
+describe("OBS-03: cron job run recording", () => {
+  const ENV_KEYS = [
+    "NEXT_RUNTIME",
+    "CRON_ENABLED",
+    "FEATURE_FINANCE_DASHBOARD",
+    "FEATURE_WAITLIST",
+    "FEATURE_XERO_INTEGRATION",
+  ] as const;
+  const originalEnv = Object.fromEntries(
+    ENV_KEYS.map((key) => [key, process.env[key]])
+  );
+
+  function resetInstrumentationEnv() {
+    for (const key of ENV_KEYS) {
+      const value = originalEnv[key];
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+
+  function mockTransactionWithPrisma() {
+    (
+      prisma.$transaction as unknown as {
+        mockImplementation: (
+          implementation: (callback: unknown) => Promise<unknown>
+        ) => void;
+      }
+    ).mockImplementation(async (callback: unknown) => {
+      if (typeof callback !== "function") {
+        throw new Error("Expected interactive transaction callback");
+      }
+
+      return (callback as (tx: typeof prisma) => Promise<unknown>)(prisma);
+    });
+  }
+
+  async function registerCronJobs() {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.CRON_ENABLED = "true";
+    delete process.env.FEATURE_FINANCE_DASHBOARD;
+    delete process.env.FEATURE_WAITLIST;
+    delete process.env.FEATURE_XERO_INTEGRATION;
+
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([{ ok: 1 }] as any);
+    const { register } = await import("@/instrumentation.node");
+    await register();
+
+    const draftCleanup = scheduledCronJobs.find(
+      (job) => job.expression === "0 4 * * *"
+    );
+    expect(draftCleanup).toBeDefined();
+    return draftCleanup!;
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    scheduledCronJobs.length = 0;
+  });
+
+  afterEach(() => {
+    resetInstrumentationEnv();
+  });
+
+  it("records draft cleanup success summaries", async () => {
+    const draftCleanup = await registerCronJobs();
+    mockTransactionWithPrisma();
+    vi.mocked(prisma.booking.findMany).mockResolvedValue([
+      {
+        id: "booking-1",
+        promoRedemption: {
+          id: "redemption-1",
+          promoCodeId: "promo-1",
+        },
+      },
+    ] as any);
+    vi.mocked(prisma.promoCode.update).mockResolvedValue({} as any);
+    vi.mocked(prisma.booking.deleteMany).mockResolvedValue({ count: 1 } as any);
+
+    await draftCleanup.callback();
+
+    expect(prisma.promoCode.update).toHaveBeenCalledWith({
+      where: { id: "promo-1" },
+      data: { currentRedemptions: { decrement: 1 } },
+    });
+    expect(prisma.booking.deleteMany).toHaveBeenCalledWith({
+      where: { status: "DRAFT", draftExpiresAt: { lt: expect.any(Date) } },
+    });
+    expect(prisma.cronJobRun.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobName: "draft-cleanup",
+        status: "SUCCESS",
+        resultSummary: { deletedDrafts: 1 },
+      }),
+    });
+  });
+
+  it("records draft cleanup zero-delete successes and failures", async () => {
+    const draftCleanup = await registerCronJobs();
+    vi.mocked(prisma.booking.findMany).mockResolvedValueOnce([] as any);
+
+    await draftCleanup.callback();
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.cronJobRun.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobName: "draft-cleanup",
+        status: "SUCCESS",
+        resultSummary: { deletedDrafts: 0 },
+      }),
+    });
+
+    vi.mocked(prisma.booking.findMany).mockRejectedValueOnce(
+      new Error("database unavailable")
+    );
+
+    await draftCleanup.callback();
+
+    expect(prisma.cronJobRun.create).toHaveBeenLastCalledWith({
+      data: expect.objectContaining({
+        jobName: "draft-cleanup",
+        status: "FAILURE",
+        error: "database unavailable",
+      }),
+    });
   });
 });
 

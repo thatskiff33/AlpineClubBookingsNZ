@@ -134,4 +134,35 @@ describe("admin cron health", () => {
     });
     expect(finance?.note).toContain("10:15 local New Zealand time");
   });
+
+  it("tracks draft cleanup as a daily CronJobRun-backed job", () => {
+    const definitions = getAdminCronJobDefinitions({
+      CRON_ENABLED: "true",
+    } as NodeJS.ProcessEnv);
+    const draftCleanup = definitions.find(
+      (definition) => definition.jobName === "draft-cleanup"
+    );
+
+    expect(draftCleanup).toMatchObject({
+      recordsRuns: true,
+      staleAfterMinutes: 2160,
+    });
+    expect(draftCleanup?.note).toBeUndefined();
+  });
+
+  it("describes the daily Xero membership refresh as an optional disabled safety net", () => {
+    const definitions = getAdminCronJobDefinitions({
+      CRON_ENABLED: "true",
+      XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH: "false",
+    } as NodeJS.ProcessEnv);
+    const refresh = definitions.find(
+      (definition) => definition.jobName === "xero-membership-refresh"
+    );
+
+    expect(refresh).toMatchObject({
+      enabled: false,
+      disabledReason:
+        "Optional safety-net disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=false; leave disabled when the 15-minute Xero reconciliation jobs are healthy, or set it to true to run a full daily membership refresh.",
+    });
+  });
 });
