@@ -3,6 +3,7 @@ import {
   CLUB_EMAIL_FROM_NAME,
   CLUB_SUPPORT_EMAIL,
 } from "@/config/club-identity";
+import { LODGE_CAPACITY } from "@/lib/capacity";
 
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter } = vi.hoisted(() => {
@@ -551,8 +552,8 @@ describe("Email templates - Phase 6b", () => {
     ]);
 
     expect(html).toContain("Capacity Warning");
-    expect(html).toContain("26/29");
-    expect(html).toContain("28/29");
+    expect(html).toContain(`26/${LODGE_CAPACITY}`);
+    expect(html).toContain(`28/${LODGE_CAPACITY}`);
   });
 
   it("adminDailyDigestTemplate shows alert counts", async () => {

@@ -35,6 +35,7 @@ import {
   findLodgeGuestForDate,
   validateRosterAllocationsForDate,
 } from "../lodge-date-scoping";
+import { LODGE_CAPACITY } from "../capacity";
 
 function readRepoFile(relativePath: string) {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
@@ -105,10 +106,11 @@ describe("paid legacy CONFIRMED booking repair", () => {
       makeBooking(2, BookingStatus.PAID),
     ]);
 
+    const requestedGuests = LODGE_CAPACITY - 2;
     const result = await checkCapacity(
       dateOnly(2026, 6, 10),
       dateOnly(2026, 6, 12),
-      27
+      requestedGuests
     );
 
     expect(prismaMocks.bookingFindMany).toHaveBeenCalledWith(
@@ -121,7 +123,7 @@ describe("paid legacy CONFIRMED booking repair", () => {
       })
     );
     expect(result.available).toBe(true);
-    expect(result.minAvailable).toBe(27);
+    expect(result.minAvailable).toBe(requestedGuests);
     expect(result.nightDetails.map((night) => night.occupiedBeds)).toEqual([
       2,
       2,

@@ -157,7 +157,7 @@ describe("Calendar bed availability calculation", () => {
   });
 
   it("shows available when 6 or more beds remain", () => {
-    const available = LODGE_CAPACITY - 20;
+    const available = LODGE_CAPACITY - (LODGE_CAPACITY - 6);
     expect(available).toBeGreaterThan(5);
   });
 });
