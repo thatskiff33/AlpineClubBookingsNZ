@@ -94,8 +94,8 @@ Do not commit `.env` files or production secrets.
 GitHub Actions publishes production images after CI passes on `main`:
 
 ```text
-ghcr.io/<owner>/tacbookings-app:<commit-sha>
-ghcr.io/<owner>/tacbookings-migrate:<commit-sha>
+ghcr.io/<owner>/alpineclubbookingsnz-app:<commit-sha>
+ghcr.io/<owner>/alpineclubbookingsnz-migrate:<commit-sha>
 ```
 
 If those packages are private, log in to GHCR once on the production host as

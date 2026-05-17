@@ -25,10 +25,10 @@ describe("deployment image contracts", () => {
     expect(workflow).toContain("publish-ghcr-images:");
     expect(workflow).toContain("packages: write");
     expect(workflow).toContain(
-      "APP_IMAGE: ghcr.io/thatskiff33/tacbookings-app:${{ github.sha }}",
+      "APP_IMAGE: ghcr.io/thatskiff33/alpineclubbookingsnz-app:${{ github.sha }}",
     );
     expect(workflow).toContain(
-      "MIGRATE_IMAGE: ghcr.io/thatskiff33/tacbookings-migrate:${{ github.sha }}",
+      "MIGRATE_IMAGE: ghcr.io/thatskiff33/alpineclubbookingsnz-migrate:${{ github.sha }}",
     );
     expect(workflow).toContain("uses: docker/build-push-action@v7");
     expect(workflow).toContain("target: builder");
@@ -38,10 +38,10 @@ describe("deployment image contracts", () => {
     const wrapper = readRepoFile("scripts/run-production-blue-green-deploy.sh");
 
     expect(wrapper).toContain(
-      'GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/tacbookings-app}"',
+      'GHCR_APP_IMAGE_REPOSITORY="${GHCR_APP_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-app}"',
     );
     expect(wrapper).toContain(
-      'GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/tacbookings-migrate}"',
+      'GHCR_MIGRATE_IMAGE_REPOSITORY="${GHCR_MIGRATE_IMAGE_REPOSITORY:-ghcr.io/thatskiff33/alpineclubbookingsnz-migrate}"',
     );
     expect(wrapper).toContain(
       'APP_IMAGE="${GHCR_APP_IMAGE_REPOSITORY}:${RESOLVED_REF}"',

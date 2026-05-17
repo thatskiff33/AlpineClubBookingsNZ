@@ -220,8 +220,8 @@ jobs:
       contents: read
       packages: write
     env:
-      APP_IMAGE: ghcr.io/thatskiff33/tacbookings-app:${{ github.sha }}
-      MIGRATE_IMAGE: ghcr.io/thatskiff33/tacbookings-migrate:${{ github.sha }}
+      APP_IMAGE: ghcr.io/thatskiff33/alpineclubbookingsnz-app:${{ github.sha }}
+      MIGRATE_IMAGE: ghcr.io/thatskiff33/alpineclubbookingsnz-migrate:${{ github.sha }}
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
       NEXT_PUBLIC_CONTACT_EMAIL: ${{ vars.NEXT_PUBLIC_CONTACT_EMAIL }}
       NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
@@ -255,8 +255,8 @@ jobs:
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_CONTACT_EMAIL=${{ env.NEXT_PUBLIC_CONTACT_EMAIL }}
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
-          cache-from: type=gha,scope=tacbookings-app
-          cache-to: type=gha,mode=max,scope=tacbookings-app
+          cache-from: type=gha,scope=alpineclubbookingsnz-app
+          cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-app
 
       - name: Build and push migrate image
         uses: docker/build-push-action@v7
@@ -270,5 +270,5 @@ jobs:
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_CONTACT_EMAIL=${{ env.NEXT_PUBLIC_CONTACT_EMAIL }}
             NEXT_PUBLIC_SENTRY_DSN=${{ env.NEXT_PUBLIC_SENTRY_DSN }}
-          cache-from: type=gha,scope=tacbookings-migrate
-          cache-to: type=gha,mode=max,scope=tacbookings-migrate
+          cache-from: type=gha,scope=alpineclubbookingsnz-migrate
+          cache-to: type=gha,mode=max,scope=alpineclubbookingsnz-migrate
