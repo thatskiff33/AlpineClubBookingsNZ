@@ -68,6 +68,9 @@ Minimum production categories:
   `DOMAIN` is the root public host consumed by `Caddyfile` through the
   `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, `dashboard`, and
   `xero-mcp` subdomains from that value.
+- Feature flags: `FEATURE_KIOSK`, `FEATURE_CHORES`,
+  `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, and
+  `FEATURE_XERO_INTEGRATION` must be explicit `true` or `false` values.
 - Stripe: `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
   `STRIPE_WEBHOOK_SECRET`
 - Operational Xero: `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`,

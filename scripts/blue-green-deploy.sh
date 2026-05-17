@@ -296,6 +296,11 @@ validate_env_contract() {
   require_http_url_env_key NEXTAUTH_URL
   require_one_of_env_keys "AUTH_SECRET or NEXTAUTH_SECRET" AUTH_SECRET NEXTAUTH_SECRET
   require_non_placeholder_env_key CRON_SECRET
+  require_boolean_env_key FEATURE_KIOSK
+  require_boolean_env_key FEATURE_CHORES
+  require_boolean_env_key FEATURE_FINANCE_DASHBOARD
+  require_boolean_env_key FEATURE_WAITLIST
+  require_boolean_env_key FEATURE_XERO_INTEGRATION
   require_non_placeholder_env_key STRIPE_SECRET_KEY
   require_non_placeholder_env_key NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
   require_non_placeholder_env_key STRIPE_WEBHOOK_SECRET
