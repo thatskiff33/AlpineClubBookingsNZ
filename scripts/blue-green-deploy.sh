@@ -898,7 +898,6 @@ verify_cron_registration() {
   local timeout="${CRON_REGISTRATION_TIMEOUT_SECONDS:-60}"
   local patterns=(
     "Scheduled pending booking confirmation"
-    "Scheduled daily finance sync"
     "Scheduled database backup"
     "Scheduled data pruning"
     "Scheduled draft cleanup"
@@ -911,8 +910,19 @@ verify_cron_registration() {
     "Scheduled hut leader auto-assign"
     "Scheduled age-up check"
     "Scheduled credit reconciliation"
-    "Scheduled waitlist processor"
   )
+
+  if env_key_is_true FEATURE_FINANCE_DASHBOARD false; then
+    patterns+=("Scheduled daily finance sync")
+  else
+    patterns+=("Finance sync cron registration skipped because the feature flag is off")
+  fi
+
+  if env_key_is_true FEATURE_WAITLIST false; then
+    patterns+=("Scheduled waitlist processor")
+  else
+    patterns+=("Waitlist cron registration skipped because the feature flag is off")
+  fi
 
   while true; do
     logs="$(docker compose logs "$CRON_SERVICE" --tail 200)"
@@ -941,6 +951,7 @@ verify_cron_registration() {
     "$logs" \
     "Xero membership refresh registration" \
     "Scheduled Xero membership refresh" \
+    "Xero cron registration skipped because the feature flag is off" \
     "Xero membership refresh disabled by XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH"
 }
 
