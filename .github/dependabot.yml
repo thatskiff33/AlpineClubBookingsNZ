@@ -5,6 +5,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Keep Node runtime types aligned with package.json engines.
+      # Remove this when the app runtime moves beyond Node 24.
+      - dependency-name: "@types/node"
+        versions: [">=25"]
     groups:
       npm-minor-and-patch:
         update-types:
@@ -22,3 +27,8 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Keep production images on Active/Maintenance LTS Node releases.
+      # Remove this once Node 26 enters Active LTS.
+      - dependency-name: node
+        versions: [">= 26, < 27"]
