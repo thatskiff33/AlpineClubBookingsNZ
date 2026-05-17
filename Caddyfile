@@ -1,4 +1,4 @@
-example.org, www.example.org {
+{$DOMAIN}, www.{$DOMAIN} {
 	header {
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
@@ -21,13 +21,13 @@ example.org, www.example.org {
 	import /etc/caddy/deploy/tacbookings-active.caddy
 }
 
-bookings.example.org {
+bookings.{$DOMAIN} {
 	@root path /
-	redir @root https://example.org/dashboard permanent
-	redir * https://example.org{uri} permanent
+	redir @root https://{$DOMAIN}/dashboard permanent
+	redir * https://{$DOMAIN}{uri} permanent
 }
 
-dashboard.example.org {
+dashboard.{$DOMAIN} {
 	header {
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
@@ -36,9 +36,9 @@ dashboard.example.org {
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 	}
-	redir * https://example.org/finance-legacy{uri} permanent
+	redir * https://{$DOMAIN}/finance-legacy{uri} permanent
 }
 
-xero-mcp.example.org {
+xero-mcp.{$DOMAIN} {
 	reverse_proxy xero-mcp-auth:8080
 }

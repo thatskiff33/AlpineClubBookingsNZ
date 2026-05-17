@@ -408,12 +408,13 @@ validate_caddy_contract() {
   local domain
 
   domain="$(trim_whitespace "$(get_env_file_value DOMAIN)")"
-  if ! grep -Fq "$domain" Caddyfile; then
-    echo "DOMAIN=$domain does not appear in Caddyfile" >&2
+  if ! grep -Fq "$domain" Caddyfile && ! grep -Fq '{$DOMAIN}' Caddyfile; then
+    echo "DOMAIN=$domain does not appear in Caddyfile and Caddyfile does not use the {\$DOMAIN} placeholder" >&2
     return 1
   fi
 
   docker run --rm \
+    -e "DOMAIN=$domain" \
     -v "$PROJECT_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" \
     -v "$PROJECT_DIR/deploy/caddy:/etc/caddy/deploy:ro" \
     caddy:2-alpine \

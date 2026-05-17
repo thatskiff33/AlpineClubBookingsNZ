@@ -65,6 +65,9 @@ Minimum production categories:
 - Database: `DATABASE_URL`, `DB_PASSWORD`
 - Auth: `AUTH_SECRET`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `AUTH_TRUST_HOST`
 - Public app: `DOMAIN`, `NEXT_PUBLIC_CONTACT_EMAIL`
+  `DOMAIN` is the root public host consumed by `Caddyfile` through the
+  `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, `dashboard`, and
+  `xero-mcp` subdomains from that value.
 - Stripe: `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`,
   `STRIPE_WEBHOOK_SECRET`
 - Operational Xero: `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`,
