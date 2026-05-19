@@ -2,11 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import {
-  calculateDualRefundAmounts,
-  daysUntilDate,
-  loadCancellationPolicy,
-} from "@/lib/cancellation";
+import { loadCancellationPolicy } from "@/lib/cancellation";
+import { calculateCancellationPreview } from "@/lib/policies/booking-route-decisions";
 import logger from "@/lib/logger";
 
 /**
@@ -71,34 +68,15 @@ export async function GET(
       });
     }
 
-    // CONFIRMED/PAID with successful payment — calculate refund
-    const paidAmountCents =
-      booking.payment.amountCents - booking.payment.refundedAmountCents;
-    const changeFeeCents = booking.payment.changeFeeCents;
-    const refundableBaseCents = paidAmountCents - changeFeeCents;
-    const days = daysUntilDate(booking.checkIn);
     const policy = await loadCancellationPolicy(booking.checkIn);
-    const {
-      cardRefundAmountCents,
-      cardRefundPercentage,
-      creditRefundAmountCents,
-      creditRefundPercentage,
-    } = calculateDualRefundAmounts(refundableBaseCents, days, policy);
-
-    // Credit that would be restored if this booking had credit applied
-    const creditRestoredCents = booking.payment.creditAppliedCents || 0;
-
-    const keptAmountCents = paidAmountCents - cardRefundAmountCents;
+    const preview = calculateCancellationPreview({
+      payment: booking.payment,
+      checkIn: booking.checkIn,
+      policyRules: policy,
+    });
 
     return NextResponse.json({
-      refundAmountCents: cardRefundAmountCents,
-      keptAmountCents,
-      changeFeeCents,
-      refundPercentage: cardRefundPercentage,
-      creditRefundAmountCents,
-      creditRefundPercentage,
-      creditRestoredCents,
-      totalPaidCents: paidAmountCents,
+      ...preview,
       hasPayment: true,
     });
   } catch (error) {

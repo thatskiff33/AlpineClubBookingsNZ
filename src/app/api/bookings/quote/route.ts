@@ -3,10 +3,11 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import {
-  calculateBookingPrice,
-  type GroupDiscountConfig,
-  type SeasonRateData,
-} from "@/lib/pricing";
+  isGroupDiscountAppliedToBooking,
+  priceBookingGuests,
+  toGroupDiscountConfig,
+  toSeasonRateData,
+} from "@/lib/policies/booking-route-decisions";
 import { getMemberCreditBalance } from "@/lib/member-credit";
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
@@ -105,40 +106,28 @@ export async function POST(request: NextRequest) {
     include: { rates: true },
   });
 
-  const seasonData: SeasonRateData[] = seasons.map((s) => ({
-    seasonId: s.id,
-    startDate: s.startDate,
-    endDate: s.endDate,
-    type: s.type,
-    rates: s.rates.map((r) => ({
-      ageTier: r.ageTier,
-      isMember: r.isMember,
-      pricePerNightCents: r.pricePerNightCents,
-    })),
-  }));
+  const seasonData = toSeasonRateData(seasons);
 
   // Load group discount settings
-  let groupDiscount: GroupDiscountConfig | undefined;
   const gds = await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } });
-  if (gds && gds.enabled) {
-    groupDiscount = { minGroupSize: gds.minGroupSize, summerOnly: gds.summerOnly, enabled: true };
-  }
+  const groupDiscount = toGroupDiscountConfig(gds);
 
   try {
-    const price = calculateBookingPrice(checkIn, checkOut, guests, seasonData, groupDiscount);
+    const price = priceBookingGuests({
+      checkIn,
+      checkOut,
+      guests,
+      seasons: seasonData,
+      groupDiscount,
+    });
     const availableCreditCents = await getMemberCreditBalance(effectiveMemberId);
-    const groupDiscountApplied =
-      Boolean(groupDiscount) &&
-      guests.length >= (groupDiscount?.minGroupSize ?? Number.MAX_SAFE_INTEGER) &&
-      (
-        !groupDiscount?.summerOnly ||
-        seasonData.some(
-          (season) =>
-            season.type === "SUMMER" &&
-            season.startDate < checkOut &&
-            season.endDate >= checkIn
-        )
-      );
+    const groupDiscountApplied = isGroupDiscountAppliedToBooking({
+      checkIn,
+      checkOut,
+      guestCount: guests.length,
+      seasons: seasonData,
+      groupDiscount,
+    });
 
     return NextResponse.json({
       ...price,

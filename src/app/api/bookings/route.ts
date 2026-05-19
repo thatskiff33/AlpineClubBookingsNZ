@@ -3,7 +3,15 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { getNonMemberHoldDays } from "@/lib/cancellation";
-import { calculateBookingPrice, type SeasonRateData, type GroupDiscountConfig } from "@/lib/pricing";
+import type { GroupDiscountConfig } from "@/lib/pricing";
+import {
+  calculateBookingCreditApplication,
+  calculateBookingHoldDecision,
+  priceBookingGuests,
+  toGroupDiscountConfig,
+  toGuestPricingInputs,
+  toSeasonRateData,
+} from "@/lib/policies/booking-route-decisions";
 import { checkCapacity } from "@/lib/capacity";
 import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { AgeTier, BookingStatus } from "@prisma/client";
@@ -278,11 +286,8 @@ export async function POST(request: NextRequest) {
   }
 
   // Load group discount settings once for all paths
-  let groupDiscount: GroupDiscountConfig | undefined;
   const gds = await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } });
-  if (gds && gds.enabled) {
-    groupDiscount = { minGroupSize: gds.minGroupSize, summerOnly: gds.summerOnly, enabled: true };
-  }
+  const groupDiscount = toGroupDiscountConfig(gds);
 
   // Issue 7: Draft booking — skip capacity, payment, Xero, emails
   if (draft) {
@@ -302,24 +307,15 @@ export async function POST(request: NextRequest) {
           include: { rates: true },
         });
 
-        const seasonData: SeasonRateData[] = seasons.map((s) => ({
-          seasonId: s.id,
-          startDate: s.startDate,
-          endDate: s.endDate,
-          type: s.type,
-          rates: s.rates.map((r) => ({
-            ageTier: r.ageTier,
-            isMember: r.isMember,
-            pricePerNightCents: r.pricePerNightCents,
-          })),
-        }));
-
-        const guestInputs = guests.map((g) => ({
-          ageTier: g.ageTier,
-          isMember: g.isMember,
-        }));
-
-        const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData, groupDiscount);
+        const seasonData = toSeasonRateData(seasons);
+        const guestInputs = toGuestPricingInputs(guests);
+        const price = priceBookingGuests({
+          checkIn,
+          checkOut,
+          guests: guestInputs,
+          seasons: seasonData,
+          groupDiscount,
+        });
 
         let discountCents = 0;
         let promoFreeNightsUsed = 0;
@@ -499,14 +495,11 @@ export async function POST(request: NextRequest) {
   const hasNonMembers = guests.some((g) => !g.isMember);
   const allMembers = !hasNonMembers;
   const holdDays = hasNonMembers ? await getNonMemberHoldDays(checkIn) : 7;
-  // Math.ceil: any fractional day over the threshold keeps the booking PENDING
-  // so the hold window is never accidentally short. Contrast with daysUntilDate()
-  // in cancellation.ts which uses Math.floor for refund tier lookups.
-  const daysUntilCheckIn = Math.ceil(
-    (checkIn.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-  );
-  const shouldBePending = hasNonMembers && daysUntilCheckIn > holdDays;
-  const status = shouldBePending ? BookingStatus.PENDING : BookingStatus.PAYMENT_PENDING;
+  const { shouldBePending, status } = calculateBookingHoldDecision({
+    hasNonMembers,
+    checkIn,
+    holdDays,
+  });
 
   let bumpedBookingIds: string[] = [];
   let isZeroDollarConfirmed = false;
@@ -573,24 +566,15 @@ export async function POST(request: NextRequest) {
         include: { rates: true },
       });
 
-      const seasonData: SeasonRateData[] = seasons.map((s) => ({
-        seasonId: s.id,
-        startDate: s.startDate,
-        endDate: s.endDate,
-        type: s.type,
-        rates: s.rates.map((r) => ({
-          ageTier: r.ageTier,
-          isMember: r.isMember,
-          pricePerNightCents: r.pricePerNightCents,
-        })),
-      }));
-
-      const guestInputs = guests.map((g) => ({
-        ageTier: g.ageTier,
-        isMember: g.isMember,
-      }));
-
-      const price = calculateBookingPrice(checkIn, checkOut, guestInputs, seasonData, groupDiscount);
+      const seasonData = toSeasonRateData(seasons);
+      const guestInputs = toGuestPricingInputs(guests);
+      const price = priceBookingGuests({
+        checkIn,
+        checkOut,
+        guests: guestInputs,
+        seasons: seasonData,
+        groupDiscount,
+      });
 
       // Handle promo code if provided
       let discountCents = 0;
@@ -683,20 +667,18 @@ export async function POST(request: NextRequest) {
       const finalPriceCents = price.totalPriceCents - discountCents;
 
       // Apply account credit if requested
-      let creditAppliedCents = 0;
       const requestedCredit = parsed.data.applyCreditCents || 0;
-      if (requestedCredit > 0 && status === BookingStatus.PAYMENT_PENDING) {
-        const creditBalance = await getMemberCreditBalance(effectiveMemberId, tx);
-        if (requestedCredit > creditBalance) {
-          throw new Error(`Insufficient credit: ${creditBalance} cents available, ${requestedCredit} requested`);
-        }
-        if (requestedCredit > finalPriceCents) {
-          throw new Error(`Credit amount (${requestedCredit}) exceeds booking price (${finalPriceCents})`);
-        }
-        creditAppliedCents = requestedCredit;
-      }
-
-      const effectivePriceCents = finalPriceCents - creditAppliedCents;
+      const creditBalance =
+        requestedCredit > 0 && status === BookingStatus.PAYMENT_PENDING
+          ? await getMemberCreditBalance(effectiveMemberId, tx)
+          : 0;
+      const { creditAppliedCents, effectivePriceCents } =
+        calculateBookingCreditApplication({
+          requestedCreditCents: requestedCredit,
+          creditBalanceCents: creditBalance,
+          finalPriceCents,
+          status,
+        });
 
       if (capacityExceeded && (status === BookingStatus.PENDING || effectivePriceCents > 0)) {
         const fullNights = nightDetails.filter((n) => n.availableBeds < guests.length);
@@ -1039,30 +1021,21 @@ async function createWaitlistedBooking(params: {
     include: { rates: true },
   });
 
-  const seasonData: SeasonRateData[] = seasons.map((s) => ({
-    seasonId: s.id,
-    startDate: s.startDate,
-    endDate: s.endDate,
-    type: s.type,
-    rates: s.rates.map((r) => ({
-      ageTier: r.ageTier,
-      isMember: r.isMember,
-      pricePerNightCents: r.pricePerNightCents,
-    })),
-  }));
+  const seasonData = toSeasonRateData(seasons);
+  const guestInputs = toGuestPricingInputs(
+    guests.map((guest) => ({
+      ageTier: guest.ageTier as AgeTier,
+      isMember: guest.isMember,
+    }))
+  );
 
-  const guestInputs = guests.map((g) => ({
-    ageTier: g.ageTier as AgeTier,
-    isMember: g.isMember,
-  }));
-
-  const price = calculateBookingPrice(
+  const price = priceBookingGuests({
     checkIn,
     checkOut,
-    guestInputs,
-    seasonData,
-    groupDiscount
-  );
+    guests: guestInputs,
+    seasons: seasonData,
+    groupDiscount,
+  });
 
   let discountCents = 0;
   let promoFreeNightsUsed = 0;
