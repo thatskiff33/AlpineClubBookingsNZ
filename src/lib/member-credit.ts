@@ -7,10 +7,18 @@ import {
 import { createAuditLog } from "./audit";
 import { isPrismaUniqueConstraintError } from "./prisma-errors";
 import logger from "@/lib/logger";
+import {
+  assertMatchingIdempotentAdjustmentRequest,
+  calculateAppliedCreditAmount,
+  calculateRestoredCreditAmount,
+  formatAdjustmentAmount,
+  validateAdjustmentAmount,
+  validateCreditApplicationAmount,
+  validateCreditApplicationAgainstBalance,
+  validateNegativeAdjustmentAgainstBalance,
+} from "@/lib/policies/member-credit";
 
 const MEMBER_CREDIT_LOCK_NAMESPACE = "member-credit-ledger";
-const ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT =
-  "This idempotency key was already used for a different adjustment request";
 
 const adminAdjustmentRequestSelect = {
   id: true,
@@ -121,23 +129,17 @@ export async function applyCreditToBooking(
   bookingId: string,
   tx: Prisma.TransactionClient
 ): Promise<void> {
-  if (amountCents <= 0) {
-    throw new Error("Credit amount must be positive");
-  }
+  validateCreditApplicationAmount(amountCents);
 
   await lockMemberCreditLedger(memberId, tx);
 
   const balance = await getMemberCreditBalance(memberId, tx);
-  if (balance < amountCents) {
-    throw new Error(
-      `Insufficient credit balance: ${balance} cents available, ${amountCents} cents requested`
-    );
-  }
+  validateCreditApplicationAgainstBalance(amountCents, balance);
 
   await tx.memberCredit.create({
     data: {
       memberId,
-      amountCents: -amountCents, // Negative = credit used
+      amountCents: calculateAppliedCreditAmount(amountCents),
       type: CreditType.BOOKING_APPLIED,
       description: `Applied to booking ${bookingId.slice(0, 8)}`,
       appliedToBookingId: bookingId,
@@ -168,11 +170,7 @@ export async function restoreCreditFromBooking(
     return 0;
   }
 
-  // Sum up the applied amounts (they are negative, so negate to get positive)
-  const totalApplied = appliedCredits.reduce(
-    (sum, c) => sum + Math.abs(c.amountCents),
-    0
-  );
+  const totalApplied = calculateRestoredCreditAmount(appliedCredits);
 
   // Create a positive entry to restore the credit
   await db.memberCredit.create({
@@ -269,16 +267,6 @@ export async function getAdminAdjustmentRequests(
   });
 }
 
-function formatAdjustmentAmount(amountCents: number) {
-  return `${amountCents > 0 ? "+" : ""}${amountCents} cents`;
-}
-
-function validateAdjustmentAmount(amountCents: number) {
-  if (amountCents === 0) {
-    throw new Error("Adjustment amount cannot be zero");
-  }
-}
-
 async function lockMemberCreditLedger(
   memberId: string,
   tx: Prisma.TransactionClient
@@ -298,11 +286,7 @@ async function validateNegativeAdjustmentBalance(
 ) {
   if (amountCents < 0) {
     const balance = await getMemberCreditBalance(memberId, tx);
-    if (balance + amountCents < 0) {
-      throw new Error(
-        `Cannot deduct ${Math.abs(amountCents)} cents: only ${balance} cents available`
-      );
-    }
+    validateNegativeAdjustmentAgainstBalance(amountCents, balance);
   }
 }
 
@@ -319,25 +303,6 @@ async function findAdminAdjustmentRequestByIdempotencyKey(
     },
     select: adminAdjustmentRequestSelect,
   });
-}
-
-function assertMatchingIdempotentAdjustmentRequest(
-  request: AdminAdjustmentRequestRecord,
-  expected: {
-    memberId: string;
-    amountCents: number;
-    description: string;
-    requestedById: string;
-  }
-) {
-  if (
-    request.memberId !== expected.memberId ||
-    request.amountCents !== expected.amountCents ||
-    request.description !== expected.description ||
-    request.requestedById !== expected.requestedById
-  ) {
-    throw new Error(ADMIN_ADJUSTMENT_IDEMPOTENCY_CONFLICT);
-  }
 }
 
 /**
