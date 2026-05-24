@@ -14,7 +14,11 @@ import {
   startXeroSyncOperation,
   upsertXeroObjectLink,
 } from "@/lib/xero-sync";
-import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links";
+import {
+  buildXeroContactUrl,
+  buildXeroCreditNoteUrl,
+  buildXeroInvoiceUrl,
+} from "@/lib/xero-links";
 import {
   callXeroApi,
   getAuthenticatedXeroClient,
@@ -386,7 +390,7 @@ export async function createXeroMembershipCancellationCreditNote(
       throw new Error("Failed to create membership cancellation Xero credit note");
     }
 
-    const creditNoteUrl = null;
+    const creditNoteUrl = buildXeroCreditNoteUrl(createdNote.creditNoteID);
     await upsertXeroObjectLink({
       localModel: "MemberSubscription",
       localId: subscription.id,

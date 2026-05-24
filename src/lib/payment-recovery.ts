@@ -411,12 +411,11 @@ async function processCancelPaymentIntentOperation(
     operation.paymentIntentId
   );
 
-  if (result.canceled || result.paymentIntent.status === "canceled") {
-    await markSupersededTransactionFailed(operation);
-    await completePaymentRecoveryOperation(operation.id);
-    return;
-  }
-
+  // Stripe can transition a PaymentIntent from a cancellable status to
+  // "succeeded" between our retrieve and our cancel call, and the cancel
+  // API can race with a parallel capture. Check the actual status before
+  // treating this as a cancellation, otherwise we would mark a captured
+  // payment FAILED and skip the refund handoff.
   if (result.paymentIntent.status === "succeeded") {
     await handoffSucceededSupersededIntentToRefund({
       operation,
@@ -426,6 +425,12 @@ async function processCancelPaymentIntentOperation(
           ? result.paymentIntent.payment_method
           : result.paymentIntent.payment_method?.id ?? null,
     });
+    return;
+  }
+
+  if (result.canceled || result.paymentIntent.status === "canceled") {
+    await markSupersededTransactionFailed(operation);
+    await completePaymentRecoveryOperation(operation.id);
     return;
   }
 

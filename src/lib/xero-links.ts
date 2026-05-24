@@ -29,6 +29,16 @@ export function buildXeroInvoiceUrl(
   );
 }
 
+export function buildXeroCreditNoteUrl(
+  creditNoteId: string,
+  options?: XeroUrlOptions
+): string {
+  return buildXeroUrl(
+    `/AccountsReceivable/ViewCreditNote.aspx?creditNoteID=${encodeURIComponent(creditNoteId)}`,
+    options
+  );
+}
+
 export function buildXeroObjectUrl(
   objectType: string,
   objectId: string,
@@ -40,6 +50,9 @@ export function buildXeroObjectUrl(
     case "INVOICE":
     case "SUBSCRIPTION":
       return buildXeroInvoiceUrl(objectId, options);
+    case "CREDIT_NOTE":
+    case "CREDITNOTE":
+      return buildXeroCreditNoteUrl(objectId, options);
     default:
       return null;
   }
