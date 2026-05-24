@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   deleteContactGroupContact: vi.fn(),
   createContactGroupContacts: vi.fn(),
   updateContact: vi.fn(),
+  sendAdminXeroSyncErrorAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -70,6 +71,14 @@ vi.mock("@/lib/membership-cancellation-settings", () => ({
 
 vi.mock("@/lib/age-tier-xero-groups", () => ({
   getAgeTierXeroContactGroupMappings: mocks.getAgeTierXeroContactGroupMappings,
+}));
+
+vi.mock("@/lib/email", () => ({
+  sendAdminXeroSyncErrorAlert: mocks.sendAdminXeroSyncErrorAlert,
+}));
+
+vi.mock("@/lib/logger", () => ({
+  default: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
 import {
@@ -208,7 +217,7 @@ describe("membership cancellation Xero operations", () => {
     );
   });
 
-  it("does not create credit notes for paid subscriptions", async () => {
+  it("alerts admins instead of silently skipping when a paid subscription is cancelled", async () => {
     mocks.memberSubscriptionFindUnique.mockResolvedValue({
       id: "sub_1",
       memberId: "member_1",
@@ -234,13 +243,20 @@ describe("membership cancellation Xero operations", () => {
 
     expect(mocks.getAuthenticatedXeroClient).not.toHaveBeenCalled();
     expect(mocks.createCreditNotes).not.toHaveBeenCalled();
+    expect(mocks.sendAdminXeroSyncErrorAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorType: "membership_cancellation_paid_subscription_no_refund",
+        operation: "createXeroMembershipCancellationCreditNote",
+      }),
+    );
     expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
       "op_1",
       expect.objectContaining({
         responsePayload: expect.objectContaining({
           skipped: true,
-          reason: "subscription_status_not_creditable",
+          reason: "paid_subscription_no_refund",
           status: "PAID",
+          adminAlertSent: true,
         }),
       }),
     );

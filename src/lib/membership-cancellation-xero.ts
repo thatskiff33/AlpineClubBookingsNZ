@@ -19,6 +19,8 @@ import {
   buildXeroCreditNoteUrl,
   buildXeroInvoiceUrl,
 } from "@/lib/xero-links";
+import { sendAdminXeroSyncErrorAlert } from "@/lib/email";
+import logger from "@/lib/logger";
 import {
   callXeroApi,
   getAuthenticatedXeroClient,
@@ -177,6 +179,55 @@ export async function createXeroMembershipCancellationCreditNote(
     Boolean(subscription.xeroInvoiceId);
 
   if (!shouldCredit) {
+    // Option B from the audit: paid subscriptions are not auto-refunded.
+    // The booking-side refund pipeline is not yet wired into the
+    // membership cancellation flow. Skipping silently for PAID would
+    // leave the member's money in Stripe with no admin visibility, so
+    // surface an explicit alert and a distinct skip reason whenever the
+    // subscription is PAID and otherwise would have been creditable.
+    if (
+      subscription.status === "PAID" &&
+      Boolean(subscription.xeroInvoiceId)
+    ) {
+      logger.warn(
+        {
+          subscriptionId: subscription.id,
+          memberId: subscription.memberId,
+          xeroInvoiceId: subscription.xeroInvoiceId,
+          requestId: params.requestId,
+          participantId: params.participantId,
+        },
+        "Paid membership subscription cancelled without automatic refund",
+      );
+      await sendAdminXeroSyncErrorAlert({
+        errorType: "membership_cancellation_paid_subscription_no_refund",
+        operation: "createXeroMembershipCancellationCreditNote",
+        errorMessage: `Member ${subscription.member.firstName} ${subscription.member.lastName} (${subscription.memberId}) had a PAID season subscription cancelled. No Stripe refund or Xero credit note was issued automatically; manual reconciliation required.`,
+        timestamp: new Date(),
+      }).catch((err) =>
+        logger.error(
+          {
+            err,
+            subscriptionId: subscription.id,
+            requestId: params.requestId,
+          },
+          "Failed to send admin alert for paid membership cancellation",
+        ),
+      );
+      if (operationId) {
+        await completeXeroSyncOperation(operationId, {
+          responsePayload: {
+            skipped: true,
+            reason: "paid_subscription_no_refund",
+            status: subscription.status,
+            xeroInvoiceId: subscription.xeroInvoiceId,
+            adminAlertSent: true,
+          },
+        });
+      }
+      return null;
+    }
+
     if (operationId) {
       await completeXeroSyncOperation(operationId, {
         responsePayload: {
