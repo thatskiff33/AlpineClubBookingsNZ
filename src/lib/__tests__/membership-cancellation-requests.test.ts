@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   participantFindMany: vi.fn(),
   participantFindUnique: vi.fn(),
   participantUpdate: vi.fn(),
+  participantUpdateMany: vi.fn(),
   requestCreate: vi.fn(),
   requestFindMany: vi.fn(),
   sendAdminRequestAlert: vi.fn(),
@@ -16,8 +17,8 @@ const mocks = vi.hoisted(() => ({
   logAudit: vi.fn(),
 }));
 
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
+vi.mock("@/lib/prisma", () => {
+  const prismaClient = {
     member: {
       findUnique: mocks.memberFindUnique,
       findMany: mocks.memberFindMany,
@@ -30,9 +31,14 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.participantFindMany,
       findUnique: mocks.participantFindUnique,
       update: mocks.participantUpdate,
+      updateMany: mocks.participantUpdateMany,
     },
-  },
-}));
+    $transaction: (
+      callback: (tx: typeof prismaClient) => Promise<unknown>,
+    ) => callback(prismaClient),
+  };
+  return { prisma: prismaClient };
+});
 
 vi.mock("@/lib/email", () => ({
   sendAdminMembershipCancellationRequestAlert: mocks.sendAdminRequestAlert,
@@ -148,6 +154,7 @@ describe("membership cancellation request workflow", () => {
     mocks.sendAdminRequestAlert.mockResolvedValue(undefined);
     mocks.sendConfirmationEmail.mockResolvedValue(undefined);
     mocks.sendSubmittedEmail.mockResolvedValue(undefined);
+    mocks.participantUpdateMany.mockResolvedValue({ count: 0 });
     mocks.requestCreate.mockImplementation(async (args) => ({
       id: "request-1",
       status: "REQUESTED",
@@ -352,5 +359,48 @@ describe("membership cancellation request workflow", () => {
       }),
     );
     expect(response.message).toMatch(/membership remains active/i);
+  });
+
+  it("invalidates any other open PENDING_CONFIRMATION rows for the same member", async () => {
+    const current = participant();
+    mocks.participantFindUnique.mockResolvedValue(current);
+    mocks.participantUpdate.mockResolvedValue({
+      ...current,
+      status: "REQUESTED",
+      confirmedAt: new Date("2026-05-24T01:00:00.000Z"),
+      confirmationTokenHash: null,
+      confirmationTokenExpiresAt: null,
+      request: {
+        ...current.request,
+        participants: [
+          {
+            ...current,
+            status: "REQUESTED",
+            confirmedAt: new Date("2026-05-24T01:00:00.000Z"),
+          },
+        ],
+      },
+    });
+    mocks.participantUpdateMany.mockResolvedValue({ count: 1 });
+
+    await respondToMembershipCancellationConfirmation({
+      token: "raw-confirmation-token",
+      memberId: "adult-login",
+      decision: "confirm",
+    });
+
+    expect(mocks.participantUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          memberId: "adult-login",
+          status: "PENDING_CONFIRMATION",
+          id: { not: "participant-1" },
+        },
+        data: {
+          confirmationTokenHash: null,
+          confirmationTokenExpiresAt: null,
+        },
+      }),
+    );
   });
 });

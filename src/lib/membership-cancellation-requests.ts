@@ -876,58 +876,78 @@ export async function respondToMembershipCancellationConfirmation({
     );
   }
 
-  const updated = await prisma.membershipCancellationRequestParticipant.update({
-    where: { id: participant.id },
-    data:
-      decision === "confirm"
-        ? {
-            status: "REQUESTED",
-            confirmedAt: now,
-            confirmationTokenHash: null,
-            confirmationTokenExpiresAt: null,
-          }
-        : {
-            status: "DECLINED",
-            declinedAt: now,
-            confirmationTokenHash: null,
-            confirmationTokenExpiresAt: null,
-          },
-    include: {
-      member: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
-          ageTier: true,
-          canLogin: true,
-          active: true,
-        },
-      },
-      request: {
+  const updated = await prisma.$transaction(async (tx) => {
+    const updatedParticipant =
+      await tx.membershipCancellationRequestParticipant.update({
+        where: { id: participant.id },
+        data:
+          decision === "confirm"
+            ? {
+                status: "REQUESTED",
+                confirmedAt: now,
+                confirmationTokenHash: null,
+                confirmationTokenExpiresAt: null,
+              }
+            : {
+                status: "DECLINED",
+                declinedAt: now,
+                confirmationTokenHash: null,
+                confirmationTokenExpiresAt: null,
+              },
         include: {
-          requestedBy: {
-            select: { id: true, firstName: true, lastName: true, email: true },
+          member: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+              ageTier: true,
+              canLogin: true,
+              active: true,
+            },
           },
-          participants: {
+          request: {
             include: {
-              member: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                  ageTier: true,
-                  canLogin: true,
-                  active: true,
+              requestedBy: {
+                select: { id: true, firstName: true, lastName: true, email: true },
+              },
+              participants: {
+                include: {
+                  member: {
+                    select: {
+                      id: true,
+                      firstName: true,
+                      lastName: true,
+                      email: true,
+                      ageTier: true,
+                      canLogin: true,
+                      active: true,
+                    },
+                  },
                 },
+                orderBy: { createdAt: "asc" },
               },
             },
-            orderBy: { createdAt: "asc" },
           },
         },
+      });
+
+    // Defence in depth: if the same member somehow has another open
+    // PENDING_CONFIRMATION row across overlapping requests, invalidate
+    // its token now so it cannot be replayed.
+    await tx.membershipCancellationRequestParticipant.updateMany({
+      where: {
+        memberId,
+        status: "PENDING_CONFIRMATION",
+        id: { not: participant.id },
       },
-    },
+      data: {
+        confirmationTokenHash: null,
+        confirmationTokenExpiresAt: null,
+      },
+    });
+
+    return updatedParticipant;
   });
 
   logAudit({
