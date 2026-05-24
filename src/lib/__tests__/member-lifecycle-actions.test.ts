@@ -50,6 +50,8 @@ const mockPrisma = vi.hoisted(() => {
       create: vi.fn(),
     },
     $transaction: vi.fn(),
+    $executeRaw: vi.fn().mockResolvedValue(0),
+    $executeRawUnsafe: vi.fn().mockResolvedValue(0),
   };
 });
 

@@ -128,6 +128,11 @@ The source of truth is `prisma/schema.prisma`. Key domains are:
    on nights in that individual range.
 7. Capacity-sensitive writes use a PostgreSQL advisory transaction lock so
    overlapping booking decisions serialize at the current lodge scale.
+   Member lifecycle approval (delete / archive) acquires
+   `pg_advisory_xact_lock(hashtext('member-lifecycle:<memberId>'))` inside
+   the transaction. Future approve / reject paths that recount eligibility
+   then mutate the member graph should follow the same idiom so a parallel
+   write cannot race the re-check.
 8. Stripe records payment state; Xero operations are queued or performed through
    durable integration helpers and linked back to local records.
 

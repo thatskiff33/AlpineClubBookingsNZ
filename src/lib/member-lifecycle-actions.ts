@@ -855,6 +855,14 @@ export async function reviewMemberDeleteRequest({
   }
 
   const approved = await prisma.$transaction(async (tx) => {
+    // Serialize concurrent member-lifecycle work for this member id so an
+    // eligibility re-check inside this transaction cannot be raced by a
+    // parallel write (new booking, guest appearance, family request,
+    // refund) that would otherwise leave us with a 500 from FK RESTRICT
+    // or an orphaned SET NULL row. See docs/ARCHITECTURE.md for the
+    // wider advisory-lock convention.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${request.memberId}`}))`;
+
     const eligibility = await getMemberDeleteEligibility({
       memberId: request.memberId,
       currentAdminMemberId: reviewedByMemberId,
@@ -1031,6 +1039,9 @@ export async function reviewMemberArchiveRequest({
   }
 
   const approved = await prisma.$transaction(async (tx) => {
+    // See reviewMemberDeleteRequest for the advisory-lock rationale.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-lifecycle:${request.memberId}`}))`;
+
     const member = await tx.member.findUnique({
       where: { id: request.memberId },
       select: archiveTargetMemberSelect,
