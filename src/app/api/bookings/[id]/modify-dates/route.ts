@@ -20,7 +20,10 @@ import {
 } from "@/lib/promo";
 import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
-import { sendBookingModifiedEmail } from "@/lib/email";
+import {
+  sendAdminPaymentFailureAlert,
+  sendBookingModifiedEmail,
+} from "@/lib/email";
 import {
   cleanupChoreAssignmentsForDateChange,
   cleanupChoreAssignmentsForGuestStayRanges,
@@ -541,6 +544,22 @@ export async function PUT(
       } catch (refundErr) {
         logger.error({ err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
           "Stripe refund failed after date change - requires manual reconciliation");
+        await sendAdminPaymentFailureAlert({
+          memberName: result.memberName,
+          checkIn: result.booking.checkIn,
+          checkOut: result.booking.checkOut,
+          amountCents: result.pendingRefundAmountCents,
+          errorMessage:
+            refundErr instanceof Error
+              ? `Stripe refund failed after date change (manual reconciliation required): ${refundErr.message}`
+              : "Stripe refund failed after date change (manual reconciliation required)",
+          paymentIntentId: `refund_failure_${bookingId}`,
+        }).catch((alertErr) =>
+          logger.error(
+            { err: alertErr, bookingId },
+            "Failed to send admin alert for Stripe refund failure after date change"
+          )
+        );
       }
     }
 
