@@ -74,6 +74,11 @@ function requestTouchesLockedPeriod({
   const currentCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
   const currentCheckOut = normalizeDateOnlyForTimeZone(booking.checkOut);
 
+  // `today` is produced by getTodayDateOnly() (NZ-normalised midnight UTC).
+  // `requestedEffectiveDate` and the booking dates come from parseDateOnly /
+  // normalizeDateOnlyForTimeZone, which also yield midnight UTC. The
+  // comparisons below rely on both sides being on the same midnight-UTC
+  // date-only frame.
   if (requestedEffectiveDate && requestedEffectiveDate <= today) {
     return true;
   }
