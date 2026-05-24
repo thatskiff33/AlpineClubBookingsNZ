@@ -164,11 +164,6 @@ vi.mock("@/lib/booking-member-guest-subscriptions", () => ({
   findUnpaidMemberGuestNames: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock("@/lib/booking-modify-permissions", () => ({
-  canModifyBookingStatus: vi.fn().mockReturnValue(true),
-  usesActiveBookingLifecycle: vi.fn().mockReturnValue(true),
-}));
-
 function makeBooking(overrides: Record<string, unknown> = {}) {
   return {
     id: "bk1",

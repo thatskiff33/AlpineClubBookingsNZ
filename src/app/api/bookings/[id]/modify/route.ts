@@ -48,9 +48,10 @@ import {
 } from "@/lib/booking-review";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
 import {
-  canModifyBookingStatus,
-  usesActiveBookingLifecycle,
-} from "@/lib/booking-modify-permissions";
+  canModifyBookingStatusForRole,
+  usesActiveBookingEditLifecycle,
+} from "@/lib/booking-edit-policy";
+import { ApiError } from "@/lib/api-error";
 import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
@@ -85,15 +86,6 @@ const batchModifySchema = z.object({
   promoCode: z.string().optional(),
   removePromoCode: z.boolean().optional(),
 });
-
-class ApiError extends Error {
-  constructor(
-    message: string,
-    public status: number
-  ) {
-    super(message);
-  }
-}
 
 type SupersededPrimaryPaymentIntent = {
   paymentTransactionId: string;
@@ -176,7 +168,7 @@ export async function PUT(
         throw new ApiError("Forbidden", 403);
       }
 
-      if (!canModifyBookingStatus(booking.status, session.user.role)) {
+      if (!canModifyBookingStatusForRole(booking.status, session.user.role)) {
         throw new ApiError(
           "This booking cannot be modified in its current status",
           400
@@ -252,35 +244,27 @@ export async function PUT(
 
       const skipBookingLifecycleRules =
         session.user.role === "ADMIN" &&
-        !usesActiveBookingLifecycle(booking.status);
+        !usesActiveBookingEditLifecycle(booking.status);
 
-      let normalizedAddGuests = addGuests;
-      try {
-        const linkedMembers = await resolveLinkedBookingMembers(
-          tx,
-          booking.memberId,
-          (addGuests ?? []).map((guest) => guest.memberId),
-          { skipAuthorization: session.user.role === "ADMIN" }
-        );
-        await assertLinkedBookingMembersCanBeBooked(
-          tx,
-          linkedMembers,
-          session.user.id,
-          {
-            actorRole: session.user.role,
-            onBehalfOfMemberId:
-              session.user.role === "ADMIN" ? booking.memberId : null,
-          }
-        );
-        normalizedAddGuests = addGuests
-          ? normalizeBookingGuestInputs(addGuests, linkedMembers)
-          : undefined;
-      } catch (error) {
-        if (error instanceof BookingGuestValidationError) {
-          throw error;
+      const linkedMembers = await resolveLinkedBookingMembers(
+        tx,
+        booking.memberId,
+        (addGuests ?? []).map((guest) => guest.memberId),
+        { skipAuthorization: session.user.role === "ADMIN" }
+      );
+      await assertLinkedBookingMembersCanBeBooked(
+        tx,
+        linkedMembers,
+        session.user.id,
+        {
+          actorRole: session.user.role,
+          onBehalfOfMemberId:
+            session.user.role === "ADMIN" ? booking.memberId : null,
         }
-        throw error;
-      }
+      );
+      const normalizedAddGuests = addGuests
+        ? normalizeBookingGuestInputs(addGuests, linkedMembers)
+        : undefined;
 
       // Determine guest changes
       const removeSet = new Set(removeGuestIds ?? []);
@@ -1035,7 +1019,8 @@ export async function PUT(
         newCheckOut: result.booking.checkOut,
         oldGuestCount: result.oldGuestCount,
         newGuestCount: result.booking.guests.length,
-        oldFinalPriceCents: booking_finalPriceCentsFromDiff(result),
+        oldFinalPriceCents:
+          result.booking.finalPriceCents - result.priceDiffCents,
         newFinalPriceCents: result.booking.finalPriceCents,
         changeFeeCents: result.changeFeeCents,
         refundAmountCents: result.refundAmountCents,
@@ -1073,9 +1058,3 @@ export async function PUT(
   }
 }
 
-function booking_finalPriceCentsFromDiff(result: {
-  booking: { finalPriceCents: number };
-  priceDiffCents: number;
-}): number {
-  return result.booking.finalPriceCents - result.priceDiffCents;
-}

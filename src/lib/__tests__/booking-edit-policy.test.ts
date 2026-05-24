@@ -1,36 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  canModifyBookingStatus,
-  usesActiveBookingLifecycle,
-} from "@/lib/booking-modify-permissions";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+  canModifyBookingStatusForRole,
+  getBookingEditPolicy,
+  usesActiveBookingEditLifecycle,
+} from "@/lib/booking-edit-policy";
 
-describe("booking modify permissions", () => {
+describe("booking edit policy", () => {
   it("allows members to modify only active booking lifecycle statuses", () => {
-    expect(canModifyBookingStatus("PENDING", "MEMBER")).toBe(true);
-    expect(canModifyBookingStatus("CONFIRMED", "MEMBER")).toBe(true);
-    expect(canModifyBookingStatus("PAID", "MEMBER")).toBe(true);
-    expect(canModifyBookingStatus("COMPLETED", "MEMBER")).toBe(true);
-    expect(canModifyBookingStatus("DRAFT", "MEMBER")).toBe(false);
-    expect(canModifyBookingStatus("WAITLISTED", "MEMBER")).toBe(false);
+    expect(canModifyBookingStatusForRole("PENDING", "MEMBER")).toBe(true);
+    expect(canModifyBookingStatusForRole("CONFIRMED", "MEMBER")).toBe(true);
+    expect(canModifyBookingStatusForRole("PAID", "MEMBER")).toBe(true);
+    expect(canModifyBookingStatusForRole("COMPLETED", "MEMBER")).toBe(true);
+    expect(canModifyBookingStatusForRole("DRAFT", "MEMBER")).toBe(false);
+    expect(canModifyBookingStatusForRole("WAITLISTED", "MEMBER")).toBe(false);
   });
 
   it("allows admins to modify the additional future-booking statuses from phase 1", () => {
-    expect(canModifyBookingStatus("DRAFT", "ADMIN")).toBe(true);
-    expect(canModifyBookingStatus("WAITLISTED", "ADMIN")).toBe(true);
-    expect(canModifyBookingStatus("WAITLIST_OFFERED", "ADMIN")).toBe(true);
-    expect(canModifyBookingStatus("BUMPED", "ADMIN")).toBe(true);
-    expect(canModifyBookingStatus("CANCELLED", "ADMIN")).toBe(false);
-    expect(canModifyBookingStatus("COMPLETED", "ADMIN")).toBe(true);
+    expect(canModifyBookingStatusForRole("DRAFT", "ADMIN")).toBe(true);
+    expect(canModifyBookingStatusForRole("WAITLISTED", "ADMIN")).toBe(true);
+    expect(canModifyBookingStatusForRole("WAITLIST_OFFERED", "ADMIN")).toBe(true);
+    expect(canModifyBookingStatusForRole("BUMPED", "ADMIN")).toBe(true);
+    expect(canModifyBookingStatusForRole("CANCELLED", "ADMIN")).toBe(false);
+    expect(canModifyBookingStatusForRole("COMPLETED", "ADMIN")).toBe(true);
   });
 
   it("marks only active booking states for the full capacity/payment lifecycle", () => {
-    expect(usesActiveBookingLifecycle("PENDING")).toBe(true);
-    expect(usesActiveBookingLifecycle("CONFIRMED")).toBe(true);
-    expect(usesActiveBookingLifecycle("PAID")).toBe(true);
-    expect(usesActiveBookingLifecycle("COMPLETED")).toBe(true);
-    expect(usesActiveBookingLifecycle("DRAFT")).toBe(false);
-    expect(usesActiveBookingLifecycle("WAITLISTED")).toBe(false);
+    expect(usesActiveBookingEditLifecycle("PENDING")).toBe(true);
+    expect(usesActiveBookingEditLifecycle("CONFIRMED")).toBe(true);
+    expect(usesActiveBookingEditLifecycle("PAID")).toBe(true);
+    expect(usesActiveBookingEditLifecycle("COMPLETED")).toBe(true);
+    expect(usesActiveBookingEditLifecycle("DRAFT")).toBe(false);
+    expect(usesActiveBookingEditLifecycle("WAITLISTED")).toBe(false);
   });
 
   it("allows in-progress paid/completed stays from NZ tomorrow while locking check-in", () => {

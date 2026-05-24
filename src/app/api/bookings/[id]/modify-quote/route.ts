@@ -31,12 +31,12 @@ import {
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
-import {
-  canModifyBookingStatus,
-  usesActiveBookingLifecycle,
-} from "@/lib/booking-modify-permissions";
 import { nameField } from "@/lib/zod-helpers";
-import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import {
+  canModifyBookingStatusForRole,
+  getBookingEditPolicy,
+  usesActiveBookingEditLifecycle,
+} from "@/lib/booking-edit-policy";
 import {
   buildInProgressGuestRangePlan,
   type BookingEditGuestRangePlan,
@@ -100,7 +100,7 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!canModifyBookingStatus(booking.status, session.user.role)) {
+  if (!canModifyBookingStatusForRole(booking.status, session.user.role)) {
     return NextResponse.json(
       { error: "This booking cannot be modified in its current status" },
       { status: 400 }
@@ -223,7 +223,7 @@ export async function POST(
   const newCheckOut = requestedCheckOut;
   const skipBookingLifecycleRules =
     session.user.role === "ADMIN" &&
-    !usesActiveBookingLifecycle(booking.status);
+    !usesActiveBookingEditLifecycle(booking.status);
 
   if (newCheckOut <= newCheckIn) {
     return NextResponse.json(
