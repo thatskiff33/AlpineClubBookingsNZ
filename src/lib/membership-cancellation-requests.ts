@@ -825,9 +825,18 @@ export async function respondToMembershipCancellationConfirmation({
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    const updatedParticipant =
-      await tx.membershipCancellationRequestParticipant.update({
-        where: { id: participant.id },
+    // Atomic claim: only one concurrent confirm/decline for a given
+    // token can pass this guarded updateMany. The where clause re-checks
+    // the status and expiry inside the database so the read+write race
+    // is closed.
+    const claim =
+      await tx.membershipCancellationRequestParticipant.updateMany({
+        where: {
+          id: participant.id,
+          confirmationTokenHash: tokenHash,
+          status: "PENDING_CONFIRMATION",
+          confirmationTokenExpiresAt: { gt: now },
+        },
         data:
           decision === "confirm"
             ? {
@@ -842,6 +851,17 @@ export async function respondToMembershipCancellationConfirmation({
                 confirmationTokenHash: null,
                 confirmationTokenExpiresAt: null,
               },
+      });
+    if (claim.count !== 1) {
+      throw new MembershipCancellationRequestError(
+        "This cancellation confirmation link has already been used or has expired",
+        409,
+      );
+    }
+
+    const updatedParticipant =
+      await tx.membershipCancellationRequestParticipant.findUniqueOrThrow({
+        where: { id: participant.id },
         include: cancellationParticipantWithRequestInclude,
       });
 

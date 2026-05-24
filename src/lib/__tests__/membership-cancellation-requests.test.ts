@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   memberFindMany: vi.fn(),
   participantFindMany: vi.fn(),
   participantFindUnique: vi.fn(),
+  participantFindUniqueOrThrow: vi.fn(),
   participantUpdate: vi.fn(),
   participantUpdateMany: vi.fn(),
   requestCreate: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@/lib/prisma", () => {
     membershipCancellationRequestParticipant: {
       findMany: mocks.participantFindMany,
       findUnique: mocks.participantFindUnique,
+      findUniqueOrThrow: mocks.participantFindUniqueOrThrow,
       update: mocks.participantUpdate,
       updateMany: mocks.participantUpdateMany,
     },
@@ -303,7 +305,8 @@ describe("membership cancellation request workflow", () => {
   it("confirms a pending participant by hashed token and clears the token hash", async () => {
     const current = participant();
     mocks.participantFindUnique.mockResolvedValue(current);
-    mocks.participantUpdate.mockResolvedValue({
+    mocks.participantUpdateMany.mockResolvedValueOnce({ count: 1 });
+    mocks.participantFindUniqueOrThrow.mockResolvedValue({
       ...current,
       status: "REQUESTED",
       confirmedAt: new Date("2026-05-24T01:00:00.000Z"),
@@ -333,9 +336,14 @@ describe("membership cancellation request workflow", () => {
         where: { confirmationTokenHash: "hash:raw-confirmation-token" },
       }),
     );
-    expect(mocks.participantUpdate).toHaveBeenCalledWith(
+    expect(mocks.participantUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "participant-1" },
+        where: expect.objectContaining({
+          id: "participant-1",
+          confirmationTokenHash: "hash:raw-confirmation-token",
+          status: "PENDING_CONFIRMATION",
+          confirmationTokenExpiresAt: { gt: expect.any(Date) },
+        }),
         data: expect.objectContaining({
           status: "REQUESTED",
           confirmedAt: expect.any(Date),
@@ -350,7 +358,8 @@ describe("membership cancellation request workflow", () => {
   it("declines a pending participant without cancelling the membership", async () => {
     const current = participant();
     mocks.participantFindUnique.mockResolvedValue(current);
-    mocks.participantUpdate.mockResolvedValue({
+    mocks.participantUpdateMany.mockResolvedValueOnce({ count: 1 });
+    mocks.participantFindUniqueOrThrow.mockResolvedValue({
       ...current,
       status: "DECLINED",
       declinedAt: new Date("2026-05-24T01:00:00.000Z"),
@@ -372,7 +381,7 @@ describe("membership cancellation request workflow", () => {
       decision: "decline",
     });
 
-    expect(mocks.participantUpdate).toHaveBeenCalledWith(
+    expect(mocks.participantUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           status: "DECLINED",
@@ -385,10 +394,32 @@ describe("membership cancellation request workflow", () => {
     expect(response.message).toMatch(/membership remains active/i);
   });
 
+  it("returns 409 when the atomic claim loses to a concurrent confirm", async () => {
+    const current = participant();
+    mocks.participantFindUnique.mockResolvedValue(current);
+    // First call is the atomic claim - simulate the loser by returning 0.
+    mocks.participantUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(
+      respondToMembershipCancellationConfirmation({
+        token: "raw-confirmation-token",
+        memberId: "adult-login",
+        decision: "confirm",
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+    } satisfies Partial<MembershipCancellationRequestError>);
+  });
+
   it("invalidates any other open PENDING_CONFIRMATION rows for the same member", async () => {
     const current = participant();
     mocks.participantFindUnique.mockResolvedValue(current);
-    mocks.participantUpdate.mockResolvedValue({
+    // First updateMany is the atomic claim; second is the defence-in-depth
+    // sweep of stray PENDING_CONFIRMATION rows for the same member.
+    mocks.participantUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
+    mocks.participantFindUniqueOrThrow.mockResolvedValue({
       ...current,
       status: "REQUESTED",
       confirmedAt: new Date("2026-05-24T01:00:00.000Z"),
@@ -405,7 +436,6 @@ describe("membership cancellation request workflow", () => {
         ],
       },
     });
-    mocks.participantUpdateMany.mockResolvedValue({ count: 1 });
 
     await respondToMembershipCancellationConfirmation({
       token: "raw-confirmation-token",
