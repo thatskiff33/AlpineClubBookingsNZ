@@ -541,8 +541,8 @@ describe("member archive lifecycle actions", () => {
       where: { inheritEmailFromId: "member-1" },
       data: { inheritEmailFromId: null },
     });
-    expect(mockPrisma.member.update).toHaveBeenCalledWith({
-      where: { id: "member-1" },
+    expect(mockPrisma.member.updateMany).toHaveBeenCalledWith({
+      where: { id: "member-1", archivedAt: null },
       data: expect.objectContaining({
         archivedAt: expect.any(Date),
         archivedReason: "Former member confirmed cancellation",
@@ -551,6 +551,29 @@ describe("member archive lifecycle actions", () => {
         canLogin: false,
       }),
     });
+  });
+
+  it("rejects the approval with 409 when the archive claim race-loses", async () => {
+    // Simulate a concurrent approver winning: the archive updateMany
+    // matches zero rows because archivedAt is already non-null. The
+    // happy-path beforeEach sets member.updateMany to { count: 1 } for
+    // the three cleanup updateMany calls; override the fourth (the
+    // claim) to { count: 0 }.
+    mockPrisma.member.updateMany
+      .mockResolvedValueOnce({ count: 1 }) // parentMemberId cleanup
+      .mockResolvedValueOnce({ count: 1 }) // secondaryParentId cleanup
+      .mockResolvedValueOnce({ count: 1 }) // inheritEmailFromId cleanup
+      .mockResolvedValueOnce({ count: 0 }); // archive claim - LOST
+
+    await expect(
+      reviewMemberArchiveRequest({
+        requestId: "archive-request-1",
+        reviewedByMemberId: "admin-2",
+        action: "approve",
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+    } satisfies Partial<MemberLifecycleActionError>);
   });
 
   it("records cleanup link counts in the archive_approved audit log metadata", async () => {

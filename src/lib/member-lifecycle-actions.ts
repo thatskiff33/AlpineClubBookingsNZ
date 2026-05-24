@@ -1079,8 +1079,13 @@ export async function reviewMemberArchiveRequest({
       request.memberId,
     );
 
-    await tx.member.update({
-      where: { id: request.memberId },
+    // Claim the archive transition atomically. If another approve
+    // transaction for the same member committed first (despite the
+    // advisory lock, e.g. on a replica or after a stale read), this
+    // updateMany will match zero rows and we abort with 409 rather than
+    // double-stamping archivedAt.
+    const archiveClaim = await tx.member.updateMany({
+      where: { id: request.memberId, archivedAt: null },
       data: {
         archivedAt: now,
         archivedReason: request.reason,
@@ -1089,6 +1094,12 @@ export async function reviewMemberArchiveRequest({
         canLogin: false,
       },
     });
+    if (archiveClaim.count !== 1) {
+      throw new MemberLifecycleActionError(
+        "This member has already been archived.",
+        409,
+      );
+    }
 
     const reviewed = await tx.memberLifecycleActionRequest.update({
       where: { id: request.id },
