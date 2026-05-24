@@ -123,4 +123,25 @@ describe("redact-sensitive-json", () => {
       })
     ).toContain('"authorization": "[REDACTED]"');
   });
+
+  it("redacts the token segment of /membership-cancellation/<token> URL paths", () => {
+    expect(
+      redactSensitiveText(
+        "GET /membership-cancellation/abcDEF123_token-with-mixed 200 OK"
+      )
+    ).toBe("GET /membership-cancellation/[REDACTED] 200 OK");
+
+    expect(
+      redactSensitiveText(
+        "https://example.test/membership-cancellation/x9_y7-zZ on visit"
+      )
+    ).toBe("https://example.test/membership-cancellation/[REDACTED] on visit");
+
+    // Subsequent path segments stay intact.
+    expect(
+      redactSensitiveText(
+        "/membership-cancellation/aA1_-/extra/path?keep=true"
+      )
+    ).toBe("/membership-cancellation/[REDACTED]/extra/path?keep=true");
+  });
 });
