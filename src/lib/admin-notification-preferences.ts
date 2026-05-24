@@ -36,6 +36,11 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
     description:
       "Alerts when a member request needs admin review, including membership applications, family groups, cancellation, archive, and safe-delete requests.",
   },
+  adminBookingChangeRequest: {
+    label: "Booking change requests",
+    description:
+      "Alerts when a member submits a booking change request that needs admin review.",
+  },
   adminRefundRequest: {
     label: "Refund requests",
     description: "Alerts when a member submits a refund appeal.",
@@ -68,6 +73,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_SELECT = {
   adminDailyDigest: true,
   adminWaitlistOffer: true,
   adminFamilyGroupRequest: true,
+  adminBookingChangeRequest: true,
   adminRefundRequest: true,
   adminIssueReport: true,
 } as const;
@@ -85,6 +91,7 @@ export function resolveAdminNotificationPreferences(
     adminDailyDigest: preferences?.adminDailyDigest ?? true,
     adminWaitlistOffer: preferences?.adminWaitlistOffer ?? true,
     adminFamilyGroupRequest: preferences?.adminFamilyGroupRequest ?? true,
+    adminBookingChangeRequest: preferences?.adminBookingChangeRequest ?? true,
     adminRefundRequest: preferences?.adminRefundRequest ?? true,
     adminIssueReport: preferences?.adminIssueReport ?? true,
   };

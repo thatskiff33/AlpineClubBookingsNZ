@@ -1902,7 +1902,7 @@ export async function sendAdminBookingChangeRequestAlert(data: {
       reason: data.reason ?? "",
       reviewUrl,
     },
-    preferenceKey: "adminFamilyGroupRequest",
+    preferenceKey: "adminBookingChangeRequest",
   });
 }
 

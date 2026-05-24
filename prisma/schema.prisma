@@ -1762,6 +1762,7 @@ model NotificationPreference {
   adminDailyDigest        Boolean  @default(true)
   adminWaitlistOffer      Boolean  @default(true)
   adminFamilyGroupRequest Boolean  @default(true)
+  adminBookingChangeRequest Boolean @default(true)
   adminRefundRequest      Boolean  @default(true)
   adminIssueReport        Boolean  @default(true)
   createdAt               DateTime @default(now())

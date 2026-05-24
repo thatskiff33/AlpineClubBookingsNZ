@@ -24,6 +24,7 @@ const preferenceUpdateSchema = z
     adminDailyDigest: z.boolean().optional(),
     adminWaitlistOffer: z.boolean().optional(),
     adminFamilyGroupRequest: z.boolean().optional(),
+    adminBookingChangeRequest: z.boolean().optional(),
     adminRefundRequest: z.boolean().optional(),
     adminIssueReport: z.boolean().optional(),
   })
