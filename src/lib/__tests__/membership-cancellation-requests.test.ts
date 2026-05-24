@@ -276,6 +276,30 @@ describe("membership cancellation request workflow", () => {
     expect(mocks.requestCreate).not.toHaveBeenCalled();
   });
 
+  it("re-checks open participant rows inside the create transaction", async () => {
+    // Candidate load sees no conflict, but a concurrent submission
+    // creates an open participant before this transaction runs the
+    // findMany guard. The transaction-time check should fail with 409.
+    mocks.participantFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { memberId: "child-1" },
+      ]);
+
+    await expect(
+      createMembershipCancellationRequest({
+        requesterMemberId: "member-1",
+        participantMemberIds: ["child-1"],
+        acknowledgedWarning: true,
+      }),
+    ).rejects.toMatchObject({
+      message:
+        "One or more selected memberships already have an open cancellation request",
+      statusCode: 409,
+    } satisfies Partial<MembershipCancellationRequestError>);
+    expect(mocks.requestCreate).not.toHaveBeenCalled();
+  });
+
   it("confirms a pending participant by hashed token and clears the token hash", async () => {
     const current = participant();
     mocks.participantFindUnique.mockResolvedValue(current);

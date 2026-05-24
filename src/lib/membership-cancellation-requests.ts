@@ -542,7 +542,27 @@ export async function createMembershipCancellationRequest({
     });
   }
 
-  const request = await prisma.membershipCancellationRequest.create({
+  const request = await prisma.$transaction(async (tx) => {
+    // Re-check open participant rows for each selected member inside
+    // the transaction so two near-simultaneous submissions cannot both
+    // succeed and create duplicate participants for the same member
+    // across overlapping cancellation requests.
+    const conflicting =
+      await tx.membershipCancellationRequestParticipant.findMany({
+        where: {
+          memberId: { in: selectedCandidates.map((candidate) => candidate.id) },
+          status: { in: [...OPEN_PARTICIPANT_STATUSES] },
+        },
+        select: { memberId: true },
+      });
+    if (conflicting.length > 0) {
+      throw new MembershipCancellationRequestError(
+        "One or more selected memberships already have an open cancellation request",
+        409,
+      );
+    }
+
+    return tx.membershipCancellationRequest.create({
     data: {
       requestedByMemberId: currentMember.id,
       status: "REQUESTED",
@@ -581,6 +601,7 @@ export async function createMembershipCancellationRequest({
         orderBy: { createdAt: "asc" },
       },
     },
+    });
   });
 
   logAudit({
