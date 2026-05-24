@@ -511,6 +511,9 @@ model MembershipCancellationRequestParticipant {
 
 model MemberLifecycleActionRequest {
   id                  String                             @id @default(cuid())
+  // No FK relation on memberId by design: the snapshot must survive the
+  // member being deleted so the audit trail is preserved. See the
+  // foundation migration for the original rationale.
   memberId            String
   action              MemberLifecycleAction
   status              MemberLifecycleActionRequestStatus @default(REQUESTED)

@@ -16,7 +16,7 @@ const ENTRANCE_FEE_CATEGORIES = ["ADULT", "YOUTH", "CHILD", "FAMILY"] as const;
 export async function GET() {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const inactiveResponse = await requireActiveSessionUser(session.user.id);
   if (inactiveResponse) {
@@ -91,7 +91,7 @@ const UpdateItemCodeMappingsSchema = z.object({
 export async function PUT(request: NextRequest) {
   const session = await auth();
   if (!session?.user || session.user.role !== "ADMIN") {
-    return NextResponse.json({ error: "Unauthorised" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const inactiveResponse = await requireActiveSessionUser(session.user.id);
   if (inactiveResponse) {

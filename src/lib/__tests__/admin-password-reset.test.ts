@@ -69,7 +69,7 @@ describe("Admin Send Password Reset API", () => {
     const res = await POST(makeReq({ memberIds: ["m1"] }));
     expect(res.status).toBe(401);
     const body = await res.json();
-    expect(body.error).toBe("Unauthorised");
+    expect(body.error).toBe("Unauthorized");
   });
 
   it("returns 401 for non-admin users", async () => {

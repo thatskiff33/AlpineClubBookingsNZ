@@ -5,34 +5,13 @@ import { MembershipCancellationConfirmCard } from "@/components/membership-cance
 import { auth } from "@/lib/auth";
 import { buildLoginPath } from "@/lib/auth-redirect";
 import { getMembershipCancellationConfirmationDetails } from "@/lib/membership-cancellation-requests";
+import { participantStatusLabel } from "@/lib/membership-cancellation-status-labels";
+import { formatNZDate } from "@/lib/nzst-date";
 
-function statusLabel(status: string) {
-  switch (status) {
-    case "PENDING_CONFIRMATION":
-      return "Waiting for confirmation";
-    case "REQUESTED":
-      return "Included";
-    case "DECLINED":
-      return "Declined";
-    case "APPROVED":
-      return "Approved";
-    case "REJECTED":
-      return "Rejected";
-    case "CANCELLED":
-      return "Cancelled";
-    case "REJOINED":
-      return "Rejoined";
-    default:
-      return status.replaceAll("_", " ").toLowerCase();
-  }
-}
+const statusLabel = participantStatusLabel;
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleDateString("en-NZ", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return formatNZDate(new Date(value));
 }
 
 export default async function MembershipCancellationConfirmationPage({

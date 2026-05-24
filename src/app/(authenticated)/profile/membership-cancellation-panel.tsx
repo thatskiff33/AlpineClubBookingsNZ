@@ -12,44 +12,11 @@ import type {
   MembershipCancellationOverview,
   SerializedMembershipCancellationRequest,
 } from "@/lib/membership-cancellation-requests";
-
-function participantStatusLabel(status: string) {
-  switch (status) {
-    case "PENDING_CONFIRMATION":
-      return "Waiting for confirmation";
-    case "REQUESTED":
-      return "Included";
-    case "DECLINED":
-      return "Declined";
-    case "APPROVED":
-      return "Approved";
-    case "REJECTED":
-      return "Rejected";
-    case "CANCELLED":
-      return "Cancelled";
-    case "REJOINED":
-      return "Rejoined";
-    default:
-      return status.replaceAll("_", " ").toLowerCase();
-  }
-}
-
-function requestStatusLabel(status: string) {
-  switch (status) {
-    case "REQUESTED":
-      return "Submitted";
-    case "APPROVED":
-      return "Approved";
-    case "REJECTED":
-      return "Rejected";
-    case "WITHDRAWN":
-      return "Withdrawn";
-    case "COMPLETED":
-      return "Completed";
-    default:
-      return status.replaceAll("_", " ").toLowerCase();
-  }
-}
+import {
+  participantStatusLabel,
+  requestStatusLabel,
+} from "@/lib/membership-cancellation-status-labels";
+import { formatNZDate } from "@/lib/nzst-date";
 
 function relationshipLabel(candidate: MembershipCancellationCandidate) {
   switch (candidate.relationship) {
@@ -78,11 +45,7 @@ function statusTone(status: string) {
 }
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleDateString("en-NZ", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return formatNZDate(new Date(value));
 }
 
 function RequestStatusList({

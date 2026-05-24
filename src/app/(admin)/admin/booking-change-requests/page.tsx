@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
+import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
 
 type RequestFilter = "PENDING" | "RESOLVED" | "DECLINED" | "ALL";
@@ -81,22 +82,12 @@ interface BookingChangeRequestData {
 }
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleDateString("en-NZ", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return formatNZDate(new Date(value));
 }
 
 function formatDateTime(value: string | null) {
   if (!value) return null;
-  return new Date(value).toLocaleDateString("en-NZ", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatNZDateTime(new Date(value));
 }
 
 function statusBadgeClass(status: BookingChangeRequestData["status"]) {

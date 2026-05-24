@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
+import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
 import { cn } from "@/lib/utils";
 
 type RequestFilter =
@@ -96,21 +97,11 @@ const currentPath = "/admin/membership-cancellations";
 
 function formatDateTime(value: string | null) {
   if (!value) return "Not recorded";
-  return new Date(value).toLocaleString("en-NZ", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatNZDateTime(new Date(value));
 }
 
 function formatDateOnly(value: string) {
-  return new Date(value).toLocaleDateString("en-NZ", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  return formatNZDate(new Date(value));
 }
 
 function requestStatusLabel(status: string) {
