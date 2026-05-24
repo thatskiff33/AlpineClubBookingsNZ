@@ -425,7 +425,7 @@ export async function recordStripeRefundLedgerEntry({
   };
 }
 
-async function sumRecordedRefundsForTransaction(
+export async function sumRecordedRefundsForTransaction(
   store: PaymentStore,
   paymentTransactionId: string
 ) {

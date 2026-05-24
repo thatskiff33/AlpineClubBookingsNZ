@@ -20,6 +20,7 @@ const {
   mockProcessRefund,
   mockReconcilePaymentAggregates,
   mockRecordStripeRefundLedgerEntry,
+  mockSumRecordedRefundsForTransaction,
   mockSendAdminPaymentFailureAlert,
 } = vi.hoisted(() => ({
   mockPaymentRecoveryFindMany: vi.fn(),
@@ -39,6 +40,7 @@ const {
     created: true,
     amountCents: 6000,
   }),
+  mockSumRecordedRefundsForTransaction: vi.fn().mockResolvedValue(0),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -74,6 +76,8 @@ vi.mock("@/lib/payment-transactions", () => ({
     mockReconcilePaymentAggregates(...args),
   recordStripeRefundLedgerEntry: (...args: unknown[]) =>
     mockRecordStripeRefundLedgerEntry(...args),
+  sumRecordedRefundsForTransaction: (...args: unknown[]) =>
+    mockSumRecordedRefundsForTransaction(...args),
 }));
 
 vi.mock("@/lib/email", () => ({
@@ -337,6 +341,48 @@ describe("payment recovery worker", () => {
       update: expect.objectContaining({
         paymentIntentId: "pi_superseded",
         amountCents: 6000,
+      }),
+    });
+  });
+
+  it("does not double-count a previously written refund when the recovery retries", async () => {
+    // First attempt scenario: refund partially succeeded in Stripe and the
+    // ledger entry was written, but the paymentTransaction row update never
+    // committed. On retry, Stripe returns the same refund via idempotency
+    // key; the ledger total is the truth source, so refundedAmountCents
+    // should NOT be incremented by the same Stripe refund again.
+    mockPaymentRecoveryFindUnique.mockResolvedValue(
+      makeOperation({
+        type: PaymentRecoveryOperationType.REFUND_SUPERSEDED_PAYMENT,
+      }),
+    );
+    mockPaymentTransactionFindUnique.mockResolvedValue({
+      id: "txn-1",
+      paymentId: "payment-1",
+      stripePaymentIntentId: "pi_superseded",
+      amountCents: 10000,
+      refundedAmountCents: 3000,
+      status: PaymentStatus.PARTIALLY_REFUNDED,
+    });
+    mockProcessRefund.mockResolvedValue({
+      id: "re_idempotent",
+      amount: 3000,
+      currency: "nzd",
+      status: "succeeded",
+      payment_intent: "pi_superseded",
+    });
+    mockSumRecordedRefundsForTransaction.mockResolvedValue(3000);
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockSumRecordedRefundsForTransaction).toHaveBeenCalledWith(
+      expect.anything(),
+      "txn-1",
+    );
+    expect(mockPaymentTransactionUpdate).toHaveBeenCalledWith({
+      where: { id: "txn-1" },
+      data: expect.objectContaining({
+        refundedAmountCents: 3000,
       }),
     });
   });

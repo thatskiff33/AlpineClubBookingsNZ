@@ -14,6 +14,7 @@ import {
 import {
   reconcilePaymentAggregates,
   recordStripeRefundLedgerEntry,
+  sumRecordedRefundsForTransaction,
 } from "@/lib/payment-transactions";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -500,12 +501,18 @@ async function processRefundSupersededPaymentOperation(
     fallbackPaymentIntentId: operation.paymentIntentId,
   });
 
+  // Idempotency-by-ledger: read the refunded total from the ledger
+  // (which is upserted on stripeRefundId) rather than incrementing the
+  // pre-read row. If a previous attempt wrote the ledger entry but
+  // failed before updating the transaction row, the ledger total is
+  // still the truth.
+  const ledgerRefundedTotal = await sumRecordedRefundsForTransaction(
+    prisma,
+    refreshedTransaction.id,
+  );
   const nextRefundedAmountCents = Math.min(
     refreshedTransaction.amountCents,
-    Math.max(
-      refreshedTransaction.refundedAmountCents,
-      refreshedTransaction.refundedAmountCents + refund.amount
-    )
+    Math.max(refreshedTransaction.refundedAmountCents, ledgerRefundedTotal),
   );
 
   await prisma.paymentTransaction.update({
