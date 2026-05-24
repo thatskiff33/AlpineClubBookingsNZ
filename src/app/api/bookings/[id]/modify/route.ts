@@ -56,10 +56,7 @@ import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
-import {
-  enqueuePaymentIntentCancellationRecovery,
-  processPaymentRecoveryOperations,
-} from "@/lib/payment-recovery";
+import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
 import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import {
@@ -87,11 +84,10 @@ const batchModifySchema = z.object({
   removePromoCode: z.boolean().optional(),
 });
 
-type SupersededPrimaryPaymentIntent = {
-  paymentTransactionId: string;
-  paymentIntentId: string;
-  amountCents: number;
-};
+import {
+  queueSupersededPrimaryIntentCancellations,
+  type SupersededPrimaryPaymentIntent,
+} from "@/lib/booking-payment-cleanup";
 
 export async function PUT(
   request: NextRequest,
@@ -755,36 +751,12 @@ export async function PUT(
             additionalPaymentStatus: null,
           },
         });
-        const pendingPrimaryTransactions = await tx.paymentTransaction.findMany({
-          where: {
-            paymentId: zeroDollarPayment.id,
-            kind: PaymentTransactionKind.PRIMARY,
-            status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
-            amountCents: { gt: 0 },
-          },
-          select: {
-            id: true,
-            stripePaymentIntentId: true,
-            amountCents: true,
-          },
-        });
-        supersededPrimaryPaymentIntents = pendingPrimaryTransactions.map(
-          (transaction) => ({
-            paymentTransactionId: transaction.id,
-            paymentIntentId: transaction.stripePaymentIntentId,
-            amountCents: transaction.amountCents,
-          })
-        );
-        for (const transaction of pendingPrimaryTransactions) {
-          await enqueuePaymentIntentCancellationRecovery({
+        supersededPrimaryPaymentIntents =
+          await queueSupersededPrimaryIntentCancellations(tx, {
             bookingId,
             paymentId: zeroDollarPayment.id,
-            paymentTransactionId: transaction.id,
-            paymentIntentId: transaction.stripePaymentIntentId,
-            amountCents: transaction.amountCents,
-            store: tx,
+            newFinalPriceCents,
           });
-        }
       }
 
       // --- Update booking ---

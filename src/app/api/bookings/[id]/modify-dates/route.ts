@@ -26,6 +26,7 @@ import {
   cleanupChoreAssignmentsForGuestStayRanges,
 } from "@/lib/chore-cleanup";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -462,6 +463,18 @@ export async function PUT(
         },
         include: { guests: true, payment: true },
       });
+
+      // Defence in depth: date-only changes cannot drop a booking to zero
+      // today, but a future change that adds promo recalculation to this
+      // route would. Call the symmetric cleanup helper so the invariant
+      // is enforced from both modify endpoints.
+      if (updatedBooking.payment) {
+        await queueSupersededPrimaryIntentCancellations(tx, {
+          bookingId,
+          paymentId: updatedBooking.payment.id,
+          newFinalPriceCents,
+        });
+      }
 
       // Create BookingModification record
       const bookingModification = await tx.bookingModification.create({
