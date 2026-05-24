@@ -277,6 +277,46 @@ async function resetStaleProcessingOperations() {
       lastError: "Payment recovery worker timed out before completion.",
     },
   });
+
+  // If a worker died mid-processing on the final attempt the row never
+  // moves out of PROCESSING because the `< MAX` guard above excludes it
+  // and no exception fires from this process to drive the alert path.
+  // Mark these terminally failed and alert.
+  const exhaustedStale = await prisma.paymentRecoveryOperation.findMany({
+    where: {
+      status: PaymentRecoveryOperationStatus.PROCESSING,
+      processingStartedAt: { lt: staleBefore },
+      attempts: { gte: MAX_PAYMENT_RECOVERY_ATTEMPTS },
+    },
+  });
+
+  for (const operation of exhaustedStale) {
+    const claimed = await prisma.paymentRecoveryOperation.updateMany({
+      where: {
+        id: operation.id,
+        status: PaymentRecoveryOperationStatus.PROCESSING,
+      },
+      data: {
+        status: PaymentRecoveryOperationStatus.FAILED,
+        nextRetryAt: null,
+        processingStartedAt: null,
+        lastError:
+          "Payment recovery worker timed out on the final attempt before completion.",
+      },
+    });
+
+    if (claimed.count !== 1) continue;
+
+    await alertPaymentRecoveryFailure(
+      operation,
+      "Payment recovery worker timed out on the final attempt before completion.",
+    ).catch((alertError) =>
+      logger.error(
+        { err: alertError, operationId: operation.id },
+        "Failed to send stale payment recovery failure alert",
+      ),
+    );
+  }
 }
 
 async function markSupersededTransactionFailed(

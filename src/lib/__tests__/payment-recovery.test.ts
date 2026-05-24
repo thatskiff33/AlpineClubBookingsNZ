@@ -117,7 +117,15 @@ function makeOperation(overrides: Record<string, unknown> = {}) {
 describe("payment recovery worker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockPaymentRecoveryFindMany.mockResolvedValue([makeOperation({ status: "PENDING" })]);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { status?: unknown; attempts?: { gte?: number } } }) => {
+        // resetStaleProcessingOperations queries for exhausted PROCESSING rows.
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([makeOperation({ status: "PENDING" })]);
+      },
+    );
     mockPaymentRecoveryFindUnique.mockResolvedValue(makeOperation());
     mockPaymentRecoveryUpdateMany.mockImplementation(({ where }: { where?: { id?: string } }) =>
       Promise.resolve({ count: where?.id ? 1 : 0 })
@@ -255,6 +263,43 @@ describe("payment recovery worker", () => {
         paymentIntentId: "pi_superseded",
         errorMessage: expect.stringContaining("failed after 5 attempts"),
       })
+    );
+  });
+
+  it("marks stale PROCESSING rows at max attempts terminally failed and alerts admins", async () => {
+    const staleExhausted = makeOperation({
+      id: "recovery-stale-5",
+      attempts: 5,
+      status: PaymentRecoveryOperationStatus.PROCESSING,
+      processingStartedAt: new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    mockPaymentRecoveryFindMany
+      // resetStaleProcessingOperations looks for exhausted stale rows
+      .mockResolvedValueOnce([staleExhausted])
+      // the regular queue findMany returns nothing this tick
+      .mockResolvedValueOnce([]);
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockPaymentRecoveryUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "recovery-stale-5",
+        status: PaymentRecoveryOperationStatus.PROCESSING,
+      },
+      data: expect.objectContaining({
+        status: PaymentRecoveryOperationStatus.FAILED,
+        nextRetryAt: null,
+        processingStartedAt: null,
+      }),
+    });
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Alice Example",
+        amountCents: 6000,
+        paymentIntentId: "pi_superseded",
+        errorMessage: expect.stringContaining("timed out on the final attempt"),
+      }),
     );
   });
 
