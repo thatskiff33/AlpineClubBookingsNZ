@@ -22,15 +22,19 @@ type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
 const MAX_PAYMENT_RECOVERY_ATTEMPTS = 5;
 const STALE_PROCESSING_MINUTES = 30;
-const RETRY_BACKOFF_MINUTES = [5, 15, 60, 240, 720];
+// One entry per attempt: nextRetryDate(attempts) reads RETRY_BACKOFF_MINUTES[attempts - 1].
+const RETRY_BACKOFF_MINUTES: readonly number[] = [5, 15, 60, 240, 720];
+if (RETRY_BACKOFF_MINUTES.length !== MAX_PAYMENT_RECOVERY_ATTEMPTS) {
+  throw new Error(
+    "RETRY_BACKOFF_MINUTES must have exactly MAX_PAYMENT_RECOVERY_ATTEMPTS entries",
+  );
+}
 
 const CAPTURED_TRANSACTION_STATUSES = new Set<PaymentStatus>([
   PaymentStatus.SUCCEEDED,
   PaymentStatus.PARTIALLY_REFUNDED,
   PaymentStatus.REFUNDED,
 ]);
-
-type PaymentRecoveryOperationRecord = PaymentRecoveryOperation;
 
 export interface PaymentRecoveryProcessResult {
   found: number;
@@ -173,7 +177,7 @@ async function completePaymentRecoveryOperation(operationId: string) {
 }
 
 async function alertPaymentRecoveryFailure(
-  operation: PaymentRecoveryOperationRecord,
+  operation: PaymentRecoveryOperation,
   message: string
 ) {
   const booking = await prisma.booking.findUnique({
@@ -200,7 +204,7 @@ async function alertPaymentRecoveryFailure(
 }
 
 async function failPaymentRecoveryOperation(
-  operation: PaymentRecoveryOperationRecord,
+  operation: PaymentRecoveryOperation,
   error: unknown
 ) {
   const message = errorMessage(error);
@@ -320,7 +324,7 @@ async function resetStaleProcessingOperations() {
 }
 
 async function markSupersededTransactionFailed(
-  operation: PaymentRecoveryOperationRecord
+  operation: PaymentRecoveryOperation
 ) {
   if (!operation.paymentTransactionId) {
     return;
@@ -347,7 +351,7 @@ async function markSupersededTransactionSucceeded({
   amountCents,
   paymentMethodId,
 }: {
-  operation: PaymentRecoveryOperationRecord;
+  operation: PaymentRecoveryOperation;
   amountCents: number;
   paymentMethodId?: string | null;
 }) {
@@ -375,7 +379,7 @@ async function handoffSucceededSupersededIntentToRefund({
   amountCents,
   paymentMethodId,
 }: {
-  operation: PaymentRecoveryOperationRecord;
+  operation: PaymentRecoveryOperation;
   amountCents: number;
   paymentMethodId?: string | null;
 }) {
@@ -401,7 +405,7 @@ async function handoffSucceededSupersededIntentToRefund({
 }
 
 async function processCancelPaymentIntentOperation(
-  operation: PaymentRecoveryOperationRecord
+  operation: PaymentRecoveryOperation
 ) {
   const result = await cancelPaymentIntentIfCancellableWithResult(
     operation.paymentIntentId
@@ -431,7 +435,7 @@ async function processCancelPaymentIntentOperation(
 }
 
 async function processRefundSupersededPaymentOperation(
-  operation: PaymentRecoveryOperationRecord
+  operation: PaymentRecoveryOperation
 ) {
   if (!operation.paymentTransactionId) {
     throw new Error("Payment recovery operation is missing paymentTransactionId");
@@ -515,7 +519,7 @@ async function processRefundSupersededPaymentOperation(
 }
 
 async function processPaymentRecoveryOperation(
-  operation: PaymentRecoveryOperationRecord
+  operation: PaymentRecoveryOperation
 ) {
   if (operation.type === PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT) {
     await processCancelPaymentIntentOperation(operation);

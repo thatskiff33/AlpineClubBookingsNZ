@@ -21,7 +21,7 @@ const IN_PROGRESS_EDIT_STATUSES = new Set<string>([
   BookingStatus.COMPLETED,
 ]);
 
-export type BookingEditMode = "future" | "in-progress";
+type BookingEditMode = "future" | "in-progress";
 
 export interface BookingEditPolicy {
   canModify: boolean;
