@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
+import { reapStaleWaitingPaymentXeroOutboxOperations } from "@/lib/xero-operation-outbox";
 import logger from "@/lib/logger";
 
 const cronTaskQuerySchema = z.object({
@@ -89,16 +90,26 @@ export async function POST(request: NextRequest) {
   const startedAt = new Date();
   try {
     const recovery = await processPaymentRecoveryOperations();
+    const xeroOutboxReap = await reapStaleWaitingPaymentXeroOutboxOperations().catch(
+      (err) => {
+        logger.error(
+          { err, task },
+          "Failed to reap stale WAITING_PAYMENT Xero outbox operations",
+        );
+        return { reaped: 0, queueOperationIds: [] as string[] };
+      },
+    );
     await recordCronRun({
       startedAt,
       status: "SUCCESS",
-      resultSummary: { ...recovery },
+      resultSummary: { ...recovery, xeroOutboxReap },
     });
 
     return NextResponse.json({
       message: "Payment recovery completed",
       task,
       recovery,
+      xeroOutboxReap,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

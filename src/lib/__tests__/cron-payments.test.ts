@@ -3,9 +3,11 @@ import { NextRequest } from "next/server";
 
 const {
   mockProcessPaymentRecoveryOperations,
+  mockReapStaleWaitingPaymentXeroOutboxOperations,
   mockCronJobRunCreate,
 } = vi.hoisted(() => ({
   mockProcessPaymentRecoveryOperations: vi.fn(),
+  mockReapStaleWaitingPaymentXeroOutboxOperations: vi.fn(),
   mockCronJobRunCreate: vi.fn(),
 }));
 
@@ -20,6 +22,11 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/payment-recovery", () => ({
   processPaymentRecoveryOperations: (...args: unknown[]) =>
     mockProcessPaymentRecoveryOperations(...args),
+}));
+
+vi.mock("@/lib/xero-operation-outbox", () => ({
+  reapStaleWaitingPaymentXeroOutboxOperations: (...args: unknown[]) =>
+    mockReapStaleWaitingPaymentXeroOutboxOperations(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -51,6 +58,10 @@ describe("POST /api/cron/payments", () => {
       failed: 0,
       retried: 0,
       skipped: 0,
+    });
+    mockReapStaleWaitingPaymentXeroOutboxOperations.mockResolvedValue({
+      reaped: 0,
+      queueOperationIds: [],
     });
     mockCronJobRunCreate.mockResolvedValue(undefined);
   });

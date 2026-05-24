@@ -1072,6 +1072,90 @@ export async function releaseXeroSupplementaryInvoiceOperationsForPaymentIntent(
   };
 }
 
+const STALE_WAITING_PAYMENT_AGE_DAYS = 14;
+
+export async function reapStaleWaitingPaymentXeroOutboxOperations(options?: {
+  /** Override the staleness threshold in days. Defaults to 14. */
+  ageInDays?: number;
+}): Promise<{ reaped: number; queueOperationIds: string[] }> {
+  const ageInDays =
+    options?.ageInDays ?? STALE_WAITING_PAYMENT_AGE_DAYS;
+  const ageThreshold = new Date(
+    Date.now() - ageInDays * 24 * 60 * 60 * 1000,
+  );
+
+  const waitingOperations = await prisma.xeroSyncOperation.findMany({
+    where: {
+      status: "WAITING_PAYMENT",
+      direction: "OUTBOUND",
+    },
+    select: {
+      id: true,
+      createdAt: true,
+      requestPayload: true,
+    },
+  });
+
+  if (waitingOperations.length === 0) {
+    return { reaped: 0, queueOperationIds: [] };
+  }
+
+  const reapableIds: string[] = [];
+  for (const operation of waitingOperations) {
+    if (operation.createdAt <= ageThreshold) {
+      reapableIds.push(operation.id);
+      continue;
+    }
+
+    const payload = operation.requestPayload as
+      | { paymentIntentId?: string | null }
+      | null;
+    const paymentIntentId = payload?.paymentIntentId ?? null;
+    if (!paymentIntentId) continue;
+
+    const failedTransaction = await prisma.paymentTransaction.findFirst({
+      where: {
+        stripePaymentIntentId: paymentIntentId,
+        status: "FAILED",
+      },
+      select: { id: true },
+    });
+    if (failedTransaction) {
+      reapableIds.push(operation.id);
+    }
+  }
+
+  if (reapableIds.length === 0) {
+    return { reaped: 0, queueOperationIds: [] };
+  }
+
+  const updateResult = await prisma.xeroSyncOperation.updateMany({
+    where: {
+      id: { in: reapableIds },
+      status: "WAITING_PAYMENT",
+    },
+    data: {
+      status: "CANCELLED",
+      completedAt: new Date(),
+      lastErrorCode: "STALE_WAITING_PAYMENT",
+      lastErrorMessage:
+        "Reaped: linked Stripe payment failed or did not confirm in time.",
+    },
+  });
+
+  if (updateResult.count > 0) {
+    logger.info(
+      { reaped: updateResult.count, ageInDays },
+      "Reaped stale WAITING_PAYMENT Xero outbox operations",
+    );
+  }
+
+  return {
+    reaped: updateResult.count,
+    queueOperationIds: reapableIds,
+  };
+}
+
 export async function recordSkippedXeroBookingInvoiceUpdateOperation(params: {
   bookingId: string;
   bookingModificationId: string;

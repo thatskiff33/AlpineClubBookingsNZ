@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   findUniqueMember: vi.fn(),
   findUniqueMemberSubscription: vi.fn(),
   findUniquePayment: vi.fn(),
+  findFirstPaymentTransaction: vi.fn(),
   findFirstOperation: vi.fn(),
   findManyOperations: vi.fn(),
   updateManyOperation: vi.fn(),
@@ -41,6 +42,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     payment: {
       findUnique: mocks.findUniquePayment,
+    },
+    paymentTransaction: {
+      findFirst: mocks.findFirstPaymentTransaction,
     },
     xeroObjectLink: {
       findFirst: mocks.findFirstLink,
@@ -111,6 +115,7 @@ import {
   enqueueXeroRefundCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   processQueuedXeroOutboxOperations,
+  reapStaleWaitingPaymentXeroOutboxOperations,
   releaseXeroSupplementaryInvoiceOperationsForPaymentIntent,
 } from "@/lib/xero-operation-outbox";
 
@@ -1218,5 +1223,92 @@ describe("processQueuedXeroOutboxOperations", () => {
         message: "Queued Xero outbox payload is incomplete.",
       })
     );
+  });
+});
+
+describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirstPaymentTransaction.mockResolvedValue(null);
+    mocks.updateManyOperation.mockResolvedValue({ count: 0 });
+  });
+
+  it("reaps WAITING_PAYMENT operations whose linked PaymentTransaction is FAILED", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_waiting_1",
+        createdAt: new Date(),
+        requestPayload: { paymentIntentId: "pi_failed_abc" },
+      },
+    ]);
+    mocks.findFirstPaymentTransaction.mockResolvedValue({ id: "txn-failed" });
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(mocks.findFirstPaymentTransaction).toHaveBeenCalledWith({
+      where: {
+        stripePaymentIntentId: "pi_failed_abc",
+        status: "FAILED",
+      },
+      select: { id: true },
+    });
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["op_waiting_1"] },
+        status: "WAITING_PAYMENT",
+      },
+      data: expect.objectContaining({
+        status: "CANCELLED",
+        lastErrorCode: "STALE_WAITING_PAYMENT",
+      }),
+    });
+    expect(result).toEqual({
+      reaped: 1,
+      queueOperationIds: ["op_waiting_1"],
+    });
+  });
+
+  it("reaps WAITING_PAYMENT operations older than the staleness threshold", async () => {
+    const sixteenDaysAgo = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_waiting_old",
+        createdAt: sixteenDaysAgo,
+        requestPayload: { paymentIntentId: "pi_still_pending" },
+      },
+    ]);
+    mocks.updateManyOperation.mockResolvedValue({ count: 1 });
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(mocks.findFirstPaymentTransaction).not.toHaveBeenCalled();
+    expect(mocks.updateManyOperation).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["op_waiting_old"] },
+        status: "WAITING_PAYMENT",
+      },
+      data: expect.objectContaining({
+        status: "CANCELLED",
+        lastErrorCode: "STALE_WAITING_PAYMENT",
+      }),
+    });
+    expect(result.reaped).toBe(1);
+  });
+
+  it("leaves recent WAITING_PAYMENT operations with active payments alone", async () => {
+    mocks.findManyOperations.mockResolvedValue([
+      {
+        id: "op_waiting_fresh",
+        createdAt: new Date(),
+        requestPayload: { paymentIntentId: "pi_still_active" },
+      },
+    ]);
+    mocks.findFirstPaymentTransaction.mockResolvedValue(null);
+
+    const result = await reapStaleWaitingPaymentXeroOutboxOperations();
+
+    expect(result.reaped).toBe(0);
+    expect(mocks.updateManyOperation).not.toHaveBeenCalled();
   });
 });
