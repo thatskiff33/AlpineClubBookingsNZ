@@ -534,10 +534,53 @@ async function processPaymentRecoveryOperation(
   await processRefundSupersededPaymentOperation(operation);
 }
 
+const PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS = 30 * 60 * 1000;
+const PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS = 60 * 60 * 1000;
+let lastStalePaymentRecoveryAlertAt = 0;
+
+async function alertStalePaymentRecoveryQueueIfNeeded() {
+  if (
+    Date.now() - lastStalePaymentRecoveryAlertAt <
+    PAYMENT_RECOVERY_STALE_ALERT_COOLDOWN_MS
+  ) {
+    return;
+  }
+  const staleThreshold = new Date(
+    Date.now() - PAYMENT_RECOVERY_STALE_ALERT_THRESHOLD_MS,
+  );
+  const oldest = await prisma.paymentRecoveryOperation.findFirst({
+    where: {
+      status: PaymentRecoveryOperationStatus.PENDING,
+      createdAt: { lt: staleThreshold },
+    },
+    orderBy: { createdAt: "asc" },
+    include: { booking: { include: { member: true } } },
+  });
+  if (!oldest) return;
+  lastStalePaymentRecoveryAlertAt = Date.now();
+  await sendAdminPaymentFailureAlert({
+    memberName: oldest.booking?.member
+      ? `${oldest.booking.member.firstName} ${oldest.booking.member.lastName}`
+      : "Unknown member",
+    checkIn: oldest.booking?.checkIn ?? new Date(),
+    checkOut: oldest.booking?.checkOut ?? new Date(),
+    amountCents: oldest.amountCents,
+    errorMessage:
+      "Stripe payment recovery queue is stalled. Confirm that /api/cron/payments?task=recovery is running every 5 minutes.",
+    paymentIntentId: oldest.paymentIntentId,
+  }).catch((alertError) =>
+    logger.error(
+      { err: alertError, operationId: oldest.id },
+      "Failed to send stale payment recovery queue alert",
+    ),
+  );
+}
+
 export async function processPaymentRecoveryOperations(options?: {
   limit?: number;
 }): Promise<PaymentRecoveryProcessResult> {
   await resetStaleProcessingOperations();
+  await alertStalePaymentRecoveryQueueIfNeeded();
 
   const limit = Math.min(Math.max(options?.limit ?? 10, 1), 50);
   const queuedOperations = await prisma.paymentRecoveryOperation.findMany({

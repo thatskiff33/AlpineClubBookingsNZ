@@ -17,6 +17,7 @@ export interface DetailedHealthReport {
     stripe: CheckResult;
     xero: CheckResult;
     smtp: CheckResult;
+    paymentRecovery: CheckResult;
   };
 }
 
@@ -149,6 +150,40 @@ async function checkSmtp(): Promise<CheckResult> {
   }
 }
 
+const PAYMENT_RECOVERY_STALE_THRESHOLD_MS = 15 * 60 * 1000;
+
+async function checkPaymentRecoveryQueue(): Promise<CheckResult> {
+  const start = Date.now();
+  try {
+    const staleThreshold = new Date(
+      Date.now() - PAYMENT_RECOVERY_STALE_THRESHOLD_MS,
+    );
+    const stale = await withTimeout(
+      prisma.paymentRecoveryOperation.count({
+        where: {
+          status: "PENDING",
+          createdAt: { lt: staleThreshold },
+        },
+      }),
+      CHECK_TIMEOUT_MS,
+    );
+    if (stale > 0) {
+      return {
+        status: "error",
+        latencyMs: Date.now() - start,
+        error: `${stale} payment recovery operation(s) pending > 15 minutes; check /api/cron/payments scheduler`,
+      };
+    }
+    return { status: "ok", latencyMs: Date.now() - start };
+  } catch (err) {
+    return {
+      status: "error",
+      latencyMs: Date.now() - start,
+      error: err instanceof Error ? err.message : "Unknown error",
+    };
+  }
+}
+
 function getBaseMetadata() {
   return {
     version: process.env.npm_package_version || "0.1.0",
@@ -174,11 +209,12 @@ export async function getDetailedHealthReport(): Promise<{
   httpStatus: number;
   report: DetailedHealthReport;
 }> {
-  const [db, stripe, xero, smtp] = await Promise.all([
+  const [db, stripe, xero, smtp, paymentRecovery] = await Promise.all([
     checkDatabase(),
     checkStripe(),
     checkXero(),
     checkSmtp(),
+    checkPaymentRecoveryQueue(),
   ]);
   const config = getRuntimeConfigCheck();
 
@@ -188,14 +224,15 @@ export async function getDetailedHealthReport(): Promise<{
     (config.status === "error" ||
       stripe.status === "error" ||
       xero.status === "error" ||
-      smtp.status === "error");
+      smtp.status === "error" ||
+      paymentRecovery.status === "error");
 
   return {
     httpStatus: isUnhealthy ? 503 : 200,
     report: {
       ...getBaseMetadata(),
       status: isUnhealthy ? "unhealthy" : isDegraded ? "degraded" : "healthy",
-      checks: { db, config, stripe, xero, smtp },
+      checks: { db, config, stripe, xero, smtp, paymentRecovery },
     },
   };
 }

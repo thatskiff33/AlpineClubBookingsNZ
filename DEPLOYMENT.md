@@ -222,6 +222,27 @@ Configure webhook endpoints for the deployed domain:
 
 Keep webhook secrets in `.env`. Rotate them if they are exposed.
 
+## Cron Schedule
+
+The application exposes secured cron endpoints that must be invoked by an
+external scheduler. Auth is the `x-cron-secret` header set to `CRON_SECRET`.
+
+| Endpoint | Required cadence | Purpose |
+| -------- | ---------------- | ------- |
+| `POST /api/cron/payments?task=recovery` | every 5 minutes | Process the durable Stripe payment recovery queue and reap stale WAITING_PAYMENT Xero outbox rows. |
+| `POST /api/cron` | per existing setup | General cron entry point used by other scheduled work. |
+| `POST /api/cron/xero` | per existing setup | Xero retry loop. |
+| `POST /api/cron/issue-reports` | per existing setup | Issue-report digest. |
+
+Without `/api/cron/payments?task=recovery` running on a regular schedule,
+abandoned zero-dollar batch edits leave PaymentIntents held in Stripe
+indefinitely. The `/api/health` detailed report surfaces a stale recovery
+queue when any `PaymentRecoveryOperation` row has been `PENDING` for more
+than 15 minutes. Each cron tick also sends an admin alert (re-using
+`sendAdminPaymentFailureAlert`) when the queue contains a row that has
+been pending for more than 30 minutes, with a one-hour cooldown to avoid
+storming the inbox.
+
 ## Health Checks
 
 Use these endpoints for smoke tests and load-balancer readiness:

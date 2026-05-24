@@ -340,4 +340,41 @@ describe("payment recovery worker", () => {
       }),
     });
   });
+
+  it("alerts admins when a PENDING recovery op has been queued > 30 minutes", async () => {
+    const ancientOperation = {
+      ...makeOperation({
+        id: "recovery-ancient",
+        status: PaymentRecoveryOperationStatus.PENDING,
+        createdAt: new Date(Date.now() - 60 * 60 * 1000),
+      }),
+      booking: {
+        id: "booking-1",
+        checkIn: new Date("2026-07-01"),
+        checkOut: new Date("2026-07-03"),
+        member: { firstName: "Alice", lastName: "Example" },
+      },
+    };
+
+    mockPaymentRecoveryFindMany.mockResolvedValue([]);
+    mockPaymentRecoveryFindFirst.mockResolvedValueOnce(ancientOperation);
+
+    await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(mockPaymentRecoveryFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: PaymentRecoveryOperationStatus.PENDING,
+          createdAt: expect.objectContaining({ lt: expect.any(Date) }),
+        }),
+      }),
+    );
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        memberName: "Alice Example",
+        errorMessage: expect.stringContaining("queue is stalled"),
+        paymentIntentId: "pi_superseded",
+      }),
+    );
+  });
 });
