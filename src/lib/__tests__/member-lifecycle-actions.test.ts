@@ -41,6 +41,7 @@ const mockPrisma = vi.hoisted(() => {
     hutLeaderAssignment: countDelegate(),
     issueReport: countDelegate(),
     bookingModification: countDelegate(),
+    bookingChangeRequest: countDelegate(),
     deletionRequest: countDelegate(),
     xeroObjectLink: {
       findMany: vi.fn().mockResolvedValue([]),

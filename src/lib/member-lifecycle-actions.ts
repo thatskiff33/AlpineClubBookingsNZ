@@ -168,17 +168,6 @@ export function serializeMemberLifecycleActionRequest(
   };
 }
 
-function pushCountBlocker(
-  blockers: MemberDeleteEligibilityBlocker[],
-  code: string,
-  label: string,
-  count: number,
-) {
-  if (count > 0) {
-    blockers.push({ code, label, count });
-  }
-}
-
 function pendingDeleteWhere(memberId: string, ignoreRequestId?: string) {
   return {
     memberId,
@@ -187,6 +176,221 @@ function pendingDeleteWhere(memberId: string, ignoreRequestId?: string) {
     ...(ignoreRequestId ? { id: { not: ignoreRequestId } } : {}),
   } satisfies Prisma.MemberLifecycleActionRequestWhereInput;
 }
+
+type BlockerSpec = {
+  code: string;
+  label: string;
+  query: (
+    db: LifecycleActionClient,
+    memberId: string,
+    ignoreRequestId?: string,
+  ) => Promise<number>;
+};
+
+const MEMBER_DELETE_BLOCKER_SPECS: readonly BlockerSpec[] = [
+  {
+    code: "pending_delete_request",
+    label: "A delete request is already pending for this member.",
+    query: (db, memberId, ignoreRequestId) =>
+      db.memberLifecycleActionRequest.count({
+        where: pendingDeleteWhere(memberId, ignoreRequestId),
+      }),
+  },
+  {
+    code: "owned_bookings",
+    label: "Owned bookings exist.",
+    query: (db, memberId) => db.booking.count({ where: { memberId } }),
+  },
+  {
+    code: "guest_appearances",
+    label: "Booking guest appearances exist.",
+    query: (db, memberId) => db.bookingGuest.count({ where: { memberId } }),
+  },
+  {
+    code: "payments",
+    label: "Payments exist through owned bookings.",
+    query: (db, memberId) =>
+      db.payment.count({ where: { booking: { memberId } } }),
+  },
+  {
+    code: "payment_refunds",
+    label: "Payment refunds exist through owned bookings.",
+    query: (db, memberId) =>
+      db.paymentRefund.count({ where: { payment: { booking: { memberId } } } }),
+  },
+  {
+    code: "payment_recovery_operations",
+    label: "Payment recovery operations exist through owned bookings.",
+    query: (db, memberId) =>
+      db.paymentRecoveryOperation.count({ where: { booking: { memberId } } }),
+  },
+  {
+    code: "credits",
+    label: "Member credit history exists.",
+    query: (db, memberId) =>
+      db.memberCredit.count({
+        where: {
+          OR: [
+            { memberId },
+            { requestedById: memberId },
+            { approvedById: memberId },
+          ],
+        },
+      }),
+  },
+  {
+    code: "credit_adjustment_requests",
+    label: "Credit adjustment requests reference this member.",
+    query: (db, memberId) =>
+      db.adminCreditAdjustmentRequest.count({
+        where: {
+          OR: [
+            { memberId },
+            { requestedById: memberId },
+            { reviewedById: memberId },
+          ],
+        },
+      }),
+  },
+  {
+    code: "refund_requests",
+    label: "Refund requests exist.",
+    query: (db, memberId) =>
+      db.refundRequest.count({
+        where: { OR: [{ memberId }, { booking: { memberId } }] },
+      }),
+  },
+  {
+    code: "subscriptions",
+    label: "Membership subscriptions exist.",
+    query: (db, memberId) =>
+      db.memberSubscription.count({ where: { memberId } }),
+  },
+  {
+    code: "promo_redemptions",
+    label: "Promo redemptions exist.",
+    query: (db, memberId) =>
+      db.promoRedemption.count({ where: { memberId } }),
+  },
+  {
+    code: "promo_assignments",
+    label: "Promo assignments exist.",
+    query: (db, memberId) =>
+      db.promoCodeAssignment.count({ where: { memberId } }),
+  },
+  {
+    code: "nomination_tokens",
+    label: "Nomination tokens reference this member.",
+    query: (db, memberId) =>
+      db.nominationToken.count({ where: { nominatorMemberId: memberId } }),
+  },
+  {
+    code: "member_applications",
+    label: "Member applications reference this member.",
+    query: (db, memberId) =>
+      db.memberApplication.count({
+        where: {
+          OR: [
+            { nominator1Id: memberId },
+            { nominator2Id: memberId },
+            { reviewedBy: memberId },
+          ],
+        },
+      }),
+  },
+  {
+    code: "membership_cancellation_requests",
+    label: "Membership cancellation requests reference this member.",
+    query: async (db, memberId) => {
+      const [requests, participants] = await Promise.all([
+        db.membershipCancellationRequest.count({
+          where: {
+            OR: [
+              { requestedByMemberId: memberId },
+              { reviewedByMemberId: memberId },
+            ],
+          },
+        }),
+        db.membershipCancellationRequestParticipant.count({
+          where: { OR: [{ memberId }, { reviewedByMemberId: memberId }] },
+        }),
+      ]);
+      return requests + participants;
+    },
+  },
+  {
+    code: "unresolved_family_requests",
+    label: "Unresolved family requests reference this member.",
+    query: (db, memberId) =>
+      db.familyGroupJoinRequest.count({
+        where: {
+          status: "PENDING",
+          OR: [
+            { requesterId: memberId },
+            { invitedMemberId: memberId },
+            { linkedMemberId: memberId },
+            { subjectMemberId: memberId },
+            { reviewedBy: memberId },
+          ],
+        },
+      }),
+  },
+  {
+    code: "family_group_memberships",
+    label: "Family group memberships reference this member.",
+    query: (db, memberId) =>
+      db.familyGroupMember.count({ where: { memberId } }),
+  },
+  {
+    code: "dependants",
+    label: "Dependants are linked to this member.",
+    query: (db, memberId) =>
+      db.member.count({
+        where: {
+          OR: [{ parentMemberId: memberId }, { secondaryParentId: memberId }],
+        },
+      }),
+  },
+  {
+    code: "email_inheritance_references",
+    label: "Other members inherit email from this member.",
+    query: (db, memberId) =>
+      db.member.count({ where: { inheritEmailFromId: memberId } }),
+  },
+  {
+    code: "hut_leader_assignments",
+    label: "Hut leader assignments reference this member.",
+    query: (db, memberId) =>
+      db.hutLeaderAssignment.count({ where: { memberId } }),
+  },
+  {
+    code: "issue_reports",
+    label: "Issue reports reference this member.",
+    query: (db, memberId) => db.issueReport.count({ where: { memberId } }),
+  },
+  {
+    code: "booking_modifications",
+    label: "Booking modification history references this member.",
+    query: (db, memberId) =>
+      db.bookingModification.count({
+        where: { OR: [{ memberId }, { booking: { memberId } }] },
+      }),
+  },
+  {
+    code: "booking_change_requests",
+    label: "Pending booking change requests reference this member.",
+    query: (db, memberId) =>
+      db.bookingChangeRequest.count({
+        where: { requesterId: memberId, status: "PENDING" },
+      }),
+  },
+  {
+    code: "account_deletion_requests",
+    label: "Self-service account deletion requests reference this member.",
+    query: (db, memberId) =>
+      db.deletionRequest.count({ where: { memberId } }),
+  },
+];
 
 export async function getMemberDeleteEligibility({
   memberId,
@@ -214,122 +418,19 @@ export async function getMemberDeleteEligibility({
     throw new MemberLifecycleActionError("Member not found.", 404);
   }
 
-  const [
-    pendingDeleteRequests,
-    ownedBookings,
-    guestAppearances,
-    payments,
-    paymentRefunds,
-    paymentRecoveryOperations,
-    memberCredits,
-    creditAdjustmentRequests,
-    refundRequests,
-    subscriptions,
-    promoRedemptions,
-    promoAssignments,
-    nominationTokens,
-    nominationApplications,
-    membershipCancellationRequests,
-    membershipCancellationParticipants,
-    unresolvedFamilyRequests,
-    familyGroupMemberships,
-    dependants,
-    emailInheritanceReferences,
-    hutLeaderAssignments,
-    issueReports,
-    bookingModifications,
-    accountDeletionRequests,
-  ] = await Promise.all([
-    db.memberLifecycleActionRequest.count({
-      where: pendingDeleteWhere(memberId, ignoreRequestId),
-    }),
-    db.booking.count({ where: { memberId } }),
-    db.bookingGuest.count({ where: { memberId } }),
-    db.payment.count({ where: { booking: { memberId } } }),
-    db.paymentRefund.count({
-      where: { payment: { booking: { memberId } } },
-    }),
-    db.paymentRecoveryOperation.count({ where: { booking: { memberId } } }),
-    db.memberCredit.count({
-      where: {
-        OR: [
-          { memberId },
-          { requestedById: memberId },
-          { approvedById: memberId },
-        ],
-      },
-    }),
-    db.adminCreditAdjustmentRequest.count({
-      where: {
-        OR: [
-          { memberId },
-          { requestedById: memberId },
-          { reviewedById: memberId },
-        ],
-      },
-    }),
-    db.refundRequest.count({
-      where: { OR: [{ memberId }, { booking: { memberId } }] },
-    }),
-    db.memberSubscription.count({ where: { memberId } }),
-    db.promoRedemption.count({ where: { memberId } }),
-    db.promoCodeAssignment.count({ where: { memberId } }),
-    db.nominationToken.count({ where: { nominatorMemberId: memberId } }),
-    db.memberApplication.count({
-      where: {
-        OR: [
-          { nominator1Id: memberId },
-          { nominator2Id: memberId },
-          { reviewedBy: memberId },
-        ],
-      },
-    }),
-    db.membershipCancellationRequest.count({
-      where: {
-        OR: [
-          { requestedByMemberId: memberId },
-          { reviewedByMemberId: memberId },
-        ],
-      },
-    }),
-    db.membershipCancellationRequestParticipant.count({
-      where: {
-        OR: [{ memberId }, { reviewedByMemberId: memberId }],
-      },
-    }),
-    db.familyGroupJoinRequest.count({
-      where: {
-        status: "PENDING",
-        OR: [
-          { requesterId: memberId },
-          { invitedMemberId: memberId },
-          { linkedMemberId: memberId },
-          { subjectMemberId: memberId },
-          { reviewedBy: memberId },
-        ],
-      },
-    }),
-    db.familyGroupMember.count({ where: { memberId } }),
-    db.member.count({
-      where: {
-        OR: [{ parentMemberId: memberId }, { secondaryParentId: memberId }],
-      },
-    }),
-    db.member.count({ where: { inheritEmailFromId: memberId } }),
-    db.hutLeaderAssignment.count({ where: { memberId } }),
-    db.issueReport.count({ where: { memberId } }),
-    db.bookingModification.count({
-      where: { OR: [{ memberId }, { booking: { memberId } }] },
-    }),
-    db.deletionRequest.count({ where: { memberId } }),
-  ]);
+  const counts = await Promise.all(
+    MEMBER_DELETE_BLOCKER_SPECS.map((spec) =>
+      spec.query(db, memberId, ignoreRequestId),
+    ),
+  );
 
   const blockers: MemberDeleteEligibilityBlocker[] = [];
 
   if (currentAdminMemberId && currentAdminMemberId === memberId) {
     blockers.push({
       code: "self_delete",
-      label: "The current admin cannot request or approve deletion of their own member record.",
+      label:
+        "The current admin cannot request or approve deletion of their own member record.",
     });
   }
 
@@ -354,94 +455,12 @@ export async function getMemberDeleteEligibility({
     });
   }
 
-  pushCountBlocker(
-    blockers,
-    "pending_delete_request",
-    "A delete request is already pending for this member.",
-    pendingDeleteRequests,
-  );
-  pushCountBlocker(blockers, "owned_bookings", "Owned bookings exist.", ownedBookings);
-  pushCountBlocker(
-    blockers,
-    "guest_appearances",
-    "Booking guest appearances exist.",
-    guestAppearances,
-  );
-  pushCountBlocker(blockers, "payments", "Payments exist through owned bookings.", payments);
-  pushCountBlocker(
-    blockers,
-    "payment_refunds",
-    "Payment refunds exist through owned bookings.",
-    paymentRefunds,
-  );
-  pushCountBlocker(
-    blockers,
-    "payment_recovery_operations",
-    "Payment recovery operations exist through owned bookings.",
-    paymentRecoveryOperations,
-  );
-  pushCountBlocker(blockers, "credits", "Member credit history exists.", memberCredits);
-  pushCountBlocker(
-    blockers,
-    "credit_adjustment_requests",
-    "Credit adjustment requests reference this member.",
-    creditAdjustmentRequests,
-  );
-  pushCountBlocker(blockers, "refund_requests", "Refund requests exist.", refundRequests);
-  pushCountBlocker(blockers, "subscriptions", "Membership subscriptions exist.", subscriptions);
-  pushCountBlocker(blockers, "promo_redemptions", "Promo redemptions exist.", promoRedemptions);
-  pushCountBlocker(blockers, "promo_assignments", "Promo assignments exist.", promoAssignments);
-  pushCountBlocker(blockers, "nomination_tokens", "Nomination tokens reference this member.", nominationTokens);
-  pushCountBlocker(
-    blockers,
-    "member_applications",
-    "Member applications reference this member.",
-    nominationApplications,
-  );
-  pushCountBlocker(
-    blockers,
-    "membership_cancellation_requests",
-    "Membership cancellation requests reference this member.",
-    membershipCancellationRequests + membershipCancellationParticipants,
-  );
-  pushCountBlocker(
-    blockers,
-    "unresolved_family_requests",
-    "Unresolved family requests reference this member.",
-    unresolvedFamilyRequests,
-  );
-  pushCountBlocker(
-    blockers,
-    "family_group_memberships",
-    "Family group memberships reference this member.",
-    familyGroupMemberships,
-  );
-  pushCountBlocker(blockers, "dependants", "Dependants are linked to this member.", dependants);
-  pushCountBlocker(
-    blockers,
-    "email_inheritance_references",
-    "Other members inherit email from this member.",
-    emailInheritanceReferences,
-  );
-  pushCountBlocker(
-    blockers,
-    "hut_leader_assignments",
-    "Hut leader assignments reference this member.",
-    hutLeaderAssignments,
-  );
-  pushCountBlocker(blockers, "issue_reports", "Issue reports reference this member.", issueReports);
-  pushCountBlocker(
-    blockers,
-    "booking_modifications",
-    "Booking modification history references this member.",
-    bookingModifications,
-  );
-  pushCountBlocker(
-    blockers,
-    "account_deletion_requests",
-    "Self-service account deletion requests reference this member.",
-    accountDeletionRequests,
-  );
+  MEMBER_DELETE_BLOCKER_SPECS.forEach((spec, index) => {
+    const count = counts[index];
+    if (count > 0) {
+      blockers.push({ code: spec.code, label: spec.label, count });
+    }
+  });
 
   return {
     eligible: blockers.length === 0,
