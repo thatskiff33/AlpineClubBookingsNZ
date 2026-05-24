@@ -1012,4 +1012,24 @@ describe("PUT /api/bookings/[id]/modify", () => {
       vi.useRealTimers();
     }
   });
+
+  it("returns 400 with a structured error envelope when the request body is not valid JSON", async () => {
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: "{not json",
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toBe("Invalid JSON");
+    expect(data.details).toEqual({
+      body: ["Request body must be valid JSON"],
+    });
+  });
 });

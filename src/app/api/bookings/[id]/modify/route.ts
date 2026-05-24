@@ -117,7 +117,19 @@ export async function PUT(
 
   const { id: bookingId } = await params;
 
-  const body = await request.json();
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      {
+        error: "Invalid JSON",
+        details: { body: ["Request body must be valid JSON"] },
+      },
+      { status: 400 }
+    );
+  }
+
   const parsed = batchModifySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
