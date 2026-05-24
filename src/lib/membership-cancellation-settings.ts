@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import logger from "@/lib/logger";
 
 export const MEMBERSHIP_CANCELLATION_SETTINGS_ID = "default";
 
@@ -87,14 +88,10 @@ export function normalizeMembershipCancellationSettings(
 export async function loadPersistedMembershipCancellationSettings(): Promise<
   PersistedMembershipCancellationSettings | null
 > {
-  const delegate = (prisma as unknown as {
-    membershipCancellationSetting?: {
-      findUnique: (
-        args: unknown,
-      ) => Promise<PersistedMembershipCancellationSettings | null>;
-    };
-  }).membershipCancellationSetting;
-
+  // Some unit tests stub @/lib/prisma with a partial client that omits
+  // this delegate. Keep an existence check so those tests still run, but
+  // do not use it as a catch-all for generic database errors.
+  const delegate = prisma.membershipCancellationSetting;
   if (!delegate) return null;
 
   try {
@@ -106,7 +103,11 @@ export async function loadPersistedMembershipCancellationSettings(): Promise<
         },
       },
     });
-  } catch {
+  } catch (err) {
+    logger.warn(
+      { err },
+      "membership cancellation settings load failed",
+    );
     return null;
   }
 }
