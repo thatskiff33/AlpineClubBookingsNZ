@@ -85,6 +85,7 @@ const batchModifySchema = z.object({
 });
 
 import {
+  queueSupersededAdditionalIntentCancellations,
   queueSupersededPrimaryIntentCancellations,
   type SupersededPrimaryPaymentIntent,
 } from "@/lib/booking-payment-cleanup";
@@ -901,6 +902,17 @@ export async function PUT(
           },
           idempotencyKey: `mod_batch_${bookingId}_${result.bookingModificationId}`,
         });
+
+        await queueSupersededAdditionalIntentCancellations({
+          bookingId,
+          paymentId: result.paymentId,
+          newPaymentIntentId: pi.id,
+        }).catch((err) =>
+          logger.error(
+            { err, bookingId, paymentIntentId: pi.id },
+            "Failed to queue superseded additional intent cancellations"
+          )
+        );
 
         await upsertPaymentIntentTransaction({
           paymentId: result.paymentId,

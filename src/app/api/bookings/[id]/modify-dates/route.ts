@@ -26,7 +26,10 @@ import {
   cleanupChoreAssignmentsForGuestStayRanges,
 } from "@/lib/chore-cleanup";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
-import { queueSupersededPrimaryIntentCancellations } from "@/lib/booking-payment-cleanup";
+import {
+  queueSupersededAdditionalIntentCancellations,
+  queueSupersededPrimaryIntentCancellations,
+} from "@/lib/booking-payment-cleanup";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -569,6 +572,17 @@ export async function PUT(
           },
           idempotencyKey: `mod_dates_${bookingId}_${result.bookingModificationId}`,
         });
+
+        await queueSupersededAdditionalIntentCancellations({
+          bookingId,
+          paymentId: result.paymentId,
+          newPaymentIntentId: pi.id,
+        }).catch((err) =>
+          logger.error(
+            { err, bookingId, paymentIntentId: pi.id },
+            "Failed to queue superseded additional intent cancellations",
+          ),
+        );
 
         await upsertPaymentIntentTransaction({
           paymentId: result.paymentId,

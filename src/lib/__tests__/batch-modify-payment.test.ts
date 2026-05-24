@@ -48,6 +48,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     paymentTransaction: {
       updateMany: mockPaymentTransactionUpdateMany,
+      findMany: vi.fn().mockResolvedValue([]),
     },
     member: {
       findUnique: mockMemberFindUnique,
