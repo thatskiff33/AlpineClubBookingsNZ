@@ -31,6 +31,7 @@ vi.mock("@/lib/prisma", () => ({
     hutLeaderAssignment: { count: vi.fn().mockResolvedValue(0) },
     issueReport: { count: vi.fn().mockResolvedValue(0) },
     bookingModification: { count: vi.fn().mockResolvedValue(0) },
+    bookingChangeRequest: { count: vi.fn().mockResolvedValue(0) },
     deletionRequest: { count: vi.fn().mockResolvedValue(0) },
     memberLifecycleActionRequest: {
       count: vi.fn().mockResolvedValue(0),
