@@ -600,25 +600,39 @@ function assertArchiveEligible(member: {
   }
 }
 
+type ArchivedMemberLinkCleanupCounts = {
+  cleanedFamilyGroupMembers: number;
+  nulledChildren: number;
+  nulledSecondaryParents: number;
+  nulledInheritance: number;
+};
+
 async function cleanupArchivedMemberLinks(
   tx: Prisma.TransactionClient,
   memberId: string,
-) {
-  await tx.familyGroupMember.deleteMany({
+): Promise<ArchivedMemberLinkCleanupCounts> {
+  const familyGroupMembers = await tx.familyGroupMember.deleteMany({
     where: { memberId },
   });
-  await tx.member.updateMany({
+  const children = await tx.member.updateMany({
     where: { parentMemberId: memberId },
     data: { parentMemberId: null },
   });
-  await tx.member.updateMany({
+  const secondaryParents = await tx.member.updateMany({
     where: { secondaryParentId: memberId },
     data: { secondaryParentId: null },
   });
-  await tx.member.updateMany({
+  const inheritance = await tx.member.updateMany({
     where: { inheritEmailFromId: memberId },
     data: { inheritEmailFromId: null },
   });
+
+  return {
+    cleanedFamilyGroupMembers: familyGroupMembers.count,
+    nulledChildren: children.count,
+    nulledSecondaryParents: secondaryParents.count,
+    nulledInheritance: inheritance.count,
+  };
 }
 
 export async function createMemberDeleteRequest({
@@ -1066,7 +1080,10 @@ export async function reviewMemberArchiveRequest({
 
     const now = new Date();
 
-    await cleanupArchivedMemberLinks(tx, request.memberId);
+    const linkCleanupCounts = await cleanupArchivedMemberLinks(
+      tx,
+      request.memberId,
+    );
 
     await tx.member.update({
       where: { id: request.memberId },
@@ -1108,6 +1125,7 @@ export async function reviewMemberArchiveRequest({
         metadata: {
           action: MemberLifecycleAction.ARCHIVE,
           requestReason: request.reason,
+          ...linkCleanupCounts,
         },
         ipAddress,
       },

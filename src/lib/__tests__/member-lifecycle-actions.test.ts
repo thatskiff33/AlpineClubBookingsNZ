@@ -115,6 +115,9 @@ import {
   reviewMemberDeleteRequest,
 } from "@/lib/member-lifecycle-actions";
 import { DELETE as directDeleteMember } from "@/app/api/admin/members/[id]/route";
+import { createAuditLog } from "@/lib/audit";
+
+const mockCreateAuditLog = vi.mocked(createAuditLog);
 
 const now = new Date("2026-05-24T10:00:00.000Z");
 
@@ -432,7 +435,7 @@ describe("member archive lifecycle actions", () => {
       archivedReason: "Former member confirmed cancellation",
     });
     mockPrisma.member.updateMany.mockResolvedValue({ count: 1 });
-    mockPrisma.familyGroupMember.deleteMany.mockResolvedValue({ count: 1 });
+    mockPrisma.familyGroupMember.deleteMany.mockResolvedValue({ count: 2 });
     mockPrisma.memberLifecycleActionRequest.findFirst.mockResolvedValue(null);
     mockPrisma.memberLifecycleActionRequest.findUnique.mockResolvedValue(archiveRequest());
     mockPrisma.memberLifecycleActionRequest.create.mockImplementation(
@@ -545,5 +548,35 @@ describe("member archive lifecycle actions", () => {
         canLogin: false,
       }),
     });
+  });
+
+  it("records cleanup link counts in the archive_approved audit log metadata", async () => {
+    mockPrisma.familyGroupMember.deleteMany.mockResolvedValueOnce({ count: 3 });
+    mockPrisma.member.updateMany
+      .mockResolvedValueOnce({ count: 4 })
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 2 });
+
+    await reviewMemberArchiveRequest({
+      requestId: "archive-request-1",
+      reviewedByMemberId: "admin-2",
+      action: "approve",
+      reviewNote: "Checked",
+    });
+
+    const archiveApprovedCall = mockCreateAuditLog.mock.calls.find(
+      ([entry]) => entry.action === "member_lifecycle.archive_approved",
+    );
+    expect(archiveApprovedCall).toBeDefined();
+    const [archiveApprovedEntry] = archiveApprovedCall!;
+    expect(archiveApprovedEntry.metadata).toEqual(
+      expect.objectContaining({
+        action: "ARCHIVE",
+        cleanedFamilyGroupMembers: 3,
+        nulledChildren: 4,
+        nulledSecondaryParents: 1,
+        nulledInheritance: 2,
+      }),
+    );
   });
 });
