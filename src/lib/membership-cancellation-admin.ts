@@ -12,6 +12,12 @@ import {
 } from "@/lib/email";
 import logger from "@/lib/logger";
 import { loadMembershipCancellationSettings } from "@/lib/membership-cancellation-settings";
+import {
+  cleanText,
+  memberName,
+  serializeDate,
+  serializeMember,
+} from "@/lib/member-serialization";
 import { prisma } from "@/lib/prisma";
 import { queueApprovedMembershipCancellationXeroOperations } from "@/lib/xero-operation-outbox";
 
@@ -25,13 +31,6 @@ const REVIEWABLE_REJECTION_STATUSES: readonly MembershipCancellationParticipantS
 ] as const;
 
 type CancellationReviewClient = Prisma.TransactionClient | typeof prisma;
-
-type MemberSummary = {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-};
 
 type AdminCancellationRequestRecord =
   Prisma.MembershipCancellationRequestGetPayload<{
@@ -138,30 +137,6 @@ const adminCancellationRequestInclude = {
     orderBy: { createdAt: "asc" },
   },
 } satisfies Prisma.MembershipCancellationRequestInclude;
-
-function cleanText(value: string | null | undefined) {
-  const cleaned = value?.trim() ?? "";
-  return cleaned ? cleaned : null;
-}
-
-function memberName(member: Pick<MemberSummary, "firstName" | "lastName">) {
-  return [member.firstName, member.lastName].filter(Boolean).join(" ").trim();
-}
-
-function serializeDate(value: Date | string | null | undefined) {
-  if (!value) return null;
-  if (value instanceof Date) return value.toISOString();
-  return new Date(value).toISOString();
-}
-
-function serializeMember(member: MemberSummary | null) {
-  if (!member) return null;
-  return {
-    id: member.id,
-    name: memberName(member),
-    email: member.email,
-  };
-}
 
 function emptyBlockerMap(memberIds: string[]) {
   return new Map(

@@ -15,6 +15,12 @@ import {
 } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import {
+  cleanText,
+  memberDisplayName,
+  serializeDate,
+  serializeMember,
+} from "@/lib/member-serialization";
 
 type LifecycleActionClient = Prisma.TransactionClient | typeof prisma;
 
@@ -47,13 +53,6 @@ type LifecycleActionRequestRecord =
   Prisma.MemberLifecycleActionRequestGetPayload<{
     include: typeof lifecycleActionRequestInclude;
   }>;
-
-type MemberSummary = {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-};
 
 export type MemberDeleteEligibilityBlocker = {
   code: string;
@@ -101,47 +100,12 @@ export class MemberLifecycleActionError extends Error {
   }
 }
 
-function cleanText(value: string | null | undefined) {
-  const cleaned = value?.trim() ?? "";
-  return cleaned ? cleaned : null;
-}
-
 function requireCleanText(value: string | null | undefined, message: string) {
   const cleaned = cleanText(value);
   if (!cleaned) {
     throw new MemberLifecycleActionError(message, 422);
   }
   return cleaned;
-}
-
-function memberName(member: {
-  firstName?: string | null;
-  lastName?: string | null;
-}) {
-  return [member.firstName, member.lastName].filter(Boolean).join(" ").trim();
-}
-
-function memberDisplayName(member: {
-  firstName?: string | null;
-  lastName?: string | null;
-  email?: string | null;
-}) {
-  return memberName(member) || member.email || "Unknown member";
-}
-
-function serializeDate(value: Date | string | null | undefined) {
-  if (!value) return null;
-  if (value instanceof Date) return value.toISOString();
-  return new Date(value).toISOString();
-}
-
-function serializeMember(member: MemberSummary | null) {
-  if (!member) return null;
-  return {
-    id: member.id,
-    name: memberName(member),
-    email: member.email,
-  };
 }
 
 function jsonSnapshot(value: unknown): Prisma.InputJsonValue {

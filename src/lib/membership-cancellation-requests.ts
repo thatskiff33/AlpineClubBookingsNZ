@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { hashActionToken, issueActionToken } from "@/lib/action-tokens";
 import { logAudit } from "@/lib/audit";
 import {
@@ -6,6 +7,11 @@ import {
   sendMembershipCancellationSubmittedEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import {
+  memberDisplayName,
+  memberName,
+  serializeDate,
+} from "@/lib/member-serialization";
 import {
   loadMembershipCancellationSettings,
   type MembershipCancellationSettings,
@@ -21,6 +27,33 @@ const OPEN_PARTICIPANT_STATUSES = [
   "PENDING_CONFIRMATION",
   "APPROVED",
 ] as const;
+
+const participantMemberSummarySelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  ageTier: true,
+  canLogin: true,
+  active: true,
+} satisfies Prisma.MemberSelect;
+
+const cancellationRequestInclude = {
+  requestedBy: {
+    select: { id: true, firstName: true, lastName: true, email: true },
+  },
+  participants: {
+    include: {
+      member: { select: participantMemberSummarySelect },
+    },
+    orderBy: { createdAt: "asc" },
+  },
+} satisfies Prisma.MembershipCancellationRequestInclude;
+
+const cancellationParticipantWithRequestInclude = {
+  member: { select: participantMemberSummarySelect },
+  request: { include: cancellationRequestInclude },
+} satisfies Prisma.MembershipCancellationRequestParticipantInclude;
 
 type CancellationMemberRecord = {
   id: string;
@@ -168,21 +201,6 @@ function nullableText(value: unknown) {
   return cleaned ? cleaned : null;
 }
 
-function memberName(member: {
-  firstName?: string | null;
-  lastName?: string | null;
-}) {
-  return [member.firstName, member.lastName].filter(Boolean).join(" ").trim();
-}
-
-function memberDisplayName(member: {
-  firstName?: string | null;
-  lastName?: string | null;
-  email?: string | null;
-}) {
-  return memberName(member) || member.email || "Unknown member";
-}
-
 function participantSummary(
   participants: Array<{
     member: {
@@ -202,12 +220,6 @@ function hasReviewableCancellationParticipant(
     (participant) =>
       participant.status === "REQUESTED" && Boolean(participant.confirmedAt),
   );
-}
-
-function serializeDate(value: Date | string | null | undefined) {
-  if (!value) return null;
-  if (value instanceof Date) return value.toISOString();
-  return new Date(value).toISOString();
 }
 
 function serializeRequest(
@@ -439,27 +451,7 @@ async function loadVisibleRequests(memberId: string) {
         { participants: { some: { memberId } } },
       ],
     },
-    include: {
-      requestedBy: {
-        select: { id: true, firstName: true, lastName: true, email: true },
-      },
-      participants: {
-        include: {
-          member: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              ageTier: true,
-              canLogin: true,
-              active: true,
-            },
-          },
-        },
-        orderBy: { createdAt: "asc" },
-      },
-    },
+    include: cancellationRequestInclude,
     orderBy: { submittedAt: "desc" },
     take: 10,
   });
@@ -580,27 +572,7 @@ export async function createMembershipCancellationRequest({
         }),
       },
     },
-    include: {
-      requestedBy: {
-        select: { id: true, firstName: true, lastName: true, email: true },
-      },
-      participants: {
-        include: {
-          member: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              ageTier: true,
-              canLogin: true,
-              active: true,
-            },
-          },
-        },
-        orderBy: { createdAt: "asc" },
-      },
-    },
+    include: cancellationRequestInclude,
     });
   });
 
@@ -697,42 +669,7 @@ async function findConfirmationParticipant(token: string) {
 
   return prisma.membershipCancellationRequestParticipant.findUnique({
     where: { confirmationTokenHash: hashActionToken(normalizedToken) },
-    include: {
-      member: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
-          ageTier: true,
-          canLogin: true,
-          active: true,
-        },
-      },
-      request: {
-        include: {
-          requestedBy: {
-            select: { id: true, firstName: true, lastName: true, email: true },
-          },
-          participants: {
-            include: {
-              member: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                  ageTier: true,
-                  canLogin: true,
-                  active: true,
-                },
-              },
-            },
-            orderBy: { createdAt: "asc" },
-          },
-        },
-      },
-    },
+    include: cancellationParticipantWithRequestInclude,
   });
 }
 
@@ -844,17 +781,7 @@ export async function respondToMembershipCancellationConfirmation({
     await prisma.membershipCancellationRequestParticipant.findUnique({
       where: { confirmationTokenHash: tokenHash },
       include: {
-        member: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-            ageTier: true,
-            canLogin: true,
-            active: true,
-          },
-        },
+        member: { select: participantMemberSummarySelect },
         request: true,
       },
     });
@@ -915,42 +842,7 @@ export async function respondToMembershipCancellationConfirmation({
                 confirmationTokenHash: null,
                 confirmationTokenExpiresAt: null,
               },
-        include: {
-          member: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              ageTier: true,
-              canLogin: true,
-              active: true,
-            },
-          },
-          request: {
-            include: {
-              requestedBy: {
-                select: { id: true, firstName: true, lastName: true, email: true },
-              },
-              participants: {
-                include: {
-                  member: {
-                    select: {
-                      id: true,
-                      firstName: true,
-                      lastName: true,
-                      email: true,
-                      ageTier: true,
-                      canLogin: true,
-                      active: true,
-                    },
-                  },
-                },
-                orderBy: { createdAt: "asc" },
-              },
-            },
-          },
-        },
+        include: cancellationParticipantWithRequestInclude,
       });
 
     // Defence in depth: if the same member somehow has another open
