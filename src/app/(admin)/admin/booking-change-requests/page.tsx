@@ -163,7 +163,11 @@ export default function BookingChangeRequestsPage() {
       }
 
       setAdminNotes("");
-      setSuccess(status === "RESOLVED" ? "Request marked resolved" : "Request declined");
+      setSuccess(
+        status === "RESOLVED"
+          ? "Request acknowledged as resolved. Apply the actual change on the booking page if it is still required."
+          : "Request declined"
+      );
       await fetchRequests();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to review request");
@@ -309,6 +313,12 @@ export default function BookingChangeRequestsPage() {
 
                   {request.status === "PENDING" ? (
                     <div className="space-y-3 rounded-md border border-slate-200 p-3">
+                      <p className="text-xs text-slate-600">
+                        Marking a request resolved only acknowledges the review.
+                        The booking is not edited automatically; open the
+                        booking from the link above and apply the change there
+                        if it is still feasible.
+                      </p>
                       <div className="space-y-1">
                         <Label htmlFor={`admin-notes-${request.id}`}>Admin notes</Label>
                         <Textarea
@@ -327,7 +337,7 @@ export default function BookingChangeRequestsPage() {
                           onClick={() => reviewRequest(request, "RESOLVED")}
                           disabled={reviewingId === request.id && !adminNotes.trim()}
                         >
-                          Mark Resolved
+                          Acknowledge as resolved
                         </Button>
                         <Button
                           size="sm"
