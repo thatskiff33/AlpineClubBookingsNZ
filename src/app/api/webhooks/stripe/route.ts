@@ -118,6 +118,18 @@ export async function POST(request: NextRequest) {
         );
         break;
 
+      case "payment_intent.requires_action":
+        await handlePaymentIntentRequiresAction(
+          event.data.object as Stripe.PaymentIntent
+        );
+        break;
+
+      case "payment_intent.processing":
+        await handlePaymentIntentProcessing(
+          event.data.object as Stripe.PaymentIntent
+        );
+        break;
+
       case "setup_intent.succeeded":
         await handleSetupIntentSucceeded(
           event.data.object as Stripe.SetupIntent
@@ -460,6 +472,53 @@ async function handlePaymentIntentCanceled(
   logger.info(
     { bookingId, paymentIntentId: paymentIntent.id },
     "Payment intent canceled for booking"
+  );
+}
+
+/**
+ * Observability-only handlers for intermediate PaymentIntent states.
+ * The customer-facing payment flow eventually reconciles via
+ * payment_intent.succeeded / payment_intent.canceled or via
+ * confirm-modification-payment, so we do not mutate state here -- we
+ * just emit structured logs so dashboards can track 3DS step-ups and
+ * async funding (e.g. bank debits) without manual Stripe lookups.
+ */
+async function handlePaymentIntentRequiresAction(
+  paymentIntent: Stripe.PaymentIntent
+) {
+  const bookingId = paymentIntent.metadata?.bookingId;
+  const paymentTransaction = await findPaymentTransactionByIntentId({
+    paymentIntentId: paymentIntent.id,
+  });
+  logger.info(
+    {
+      bookingId,
+      paymentIntentId: paymentIntent.id,
+      amountCents: paymentIntent.amount,
+      transactionKind: paymentTransaction?.kind ?? null,
+      transactionId: paymentTransaction?.id ?? null,
+      nextActionType: paymentIntent.next_action?.type ?? null,
+    },
+    "Payment intent requires action"
+  );
+}
+
+async function handlePaymentIntentProcessing(
+  paymentIntent: Stripe.PaymentIntent
+) {
+  const bookingId = paymentIntent.metadata?.bookingId;
+  const paymentTransaction = await findPaymentTransactionByIntentId({
+    paymentIntentId: paymentIntent.id,
+  });
+  logger.info(
+    {
+      bookingId,
+      paymentIntentId: paymentIntent.id,
+      amountCents: paymentIntent.amount,
+      transactionKind: paymentTransaction?.kind ?? null,
+      transactionId: paymentTransaction?.id ?? null,
+    },
+    "Payment intent processing"
   );
 }
 

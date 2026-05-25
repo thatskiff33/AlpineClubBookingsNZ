@@ -651,4 +651,61 @@ describe("Stripe webhook Xero alerting", () => {
     expect(response.status).toBe(200);
     expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
+
+  it("logs payment_intent.requires_action as an observability event without mutating state", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_requires_action",
+      type: "payment_intent.requires_action",
+      data: {
+        object: {
+          id: "pi_requires_action",
+          amount: 6000,
+          metadata: { bookingId: "booking-3ds" },
+          next_action: { type: "use_stripe_sdk" },
+        },
+      },
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue({
+      id: "ptx_3ds",
+      kind: "ADDITIONAL",
+      paymentId: "pay_3ds",
+      status: "PENDING",
+      createdAt: new Date(),
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockFindPaymentTransactionByIntentId).toHaveBeenCalledWith({
+      paymentIntentId: "pi_requires_action",
+    });
+    expect(mockMarkPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
+    expect(mockMarkPaymentIntentTransactionFailed).not.toHaveBeenCalled();
+    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+  });
+
+  it("logs payment_intent.processing as an observability event without mutating state", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_processing",
+      type: "payment_intent.processing",
+      data: {
+        object: {
+          id: "pi_processing",
+          amount: 6000,
+          metadata: { bookingId: "booking-bank-debit" },
+        },
+      },
+    } as any);
+    mockFindPaymentTransactionByIntentId.mockResolvedValue(null);
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockFindPaymentTransactionByIntentId).toHaveBeenCalledWith({
+      paymentIntentId: "pi_processing",
+    });
+    expect(mockMarkPaymentIntentTransactionSucceeded).not.toHaveBeenCalled();
+    expect(mockMarkPaymentIntentTransactionFailed).not.toHaveBeenCalled();
+    expect(mockPaymentUpdate).not.toHaveBeenCalled();
+  });
 });
