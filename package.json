@@ -33,6 +33,7 @@
     "test": "vitest run",
     "test:policy": "vitest run src/lib/policies/__tests__",
     "test:watch": "vitest",
+    "quality:report": "tsx scripts/quality-report.ts",
     "setup:check": "tsx scripts/setup.ts check",
     "setup:wizard": "tsx scripts/setup.ts wizard",
     "review:staging:a11y": "bash scripts/run-staging-accessibility-checks.sh",

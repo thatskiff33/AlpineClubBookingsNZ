@@ -32,6 +32,49 @@ CI also runs independent static and container checks:
 - Use test or demo credentials for Stripe, Xero, SES, and Sentry in local and
   CI environments.
 
+## Maintainability Budgets
+
+The repo has a handful of oversized files and route surfaces. Future
+refactors should keep new code inside soft budgets so reviewers can spot
+regressions early. Treat these as review prompts, not hard CI gates:
+
+- Route handlers (`src/app/.../route.ts`) should generally stay under
+  roughly 250 LOC.
+- App Router page shells (`src/app/.../page.tsx`) should generally stay
+  under roughly 500 LOC.
+- New domain modules (`src/lib/...`, `src/components/...`) should
+  generally stay under roughly 900 LOC.
+- No new production `any`, type suppression (`@ts-ignore`,
+  `@ts-expect-error`, `@ts-nocheck`), or `eslint-disable` without a
+  short inline comment explaining the local justification.
+
+When a file is already over budget, prefer extracting cohesive helpers
+into a focused module rather than adding more to the existing surface.
+
+### Quality report
+
+Run the local maintainability report to see current hotspots:
+
+```bash
+npm run quality:report
+```
+
+The script scans tracked files via `git ls-files` and prints a markdown
+summary of:
+
+- largest production files
+- largest route handlers and App Router pages
+- largest test files
+- production `any` / type-suppression hotspots
+- production `eslint-disable` hotspots
+- test `as any` totals
+
+It uses only existing repo tooling, runs without external service
+credentials or network access, and is advisory: it warns and informs
+rather than failing the build. Use it before opening a refactor PR to
+confirm that the change reduces an oversized surface instead of just
+moving lines around.
+
 ## Operational Repair Tools
 
 `scripts/xero-booking-repair.ts` is a targeted booking/Xero reconciliation
