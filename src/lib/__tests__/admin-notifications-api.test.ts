@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -39,11 +38,14 @@ vi.mock("@/lib/logger", () => ({
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { PUT } from "@/app/api/admin/notifications/route";
+import {
+  adminSession,
+  jsonRequest,
+  memberFactory,
+  memberSession,
+} from "@/lib/__tests__/helpers";
 
 const mockedAuth = vi.mocked(auth);
-
-const adminSession = { user: { id: "admin-1", role: "ADMIN" } } as any;
-const memberSession = { user: { id: "member-1", role: "MEMBER" } } as any;
 
 const fullAdminPreferences = {
   adminNewBooking: true,
@@ -59,20 +61,21 @@ const fullAdminPreferences = {
   adminIssueReport: true,
 };
 
+function notificationsRequest(body: Record<string, unknown>) {
+  return jsonRequest("/api/admin/notifications", body, { method: "PUT" });
+}
+
 describe("Admin notifications API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it("returns 403 for non-admin users", async () => {
-    mockedAuth.mockResolvedValue(memberSession);
+    mockedAuth.mockResolvedValue(memberSession({ id: "member-1" }));
 
-    const req = new NextRequest("http://localhost/api/admin/notifications", {
-      method: "PUT",
-      body: JSON.stringify({
-        memberId: "admin-2",
-        preferences: { adminNewBooking: false },
-      }),
+    const req = notificationsRequest({
+      memberId: "admin-2",
+      preferences: { adminNewBooking: false },
     });
 
     const res = await PUT(req);
@@ -80,22 +83,21 @@ describe("Admin notifications API", () => {
   });
 
   it("returns 400 when the target user is not an admin", async () => {
-    mockedAuth.mockResolvedValue(adminSession);
+    mockedAuth.mockResolvedValue(adminSession({ id: "admin-1" }));
     vi.mocked(prisma.member.findUnique).mockResolvedValue({
-      id: "member-2",
-      firstName: "Not",
-      lastName: "Admin",
-      email: "member@example.com",
-      role: "MEMBER",
-      notificationPreference: null,
-    } as any);
-
-    const req = new NextRequest("http://localhost/api/admin/notifications", {
-      method: "PUT",
-      body: JSON.stringify({
-        memberId: "member-2",
-        preferences: { adminNewBooking: false },
+      ...memberFactory({
+        id: "member-2",
+        firstName: "Not",
+        lastName: "Admin",
+        email: "member@example.com",
+        role: "MEMBER",
       }),
+      notificationPreference: null,
+    } as never);
+
+    const req = notificationsRequest({
+      memberId: "member-2",
+      preferences: { adminNewBooking: false },
     });
 
     const res = await PUT(req);
@@ -103,25 +105,25 @@ describe("Admin notifications API", () => {
   });
 
   it("updates admin notification preferences", async () => {
-    mockedAuth.mockResolvedValue(adminSession);
+    mockedAuth.mockResolvedValue(adminSession({ id: "admin-1" }));
     vi.mocked(prisma.member.findUnique).mockResolvedValue({
-      id: "admin-2",
-      firstName: "Jane",
-      lastName: "Doe",
-      role: "ADMIN",
+      ...memberFactory({
+        id: "admin-2",
+        firstName: "Jane",
+        lastName: "Doe",
+        email: "jane@example.org",
+        role: "ADMIN",
+      }),
       notificationPreference: null,
-    } as any);
+    } as never);
     vi.mocked(prisma.notificationPreference.upsert).mockResolvedValue({
       ...fullAdminPreferences,
       adminNewBooking: false,
-    } as any);
+    } as never);
 
-    const req = new NextRequest("http://localhost/api/admin/notifications", {
-      method: "PUT",
-      body: JSON.stringify({
-        memberId: "admin-2",
-        preferences: { adminNewBooking: false },
-      }),
+    const req = notificationsRequest({
+      memberId: "admin-2",
+      preferences: { adminNewBooking: false },
     });
 
     const res = await PUT(req);

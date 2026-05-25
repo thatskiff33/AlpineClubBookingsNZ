@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { NextRequest } from "next/server";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -26,15 +25,16 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { PUT } from "@/app/api/admin/lodge/route";
+import {
+  adminSession,
+  jsonRequest,
+  memberFactory,
+} from "@/lib/__tests__/helpers";
 
 const mockedAuth = vi.mocked(auth);
 
 function makePutRequest(body: Record<string, unknown>) {
-  return new NextRequest("http://localhost/api/admin/lodge", {
-    method: "PUT",
-    body: JSON.stringify(body),
-    headers: { "Content-Type": "application/json" },
-  });
+  return jsonRequest("/api/admin/lodge", body, { method: "PUT" });
 }
 
 describe("admin lodge route", () => {
@@ -43,24 +43,26 @@ describe("admin lodge route", () => {
   });
 
   it("normalizes finance access to NONE when updating the lodge account", async () => {
-    mockedAuth.mockResolvedValue({
-      user: { id: "admin-1", role: "ADMIN" },
-    } as any);
-    vi.mocked(prisma.member.findFirst).mockResolvedValue({
-      id: "lodge-1",
-      email: "lodge@example.org",
-      firstName: "Lodge",
-      lastName: "Kiosk",
-      role: "LODGE",
-      financeAccessLevel: "MANAGER",
-    } as any);
-    vi.mocked(prisma.member.update).mockResolvedValue({
-      id: "lodge-1",
-      email: "lodge@example.org",
-      firstName: "Lodge Desk",
-      lastName: "Kiosk",
-      updatedAt: new Date("2026-04-11"),
-    } as any);
+    mockedAuth.mockResolvedValue(adminSession({ id: "admin-1" }));
+    vi.mocked(prisma.member.findFirst).mockResolvedValue(
+      memberFactory({
+        id: "lodge-1",
+        email: "lodge@example.org",
+        firstName: "Lodge",
+        lastName: "Kiosk",
+        role: "LODGE",
+        financeAccessLevel: "MANAGER",
+      }),
+    );
+    vi.mocked(prisma.member.update).mockResolvedValue(
+      memberFactory({
+        id: "lodge-1",
+        email: "lodge@example.org",
+        firstName: "Lodge Desk",
+        lastName: "Kiosk",
+        updatedAt: new Date("2026-04-11"),
+      }),
+    );
 
     const res = await PUT(makePutRequest({ firstName: "Lodge Desk" }));
 
@@ -72,14 +74,14 @@ describe("admin lodge route", () => {
           firstName: "Lodge Desk",
           financeAccessLevel: "NONE",
         }),
-      })
+      }),
     );
     expect(logAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "LODGE_ACCOUNT_UPDATED",
         memberId: "admin-1",
         targetId: "lodge-1",
-      })
+      }),
     );
   });
 });
