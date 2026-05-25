@@ -137,8 +137,8 @@ describe("booking change requests", () => {
     mocks.bookingChangeRequestCreate.mockResolvedValue({
       id: "request-1",
       bookingId: "booking-1",
-      requesterId: "member-1",
-      status: "PENDING",
+      requestedByMemberId: "member-1",
+      status: "REQUESTED",
       requestedChanges: {},
       reason: "Weather closed the road.",
       createdAt: new Date(),
@@ -177,7 +177,7 @@ describe("booking change requests", () => {
     expect(mocks.bookingChangeRequestCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         bookingId: "booking-1",
-        requesterId: "member-1",
+        requestedByMemberId: "member-1",
         reason: "Weather closed the road.",
         requestedChanges: expect.objectContaining({
           requested: expect.objectContaining({
@@ -327,7 +327,7 @@ describe("booking change requests", () => {
     mocks.bookingChangeRequestCount.mockResolvedValue(1);
 
     const request = new NextRequest(
-      "http://localhost/api/admin/booking-change-requests?status=PENDING"
+      "http://localhost/api/admin/booking-change-requests?status=REQUESTED"
     );
     const response = await getAdminBookingChangeRequests(request);
     const body = await response.json();
@@ -336,23 +336,23 @@ describe("booking change requests", () => {
     expect(body.total).toBe(1);
     expect(mocks.bookingChangeRequestFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { status: "PENDING" },
+        where: { status: "REQUESTED" },
         take: 25,
       })
     );
   });
 
-  it("marks a pending request resolved with audit context", async () => {
+  it("marks a requested change approved with audit context", async () => {
     mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
     mocks.bookingChangeRequestFindUnique
       .mockResolvedValueOnce({
         id: "request-1",
-        status: "PENDING",
+        status: "REQUESTED",
         booking: { id: "booking-1", memberId: "member-1" },
       })
       .mockResolvedValueOnce({
         id: "request-1",
-        status: "RESOLVED",
+        status: "APPROVED",
         booking: { id: "booking-1", memberId: "member-1" },
       });
     mocks.bookingChangeRequestUpdateMany.mockResolvedValue({ count: 1 });
@@ -366,7 +366,7 @@ describe("booking change requests", () => {
           "x-forwarded-for": "127.0.0.1",
         },
         body: JSON.stringify({
-          status: "RESOLVED",
+          status: "APPROVED",
           adminNotes: "Handled manually through the booking edit flow.",
         }),
       }
@@ -379,17 +379,17 @@ describe("booking change requests", () => {
     expect(response.status).toBe(200);
     expect(mocks.bookingChangeRequestUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "request-1", status: "PENDING" },
+        where: { id: "request-1", status: "REQUESTED" },
         data: expect.objectContaining({
-          status: "RESOLVED",
+          status: "APPROVED",
           adminNotes: "Handled manually through the booking edit flow.",
-          reviewedById: "admin-1",
+          reviewedByMemberId: "admin-1",
         }),
       })
     );
     expect(mocks.logAudit).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: "booking-change-request.resolve",
+        action: "booking-change-request.approve",
         subjectMemberId: "member-1",
       })
     );

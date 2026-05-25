@@ -271,8 +271,8 @@ export async function POST(
   const existing = await prisma.bookingChangeRequest.findFirst({
     where: {
       bookingId,
-      requesterId: session.user.id,
-      status: "PENDING",
+      requestedByMemberId: session.user.id,
+      status: "REQUESTED",
     },
     select: { id: true },
   });
@@ -318,7 +318,7 @@ export async function POST(
   const changeRequest = await prisma.bookingChangeRequest.create({
     data: {
       bookingId,
-      requesterId: session.user.id,
+      requestedByMemberId: session.user.id,
       requestedChanges: {
         original: {
           checkIn: formatBookingDate(booking.checkIn),
@@ -432,7 +432,7 @@ export async function GET(
   const requests = await prisma.bookingChangeRequest.findMany({
     where: { bookingId },
     include: {
-      requester: { select: { id: true, firstName: true, lastName: true, email: true } },
+      requestedBy: { select: { id: true, firstName: true, lastName: true, email: true } },
       reviewedBy: { select: { id: true, firstName: true, lastName: true } },
     },
     orderBy: { createdAt: "desc" },

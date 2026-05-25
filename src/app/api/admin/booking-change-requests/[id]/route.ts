@@ -5,12 +5,12 @@ import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
 
 const reviewSchema = z.object({
-  status: z.enum(["RESOLVED", "DECLINED"]),
+  status: z.enum(["APPROVED", "REJECTED"]),
   adminNotes: z.string().max(2000).optional(),
 });
 
 const includeRequestDetail = {
-  requester: {
+  requestedBy: {
     select: { id: true, firstName: true, lastName: true, email: true },
   },
   reviewedBy: {
@@ -88,7 +88,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Booking change request not found" }, { status: 404 });
   }
 
-  if (existing.status !== "PENDING") {
+  if (existing.status !== "REQUESTED") {
     return NextResponse.json(
       { error: "This booking change request has already been reviewed" },
       { status: 400 }
@@ -97,11 +97,11 @@ export async function PATCH(
 
   const reviewedAt = new Date();
   const claim = await prisma.bookingChangeRequest.updateMany({
-    where: { id, status: "PENDING" },
+    where: { id, status: "REQUESTED" },
     data: {
       status: parsed.data.status,
       adminNotes: parsed.data.adminNotes?.trim() || null,
-      reviewedById: session.user.id,
+      reviewedByMemberId: session.user.id,
       reviewedAt,
     },
   });
@@ -115,9 +115,9 @@ export async function PATCH(
 
   logAudit({
     action:
-      parsed.data.status === "RESOLVED"
-        ? "booking-change-request.resolve"
-        : "booking-change-request.decline",
+      parsed.data.status === "APPROVED"
+        ? "booking-change-request.approve"
+        : "booking-change-request.reject",
     memberId: session.user.id,
     targetId: existing.booking.id,
     subjectMemberId: existing.booking.memberId,
@@ -126,9 +126,9 @@ export async function PATCH(
     category: "booking",
     outcome: "success",
     summary:
-      parsed.data.status === "RESOLVED"
-        ? "Booking change request resolved"
-        : "Booking change request declined",
+      parsed.data.status === "APPROVED"
+        ? "Booking change request approved"
+        : "Booking change request rejected",
     details: parsed.data.adminNotes?.trim() || null,
     metadata: {
       bookingId: existing.booking.id,

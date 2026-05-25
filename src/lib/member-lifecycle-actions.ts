@@ -381,7 +381,7 @@ const MEMBER_DELETE_BLOCKER_SPECS: readonly BlockerSpec[] = [
     label: "Pending booking change requests reference this member.",
     query: (db, memberId) =>
       db.bookingChangeRequest.count({
-        where: { requesterId: memberId, status: "PENDING" },
+        where: { requestedByMemberId: memberId, status: "REQUESTED" },
       }),
   },
   {

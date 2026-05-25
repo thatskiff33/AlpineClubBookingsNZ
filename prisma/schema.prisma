@@ -171,9 +171,9 @@ enum AdminCreditAdjustmentRequestStatus {
 }
 
 enum BookingChangeRequestStatus {
-  PENDING
-  RESOLVED
-  DECLINED
+  REQUESTED
+  APPROVED
+  REJECTED
 }
 
 enum AgeRestriction {
@@ -1492,26 +1492,26 @@ model BookingModification {
 
 // Booking Change Requests (locked same-day/past-night edits needing admin review)
 model BookingChangeRequest {
-  id               String                     @id @default(cuid())
-  bookingId        String
-  requesterId      String
-  status           BookingChangeRequestStatus @default(PENDING)
-  requestedChanges Json
-  reason           String?                    @db.VarChar(2000)
-  adminNotes       String?                    @db.VarChar(2000)
-  reviewedById     String?
-  reviewedAt       DateTime?
-  createdAt        DateTime                   @default(now())
-  updatedAt        DateTime                   @updatedAt
+  id                   String                     @id @default(cuid())
+  bookingId            String
+  requestedByMemberId  String
+  status               BookingChangeRequestStatus @default(REQUESTED)
+  requestedChanges     Json
+  reason               String?                    @db.VarChar(2000)
+  adminNotes           String?                    @db.VarChar(2000)
+  reviewedByMemberId   String?
+  reviewedAt           DateTime?
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
 
-  booking    Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
-  requester  Member  @relation("BookingChangeRequestsRequested", fields: [requesterId], references: [id], onDelete: Restrict)
-  reviewedBy Member? @relation("BookingChangeRequestsReviewed", fields: [reviewedById], references: [id], onDelete: SetNull)
+  booking         Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  requestedBy     Member  @relation("BookingChangeRequestsRequested", fields: [requestedByMemberId], references: [id], onDelete: Restrict)
+  reviewedBy      Member? @relation("BookingChangeRequestsReviewed", fields: [reviewedByMemberId], references: [id], onDelete: SetNull)
 
   @@index([bookingId, status, createdAt])
-  @@index([requesterId, status, createdAt])
+  @@index([requestedByMemberId, status, createdAt])
   @@index([status, createdAt])
-  @@index([reviewedById, reviewedAt])
+  @@index([reviewedByMemberId, reviewedAt])
 }
 
 // ---------------------------------------------------------------------------

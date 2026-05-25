@@ -270,7 +270,7 @@ export default async function BookingDetailPage({
                     <p className="font-medium">
                       {requested.requested?.summary ?? "Booking change request"}
                     </p>
-                    <Badge variant={request.status === "PENDING" ? "outline" : "secondary"}>
+                    <Badge variant={request.status === "REQUESTED" ? "outline" : "secondary"}>
                       {request.status}
                     </Badge>
                   </div>

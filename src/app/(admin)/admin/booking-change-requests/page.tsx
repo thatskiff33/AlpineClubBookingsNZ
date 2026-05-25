@@ -12,12 +12,12 @@ import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
 import { formatNZDate, formatNZDateTime } from "@/lib/nzst-date";
 import { formatCents } from "@/lib/utils";
 
-type RequestFilter = "PENDING" | "RESOLVED" | "DECLINED" | "ALL";
+type RequestFilter = "REQUESTED" | "APPROVED" | "REJECTED" | "ALL";
 
 const requestFilters = new Set<RequestFilter>([
-  "PENDING",
-  "RESOLVED",
-  "DECLINED",
+  "REQUESTED",
+  "APPROVED",
+  "REJECTED",
   "ALL",
 ]);
 
@@ -28,8 +28,8 @@ function isRequestFilter(value: string | null): value is RequestFilter {
 interface BookingChangeRequestData {
   id: string;
   bookingId: string;
-  requesterId: string;
-  status: "PENDING" | "RESOLVED" | "DECLINED";
+  requestedByMemberId: string;
+  status: "REQUESTED" | "APPROVED" | "REJECTED";
   requestedChanges: {
     requested?: {
       summary?: string | null;
@@ -47,7 +47,7 @@ interface BookingChangeRequestData {
   adminNotes: string | null;
   reviewedAt: string | null;
   createdAt: string;
-  requester: {
+  requestedBy: {
     id: string;
     firstName: string;
     lastName: string;
@@ -91,8 +91,8 @@ function formatDateTime(value: string | null) {
 }
 
 function statusBadgeClass(status: BookingChangeRequestData["status"]) {
-  if (status === "PENDING") return "border-amber-200 bg-amber-50 text-amber-800";
-  if (status === "RESOLVED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (status === "REQUESTED") return "border-amber-200 bg-amber-50 text-amber-800";
+  if (status === "APPROVED") return "border-emerald-200 bg-emerald-50 text-emerald-800";
   return "border-slate-200 bg-slate-100 text-slate-700";
 }
 
@@ -103,7 +103,7 @@ export default function BookingChangeRequestsPage() {
   const requestId = searchParams.get("requestId");
   const [requests, setRequests] = useState<BookingChangeRequestData[]>([]);
   const [filter, setFilter] = useState<RequestFilter>(
-    isRequestFilter(initialFilter) ? initialFilter : requestId ? "ALL" : "PENDING"
+    isRequestFilter(initialFilter) ? initialFilter : requestId ? "ALL" : "REQUESTED"
   );
   const [loading, setLoading] = useState(true);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
@@ -111,7 +111,7 @@ export default function BookingChangeRequestsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const currentPath =
-    filter === "PENDING"
+    filter === "REQUESTED"
       ? "/admin/booking-change-requests"
       : `/admin/booking-change-requests?status=${filter}`;
 
@@ -142,7 +142,7 @@ export default function BookingChangeRequestsPage() {
 
   async function reviewRequest(
     request: BookingChangeRequestData,
-    status: "RESOLVED" | "DECLINED"
+    status: "APPROVED" | "REJECTED"
   ) {
     setReviewingId(request.id);
     setError("");
@@ -164,9 +164,9 @@ export default function BookingChangeRequestsPage() {
 
       setAdminNotes("");
       setSuccess(
-        status === "RESOLVED"
-          ? "Request acknowledged as resolved. Apply the actual change on the booking page if it is still required."
-          : "Request declined"
+        status === "APPROVED"
+          ? "Request acknowledged as approved. Apply the actual change on the booking page if it is still required."
+          : "Request rejected"
       );
       await fetchRequests();
     } catch (err) {
@@ -204,7 +204,7 @@ export default function BookingChangeRequestsPage() {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {(["PENDING", "RESOLVED", "DECLINED", "ALL"] as const).map((status) => (
+        {(["REQUESTED", "APPROVED", "REJECTED", "ALL"] as const).map((status) => (
           <Button
             key={status}
             variant={filter === status ? "default" : "outline"}
@@ -244,7 +244,7 @@ export default function BookingChangeRequestsPage() {
                         {request.booking.member.firstName} {request.booking.member.lastName}
                       </CardTitle>
                       <p className="text-sm text-muted-foreground">
-                        Requested by {request.requester.firstName} {request.requester.lastName} on{" "}
+                        Requested by {request.requestedBy.firstName} {request.requestedBy.lastName} on{" "}
                         {formatDateTime(request.createdAt)}
                       </p>
                     </div>
@@ -311,10 +311,10 @@ export default function BookingChangeRequestsPage() {
                     </Link>
                   </div>
 
-                  {request.status === "PENDING" ? (
+                  {request.status === "REQUESTED" ? (
                     <div className="space-y-3 rounded-md border border-slate-200 p-3">
                       <p className="text-xs text-slate-600">
-                        Marking a request resolved only acknowledges the review.
+                        Marking a request approved only acknowledges the review.
                         The booking is not edited automatically; open the
                         booking from the link above and apply the change there
                         if it is still feasible.
@@ -334,24 +334,24 @@ export default function BookingChangeRequestsPage() {
                       <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
-                          onClick={() => reviewRequest(request, "RESOLVED")}
+                          onClick={() => reviewRequest(request, "APPROVED")}
                           disabled={reviewingId === request.id && !adminNotes.trim()}
                         >
-                          Acknowledge as resolved
+                          Acknowledge as approved
                         </Button>
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => reviewRequest(request, "DECLINED")}
+                          onClick={() => reviewRequest(request, "REJECTED")}
                           disabled={reviewingId === request.id && !adminNotes.trim()}
                         >
-                          Decline
+                          Reject
                         </Button>
                       </div>
                     </div>
                   ) : (
                     <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-700">
-                      {request.status === "RESOLVED" ? "Resolved" : "Declined"}
+                      {request.status === "APPROVED" ? "Approved" : "Rejected"}
                       {reviewedAt ? ` on ${reviewedAt}` : ""}
                       {request.reviewedBy
                         ? ` by ${request.reviewedBy.firstName} ${request.reviewedBy.lastName}`

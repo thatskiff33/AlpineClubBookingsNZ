@@ -4,7 +4,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { z } from "zod";
 
 const querySchema = z.object({
-  status: z.enum(["PENDING", "RESOLVED", "DECLINED", "ALL"]).optional().default("PENDING"),
+  status: z.enum(["REQUESTED", "APPROVED", "REJECTED", "ALL"]).optional().default("REQUESTED"),
   page: z.coerce.number().int().min(1).optional().default(1),
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(25),
 });
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     prisma.bookingChangeRequest.findMany({
       where,
       include: {
-        requester: {
+        requestedBy: {
           select: { id: true, firstName: true, lastName: true, email: true },
         },
         reviewedBy: {
