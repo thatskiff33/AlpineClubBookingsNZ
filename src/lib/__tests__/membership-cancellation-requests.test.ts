@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   participantUpdateMany: vi.fn(),
   requestCreate: vi.fn(),
   requestFindMany: vi.fn(),
+  requestFindUnique: vi.fn(),
   sendAdminRequestAlert: vi.fn(),
   sendConfirmationEmail: vi.fn(),
   sendSubmittedEmail: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("@/lib/prisma", () => {
     membershipCancellationRequest: {
       create: mocks.requestCreate,
       findMany: mocks.requestFindMany,
+      findUnique: mocks.requestFindUnique,
     },
     membershipCancellationRequestParticipant: {
       findMany: mocks.participantFindMany,
@@ -64,6 +66,7 @@ vi.mock("@/lib/logger", () => ({
 import {
   MembershipCancellationRequestError,
   createMembershipCancellationRequest,
+  reissueParticipantConfirmationToken,
   respondToMembershipCancellationConfirmation,
 } from "@/lib/membership-cancellation-requests";
 
@@ -456,5 +459,149 @@ describe("membership cancellation request workflow", () => {
         },
       }),
     );
+  });
+
+  it("reissues a participant confirmation token and resends the confirmation email", async () => {
+    mocks.participantFindUnique.mockResolvedValue(participant());
+    mocks.issueActionToken.mockReturnValue({
+      token: "fresh-token",
+      tokenHash: "fresh-token-hash",
+    });
+    mocks.sendConfirmationEmail.mockResolvedValue(undefined);
+    mocks.requestFindUnique.mockResolvedValue({
+      id: "request-1",
+      requestedByMemberId: "member-1",
+      status: "REQUESTED",
+      reason: "Moving away",
+      submittedAt: new Date("2026-05-24T00:00:00.000Z"),
+      reviewedAt: null,
+      completedAt: null,
+      requestedBy: {
+        id: "member-1",
+        firstName: "Alice",
+        lastName: "Smith",
+        email: "member@example.org",
+      },
+      participants: [],
+    });
+
+    const result = await reissueParticipantConfirmationToken({
+      requestId: "request-1",
+      participantId: "participant-1",
+      adminMemberId: "admin-9",
+      ipAddress: "127.0.0.1",
+    });
+
+    expect(result.emailWarnings).toEqual([]);
+    expect(mocks.participantUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "participant-1" },
+        data: expect.objectContaining({
+          confirmationTokenHash: "fresh-token-hash",
+        }),
+      }),
+    );
+    expect(mocks.sendConfirmationEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "adult@example.org",
+        token: "fresh-token",
+      }),
+    );
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "membership_cancellation.confirmation_token_reissued",
+        actorMemberId: "admin-9",
+        subjectMemberId: "adult-login",
+        entityId: "participant-1",
+      }),
+    );
+  });
+
+  it("returns an email warning when the resent confirmation email fails", async () => {
+    mocks.participantFindUnique.mockResolvedValue(participant());
+    mocks.issueActionToken.mockReturnValue({
+      token: "fresh-token",
+      tokenHash: "fresh-token-hash",
+    });
+    mocks.sendConfirmationEmail.mockRejectedValueOnce(new Error("SES down"));
+    mocks.requestFindUnique.mockResolvedValue({
+      id: "request-1",
+      requestedByMemberId: "member-1",
+      status: "REQUESTED",
+      reason: null,
+      submittedAt: new Date("2026-05-24T00:00:00.000Z"),
+      reviewedAt: null,
+      completedAt: null,
+      requestedBy: {
+        id: "member-1",
+        firstName: "Alice",
+        lastName: "Smith",
+        email: "member@example.org",
+      },
+      participants: [],
+    });
+
+    const result = await reissueParticipantConfirmationToken({
+      requestId: "request-1",
+      participantId: "participant-1",
+      adminMemberId: "admin-9",
+    });
+
+    expect(result.emailWarnings).toHaveLength(1);
+    expect(result.emailWarnings[0]).toContain("Confirmation email could not be sent");
+    expect(mocks.participantUpdate).toHaveBeenCalled();
+  });
+
+  it("rejects reissue for a participant that has already confirmed", async () => {
+    mocks.participantFindUnique.mockResolvedValue(
+      participant({
+        status: "REQUESTED",
+        confirmedAt: new Date("2026-05-24T01:00:00.000Z"),
+      }),
+    );
+
+    await expect(
+      reissueParticipantConfirmationToken({
+        requestId: "request-1",
+        participantId: "participant-1",
+        adminMemberId: "admin-9",
+      }),
+    ).rejects.toBeInstanceOf(MembershipCancellationRequestError);
+    expect(mocks.participantUpdate).not.toHaveBeenCalled();
+    expect(mocks.sendConfirmationEmail).not.toHaveBeenCalled();
+  });
+
+  it("rejects reissue for a participant whose cancellation request is no longer open", async () => {
+    mocks.participantFindUnique.mockResolvedValue(
+      participant({
+        request: {
+          ...participant().request,
+          status: "APPROVED",
+        },
+      }),
+    );
+
+    await expect(
+      reissueParticipantConfirmationToken({
+        requestId: "request-1",
+        participantId: "participant-1",
+        adminMemberId: "admin-9",
+      }),
+    ).rejects.toBeInstanceOf(MembershipCancellationRequestError);
+    expect(mocks.participantUpdate).not.toHaveBeenCalled();
+  });
+
+  it("rejects reissue when the participant belongs to a different request", async () => {
+    mocks.participantFindUnique.mockResolvedValue(
+      participant({ requestId: "other-request" }),
+    );
+
+    await expect(
+      reissueParticipantConfirmationToken({
+        requestId: "request-1",
+        participantId: "participant-1",
+        adminMemberId: "admin-9",
+      }),
+    ).rejects.toBeInstanceOf(MembershipCancellationRequestError);
   });
 });

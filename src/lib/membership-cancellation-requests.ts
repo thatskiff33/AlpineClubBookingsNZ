@@ -663,6 +663,125 @@ export async function createMembershipCancellationRequest({
   };
 }
 
+export async function reissueParticipantConfirmationToken({
+  requestId,
+  participantId,
+  adminMemberId,
+  ipAddress,
+}: {
+  requestId: string;
+  participantId: string;
+  adminMemberId: string;
+  ipAddress?: string | null;
+}): Promise<{
+  request: SerializedMembershipCancellationRequest;
+  emailWarnings: string[];
+}> {
+  const participant = await prisma.membershipCancellationRequestParticipant.findUnique({
+    where: { id: participantId },
+    include: cancellationParticipantWithRequestInclude,
+  });
+
+  if (!participant || participant.requestId !== requestId) {
+    throw new MembershipCancellationRequestError(
+      "Membership cancellation participant not found",
+      404,
+    );
+  }
+
+  if (participant.status !== "PENDING_CONFIRMATION") {
+    throw new MembershipCancellationRequestError(
+      "Confirmation token can only be reissued for participants awaiting confirmation",
+      409,
+    );
+  }
+
+  if (participant.request.status !== "REQUESTED") {
+    throw new MembershipCancellationRequestError(
+      "Confirmation token cannot be reissued for a cancellation request that is no longer open",
+      409,
+    );
+  }
+
+  const issued = issueActionToken();
+  const expiresAt = new Date(
+    Date.now() + MEMBERSHIP_CANCELLATION_CONFIRMATION_TTL_MS,
+  );
+
+  await prisma.membershipCancellationRequestParticipant.update({
+    where: { id: participantId },
+    data: {
+      confirmationTokenHash: issued.tokenHash,
+      confirmationTokenExpiresAt: expiresAt,
+    },
+  });
+
+  logAudit({
+    action: "membership_cancellation.confirmation_token_reissued",
+    memberId: adminMemberId,
+    actorMemberId: adminMemberId,
+    subjectMemberId: participant.memberId,
+    targetId: participant.requestId,
+    entityType: "MembershipCancellationRequestParticipant",
+    entityId: participant.id,
+    category: "account",
+    severity: "important",
+    outcome: "success",
+    summary: "Membership cancellation confirmation token reissued",
+    metadata: {
+      requestId: participant.requestId,
+      participantId: participant.id,
+      participantMemberId: participant.memberId,
+    },
+    ipAddress: ipAddress ?? undefined,
+  });
+
+  const requesterName = participant.request.requestedBy
+    ? memberDisplayName(participant.request.requestedBy)
+    : memberDisplayName(participant.member);
+
+  const emailWarnings: string[] = [];
+  try {
+    await sendMembershipCancellationConfirmationEmail({
+      email: participant.member.email,
+      firstName: participant.member.firstName,
+      requesterName,
+      participantName: memberName(participant.member),
+      token: issued.token,
+      expiresAt,
+    });
+  } catch (err) {
+    logger.error(
+      {
+        err,
+        requestId: participant.requestId,
+        participantId: participant.id,
+      },
+      "Failed to send reissued membership cancellation confirmation email",
+    );
+    emailWarnings.push(
+      `Confirmation email could not be sent to ${memberName(participant.member)}`,
+    );
+  }
+
+  const refreshedRequest = await prisma.membershipCancellationRequest.findUnique({
+    where: { id: requestId },
+    include: cancellationRequestInclude,
+  });
+
+  if (!refreshedRequest) {
+    throw new MembershipCancellationRequestError(
+      "Membership cancellation request not found",
+      404,
+    );
+  }
+
+  return {
+    request: serializeRequest(refreshedRequest),
+    emailWarnings,
+  };
+}
+
 async function findConfirmationParticipant(token: string) {
   const normalizedToken = cleanString(token);
   if (!normalizedToken) return null;
