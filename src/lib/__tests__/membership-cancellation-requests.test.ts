@@ -65,6 +65,7 @@ vi.mock("@/lib/logger", () => ({
 
 import {
   MembershipCancellationRequestError,
+  createAdminMembershipCancellationRequest,
   createMembershipCancellationRequest,
   reissueParticipantConfirmationToken,
   respondToMembershipCancellationConfirmation,
@@ -603,5 +604,227 @@ describe("membership cancellation request workflow", () => {
         adminMemberId: "admin-9",
       }),
     ).rejects.toBeInstanceOf(MembershipCancellationRequestError);
+  });
+
+  describe("createAdminMembershipCancellationRequest", () => {
+    function targetMember(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "target-1",
+        email: "target@example.org",
+        firstName: "Target",
+        lastName: "Member",
+        ageTier: "ADULT",
+        active: true,
+        canLogin: true,
+        role: "MEMBER",
+        cancelledAt: null,
+        archivedAt: null,
+        ...overrides,
+      };
+    }
+
+    function createdRequest(participantStatus = "REQUESTED") {
+      return {
+        id: "request-2",
+        status: "REQUESTED",
+        reason: "Member can no longer be reached",
+        submittedAt: new Date("2026-05-25T00:00:00.000Z"),
+        reviewedAt: null,
+        completedAt: null,
+        requestedBy: {
+          id: "admin-1",
+          firstName: "Admin",
+          lastName: "User",
+          email: "admin@example.org",
+        },
+        participants: [
+          {
+            id: "participant-admin-1",
+            memberId: "target-1",
+            status: participantStatus,
+            confirmationTokenExpiresAt: null,
+            confirmedAt: new Date("2026-05-25T00:00:00.000Z"),
+            declinedAt: null,
+            createdAt: new Date("2026-05-25T00:00:00.000Z"),
+            member: {
+              id: "target-1",
+              firstName: "Target",
+              lastName: "Member",
+              email: "target@example.org",
+              ageTier: "ADULT",
+              canLogin: true,
+              active: true,
+            },
+          },
+        ],
+      };
+    }
+
+    beforeEach(() => {
+      mocks.memberFindUnique.mockResolvedValue(targetMember());
+      mocks.participantFindMany.mockResolvedValue([]);
+      mocks.requestCreate.mockResolvedValue(createdRequest());
+    });
+
+    it("creates an admin-initiated request that is reviewable immediately", async () => {
+      const result = await createAdminMembershipCancellationRequest({
+        targetMemberId: "target-1",
+        adminMemberId: "admin-1",
+        reason: "Member can no longer be reached",
+        ipAddress: "203.0.113.5",
+      });
+
+      expect(result.request.id).toBe("request-2");
+      expect(mocks.requestCreate).toHaveBeenCalledTimes(1);
+
+      const createArgs = mocks.requestCreate.mock.calls[0][0];
+      expect(createArgs.data).toMatchObject({
+        requestedByMemberId: "admin-1",
+        status: "REQUESTED",
+        reason: "Member can no longer be reached",
+      });
+      const participants = createArgs.data.participants.create;
+      expect(participants).toHaveLength(1);
+      expect(participants[0]).toMatchObject({
+        memberId: "target-1",
+        status: "REQUESTED",
+        confirmationTokenHash: null,
+        confirmationTokenExpiresAt: null,
+      });
+      expect(participants[0].confirmedAt).toBeInstanceOf(Date);
+
+      expect(mocks.logAudit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "membership_cancellation.admin_requested",
+          actorMemberId: "admin-1",
+          subjectMemberId: "target-1",
+          metadata: expect.objectContaining({ adminInitiated: true }),
+        }),
+      );
+      expect(mocks.sendAdminRequestAlert).toHaveBeenCalled();
+      expect(mocks.sendConfirmationEmail).not.toHaveBeenCalled();
+      expect(mocks.sendSubmittedEmail).not.toHaveBeenCalled();
+    });
+
+    it("rejects an admin request when the target is missing", async () => {
+      mocks.memberFindUnique.mockResolvedValue(null);
+
+      await expect(
+        createAdminMembershipCancellationRequest({
+          targetMemberId: "missing",
+          adminMemberId: "admin-1",
+          reason: "Test",
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 404,
+      } satisfies Partial<MembershipCancellationRequestError>);
+      expect(mocks.requestCreate).not.toHaveBeenCalled();
+    });
+
+    it("rejects an admin request when the target is already cancelled", async () => {
+      mocks.memberFindUnique.mockResolvedValue(
+        targetMember({ cancelledAt: new Date("2025-01-01T00:00:00.000Z") }),
+      );
+
+      await expect(
+        createAdminMembershipCancellationRequest({
+          targetMemberId: "target-1",
+          adminMemberId: "admin-1",
+          reason: "Test",
+        }),
+      ).rejects.toMatchObject({
+        message: "This membership is already cancelled",
+        statusCode: 409,
+      } satisfies Partial<MembershipCancellationRequestError>);
+      expect(mocks.requestCreate).not.toHaveBeenCalled();
+    });
+
+    it("rejects an admin request when the target is archived", async () => {
+      mocks.memberFindUnique.mockResolvedValue(
+        targetMember({ archivedAt: new Date("2025-01-01T00:00:00.000Z") }),
+      );
+
+      await expect(
+        createAdminMembershipCancellationRequest({
+          targetMemberId: "target-1",
+          adminMemberId: "admin-1",
+          reason: "Test",
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+      } satisfies Partial<MembershipCancellationRequestError>);
+      expect(mocks.requestCreate).not.toHaveBeenCalled();
+    });
+
+    it("rejects an admin request when the target is inactive", async () => {
+      mocks.memberFindUnique.mockResolvedValue(
+        targetMember({ active: false }),
+      );
+
+      await expect(
+        createAdminMembershipCancellationRequest({
+          targetMemberId: "target-1",
+          adminMemberId: "admin-1",
+          reason: "Test",
+        }),
+      ).rejects.toMatchObject({
+        message: "This membership is not active",
+        statusCode: 409,
+      } satisfies Partial<MembershipCancellationRequestError>);
+      expect(mocks.requestCreate).not.toHaveBeenCalled();
+    });
+
+    it("rejects an admin request when the target is an admin role", async () => {
+      mocks.memberFindUnique.mockResolvedValue(
+        targetMember({ role: "ADMIN" }),
+      );
+
+      await expect(
+        createAdminMembershipCancellationRequest({
+          targetMemberId: "target-1",
+          adminMemberId: "admin-1",
+          reason: "Test",
+        }),
+      ).rejects.toMatchObject({
+        message: "Only member accounts can be cancelled",
+        statusCode: 422,
+      } satisfies Partial<MembershipCancellationRequestError>);
+      expect(mocks.requestCreate).not.toHaveBeenCalled();
+    });
+
+    it("rejects an admin request when an open participant already exists", async () => {
+      mocks.participantFindMany.mockResolvedValueOnce([
+        {
+          memberId: "target-1",
+          status: "REQUESTED",
+        },
+      ]);
+
+      await expect(
+        createAdminMembershipCancellationRequest({
+          targetMemberId: "target-1",
+          adminMemberId: "admin-1",
+          reason: "Test",
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+      } satisfies Partial<MembershipCancellationRequestError>);
+      expect(mocks.requestCreate).not.toHaveBeenCalled();
+    });
+
+    it("still returns the request when the admin alert email fails", async () => {
+      mocks.sendAdminRequestAlert.mockRejectedValueOnce(new Error("SES down"));
+
+      const result = await createAdminMembershipCancellationRequest({
+        targetMemberId: "target-1",
+        adminMemberId: "admin-1",
+        reason: "Member can no longer be reached",
+      });
+
+      expect(result.request.id).toBe("request-2");
+      expect(result.emailWarnings).toEqual([
+        "Admin review alert could not be sent",
+      ]);
+    });
   });
 });

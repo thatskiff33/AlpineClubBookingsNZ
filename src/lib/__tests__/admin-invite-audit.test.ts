@@ -42,7 +42,7 @@ vi.mock("@/lib/prisma", () => ({
     nominationToken: { count: vi.fn().mockResolvedValue(0) },
     memberApplication: { count: vi.fn().mockResolvedValue(0) },
     membershipCancellationRequest: { count: vi.fn().mockResolvedValue(0) },
-    membershipCancellationRequestParticipant: { count: vi.fn().mockResolvedValue(0) },
+    membershipCancellationRequestParticipant: { count: vi.fn().mockResolvedValue(0), findFirst: vi.fn().mockResolvedValue(null) },
     familyGroupJoinRequest: { count: vi.fn().mockResolvedValue(0) },
     familyGroupMember: { count: vi.fn().mockResolvedValue(0) },
     hutLeaderAssignment: { count: vi.fn().mockResolvedValue(0) },

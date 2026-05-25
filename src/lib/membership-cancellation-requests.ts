@@ -663,6 +663,165 @@ export async function createMembershipCancellationRequest({
   };
 }
 
+export async function createAdminMembershipCancellationRequest({
+  targetMemberId,
+  adminMemberId,
+  reason,
+  ipAddress,
+}: {
+  targetMemberId: string;
+  adminMemberId: string;
+  reason?: string | null;
+  ipAddress?: string | null;
+}) {
+  const cleanedTargetId = cleanString(targetMemberId);
+  if (!cleanedTargetId) {
+    throw new MembershipCancellationRequestError(
+      "Target member is required",
+      422,
+    );
+  }
+
+  const cleanedAdminId = cleanString(adminMemberId);
+  if (!cleanedAdminId) {
+    throw new MembershipCancellationRequestError(
+      "Admin member is required",
+      422,
+    );
+  }
+
+  const target = await prisma.member.findUnique({
+    where: { id: cleanedTargetId },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      ageTier: true,
+      active: true,
+      canLogin: true,
+      role: true,
+      cancelledAt: true,
+      archivedAt: true,
+    },
+  });
+
+  if (!target) {
+    throw new MembershipCancellationRequestError("Member not found", 404);
+  }
+
+  if (target.role !== "MEMBER") {
+    throw new MembershipCancellationRequestError(
+      "Only member accounts can be cancelled",
+      422,
+    );
+  }
+
+  if (!target.active) {
+    throw new MembershipCancellationRequestError(
+      "This membership is not active",
+      409,
+    );
+  }
+
+  if (target.cancelledAt) {
+    throw new MembershipCancellationRequestError(
+      "This membership is already cancelled",
+      409,
+    );
+  }
+
+  if (target.archivedAt) {
+    throw new MembershipCancellationRequestError(
+      "Archived members cannot have new cancellation requests",
+      409,
+    );
+  }
+
+  const cleanedReason = nullableText(reason);
+  const now = new Date();
+
+  const request = await prisma.$transaction(async (tx) => {
+    const conflicting =
+      await tx.membershipCancellationRequestParticipant.findMany({
+        where: {
+          memberId: target.id,
+          status: { in: [...OPEN_PARTICIPANT_STATUSES] },
+        },
+        select: { memberId: true },
+      });
+    if (conflicting.length > 0) {
+      throw new MembershipCancellationRequestError(
+        "This member already has an open cancellation request",
+        409,
+      );
+    }
+
+    return tx.membershipCancellationRequest.create({
+      data: {
+        requestedByMemberId: cleanedAdminId,
+        status: "REQUESTED",
+        reason: cleanedReason,
+        participants: {
+          create: [
+            {
+              memberId: target.id,
+              status: "REQUESTED",
+              confirmedAt: now,
+              confirmationTokenHash: null,
+              confirmationTokenExpiresAt: null,
+            },
+          ],
+        },
+      },
+      include: cancellationRequestInclude,
+    });
+  });
+
+  logAudit({
+    action: "membership_cancellation.admin_requested",
+    memberId: cleanedAdminId,
+    actorMemberId: cleanedAdminId,
+    subjectMemberId: target.id,
+    targetId: request.id,
+    entityType: "MembershipCancellationRequest",
+    entityId: request.id,
+    category: "account",
+    severity: "important",
+    outcome: "success",
+    summary: "Admin initiated membership cancellation request",
+    metadata: {
+      participantMemberIds: [target.id],
+      adminInitiated: true,
+    },
+    ipAddress,
+  });
+
+  const emailWarnings: string[] = [];
+  const requesterName = request.requestedBy
+    ? memberDisplayName(request.requestedBy)
+    : "Admin";
+
+  try {
+    await sendAdminMembershipCancellationRequestAlert({
+      requesterName,
+      participantSummary: participantSummary(request.participants),
+      reason: request.reason,
+    });
+  } catch (err) {
+    logger.error(
+      { err, requestId: request.id },
+      "Failed to send admin membership cancellation request alert",
+    );
+    emailWarnings.push("Admin review alert could not be sent");
+  }
+
+  return {
+    request: serializeRequest(request),
+    emailWarnings,
+  };
+}
+
 export async function reissueParticipantConfirmationToken({
   requestId,
   participantId,

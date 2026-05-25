@@ -107,6 +107,17 @@ interface EmailInheritanceSearchResult {
   active?: boolean
 }
 
+interface OpenCancellationRequestSummary {
+  id: string
+  status: string
+  reason: string | null
+  submittedAt: string
+  participantId: string
+  participantStatus: string
+  requestedBy: { id: string; name: string; email: string } | null
+  requestedByCurrentAdmin: boolean
+}
+
 interface MemberDetail {
   id: string; firstName: string; lastName: string; email: string
   phoneCountryCode: string | null; phoneAreaCode: string | null; phoneNumber: string | null
@@ -156,6 +167,7 @@ interface MemberDetail {
     statusReason: string
   }>
   lifecycleActionRequests: MemberLifecycleActionRequest[]
+  openCancellationRequest: OpenCancellationRequestSummary | null
   auditLogs: AuditLogEntry[]
   deleteEligibility: MemberDeleteEligibility
   stats: { totalBookings: number; totalSpendCents: number; lastStay: string | null }
@@ -490,6 +502,9 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const [archiveReviewNotes, setArchiveReviewNotes] = useState<Record<string, string>>({})
   const [archiveActionLoading, setArchiveActionLoading] = useState<string | null>(null)
   const [archiveError, setArchiveError] = useState("")
+  const [cancellationReason, setCancellationReason] = useState("")
+  const [cancellationSubmitting, setCancellationSubmitting] = useState(false)
+  const [cancellationError, setCancellationError] = useState("")
 
   // Xero link/push state
   const [xeroSearchOpen, setXeroSearchOpen] = useState(false)
@@ -749,6 +764,38 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
       setArchiveError(err instanceof Error ? err.message : "Failed to review archive request")
     } finally {
       setArchiveActionLoading(null)
+    }
+  }
+
+  const handleSubmitCancellationRequest = async () => {
+    const reason = cancellationReason.trim()
+    if (!reason) {
+      setCancellationError("Cancellation reason is required")
+      return
+    }
+
+    setCancellationSubmitting(true)
+    setCancellationError("")
+    try {
+      const res = await fetch(`/api/admin/members/${id}/membership-cancellation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to request cancellation")
+      }
+
+      setCancellationReason("")
+      setSuccess("Cancellation request submitted")
+      setTimeout(() => setSuccess(""), 3000)
+      setLoading(true)
+      await fetchMember()
+    } catch (err) {
+      setCancellationError(err instanceof Error ? err.message : "Failed to request cancellation")
+    } finally {
+      setCancellationSubmitting(false)
     }
   }
 
@@ -1726,6 +1773,14 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const reviewedArchiveRequests = archiveRequests.filter((request) => request.status !== "REQUESTED").slice(0, 3)
   const isArchiveRequester = pendingArchiveRequest?.requestedBy?.id === session?.user?.id
   const canRequestArchive = Boolean(member.cancelledAt && !member.archivedAt && !pendingArchiveRequest)
+  const openCancellationRequest = member.openCancellationRequest
+  const canRequestCancellation = Boolean(
+    member.role === "MEMBER" &&
+      member.active &&
+      !member.cancelledAt &&
+      !member.archivedAt &&
+      !openCancellationRequest,
+  )
 
   return (
     <div className="space-y-6">
@@ -1952,6 +2007,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                   <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">Cancelled {fmtDate(member.cancelledAt)}</Badge>
                   {member.cancelledReason && <p className="text-slate-600">{member.cancelledReason}</p>}
                 </div>
+              ) : openCancellationRequest ? (
+                <p className="mt-2 text-sm text-amber-700">Cancellation request pending review.</p>
               ) : (
                 <p className="mt-2 text-sm text-slate-600">This member has not been cancelled.</p>
               )}
@@ -1972,6 +2029,45 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
               )}
             </div>
           </div>
+
+          {cancellationError && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{cancellationError}</div>}
+
+          {openCancellationRequest && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-amber-950">Pending cancellation request</p>
+                {openCancellationRequest.reason && (
+                  <p className="text-sm text-amber-900">{openCancellationRequest.reason}</p>
+                )}
+                <p className="text-xs text-amber-800">
+                  Requested by {openCancellationRequest.requestedBy?.name ?? "Unknown"} on {fmtDate(openCancellationRequest.submittedAt)} ({openCancellationRequest.participantStatus.replace(/_/g, " ").toLowerCase()})
+                </p>
+                <p className="text-xs text-amber-800">
+                  Review in the <a href="/admin/membership-cancellations" className="underline">cancellation review queue</a>.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {canRequestCancellation && (
+            <div className="rounded-md border border-slate-200 p-4">
+              <div className="space-y-2">
+                <Label htmlFor="cancellation-reason">Cancellation reason *</Label>
+                <textarea
+                  id="cancellation-reason"
+                  value={cancellationReason}
+                  onChange={(event) => setCancellationReason(event.target.value)}
+                  rows={3}
+                  maxLength={1000}
+                  className="min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-slate-500">Admin-initiated cancellation requests go directly to the review queue without requiring the member to confirm by email.</p>
+              </div>
+              <Button className="mt-3" size="sm" onClick={handleSubmitCancellationRequest} disabled={cancellationSubmitting}>
+                {cancellationSubmitting ? "Submitting..." : "Request Cancellation"}
+              </Button>
+            </div>
+          )}
 
           {pendingArchiveRequest && (
             <div className="rounded-md border border-amber-200 bg-amber-50 p-4">

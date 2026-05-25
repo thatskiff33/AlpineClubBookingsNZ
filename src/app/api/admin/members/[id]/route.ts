@@ -207,7 +207,15 @@ export async function GET(
 
   const { id } = await params;
 
-  const [member, bookings, auditLogs, stats, assignedPromoCodes, archiveLifecycleActionRequests] = await Promise.all([
+  const [
+    member,
+    bookings,
+    auditLogs,
+    stats,
+    assignedPromoCodes,
+    archiveLifecycleActionRequests,
+    openCancellationParticipant,
+  ] = await Promise.all([
     prisma.member.findUnique({
       where: { id },
       select: {
@@ -344,6 +352,37 @@ export async function GET(
     }),
     getAssignedPromoCodeSummariesForMember(id),
     getMemberArchiveLifecycleRequests(id),
+    prisma.membershipCancellationRequestParticipant.findFirst({
+      where: {
+        memberId: id,
+        status: { in: ["REQUESTED", "PENDING_CONFIRMATION", "APPROVED"] },
+        request: { status: { in: ["REQUESTED", "APPROVED"] } },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        confirmedAt: true,
+        request: {
+          select: {
+            id: true,
+            status: true,
+            reason: true,
+            submittedAt: true,
+            requestedByMemberId: true,
+            requestedBy: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    }),
   ]);
 
   if (!member) {
@@ -441,6 +480,29 @@ export async function GET(
     xeroContactGroupsLoaded,
     deleteEligibility,
     lifecycleActionRequests,
+    openCancellationRequest: openCancellationParticipant
+      ? {
+          id: openCancellationParticipant.request.id,
+          status: openCancellationParticipant.request.status,
+          reason: openCancellationParticipant.request.reason,
+          submittedAt:
+            openCancellationParticipant.request.submittedAt.toISOString(),
+          participantId: openCancellationParticipant.id,
+          participantStatus: openCancellationParticipant.status,
+          requestedBy: openCancellationParticipant.request.requestedBy
+            ? {
+                id: openCancellationParticipant.request.requestedBy.id,
+                name:
+                  `${openCancellationParticipant.request.requestedBy.firstName} ${openCancellationParticipant.request.requestedBy.lastName}`.trim() ||
+                  openCancellationParticipant.request.requestedBy.email,
+                email: openCancellationParticipant.request.requestedBy.email,
+              }
+            : null,
+          requestedByCurrentAdmin:
+            openCancellationParticipant.request.requestedByMemberId ===
+            session.user.id,
+        }
+      : null,
     stats: {
       totalBookings: stats._count,
       totalSpendCents: stats._sum.finalPriceCents || 0,
