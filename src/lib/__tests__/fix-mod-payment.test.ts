@@ -834,6 +834,9 @@ describe("Stripe webhook — additional modification payment succeeded", () => {
         amountCents: 3000,
       })
     );
+    expect(
+      mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent
+    ).toHaveBeenCalledWith("pi_additional");
   });
 
   it("is idempotent: skips already-SUCCEEDED additional payment", async () => {
@@ -1028,6 +1031,9 @@ describe("POST /api/bookings/[id]/confirm-modification-payment", () => {
         amountCents: 3000,
       })
     );
+    expect(
+      mockReleaseXeroSupplementaryInvoiceOperationsForPaymentIntent
+    ).toHaveBeenCalledWith("pi_additional");
   });
 
   it("returns 400 if Stripe PI has not succeeded yet", async () => {

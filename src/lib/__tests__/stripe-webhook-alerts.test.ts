@@ -603,4 +603,52 @@ describe("Stripe webhook Xero alerting", () => {
     });
     expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
   });
+
+  it("does not enqueue a Xero credit note when a recovery-driven refund's webhook arrives after the ledger is already up to date", async () => {
+    // Scenario: the payment recovery worker called refundPaymentTransactions,
+    // which recorded the Stripe refund ledger entry and updated the
+    // PaymentTransaction.refundedAmountCents. The charge.refunded webhook
+    // arrives afterwards; syncRefundsFromStripeCharge sees the cumulative
+    // total matches the ledger and returns refundDeltaCents=0. The handler
+    // must not enqueue a duplicate Xero credit note.
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_recovery_refund_webhook",
+      type: "charge.refunded",
+      data: {
+        object: {
+          id: "ch_recovery_refund",
+          payment_intent: "pi_recovery_refund",
+          amount_refunded: 4000,
+        },
+      },
+    } as any);
+
+    const refunds = [
+      {
+        id: "re_recovery",
+        amount: 4000,
+        currency: "nzd",
+        status: "succeeded",
+        reason: "requested_by_customer",
+        created: 1770000001,
+        charge: "ch_recovery_refund",
+        payment_intent: "pi_recovery_refund",
+      },
+    ];
+    mockListRefundsForCharge.mockResolvedValue(refunds);
+    mockSyncRefundsFromStripeCharge.mockResolvedValue({
+      paymentId: "payment-recovery",
+      refundDeltaCents: 0,
+      payment: {
+        id: "payment-recovery",
+        amountCents: 4000,
+        refundedAmountCents: 4000,
+      },
+    });
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    expect(mockEnqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
 });

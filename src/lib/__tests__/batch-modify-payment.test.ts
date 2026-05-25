@@ -655,6 +655,90 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
   });
 
+  it("rolls back the modification when the in-transaction recovery enqueue throws", async () => {
+    const booking = makeBooking({
+      status: "PAYMENT_PENDING",
+      totalPriceCents: 10000,
+      finalPriceCents: 10000,
+      payment: {
+        id: "pay_1",
+        bookingId: "bk1",
+        amountCents: 6000,
+        status: "PROCESSING",
+        stripePaymentIntentId: "pi_pending",
+        xeroInvoiceId: null,
+        stripeCustomerId: "cus_existing",
+        refundedAmountCents: 0,
+        changeFeeCents: 0,
+      },
+    });
+    const tx = makeTx(booking);
+    tx.paymentTransaction.findMany.mockResolvedValue([
+      {
+        id: "ptx_pending",
+        stripePaymentIntentId: "pi_pending",
+        amountCents: 6000,
+      },
+    ]);
+
+    mockTransaction.mockImplementation(async (fn: (innerTx: typeof tx) => unknown) => {
+      // A real prisma.$transaction would rethrow the callback error and not
+      // commit the transaction. Mirror that here so the route's outer catch
+      // returns a 4xx/5xx.
+      return await fn(tx);
+    });
+
+    mockCalculateBookingPrice
+      .mockReturnValueOnce({
+        totalPriceCents: 15000,
+        guests: [
+          { priceCents: 5000, perNightCents: [2500, 2500] },
+          { priceCents: 10000, perNightCents: [5000, 5000] },
+        ],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 10000,
+        guests: [{ priceCents: 10000, perNightCents: [5000, 5000] }],
+      });
+    mockCalculatePromoDiscountForGuestRates.mockReturnValueOnce({
+      discountCents: 15000,
+      freeNightsUsed: 0,
+    });
+    mockEnqueuePaymentIntentCancellationRecovery.mockRejectedValueOnce(
+      new Error("recovery upsert failed inside transaction")
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        addGuests: [
+          {
+            firstName: "Bob",
+            lastName: "Guest",
+            ageTier: "ADULT",
+            isMember: false,
+          },
+        ],
+        promoCode: "FREE100",
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(tx.booking.update).not.toHaveBeenCalled();
+    expect(tx.bookingModification.create).not.toHaveBeenCalled();
+    expect(mockProcessPaymentRecoveryOperations).not.toHaveBeenCalled();
+  });
+
   it("still succeeds when immediate queued Stripe recovery processing fails", async () => {
     const booking = makeBooking({
       status: "PAYMENT_PENDING",
