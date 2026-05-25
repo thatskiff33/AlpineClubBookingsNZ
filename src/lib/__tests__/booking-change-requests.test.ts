@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   bookingChangeRequestCount: vi.fn(),
   bookingChangeRequestFindUnique: vi.fn(),
   bookingChangeRequestUpdateMany: vi.fn(),
+  bookingModificationFindUnique: vi.fn(),
   checkRateLimit: vi.fn(),
   getClientIp: vi.fn(),
   logAudit: vi.fn(),
@@ -39,6 +40,9 @@ vi.mock("@/lib/prisma", () => ({
       count: (...args: unknown[]) => mocks.bookingChangeRequestCount(...args),
       findUnique: (...args: unknown[]) => mocks.bookingChangeRequestFindUnique(...args),
       updateMany: (...args: unknown[]) => mocks.bookingChangeRequestUpdateMany(...args),
+    },
+    bookingModification: {
+      findUnique: (...args: unknown[]) => mocks.bookingModificationFindUnique(...args),
     },
   },
 }));
@@ -384,6 +388,7 @@ describe("booking change requests", () => {
           status: "APPROVED",
           adminNotes: "Handled manually through the booking edit flow.",
           reviewedByMemberId: "admin-1",
+          linkedModificationId: null,
         }),
       })
     );
@@ -393,6 +398,146 @@ describe("booking change requests", () => {
         subjectMemberId: "member-1",
       })
     );
+  });
+
+  it("approves and links the executed booking modification when its id is provided", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.bookingChangeRequestFindUnique
+      .mockResolvedValueOnce({
+        id: "request-1",
+        status: "REQUESTED",
+        booking: { id: "booking-1", memberId: "member-1" },
+      })
+      .mockResolvedValueOnce({
+        id: "request-1",
+        status: "APPROVED",
+        linkedModificationId: "mod-7",
+        booking: { id: "booking-1", memberId: "member-1" },
+      });
+    mocks.bookingChangeRequestUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.bookingModificationFindUnique.mockResolvedValue({
+      id: "mod-7",
+      bookingId: "booking-1",
+    });
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/booking-change-requests/request-1",
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          status: "APPROVED",
+          adminNotes: "Edit applied via /modify",
+          linkedModificationId: "mod-7",
+        }),
+      }
+    );
+
+    const response = await patchAdminBookingChangeRequest(request, {
+      params: Promise.resolve({ id: "request-1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.bookingChangeRequestUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "APPROVED",
+          linkedModificationId: "mod-7",
+        }),
+      })
+    );
+    expect(mocks.logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ linkedModificationId: "mod-7" }),
+      })
+    );
+  });
+
+  it("rejects approval when the linked booking modification does not belong to the booking", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.bookingChangeRequestFindUnique.mockResolvedValueOnce({
+      id: "request-1",
+      status: "REQUESTED",
+      booking: { id: "booking-1", memberId: "member-1" },
+    });
+    mocks.bookingModificationFindUnique.mockResolvedValue({
+      id: "mod-9",
+      bookingId: "another-booking",
+    });
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/booking-change-requests/request-1",
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          status: "APPROVED",
+          adminNotes: "x",
+          linkedModificationId: "mod-9",
+        }),
+      }
+    );
+
+    const response = await patchAdminBookingChangeRequest(request, {
+      params: Promise.resolve({ id: "request-1" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.bookingChangeRequestUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects approval when the linked booking modification does not exist", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+    mocks.bookingChangeRequestFindUnique.mockResolvedValueOnce({
+      id: "request-1",
+      status: "REQUESTED",
+      booking: { id: "booking-1", memberId: "member-1" },
+    });
+    mocks.bookingModificationFindUnique.mockResolvedValue(null);
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/booking-change-requests/request-1",
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          status: "APPROVED",
+          adminNotes: "x",
+          linkedModificationId: "mod-missing",
+        }),
+      }
+    );
+
+    const response = await patchAdminBookingChangeRequest(request, {
+      params: Promise.resolve({ id: "request-1" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.bookingChangeRequestUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects rejection that includes a linked modification id", async () => {
+    mocks.auth.mockResolvedValue({ user: { id: "admin-1", role: "ADMIN" } });
+
+    const request = new NextRequest(
+      "http://localhost/api/admin/booking-change-requests/request-1",
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          status: "REJECTED",
+          adminNotes: "x",
+          linkedModificationId: "mod-7",
+        }),
+      }
+    );
+
+    const response = await patchAdminBookingChangeRequest(request, {
+      params: Promise.resolve({ id: "request-1" }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.bookingChangeRequestUpdateMany).not.toHaveBeenCalled();
   });
 
   it("returns a member's booking change requests for their booking", async () => {

@@ -1484,7 +1484,8 @@ model BookingModification {
   changeFeeCents   Int      @default(0) // late-notice fee charged
   createdAt        DateTime @default(now())
 
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  booking                Booking                @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  linkedChangeRequests   BookingChangeRequest[] @relation("BookingChangeRequestLinkedModification")
 
   @@index([bookingId])
   @@index([memberId])
@@ -1492,26 +1493,29 @@ model BookingModification {
 
 // Booking Change Requests (locked same-day/past-night edits needing admin review)
 model BookingChangeRequest {
-  id                   String                     @id @default(cuid())
-  bookingId            String
-  requestedByMemberId  String
-  status               BookingChangeRequestStatus @default(REQUESTED)
-  requestedChanges     Json
-  reason               String?                    @db.VarChar(2000)
-  adminNotes           String?                    @db.VarChar(2000)
-  reviewedByMemberId   String?
-  reviewedAt           DateTime?
-  createdAt            DateTime                   @default(now())
-  updatedAt            DateTime                   @updatedAt
+  id                    String                     @id @default(cuid())
+  bookingId             String
+  requestedByMemberId   String
+  status                BookingChangeRequestStatus @default(REQUESTED)
+  requestedChanges      Json
+  reason                String?                    @db.VarChar(2000)
+  adminNotes            String?                    @db.VarChar(2000)
+  reviewedByMemberId    String?
+  reviewedAt            DateTime?
+  linkedModificationId  String?
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
 
-  booking         Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
-  requestedBy     Member  @relation("BookingChangeRequestsRequested", fields: [requestedByMemberId], references: [id], onDelete: Restrict)
-  reviewedBy      Member? @relation("BookingChangeRequestsReviewed", fields: [reviewedByMemberId], references: [id], onDelete: SetNull)
+  booking            Booking              @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  requestedBy        Member               @relation("BookingChangeRequestsRequested", fields: [requestedByMemberId], references: [id], onDelete: Restrict)
+  reviewedBy         Member?              @relation("BookingChangeRequestsReviewed", fields: [reviewedByMemberId], references: [id], onDelete: SetNull)
+  linkedModification BookingModification? @relation("BookingChangeRequestLinkedModification", fields: [linkedModificationId], references: [id], onDelete: SetNull)
 
   @@index([bookingId, status, createdAt])
   @@index([requestedByMemberId, status, createdAt])
   @@index([status, createdAt])
   @@index([reviewedByMemberId, reviewedAt])
+  @@index([linkedModificationId])
 }
 
 // ---------------------------------------------------------------------------

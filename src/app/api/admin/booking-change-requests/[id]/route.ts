@@ -7,6 +7,7 @@ import { z } from "zod";
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
   adminNotes: z.string().max(2000).optional(),
+  linkedModificationId: z.string().min(1).optional(),
 });
 
 const includeRequestDetail = {
@@ -15,6 +16,15 @@ const includeRequestDetail = {
   },
   reviewedBy: {
     select: { id: true, firstName: true, lastName: true },
+  },
+  linkedModification: {
+    select: {
+      id: true,
+      createdAt: true,
+      modificationType: true,
+      priceDiffCents: true,
+      changeFeeCents: true,
+    },
   },
   booking: {
     select: {
@@ -79,6 +89,13 @@ export async function PATCH(
     );
   }
 
+  if (parsed.data.status === "REJECTED" && parsed.data.linkedModificationId) {
+    return NextResponse.json(
+      { error: "linkedModificationId cannot be attached to a rejected change request" },
+      { status: 400 }
+    );
+  }
+
   const existing = await prisma.bookingChangeRequest.findUnique({
     where: { id },
     include: { booking: { select: { id: true, memberId: true } } },
@@ -95,6 +112,25 @@ export async function PATCH(
     );
   }
 
+  if (parsed.data.linkedModificationId) {
+    const modification = await prisma.bookingModification.findUnique({
+      where: { id: parsed.data.linkedModificationId },
+      select: { id: true, bookingId: true },
+    });
+    if (!modification) {
+      return NextResponse.json(
+        { error: "Linked booking modification not found" },
+        { status: 400 }
+      );
+    }
+    if (modification.bookingId !== existing.booking.id) {
+      return NextResponse.json(
+        { error: "Linked booking modification does not belong to this booking" },
+        { status: 400 }
+      );
+    }
+  }
+
   const reviewedAt = new Date();
   const claim = await prisma.bookingChangeRequest.updateMany({
     where: { id, status: "REQUESTED" },
@@ -103,6 +139,7 @@ export async function PATCH(
       adminNotes: parsed.data.adminNotes?.trim() || null,
       reviewedByMemberId: session.user.id,
       reviewedAt,
+      linkedModificationId: parsed.data.linkedModificationId ?? null,
     },
   });
 
@@ -134,6 +171,7 @@ export async function PATCH(
       bookingId: existing.booking.id,
       requestId: id,
       status: parsed.data.status,
+      linkedModificationId: parsed.data.linkedModificationId ?? null,
     },
     ipAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown",
   });

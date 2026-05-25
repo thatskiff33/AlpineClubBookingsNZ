@@ -33,6 +33,15 @@ export async function GET(req: NextRequest) {
         reviewedBy: {
           select: { id: true, firstName: true, lastName: true },
         },
+        linkedModification: {
+          select: {
+            id: true,
+            createdAt: true,
+            modificationType: true,
+            priceDiffCents: true,
+            changeFeeCents: true,
+          },
+        },
         booking: {
           select: {
             id: true,

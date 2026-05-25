@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { buildHrefWithReturnTo } from "@/lib/internal-return-path";
@@ -58,6 +59,13 @@ interface BookingChangeRequestData {
     firstName: string;
     lastName: string;
   } | null;
+  linkedModification: {
+    id: string;
+    createdAt: string;
+    modificationType: string;
+    priceDiffCents: number;
+    changeFeeCents: number;
+  } | null;
   booking: {
     id: string;
     checkIn: string;
@@ -108,6 +116,7 @@ export default function BookingChangeRequestsPage() {
   const [loading, setLoading] = useState(true);
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [adminNotes, setAdminNotes] = useState("");
+  const [linkedModificationIdInput, setLinkedModificationIdInput] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const currentPath =
@@ -149,12 +158,17 @@ export default function BookingChangeRequestsPage() {
     setSuccess("");
 
     try {
+      const trimmedModificationId = linkedModificationIdInput.trim();
       const response = await fetch(`/api/admin/booking-change-requests/${request.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status,
           adminNotes: adminNotes || undefined,
+          linkedModificationId:
+            status === "APPROVED" && trimmedModificationId
+              ? trimmedModificationId
+              : undefined,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -163,9 +177,12 @@ export default function BookingChangeRequestsPage() {
       }
 
       setAdminNotes("");
+      setLinkedModificationIdInput("");
       setSuccess(
         status === "APPROVED"
-          ? "Request acknowledged as approved. Apply the actual change on the booking page if it is still required."
+          ? trimmedModificationId
+            ? "Request approved and linked to the booking modification."
+            : "Request acknowledged as approved. Apply the actual change on the booking page if it is still required."
           : "Request rejected"
       );
       await fetchRequests();
@@ -317,7 +334,9 @@ export default function BookingChangeRequestsPage() {
                         Marking a request approved only acknowledges the review.
                         The booking is not edited automatically; open the
                         booking from the link above and apply the change there
-                        if it is still feasible.
+                        if it is still feasible. If you have already applied
+                        the change, paste the booking modification id below to
+                        link the audit trail.
                       </p>
                       <div className="space-y-1">
                         <Label htmlFor={`admin-notes-${request.id}`}>Admin notes</Label>
@@ -329,6 +348,24 @@ export default function BookingChangeRequestsPage() {
                             setAdminNotes(event.target.value);
                           }}
                           maxLength={2000}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor={`linked-modification-${request.id}`}>
+                          Linked booking modification id (optional)
+                        </Label>
+                        <Input
+                          id={`linked-modification-${request.id}`}
+                          value={
+                            reviewingId === request.id
+                              ? linkedModificationIdInput
+                              : ""
+                          }
+                          onChange={(event) => {
+                            setReviewingId(request.id);
+                            setLinkedModificationIdInput(event.target.value);
+                          }}
+                          placeholder="Paste the BookingModification id from the booking audit"
                         />
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -358,6 +395,22 @@ export default function BookingChangeRequestsPage() {
                         : ""}
                       {request.adminNotes ? (
                         <p className="mt-2 text-slate-600">{request.adminNotes}</p>
+                      ) : null}
+                      {request.linkedModification ? (
+                        <p className="mt-2 text-slate-600">
+                          Linked booking modification:{" "}
+                          <span className="font-mono">
+                            {request.linkedModification.id}
+                          </span>{" "}
+                          ({request.linkedModification.modificationType},{" "}
+                          {formatCents(request.linkedModification.priceDiffCents)}{" "}
+                          delta)
+                        </p>
+                      ) : request.status === "APPROVED" ? (
+                        <p className="mt-2 text-amber-700">
+                          No booking modification linked. The booking edit may
+                          still be outstanding.
+                        </p>
                       ) : null}
                     </div>
                   )}
