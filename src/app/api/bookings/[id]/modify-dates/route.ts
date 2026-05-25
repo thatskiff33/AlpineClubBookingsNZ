@@ -20,10 +20,8 @@ import {
 } from "@/lib/promo";
 import { createPaymentIntent, findOrCreateCustomer } from "@/lib/stripe";
 import { logAudit } from "@/lib/audit";
-import {
-  sendAdminPaymentFailureAlert,
-  sendBookingModifiedEmail,
-} from "@/lib/email";
+import { sendBookingModifiedEmail } from "@/lib/email";
+import { enqueueBookingModificationRefundRecovery } from "@/lib/payment-recovery";
 import {
   cleanupChoreAssignmentsForDateChange,
   cleanupChoreAssignmentsForGuestStayRanges,
@@ -546,21 +544,16 @@ export async function PUT(
         stripeRefundId = refundResult.refunds[0]?.refundId;
       } catch (refundErr) {
         logger.error({ err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
-          "Stripe refund failed after date change - requires manual reconciliation");
-        await sendAdminPaymentFailureAlert({
-          memberName: result.memberName,
-          checkIn: result.booking.checkIn,
-          checkOut: result.booking.checkOut,
+          "Stripe refund failed after date change - enqueueing recovery");
+        await enqueueBookingModificationRefundRecovery({
+          bookingId,
+          paymentId: result.paymentId,
+          bookingModificationId: result.bookingModificationId,
           amountCents: result.pendingRefundAmountCents,
-          errorMessage:
-            refundErr instanceof Error
-              ? `Stripe refund failed after date change (manual reconciliation required): ${refundErr.message}`
-              : "Stripe refund failed after date change (manual reconciliation required)",
-          paymentIntentId: `refund_failure_${bookingId}`,
-        }).catch((alertErr) =>
+        }).catch((enqueueErr) =>
           logger.error(
-            { err: alertErr, bookingId },
-            "Failed to send admin alert for Stripe refund failure after date change"
+            { err: enqueueErr, bookingId },
+            "Failed to enqueue payment recovery for Stripe refund failure after date change"
           )
         );
       }

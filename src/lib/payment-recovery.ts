@@ -14,6 +14,7 @@ import {
 import {
   reconcilePaymentAggregates,
   recordStripeRefundLedgerEntry,
+  refundPaymentTransactions,
   sumRecordedRefundsForTransaction,
 } from "@/lib/payment-transactions";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
@@ -58,6 +59,12 @@ function buildRefundIdempotencyKey(
   paymentIntentId: string
 ) {
   return `payment_recovery_refund_${paymentTransactionId}_${paymentIntentId}`;
+}
+
+function buildBookingModificationRefundIdempotencyKey(
+  bookingModificationId: string,
+) {
+  return `payment_recovery_modification_refund_${bookingModificationId}`;
 }
 
 function errorMessage(error: unknown) {
@@ -116,6 +123,66 @@ export async function enqueuePaymentIntentCancellationRecovery({
       paymentId,
       paymentTransactionId,
       paymentIntentId,
+      amountCents,
+    },
+  });
+}
+
+export async function enqueueBookingModificationRefundRecovery({
+  bookingId,
+  paymentId,
+  bookingModificationId,
+  amountCents,
+  store = prisma,
+}: {
+  bookingId: string;
+  paymentId: string;
+  bookingModificationId: string;
+  amountCents: number;
+  store?: PaymentRecoveryStore;
+}) {
+  const payment = await store.payment.findUnique({
+    where: { id: paymentId },
+    include: {
+      transactions: {
+        orderBy: { createdAt: "desc" },
+      },
+    },
+  });
+
+  const capturedTransaction = payment?.transactions.find((transaction) =>
+    CAPTURED_TRANSACTION_STATUSES.has(transaction.status),
+  );
+  const representativePaymentIntentId =
+    capturedTransaction?.stripePaymentIntentId ??
+    payment?.stripePaymentIntentId ??
+    null;
+
+  if (!representativePaymentIntentId) {
+    throw new Error(
+      "Cannot enqueue booking modification refund recovery without a payment intent",
+    );
+  }
+
+  const idempotencyKey =
+    buildBookingModificationRefundIdempotencyKey(bookingModificationId);
+
+  return store.paymentRecoveryOperation.upsert({
+    where: { idempotencyKey },
+    create: {
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      status: PaymentRecoveryOperationStatus.PENDING,
+      bookingId,
+      paymentId,
+      paymentIntentId: representativePaymentIntentId,
+      amountCents,
+      idempotencyKey,
+      nextRetryAt: new Date(),
+    },
+    update: {
+      bookingId,
+      paymentId,
+      paymentIntentId: representativePaymentIntentId,
       amountCents,
     },
   });
@@ -530,11 +597,63 @@ async function processRefundSupersededPaymentOperation(
   await completePaymentRecoveryOperation(operation.id);
 }
 
+async function processBookingModificationRefundOperation(
+  operation: PaymentRecoveryOperation,
+) {
+  const payment = await prisma.payment.findUnique({
+    where: { id: operation.paymentId },
+    include: { transactions: true },
+  });
+
+  if (!payment) {
+    throw new Error(
+      `Payment ${operation.paymentId} not found for booking modification refund recovery`,
+    );
+  }
+
+  const refundableCents = payment.transactions
+    .filter((transaction) =>
+      CAPTURED_TRANSACTION_STATUSES.has(transaction.status),
+    )
+    .reduce(
+      (sum, transaction) =>
+        sum + (transaction.amountCents - transaction.refundedAmountCents),
+      0,
+    );
+
+  const outstandingCents = Math.min(operation.amountCents, refundableCents);
+
+  if (outstandingCents <= 0) {
+    await completePaymentRecoveryOperation(operation.id);
+    return;
+  }
+
+  await refundPaymentTransactions({
+    paymentId: operation.paymentId,
+    amountCents: outstandingCents,
+    metadata: {
+      bookingId: operation.bookingId,
+      reason: "booking_modification_refund_recovery",
+    },
+    idempotencyKeyPrefix: `payment_recovery_modification_refund_${operation.id}`,
+  });
+
+  await completePaymentRecoveryOperation(operation.id);
+}
+
 async function processPaymentRecoveryOperation(
   operation: PaymentRecoveryOperation
 ) {
   if (operation.type === PaymentRecoveryOperationType.CANCEL_PAYMENT_INTENT) {
     await processCancelPaymentIntentOperation(operation);
+    return;
+  }
+
+  if (
+    operation.type ===
+    PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION
+  ) {
+    await processBookingModificationRefundOperation(operation);
     return;
   }
 

@@ -27,16 +27,16 @@ import {
   resolveTargetDates,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
-import {
-  sendAdminPaymentFailureAlert,
-  sendBookingModifiedEmail,
-} from "@/lib/email";
+import { sendBookingModifiedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
-import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
+import {
+  enqueueBookingModificationRefundRecovery,
+  processPaymentRecoveryOperations,
+} from "@/lib/payment-recovery";
 import { prisma } from "@/lib/prisma";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import {
@@ -510,22 +510,17 @@ async function executeStripeRefund({
   } catch (refundErr) {
     logger.error(
       { err: refundErr, bookingId, amount: result.pendingRefundAmountCents },
-      "Stripe refund failed after batch modification - requires manual reconciliation",
+      "Stripe refund failed after batch modification - enqueueing recovery",
     );
-    await sendAdminPaymentFailureAlert({
-      memberName: result.memberName,
-      checkIn: result.booking.checkIn,
-      checkOut: result.booking.checkOut,
+    await enqueueBookingModificationRefundRecovery({
+      bookingId,
+      paymentId: result.paymentId,
+      bookingModificationId: result.bookingModificationId,
       amountCents: result.pendingRefundAmountCents,
-      errorMessage:
-        refundErr instanceof Error
-          ? `Stripe refund failed after booking modification (manual reconciliation required): ${refundErr.message}`
-          : "Stripe refund failed after booking modification (manual reconciliation required)",
-      paymentIntentId: `refund_failure_${bookingId}`,
-    }).catch((alertErr) =>
+    }).catch((enqueueErr) =>
       logger.error(
-        { err: alertErr, bookingId },
-        "Failed to send admin alert for Stripe refund failure after batch modification",
+        { err: enqueueErr, bookingId },
+        "Failed to enqueue payment recovery for Stripe refund failure after batch modification",
       ),
     );
     return undefined;

@@ -107,6 +107,7 @@ enum PaymentTransactionKind {
 enum PaymentRecoveryOperationType {
   CANCEL_PAYMENT_INTENT
   REFUND_SUPERSEDED_PAYMENT
+  REFUND_BOOKING_MODIFICATION
 }
 
 enum PaymentRecoveryOperationStatus {

@@ -15,11 +15,13 @@ const {
   mockPaymentTransactionUpdateMany,
   mockPaymentTransactionUpdate,
   mockPaymentTransactionFindUnique,
+  mockPaymentFindUnique,
   mockBookingFindUnique,
   mockCancelPaymentIntentIfCancellableWithResult,
   mockProcessRefund,
   mockReconcilePaymentAggregates,
   mockRecordStripeRefundLedgerEntry,
+  mockRefundPaymentTransactions,
   mockSumRecordedRefundsForTransaction,
   mockSendAdminPaymentFailureAlert,
 } = vi.hoisted(() => ({
@@ -32,6 +34,7 @@ const {
   mockPaymentTransactionUpdateMany: vi.fn(),
   mockPaymentTransactionUpdate: vi.fn(),
   mockPaymentTransactionFindUnique: vi.fn(),
+  mockPaymentFindUnique: vi.fn(),
   mockBookingFindUnique: vi.fn(),
   mockCancelPaymentIntentIfCancellableWithResult: vi.fn(),
   mockProcessRefund: vi.fn(),
@@ -40,6 +43,7 @@ const {
     created: true,
     amountCents: 6000,
   }),
+  mockRefundPaymentTransactions: vi.fn(),
   mockSumRecordedRefundsForTransaction: vi.fn().mockResolvedValue(0),
   mockSendAdminPaymentFailureAlert: vi.fn().mockResolvedValue(undefined),
 }));
@@ -59,6 +63,9 @@ vi.mock("@/lib/prisma", () => ({
       update: (...args: unknown[]) => mockPaymentTransactionUpdate(...args),
       findUnique: (...args: unknown[]) => mockPaymentTransactionFindUnique(...args),
     },
+    payment: {
+      findUnique: (...args: unknown[]) => mockPaymentFindUnique(...args),
+    },
     booking: {
       findUnique: (...args: unknown[]) => mockBookingFindUnique(...args),
     },
@@ -76,6 +83,8 @@ vi.mock("@/lib/payment-transactions", () => ({
     mockReconcilePaymentAggregates(...args),
   recordStripeRefundLedgerEntry: (...args: unknown[]) =>
     mockRecordStripeRefundLedgerEntry(...args),
+  refundPaymentTransactions: (...args: unknown[]) =>
+    mockRefundPaymentTransactions(...args),
   sumRecordedRefundsForTransaction: (...args: unknown[]) =>
     mockSumRecordedRefundsForTransaction(...args),
 }));
@@ -94,7 +103,10 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
-import { processPaymentRecoveryOperations } from "@/lib/payment-recovery";
+import {
+  enqueueBookingModificationRefundRecovery,
+  processPaymentRecoveryOperations,
+} from "@/lib/payment-recovery";
 
 function makeOperation(overrides: Record<string, unknown> = {}) {
   return {
@@ -165,6 +177,25 @@ describe("payment recovery worker", () => {
       currency: "nzd",
       status: "succeeded",
       payment_intent: "pi_superseded",
+    });
+    mockRefundPaymentTransactions.mockResolvedValue({
+      refunds: [
+        { paymentIntentId: "pi_original", refundId: "re_recovery", amountCents: 4000 },
+      ],
+      totalRefundedAmountCents: 4000,
+    });
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_original",
+      transactions: [
+        {
+          id: "txn-1",
+          stripePaymentIntentId: "pi_original",
+          amountCents: 10000,
+          refundedAmountCents: 0,
+          status: PaymentStatus.SUCCEEDED,
+        },
+      ],
     });
   });
 
@@ -420,6 +451,187 @@ describe("payment recovery worker", () => {
         memberName: "Alice Example",
         errorMessage: expect.stringContaining("queue is stalled"),
         paymentIntentId: "pi_superseded",
+      }),
+    );
+  });
+
+  it("processes a booking modification refund recovery by replaying refundPaymentTransactions", async () => {
+    mockPaymentRecoveryFindUnique.mockResolvedValue(
+      makeOperation({
+        id: "recovery-mod-refund",
+        type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+        amountCents: 4000,
+        idempotencyKey: "payment_recovery_modification_refund_mod-1",
+        paymentTransactionId: null,
+      }),
+    );
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { status?: unknown; attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([
+          makeOperation({
+            id: "recovery-mod-refund",
+            type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+            status: "PENDING",
+            amountCents: 4000,
+            idempotencyKey: "payment_recovery_modification_refund_mod-1",
+            paymentTransactionId: null,
+          }),
+        ]);
+      },
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "payment-1",
+        amountCents: 4000,
+        metadata: {
+          bookingId: "booking-1",
+          reason: "booking_modification_refund_recovery",
+        },
+        idempotencyKeyPrefix: expect.stringContaining(
+          "payment_recovery_modification_refund_",
+        ),
+      }),
+    );
+    expect(mockPaymentRecoveryUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "recovery-mod-refund" },
+        data: expect.objectContaining({
+          status: PaymentRecoveryOperationStatus.SUCCEEDED,
+        }),
+      }),
+    );
+  });
+
+  it("skips the Stripe call when the outstanding refund balance has already been settled", async () => {
+    mockPaymentRecoveryFindUnique.mockResolvedValue(
+      makeOperation({
+        id: "recovery-mod-settled",
+        type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+        amountCents: 4000,
+        paymentTransactionId: null,
+      }),
+    );
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([
+          makeOperation({
+            id: "recovery-mod-settled",
+            type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+            status: "PENDING",
+            amountCents: 4000,
+            paymentTransactionId: null,
+          }),
+        ]);
+      },
+    );
+    mockPaymentFindUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_original",
+      transactions: [
+        {
+          id: "txn-1",
+          stripePaymentIntentId: "pi_original",
+          amountCents: 10000,
+          refundedAmountCents: 10000,
+          status: PaymentStatus.REFUNDED,
+        },
+      ],
+    });
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.succeeded).toBe(1);
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+  });
+
+  it("alerts admins when a booking modification refund recovery exhausts its retries", async () => {
+    const exhaustedOperation = makeOperation({
+      id: "recovery-mod-fail",
+      type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+      attempts: 5,
+      amountCents: 4000,
+      paymentTransactionId: null,
+    });
+    mockPaymentRecoveryFindUnique.mockResolvedValue(exhaustedOperation);
+    mockPaymentRecoveryFindMany.mockImplementation(
+      (args?: { where?: { attempts?: { gte?: number } } }) => {
+        if (args?.where?.attempts && "gte" in args.where.attempts) {
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([
+          { ...exhaustedOperation, status: "PENDING" },
+        ]);
+      },
+    );
+    mockRefundPaymentTransactions.mockRejectedValue(
+      new Error("Stripe is unavailable"),
+    );
+
+    const result = await processPaymentRecoveryOperations({ limit: 1 });
+
+    expect(result.failed).toBe(1);
+    expect(mockSendAdminPaymentFailureAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amountCents: 4000,
+        errorMessage: expect.stringContaining(
+          "REFUND_BOOKING_MODIFICATION failed after",
+        ),
+      }),
+    );
+  });
+
+  it("enqueueBookingModificationRefundRecovery picks the latest captured PaymentIntent", async () => {
+    mockPaymentFindUnique.mockResolvedValueOnce({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_legacy",
+      transactions: [
+        {
+          id: "txn-additional",
+          stripePaymentIntentId: "pi_additional",
+          amountCents: 5000,
+          refundedAmountCents: 0,
+          status: PaymentStatus.SUCCEEDED,
+        },
+        {
+          id: "txn-primary",
+          stripePaymentIntentId: "pi_primary",
+          amountCents: 10000,
+          refundedAmountCents: 0,
+          status: PaymentStatus.SUCCEEDED,
+        },
+      ],
+    });
+
+    await enqueueBookingModificationRefundRecovery({
+      bookingId: "booking-1",
+      paymentId: "payment-1",
+      bookingModificationId: "mod-7",
+      amountCents: 4000,
+    });
+
+    expect(mockPaymentRecoveryUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          idempotencyKey: "payment_recovery_modification_refund_mod-7",
+        },
+        create: expect.objectContaining({
+          type: PaymentRecoveryOperationType.REFUND_BOOKING_MODIFICATION,
+          status: PaymentRecoveryOperationStatus.PENDING,
+          bookingId: "booking-1",
+          paymentId: "payment-1",
+          paymentIntentId: "pi_additional",
+          amountCents: 4000,
+        }),
       }),
     );
   });

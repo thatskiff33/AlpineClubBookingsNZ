@@ -16,6 +16,7 @@ const mockUpsertPaymentIntentTransaction = vi.fn();
 const mockPaymentTransactionUpdateMany = vi.fn();
 const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
 const mockProcessPaymentRecoveryOperations = vi.fn();
+const mockEnqueueBookingModificationRefundRecovery = vi.fn();
 const mockAssertLinkedBookingMembersCanBeBooked = vi.fn().mockResolvedValue(undefined);
 const mockGetBookingGuestValidationErrorResponse = vi.fn((error: { message: string }) => ({
   error: error.message,
@@ -102,6 +103,8 @@ vi.mock("@/lib/payment-recovery", () => ({
     mockEnqueuePaymentIntentCancellationRecovery(...args),
   processPaymentRecoveryOperations: (...args: unknown[]) =>
     mockProcessPaymentRecoveryOperations(...args),
+  enqueueBookingModificationRefundRecovery: (...args: unknown[]) =>
+    mockEnqueueBookingModificationRefundRecovery(...args),
 }));
 
 vi.mock("@/lib/audit", () => ({
@@ -327,6 +330,9 @@ describe("PUT /api/bookings/[id]/modify", () => {
     mockPaymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
     mockEnqueuePaymentIntentCancellationRecovery.mockResolvedValue({
       id: "recovery_1",
+    });
+    mockEnqueueBookingModificationRefundRecovery.mockResolvedValue({
+      id: "recovery_refund",
     });
     mockProcessPaymentRecoveryOperations.mockResolvedValue({
       found: 1,
@@ -1026,6 +1032,73 @@ describe("PUT /api/bookings/[id]/modify", () => {
     expect(data.error).toBe("Invalid JSON");
     expect(data.details).toEqual({
       body: ["Request body must be valid JSON"],
+    });
+  });
+
+  it("enqueues refund recovery when the Stripe refund call fails after a price-decrease modification", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    // Two guests at $50 each = $100, dropping to one guest = $50 → refund $50
+    booking.guests = [
+      ...booking.guests,
+      {
+        id: "g2",
+        bookingId: "bk1",
+        firstName: "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        memberId: null,
+        priceCents: 5000,
+      },
+    ];
+    booking.totalPriceCents = 10000;
+    booking.finalPriceCents = 10000;
+    booking.payment!.amountCents = 10000;
+
+    mockCalculateBookingPrice
+      .mockReturnValueOnce({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      })
+      .mockReturnValueOnce({
+        totalPriceCents: 5000,
+        guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+      });
+
+    mockRefundPaymentTransactions.mockRejectedValueOnce(
+      new Error("Stripe is unavailable")
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ removeGuestIds: ["g2"] }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.refundAmountCents).toBe(5000);
+    expect(data.stripeRefundId).toBeNull();
+
+    expect(mockRefundPaymentTransactions).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 5000 })
+    );
+    expect(mockEnqueueBookingModificationRefundRecovery).toHaveBeenCalledWith({
+      bookingId: "bk1",
+      paymentId: "pay_1",
+      bookingModificationId: "mod_1",
+      amountCents: 5000,
     });
   });
 });
