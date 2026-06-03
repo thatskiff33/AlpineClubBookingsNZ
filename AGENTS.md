@@ -21,19 +21,21 @@ relevant guide in `node_modules/next/dist/docs/` and follow deprecation notices.
 
 ## Validation Policy
 
-This repository is often worked on from a lightweight Lightsail checkout.
+This repository is now normally worked on from the home Ubuntu development
+server, which has enough CPU, memory, and disk for routine local validation.
 
-- Do not run local production builds such as `npm run build`, `next build`,
-  Docker image builds, or broad build-equivalent commands unless the repository
-  owner explicitly asks for one in the current task.
-- Use GitHub Actions as the source of truth for build, image, and full CI
-  validation.
+- Run relevant local validation before opening or updating PRs. Acceptable
+  checks include targeted tests, `npm run lint`, `npx tsc --noEmit`,
+  `npx prisma validate`, `npx prisma generate`, `npm test`, `npm run build`,
+  Docker image builds, and `git diff --check` when they match the change.
+- Use GitHub-hosted Actions as the external CI source of truth for build,
+  image, and full CI validation. This is a public repository, so standard
+  GitHub-hosted runner minutes are not the constraint.
+- Do not attach a persistent self-hosted runner to this public repository.
+  Public pull requests can execute untrusted workflow code on self-hosted
+  runner machines.
 - After opening a PR, monitor GitHub checks with `gh pr checks <pr>` and inspect
   failed Actions logs with `gh run view --log`.
-- Local validation should stay lightweight: targeted tests, `npm run lint`,
-  `npx tsc --noEmit`, `npx prisma validate`, `npx prisma generate`, and
-  `git diff --check` are acceptable when relevant.
-- If a task appears to require a local build, stop and ask first.
 
 ## External Connectors
 
