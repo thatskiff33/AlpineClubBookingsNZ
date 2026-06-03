@@ -21,8 +21,8 @@ relevant guide in `node_modules/next/dist/docs/` and follow deprecation notices.
 
 ## Validation Policy
 
-This repository is now normally worked on from the home Ubuntu development
-server, which has enough CPU, memory, and disk for routine local validation.
+This repository is normally worked on from a development environment with
+enough CPU, memory, and disk for routine local validation.
 
 - Run relevant local validation before opening or updating PRs. Acceptable
   checks include targeted tests, `npm run lint`, `npx tsc --noEmit`,
