@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
-import { checkCapacity } from "./capacity";
+import { checkCapacityForGuestRanges } from "./capacity";
 import { chargePaymentMethod } from "./stripe";
 import {
   enqueueXeroBookingInvoiceOperation,
@@ -67,10 +67,10 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
     try {
       // Check capacity (excluding this booking since it's already counted as PENDING)
-      const capacityCheck = await checkCapacity(
+      const capacityCheck = await checkCapacityForGuestRanges(
         booking.checkIn,
         booking.checkOut,
-        booking.guests.length,
+        booking.guests,
         booking.id
       );
 

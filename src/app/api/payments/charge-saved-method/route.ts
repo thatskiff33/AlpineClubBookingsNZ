@@ -15,6 +15,7 @@ import { logAudit } from "@/lib/audit";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
 
 const ChargeSavedMethodSchema = z.object({
   bookingId: z.string().min(1),
@@ -67,7 +68,7 @@ export async function POST(request: NextRequest) {
 
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { payment: true, member: true },
+      include: { payment: true, member: true, guests: true },
     });
 
     if (!booking) {
@@ -91,6 +92,23 @@ export async function POST(request: NextRequest) {
       );
     }
     const savedPayment = booking.payment;
+
+    const capacity = await checkCapacityForGuestRanges(
+      booking.checkIn,
+      booking.checkOut,
+      booking.guests,
+      booking.id
+    );
+
+    if (!capacity.available) {
+      return NextResponse.json(
+        {
+          error:
+            "Lodge capacity is no longer available for this booking.",
+        },
+        { status: 409 }
+      );
+    }
 
     // Charge the saved payment method
     const paymentIntent = await chargePaymentMethod({

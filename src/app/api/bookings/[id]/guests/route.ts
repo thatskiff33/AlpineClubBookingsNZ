@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { PaymentStatus, PaymentTransactionKind, type AgeTier } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { checkCapacity } from "@/lib/capacity";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import {
   calculateBookingPrice,
@@ -181,13 +181,17 @@ export async function POST(
         }
       }
 
-      const totalGuestCount = booking.guests.length + normalizedNewGuests.length;
-
       // Capacity check excluding this booking (using tx to participate in advisory lock)
-      const capacity = await checkCapacity(
+      const capacity = await checkCapacityForGuestRanges(
         booking.checkIn,
         booking.checkOut,
-        totalGuestCount,
+        [
+          ...booking.guests,
+          ...normalizedNewGuests.map(() => ({
+            stayStart: booking.checkIn,
+            stayEnd: booking.checkOut,
+          })),
+        ],
         bookingId,
         tx
       );

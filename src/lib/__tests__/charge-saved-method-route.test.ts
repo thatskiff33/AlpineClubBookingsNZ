@@ -15,6 +15,7 @@ const {
   mockPaymentUpdate,
   mockPrismaTransaction,
   mockMarkBookingPaymentSucceeded,
+  mockCheckCapacityForGuestRanges,
 } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
   mockRequireActiveSessionUser: vi.fn().mockResolvedValue(null),
@@ -38,6 +39,7 @@ const {
   mockPaymentUpdate: vi.fn(),
   mockPrismaTransaction: vi.fn(),
   mockMarkBookingPaymentSucceeded: vi.fn(),
+  mockCheckCapacityForGuestRanges: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -70,6 +72,11 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/payment-reconciliation", () => ({
   markBookingPaymentSucceeded: (...args: unknown[]) =>
     mockMarkBookingPaymentSucceeded(...args),
+}));
+
+vi.mock("@/lib/capacity", () => ({
+  checkCapacityForGuestRanges: (...args: unknown[]) =>
+    mockCheckCapacityForGuestRanges(...args),
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -108,6 +115,18 @@ describe("POST /api/payments/charge-saved-method", () => {
       finalPriceCents: 12500,
       checkIn: new Date("2026-07-10"),
       checkOut: new Date("2026-07-12"),
+      guests: [
+        {
+          id: "guest-1",
+          stayStart: new Date("2026-07-10"),
+          stayEnd: new Date("2026-07-11"),
+        },
+        {
+          id: "guest-2",
+          stayStart: new Date("2026-07-11"),
+          stayEnd: new Date("2026-07-12"),
+        },
+      ],
       payment: {
         stripePaymentMethodId: "pm_123",
         stripeCustomerId: "cus_123",
@@ -119,6 +138,11 @@ describe("POST /api/payments/charge-saved-method", () => {
     });
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
     mockPaymentUpdate.mockResolvedValue({});
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: true,
+      minAvailable: 0,
+      nightDetails: [],
+    });
     mockBookingUpdate.mockResolvedValue({});
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
@@ -166,6 +190,43 @@ describe("POST /api/payments/charge-saved-method", () => {
       amountCents: 12500,
       paymentMethodId: null,
     });
+    expect(mockCheckCapacityForGuestRanges).toHaveBeenCalledWith(
+      new Date("2026-07-10"),
+      new Date("2026-07-12"),
+      expect.arrayContaining([
+        expect.objectContaining({
+          stayStart: new Date("2026-07-10"),
+          stayEnd: new Date("2026-07-11"),
+        }),
+        expect.objectContaining({
+          stayStart: new Date("2026-07-11"),
+          stayEnd: new Date("2026-07-12"),
+        }),
+      ]),
+      "booking-1"
+    );
+  });
+
+  it("returns 409 without charging when saved-card capacity preflight fails", async () => {
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      minAvailable: -1,
+      nightDetails: [],
+    });
+
+    const request = new NextRequest("http://localhost/api/payments/charge-saved-method", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const response = await POST(request);
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error).toContain("capacity");
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
   });
 
   it("does not revert the booking to PENDING when local persistence fails after a successful charge", async () => {

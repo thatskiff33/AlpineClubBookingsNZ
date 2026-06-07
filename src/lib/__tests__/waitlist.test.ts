@@ -46,7 +46,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/capacity", () => ({
-  checkCapacity: vi.fn(),
+  checkCapacityForGuestRanges: vi.fn(),
   LODGE_CAPACITY: 29,
 }));
 
@@ -164,7 +164,7 @@ describe("getWaitlistForDates", () => {
 describe("processWaitlistForDates", () => {
   it("offers to top candidate when capacity available", async () => {
     const { processWaitlistForDates } = await import("@/lib/waitlist");
-    const { checkCapacity: mockCheckCapacity } = await import("@/lib/capacity");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
 
     const candidate = {
       id: "booking1",
@@ -196,7 +196,7 @@ describe("processWaitlistForDates", () => {
 
   it("skips candidates with only partial availability", async () => {
     const { processWaitlistForDates } = await import("@/lib/waitlist");
-    const { checkCapacity: mockCheckCapacity } = await import("@/lib/capacity");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
 
     const candidate = {
       id: "booking1",
@@ -218,6 +218,54 @@ describe("processWaitlistForDates", () => {
     expect(result.offeredBookingId).toBeNull();
   });
 
+  it("passes per-guest stay ranges into waitlist promotion capacity checks", async () => {
+    const { processWaitlistForDates } = await import("@/lib/waitlist");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
+
+    const candidate = {
+      id: "booking1",
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+      createdAt: new Date("2026-04-01"),
+      guests: [
+        {
+          id: "g1",
+          stayStart: new Date("2026-07-01"),
+          stayEnd: new Date("2026-07-02"),
+        },
+        {
+          id: "g2",
+          stayStart: new Date("2026-07-02"),
+          stayEnd: new Date("2026-07-03"),
+        },
+      ],
+      member: { id: "m1", email: "test@test.com", firstName: "John", lastName: "Doe" },
+    };
+
+    mockTx.booking.findMany.mockResolvedValue([candidate]);
+    (mockCheckCapacity as ReturnType<typeof vi.fn>).mockResolvedValue({
+      available: true,
+      minAvailable: 0,
+      nightDetails: [],
+    });
+    mockTx.booking.update.mockResolvedValue({});
+    mockTx.booking.count.mockResolvedValue(0);
+
+    const result = await processWaitlistForDates({
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
+    });
+
+    expect(result.offeredBookingId).toBe("booking1");
+    expect(mockCheckCapacity).toHaveBeenCalledWith(
+      candidate.checkIn,
+      candidate.checkOut,
+      candidate.guests,
+      undefined,
+      mockTx
+    );
+  });
+
   it("does nothing when no waitlisted bookings exist", async () => {
     const { processWaitlistForDates } = await import("@/lib/waitlist");
 
@@ -235,7 +283,7 @@ describe("processWaitlistForDates", () => {
 describe("confirmWaitlistOffer", () => {
   it("transitions to PAYMENT_PENDING for all-member bookings", async () => {
     const { confirmWaitlistOffer } = await import("@/lib/waitlist");
-    const { checkCapacity: mockCheckCapacity } = await import("@/lib/capacity");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
 
     mockTx.booking.findUnique.mockResolvedValue({
       id: "booking1",
@@ -257,7 +305,7 @@ describe("confirmWaitlistOffer", () => {
 
   it("transitions to PENDING for non-member bookings far from check-in", async () => {
     const { confirmWaitlistOffer } = await import("@/lib/waitlist");
-    const { checkCapacity: mockCheckCapacity } = await import("@/lib/capacity");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
 
     const farFuture = new Date();
     farFuture.setDate(farFuture.getDate() + 30);
@@ -323,7 +371,7 @@ describe("confirmWaitlistOffer", () => {
 
   it("handles capacity race condition (capacity taken between offer and confirm)", async () => {
     const { confirmWaitlistOffer } = await import("@/lib/waitlist");
-    const { checkCapacity: mockCheckCapacity } = await import("@/lib/capacity");
+    const { checkCapacityForGuestRanges: mockCheckCapacity } = await import("@/lib/capacity");
 
     mockTx.booking.findUnique.mockResolvedValue({
       id: "booking1",
@@ -404,7 +452,7 @@ describe("expireStaleOffers", () => {
 
   it("reverts expired offer to WAITLISTED and keeps reofferedCount=0 when no capacity for next candidate", async () => {
     const { expireStaleOffers } = await import("@/lib/waitlist");
-    const { checkCapacity } = await import("@/lib/capacity");
+    const { checkCapacityForGuestRanges } = await import("@/lib/capacity");
 
     mockTx.booking.findMany
       .mockResolvedValueOnce([
@@ -427,7 +475,7 @@ describe("expireStaleOffers", () => {
         },
       ]);
     mockTx.booking.update.mockResolvedValue({});
-    vi.mocked(checkCapacity).mockResolvedValue({
+    vi.mocked(checkCapacityForGuestRanges).mockResolvedValue({
       available: false,
       minAvailable: 0,
       nightDetails: [],

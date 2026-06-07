@@ -4,7 +4,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { AdminReviewStatus, BookingStatus } from "@prisma/client";
 import { requiresAdultSupervisionReview } from "@/lib/booking-review";
-import { checkCapacity } from "@/lib/capacity";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { logAudit } from "@/lib/audit";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -52,15 +52,17 @@ export async function POST(
       }
 
       // Check capacity
-      const { available, nightDetails } = await checkCapacity(
+      const { available, nightDetails } = await checkCapacityForGuestRanges(
         booking.checkIn,
         booking.checkOut,
-        booking.guests.length
+        booking.guests,
+        undefined,
+        tx
       );
 
       if (!available && !allowOverbook) {
         const overbookDates = nightDetails
-          .filter((n) => n.availableBeds < booking.guests.length)
+          .filter((n) => n.availableBeds < 0)
           .map((n) => n.date.toISOString().split("T")[0]);
 
         return {

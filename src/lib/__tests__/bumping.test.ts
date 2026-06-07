@@ -239,6 +239,42 @@ describe("Bumping Algorithm", () => {
       expect(result.capacityRestored).toBe(true);
     });
 
+    it("does not bump for staggered proposed guests on nights they are not active", async () => {
+      const fullFirstNight = makeBooking(
+        "conf1", "2026-07-10", "2026-07-11", LODGE_CAPACITY, "CONFIRMED"
+      );
+      const oneBedLeftSecondNight = makeBooking(
+        "conf2", "2026-07-11", "2026-07-12", LODGE_CAPACITY - 1, "CONFIRMED"
+      );
+      const txMock = {
+        booking: {
+          findMany: vi.fn().mockResolvedValue([
+            fullFirstNight,
+            oneBedLeftSecondNight,
+          ]),
+          update: vi.fn(),
+        },
+        promoRedemption: mockPromoRedemption,
+        promoCode: mockPromoCode,
+      };
+
+      const result = await bumpPendingBookings(
+        new Date("2026-07-10"),
+        new Date("2026-07-12"),
+        [
+          {
+            stayStart: new Date("2026-07-11"),
+            stayEnd: new Date("2026-07-12"),
+          },
+        ],
+        txMock as never
+      );
+
+      expect(result.bumpedBookingIds).toHaveLength(0);
+      expect(result.capacityRestored).toBe(true);
+      expect(txMock.booking.update).not.toHaveBeenCalled();
+    });
+
     it("bumps most recent PENDING booking first when capacity exceeded", async () => {
       const existingConfirmed = makeBooking(
         "conf1", "2026-07-10", "2026-07-12", LODGE_CAPACITY - 4, "CONFIRMED"

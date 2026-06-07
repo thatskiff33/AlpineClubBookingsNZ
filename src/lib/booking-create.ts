@@ -72,7 +72,6 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
-import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 
 type BookingWithGuests = Booking & { guests: BookingGuest[] };
 
@@ -362,27 +361,6 @@ function getCapacityFullNights(
   return nightDetails
     .filter((night) => night.availableBeds < 0)
     .map((night) => night.date.toISOString().split("T")[0]);
-}
-
-function getMaxActiveGuestCount(
-  guests: BookingGuestInput[],
-  checkIn: Date,
-  checkOut: Date
-): number {
-  let maxActive = 0;
-
-  for (
-    let current = new Date(checkIn);
-    current < checkOut;
-    current.setUTCDate(current.getUTCDate() + 1)
-  ) {
-    maxActive = Math.max(
-      maxActive,
-      countActiveGuestsForNight(guests, current, { checkIn, checkOut })
-    );
-  }
-
-  return maxActive;
 }
 
 /**
@@ -777,7 +755,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           const bumpResult = await bumpPendingBookings(
             checkIn,
             checkOut,
-            getMaxActiveGuestCount(guests, checkIn, checkOut),
+            capacityGuestRanges,
             tx
           );
           if (!bumpResult.capacityRestored) {

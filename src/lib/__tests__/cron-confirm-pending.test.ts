@@ -52,9 +52,10 @@ vi.mock("../email", () => ({
 }));
 
 // Mock capacity
-const mockCheckCapacity = vi.fn();
+const mockCheckCapacityForGuestRanges = vi.fn();
 vi.mock("../capacity", () => ({
-  checkCapacity: (...args: unknown[]) => mockCheckCapacity(...args),
+  checkCapacityForGuestRanges: (...args: unknown[]) =>
+    mockCheckCapacityForGuestRanges(...args),
   LODGE_CAPACITY: 29,
 }));
 
@@ -100,6 +101,8 @@ function makePendingBooking(
     hasPaymentMethod = true,
     finalPriceCents = 10000,
   } = opts;
+  const stayStart = new Date(checkIn);
+  const stayEnd = new Date(checkOut);
 
   return {
     id,
@@ -126,6 +129,8 @@ function makePendingBooking(
       lastName: "Test",
       ageTier: "ADULT",
       isMember: false,
+      stayStart,
+      stayEnd,
       priceCents: 5000,
     })),
     payment: hasPaymentMethod
@@ -180,7 +185,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     const booking = makePendingBooking("b1");
     const expectedIdempotencyKey = ["pending", "charge", "b1"].join("_");
     mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacity.mockResolvedValue({
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
       available: true,
       minAvailable: 10,
       nightDetails: [],
@@ -221,7 +226,7 @@ describe("Cron: Confirm Pending Bookings", () => {
   it("bumps a booking when capacity is not available", async () => {
     const booking = makePendingBooking("b1");
     mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacity.mockResolvedValue({
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
       available: false,
       minAvailable: 0,
       nightDetails: [],
@@ -245,7 +250,7 @@ describe("Cron: Confirm Pending Bookings", () => {
   it("fails gracefully when no payment method is saved", async () => {
     const booking = makePendingBooking("b1", { hasPaymentMethod: false });
     mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacity.mockResolvedValue({
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
       available: true,
       minAvailable: 10,
       nightDetails: [],
@@ -265,7 +270,7 @@ describe("Cron: Confirm Pending Bookings", () => {
 
     // b1: available, payment succeeds
     // b2: not available, bump
-    mockCheckCapacity
+    mockCheckCapacityForGuestRanges
       .mockResolvedValueOnce({ available: true, minAvailable: 10, nightDetails: [] })
       .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] });
 
@@ -286,7 +291,7 @@ describe("Cron: Confirm Pending Bookings", () => {
   it("handles Stripe charge failure gracefully", async () => {
     const booking = makePendingBooking("b1");
     mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacity.mockResolvedValue({
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
       available: true,
       minAvailable: 10,
       nightDetails: [],
@@ -302,7 +307,7 @@ describe("Cron: Confirm Pending Bookings", () => {
   it("handles payment in processing state (requires_action)", async () => {
     const booking = makePendingBooking("b1");
     mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacity.mockResolvedValue({
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
       available: true,
       minAvailable: 10,
       nightDetails: [],
@@ -342,7 +347,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(result.confirmedBookingIds).toHaveLength(0);
     expect(result.bumpedBookingIds).toHaveLength(0);
     expect(result.failedBookingIds).toHaveLength(0);
-    expect(mockCheckCapacity).not.toHaveBeenCalled();
+    expect(mockCheckCapacityForGuestRanges).not.toHaveBeenCalled();
   });
 
   it("continues processing remaining bookings when one fails", async () => {
@@ -350,7 +355,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     const booking2 = makePendingBooking("b2");
     mockBookingFindMany.mockResolvedValue([booking1, booking2]);
 
-    mockCheckCapacity
+    mockCheckCapacityForGuestRanges
       .mockRejectedValueOnce(new Error("DB error")) // b1 fails
       .mockResolvedValueOnce({ available: true, minAvailable: 10, nightDetails: [] }); // b2 succeeds
 
@@ -369,10 +374,10 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
   });
 
-  it("passes booking ID to checkCapacity as excludeBookingId", async () => {
+  it("passes guest stay ranges and booking ID to range capacity as excludeBookingId", async () => {
     const booking = makePendingBooking("b1", { guestCount: 3 });
     mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacity.mockResolvedValue({
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
       available: true,
       minAvailable: 10,
       nightDetails: [],
@@ -387,10 +392,10 @@ describe("Cron: Confirm Pending Bookings", () => {
 
     await confirmPendingBookings();
 
-    expect(mockCheckCapacity).toHaveBeenCalledWith(
+    expect(mockCheckCapacityForGuestRanges).toHaveBeenCalledWith(
       booking.checkIn,
       booking.checkOut,
-      3,
+      booking.guests,
       "b1"
     );
   });
@@ -398,7 +403,7 @@ describe("Cron: Confirm Pending Bookings", () => {
   it("continues when Xero invoice queueing fails during pending confirmation", async () => {
     const booking = makePendingBooking("b1");
     mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacity.mockResolvedValue({
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
       available: true,
       minAvailable: 10,
       nightDetails: [],
@@ -420,7 +425,7 @@ describe("Cron: Confirm Pending Bookings", () => {
   it("does not revert or alert when local persistence fails after Stripe already succeeded", async () => {
     const booking = makePendingBooking("b1");
     mockBookingFindMany.mockResolvedValue([booking]);
-    mockCheckCapacity.mockResolvedValue({
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
       available: true,
       minAvailable: 10,
       nightDetails: [],

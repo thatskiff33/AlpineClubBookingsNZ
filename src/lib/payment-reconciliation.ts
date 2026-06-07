@@ -4,7 +4,7 @@ import {
   refundPaymentTransactions,
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
-import { checkCapacity } from "@/lib/capacity";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { bumpPendingBookings, sendBumpedNotifications } from "@/lib/bumping";
 import { restoreCreditFromBooking } from "@/lib/member-credit";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
@@ -139,10 +139,10 @@ export async function markBookingPaymentSucceeded({
       throw new Error("Payment amount does not match booking total");
     }
 
-    const capacity = await checkCapacity(
+    const capacity = await checkCapacityForGuestRanges(
       booking.checkIn,
       booking.checkOut,
-      booking.guests.length,
+      booking.guests,
       booking.id,
       tx
     );
@@ -154,7 +154,7 @@ export async function markBookingPaymentSucceeded({
       const bumpResult = await bumpPendingBookings(
         booking.checkIn,
         booking.checkOut,
-        booking.guests.length,
+        booking.guests,
         tx
       );
       capacityRestored = bumpResult.capacityRestored;

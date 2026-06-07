@@ -184,13 +184,14 @@ vi.mock("@/lib/chore-cleanup", () => ({
 }));
 
 import { auth } from "@/lib/auth";
-import { checkCapacity } from "@/lib/capacity";
+import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { calculateBookingPrice } from "@/lib/pricing";
 import { calculateChangeFee } from "@/lib/change-fee";
 import { processRefund, createPaymentIntent, findOrCreateCustomer, getPaymentIntent, constructWebhookEvent } from "@/lib/stripe";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCheckCapacity = vi.mocked(checkCapacity);
+const mockedCheckCapacityForGuestRanges = vi.mocked(checkCapacityForGuestRanges);
 const mockedCalcPrice = vi.mocked(calculateBookingPrice);
 const mockedCalcChangeFee = vi.mocked(calculateChangeFee);
 const mockedProcessRefund = vi.mocked(processRefund);
@@ -714,7 +715,7 @@ describe("POST /api/bookings/[id]/guests — price increase", () => {
     const tx = makeTx(booking);
     mockedAuth.mockResolvedValue(makeSession() as any);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
-    mockedCheckCapacity.mockResolvedValue({ available: true, availableBeds: 20 } as any);
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 20, nightDetails: [] } as any);
     // New guest price: 5000 per guest for 2 nights = 10000 extra
     mockedCalcPrice.mockImplementation((_ci, _co, guests) => ({
       totalPriceCents: guests.length === 1 ? 10000 : 20000,

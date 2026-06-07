@@ -10,8 +10,7 @@ import { BookingStatus } from "@prisma/client";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
-import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
-import { getOccupiedBedsForNight } from "@/lib/capacity";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export async function POST(request: NextRequest) {
@@ -147,30 +146,16 @@ export async function POST(request: NextRequest) {
           throw new Error("Booking is no longer a draft");
         }
 
-        // Check capacity
-        const overlapping = await tx.booking.findMany({
-          where: {
-            id: { not: bookingId },
-            checkIn: { lt: freshBooking.checkOut },
-            checkOut: { gt: freshBooking.checkIn },
-            status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
-          },
-          include: { guests: true },
-        });
+        const capacity = await checkCapacityForGuestRanges(
+          freshBooking.checkIn,
+          freshBooking.checkOut,
+          freshBooking.guests,
+          bookingId,
+          tx
+        );
 
-        const { eachDayOfInterval, subDays } = await import("date-fns");
-        const nights = eachDayOfInterval({
-          start: new Date(freshBooking.checkIn),
-          end: subDays(new Date(freshBooking.checkOut), 1),
-        });
-
-        const { LODGE_CAPACITY } = await import("@/lib/capacity");
-
-        for (const night of nights) {
-          const occupiedBeds = getOccupiedBedsForNight(night, overlapping);
-          if (occupiedBeds + freshBooking.guests.length > LODGE_CAPACITY) {
-            throw new Error("Not enough beds available for your dates. Please choose different dates.");
-          }
+        if (!capacity.available) {
+          throw new Error("Not enough beds available for your dates. Please choose different dates.");
         }
 
         // Transition DRAFT -> PAYMENT_PENDING

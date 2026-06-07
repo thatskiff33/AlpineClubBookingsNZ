@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
-import { checkCapacity } from "./capacity";
+import { checkCapacityForGuestRanges } from "./capacity";
 import { getNonMemberHoldDays } from "./cancellation";
 import {
   sendWaitlistOfferEmail,
@@ -99,10 +99,12 @@ export async function processWaitlistForDates(freedDates: {
 
       for (const candidate of candidates) {
         // Check if ALL nights in the candidate's range have capacity
-        const { available } = await checkCapacity(
+        const { available } = await checkCapacityForGuestRanges(
           candidate.checkIn,
           candidate.checkOut,
-          candidate.guests.length
+          candidate.guests,
+          undefined,
+          tx
         );
 
         if (available) {
@@ -243,10 +245,12 @@ export async function confirmWaitlistOffer(
       }
 
       // Re-check capacity
-      const { available } = await checkCapacity(
+      const { available } = await checkCapacityForGuestRanges(
         booking.checkIn,
         booking.checkOut,
-        booking.guests.length
+        booking.guests,
+        undefined,
+        tx
       );
 
       if (!available) {

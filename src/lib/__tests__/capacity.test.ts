@@ -14,7 +14,12 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-import { checkCapacity, getMonthAvailability, LODGE_CAPACITY } from "@/lib/capacity";
+import {
+  checkCapacity,
+  checkCapacityForGuestRanges,
+  getMonthAvailability,
+  LODGE_CAPACITY,
+} from "@/lib/capacity";
 
 describe("capacity calendar availability", () => {
   beforeEach(() => {
@@ -146,5 +151,62 @@ describe("capacity calendar availability", () => {
     expect(availability.get("2026-04-13")).toBe(1);
     expect(availability.get("2026-04-14")).toBe(1);
     expect(availability.get("2026-04-15")).toBe(0);
+  });
+
+  it("allows proposed staggered guests when only one bed is available per night", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        status: BookingStatus.PAID,
+        checkIn: parseDateOnly("2026-04-10"),
+        checkOut: parseDateOnly("2026-04-12"),
+        guests: Array.from({ length: LODGE_CAPACITY - 1 }, (_, index) => ({
+          id: `existing-${index}`,
+          stayStart: parseDateOnly("2026-04-10"),
+          stayEnd: parseDateOnly("2026-04-12"),
+        })),
+      },
+    ]);
+
+    const result = await checkCapacityForGuestRanges(
+      parseDateOnly("2026-04-10"),
+      parseDateOnly("2026-04-12"),
+      [
+        {
+          stayStart: parseDateOnly("2026-04-10"),
+          stayEnd: parseDateOnly("2026-04-11"),
+        },
+        {
+          stayStart: parseDateOnly("2026-04-11"),
+          stayEnd: parseDateOnly("2026-04-12"),
+        },
+      ]
+    );
+
+    expect(result.available).toBe(true);
+    expect(result.nightDetails.map((night) => night.availableBeds)).toEqual([0, 0]);
+  });
+
+  it("still rejects full-span proposed guests when only one bed is available per night", async () => {
+    mocks.bookingFindMany.mockResolvedValue([
+      {
+        status: BookingStatus.PAID,
+        checkIn: parseDateOnly("2026-04-10"),
+        checkOut: parseDateOnly("2026-04-12"),
+        guests: Array.from({ length: LODGE_CAPACITY - 1 }, (_, index) => ({
+          id: `existing-${index}`,
+          stayStart: parseDateOnly("2026-04-10"),
+          stayEnd: parseDateOnly("2026-04-12"),
+        })),
+      },
+    ]);
+
+    const result = await checkCapacityForGuestRanges(
+      parseDateOnly("2026-04-10"),
+      parseDateOnly("2026-04-12"),
+      [{}, {}]
+    );
+
+    expect(result.available).toBe(false);
+    expect(result.nightDetails.map((night) => night.availableBeds)).toEqual([-1, -1]);
   });
 });

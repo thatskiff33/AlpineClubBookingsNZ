@@ -107,7 +107,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { auth } from "@/lib/auth";
-import { checkCapacity } from "@/lib/capacity";
+import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
 import { calculateBookingPrice } from "@/lib/pricing";
 import { calculateChangeFee } from "@/lib/change-fee";
 import { daysUntilDate, loadCancellationPolicy, getNonMemberHoldDays } from "@/lib/cancellation";
@@ -118,6 +118,7 @@ import { sendBookingModifiedEmail } from "@/lib/email";
 
 const mockedAuth = vi.mocked(auth);
 const mockedCheckCapacity = vi.mocked(checkCapacity);
+const mockedCheckCapacityForGuestRanges = vi.mocked(checkCapacityForGuestRanges);
 const mockedCalcPrice = vi.mocked(calculateBookingPrice);
 const mockedCalcChangeFee = vi.mocked(calculateChangeFee);
 const mockedDaysUntilDate = vi.mocked(daysUntilDate);
@@ -745,7 +746,7 @@ describe("POST /api/bookings/[id]/guests", () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
     const tx = makeTx(makeBooking());
     mockTransaction.mockImplementation((fn: any) => fn(tx));
-    mockedCheckCapacity.mockResolvedValue({ available: false, minAvailable: 0, nightDetails: [] });
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: false, minAvailable: 0, nightDetails: [] });
 
     const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
       method: "POST",
@@ -854,7 +855,7 @@ describe("POST /api/bookings/[id]/guests", () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
-    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
     mockedCalcPrice
       .mockReturnValueOnce({ // new guest price
         guests: [{ ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000] }],
@@ -888,12 +889,80 @@ describe("POST /api/bookings/[id]/guests", () => {
     );
   });
 
+  it("checks guest-add capacity with existing stay ranges plus full-span new guests", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
+    const booking = makeBooking({
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Alice",
+          lastName: "Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "m1",
+          stayStart: new Date("2026-06-01"),
+          stayEnd: new Date("2026-06-02"),
+          priceCents: 5000,
+        },
+        {
+          id: "g2",
+          bookingId: "bk1",
+          firstName: "Bob",
+          lastName: "Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: null,
+          stayStart: new Date("2026-06-02"),
+          stayEnd: new Date("2026-06-03"),
+          priceCents: 5000,
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+    mockTransaction.mockImplementation((fn: any) => fn(tx));
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 0, nightDetails: [] });
+    mockedCalcPrice
+      .mockReturnValueOnce({
+        guests: [{ ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000] }],
+        totalPriceCents: 14000,
+      })
+      .mockReturnValueOnce({
+        guests: [
+          { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 5000, perNightCents: [5000] },
+          { ageTier: "ADULT" as const, isMember: true, nights: 1, priceCents: 5000, perNightCents: [5000] },
+          { ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000] },
+        ],
+        totalPriceCents: 24000,
+      });
+    mockedGetHoldDays.mockResolvedValue(7);
+    mockFindUnique.mockResolvedValue({ id: "m1", active: true, email: "a@t.com", firstName: "A" });
+
+    const req = new NextRequest("http://localhost/api/bookings/bk1/guests", {
+      method: "POST",
+      body: JSON.stringify({ guests: [{ firstName: "New", lastName: "Guest", ageTier: "ADULT", isMember: false }] }),
+    });
+    const res = await POST(req, { params: Promise.resolve({ id: "bk1" }) });
+
+    expect(res.status).toBe(200);
+    expect(mockedCheckCapacityForGuestRanges).toHaveBeenCalledWith(
+      booking.checkIn,
+      booking.checkOut,
+      [
+        ...booking.guests,
+        { stayStart: booking.checkIn, stayEnd: booking.checkOut },
+      ],
+      "bk1",
+      tx
+    );
+  });
+
   it("forces typed guest additions to non-member pricing", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
-    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
     mockedCalcPrice
       .mockReturnValueOnce({
         guests: [{ ageTier: "ADULT" as const, isMember: false, nights: 2, priceCents: 14000, perNightCents: [7000, 7000] }],
@@ -941,7 +1010,7 @@ describe("POST /api/bookings/[id]/guests", () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
-    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
     mockedCalcPrice
       .mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }], totalPriceCents: 5000 })
       .mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }], totalPriceCents: 15000 });
@@ -963,7 +1032,7 @@ describe("POST /api/bookings/[id]/guests", () => {
     const booking = makeBooking();
     const tx = makeTx(booking);
     mockTransaction.mockImplementation((fn: any) => fn(tx));
-    mockedCheckCapacity.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
+    mockedCheckCapacityForGuestRanges.mockResolvedValue({ available: true, minAvailable: 5, nightDetails: [] });
     mockedCalcPrice
       .mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }], totalPriceCents: 5000 })
       .mockReturnValueOnce({ guests: [{ ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }, { ageTier: "ADULT" as const, isMember: true, nights: 2, priceCents: 5000, perNightCents: [5000, 5000] }], totalPriceCents: 15000 });

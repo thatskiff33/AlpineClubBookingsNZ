@@ -509,7 +509,20 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
   });
 
   it("accepts DRAFT status and transitions to PAYMENT_PENDING", async () => {
+    const { checkCapacityForGuestRanges } = await import("@/lib/capacity");
     mockAuth.mockResolvedValue(memberSession());
+    const guestRanges = [
+      {
+        id: "g1",
+        stayStart: new Date("2026-07-01"),
+        stayEnd: new Date("2026-07-02"),
+      },
+      {
+        id: "g2",
+        stayStart: new Date("2026-07-02"),
+        stayEnd: new Date("2026-07-03"),
+      },
+    ];
 
     const draftBooking = {
       id: "draft-1",
@@ -519,6 +532,8 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
       hasNonMembers: false,
       requiresAdminReview: false,
       adminReviewReason: null,
+      checkIn: new Date("2026-07-01"),
+      checkOut: new Date("2026-07-03"),
       member: { id: "member-1", email: "test@example.com", firstName: "Alice", lastName: "Smith" },
       payment: null,
     };
@@ -529,9 +544,8 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
     mockPrisma.$transaction.mockImplementation(async (fn: (tx: typeof mockTx) => Promise<unknown>) => {
       mockTx.booking.findUnique.mockResolvedValue({
         ...draftBooking,
-        guests: [{ id: "g1" }],
+        guests: guestRanges,
       });
-      mockTx.booking.findMany.mockResolvedValue([]); // no overlapping
       mockTx.booking.update.mockResolvedValue({});
       return fn(mockTx as unknown as typeof mockTx);
     });
@@ -552,6 +566,13 @@ describe("Issue 7: create-payment-intent with DRAFT booking", () => {
       expect.objectContaining({
         data: expect.objectContaining({ status: "PAYMENT_PENDING" }),
       })
+    );
+    expect(checkCapacityForGuestRanges).toHaveBeenCalledWith(
+      draftBooking.checkIn,
+      draftBooking.checkOut,
+      guestRanges,
+      "draft-1",
+      mockTx
     );
     expect(mockUpsertPaymentIntentTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
