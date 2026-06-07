@@ -62,15 +62,18 @@ vi.mock("@/lib/promo", () => ({
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
     discount: {
       discountCents: 0,
+      priceAdjustmentCents: 0,
       freeNightsUsed: 0,
       eligibleGuestCount: 0,
       allocations: [],
     },
     beneficiaryMemberIds: [],
   }),
+  shouldPersistPromoRedemption: vi.fn().mockReturnValue(true),
   redeemPromoCode: vi.fn().mockResolvedValue(undefined),
   calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({
     discountCents: 0,
+    priceAdjustmentCents: 0,
     freeNightsUsed: 0,
     eligibleGuestCount: 0,
     allocations: [],
@@ -676,5 +679,76 @@ describe("Promo Validate API - forMemberId", () => {
       null,
       expect.objectContaining({ db: mockedPrisma }),
     );
+  });
+
+  it("returns signed promo adjustments and final price for fixed-nightly validation", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as never);
+    (mockedPrisma.promoCode.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "pc-fixed",
+      code: "SET30",
+      description: "Set eligible nights to $30",
+      active: true,
+      type: "FIXED_NIGHTLY_PRICE",
+      percentOff: null,
+      valueCents: null,
+      freeNightsPerIndividual: null,
+      fixedNightlyPriceCents: 3000,
+      fixedNightlyMode: "SET_PRICE",
+      maxRedemptionsTotal: null,
+      maxUniqueMembersTotal: null,
+      maxGuestsPerBooking: null,
+      maxNightlyValueCents: null,
+      memberGuestsOnly: false,
+      membersOnly: false,
+      currentRedemptions: 0,
+      validFrom: null,
+      validUntil: null,
+      bookingStartFrom: null,
+      bookingStartUntil: null,
+      assignments: [],
+    });
+    (mockedPrisma.season.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    mockedCalcPrice.mockReturnValueOnce({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [5000] }],
+    });
+    const { validateAndCalculatePromoDiscount } = await import("@/lib/promo");
+    vi.mocked(validateAndCalculatePromoDiscount).mockResolvedValueOnce({
+      discount: {
+        discountCents: 0,
+        priceAdjustmentCents: 2000,
+        freeNightsUsed: 0,
+        eligibleGuestCount: 1,
+        allocations: [
+          { memberId: "m1", discountCents: 0, priceAdjustmentCents: 2000, freeNightsUsed: 0 },
+        ],
+      },
+      beneficiaryMemberIds: ["m1"],
+    });
+
+    const req = new NextRequest("http://localhost/api/promo-codes/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        code: "SET30",
+        checkIn,
+        checkOut,
+        guests: [{ ageTier: "ADULT", isMember: true, memberId: "m1" }],
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const response = await postPromoValidate(req);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual(expect.objectContaining({
+      valid: true,
+      code: "SET30",
+      type: "FIXED_NIGHTLY_PRICE",
+      discountCents: 0,
+      promoAdjustmentCents: 2000,
+      totalPriceCents: 5000,
+      finalPriceCents: 7000,
+    }));
   });
 });

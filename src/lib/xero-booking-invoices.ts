@@ -205,8 +205,9 @@ export async function createXeroInvoiceForBooking(
     bookingSeasonType,
   );
 
-  // Add discount line if applicable
-  if (booking.discountCents > 0) {
+  // Add signed promo adjustment line if applicable. Negative values behave
+  // like discounts; positive values are extra revenue.
+  if (booking.promoAdjustmentCents !== 0) {
     const promo = booking.promoRedemption?.promoCode ?? null;
     const firstGuest = booking.guests[0];
 
@@ -221,9 +222,9 @@ export async function createXeroInvoiceForBooking(
       promo?.xeroAccountCode != null || hutFeeMapping.codeExplicitlyConfigured;
 
     const discountLineItem: LineItem = {
-      description: promo ? `Discount - ${promo.code}` : "Discount",
+      description: promo ? `Promo adjustment - ${promo.code}` : "Promo adjustment",
       quantity: 1,
-      unitAmount: -(booking.discountCents / 100),
+      unitAmount: booking.promoAdjustmentCents / 100,
       taxType: "OUTPUT2",
     };
     if (discountItemCode) {
@@ -457,7 +458,13 @@ function mergeBookingInvoiceLineItemDescriptions(
     const nextLineItem = copyMutableLineItemFields(existingLineItem);
     const description = existingLineItem.description ?? "";
 
-    if (description.trim().toLowerCase() === "discount") {
+    const normalizedDescription = description.trim().toLowerCase();
+    if (
+      normalizedDescription === "discount" ||
+      normalizedDescription.startsWith("discount -") ||
+      normalizedDescription === "promo adjustment" ||
+      normalizedDescription.startsWith("promo adjustment -")
+    ) {
       return nextLineItem;
     }
 

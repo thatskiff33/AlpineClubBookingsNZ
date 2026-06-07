@@ -39,7 +39,7 @@ export async function POST(
 
       const booking = await tx.booking.findUnique({
         where: { id: bookingId },
-        include: { guests: true, member: true },
+        include: { guests: true, member: true, promoRedemption: { include: { promoCode: true } } },
       });
 
       if (!booking) {
@@ -164,6 +164,13 @@ export async function POST(
         booking.checkOut,
         booking.guests.length,
         booking.finalPriceCents,
+        booking.promoRedemption?.promoCode
+          ? {
+              discountCents: booking.discountCents,
+              promoAdjustmentCents: booking.promoAdjustmentCents,
+              promoCode: booking.promoRedemption.promoCode.code,
+            }
+          : undefined,
       ).catch((err) => logger.error({ err, bookingId }, "Failed to send confirmation after force-confirm"));
     }
 

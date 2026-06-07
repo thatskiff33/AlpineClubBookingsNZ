@@ -219,6 +219,7 @@ export default async function BookingDetailPage({
     viewerRole: session.user.role,
     totalPriceCents: booking.totalPriceCents,
     discountCents: booking.discountCents,
+    promoAdjustmentCents: booking.promoAdjustmentCents,
     finalPriceCents: booking.finalPriceCents,
     promo: booking.promoRedemption?.promoCode
       ? {

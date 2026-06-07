@@ -21,6 +21,7 @@ import {
   AdminReviewStatus,
   AgeTier,
   BookingStatus,
+  type FixedNightlyMode,
   PromoCodeType,
   type Booking,
   type BookingGuest,
@@ -38,6 +39,7 @@ import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
   redeemPromoCode,
+  shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
   type PromoBeneficiaryAllocation,
 } from "@/lib/promo";
@@ -206,9 +208,11 @@ function resolveAdminReviewFields(args: {
 
 interface ResolvedPromo {
   discountCents: number;
+  promoAdjustmentCents: number;
   promoFreeNightsUsed: number;
   promoEligibleGuestCount: number;
   promoAllocations: PromoBeneficiaryAllocation[];
+  promoShouldPersist: boolean;
   promoCodeRecord:
     | {
         id: string;
@@ -217,6 +221,8 @@ interface ResolvedPromo {
         percentOff: number | null;
         freeNightsPerIndividual: number | null;
         lifetimeFreeNightsCap: number | null;
+        fixedNightlyPriceCents: number | null;
+        fixedNightlyMode: FixedNightlyMode | null;
         maxGuestsPerBooking: number | null;
         maxNightlyValueCents: number | null;
         memberGuestsOnly: boolean;
@@ -242,6 +248,8 @@ type LockedPromoRow = {
   percentOff: number | null;
   freeNightsPerIndividual: number | null;
   lifetimeFreeNightsCap: number | null;
+  fixedNightlyPriceCents: number | null;
+  fixedNightlyMode: FixedNightlyMode | null;
   maxGuestsPerBooking: number | null;
   maxNightlyValueCents: number | null;
   code: string;
@@ -305,9 +313,11 @@ async function resolvePromoInTransaction(
 
   return {
     discountCents: promoResult.discountCents,
+    promoAdjustmentCents: promoResult.priceAdjustmentCents,
     promoFreeNightsUsed: promoResult.freeNightsUsed,
     promoEligibleGuestCount: promoResult.eligibleGuestCount,
     promoAllocations: promoResult.allocations,
+    promoShouldPersist: shouldPersistPromoRedemption(promoResult),
     promoCodeRecord: promoCode,
   };
 }
@@ -374,9 +384,11 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     const price = priceBookingGuests({ checkIn, checkOut, guests: guestInputs, seasons: seasonData, groupDiscount });
 
     let discountCents = 0;
+    let promoAdjustmentCents = 0;
     let promoFreeNightsUsed = 0;
     let promoEligibleGuestCount = 0;
     let promoAllocations: PromoBeneficiaryAllocation[] = [];
+    let promoShouldPersist = false;
     let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
     if (promoCodeStr) {
       const resolved = await resolvePromoInTransaction(tx, {
@@ -388,13 +400,15 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
       });
       discountCents = resolved.discountCents;
+      promoAdjustmentCents = resolved.promoAdjustmentCents;
       promoFreeNightsUsed = resolved.promoFreeNightsUsed;
       promoEligibleGuestCount = resolved.promoEligibleGuestCount;
       promoAllocations = resolved.promoAllocations;
+      promoShouldPersist = resolved.promoShouldPersist;
       promoCodeRecord = resolved.promoCodeRecord;
     }
 
-    const finalPriceCents = price.totalPriceCents - discountCents;
+    const finalPriceCents = price.totalPriceCents + promoAdjustmentCents;
     const hasNonMembers = guests.some((g) => !g.isMember);
 
     const createdBooking = await tx.booking.create({
@@ -405,6 +419,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         status: draftStatus,
         totalPriceCents: price.totalPriceCents,
         discountCents,
+        promoAdjustmentCents,
         finalPriceCents,
         hasNonMembers,
         nonMemberHoldUntil: null,
@@ -424,13 +439,14 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       include: { guests: true },
     });
 
-    if (promoCodeRecord && discountCents > 0) {
+    if (promoCodeRecord && promoShouldPersist) {
       await redeemPromoCode(
         tx,
         promoCodeRecord.id,
         createdBooking.id,
         effectiveMemberId,
         discountCents,
+        promoAdjustmentCents,
         promoFreeNightsUsed || undefined,
         promoEligibleGuestCount || undefined,
         promoAllocations,
@@ -588,9 +604,11 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       const price = priceBookingGuests({ checkIn, checkOut, guests: guestInputs, seasons: seasonData, groupDiscount });
 
       let discountCents = 0;
+      let promoAdjustmentCents = 0;
       let promoFreeNightsUsed = 0;
       let promoEligibleGuestCount = 0;
       let promoAllocations: PromoBeneficiaryAllocation[] = [];
+      let promoShouldPersist = false;
       let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
       if (promoCodeStr) {
         const resolved = await resolvePromoInTransaction(tx, {
@@ -602,13 +620,15 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           perNightCentsByGuest: price.guests.map((g) => g.perNightCents),
         });
         discountCents = resolved.discountCents;
+        promoAdjustmentCents = resolved.promoAdjustmentCents;
         promoFreeNightsUsed = resolved.promoFreeNightsUsed;
         promoEligibleGuestCount = resolved.promoEligibleGuestCount;
         promoAllocations = resolved.promoAllocations;
+        promoShouldPersist = resolved.promoShouldPersist;
         promoCodeRecord = resolved.promoCodeRecord;
       }
 
-      const finalPriceCents = price.totalPriceCents - discountCents;
+      const finalPriceCents = price.totalPriceCents + promoAdjustmentCents;
       // Credit is only applied at payment time. For a booking heading to
       // AWAITING_REVIEW, defer credit application until the admin approves
       // and the member completes payment.
@@ -650,6 +670,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           status: effectiveStatus,
           totalPriceCents: price.totalPriceCents,
           discountCents,
+          promoAdjustmentCents,
           finalPriceCents,
           hasNonMembers,
           nonMemberHoldUntil,
@@ -668,13 +689,14 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         include: { guests: true },
       });
 
-      if (promoCodeRecord && discountCents > 0) {
+      if (promoCodeRecord && promoShouldPersist) {
         await redeemPromoCode(
           tx,
           promoCodeRecord.id,
           newBooking.id,
           effectiveMemberId,
           discountCents,
+          promoAdjustmentCents,
           promoFreeNightsUsed || undefined,
           promoEligibleGuestCount || undefined,
           promoAllocations,
@@ -809,8 +831,12 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           fullBooking.checkOut,
           fullBooking.guests.length,
           fullBooking.finalPriceCents,
-          fullBooking.discountCents > 0
-            ? { discountCents: fullBooking.discountCents, promoCode: fullBooking.promoRedemption?.promoCode?.code }
+          fullBooking.promoRedemption?.promoCode
+            ? {
+                discountCents: fullBooking.discountCents,
+                promoAdjustmentCents: fullBooking.promoAdjustmentCents,
+                promoCode: fullBooking.promoRedemption.promoCode.code,
+              }
             : undefined,
         ).catch((err) => logger.error({ err, bookingId: booking.id }, "Failed to send confirmation email for $0 booking"));
 
@@ -903,9 +929,11 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
   const price = priceBookingGuests({ checkIn, checkOut, guests: guestInputs, seasons: seasonData, groupDiscount });
 
   let discountCents = 0;
+  let promoAdjustmentCents = 0;
   let promoFreeNightsUsed = 0;
   let promoEligibleGuestCount = 0;
   let promoAllocations: PromoBeneficiaryAllocation[] = [];
+  let promoShouldPersist = false;
   let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
 
   if (promoCodeStr) {
@@ -938,13 +966,15 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     }
     const promoResult = application.discount;
     discountCents = promoResult.discountCents;
+    promoAdjustmentCents = promoResult.priceAdjustmentCents;
     promoFreeNightsUsed = promoResult.freeNightsUsed;
     promoEligibleGuestCount = promoResult.eligibleGuestCount;
     promoAllocations = promoResult.allocations;
+    promoShouldPersist = shouldPersistPromoRedemption(promoResult);
     promoCodeRecord = promoCode;
   }
 
-  const finalPriceCents = price.totalPriceCents - discountCents;
+  const finalPriceCents = price.totalPriceCents + promoAdjustmentCents;
   const hasNonMembers = guests.some((g) => !g.isMember);
 
   const { newBooking, position } = await prisma.$transaction(async (tx) => {
@@ -958,6 +988,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         status: BookingStatus.WAITLISTED,
         totalPriceCents: price.totalPriceCents,
         discountCents,
+        promoAdjustmentCents,
         finalPriceCents,
         hasNonMembers,
         nonMemberHoldUntil: null,
@@ -976,13 +1007,14 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       include: { guests: true },
     });
 
-    if (promoCodeRecord && discountCents > 0) {
+    if (promoCodeRecord && promoShouldPersist) {
       await redeemPromoCode(
         tx,
         promoCodeRecord.id,
         createdBooking.id,
         effectiveMemberId,
         discountCents,
+        promoAdjustmentCents,
         promoFreeNightsUsed || undefined,
         promoEligibleGuestCount || undefined,
         promoAllocations,

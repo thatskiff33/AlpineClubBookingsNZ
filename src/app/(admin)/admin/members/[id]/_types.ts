@@ -73,11 +73,13 @@ export interface MemberPromoCode {
   id: string
   code: string
   description: string | null
-  type: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS"
+  type: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS" | "FIXED_NIGHTLY_PRICE"
   percentOff: number | null
   valueCents: number | null
   freeNightsPerIndividual: number | null
   lifetimeFreeNightsCap: number | null
+  fixedNightlyPriceCents: number | null
+  fixedNightlyMode: "SET_PRICE" | "CAP_ONLY" | null
   assignedAt: string | null
   active: boolean
   archivedAt: string | null

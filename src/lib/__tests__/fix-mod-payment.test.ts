@@ -105,10 +105,11 @@ vi.mock("@/lib/cancellation", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
-    discount: { discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   }),
-  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] }),
+  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] }),
+  shouldPersistPromoRedemption: vi.fn().mockReturnValue(true),
   redeemPromoCode: vi.fn(),
   replacePromoRedemptionAllocations: vi.fn(),
   deletePromoRedemptionAndAdjustCount: vi.fn(),

@@ -465,8 +465,14 @@ export async function sendBookingConfirmedEmail(
   checkOut: Date,
   guestCount: number,
   totalCents: number,
-  options?: { discountCents?: number; promoCode?: string }
+  options?: { discountCents?: number; promoAdjustmentCents?: number; promoCode?: string }
 ) {
+  const promoAdjustmentCents =
+    options?.promoAdjustmentCents ??
+    (options?.discountCents && options.discountCents > 0
+      ? -options.discountCents
+      : 0);
+  const promoAdjustmentPrefix = promoAdjustmentCents > 0 ? "+" : "-";
   await sendEmail({
     to: email,
     subject: `Booking Confirmed - ${CLUB_LODGE_NAME}`,
@@ -477,11 +483,16 @@ export async function sendBookingConfirmedEmail(
       checkIn: formatNZDate(checkIn),
       checkOut: formatNZDate(checkOut),
       guestCount,
-      subtotal: options?.discountCents
-        ? formatMoneyCents(totalCents + options.discountCents)
+      subtotal: promoAdjustmentCents !== 0
+        ? formatMoneyCents(totalCents - promoAdjustmentCents)
         : "",
       promoCode: options?.promoCode ?? "",
-      discount: options?.discountCents ? formatMoneyCents(options.discountCents) : "",
+      discount: promoAdjustmentCents < 0
+        ? formatMoneyCents(Math.abs(promoAdjustmentCents))
+        : "",
+      promoAdjustment: promoAdjustmentCents !== 0
+        ? `${promoAdjustmentPrefix}${formatMoneyCents(Math.abs(promoAdjustmentCents))}`
+        : "",
       totalPaid: formatMoneyCents(totalCents),
       total: formatMoneyCents(totalCents),
     },

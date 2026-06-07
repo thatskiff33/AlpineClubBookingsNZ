@@ -13,7 +13,7 @@ const mockFindMany = vi.fn();
 const mockMemberCount = vi.fn();
 const mockValidateAndCalculatePromoDiscount = vi.hoisted(() =>
   vi.fn().mockResolvedValue({
-    discount: { discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   })
 );
@@ -79,7 +79,8 @@ vi.mock("@/lib/cancellation", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn(),
   validateAndCalculatePromoDiscount: mockValidateAndCalculatePromoDiscount,
-  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] }),
+  calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({ discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] }),
+  shouldPersistPromoRedemption: vi.fn().mockReturnValue(true),
   redeemPromoCode: vi.fn(),
   replacePromoRedemptionAllocations: vi.fn(),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
@@ -147,6 +148,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     status: "CONFIRMED",
     totalPriceCents: 10000,
     discountCents: 0,
+    promoAdjustmentCents: 0,
     finalPriceCents: 10000,
     hasNonMembers: false,
     nonMemberHoldUntil: null,

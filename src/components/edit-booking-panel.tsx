@@ -47,6 +47,7 @@ interface BookingData {
   finalPriceCents: number;
   totalPriceCents: number;
   discountCents: number;
+  promoAdjustmentCents: number;
   promo: PromoInfo | null;
   editPolicy: {
     mode: "future" | "in-progress" | null;
@@ -73,6 +74,7 @@ interface ItemizedChange {
 interface QuoteResult {
   newTotalPriceCents: number;
   newDiscountCents: number;
+  newPromoAdjustmentCents: number;
   newFinalPriceCents: number;
   priceDiffCents: number;
   changeFeeCents: number;
@@ -84,6 +86,7 @@ interface QuoteResult {
     error?: string;
     code?: string;
     discountCents?: number;
+    promoAdjustmentCents?: number;
   } | null;
   itemizedChanges: ItemizedChange[];
   nightDetails?: { date: string; availableBeds: number }[];
@@ -95,6 +98,11 @@ function previousDateOnly(dateString: string | null) {
   if (Number.isNaN(date.getTime())) return null;
   date.setUTCDate(date.getUTCDate() - 1);
   return date.toISOString().slice(0, 10);
+}
+
+function formatSignedCents(cents: number) {
+  const prefix = cents > 0 ? "+" : "-";
+  return `${prefix}${formatCents(Math.abs(cents))}`;
 }
 
 export function EditBookingPanel({
@@ -643,8 +651,8 @@ export function EditBookingPanel({
                 {booking.promo.description && (
                   <span className="text-sm text-gray-500 ml-2">{booking.promo.description}</span>
                 )}
-                <span className="text-sm text-green-600 ml-2">
-                  (-{formatCents(booking.discountCents)})
+                <span className={`text-sm ml-2 ${booking.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
+                  ({formatSignedCents(booking.promoAdjustmentCents)})
                 </span>
               </div>
               <Button
@@ -678,9 +686,9 @@ export function EditBookingPanel({
             <div className="flex items-center justify-between">
               <div>
                 <span className="font-medium text-green-700">{promoAction.code.toUpperCase()}</span>
-                {quote?.promoValidation?.valid && quote.promoValidation.discountCents && (
-                  <span className="text-sm text-green-600 ml-2">
-                    (-{formatCents(quote.promoValidation.discountCents)})
+                {quote?.promoValidation?.valid && quote.promoValidation.promoAdjustmentCents !== undefined && (
+                  <span className={`text-sm ml-2 ${(quote.promoValidation.promoAdjustmentCents ?? 0) > 0 ? "text-orange-700" : "text-green-600"}`}>
+                    ({formatSignedCents(quote.promoValidation.promoAdjustmentCents ?? 0)})
                   </span>
                 )}
                 {quote?.promoValidation && !quote.promoValidation.valid && (

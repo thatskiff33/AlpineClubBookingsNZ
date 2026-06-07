@@ -116,9 +116,10 @@ vi.mock("@/lib/bumping", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn(),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
-    discount: { discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   }),
+  shouldPersistPromoRedemption: vi.fn().mockReturnValue(true),
   redeemPromoCode: vi.fn().mockResolvedValue(undefined),
   replacePromoRedemptionAllocations: vi.fn(),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
@@ -226,6 +227,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       status: "PAYMENT_PENDING",
       totalPriceCents: 10000,
       discountCents: 10000,
+      promoAdjustmentCents: -10000,
       finalPriceCents: 0,
       hasNonMembers: false,
       nonMemberHoldUntil: null,
@@ -243,6 +245,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       checkOut: new Date(dayAfterTomorrow),
       finalPriceCents: 0,
       discountCents: 10000,
+      promoAdjustmentCents: -10000,
       promoRedemption: { promoCode: { code: "FREE100" } },
     });
     // Pricing returns $0 (e.g. 100% promo applied by calculateBookingPrice + promo reduction)
@@ -346,6 +349,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       status: "PENDING",
       totalPriceCents: 0,
       discountCents: 0,
+      promoAdjustmentCents: 0,
       finalPriceCents: 0,
       hasNonMembers: true,
       nonMemberHoldUntil: new Date(new Date(farFuture).getTime() - 7 * 86400000),
@@ -389,6 +393,7 @@ describe("Booking Creation Route: zero-dollar handling", () => {
       status: "PAYMENT_PENDING",
       totalPriceCents: 10000,
       discountCents: 0,
+      promoAdjustmentCents: 0,
       finalPriceCents: 10000,
       hasNonMembers: false,
       nonMemberHoldUntil: null,
@@ -426,6 +431,7 @@ describe("Cron Confirm Pending: zero-dollar handling", () => {
       status: "PENDING",
       finalPriceCents: 0,
       discountCents: 10000,
+      promoAdjustmentCents: -10000,
       nonMemberHoldUntil: new Date("2026-08-08"),
       hasNonMembers: true,
       promoRedemption: { promoCode: { code: "FREE100" } },
@@ -528,7 +534,7 @@ describe("Cron Confirm Pending: zero-dollar handling", () => {
       booking.checkOut,
       2,
       0,
-      { discountCents: 10000, promoCode: "FREE100" }
+      { discountCents: 10000, promoAdjustmentCents: -10000, promoCode: "FREE100" }
     );
   });
 

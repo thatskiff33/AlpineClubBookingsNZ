@@ -149,7 +149,7 @@ export async function removeBookingGuestInTransaction({
     newTotalPriceCents,
     guestNightRates,
   });
-  const newFinalPriceCents = newTotalPriceCents - promoResult.newDiscountCents;
+  const newFinalPriceCents = newTotalPriceCents + promoResult.newPromoAdjustmentCents;
   const priceDiffCents = newFinalPriceCents - booking.finalPriceCents;
   const requiresAdminReview = requiresAdultSupervisionReview(remainingGuests);
   const adminReviewReason = requiresAdminReview
@@ -183,6 +183,7 @@ export async function removeBookingGuestInTransaction({
     data: {
       totalPriceCents: newTotalPriceCents,
       discountCents: promoResult.newDiscountCents,
+      promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
       finalPriceCents: newFinalPriceCents,
       hasNonMembers,
       nonMemberHoldUntil: hasNonMembers ? booking.nonMemberHoldUntil : null,
@@ -206,11 +207,15 @@ export async function removeBookingGuestInTransaction({
           isMember: guestToRemove.isMember,
         },
         totalPriceCents: booking.totalPriceCents,
+        discountCents: booking.discountCents,
+        promoAdjustmentCents: booking.promoAdjustmentCents,
         finalPriceCents: booking.finalPriceCents,
       },
       newData: {
         guestCount: updatedBooking.guests.length,
         totalPriceCents: newTotalPriceCents,
+        discountCents: promoResult.newDiscountCents,
+        promoAdjustmentCents: promoResult.newPromoAdjustmentCents,
         finalPriceCents: newFinalPriceCents,
       },
       priceDiffCents,
@@ -308,6 +313,7 @@ async function recalculateBookingPromo({
   }>;
 }) {
   let newDiscountCents = 0;
+  let newPromoAdjustmentCents = 0;
   let promoRemoved = false;
 
   if (booking.promoRedemption?.promoCode) {
@@ -332,11 +338,13 @@ async function recalculateBookingPromo({
     } else {
       const discount = application.discount;
       newDiscountCents = discount.discountCents;
+      newPromoAdjustmentCents = discount.priceAdjustmentCents;
 
       await replacePromoRedemptionAllocations(
         tx,
         booking.promoRedemption,
         newDiscountCents,
+        newPromoAdjustmentCents,
         discount.freeNightsUsed,
         discount.eligibleGuestCount,
         discount.allocations,
@@ -344,5 +352,5 @@ async function recalculateBookingPromo({
     }
   }
 
-  return { newDiscountCents, promoRemoved };
+  return { newDiscountCents, newPromoAdjustmentCents, promoRemoved };
 }

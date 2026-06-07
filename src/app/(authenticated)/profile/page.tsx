@@ -37,6 +37,8 @@ function singleSearchParam(value?: string | string[]) {
 }
 
 function formatPromoBenefit(promo: {
+  fixedNightlyMode: string | null;
+  fixedNightlyPriceCents: number | null;
   freeNightsPerIndividual: number | null;
   lifetimeFreeNightsCap: number | null;
   percentOff: number | null;
@@ -64,6 +66,16 @@ function formatPromoBenefit(promo: {
       return `${perBooking} · ${promo.lifetimeFreeNightsCap} lifetime`;
     }
     return perBooking;
+  }
+
+  if (promo.type === "FIXED_NIGHTLY_PRICE") {
+    if (promo.fixedNightlyPriceCents === null) {
+      return "Fixed nightly price";
+    }
+    const price = `${formatCents(promo.fixedNightlyPriceCents)} per eligible night`;
+    return promo.fixedNightlyMode === "SET_PRICE"
+      ? `${price} · set price`
+      : `${price} · cap only`;
   }
 
   return promo.type.replaceAll("_", " ").toLowerCase();

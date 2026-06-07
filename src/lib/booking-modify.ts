@@ -46,6 +46,7 @@ import {
   deletePromoRedemptionAndAdjustCount,
   redeemPromoCode,
   replacePromoRedemptionAllocations,
+  shouldPersistPromoRedemption,
   validateAndCalculatePromoDiscount,
 } from "@/lib/promo";
 import { findUnpaidMemberGuestNames } from "@/lib/booking-member-guest-subscriptions";
@@ -517,6 +518,7 @@ export async function calculateModifiedPricing(
         checkOut: booking.checkOut,
         totalPriceCents: booking.totalPriceCents,
         discountCents: booking.discountCents,
+        promoAdjustmentCents: booking.promoAdjustmentCents,
         finalPriceCents: booking.finalPriceCents,
         guests: booking.guests.map((guest) => ({
           ...guest,
@@ -594,6 +596,7 @@ export async function calculateModifiedPricing(
 
 export type PromoChangeResult = {
   newDiscountCents: number;
+  newPromoAdjustmentCents: number;
   promoRemoved: boolean;
   promoChanged: boolean;
 };
@@ -623,12 +626,14 @@ export async function applyPromoCodeChanges(
   if (inProgressPlan) {
     return {
       newDiscountCents: inProgressPlan.newDiscountCents,
+      newPromoAdjustmentCents: inProgressPlan.newPromoAdjustmentCents,
       promoRemoved: false,
       promoChanged: false,
     };
   }
 
   let newDiscountCents = 0;
+  let newPromoAdjustmentCents = 0;
   let promoRemoved = false;
   let promoChanged = false;
 
@@ -670,14 +675,16 @@ export async function applyPromoCodeChanges(
 
     const promoResult = application.discount;
     newDiscountCents = promoResult.discountCents;
+    newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
 
-    if (newDiscountCents > 0) {
+    if (shouldPersistPromoRedemption(promoResult)) {
       await redeemPromoCode(
         tx,
         promoCode.id,
         bookingId,
         booking.memberId,
         newDiscountCents,
+        newPromoAdjustmentCents,
         promoResult.freeNightsUsed,
         promoResult.eligibleGuestCount,
         promoResult.allocations,
@@ -710,11 +717,13 @@ export async function applyPromoCodeChanges(
     } else {
       const promoResult = application.discount;
       newDiscountCents = promoResult.discountCents;
+      newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
 
       await replacePromoRedemptionAllocations(
         tx,
         booking.promoRedemption,
         newDiscountCents,
+        newPromoAdjustmentCents,
         promoResult.freeNightsUsed,
         promoResult.eligibleGuestCount,
         promoResult.allocations,
@@ -722,7 +731,7 @@ export async function applyPromoCodeChanges(
     }
   }
 
-  return { newDiscountCents, promoRemoved, promoChanged };
+  return { newDiscountCents, newPromoAdjustmentCents, promoRemoved, promoChanged };
 }
 
 export async function calculateModificationChangeFee({

@@ -322,6 +322,7 @@ export async function POST(
             checkOut: booking.checkOut,
             totalPriceCents: booking.totalPriceCents,
             discountCents: booking.discountCents,
+            promoAdjustmentCents: booking.promoAdjustmentCents,
             finalPriceCents: booking.finalPriceCents,
             guests: booking.guests.map((guest) => ({
               ...guest,
@@ -516,12 +517,14 @@ export async function POST(
 
   // 5. Promo code handling
   let newDiscountCents = 0;
+  let newPromoAdjustmentCents = 0;
   let promoStillValid = true;
   let promoValidation: {
     valid: boolean;
     error?: string;
     code?: string;
     discountCents?: number;
+    promoAdjustmentCents?: number;
   } | null = null;
 
   // Helper: get per-night rates per guest for promo calculation
@@ -551,9 +554,11 @@ export async function POST(
 
   if (inProgressPlan) {
     newDiscountCents = inProgressPlan.newDiscountCents;
+    newPromoAdjustmentCents = inProgressPlan.newPromoAdjustmentCents;
   } else if (removePromoCode) {
     // User wants to remove existing promo (for reuse later)
     newDiscountCents = 0;
+    newPromoAdjustmentCents = 0;
     promoValidation = null;
   } else if (newPromoCode) {
     // User wants to apply a new promo code
@@ -565,10 +570,12 @@ export async function POST(
 
     if (validation.valid) {
       newDiscountCents = validation.discountCents ?? 0;
+      newPromoAdjustmentCents = validation.promoAdjustmentCents ?? 0;
       promoValidation = {
         valid: true,
         code: validation.promoCode?.code,
         discountCents: validation.discountCents ?? 0,
+        promoAdjustmentCents: validation.promoAdjustmentCents ?? 0,
       };
     } else {
       promoValidation = {
@@ -599,11 +606,12 @@ export async function POST(
     } else {
       const promoResult = application.discount;
       newDiscountCents = promoResult.discountCents;
+      newPromoAdjustmentCents = promoResult.priceAdjustmentCents;
     }
   }
 
   // Add promo line item
-  if (newDiscountCents > 0) {
+  if (newPromoAdjustmentCents !== 0) {
     const promoLabel = newPromoCode
       ? `Promo '${newPromoCode.toUpperCase()}'`
       : booking.promoRedemption?.promoCode
@@ -611,21 +619,21 @@ export async function POST(
         : "Promo discount";
     itemizedChanges.push({
       label: promoLabel,
-      amountCents: -newDiscountCents,
+      amountCents: newPromoAdjustmentCents,
     });
   }
 
-  // Show removed promo as a charge (loss of discount)
-  if (removePromoCode && booking.discountCents > 0) {
+  // Show removed promo as the inverse of its previous signed adjustment.
+  if (removePromoCode && booking.promoAdjustmentCents !== 0) {
     itemizedChanges.push({
-      label: `Removed promo '${booking.promoRedemption?.promoCode?.code || "discount"}'`,
-      amountCents: booking.discountCents,
+      label: `Removed promo '${booking.promoRedemption?.promoCode?.code || "adjustment"}'`,
+      amountCents: -booking.promoAdjustmentCents,
     });
   }
 
   const newFinalPriceCents = inProgressPlan
     ? inProgressPlan.newFinalPriceCents
-    : newTotalPriceCents - newDiscountCents;
+    : newTotalPriceCents + newPromoAdjustmentCents;
   const priceDiffCents = inProgressPlan
     ? inProgressPlan.priceDiffCents
     : newFinalPriceCents - booking.finalPriceCents;
@@ -634,6 +642,7 @@ export async function POST(
   return NextResponse.json({
     newTotalPriceCents,
     newDiscountCents,
+    newPromoAdjustmentCents,
     newFinalPriceCents,
     priceDiffCents,
     changeFeeCents,

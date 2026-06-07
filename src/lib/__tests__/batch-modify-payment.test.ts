@@ -15,6 +15,8 @@ const mockValidateAndCalculatePromoDiscount = vi.fn(async () => {
   return {
     discount: {
       discountCents: discount?.discountCents ?? 0,
+      priceAdjustmentCents:
+        discount?.priceAdjustmentCents ?? -(discount?.discountCents ?? 0),
       freeNightsUsed: discount?.freeNightsUsed ?? 0,
       eligibleGuestCount: discount?.eligibleGuestCount ?? 0,
       allocations: discount?.allocations ?? [],
@@ -96,6 +98,7 @@ vi.mock("@/lib/promo", () => ({
   calculatePromoDiscountForGuestRates: mockCalculatePromoDiscountForGuestRates,
   validateAndCalculatePromoDiscount: mockValidateAndCalculatePromoDiscount,
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
+  shouldPersistPromoRedemption: vi.fn().mockReturnValue(true),
   redeemPromoCode: vi.fn(),
   replacePromoRedemptionAllocations: vi.fn(),
   deletePromoRedemptionAndAdjustCount: vi.fn(),
@@ -192,6 +195,7 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
     status: "PAID",
     totalPriceCents: 5000,
     discountCents: 0,
+    promoAdjustmentCents: 0,
     finalPriceCents: 5000,
     hasNonMembers: false,
     nonMemberHoldUntil: null,
@@ -362,7 +366,11 @@ describe("PUT /api/bookings/[id]/modify", () => {
       totalRefundedAmountCents: 0,
     });
     mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
-    mockCalculatePromoDiscountForGuestRates.mockReturnValue({ discountCents: 0, freeNightsUsed: 0 });
+    mockCalculatePromoDiscountForGuestRates.mockReturnValue({
+      discountCents: 0,
+      priceAdjustmentCents: 0,
+      freeNightsUsed: 0,
+    });
     mockAssertLinkedBookingMembersCanBeBooked.mockResolvedValue(undefined);
     mockGetBookingGuestValidationErrorResponse.mockImplementation((error: { message: string }) => ({
       error: error.message,

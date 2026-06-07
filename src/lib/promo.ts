@@ -1,4 +1,4 @@
-import { Prisma, PromoCodeType } from "@prisma/client";
+import { Prisma, PromoCodeType, type FixedNightlyMode } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   calculatePromoDiscount,
@@ -24,11 +24,14 @@ export interface PromoValidationResult {
     percentOff: number | null;
     freeNightsPerIndividual: number | null;
     lifetimeFreeNightsCap: number | null;
+    fixedNightlyPriceCents: number | null;
+    fixedNightlyMode: FixedNightlyMode | null;
     maxGuestsPerBooking: number | null;
     maxNightlyValueCents: number | null;
     memberGuestsOnly: boolean;
   };
   discountCents?: number;
+  promoAdjustmentCents?: number;
   freeNightsUsed?: number;
   eligibleGuestCount?: number;
   remainingFreeNights?: number;
@@ -38,6 +41,7 @@ export interface PromoValidationResult {
 export interface PromoBeneficiaryAllocation {
   memberId: string;
   discountCents: number;
+  priceAdjustmentCents: number;
   freeNightsUsed: number;
 }
 
@@ -49,6 +53,8 @@ export interface AvailablePromoCode {
   valueCents: number | null;
   freeNightsPerIndividual: number | null;
   lifetimeFreeNightsCap: number | null;
+  fixedNightlyPriceCents: number | null;
+  fixedNightlyMode: FixedNightlyMode | null;
 }
 
 export interface AssignedPromoCodeSummary extends AvailablePromoCode {
@@ -84,6 +90,8 @@ export interface PromoApplicationSubject extends PromoRuleSubject {
   percentOff: number | null;
   freeNightsPerIndividual: number | null;
   lifetimeFreeNightsCap: number | null;
+  fixedNightlyPriceCents: number | null;
+  fixedNightlyMode: FixedNightlyMode | null;
   maxGuestsPerBooking: number | null;
   maxNightlyValueCents: number | null;
   memberGuestsOnly: boolean;
@@ -115,25 +123,32 @@ function normalizeAllocations(
   allocations: PromoDiscountAllocation[] | undefined,
   fallbackMemberId: string,
   discountCents: number,
-  freeNightsUsed: number
+  priceAdjustmentCents: number,
+  freeNightsUsed: number,
+  forceFallback = false
 ): PromoBeneficiaryAllocation[] {
-  const meaningfulAllocations = (allocations ?? []).filter(
-    (allocation) => allocation.discountCents > 0 || allocation.freeNightsUsed > 0
-  );
+  const meaningfulAllocations = allocations ?? [];
 
   if (meaningfulAllocations.length > 0) {
     return meaningfulAllocations.map((allocation) => ({
       memberId: allocation.memberId,
       discountCents: allocation.discountCents,
+      priceAdjustmentCents: allocation.priceAdjustmentCents,
       freeNightsUsed: allocation.freeNightsUsed,
     }));
   }
 
-  if (discountCents <= 0 && freeNightsUsed <= 0) return [];
+  if (
+    discountCents <= 0 &&
+    freeNightsUsed <= 0 &&
+    priceAdjustmentCents === 0 &&
+    !forceFallback
+  ) return [];
 
   return [{
     memberId: fallbackMemberId,
     discountCents,
+    priceAdjustmentCents,
     freeNightsUsed,
   }];
 }
@@ -177,9 +192,32 @@ export function calculatePromoDiscountForGuestRates(
       [],
       bookingMemberId,
       result.discountCents,
-      result.freeNightsUsed
+      result.priceAdjustmentCents,
+      result.freeNightsUsed,
+      result.eligibleGuestCount > 0
     ),
   };
+}
+
+function selectPromoBeneficiaryGuests(
+  promo: PromoCodeInput,
+  guests: PromoDiscountGuest[]
+) {
+  const selectedGuests = selectPromoDiscountGuests(promo, guests);
+  if (promo.type !== "FIXED_NIGHTLY_PRICE") {
+    return selectedGuests;
+  }
+
+  const fixedNightlyPriceCents = promo.fixedNightlyPriceCents ?? 0;
+  if (fixedNightlyPriceCents <= 0) return [];
+
+  if ((promo.fixedNightlyMode ?? "CAP_ONLY") === "CAP_ONLY") {
+    return selectedGuests.filter(({ guest }) =>
+      guest.perNightRates.some((rate) => rate > fixedNightlyPriceCents)
+    );
+  }
+
+  return selectedGuests.filter(({ guest }) => guest.perNightRates.length > 0);
 }
 
 export function getPromoBeneficiaryMemberIds(
@@ -189,7 +227,7 @@ export function getPromoBeneficiaryMemberIds(
   assignedMemberIds: string[] | null = null
 ): string[] {
   const scopedGuests = scopeGuestsForAssignedMembers(guests, assignedMemberIds);
-  const selectedGuests = selectPromoDiscountGuests(promo, scopedGuests);
+  const selectedGuests = selectPromoBeneficiaryGuests(promo, scopedGuests);
   if (selectedGuests.length === 0) return [];
 
   if (!hasAssignedMembers(assignedMemberIds)) {
@@ -201,6 +239,24 @@ export function getPromoBeneficiaryMemberIds(
       .map(({ guest }) => guest.memberId)
       .filter((memberId): memberId is string => Boolean(memberId))
   )];
+}
+
+export function shouldPersistPromoRedemption(result: PromoDiscountResult | null | undefined) {
+  return Boolean(
+    result &&
+      (result.allocations.length > 0 ||
+        result.discountCents > 0 ||
+        result.priceAdjustmentCents !== 0 ||
+        result.freeNightsUsed > 0 ||
+        result.eligibleGuestCount > 0)
+  );
+}
+
+export function formatSignedPromoAdjustmentCents(adjustmentCents: number) {
+  if (adjustmentCents === 0) return "$0.00";
+  const absolute = Math.abs(adjustmentCents);
+  const formatted = `$${(absolute / 100).toFixed(2)}`;
+  return adjustmentCents > 0 ? `+${formatted}` : `-${formatted}`;
 }
 
 /**
@@ -335,6 +391,8 @@ export async function getAvailablePromoCodesForMember(
       valueCents: promoCode.valueCents,
       freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
       lifetimeFreeNightsCap: promoCode.lifetimeFreeNightsCap,
+      fixedNightlyPriceCents: promoCode.fixedNightlyPriceCents,
+      fixedNightlyMode: promoCode.fixedNightlyMode,
     }));
 }
 
@@ -373,6 +431,8 @@ export async function getAssignedPromoCodeSummariesForMember(
       valueCents: promoCode.valueCents,
       freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
       lifetimeFreeNightsCap: promoCode.lifetimeFreeNightsCap,
+      fixedNightlyPriceCents: promoCode.fixedNightlyPriceCents,
+      fixedNightlyMode: promoCode.fixedNightlyMode,
       assignedAt: assignment.createdAt ?? null,
       active: promoCode.active,
       archivedAt: promoCode.archivedAt,
@@ -604,6 +664,8 @@ export async function validateAndCalculatePromoDiscount(
       valueCents: promoCode.valueCents,
       percentOff: promoCode.percentOff,
       freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
+      fixedNightlyPriceCents: promoCode.fixedNightlyPriceCents,
+      fixedNightlyMode: promoCode.fixedNightlyMode,
       maxGuestsPerBooking: promoCode.maxGuestsPerBooking,
       maxNightlyValueCents: promoCode.maxNightlyValueCents,
       memberGuestsOnly: promoCode.memberGuestsOnly,
@@ -739,6 +801,8 @@ export async function validateAndCalculatePromoDiscount(
       valueCents: promoCode.valueCents,
       percentOff: promoCode.percentOff,
       freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
+      fixedNightlyPriceCents: promoCode.fixedNightlyPriceCents,
+      fixedNightlyMode: promoCode.fixedNightlyMode,
       maxGuestsPerBooking: promoCode.maxGuestsPerBooking,
       maxNightlyValueCents: promoCode.maxNightlyValueCents,
       memberGuestsOnly: promoCode.memberGuestsOnly,
@@ -808,11 +872,14 @@ export async function validatePromoCodeFull(
       percentOff: promoCode.percentOff,
       freeNightsPerIndividual: promoCode.freeNightsPerIndividual,
       lifetimeFreeNightsCap: promoCode.lifetimeFreeNightsCap,
+      fixedNightlyPriceCents: promoCode.fixedNightlyPriceCents,
+      fixedNightlyMode: promoCode.fixedNightlyMode,
       maxGuestsPerBooking: promoCode.maxGuestsPerBooking,
       maxNightlyValueCents: promoCode.maxNightlyValueCents,
       memberGuestsOnly: promoCode.memberGuestsOnly,
     },
     discountCents: result.discountCents,
+    promoAdjustmentCents: result.priceAdjustmentCents,
     freeNightsUsed: result.freeNightsUsed,
     eligibleGuestCount: result.eligibleGuestCount,
     remainingFreeNights: application.remainingFreeNights,
@@ -830,6 +897,7 @@ export async function redeemPromoCode(
   bookingId: string,
   memberId: string,
   discountCents: number,
+  priceAdjustmentCents: number,
   freeNightsUsed?: number,
   eligibleGuestCount?: number,
   allocations?: PromoBeneficiaryAllocation[]
@@ -840,6 +908,7 @@ export async function redeemPromoCode(
       bookingId,
       memberId,
       discountCents,
+      priceAdjustmentCents,
       freeNightsUsed: freeNightsUsed ?? null,
       eligibleGuestCount: eligibleGuestCount ?? null,
     },
@@ -849,6 +918,7 @@ export async function redeemPromoCode(
     allocations,
     memberId,
     discountCents,
+    priceAdjustmentCents,
     freeNightsUsed ?? 0
   );
   await tx.promoRedemptionAllocation.deleteMany({
@@ -862,6 +932,7 @@ export async function redeemPromoCode(
         bookingId,
         memberId: allocation.memberId,
         discountCents: allocation.discountCents,
+        priceAdjustmentCents: allocation.priceAdjustmentCents,
         freeNightsUsed: allocation.freeNightsUsed,
       })),
     });
@@ -879,6 +950,7 @@ export async function replacePromoRedemptionAllocations(
   tx: PrismaTx,
   redemption: { id: string; promoCodeId: string; bookingId: string; memberId: string },
   discountCents: number,
+  priceAdjustmentCents: number,
   freeNightsUsed?: number,
   eligibleGuestCount?: number,
   allocations?: PromoBeneficiaryAllocation[]
@@ -890,6 +962,7 @@ export async function replacePromoRedemptionAllocations(
     where: { id: redemption.id },
     data: {
       discountCents,
+      priceAdjustmentCents,
       freeNightsUsed: freeNightsUsed || null,
       eligibleGuestCount: eligibleGuestCount || null,
     },
@@ -899,6 +972,7 @@ export async function replacePromoRedemptionAllocations(
     allocations,
     redemption.memberId,
     discountCents,
+    priceAdjustmentCents,
     freeNightsUsed ?? 0
   );
 
@@ -913,6 +987,7 @@ export async function replacePromoRedemptionAllocations(
         bookingId: redemption.bookingId,
         memberId: allocation.memberId,
         discountCents: allocation.discountCents,
+        priceAdjustmentCents: allocation.priceAdjustmentCents,
         freeNightsUsed: allocation.freeNightsUsed,
       })),
     });

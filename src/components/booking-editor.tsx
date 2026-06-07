@@ -44,6 +44,7 @@ export interface BookingEditorData {
   viewerRole: string;
   totalPriceCents: number;
   discountCents: number;
+  promoAdjustmentCents: number;
   finalPriceCents: number;
   promo: PromoInfo | null;
   hasNonMembers: boolean;
@@ -74,6 +75,7 @@ export function BookingEditor({
           finalPriceCents: booking.finalPriceCents,
           totalPriceCents: booking.totalPriceCents,
           discountCents: booking.discountCents,
+          promoAdjustmentCents: booking.promoAdjustmentCents,
           promo: booking.promo,
           editPolicy: booking.editPolicy,
         }}
@@ -186,15 +188,18 @@ export function BookingEditor({
             <span>Subtotal</span>
             <span>{formatCents(booking.totalPriceCents)}</span>
           </div>
-          {booking.discountCents > 0 && (
-            <div className="flex justify-between text-green-600">
+          {booking.promoAdjustmentCents !== 0 && (
+            <div className={`flex justify-between ${booking.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
               <span>
-                Discount
+                Promo adjustment
                 {booking.promo?.code && (
                   <span className="ml-1 text-xs">({booking.promo.code})</span>
                 )}
               </span>
-              <span>-{formatCents(booking.discountCents)}</span>
+              <span>
+                {booking.promoAdjustmentCents > 0 ? "+" : "-"}
+                {formatCents(Math.abs(booking.promoAdjustmentCents))}
+              </span>
             </div>
           )}
           <div className="flex justify-between border-t pt-2 font-bold">

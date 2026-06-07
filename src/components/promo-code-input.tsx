@@ -10,6 +10,7 @@ export interface PromoResult {
   description: string | null;
   type: string;
   discountCents: number;
+  promoAdjustmentCents: number;
   totalPriceCents: number;
   finalPriceCents: number;
 }
@@ -82,6 +83,7 @@ export function PromoCodeInput({
         description: data.description,
         type: data.type,
         discountCents: data.discountCents,
+        promoAdjustmentCents: data.promoAdjustmentCents,
         totalPriceCents: data.totalPriceCents,
         finalPriceCents: data.finalPriceCents,
       });
@@ -91,6 +93,12 @@ export function PromoCodeInput({
     } finally {
       setValidating(false);
     }
+  }
+
+  function formatSignedCents(cents: number) {
+    if (cents === 0) return "$0.00";
+    const prefix = cents > 0 ? "+$" : "-$";
+    return `${prefix}${(Math.abs(cents) / 100).toFixed(2)}`;
   }
 
   function handleRemove() {
@@ -114,7 +122,7 @@ export function PromoCodeInput({
               </span>
             )}
             <span className="text-green-700 ml-2">
-              (-${(appliedPromo.discountCents / 100).toFixed(2)})
+              ({formatSignedCents(appliedPromo.promoAdjustmentCents)})
             </span>
           </div>
           <Button

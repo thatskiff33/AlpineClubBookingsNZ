@@ -386,6 +386,7 @@ describe("createXeroInvoiceForBooking", () => {
         checkOut: "2026-08-02T00:00:00.000Z",
         createdAt: "2026-05-15T10:30:00.000Z",
         discountCents: 5000,
+        promoAdjustmentCents: -5000,
         guests: [
           {
             firstName: "Jordan",
@@ -407,7 +408,7 @@ describe("createXeroInvoiceForBooking", () => {
       };
     }
 
-    function getDiscountLine() {
+    function getPromoAdjustmentLine() {
       const call = mocks.xeroClientInstance.accountingApi.createInvoices.mock.calls[0];
       const lineItems = call[1].invoices[0].lineItems as Array<{
         description?: string;
@@ -415,32 +416,32 @@ describe("createXeroInvoiceForBooking", () => {
         accountCode?: string;
         unitAmount?: number;
       }>;
-      return lineItems.find((l) => l.description?.toLowerCase().startsWith("discount"));
+      return lineItems.find((l) => l.description?.toLowerCase().startsWith("promo adjustment"));
     }
 
-    it("posts the discount line to the promo's xeroItemCode when set", async () => {
+    it("posts the promo adjustment line to the promo's xeroItemCode when set", async () => {
       mocks.prisma.booking.findUnique.mockResolvedValue(
         bookingWithPromo({ code: "SUMMER25", xeroItemCode: "PROMO-DISC", xeroAccountCode: null })
       );
 
       await createXeroInvoiceForBooking("booking_1");
 
-      const discount = getDiscountLine();
+      const discount = getPromoAdjustmentLine();
       expect(discount).toBeDefined();
-      expect(discount?.description).toBe("Discount - SUMMER25");
+      expect(discount?.description).toBe("Promo adjustment - SUMMER25");
       expect(discount?.itemCode).toBe("PROMO-DISC");
       expect(discount?.accountCode).toBeUndefined();
       expect(discount?.unitAmount).toBe(-50);
     });
 
-    it("posts the discount line to the promo's xeroAccountCode when only an account code is set", async () => {
+    it("posts the promo adjustment line to the promo's xeroAccountCode when only an account code is set", async () => {
       mocks.prisma.booking.findUnique.mockResolvedValue(
         bookingWithPromo({ code: "PROMO10", xeroItemCode: null, xeroAccountCode: "201" })
       );
 
       await createXeroInvoiceForBooking("booking_1");
 
-      const discount = getDiscountLine();
+      const discount = getPromoAdjustmentLine();
       expect(discount).toBeDefined();
       expect(discount?.itemCode).toBeUndefined();
       expect(discount?.accountCode).toBe("201");
@@ -453,7 +454,7 @@ describe("createXeroInvoiceForBooking", () => {
 
       await createXeroInvoiceForBooking("booking_1");
 
-      const discount = getDiscountLine();
+      const discount = getPromoAdjustmentLine();
       expect(discount?.itemCode).toBe("PROMO-DISC");
       expect(discount?.accountCode).toBe("201");
     });
@@ -469,18 +470,18 @@ describe("createXeroInvoiceForBooking", () => {
 
       await createXeroInvoiceForBooking("booking_1");
 
-      const discount = getDiscountLine();
-      expect(discount?.description).toBe("Discount - LEGACY");
+      const discount = getPromoAdjustmentLine();
+      expect(discount?.description).toBe("Promo adjustment - LEGACY");
       expect(discount?.itemCode).toBe("HUT-FEE");
     });
 
-    it("uses the generic Discount description when no promo redemption is linked", async () => {
+    it("uses the generic promo adjustment description when no promo redemption is linked", async () => {
       mocks.prisma.booking.findUnique.mockResolvedValue(bookingWithPromo(null));
 
       await createXeroInvoiceForBooking("booking_1");
 
-      const discount = getDiscountLine();
-      expect(discount?.description).toBe("Discount");
+      const discount = getPromoAdjustmentLine();
+      expect(discount?.description).toBe("Promo adjustment");
     });
   });
 });

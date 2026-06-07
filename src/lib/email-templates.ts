@@ -263,21 +263,30 @@ export function bookingConfirmedTemplate(
   checkOut: Date,
   guestCount: number,
   totalCents: number,
-  options?: { discountCents?: number; promoCode?: string }
+  options?: { discountCents?: number; promoAdjustmentCents?: number; promoCode?: string }
 ): string {
+  const promoAdjustmentCents =
+    options?.promoAdjustmentCents ??
+    (options?.discountCents && options.discountCents > 0
+      ? -options.discountCents
+      : 0);
   const rows: Array<{ label: string; value: string }> = [
     { label: "Check-in", value: formatNZDate(checkIn) },
     { label: "Check-out", value: formatNZDate(checkOut) },
     { label: "Guests", value: String(guestCount) },
   ];
 
-  if (options?.discountCents && options.discountCents > 0) {
-    const subtotalCents = totalCents + options.discountCents;
+  if (promoAdjustmentCents !== 0) {
+    const subtotalCents = totalCents - promoAdjustmentCents;
     rows.push({ label: "Subtotal", value: formatCents(subtotalCents) });
-    const discountLabel = options.promoCode
-      ? `Discount (${escapeHtml(options.promoCode)})`
-      : "Discount";
-    rows.push({ label: discountLabel, value: `-${formatCents(options.discountCents)}` });
+    const promoLabel = options?.promoCode
+      ? `Promo adjustment (${escapeHtml(options.promoCode)})`
+      : "Promo adjustment";
+    const adjustmentPrefix = promoAdjustmentCents > 0 ? "+" : "-";
+    rows.push({
+      label: promoLabel,
+      value: `${adjustmentPrefix}${formatCents(Math.abs(promoAdjustmentCents))}`,
+    });
   }
 
   rows.push({ label: "Total Paid", value: formatCents(totalCents) });

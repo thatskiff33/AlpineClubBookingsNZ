@@ -128,7 +128,7 @@ export default function BookPage() {
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
-  const [availablePromoCodes, setAvailablePromoCodes] = useState<{ code: string; description: string | null; type: string; percentOff: number | null; valueCents: number | null; freeNightsPerIndividual: number | null; lifetimeFreeNightsCap: number | null }[]>([]);
+  const [availablePromoCodes, setAvailablePromoCodes] = useState<{ code: string; description: string | null; type: string; percentOff: number | null; valueCents: number | null; freeNightsPerIndividual: number | null; lifetimeFreeNightsCap: number | null; fixedNightlyPriceCents: number | null; fixedNightlyMode: string | null }[]>([]);
   const [prefillPromoCode, setPrefillPromoCode] = useState<string | undefined>();
   const [guestProfileBlocks, setGuestProfileBlocks] = useState<GuestProfileRequiredMember[]>([]);
   const [memberReviewJustification, setMemberReviewJustification] = useState("");
@@ -452,6 +452,11 @@ export default function BookPage() {
     return `$${(cents / 100).toFixed(2)}`;
   }
 
+  function formatSignedCents(cents: number) {
+    const prefix = cents > 0 ? "+" : "-";
+    return `${prefix}${formatCents(Math.abs(cents))}`;
+  }
+
   function getGuestProfileBlockMessage(block: GuestProfileRequiredMember) {
     if (block.action === "own_login_required") {
       return `${block.name} has their own login and needs to sign in and confirm their details before they can be booked as a member.`;
@@ -486,7 +491,7 @@ export default function BookPage() {
 
   const availableCreditCents = priceQuote?.availableCreditCents ?? 0;
   const finalPriceBeforeCredit = priceQuote
-    ? priceQuote.totalPriceCents - (appliedPromo?.discountCents ?? 0)
+    ? (appliedPromo?.finalPriceCents ?? priceQuote.totalPriceCents)
     : 0;
   const appliedCreditCents = useCredit
     ? Math.min(availableCreditCents, finalPriceBeforeCredit)
@@ -833,15 +838,15 @@ export default function BookPage() {
                 ))}
               </div>
 
-              {appliedPromo && appliedPromo.discountCents > 0 ? (
+              {appliedPromo && appliedPromo.promoAdjustmentCents !== 0 ? (
                 <>
                   <div className="border-t pt-4 flex justify-between text-sm">
                     <span>Subtotal</span>
                     <span>{formatCents(priceQuote.totalPriceCents)}</span>
                   </div>
-                  <div className="flex justify-between text-sm text-green-600">
-                    <span>Discount ({appliedPromo.code})</span>
-                    <span>-{formatCents(appliedPromo.discountCents)}</span>
+                  <div className={`flex justify-between text-sm ${appliedPromo.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
+                    <span>Promo adjustment ({appliedPromo.code})</span>
+                    <span>{formatSignedCents(appliedPromo.promoAdjustmentCents)}</span>
                   </div>
                   {appliedCreditCents > 0 && (
                     <div className="flex justify-between text-sm text-green-600">

@@ -8,11 +8,13 @@ import { logAudit } from "@/lib/audit";
 const updatePromoCodeSchema = z.object({
   code: z.string().min(1).transform((s) => s.toUpperCase().trim()).optional(),
   description: z.string().optional().nullable(),
-  type: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "FREE_NIGHTS"]).optional(),
+  type: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "FREE_NIGHTS", "FIXED_NIGHTLY_PRICE"]).optional(),
   valueCents: z.number().int().min(0).optional().nullable(),
   percentOff: z.number().int().min(0).max(100).optional().nullable(),
   freeNightsPerIndividual: z.number().int().min(0).optional().nullable(),
   lifetimeFreeNightsCap: z.number().int().min(1).optional().nullable(),
+  fixedNightlyPriceCents: z.number().int().min(0).optional().nullable(),
+  fixedNightlyMode: z.enum(["SET_PRICE", "CAP_ONLY"]).optional().nullable(),
   maxNightlyValueCents: z.number().int().min(0).optional().nullable(),
   maxGuestsPerBooking: z.number().int().min(1).optional().nullable(),
   maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
@@ -123,6 +125,10 @@ export async function PUT(
     data.freeNightsPerIndividual !== undefined
       ? data.freeNightsPerIndividual
       : existing.freeNightsPerIndividual;
+  const effectiveFixedNightlyPriceCents =
+    data.fixedNightlyPriceCents !== undefined
+      ? data.fixedNightlyPriceCents
+      : existing.fixedNightlyPriceCents;
 
   if (type === "PERCENTAGE" && (effectivePercentOff == null || effectivePercentOff <= 0)) {
     return NextResponse.json(
@@ -139,6 +145,12 @@ export async function PUT(
   if (type === "FREE_NIGHTS" && (effectiveFreeNights == null || effectiveFreeNights <= 0)) {
     return NextResponse.json(
       { error: "Free nights discount requires a freeNightsPerIndividual value greater than 0" },
+      { status: 400 }
+    );
+  }
+  if (type === "FIXED_NIGHTLY_PRICE" && (effectiveFixedNightlyPriceCents == null || effectiveFixedNightlyPriceCents <= 0)) {
+    return NextResponse.json(
+      { error: "Fixed nightly price requires a fixedNightlyPriceCents value greater than 0" },
       { status: 400 }
     );
   }
@@ -201,12 +213,31 @@ export async function PUT(
                   : null,
             }
           : {}),
-        ...(data.maxNightlyValueCents !== undefined && {
-          // Nightly cap is meaningless for FIXED_AMOUNT; clear it when the
-          // effective type is FIXED_AMOUNT.
+        ...(data.type !== undefined || data.fixedNightlyPriceCents !== undefined
+          ? {
+              fixedNightlyPriceCents:
+                type === "FIXED_NIGHTLY_PRICE"
+                  ? (data.fixedNightlyPriceCents ?? existing.fixedNightlyPriceCents)
+                  : null,
+            }
+          : {}),
+        ...(data.type !== undefined || data.fixedNightlyMode !== undefined
+          ? {
+              fixedNightlyMode:
+                type === "FIXED_NIGHTLY_PRICE"
+                  ? (data.fixedNightlyMode ?? existing.fixedNightlyMode ?? "CAP_ONLY")
+                  : null,
+            }
+          : {}),
+        ...(data.type !== undefined || data.maxNightlyValueCents !== undefined ? {
+          // Nightly cap is meaningful only for PERCENTAGE and FREE_NIGHTS.
           maxNightlyValueCents:
-            type === "FIXED_AMOUNT" ? null : data.maxNightlyValueCents,
-        }),
+            type === "FIXED_AMOUNT" || type === "FIXED_NIGHTLY_PRICE"
+              ? null
+              : (data.maxNightlyValueCents !== undefined
+                  ? data.maxNightlyValueCents
+                  : existing.maxNightlyValueCents),
+        } : {}),
         ...(data.maxGuestsPerBooking !== undefined && { maxGuestsPerBooking: data.maxGuestsPerBooking }),
         ...(data.maxRedemptionsTotal !== undefined && { maxRedemptionsTotal: data.maxRedemptionsTotal }),
         ...(data.maxUniqueMembersTotal !== undefined && { maxUniqueMembersTotal: data.maxUniqueMembersTotal }),

@@ -8,11 +8,13 @@ import { logAudit } from "@/lib/audit";
 const promoCodeSchema = z.object({
   code: z.string().min(1, "Code is required").transform((s) => s.toUpperCase().trim()),
   description: z.string().optional().nullable(),
-  type: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "FREE_NIGHTS"]),
+  type: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "FREE_NIGHTS", "FIXED_NIGHTLY_PRICE"]),
   valueCents: z.number().int().min(0).optional().nullable(),
   percentOff: z.number().int().min(0).max(100).optional().nullable(),
   freeNightsPerIndividual: z.number().int().min(0).optional().nullable(),
   lifetimeFreeNightsCap: z.number().int().min(1).optional().nullable(),
+  fixedNightlyPriceCents: z.number().int().min(0).optional().nullable(),
+  fixedNightlyMode: z.enum(["SET_PRICE", "CAP_ONLY"]).optional().nullable(),
   maxNightlyValueCents: z.number().int().min(0).optional().nullable(),
   maxGuestsPerBooking: z.number().int().min(1).optional().nullable(),
   maxRedemptionsTotal: z.number().int().min(1).optional().nullable(),
@@ -47,7 +49,13 @@ export async function GET(req: NextRequest) {
     where: showArchived ? { archivedAt: { not: null } } : { archivedAt: null },
     include: {
       allocations: {
-        select: { id: true, discountCents: true, memberId: true, createdAt: true },
+        select: {
+          id: true,
+          discountCents: true,
+          priceAdjustmentCents: true,
+          memberId: true,
+          createdAt: true,
+        },
       },
       assignments: {
         include: {
@@ -106,6 +114,12 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
+  if (data.type === "FIXED_NIGHTLY_PRICE" && (data.fixedNightlyPriceCents == null || data.fixedNightlyPriceCents <= 0)) {
+    return NextResponse.json(
+      { error: "Fixed nightly price requires a fixedNightlyPriceCents value greater than 0" },
+      { status: 400 }
+    );
+  }
 
   if (data.validFrom && data.validUntil && new Date(data.validUntil) <= new Date(data.validFrom)) {
     return NextResponse.json(
@@ -145,9 +159,15 @@ export async function POST(req: NextRequest) {
         percentOff: data.type === "PERCENTAGE" ? data.percentOff : null,
         freeNightsPerIndividual: data.type === "FREE_NIGHTS" ? data.freeNightsPerIndividual : null,
         lifetimeFreeNightsCap: data.type === "FREE_NIGHTS" ? (data.lifetimeFreeNightsCap ?? null) : null,
+        fixedNightlyPriceCents:
+          data.type === "FIXED_NIGHTLY_PRICE" ? data.fixedNightlyPriceCents : null,
+        fixedNightlyMode:
+          data.type === "FIXED_NIGHTLY_PRICE" ? (data.fixedNightlyMode ?? "CAP_ONLY") : null,
         // Nightly value cap only meaningful for PERCENTAGE and FREE_NIGHTS.
         maxNightlyValueCents:
-          data.type === "FIXED_AMOUNT" ? null : (data.maxNightlyValueCents ?? null),
+          data.type === "FIXED_AMOUNT" || data.type === "FIXED_NIGHTLY_PRICE"
+            ? null
+            : (data.maxNightlyValueCents ?? null),
         maxGuestsPerBooking: data.maxGuestsPerBooking ?? null,
         maxRedemptionsTotal: data.maxRedemptionsTotal ?? null,
         maxUniqueMembersTotal: data.maxUniqueMembersTotal ?? null,

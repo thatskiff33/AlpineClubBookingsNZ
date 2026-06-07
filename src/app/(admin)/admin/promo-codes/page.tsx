@@ -49,19 +49,24 @@ interface PromoAssignment {
 interface PromoRedemptionRow {
   id: string;
   discountCents: number;
+  priceAdjustmentCents: number;
   memberId: string;
   createdAt: string;
 }
+
+type PromoType = "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS" | "FIXED_NIGHTLY_PRICE";
 
 interface PromoCode {
   id: string;
   code: string;
   description: string | null;
-  type: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS";
+  type: PromoType;
   valueCents: number | null;
   percentOff: number | null;
   freeNightsPerIndividual: number | null;
   lifetimeFreeNightsCap: number | null;
+  fixedNightlyPriceCents: number | null;
+  fixedNightlyMode: "SET_PRICE" | "CAP_ONLY" | null;
   maxNightlyValueCents: number | null;
   maxGuestsPerBooking: number | null;
   maxRedemptionsTotal: number | null;
@@ -87,6 +92,7 @@ const TYPE_LABELS: Record<string, string> = {
   PERCENTAGE: "Percentage",
   FIXED_AMOUNT: "Fixed Amount",
   FREE_NIGHTS: "Free Nights",
+  FIXED_NIGHTLY_PRICE: "Fixed Price per Night",
 };
 
 export default function PromoCodesPage() {
@@ -101,13 +107,13 @@ export default function PromoCodesPage() {
 
   const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
-  const [type, setType] = useState<"PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS">(
-    "PERCENTAGE"
-  );
+  const [type, setType] = useState<PromoType>("PERCENTAGE");
   const [percentOff, setPercentOff] = useState("");
   const [valueDollars, setValueDollars] = useState("");
   const [freeNightsPerIndividual, setFreeNightsPerIndividual] = useState("");
   const [lifetimeFreeNightsCap, setLifetimeFreeNightsCap] = useState("");
+  const [fixedNightlyPriceDollars, setFixedNightlyPriceDollars] = useState("");
+  const [fixedNightlyMode, setFixedNightlyMode] = useState<"SET_PRICE" | "CAP_ONLY">("CAP_ONLY");
   const [maxNightlyValueDollars, setMaxNightlyValueDollars] = useState("");
   const [maxGuestsPerBooking, setMaxGuestsPerBooking] = useState("");
   const [maxRedemptionsTotal, setMaxRedemptionsTotal] = useState("");
@@ -254,6 +260,8 @@ export default function PromoCodesPage() {
     setValueDollars("");
     setFreeNightsPerIndividual("");
     setLifetimeFreeNightsCap("");
+    setFixedNightlyPriceDollars("");
+    setFixedNightlyMode("CAP_ONLY");
     setMaxNightlyValueDollars("");
     setMaxGuestsPerBooking("");
     setMaxRedemptionsTotal("");
@@ -292,6 +300,12 @@ export default function PromoCodesPage() {
     setLifetimeFreeNightsCap(
       promo.lifetimeFreeNightsCap != null ? String(promo.lifetimeFreeNightsCap) : ""
     );
+    setFixedNightlyPriceDollars(
+      promo.fixedNightlyPriceCents != null
+        ? (promo.fixedNightlyPriceCents / 100).toFixed(2)
+        : ""
+    );
+    setFixedNightlyMode(promo.fixedNightlyMode ?? "CAP_ONLY");
     setMaxNightlyValueDollars(
       promo.maxNightlyValueCents != null
         ? (promo.maxNightlyValueCents / 100).toFixed(2)
@@ -361,9 +375,14 @@ export default function PromoCodesPage() {
       payload.lifetimeFreeNightsCap = lifetimeFreeNightsCap
         ? parseInt(lifetimeFreeNightsCap)
         : null;
+    } else if (type === "FIXED_NIGHTLY_PRICE") {
+      payload.fixedNightlyPriceCents = fixedNightlyPriceDollars
+        ? Math.round(parseFloat(fixedNightlyPriceDollars) * 100)
+        : null;
+      payload.fixedNightlyMode = fixedNightlyMode;
     }
 
-    if (type !== "FIXED_AMOUNT") {
+    if (type !== "FIXED_AMOUNT" && type !== "FIXED_NIGHTLY_PRICE") {
       payload.maxNightlyValueCents = maxNightlyValueDollars
         ? Math.round(parseFloat(maxNightlyValueDollars) * 100)
         : null;
@@ -463,6 +482,10 @@ export default function PromoCodesPage() {
           return `${perBooking} · ${promo.lifetimeFreeNightsCap} lifetime`;
         }
         return perBooking;
+      }
+      case "FIXED_NIGHTLY_PRICE": {
+        const mode = promo.fixedNightlyMode === "SET_PRICE" ? "set price" : "cap only";
+        return `${formatCents(promo.fixedNightlyPriceCents || 0)} per eligible night · ${mode}`;
       }
       default:
         return "";
@@ -692,18 +715,14 @@ export default function PromoCodesPage() {
                     id="type"
                     value={type}
                     onChange={(e) =>
-                      setType(
-                        e.target.value as
-                          | "PERCENTAGE"
-                          | "FIXED_AMOUNT"
-                          | "FREE_NIGHTS"
-                      )
+                      setType(e.target.value as PromoType)
                     }
                     className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
                   >
                     <option value="PERCENTAGE">Percentage Off</option>
                     <option value="FIXED_AMOUNT">Fixed Amount Off</option>
                     <option value="FREE_NIGHTS">Free Nights</option>
+                    <option value="FIXED_NIGHTLY_PRICE">Fixed Price per Night</option>
                   </select>
                 </div>
 
@@ -789,9 +808,53 @@ export default function PromoCodesPage() {
                     </div>
                   </>
                 )}
+
+                {type === "FIXED_NIGHTLY_PRICE" && (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="fixedNightlyPrice">
+                        Fixed nightly price per eligible individual ({APP_CURRENCY})
+                      </Label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                          $
+                        </span>
+                        <Input
+                          id="fixedNightlyPrice"
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          className="pl-7"
+                          value={fixedNightlyPriceDollars}
+                          onChange={(e) => setFixedNightlyPriceDollars(e.target.value)}
+                          placeholder="0.00"
+                          required
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="fixedNightlyMode">Fixed nightly mode</Label>
+                      <select
+                        id="fixedNightlyMode"
+                        value={fixedNightlyMode}
+                        onChange={(e) =>
+                          setFixedNightlyMode(e.target.value as "SET_PRICE" | "CAP_ONLY")
+                        }
+                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
+                      >
+                        <option value="SET_PRICE">Set everyone to this price</option>
+                        <option value="CAP_ONLY">Use as maximum cap</option>
+                      </select>
+                      <p className="text-xs text-muted-foreground">
+                        Set price can increase cheaper nights and decrease dearer nights. Cap only
+                        leaves cheaper nights unchanged.
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
 
-              {type !== "FIXED_AMOUNT" && (
+              {type !== "FIXED_AMOUNT" && type !== "FIXED_NIGHTLY_PRICE" && (
                 <div className="space-y-2 max-w-md">
                   <Label htmlFor="maxNightlyValue">
                     Maximum nightly value covered (optional, {APP_CURRENCY})

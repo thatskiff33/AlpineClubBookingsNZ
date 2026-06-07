@@ -133,7 +133,11 @@ export async function POST(
     booking.guests.length,
     0,
     booking.promoRedemption?.promoCode
-      ? { discountCents: booking.discountCents, promoCode: booking.promoRedemption.promoCode.code }
+      ? {
+          discountCents: booking.discountCents,
+          promoAdjustmentCents: booking.promoAdjustmentCents,
+          promoCode: booking.promoRedemption.promoCode.code,
+        }
       : undefined
   ).catch((err) => logger.error({ err, bookingId: id }, "Failed to send confirmation email for confirmed draft"));
 

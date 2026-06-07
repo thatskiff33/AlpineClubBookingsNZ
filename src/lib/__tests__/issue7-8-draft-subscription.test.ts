@@ -117,12 +117,14 @@ vi.mock("@/lib/bumping", () => ({
 vi.mock("@/lib/promo", () => ({
   validatePromoCodeRules: vi.fn().mockReturnValue(null),
   validateAndCalculatePromoDiscount: vi.fn().mockResolvedValue({
-    discount: { discountCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
+    discount: { discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0, eligibleGuestCount: 0, allocations: [] },
     beneficiaryMemberIds: [],
   }),
+  shouldPersistPromoRedemption: vi.fn().mockReturnValue(true),
   redeemPromoCode: vi.fn(),
   calculatePromoDiscountForGuestRates: vi.fn().mockReturnValue({
     discountCents: 0,
+    priceAdjustmentCents: 0,
     freeNightsUsed: 0,
     eligibleGuestCount: 0,
     allocations: [],

@@ -511,6 +511,101 @@ describe("calculatePromoDiscount - FIXED_AMOUNT per individual", () => {
   });
 });
 
+// --- Discount calculation: FIXED_NIGHTLY_PRICE (per guest-night) ---
+
+describe("calculatePromoDiscount - FIXED_NIGHTLY_PRICE", () => {
+  it("SET_PRICE can increase cheaper nights and discount dearer nights", () => {
+    const promo: PromoCodeInput = {
+      type: "FIXED_NIGHTLY_PRICE",
+      fixedNightlyPriceCents: 3000,
+      fixedNightlyMode: "SET_PRICE",
+    };
+    const result = calculatePromoDiscount(promo, {
+      totalPriceCents: 11000,
+      guests: [
+        { memberId: "member-1", isMember: true, perNightRates: [2000, 5000] },
+        { memberId: "member-2", isMember: true, perNightRates: [4000] },
+      ],
+    });
+
+    expect(result.priceAdjustmentCents).toBe(-2000);
+    expect(result.discountCents).toBe(2000);
+    expect(result.eligibleGuestCount).toBe(2);
+  });
+
+  it("SET_PRICE can produce a positive adjustment", () => {
+    const promo: PromoCodeInput = {
+      type: "FIXED_NIGHTLY_PRICE",
+      fixedNightlyPriceCents: 3000,
+      fixedNightlyMode: "SET_PRICE",
+    };
+    const result = calculatePromoDiscount(promo, {
+      totalPriceCents: 1000,
+      guests: [{ memberId: "member-1", isMember: true, perNightRates: [1000] }],
+    });
+
+    expect(result.priceAdjustmentCents).toBe(2000);
+    expect(result.discountCents).toBe(0);
+    expect(result.allocations).toEqual([
+      { memberId: "member-1", discountCents: 0, priceAdjustmentCents: 2000, freeNightsUsed: 0 },
+    ]);
+  });
+
+  it("CAP_ONLY only reduces nights above the configured cap", () => {
+    const promo: PromoCodeInput = {
+      type: "FIXED_NIGHTLY_PRICE",
+      fixedNightlyPriceCents: 3000,
+      fixedNightlyMode: "CAP_ONLY",
+    };
+    const result = calculatePromoDiscount(promo, {
+      totalPriceCents: 10000,
+      guests: [{ memberId: "member-1", isMember: true, perNightRates: [2000, 5000, 3000] }],
+    });
+
+    expect(result.priceAdjustmentCents).toBe(-2000);
+    expect(result.discountCents).toBe(2000);
+    expect(result.eligibleGuestCount).toBe(1);
+  });
+
+  it("CAP_ONLY has no effect and no beneficiaries when all nights are below the cap", () => {
+    const promo: PromoCodeInput = {
+      type: "FIXED_NIGHTLY_PRICE",
+      fixedNightlyPriceCents: 3000,
+      fixedNightlyMode: "CAP_ONLY",
+    };
+    const result = calculatePromoDiscount(promo, {
+      totalPriceCents: 3000,
+      guests: [{ memberId: "member-1", isMember: true, perNightRates: [1000, 2000] }],
+    });
+
+    expect(result.priceAdjustmentCents).toBe(0);
+    expect(result.discountCents).toBe(0);
+    expect(result.eligibleGuestCount).toBe(0);
+    expect(result.allocations).toEqual([]);
+  });
+
+  it("SET_PRICE counts assigned beneficiaries even when the net adjustment is zero", () => {
+    const promo: PromoCodeInput = {
+      type: "FIXED_NIGHTLY_PRICE",
+      fixedNightlyPriceCents: 3000,
+      fixedNightlyMode: "SET_PRICE",
+    };
+    const result = calculatePromoDiscountForGuestRates(
+      promo,
+      3000,
+      "member-1",
+      [{ memberId: "member-1", isMember: true, perNightRates: [3000] }],
+      ["member-1"]
+    );
+
+    expect(result.priceAdjustmentCents).toBe(0);
+    expect(result.eligibleGuestCount).toBe(1);
+    expect(result.allocations).toEqual([
+      { memberId: "member-1", discountCents: 0, priceAdjustmentCents: 0, freeNightsUsed: 0 },
+    ]);
+  });
+});
+
 // --- Discount calculation: FREE_NIGHTS (per individual) ---
 
 describe("calculatePromoDiscount - FREE_NIGHTS per individual", () => {
@@ -653,8 +748,8 @@ describe("calculatePromoDiscountForGuestRates", () => {
     expect(result.freeNightsUsed).toBe(6);
     expect(result.eligibleGuestCount).toBe(2);
     expect(result.allocations).toEqual([
-      { memberId: "member-1", discountCents: 6000, freeNightsUsed: 3 },
-      { memberId: "member-2", discountCents: 6000, freeNightsUsed: 3 },
+      { memberId: "member-1", discountCents: 6000, priceAdjustmentCents: -6000, freeNightsUsed: 3 },
+      { memberId: "member-2", discountCents: 6000, priceAdjustmentCents: -6000, freeNightsUsed: 3 },
     ]);
   });
 

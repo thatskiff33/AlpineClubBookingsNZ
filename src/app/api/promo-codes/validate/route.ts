@@ -145,11 +145,12 @@ export async function POST(req: NextRequest) {
       description: promoCode!.description,
       type: promoCode!.type,
       discountCents: promoResult.discountCents,
+      promoAdjustmentCents: promoResult.priceAdjustmentCents,
       freeNightsUsed: promoResult.freeNightsUsed,
       eligibleGuestCount: promoResult.eligibleGuestCount,
       remainingFreeNights: application.remainingFreeNights,
       totalPriceCents: price.totalPriceCents,
-      finalPriceCents: price.totalPriceCents - promoResult.discountCents,
+      finalPriceCents: price.totalPriceCents + promoResult.priceAdjustmentCents,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to calculate price";

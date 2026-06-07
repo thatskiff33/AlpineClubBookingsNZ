@@ -50,6 +50,7 @@ export interface BookingEditGuestRangePlan {
   removedGuests: ExistingBookingEditGuest[];
   newTotalPriceCents: number;
   newDiscountCents: number;
+  newPromoAdjustmentCents: number;
   newFinalPriceCents: number;
   priceDiffCents: number;
   futureExistingDeltaCents: number;
@@ -66,6 +67,7 @@ export interface BuildInProgressGuestRangePlanInput {
     checkOut: Date;
     totalPriceCents: number;
     discountCents: number;
+    promoAdjustmentCents: number;
     finalPriceCents: number;
     guests: ExistingBookingEditGuest[];
   };
@@ -182,7 +184,8 @@ export function buildInProgressGuestRangePlan(
     proposedExistingGuests.reduce((sum, entry) => sum + entry.priceCents, 0) +
     proposedAddedGuests.reduce((sum, entry) => sum + entry.priceCents, 0);
   const newDiscountCents = input.booking.discountCents;
-  const newFinalPriceCents = newTotalPriceCents - newDiscountCents;
+  const newPromoAdjustmentCents = input.booking.promoAdjustmentCents;
+  const newFinalPriceCents = newTotalPriceCents + newPromoAdjustmentCents;
   const priceDiffCents = newFinalPriceCents - input.booking.finalPriceCents;
   const futureExistingDeltaCents = proposedExistingGuests.reduce(
     (sum, entry) => sum + entry.futureDeltaCents,
@@ -212,6 +215,7 @@ export function buildInProgressGuestRangePlan(
     removedGuests,
     newTotalPriceCents,
     newDiscountCents,
+    newPromoAdjustmentCents,
     newFinalPriceCents,
     priceDiffCents,
     futureExistingDeltaCents,

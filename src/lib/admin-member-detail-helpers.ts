@@ -45,11 +45,13 @@ export interface ParentLinkSummary {
 }
 
 export interface PromoCodeBenefitSource {
-  type: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS"
+  type: "PERCENTAGE" | "FIXED_AMOUNT" | "FREE_NIGHTS" | "FIXED_NIGHTLY_PRICE"
   percentOff: number | null
   valueCents: number | null
   freeNightsPerIndividual: number | null
   lifetimeFreeNightsCap: number | null
+  fixedNightlyPriceCents?: number | null
+  fixedNightlyMode?: "SET_PRICE" | "CAP_ONLY" | null
 }
 
 export interface XeroCreateFormFields {
@@ -187,6 +189,13 @@ export function formatPromoBenefit(promo: PromoCodeBenefitSource) {
     return promo.valueCents !== null
       ? `$${(promo.valueCents / 100).toFixed(2)} off per individual`
       : "Fixed discount"
+  }
+  if (promo.type === "FIXED_NIGHTLY_PRICE") {
+    if (promo.fixedNightlyPriceCents == null) {
+      return "Fixed nightly price"
+    }
+    const mode = promo.fixedNightlyMode === "SET_PRICE" ? "set price" : "cap only"
+    return `$${(promo.fixedNightlyPriceCents / 100).toFixed(2)} per eligible night · ${mode}`
   }
   if (promo.freeNightsPerIndividual !== null) {
     const perBooking = `${promo.freeNightsPerIndividual} free night${promo.freeNightsPerIndividual === 1 ? "" : "s"} per booking`

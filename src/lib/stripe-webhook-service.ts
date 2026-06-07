@@ -299,8 +299,12 @@ async function handlePaymentIntentSucceeded(
         booking.checkOut,
         booking.guests.length,
         booking.finalPriceCents,
-        booking.discountCents > 0
-          ? { discountCents: booking.discountCents, promoCode: booking.promoRedemption?.promoCode?.code }
+        booking.promoRedemption?.promoCode
+          ? {
+              discountCents: booking.discountCents,
+              promoAdjustmentCents: booking.promoAdjustmentCents,
+              promoCode: booking.promoRedemption.promoCode.code,
+            }
           : undefined
       );
     }

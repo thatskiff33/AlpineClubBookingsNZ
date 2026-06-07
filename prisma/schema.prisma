@@ -162,6 +162,12 @@ enum PromoCodeType {
   PERCENTAGE
   FIXED_AMOUNT
   FREE_NIGHTS
+  FIXED_NIGHTLY_PRICE
+}
+
+enum FixedNightlyMode {
+  SET_PRICE
+  CAP_ONLY
 }
 
 enum ChoreStatus {
@@ -594,35 +600,36 @@ model SeasonRate {
 // ---------------------------------------------------------------------------
 
 model Booking {
-  id                     String        @id @default(cuid())
-  memberId               String
-  checkIn                DateTime      @db.Date
-  checkOut               DateTime      @db.Date
-  status                 BookingStatus @default(PENDING)
-  totalPriceCents        Int
-  discountCents          Int           @default(0)
-  finalPriceCents        Int
-  hasNonMembers          Boolean       @default(false)
-  nonMemberHoldUntil     DateTime?
-  draftExpiresAt         DateTime?
-  notes                  String?       @db.VarChar(500)
-  expectedArrivalTime    String?       @db.VarChar(5)
-  createdById            String? // Admin who created this booking on behalf of the member
-  requiresAdminReview    Boolean       @default(false)
-  adminReviewReason      String?       @db.VarChar(300)
-  memberReviewJustification String?    @db.VarChar(1000)
-  adminReviewStatus      AdminReviewStatus?
-  adminReviewNotes       String?       @db.VarChar(2000)
-  adminReviewedById      String?
-  adminReviewedAt        DateTime?
-  waitlistPosition       Int?
-  waitlistOfferedAt      DateTime?
-  waitlistOfferExpiresAt DateTime?
-  deletedAt              DateTime?
-  deletedById            String?
-  deletedReason          String?       @db.VarChar(500)
-  createdAt              DateTime      @default(now())
-  updatedAt              DateTime      @updatedAt
+  id                        String             @id @default(cuid())
+  memberId                  String
+  checkIn                   DateTime           @db.Date
+  checkOut                  DateTime           @db.Date
+  status                    BookingStatus      @default(PENDING)
+  totalPriceCents           Int
+  discountCents             Int                @default(0)
+  promoAdjustmentCents      Int                @default(0)
+  finalPriceCents           Int
+  hasNonMembers             Boolean            @default(false)
+  nonMemberHoldUntil        DateTime?
+  draftExpiresAt            DateTime?
+  notes                     String?            @db.VarChar(500)
+  expectedArrivalTime       String?            @db.VarChar(5)
+  createdById               String? // Admin who created this booking on behalf of the member
+  requiresAdminReview       Boolean            @default(false)
+  adminReviewReason         String?            @db.VarChar(300)
+  memberReviewJustification String?            @db.VarChar(1000)
+  adminReviewStatus         AdminReviewStatus?
+  adminReviewNotes          String?            @db.VarChar(2000)
+  adminReviewedById         String?
+  adminReviewedAt           DateTime?
+  waitlistPosition          Int?
+  waitlistOfferedAt         DateTime?
+  waitlistOfferExpiresAt    DateTime?
+  deletedAt                 DateTime?
+  deletedById               String?
+  deletedReason             String?            @db.VarChar(500)
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
 
   member                     Member                      @relation(fields: [memberId], references: [id], onDelete: Restrict)
   createdBy                  Member?                     @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
@@ -888,6 +895,8 @@ model PromoCode {
   percentOff              Int? // Percentage off, applied per eligible guest
   freeNightsPerIndividual Int? // Per-booking cap: max free nights applied to each eligible guest on a single booking
   lifetimeFreeNightsCap   Int? // Lifetime cap: max free nights any single member can claim from this code across all their bookings (null = no lifetime cap)
+  fixedNightlyPriceCents   Int? // Fixed nightly price per eligible guest-night for FIXED_NIGHTLY_PRICE promos
+  fixedNightlyMode         FixedNightlyMode?
   // Optional per-night value cap (FREE_NIGHTS and PERCENTAGE only): caps the discount applied to any single night
   maxNightlyValueCents    Int?
   // Per-booking limit: how many guests on a single booking the promo applies to (null = unlimited / all eligible guests)
@@ -930,6 +939,7 @@ model PromoRedemption {
   bookingId          String   @unique
   memberId           String
   discountCents      Int
+  priceAdjustmentCents Int      @default(0)
   freeNightsUsed     Int? // Number of guest-nights subsidised (full or partial) for FREE_NIGHTS promos
   eligibleGuestCount Int? // Number of guests the promo applied to on this booking (for reporting)
   createdAt          DateTime @default(now())
@@ -951,6 +961,7 @@ model PromoRedemptionAllocation {
   bookingId         String
   memberId          String
   discountCents     Int
+  priceAdjustmentCents Int      @default(0)
   freeNightsUsed    Int      @default(0)
   createdAt         DateTime @default(now())
 
@@ -1975,19 +1986,19 @@ model XeroItemCodeMapping {
 // ---------------------------------------------------------------------------
 
 model AgeTierSetting {
-  id                             String                            @id @default(cuid())
-  tier                           AgeTier                           @unique
-  minAge                         Int
-  maxAge                         Int? // null for ADULT (no upper limit)
-  label                          String // e.g. "Child (under 10)"
-  subscriptionRequiredForBooking Boolean                           @default(true)
-  familyGroupRequestCreateMemberAllowed Boolean                    @default(false)
-  xeroContactGroupId             String?
-  xeroContactGroupName           String?
-  xeroAcceptedContactGroups      AgeTierXeroAcceptedContactGroup[]
-  sortOrder                      Int                               @default(0)
-  createdAt                      DateTime                          @default(now())
-  updatedAt                      DateTime                          @updatedAt
+  id                                    String                            @id @default(cuid())
+  tier                                  AgeTier                           @unique
+  minAge                                Int
+  maxAge                                Int? // null for ADULT (no upper limit)
+  label                                 String // e.g. "Child (under 10)"
+  subscriptionRequiredForBooking        Boolean                           @default(true)
+  familyGroupRequestCreateMemberAllowed Boolean                           @default(false)
+  xeroContactGroupId                    String?
+  xeroContactGroupName                  String?
+  xeroAcceptedContactGroups             AgeTierXeroAcceptedContactGroup[]
+  sortOrder                             Int                               @default(0)
+  createdAt                             DateTime                          @default(now())
+  updatedAt                             DateTime                          @updatedAt
 
   @@index([sortOrder])
 }

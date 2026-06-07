@@ -1,4 +1,4 @@
-import type { AgeTier, PromoCodeType, SeasonType } from "@prisma/client";
+import type { AgeTier, FixedNightlyMode, PromoCodeType, SeasonType } from "@prisma/client";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "../date-only";
 
@@ -41,6 +41,8 @@ export interface PromoCodeInput {
   valueCents?: number | null;
   percentOff?: number | null;
   freeNightsPerIndividual?: number | null;
+  fixedNightlyPriceCents?: number | null;
+  fixedNightlyMode?: FixedNightlyMode | null;
   maxGuestsPerBooking?: number | null;
   maxNightlyValueCents?: number | null;
   memberGuestsOnly?: boolean | null;
@@ -264,6 +266,7 @@ export function calculateBookingPrice(
 
 export interface PromoDiscountResult {
   discountCents: number;
+  priceAdjustmentCents: number;
   freeNightsUsed: number;
   eligibleGuestCount: number;
   allocations: PromoDiscountAllocation[];
@@ -272,6 +275,7 @@ export interface PromoDiscountResult {
 export interface PromoDiscountAllocation {
   memberId: string;
   discountCents: number;
+  priceAdjustmentCents: number;
   freeNightsUsed: number;
 }
 
@@ -297,13 +301,19 @@ function addPromoAllocation(
   allocations: Map<string, PromoDiscountAllocation>,
   memberId: string | null,
   discountCents: number,
+  priceAdjustmentCents: number,
   freeNightsUsed: number,
+  includeWhenZero = false,
 ) {
-  if (!memberId || (discountCents <= 0 && freeNightsUsed <= 0)) return;
+  if (
+    !memberId ||
+    (discountCents <= 0 && freeNightsUsed <= 0 && priceAdjustmentCents === 0 && !includeWhenZero)
+  ) return;
 
   const existing = allocations.get(memberId);
   if (existing) {
     existing.discountCents += discountCents;
+    existing.priceAdjustmentCents += priceAdjustmentCents;
     existing.freeNightsUsed += freeNightsUsed;
     return;
   }
@@ -311,6 +321,7 @@ function addPromoAllocation(
   allocations.set(memberId, {
     memberId,
     discountCents,
+    priceAdjustmentCents,
     freeNightsUsed,
   });
 }
@@ -347,6 +358,7 @@ export function calculatePromoDiscount(
   } = opts;
   const empty: PromoDiscountResult = {
     discountCents: 0,
+    priceAdjustmentCents: 0,
     freeNightsUsed: 0,
     eligibleGuestCount: 0,
     allocations: [],
@@ -371,11 +383,13 @@ export function calculatePromoDiscount(
           guestDiscount += capped;
         }
         discount += guestDiscount;
-        addPromoAllocation(allocations, guest.memberId, guestDiscount, 0);
+        addPromoAllocation(allocations, guest.memberId, guestDiscount, -guestDiscount, 0);
       }
       // Cap at total booking price as a safety rail.
+      const discountCents = Math.min(discount, totalPriceCents);
       return {
-        discountCents: Math.min(discount, totalPriceCents),
+        discountCents,
+        priceAdjustmentCents: -discountCents,
         freeNightsUsed: 0,
         eligibleGuestCount: selected.length,
         allocations: [...allocations.values()],
@@ -391,10 +405,12 @@ export function calculatePromoDiscount(
         const guestTotal = guest.perNightRates.reduce((s, r) => s + r, 0);
         const guestDiscount = Math.min(perGuest, guestTotal);
         discount += guestDiscount;
-        addPromoAllocation(allocations, guest.memberId, guestDiscount, 0);
+        addPromoAllocation(allocations, guest.memberId, guestDiscount, -guestDiscount, 0);
       }
+      const discountCents = Math.min(discount, totalPriceCents);
       return {
-        discountCents: Math.min(discount, totalPriceCents),
+        discountCents,
+        priceAdjustmentCents: -discountCents,
         freeNightsUsed: 0,
         eligibleGuestCount: selected.length,
         allocations: [...allocations.values()],
@@ -451,12 +467,64 @@ export function calculatePromoDiscount(
           : rate;
         discount += capped;
         freeNightsUsed += 1;
-        addPromoAllocation(allocations, memberId, capped, 1);
+        addPromoAllocation(allocations, memberId, capped, -capped, 1);
       }
+      const discountCents = Math.min(discount, totalPriceCents);
       return {
-        discountCents: Math.min(discount, totalPriceCents),
+        discountCents,
+        priceAdjustmentCents: -discountCents,
         freeNightsUsed,
         eligibleGuestCount: selected.length,
+        allocations: [...allocations.values()],
+      };
+    }
+
+    case "FIXED_NIGHTLY_PRICE": {
+      const fixedNightlyPriceCents = promo.fixedNightlyPriceCents ?? 0;
+      if (fixedNightlyPriceCents <= 0) return empty;
+
+      const mode = promo.fixedNightlyMode ?? "CAP_ONLY";
+      let totalAdjustment = 0;
+      let effectiveGuestCount = 0;
+      const allocations = new Map<string, PromoDiscountAllocation>();
+
+      for (const { guest } of selected) {
+        let guestAdjustment = 0;
+        let cappedNightCount = 0;
+
+        for (const rate of guest.perNightRates) {
+          if (mode === "CAP_ONLY") {
+            if (rate <= fixedNightlyPriceCents) continue;
+            guestAdjustment += fixedNightlyPriceCents - rate;
+            cappedNightCount += 1;
+          } else {
+            guestAdjustment += fixedNightlyPriceCents - rate;
+          }
+        }
+
+        const countsAsBeneficiary =
+          mode === "SET_PRICE"
+            ? guest.perNightRates.length > 0
+            : cappedNightCount > 0;
+        if (!countsAsBeneficiary) continue;
+
+        totalAdjustment += guestAdjustment;
+        effectiveGuestCount += 1;
+        addPromoAllocation(
+          allocations,
+          guest.memberId,
+          Math.max(0, -guestAdjustment),
+          guestAdjustment,
+          0,
+          mode === "SET_PRICE"
+        );
+      }
+
+      return {
+        discountCents: Math.max(0, -totalAdjustment),
+        priceAdjustmentCents: totalAdjustment,
+        freeNightsUsed: 0,
+        eligibleGuestCount: effectiveGuestCount,
         allocations: [...allocations.values()],
       };
     }
