@@ -34,6 +34,10 @@ import {
   createWaitlistedBooking,
   type BookingGuestInput,
 } from "@/lib/booking-create";
+import {
+  BookingGuestStayRangeValidationError,
+  normalizeGuestStayRanges,
+} from "@/lib/booking-guest-stay-range-input";
 
 const createBookingSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -46,6 +50,8 @@ const createBookingSchema = z.object({
         ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
+        stayStart: z.string().optional(),
+        stayEnd: z.string().optional(),
       })
     )
     .min(1)
@@ -138,6 +144,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { checkIn, checkOut, guests, notes, promoCode: promoCodeStr, draft, waitlist, expectedArrivalTime, memberReviewJustification } = parsed.data;
+  let guestInputs: BookingGuestInput[] = [];
 
   if (checkOut <= checkIn) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
@@ -160,13 +167,16 @@ export async function POST(request: NextRequest) {
       }
     );
     const normalizedGuests = normalizeBookingGuestInputs(guests, linkedMembers);
-    guests.splice(0, guests.length, ...normalizedGuests);
+    guestInputs = normalizeGuestStayRanges(normalizedGuests, { checkIn, checkOut });
   } catch (error) {
     if (error instanceof BookingGuestValidationError) {
       return NextResponse.json(
         getBookingGuestValidationErrorResponse(error),
         { status: error.status }
       );
+    }
+    if (error instanceof BookingGuestStayRangeValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
     throw error;
   }
@@ -209,7 +219,7 @@ export async function POST(request: NextRequest) {
     const unpaidMemberGuests = await findUnpaidMemberGuests(prisma, {
       bookingMemberId: effectiveMemberId,
       checkIn,
-      guests,
+      guests: guestInputs,
     });
 
     if (unpaidMemberGuests.length > 0) {
@@ -251,7 +261,6 @@ export async function POST(request: NextRequest) {
 
   const gds = await prisma.groupDiscountSetting.findUnique({ where: { id: "default" } });
   const groupDiscount = toGroupDiscountConfig(gds);
-  const guestInputs: BookingGuestInput[] = guests as BookingGuestInput[];
 
   if (draft) {
     try {
@@ -285,7 +294,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const hasNonMembers = guests.some((g) => !g.isMember);
+  const hasNonMembers = guestInputs.some((g) => !g.isMember);
   const holdDays = hasNonMembers ? await getNonMemberHoldDays(checkIn) : 7;
   const { shouldBePending, status } = calculateBookingHoldDecision({
     hasNonMembers,

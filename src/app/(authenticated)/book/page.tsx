@@ -79,6 +79,11 @@ interface PriceQuote {
   availableCreditCents?: number;
 }
 
+interface AvailabilityNightDetail {
+  date: string;
+  availableBeds: number;
+}
+
 interface SubscriptionStatus {
   status: "PAID" | "UNPAID" | "OVERDUE" | "NOT_INVOICED" | "NOT_REQUIRED" | "UNKNOWN";
   seasonDisplay: string;
@@ -98,6 +103,15 @@ const PROFILE_FAMILY_GROUP_RETURN_TO_BOOK = buildProfilePathWithReturnTo(
   "/book",
   "family-group",
 );
+
+function clearGuestStayRanges(guestList: GuestData[]): GuestData[] {
+  return guestList.map((guest) => {
+    const nextGuest = { ...guest };
+    delete nextGuest.stayStart;
+    delete nextGuest.stayEnd;
+    return nextGuest;
+  });
+}
 
 export default function BookPage() {
   const router = useRouter();
@@ -122,6 +136,8 @@ export default function BookPage() {
   const [waitlistFullNights, setWaitlistFullNights] = useState<string[]>([]);
   const [joiningWaitlist, setJoiningWaitlist] = useState(false);
   const [availableBeds, setAvailableBeds] = useState(lodgeCapacity);
+  const [availabilityNightDetails, setAvailabilityNightDetails] = useState<AvailabilityNightDetail[]>([]);
+  const [perGuestDatesEnabled, setPerGuestDatesEnabled] = useState(false);
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
@@ -140,6 +156,117 @@ export default function BookPage() {
     );
     return hasMinor && !hasAdult;
   })();
+
+  function getBookingDateStrings() {
+    if (!checkIn || !checkOut) {
+      return null;
+    }
+
+    return {
+      checkIn: formatLocalDateOnly(checkIn),
+      checkOut: formatLocalDateOnly(checkOut),
+    };
+  }
+
+  function withDefaultGuestStayRanges(guestList: GuestData[]): GuestData[] {
+    const dateStrings = getBookingDateStrings();
+    if (!dateStrings) {
+      return guestList;
+    }
+
+    return guestList.map((guest) => ({
+      ...guest,
+      stayStart: guest.stayStart || dateStrings.checkIn,
+      stayEnd: guest.stayEnd || dateStrings.checkOut,
+    }));
+  }
+
+  function buildGuestPayload(): GuestData[] {
+    if (!perGuestDatesEnabled) {
+      return clearGuestStayRanges(guests);
+    }
+
+    return withDefaultGuestStayRanges(guests);
+  }
+
+  function handlePerGuestDatesEnabledChange(enabled: boolean) {
+    setPerGuestDatesEnabled(enabled);
+    setAppliedPromo(null);
+    setPriceQuote(null);
+    setUseCredit(false);
+    setGuests((current) =>
+      enabled ? withDefaultGuestStayRanges(current) : clearGuestStayRanges(current)
+    );
+  }
+
+  function handleGuestsChange(nextGuests: GuestData[]) {
+    setGuests(nextGuests);
+    setAppliedPromo(null);
+    setPriceQuote(null);
+    setUseCredit(false);
+  }
+
+  function validateGuestStayRanges(guestList: GuestData[]): string | null {
+    if (!perGuestDatesEnabled) {
+      return null;
+    }
+
+    const dateStrings = getBookingDateStrings();
+    if (!dateStrings) {
+      return "Select booking dates first.";
+    }
+
+    for (const [index, guest] of guestList.entries()) {
+      const label = `Guest ${index + 1}`;
+      if (!guest.stayStart || !guest.stayEnd) {
+        return `${label}: select Date In and Date Out.`;
+      }
+      if (guest.stayEnd <= guest.stayStart) {
+        return `${label}: Date Out must be after Date In.`;
+      }
+      if (guest.stayStart < dateStrings.checkIn || guest.stayEnd > dateStrings.checkOut) {
+        return `${label}: guest dates must stay within the booking dates.`;
+      }
+    }
+
+    return null;
+  }
+
+  function getCapacityExceededNights(guestList: GuestData[]): string[] {
+    const dateStrings = getBookingDateStrings();
+    if (!dateStrings) {
+      return [];
+    }
+    if (availabilityNightDetails.length === 0) {
+      return guestList.length > availableBeds ? [dateStrings.checkIn] : [];
+    }
+
+    return availabilityNightDetails
+      .filter((night) => {
+        const activeGuests = guestList.filter((guest) => {
+          const stayStart = guest.stayStart ?? dateStrings.checkIn;
+          const stayEnd = guest.stayEnd ?? dateStrings.checkOut;
+          return stayStart <= night.date && night.date < stayEnd;
+        }).length;
+        return activeGuests > night.availableBeds;
+      })
+      .map((night) => night.date);
+  }
+
+  function formatCapacityExceededMessage(fullNights: string[]) {
+    if (fullNights.length === 1) {
+      return `The lodge does not have enough beds on ${fullNights[0]}`;
+    }
+
+    return `The lodge does not have enough beds on ${fullNights.length} nights`;
+  }
+
+  useEffect(() => {
+    if (guests.length <= 1 && perGuestDatesEnabled) {
+      setPerGuestDatesEnabled(false);
+      setGuests((current) => clearGuestStayRanges(current));
+    }
+  }, [guests.length, perGuestDatesEnabled]);
 
   // Redirect admins to the admin booking page — admins must book on behalf of members
   useEffect(() => {
@@ -196,8 +323,12 @@ export default function BookPage() {
 
   function addFamilyMemberAsGuest(fm: FamilyMember) {
     if (guests.some((g) => g.memberId === fm.id)) return;
-    if (guests.length >= availableBeds) return;
+    if (guests.length >= lodgeCapacity) return;
     if (fm.canBeBooked === false) return;
+    const dateStrings = getBookingDateStrings();
+    setAppliedPromo(null);
+    setPriceQuote(null);
+    setUseCredit(false);
     setGuests([
       ...guests,
       {
@@ -206,6 +337,9 @@ export default function BookPage() {
         ageTier: fm.ageTier,
         isMember: true,
         memberId: fm.id,
+        ...(perGuestDatesEnabled && dateStrings
+          ? { stayStart: dateStrings.checkIn, stayEnd: dateStrings.checkOut }
+          : {}),
       },
     ]);
   }
@@ -241,6 +375,11 @@ export default function BookPage() {
     setCheckOut(co);
     setError("");
     setGuestProfileBlocks([]);
+    setAppliedPromo(null);
+    setPriceQuote(null);
+    setUseCredit(false);
+    setPerGuestDatesEnabled(false);
+    setGuests((current) => clearGuestStayRanges(current));
     const ciStr = formatLocalDateOnly(ci);
     const coStr = formatLocalDateOnly(co);
 
@@ -251,6 +390,9 @@ export default function BookPage() {
     if (res.ok) {
       const data = await res.json();
       setAvailableBeds(data.minAvailable);
+      setAvailabilityNightDetails(data.nightDetails || []);
+    } else {
+      setAvailabilityNightDetails([]);
     }
 
     // Check minimum stay policies
@@ -281,8 +423,16 @@ export default function BookPage() {
       }
     }
 
-    if (guests.length > availableBeds) {
-      setError(`Only ${availableBeds} beds available for your dates`);
+    const guestPayload = buildGuestPayload();
+    const stayRangeError = validateGuestStayRanges(guestPayload);
+    if (stayRangeError) {
+      setError(stayRangeError);
+      return;
+    }
+
+    const fullNights = getCapacityExceededNights(guestPayload);
+    if (fullNights.length > 0) {
+      setError(formatCapacityExceededMessage(fullNights));
       return;
     }
 
@@ -298,10 +448,12 @@ export default function BookPage() {
       body: JSON.stringify({
         checkIn: checkInStr,
         checkOut: checkOutStr,
-        guests: guests.map((g) => ({
+        guests: guestPayload.map((g) => ({
           ageTier: g.ageTier,
           isMember: g.isMember,
           memberId: g.memberId,
+          stayStart: g.stayStart,
+          stayEnd: g.stayEnd,
         })),
       }),
     });
@@ -328,6 +480,12 @@ export default function BookPage() {
       setError("Please add a reason for booking without an adult guest. This goes to an admin for review.");
       return;
     }
+    const guestPayload = buildGuestPayload();
+    const stayRangeError = validateGuestStayRanges(guestPayload);
+    if (stayRangeError) {
+      setError(stayRangeError);
+      return;
+    }
     setSubmitting(true);
     setError("");
     setErrorPaymentTargets([]);
@@ -342,7 +500,7 @@ export default function BookPage() {
       body: JSON.stringify({
         checkIn: checkInStr,
         checkOut: checkOutStr,
-        guests,
+        guests: guestPayload,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
@@ -374,6 +532,12 @@ export default function BookPage() {
       setError("Please add a reason for booking without an adult guest before joining the waitlist.");
       return;
     }
+    const guestPayload = buildGuestPayload();
+    const stayRangeError = validateGuestStayRanges(guestPayload);
+    if (stayRangeError) {
+      setError(stayRangeError);
+      return;
+    }
     setJoiningWaitlist(true);
     setError("");
     setErrorPaymentTargets([]);
@@ -387,7 +551,7 @@ export default function BookPage() {
       body: JSON.stringify({
         checkIn: checkInStr,
         checkOut: checkOutStr,
-        guests,
+        guests: guestPayload,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
@@ -409,6 +573,12 @@ export default function BookPage() {
   }
 
   async function handleSaveAsDraft() {
+    const guestPayload = buildGuestPayload();
+    const stayRangeError = validateGuestStayRanges(guestPayload);
+    if (stayRangeError) {
+      setError(stayRangeError);
+      return;
+    }
     setSavingDraft(true);
     setError("");
     setErrorPaymentTargets([]);
@@ -422,7 +592,7 @@ export default function BookPage() {
       body: JSON.stringify({
         checkIn: checkInStr,
         checkOut: checkOutStr,
-        guests,
+        guests: guestPayload,
         notes: notes || undefined,
         promoCode: appliedPromo?.code || undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
@@ -497,6 +667,8 @@ export default function BookPage() {
     ? Math.min(availableCreditCents, finalPriceBeforeCredit)
     : 0;
   const remainingToPay = finalPriceBeforeCredit - appliedCreditCents;
+  const bookingDateStrings = getBookingDateStrings();
+  const reviewGuestPayload = priceQuote ? buildGuestPayload() : guests;
 
   const subscriptionUnpaid =
     subscriptionStatus &&
@@ -724,7 +896,7 @@ export default function BookPage() {
                             type="button"
                             variant={alreadyAdded ? "secondary" : fm.relationship === "self" ? "default" : "outline"}
                             size="sm"
-                            disabled={alreadyAdded || guests.length >= availableBeds || blocked}
+                            disabled={alreadyAdded || guests.length >= lodgeCapacity || blocked}
                             onClick={() => addFamilyMemberAsGuest(fm)}
                           >
                             {alreadyAdded ? "\u2713 " : "+ "}
@@ -774,8 +946,12 @@ export default function BookPage() {
             )}
             <GuestForm
               guests={guests}
-              onGuestsChange={setGuests}
-              maxGuests={availableBeds}
+              onGuestsChange={handleGuestsChange}
+              maxGuests={lodgeCapacity}
+              bookingCheckIn={checkIn ? formatLocalDateOnly(checkIn) : undefined}
+              bookingCheckOut={checkOut ? formatLocalDateOnly(checkOut) : undefined}
+              perGuestDatesEnabled={perGuestDatesEnabled}
+              onPerGuestDatesEnabledChange={handlePerGuestDatesEnabledChange}
             />
             <div className="flex justify-between pt-4">
               <Button variant="outline" onClick={() => setStep("dates")}>
@@ -826,16 +1002,27 @@ export default function BookPage() {
 
               <div className="border-t pt-4">
                 <h4 className="font-medium mb-2">Guests</h4>
-                {guests.map((g, i) => (
-                  <div key={i} className="flex justify-between text-sm py-1">
-                    <span>
-                      {g.firstName} {g.lastName} ({g.ageTier}, {g.isMember ? "Member" : "Non-member"})
-                    </span>
-                    <span className="font-medium">
-                      {formatCents(priceQuote.guests[i]?.priceCents || 0)}
-                    </span>
-                  </div>
-                ))}
+                {reviewGuestPayload.map((g, i) => {
+                  const stayStart = g.stayStart ?? bookingDateStrings?.checkIn;
+                  const stayEnd = g.stayEnd ?? bookingDateStrings?.checkOut;
+                  const guestNights = priceQuote.guests[i]?.nights ?? 0;
+
+                  return (
+                    <div key={i} className="flex justify-between gap-3 text-sm py-1">
+                      <span>
+                        {g.firstName} {g.lastName} ({g.ageTier}, {g.isMember ? "Member" : "Non-member"})
+                        {perGuestDatesEnabled && stayStart && stayEnd && (
+                          <span className="block text-xs text-gray-500">
+                            Date In {stayStart} - Date Out {stayEnd} ({guestNights} night{guestNights === 1 ? "" : "s"})
+                          </span>
+                        )}
+                      </span>
+                      <span className="font-medium">
+                        {formatCents(priceQuote.guests[i]?.priceCents || 0)}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
 
               {appliedPromo && appliedPromo.promoAdjustmentCents !== 0 ? (
@@ -966,13 +1153,13 @@ export default function BookPage() {
                   </div>
                 </div>
               )}
-              <PromoCodeInput
-                checkIn={checkIn!}
-                checkOut={checkOut!}
-                guests={guests}
-                onPromoApplied={setAppliedPromo}
-                appliedPromo={appliedPromo}
-                prefillCode={prefillPromoCode}
+	              <PromoCodeInput
+	                checkIn={checkIn!}
+	                checkOut={checkOut!}
+	                guests={reviewGuestPayload}
+	                onPromoApplied={setAppliedPromo}
+	                appliedPromo={appliedPromo}
+	                prefillCode={prefillPromoCode}
               />
             </CardContent>
           </Card>

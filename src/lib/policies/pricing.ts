@@ -1,6 +1,7 @@
 import type { AgeTier, FixedNightlyMode, PromoCodeType, SeasonType } from "@prisma/client";
 import { APP_TIME_ZONE } from "@/config/operational";
 import { addDaysDateOnly, formatDateOnly, parseDateOnly } from "../date-only";
+import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 
 export interface SeasonRateData {
   seasonId: string;
@@ -23,6 +24,8 @@ export interface GroupDiscountConfig {
 export interface GuestInput {
   ageTier: AgeTier;
   isMember: boolean;
+  stayStart?: Date | null;
+  stayEnd?: Date | null;
 }
 
 export interface PriceBreakdown {
@@ -225,17 +228,28 @@ export function calculateBookingPrice(
   seasons: SeasonRateData[],
   groupDiscount?: GroupDiscountConfig
 ): PriceBreakdown {
-  const nights = getStayNights(checkIn, checkOut);
+  const bookingRange = {
+    checkIn: normalizeBookingDate(checkIn),
+    checkOut: normalizeBookingDate(checkOut),
+  };
 
   const guestBreakdowns = guests.map((guest) => {
+    const guestStayStart = guest.stayStart
+      ? normalizeBookingDate(guest.stayStart)
+      : bookingRange.checkIn;
+    const guestStayEnd = guest.stayEnd
+      ? normalizeBookingDate(guest.stayEnd)
+      : bookingRange.checkOut;
+    const nights = getStayNights(guestStayStart, guestStayEnd);
     const perNightCents: number[] = [];
     let guestTotal = 0;
 
     for (const night of nights) {
+      const activeGuestCount = countActiveGuestsForNight(guests, night, bookingRange);
       // Group discount: if applicable, treat all guests as members for rate lookup
       const effectiveIsMember =
         guest.isMember ||
-        isGroupDiscountApplicable(guests.length, night, seasons, groupDiscount);
+        isGroupDiscountApplicable(activeGuestCount, night, seasons, groupDiscount);
 
       const rate = findRateForNight(night, guest.ageTier, effectiveIsMember, seasons);
       if (rate === null) {

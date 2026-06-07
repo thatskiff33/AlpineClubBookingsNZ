@@ -1,11 +1,14 @@
 import { BookingStatus, type AgeTier, type SeasonType } from "@prisma/client";
 import {
   calculateBookingPrice,
+  getStayNights,
+  isGroupDiscountApplicable,
   type GroupDiscountConfig,
   type GuestInput,
   type PriceBreakdown,
   type SeasonRateData,
 } from "@/lib/pricing";
+import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 import {
   calculateDualRefundAmounts,
   daysUntilDate,
@@ -35,6 +38,8 @@ export interface SeasonRateSource {
 export interface GuestPricingSource {
   ageTier: AgeTier;
   isMember: boolean;
+  stayStart?: Date | null;
+  stayEnd?: Date | null;
 }
 
 export function toGroupDiscountConfig(
@@ -69,6 +74,8 @@ export function toGuestPricingInputs(guests: GuestPricingSource[]): GuestInput[]
   return guests.map((guest) => ({
     ageTier: guest.ageTier,
     isMember: guest.isMember,
+    stayStart: guest.stayStart ?? undefined,
+    stayEnd: guest.stayEnd ?? undefined,
   }));
 }
 
@@ -92,16 +99,27 @@ export function isGroupDiscountAppliedToBooking(input: {
   checkIn: Date;
   checkOut: Date;
   guestCount: number;
+  guests?: GuestInput[];
   seasons: SeasonRateData[];
   groupDiscount?: GroupDiscountConfig;
 }): boolean {
-  const { checkIn, checkOut, guestCount, seasons, groupDiscount } = input;
+  const { checkIn, checkOut, guestCount, guests, seasons, groupDiscount } = input;
   if (!groupDiscount?.enabled) {
     return false;
   }
-  if (guestCount < groupDiscount.minGroupSize) {
-    return false;
+
+  if (guests) {
+    return getStayNights(checkIn, checkOut).some((night) =>
+      isGroupDiscountApplicable(
+        countActiveGuestsForNight(guests, night, { checkIn, checkOut }),
+        night,
+        seasons,
+        groupDiscount
+      )
+    );
   }
+
+  if (guestCount < groupDiscount.minGroupSize) return false;
   if (!groupDiscount.summerOnly) {
     return true;
   }

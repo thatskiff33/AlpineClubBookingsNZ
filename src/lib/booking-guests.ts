@@ -9,6 +9,8 @@ export type BookingGuestPricingInput = {
   ageTier: AgeTier;
   isMember: boolean;
   memberId?: string;
+  stayStart?: Date | string | null;
+  stayEnd?: Date | string | null;
 };
 
 export type BookingGuestInput = BookingGuestPricingInput & {

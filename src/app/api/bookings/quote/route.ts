@@ -16,9 +16,15 @@ import {
   assertLinkedBookingMembersCanBeBooked,
   BookingGuestValidationError,
   getBookingGuestValidationErrorResponse,
+  type BookingGuestPricingInput,
   normalizeBookingGuestPricingInputs,
   resolveLinkedBookingMembers,
 } from "@/lib/booking-guests";
+import {
+  BookingGuestStayRangeValidationError,
+  type NormalizedBookingGuestStayRange,
+  normalizeGuestStayRanges,
+} from "@/lib/booking-guest-stay-range-input";
 
 const quoteSchema = z.object({
   checkIn: z.string().transform((s) => new Date(s)),
@@ -28,6 +34,8 @@ const quoteSchema = z.object({
       ageTier: ageTierEnum,
       isMember: z.boolean(),
       memberId: z.string().min(1).optional(),
+      stayStart: z.string().optional(),
+      stayEnd: z.string().optional(),
     })
   ).min(1),
   forMemberId: z.string().optional(),
@@ -57,7 +65,8 @@ export async function POST(request: NextRequest) {
   }
 
   const { checkIn, checkOut } = parsed.data;
-  let { guests } = parsed.data;
+  const rawGuests: BookingGuestPricingInput[] = parsed.data.guests;
+  let guests: Array<BookingGuestPricingInput & NormalizedBookingGuestStayRange>;
 
   if (checkOut <= checkIn) {
     return NextResponse.json({ error: "Check-out must be after check-in" }, { status: 400 });
@@ -73,7 +82,7 @@ export async function POST(request: NextRequest) {
     const linkedMembers = await resolveLinkedBookingMembers(
       prisma,
       effectiveMemberId,
-      guests.map((guest) => guest.memberId),
+      rawGuests.map((guest) => guest.memberId),
       { skipAuthorization: isAdminOnBehalf }
     );
     await assertLinkedBookingMembersCanBeBooked(
@@ -85,13 +94,19 @@ export async function POST(request: NextRequest) {
         onBehalfOfMemberId: isAdminOnBehalf ? effectiveMemberId : null,
       }
     );
-    guests = normalizeBookingGuestPricingInputs(guests, linkedMembers);
+    guests = normalizeGuestStayRanges(
+      normalizeBookingGuestPricingInputs(rawGuests, linkedMembers),
+      { checkIn, checkOut }
+    );
   } catch (error) {
     if (error instanceof BookingGuestValidationError) {
       return NextResponse.json(
         getBookingGuestValidationErrorResponse(error),
         { status: error.status }
       );
+    }
+    if (error instanceof BookingGuestStayRangeValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
     throw error;
   }
@@ -125,6 +140,7 @@ export async function POST(request: NextRequest) {
       checkIn,
       checkOut,
       guestCount: guests.length,
+      guests,
       seasons: seasonData,
       groupDiscount,
     });

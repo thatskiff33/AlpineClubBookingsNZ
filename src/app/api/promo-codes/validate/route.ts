@@ -13,6 +13,11 @@ import {
 import { applyRateLimit, rateLimiters } from "@/lib/rate-limit";
 import { z } from "zod";
 import { ageTierEnum } from "@/lib/age-tier-schema";
+import {
+  BookingGuestStayRangeValidationError,
+  type NormalizedBookingGuestStayRange,
+  normalizeGuestStayRanges,
+} from "@/lib/booking-guest-stay-range-input";
 
 const validateSchema = z.object({
   code: z.string().min(1, "Promo code is required"),
@@ -24,6 +29,8 @@ const validateSchema = z.object({
         ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
+        stayStart: z.string().optional(),
+        stayEnd: z.string().optional(),
       })
     )
     .min(1),
@@ -53,7 +60,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { code, checkIn, checkOut, guests } = parsed.data;
+  const { code, checkIn, checkOut } = parsed.data;
+  let guests: Array<(typeof parsed.data.guests)[number] & NormalizedBookingGuestStayRange>;
+  try {
+    guests = normalizeGuestStayRanges(parsed.data.guests, { checkIn, checkOut });
+  } catch (error) {
+    if (error instanceof BookingGuestStayRangeValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
+  }
   const normalizedCode = code.toUpperCase().trim();
 
   // Use target member for admin on-behalf bookings

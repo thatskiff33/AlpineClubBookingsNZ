@@ -238,6 +238,73 @@ describe("calculateBookingPrice - multiple guests", () => {
     )
     expect(totalPriceCents).toBe(4500)
   })
+
+  it("prices guest-specific stay ranges", () => {
+    const guests: GuestInput[] = [
+      {
+        ageTier: "ADULT",
+        isMember: true,
+        stayStart: new Date("2026-07-10"),
+        stayEnd: new Date("2026-07-13"),
+      },
+      {
+        ageTier: "ADULT",
+        isMember: true,
+        stayStart: new Date("2026-07-10"),
+        stayEnd: new Date("2026-07-14"),
+      },
+      {
+        ageTier: "CHILD",
+        isMember: true,
+        stayStart: new Date("2026-07-11"),
+        stayEnd: new Date("2026-07-14"),
+      },
+    ]
+
+    const result = calculateBookingPrice(
+      new Date("2026-07-10"),
+      new Date("2026-07-14"),
+      guests,
+      allSeasons
+    )
+
+    expect(result.totalPriceCents).toBe(4500 * 3 + 4500 * 4 + 1500 * 3)
+    expect(result.guests.map((guest) => guest.nights)).toEqual([3, 4, 3])
+    expect(result.guests.map((guest) => guest.priceCents)).toEqual([
+      13500,
+      18000,
+      4500,
+    ])
+  })
+
+  it("uses active guest count for group discounts on each night", () => {
+    const guests: GuestInput[] = [
+      {
+        ageTier: "ADULT",
+        isMember: false,
+        stayStart: new Date("2026-07-10"),
+        stayEnd: new Date("2026-07-12"),
+      },
+      {
+        ageTier: "ADULT",
+        isMember: false,
+        stayStart: new Date("2026-07-11"),
+        stayEnd: new Date("2026-07-12"),
+      },
+    ]
+
+    const result = calculateBookingPrice(
+      new Date("2026-07-10"),
+      new Date("2026-07-12"),
+      guests,
+      allSeasons,
+      { enabled: true, minGroupSize: 2, summerOnly: false }
+    )
+
+    expect(result.guests[0].perNightCents).toEqual([6500, 4500])
+    expect(result.guests[1].perNightCents).toEqual([4500])
+    expect(result.totalPriceCents).toBe(15500)
+  })
 })
 
 describe("calculatePromoDiscount", () => {

@@ -18,7 +18,13 @@ export interface PromoResult {
 interface PromoCodeInputProps {
   checkIn: Date;
   checkOut: Date;
-  guests: { ageTier: string; isMember: boolean; memberId?: string }[];
+  guests: {
+    ageTier: string;
+    isMember: boolean;
+    memberId?: string;
+    stayStart?: string;
+    stayEnd?: string;
+  }[];
   onPromoApplied: (result: PromoResult | null) => void;
   appliedPromo: PromoResult | null;
   forMemberId?: string;
@@ -61,11 +67,13 @@ export function PromoCodeInput({
           code: code.trim(),
           checkIn: checkIn.toISOString(),
           checkOut: checkOut.toISOString(),
-          guests: guests.map((g) => ({
-            ageTier: g.ageTier,
-            isMember: g.isMember,
-            ...(g.memberId ? { memberId: g.memberId } : {}),
-          })),
+	          guests: guests.map((g) => ({
+	            ageTier: g.ageTier,
+	            isMember: g.isMember,
+	            ...(g.memberId ? { memberId: g.memberId } : {}),
+	            ...(g.stayStart ? { stayStart: g.stayStart } : {}),
+	            ...(g.stayEnd ? { stayEnd: g.stayEnd } : {}),
+	          })),
           ...(forMemberId ? { forMemberId } : {}),
         }),
       });

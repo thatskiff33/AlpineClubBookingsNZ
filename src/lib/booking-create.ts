@@ -26,7 +26,6 @@ import {
   type Booking,
   type BookingGuest,
 } from "@prisma/client";
-import { eachDayOfInterval, subDays } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import {
   calculateBookingCreditApplication,
@@ -34,9 +33,7 @@ import {
   toGuestPricingInputs,
   toSeasonRateData,
 } from "@/lib/policies/booking-route-decisions";
-import { checkCapacity, getOccupiedBedsForNight } from "@/lib/capacity";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
-import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
   redeemPromoCode,
   shouldPersistPromoRedemption,
@@ -67,6 +64,7 @@ import {
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 
 type BookingWithGuests = Booking & { guests: BookingGuest[] };
 
@@ -76,6 +74,8 @@ export interface BookingGuestInput {
   ageTier: AgeTier;
   isMember: boolean;
   memberId?: string;
+  stayStart?: Date | null;
+  stayEnd?: Date | null;
 }
 
 interface BaseInput {
@@ -330,10 +330,50 @@ function buildGuestCreateData(guests: BookingGuestInput[], price: { guests: { pr
     ageTier: g.ageTier,
     isMember: g.isMember,
     memberId: g.memberId || null,
-    stayStart: checkIn,
-    stayEnd: checkOut,
+    stayStart: g.stayStart ?? checkIn,
+    stayEnd: g.stayEnd ?? checkOut,
     priceCents: price.guests[i].priceCents,
   }));
+}
+
+function getCapacityGuestRanges(
+  guests: BookingGuestInput[],
+  checkIn: Date,
+  checkOut: Date
+) {
+  return guests.map((guest) => ({
+    stayStart: guest.stayStart ?? checkIn,
+    stayEnd: guest.stayEnd ?? checkOut,
+  }));
+}
+
+function getCapacityFullNights(
+  nightDetails: Array<{ date: Date; availableBeds: number }>
+): string[] {
+  return nightDetails
+    .filter((night) => night.availableBeds < 0)
+    .map((night) => night.date.toISOString().split("T")[0]);
+}
+
+function getMaxActiveGuestCount(
+  guests: BookingGuestInput[],
+  checkIn: Date,
+  checkOut: Date
+): number {
+  let maxActive = 0;
+
+  for (
+    let current = new Date(checkIn);
+    current < checkOut;
+    current.setUTCDate(current.getUTCDate() + 1)
+  ) {
+    maxActive = Math.max(
+      maxActive,
+      countActiveGuestsForNight(guests, current, { checkIn, checkOut })
+    );
+  }
+
+  return maxActive;
 }
 
 /**
@@ -576,30 +616,14 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     booking = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(1)`;
 
-      const nights = eachDayOfInterval({ start: checkIn, end: subDays(checkOut, 1) });
-
-      const overlappingBookings = await tx.booking.findMany({
-        where: {
-          checkIn: { lt: checkOut },
-          checkOut: { gt: checkIn },
-          status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
-        },
-        include: { guests: true },
-      });
-
-      const nightDetails: Array<{ date: string; occupiedBeds: number; availableBeds: number }> = [];
-      let capacityExceeded = false;
-      for (const night of nights) {
-        const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
-        nightDetails.push({
-          date: night.toISOString().split("T")[0],
-          occupiedBeds,
-          availableBeds: LODGE_CAPACITY - occupiedBeds,
-        });
-        if (occupiedBeds + guests.length > LODGE_CAPACITY) {
-          capacityExceeded = true;
-        }
-      }
+      const capacityGuestRanges = getCapacityGuestRanges(guests, checkIn, checkOut);
+      const capacityCheck = await checkCapacityForGuestRanges(
+        checkIn,
+        checkOut,
+        capacityGuestRanges,
+        undefined,
+        tx
+      );
 
       const seasons = await tx.season.findMany({
         where: { active: true, startDate: { lte: checkOut }, endDate: { gte: checkIn } },
@@ -655,12 +679,10 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // when the booking would otherwise have skipped the check (zero-dollar
       // member-paid path).
       if (
-        capacityExceeded &&
+        !capacityCheck.available &&
         (status === BookingStatus.PENDING || effectivePriceCents > 0 || review.blockForReview)
       ) {
-        capacityFullNights = nightDetails
-          .filter((n) => n.availableBeds < guests.length)
-          .map((n) => n.date);
+        capacityFullNights = getCapacityFullNights(capacityCheck.nightDetails);
         throw new Error("CAPACITY_EXCEEDED_SENTINEL");
       }
 
@@ -722,20 +744,27 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         status === BookingStatus.PAYMENT_PENDING &&
         !review.blockForReview
       ) {
-        const capacityCheck = await checkCapacity(checkIn, checkOut, guests.length, newBooking.id, tx);
-        if (!capacityCheck.available) {
+        const finalCapacityCheck = await checkCapacityForGuestRanges(
+          checkIn,
+          checkOut,
+          capacityGuestRanges,
+          newBooking.id,
+          tx
+        );
+        if (!finalCapacityCheck.available) {
           if (!allMembers) {
-            capacityFullNights = capacityCheck.nightDetails
-              .filter((night) => night.availableBeds < guests.length)
-              .map((night) => night.date.toISOString().split("T")[0]);
+            capacityFullNights = getCapacityFullNights(finalCapacityCheck.nightDetails);
             throw new Error("CAPACITY_EXCEEDED_SENTINEL");
           }
 
-          const bumpResult = await bumpPendingBookings(checkIn, checkOut, guests.length, tx);
+          const bumpResult = await bumpPendingBookings(
+            checkIn,
+            checkOut,
+            getMaxActiveGuestCount(guests, checkIn, checkOut),
+            tx
+          );
           if (!bumpResult.capacityRestored) {
-            capacityFullNights = capacityCheck.nightDetails
-              .filter((night) => night.availableBeds < guests.length)
-              .map((night) => night.date.toISOString().split("T")[0]);
+            capacityFullNights = getCapacityFullNights(finalCapacityCheck.nightDetails);
             throw new Error("CAPACITY_EXCEEDED_SENTINEL");
           }
 
