@@ -1,0 +1,197 @@
+import { readFileSync } from "fs";
+import path from "path";
+import { describe, expect, it, vi } from "vitest";
+import { parseDateOnly } from "@/lib/date-only";
+import {
+  buildFirstFitBedAllocationPlan,
+  replaceBedAllocationsForBooking,
+  type BedAllocationRoom,
+} from "@/lib/bed-allocation";
+
+const rooms: BedAllocationRoom[] = [
+  {
+    id: "room-b",
+    name: "Room B",
+    sortOrder: 2,
+    beds: [
+      { id: "bed-b1", roomId: "room-b", name: "B1", sortOrder: 1 },
+    ],
+  },
+  {
+    id: "room-a",
+    name: "Room A",
+    sortOrder: 1,
+    beds: [
+      { id: "bed-a2", roomId: "room-a", name: "A2", sortOrder: 2 },
+      { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 },
+    ],
+  },
+];
+
+function booking(id: string, createdAt: string, guestId: string) {
+  return {
+    id,
+    createdAt: new Date(createdAt),
+    guests: [
+      {
+        id: guestId,
+        bookingId: id,
+        stayStart: parseDateOnly("2026-07-01"),
+        stayEnd: parseDateOnly("2026-07-03"),
+      },
+    ],
+  };
+}
+
+function readRepoFile(relativePath: string) {
+  return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
+}
+
+describe("bed allocation planner", () => {
+  it("does nothing when the module is disabled", () => {
+    expect(
+      buildFirstFitBedAllocationPlan({
+        enabled: false,
+        rooms,
+        bookings: [booking("booking-1", "2026-06-01", "guest-1")],
+      }),
+    ).toEqual({ allocations: [], unallocatedGuestNights: [] });
+  });
+
+  it("allocates guest nights to active beds in room and bed sort order", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms,
+      bookings: [booking("booking-1", "2026-06-01", "guest-1")],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-1",
+        bookingGuestId: "guest-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-1",
+        bookingGuestId: "guest-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("allocates bookings FIFO and reports unallocated guest nights when beds are full", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          beds: [{ id: "bed-a1", roomId: "room-a", name: "A1" }],
+        },
+      ],
+      bookings: [
+        booking("booking-newer", "2026-06-02", "guest-newer"),
+        booking("booking-older", "2026-06-01", "guest-older"),
+      ],
+      occupiedBedNights: [{ bedId: "bed-a1", stayDate: "2026-07-02" }],
+    });
+
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-older",
+        bookingGuestId: "guest-older",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+    expect(plan.unallocatedGuestNights).toEqual([
+      {
+        bookingId: "booking-older",
+        bookingGuestId: "guest-older",
+        stayDate: "2026-07-02",
+        reason: "NO_BED_AVAILABLE",
+      },
+      {
+        bookingId: "booking-newer",
+        bookingGuestId: "guest-newer",
+        stayDate: "2026-07-01",
+        reason: "NO_BED_AVAILABLE",
+      },
+      {
+        bookingId: "booking-newer",
+        bookingGuestId: "guest-newer",
+        stayDate: "2026-07-02",
+        reason: "NO_BED_AVAILABLE",
+      },
+    ]);
+  });
+
+  it("replaces persisted booking allocations with parsed date-only values", async () => {
+    const deleteMany = vi.fn().mockResolvedValue({ count: 1 });
+    const createMany = vi.fn().mockResolvedValue({ count: 1 });
+
+    await expect(
+      replaceBedAllocationsForBooking(
+        { bedAllocation: { deleteMany, createMany } },
+        "booking-1",
+        [
+          {
+            bookingId: "booking-1",
+            bookingGuestId: "guest-1",
+            roomId: "room-a",
+            bedId: "bed-a1",
+            stayDate: "2026-07-01",
+            source: "MANUAL",
+          },
+        ],
+      ),
+    ).resolves.toEqual({ count: 1 });
+
+    expect(deleteMany).toHaveBeenCalledWith({
+      where: { bookingId: "booking-1" },
+    });
+    expect(createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          bookingId: "booking-1",
+          bookingGuestId: "guest-1",
+          roomId: "room-a",
+          bedId: "bed-a1",
+          stayDate: parseDateOnly("2026-07-01"),
+          source: "MANUAL",
+        },
+      ],
+    });
+  });
+});
+
+describe("bed allocation schema contract", () => {
+  it("adds current allocation tables with one bed per guest-night and one guest per bed-night", () => {
+    const schema = readRepoFile("prisma/schema.prisma");
+    const migration = readRepoFile(
+      "prisma/migrations/20260607133000_add_bed_allocation_inventory/migration.sql",
+    );
+
+    expect(schema).toContain("model LodgeRoom");
+    expect(schema).toContain("model LodgeBed");
+    expect(schema).toContain("model BedAllocation");
+    expect(schema).toContain("@@unique([bedId, stayDate])");
+    expect(schema).toContain("@@unique([bookingGuestId, stayDate])");
+    expect(migration).toContain('CREATE TABLE IF NOT EXISTS "LodgeRoom"');
+    expect(migration).toContain(
+      'CREATE UNIQUE INDEX IF NOT EXISTS "BedAllocation_bedId_stayDate_key"',
+    );
+    expect(migration).toContain(
+      'CREATE UNIQUE INDEX IF NOT EXISTS "BedAllocation_bookingGuestId_stayDate_key"',
+    );
+  });
+});

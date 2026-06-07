@@ -97,6 +97,11 @@ enum AdminReviewStatus {
   REJECTED
 }
 
+enum BedAllocationSource {
+  AUTO
+  MANUAL
+}
+
 enum PaymentStatus {
   PENDING
   PROCESSING
@@ -321,6 +326,7 @@ model Member {
   adminCreditAdjustmentRequestsReviewed      AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentRequestsReviewed")
   bookingsCreatedOnBehalf                    Booking[]                                  @relation("BookingsCreatedBy")
   bookingsAdminReviewed                      Booking[]                                  @relation("BookingsAdminReviewed")
+  approvedBedAllocations                     BedAllocation[]                            @relation("BedAllocationApprover")
   refundRequests                             RefundRequest[]
   issueReports                               IssueReport[]
   adminCreditAdjustmentRequests              AdminCreditAdjustmentRequest[]             @relation("AdminCreditAdjustmentTarget")
@@ -633,6 +639,7 @@ model Booking {
   creditsApplied             MemberCredit[]              @relation("CreditApplied")
   refundRequests             RefundRequest[]
   paymentRecoveryOperations  PaymentRecoveryOperation[]
+  bedAllocations             BedAllocation[]
 
   @@index([memberId])
   @@index([createdById])
@@ -670,11 +677,76 @@ model BookingGuest {
   member           Member?           @relation(fields: [memberId], references: [id], onDelete: SetNull)
   choreAssignments ChoreAssignment[]
   choreTokens      GuestChoreToken[]
+  bedAllocations   BedAllocation[]
 
   @@index([bookingId])
   @@index([bookingId, stayStart, stayEnd])
   @@index([stayStart, stayEnd])
   @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Bed Allocation
+// ---------------------------------------------------------------------------
+
+model LodgeRoom {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(100)
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  notes     String?  @db.VarChar(500)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  beds        LodgeBed[]
+  allocations BedAllocation[]
+
+  @@unique([name])
+  @@index([active, sortOrder])
+}
+
+model LodgeBed {
+  id        String   @id @default(cuid())
+  roomId    String
+  name      String   @db.VarChar(100)
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  room        LodgeRoom       @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  allocations BedAllocation[]
+
+  @@unique([roomId, name])
+  @@unique([id, roomId])
+  @@index([roomId, active, sortOrder])
+}
+
+model BedAllocation {
+  id                 String              @id @default(cuid())
+  bookingId          String
+  bookingGuestId     String
+  roomId             String
+  bedId              String
+  stayDate           DateTime            @db.Date
+  source             BedAllocationSource @default(AUTO)
+  approvedByMemberId String?
+  approvedAt         DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  booking      Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingGuest BookingGuest @relation(fields: [bookingGuestId], references: [id], onDelete: Cascade)
+  room         LodgeRoom    @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  bed          LodgeBed     @relation(fields: [bedId, roomId], references: [id, roomId], onDelete: Restrict)
+  approvedBy   Member?      @relation("BedAllocationApprover", fields: [approvedByMemberId], references: [id], onDelete: SetNull)
+
+  @@unique([bedId, stayDate])
+  @@unique([bookingGuestId, stayDate])
+  @@index([bookingId])
+  @@index([bookingGuestId])
+  @@index([roomId])
+  @@index([approvedByMemberId])
 }
 
 // ---------------------------------------------------------------------------
