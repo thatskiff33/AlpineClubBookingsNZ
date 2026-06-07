@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildMemberImportPreview,
+  createDefaultMemberImportDateFormatMapping,
   inferMemberImportColumnMapping,
   MEMBER_IMPORT_MAX_ROWS,
+  normalizeMemberImportDateValue,
   parseCsv,
   parseMemberImportCsv,
 } from "@/lib/member-csv-import";
@@ -91,6 +93,95 @@ describe("member CSV import parser", () => {
       lastName: "Last12",
       email: "member12@example.com",
       role: "MEMBER",
+    });
+  });
+
+  it("maps full name, joined date, and selected date formats", () => {
+    const parsed = parseMemberImportCsv(
+      [
+        "Name,Email,DOB,Membership Start,Phone Number",
+        "Alice Anderson,alice@example.com,15/01/1990,5 Jan 2024,021555123",
+      ].join("\n")
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const preview = buildMemberImportPreview(
+      parsed.data,
+      inferMemberImportColumnMapping(parsed.data.headers),
+      {
+        dateOfBirth: "dd/MM/yyyy",
+        joinedDate: "d MMM yyyy",
+      }
+    );
+
+    expect(preview.hasErrors).toBe(false);
+    expect(preview.rows[0].values).toMatchObject({
+      fullName: "Alice Anderson",
+      firstName: "Alice",
+      lastName: "Anderson",
+      dateOfBirth: "15/01/1990",
+      joinedDate: "5 Jan 2024",
+      phoneNumber: "021555123",
+    });
+    expect(preview.rows[0].normalizedDateValues).toEqual({
+      dateOfBirth: "1990-01-15",
+      joinedDate: "2024-01-05",
+    });
+  });
+
+  it("reports invalid mapped dates with line and column context", () => {
+    const parsed = parseMemberImportCsv(
+      "First Name,Last Name,Email,DOB\nAlice,Anderson,alice@example.com,31/02/1990"
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const preview = buildMemberImportPreview(
+      parsed.data,
+      inferMemberImportColumnMapping(parsed.data.headers),
+      {
+        ...createDefaultMemberImportDateFormatMapping(),
+        dateOfBirth: "dd/MM/yyyy",
+      }
+    );
+
+    expect(preview.hasErrors).toBe(true);
+    expect(preview.rows[0].lineNumber).toBe(2);
+    expect(preview.rows[0].errors[0]).toContain("Date of Birth (column DOB)");
+    expect(preview.rows[0].errors[0]).toContain("valid calendar date");
+  });
+
+  it("normalizes every supported date format to date-only storage format", () => {
+    expect(normalizeMemberImportDateValue("1990-01-15", "yyyy-MM-dd")).toEqual({
+      ok: true,
+      value: "1990-01-15",
+    });
+    expect(normalizeMemberImportDateValue("15/01/1990", "dd/MM/yyyy")).toEqual({
+      ok: true,
+      value: "1990-01-15",
+    });
+    expect(normalizeMemberImportDateValue("5/1/1990", "d/M/yyyy")).toEqual({
+      ok: true,
+      value: "1990-01-05",
+    });
+    expect(normalizeMemberImportDateValue("01/15/1990", "MM/dd/yyyy")).toEqual({
+      ok: true,
+      value: "1990-01-15",
+    });
+    expect(normalizeMemberImportDateValue("15-01-1990", "dd-MM-yyyy")).toEqual({
+      ok: true,
+      value: "1990-01-15",
+    });
+    expect(normalizeMemberImportDateValue("5 Jan 1990", "d MMM yyyy")).toEqual({
+      ok: true,
+      value: "1990-01-05",
+    });
+    expect(normalizeMemberImportDateValue("Jan 5 1990", "MMM d yyyy")).toEqual({
+      ok: true,
+      value: "1990-01-05",
     });
   });
 

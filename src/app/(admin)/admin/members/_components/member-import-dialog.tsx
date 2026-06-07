@@ -39,13 +39,19 @@ import {
 } from "@/components/ui/table"
 import {
   buildMemberImportPreview,
+  createDefaultMemberImportDateFormatMapping,
   inferMemberImportColumnMapping,
+  isMemberImportDateField,
+  MEMBER_IMPORT_DATE_FORMATS,
   MEMBER_IMPORT_FIELD_DEFINITIONS,
   MEMBER_IMPORT_MAX_ROWS,
   parseMemberImportCsv,
   type CsvRecord,
   type MemberImportColumnMapping,
   type MemberImportCsvData,
+  type MemberImportDateFieldKey,
+  type MemberImportDateFormat,
+  type MemberImportDateFormatMapping,
   type MemberImportFieldKey,
   type MemberImportPreview,
 } from "@/lib/member-csv-import"
@@ -194,6 +200,34 @@ function MappingSelect({
   )
 }
 
+function DateFormatSelect({
+  fieldKey,
+  dateFormats,
+  onChange,
+}: {
+  fieldKey: MemberImportDateFieldKey
+  dateFormats: MemberImportDateFormatMapping
+  onChange: (fieldKey: MemberImportDateFieldKey, format: MemberImportDateFormat) => void
+}) {
+  return (
+    <Select
+      value={dateFormats[fieldKey]}
+      onValueChange={(value) => onChange(fieldKey, value as MemberImportDateFormat)}
+    >
+      <SelectTrigger>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {MEMBER_IMPORT_DATE_FORMATS.map((format) => (
+          <SelectItem key={format.value} value={format.value}>
+            {format.label} ({format.example})
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
 function ValidationTable({ preview }: { preview: MemberImportPreview }) {
   return (
     <div className="max-h-72 overflow-auto rounded-md border text-xs">
@@ -205,6 +239,8 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
             <TableHead className="sticky top-0 z-10 bg-background">First Name</TableHead>
             <TableHead className="sticky top-0 z-10 bg-background">Last Name</TableHead>
             <TableHead className="sticky top-0 z-10 bg-background">Email</TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">DOB</TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">Joined</TableHead>
             <TableHead className="sticky top-0 z-10 bg-background">Role</TableHead>
             <TableHead className="sticky top-0 z-10 min-w-56 bg-background">Issues</TableHead>
           </TableRow>
@@ -223,6 +259,8 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
               <TableCell>{row.values.firstName}</TableCell>
               <TableCell>{row.values.lastName}</TableCell>
               <TableCell className="break-all">{row.values.email}</TableCell>
+              <TableCell>{row.normalizedDateValues.dateOfBirth || row.values.dateOfBirth || ""}</TableCell>
+              <TableCell>{row.normalizedDateValues.joinedDate || row.values.joinedDate || ""}</TableCell>
               <TableCell>{row.values.role || "MEMBER"}</TableCell>
               <TableCell className="text-red-700">
                 {row.errors.length > 0 ? row.errors.join(", ") : ""}
@@ -247,14 +285,17 @@ export function MemberImportDialog({
   const [columnMapping, setColumnMapping] = useState<MemberImportColumnMapping>(
     inferMemberImportColumnMapping([])
   )
+  const [dateFormats, setDateFormats] = useState<MemberImportDateFormatMapping>(
+    createDefaultMemberImportDateFormatMapping()
+  )
   const [parseError, setParseError] = useState<string | null>(null)
   const [importSendInvites, setImportSendInvites] = useState(false)
   const [importLoading, setImportLoading] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
 
   const preview = useMemo(
-    () => (csvData ? buildMemberImportPreview(csvData, columnMapping) : null),
-    [columnMapping, csvData]
+    () => (csvData ? buildMemberImportPreview(csvData, columnMapping, dateFormats) : null),
+    [columnMapping, csvData, dateFormats]
   )
 
   useEffect(() => {
@@ -263,6 +304,7 @@ export function MemberImportDialog({
     setCsvFileName("")
     setCsvData(null)
     setColumnMapping(inferMemberImportColumnMapping([]))
+    setDateFormats(createDefaultMemberImportDateFormatMapping())
     setParseError(null)
     setImportSendInvites(false)
     setImportLoading(false)
@@ -292,6 +334,7 @@ export function MemberImportDialog({
         const message = formatParseError(parsed.error, parsed.lineNumber)
         setCsvData(null)
         setColumnMapping(inferMemberImportColumnMapping([]))
+        setDateFormats(createDefaultMemberImportDateFormatMapping())
         setParseError(message)
         setWizardStep("upload")
         onError(message)
@@ -317,6 +360,16 @@ export function MemberImportDialog({
     }))
   }
 
+  const handleDateFormatChange = (
+    fieldKey: MemberImportDateFieldKey,
+    format: MemberImportDateFormat
+  ) => {
+    setDateFormats((currentFormats) => ({
+      ...currentFormats,
+      [fieldKey]: format,
+    }))
+  }
+
   const handleImport = async () => {
     if (!preview || preview.hasErrors) return
 
@@ -329,6 +382,7 @@ export function MemberImportDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           rows: preview.importRows,
+          dateFormats,
           sendInvites: importSendInvites,
           autoLinkXero: false,
         }),
@@ -336,7 +390,11 @@ export function MemberImportDialog({
       const data = (await res.json().catch(() => ({}))) as ImportResult & { error?: string }
       if (!res.ok) throw new Error(data.error || "Import failed")
       setImportResult(data)
-      onImported()
+      if (data.errors.length > 0) {
+        onError("Import validation failed")
+      } else {
+        onImported()
+      }
     } catch (err) {
       setWizardStep("validation")
       onError(err instanceof Error ? err.message : "Import failed")
@@ -439,6 +497,16 @@ export function MemberImportDialog({
                       headers={csvData.headers}
                       onChange={handleMappingChange}
                     />
+                    {isMemberImportDateField(definition.key) && mapped && (
+                      <div className="mt-2 space-y-1">
+                        <Label className="text-xs">Date format</Label>
+                        <DateFormatSelect
+                          fieldKey={definition.key}
+                          dateFormats={dateFormats}
+                          onChange={handleDateFormatChange}
+                        />
+                      </div>
+                    )}
                     <p className="mt-2 min-h-4 truncate text-xs text-slate-500">
                       {mapped ? sampleValueForField(definition.key) || "Blank in first row" : ""}
                     </p>

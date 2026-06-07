@@ -838,6 +838,96 @@ describe("Phase 3: Admin Member Management", () => {
       expect(createMember).toHaveBeenCalledTimes(12);
     });
 
+    it("normalizes mapped DOB and joined date formats server-side", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+
+      const createMember = vi.fn(async ({ data }: any) => ({
+        id: "new-date",
+        email: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+      }));
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
+        const tx = {
+          member: { create: createMember },
+        };
+        return fn(tx);
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/members/import", {
+        method: "POST",
+        body: JSON.stringify({
+          rows: [
+            {
+              fullName: "Alice Anderson",
+              email: "alice.date@test.com",
+              dateOfBirth: "15/01/1990",
+              joinedDate: "Jan 5 2024",
+              sourceLineNumber: 12,
+              sourceColumnLabels: {
+                dateOfBirth: "Birth date",
+                joinedDate: "Membership Start",
+              },
+            },
+          ],
+          dateFormats: {
+            dateOfBirth: "dd/MM/yyyy",
+            joinedDate: "MMM d yyyy",
+          },
+          sendInvites: false,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await importMembers(req);
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.created).toBe(1);
+      expect(createMember).toHaveBeenCalledTimes(1);
+      const createArgs = createMember.mock.calls[0][0];
+      expect(createArgs.data.firstName).toBe("Alice");
+      expect(createArgs.data.lastName).toBe("Anderson");
+      expect(createArgs.data.dateOfBirth.toISOString().slice(0, 10)).toBe("1990-01-15");
+      expect(createArgs.data.joinedDate.toISOString().slice(0, 10)).toBe("2024-01-05");
+    });
+
+    it("returns row and column context for invalid mapped dates before import", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+
+      const req = new NextRequest("http://localhost/api/admin/members/import", {
+        method: "POST",
+        body: JSON.stringify({
+          rows: [
+            {
+              firstName: "Alice",
+              lastName: "Anderson",
+              email: "bad-date@test.com",
+              dateOfBirth: "31/02/1990",
+              sourceLineNumber: 8,
+              sourceColumnLabels: { dateOfBirth: "DOB" },
+            },
+          ],
+          dateFormats: { dateOfBirth: "dd/MM/yyyy" },
+          sendInvites: false,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await importMembers(req);
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body.created).toBe(0);
+      expect(body.errors).toEqual([
+        {
+          row: 8,
+          errors: [expect.stringContaining("Date of Birth (column DOB)")],
+        },
+      ]);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it("skips members that already exist in DB", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([

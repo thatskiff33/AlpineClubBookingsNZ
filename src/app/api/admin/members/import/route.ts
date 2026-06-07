@@ -15,29 +15,117 @@ import logger from "@/lib/logger";
 import { isPrismaUniqueConstraintError } from "@/lib/prisma-errors";
 import { issueActionToken } from "@/lib/action-tokens";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
-import { nameField } from "@/lib/zod-helpers";
+import { parseDateOnly } from "@/lib/date-only";
+import {
+  DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
+  deriveMemberImportNameFields,
+  MEMBER_IMPORT_DATE_FIELD_KEYS,
+  MEMBER_IMPORT_DATE_FORMAT_VALUES,
+  MEMBER_IMPORT_FIELD_DEFINITIONS,
+  normalizeMemberImportDateValue,
+  type MemberImportDateFieldKey,
+  type MemberImportDateFormatMapping,
+} from "@/lib/member-csv-import";
+
+const nullableImportString = (max: number) => z.string().max(max).optional().nullable();
+const dateFormatSchema = z.enum(MEMBER_IMPORT_DATE_FORMAT_VALUES);
 
 const importRowSchema = z.object({
-  firstName: nameField({ required: "First name is required" }),
-  lastName: nameField({ required: "Last name is required" }),
+  fullName: nullableImportString(200),
+  firstName: nullableImportString(100),
+  lastName: nullableImportString(100),
   email: z.string().email("Invalid email address"),
   phone: z.string().max(20).optional().nullable(), // Legacy: single phone string (will be put in phoneNumber)
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(15).optional().nullable(),
-  dateOfBirth: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format (YYYY-MM-DD)")
-    .optional()
-    .nullable(),
+  dateOfBirth: z.string().max(32).optional().nullable(),
+  joinedDate: z.string().max(32).optional().nullable(),
   role: z.enum(["MEMBER", "ADMIN"]).optional().default("MEMBER"),
+  sourceLineNumber: z.number().int().positive().optional(),
+  sourceColumnLabels: z.record(z.string(), z.string().max(128)).optional(),
+}).superRefine((row, ctx) => {
+  const names = deriveMemberImportNameFields(row);
+  if (!names.firstName) {
+    ctx.addIssue({ code: "custom", path: ["firstName"], message: "First name is required" });
+  }
+  if (!names.lastName) {
+    ctx.addIssue({ code: "custom", path: ["lastName"], message: "Last name is required" });
+  }
+  if (names.firstName.length > 100) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["firstName"],
+      message: "First name must be 100 characters or fewer",
+    });
+  }
+  if (names.lastName.length > 100) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["lastName"],
+      message: "Last name must be 100 characters or fewer",
+    });
+  }
 });
 
 const importBodySchema = z.object({
   rows: z.array(importRowSchema).min(1, "At least one row is required").max(500, "Maximum 500 rows per import"),
+  dateFormats: z
+    .object({
+      dateOfBirth: dateFormatSchema.optional(),
+      joinedDate: dateFormatSchema.optional(),
+    })
+    .optional(),
   sendInvites: z.boolean().default(false),
   autoLinkXero: z.boolean().default(false),
 });
+
+type ImportRow = z.infer<typeof importRowSchema>;
+
+function getImportFieldLabel(fieldKey: MemberImportDateFieldKey) {
+  return (
+    MEMBER_IMPORT_FIELD_DEFINITIONS.find((definition) => definition.key === fieldKey)?.label ??
+    fieldKey
+  );
+}
+
+function getImportRowNumber(row: ImportRow, rowIndex: number) {
+  return row.sourceLineNumber ?? rowIndex + 1;
+}
+
+function getImportColumnContext(row: ImportRow, fieldKey: MemberImportDateFieldKey) {
+  const label = row.sourceColumnLabels?.[fieldKey];
+  return label ? ` (column ${label})` : "";
+}
+
+function normalizeImportDateField(
+  row: ImportRow,
+  fieldKey: MemberImportDateFieldKey,
+  dateFormats: MemberImportDateFormatMapping
+) {
+  const rawValue = row[fieldKey]?.trim();
+  if (!rawValue) {
+    return { date: null, error: null };
+  }
+
+  const normalized = normalizeMemberImportDateValue(rawValue, dateFormats[fieldKey]);
+  if (!normalized.ok) {
+    return {
+      date: null,
+      error: `${getImportFieldLabel(fieldKey)}${getImportColumnContext(row, fieldKey)} ${normalized.error}`,
+    };
+  }
+
+  const date = parseDateOnly(normalized.value);
+  if (Number.isNaN(date.getTime())) {
+    return {
+      date: null,
+      error: `${getImportFieldLabel(fieldKey)}${getImportColumnContext(row, fieldKey)} is invalid`,
+    };
+  }
+
+  return { date, error: null };
+}
 
 /**
  * POST /api/admin/members/import
@@ -76,6 +164,10 @@ export async function POST(req: NextRequest) {
   }
 
   const { rows, sendInvites } = parsed.data;
+  const dateFormats: MemberImportDateFormatMapping = {
+    dateOfBirth: parsed.data.dateFormats?.dateOfBirth ?? DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
+    joinedDate: parsed.data.dateFormats?.joinedDate ?? DEFAULT_MEMBER_IMPORT_DATE_FORMAT,
+  };
   const results = {
     created: 0,
     skipped: 0,
@@ -85,12 +177,15 @@ export async function POST(req: NextRequest) {
 
   // Check for duplicate emails within the file
   const emailsInFile = new Map<string, number>();
+  const duplicateRowIndexes = new Set<number>();
   for (let i = 0; i < rows.length; i++) {
     const email = rows[i].email.toLowerCase().trim();
     if (emailsInFile.has(email)) {
+      const firstRowIndex = emailsInFile.get(email)!;
+      duplicateRowIndexes.add(i);
       results.errors.push({
-        row: i + 1,
-        errors: [`Duplicate email in file (same as row ${emailsInFile.get(email)! + 1})`],
+        row: getImportRowNumber(rows[i], i),
+        errors: [`Duplicate email in file (same as row ${getImportRowNumber(rows[firstRowIndex], firstRowIndex)})`],
       });
     } else {
       emailsInFile.set(email, i);
@@ -105,9 +200,6 @@ export async function POST(req: NextRequest) {
   });
   const existingEmailSet = new Set(existingMembers.map((m) => m.email));
 
-  // Track which rows had file-duplicate errors
-  const errorRowSet = new Set(results.errors.map((e) => e.row));
-
   // Pre-validate all rows before committing (all-or-nothing)
   interface ValidatedRow {
     rowNum: number;
@@ -118,19 +210,21 @@ export async function POST(req: NextRequest) {
     phoneAreaCode: string | null;
     phoneNumber: string | null;
     dateOfBirth: Date | null;
+    joinedDate: Date | null;
     ageTier: AgeTier;
     role: "MEMBER" | "ADMIN";
   }
   const validatedRows: ValidatedRow[] = [];
 
   for (let i = 0; i < rows.length; i++) {
-    const rowNum = i + 1;
+    const rowNum = getImportRowNumber(rows[i], i);
 
     // Skip rows that already had duplicate-in-file errors
-    if (errorRowSet.has(rowNum)) continue;
+    if (duplicateRowIndexes.has(i)) continue;
 
     const row = rows[i];
     const email = row.email.toLowerCase().trim();
+    const names = deriveMemberImportNameFields(row);
 
     // Skip if already exists in DB
     if (existingEmailSet.has(email)) {
@@ -140,25 +234,43 @@ export async function POST(req: NextRequest) {
 
     // Determine age tier
     let ageTier: AgeTier = "ADULT";
-    let dateOfBirth: Date | null = null;
-    if (row.dateOfBirth) {
-      dateOfBirth = new Date(row.dateOfBirth);
-      if (isNaN(dateOfBirth.getTime())) {
-        results.errors.push({ row: rowNum, errors: ["Invalid date of birth"] });
-        continue;
+    const dateErrors: string[] = [];
+    const parsedDates = Object.fromEntries(
+      MEMBER_IMPORT_DATE_FIELD_KEYS.map((fieldKey) => [
+        fieldKey,
+        normalizeImportDateField(row, fieldKey, dateFormats),
+      ])
+    ) as Record<MemberImportDateFieldKey, { date: Date | null; error: string | null }>;
+
+    for (const fieldKey of MEMBER_IMPORT_DATE_FIELD_KEYS) {
+      const error = parsedDates[fieldKey].error;
+      if (error) {
+        dateErrors.push(error);
       }
+    }
+
+    if (dateErrors.length > 0) {
+      results.errors.push({ row: rowNum, errors: dateErrors });
+      continue;
+    }
+
+    const dateOfBirth = parsedDates.dateOfBirth.date;
+    const joinedDate = parsedDates.joinedDate.date;
+
+    if (dateOfBirth) {
       ageTier = (await computeAgeTier(dateOfBirth, getSeasonStartDate(getSeasonYear()))) as AgeTier;
     }
 
     validatedRows.push({
       rowNum,
       email,
-      firstName: row.firstName.trim(),
-      lastName: row.lastName.trim(),
+      firstName: names.firstName,
+      lastName: names.lastName,
       phoneCountryCode: row.phoneCountryCode?.trim() || null,
       phoneAreaCode: row.phoneAreaCode?.trim() || null,
       phoneNumber: row.phoneNumber?.trim() || row.phone?.trim() || null,
       dateOfBirth,
+      joinedDate,
       ageTier,
       role: (row.role || "MEMBER") as "MEMBER" | "ADMIN",
     });
@@ -186,6 +298,7 @@ export async function POST(req: NextRequest) {
             phoneAreaCode: row.phoneAreaCode,
             phoneNumber: row.phoneNumber,
             dateOfBirth: row.dateOfBirth,
+            joinedDate: row.joinedDate,
             role: row.role,
             ageTier: row.ageTier,
             active: true,

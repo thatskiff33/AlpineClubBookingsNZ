@@ -90,6 +90,7 @@ export interface Filters {
 }
 
 export interface ImportRow {
+  fullName?: string
   firstName: string
   lastName: string
   email: string
@@ -98,7 +99,10 @@ export interface ImportRow {
   phoneAreaCode?: string
   phoneNumber?: string
   dateOfBirth?: string
+  joinedDate?: string
   role?: string
+  sourceLineNumber?: number
+  sourceColumnLabels?: Record<string, string>
 }
 
 export interface ImportResult {
