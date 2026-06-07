@@ -6,6 +6,7 @@ import {
 import { createAuditLog } from "@/lib/audit";
 import { deleteDraftBookingDependents } from "@/lib/draft-booking-cleanup";
 import { prisma } from "@/lib/prisma";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 type BookingDeleteDb = Prisma.TransactionClient | typeof prisma;
 
@@ -217,6 +218,14 @@ async function softDeleteCancelledBooking(
         deletedAt,
         deletedById: actor.memberId,
         deletedReason: reason,
+      },
+    });
+    await reconcileBedAllocationsForBooking({
+      bookingId: booking.id,
+      db: tx,
+      previousRange: {
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
       },
     });
 

@@ -64,6 +64,7 @@ import {
   ADULT_SUPERVISION_REVIEW_REASON,
   requiresAdultSupervisionReview,
 } from "@/lib/booking-review";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 type BookingWithGuests = Booking & { guests: BookingGuest[] };
 
@@ -437,6 +438,11 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
       );
     }
 
+    await reconcileBedAllocationsForBooking({
+      bookingId: createdBooking.id,
+      db: tx,
+    });
+
     return createdBooking;
   });
 
@@ -729,6 +735,11 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         });
         newBooking.status = BookingStatus.PAID;
       }
+
+      await reconcileBedAllocationsForBooking({
+        bookingId: newBooking.id,
+        db: tx,
+      });
 
       return newBooking;
     });

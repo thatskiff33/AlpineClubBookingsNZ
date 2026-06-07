@@ -14,6 +14,7 @@ import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export async function POST(
   request: NextRequest,
@@ -121,6 +122,14 @@ export async function POST(
     await tx.booking.update({
       where: { id },
       data: { status: BookingStatus.PAID, draftExpiresAt: null },
+    });
+    await reconcileBedAllocationsForBooking({
+      bookingId: id,
+      db: tx,
+      previousRange: {
+        checkIn: freshBooking.checkIn,
+        checkOut: freshBooking.checkOut,
+      },
     });
   });
 

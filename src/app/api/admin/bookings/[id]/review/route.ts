@@ -11,6 +11,7 @@ import {
   sendBookingReviewRejectedEmail,
 } from "@/lib/email";
 import logger from "@/lib/logger";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
@@ -82,6 +83,13 @@ export async function PATCH(
         { status: 409 },
       );
     }
+    await reconcileBedAllocationsForBooking({
+      bookingId,
+      previousRange: {
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+      },
+    });
 
     sendBookingReviewApprovedEmail({
       email: booking.member.email,

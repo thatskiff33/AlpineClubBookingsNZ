@@ -13,6 +13,7 @@ import {
 } from "@/lib/xero-operation-outbox";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export async function POST(
   _request: NextRequest,
@@ -50,19 +51,27 @@ export async function POST(
   }
 
   if (booking.finalPriceCents === 0 && result.newStatus === BookingStatus.PAYMENT_PENDING) {
-    await prisma.$transaction([
-      prisma.payment.create({
+    await prisma.$transaction(async (tx) => {
+      await tx.payment.create({
         data: {
           bookingId,
           amountCents: 0,
           status: "SUCCEEDED",
         },
-      }),
-      prisma.booking.update({
+      });
+      await tx.booking.update({
         where: { id: bookingId },
         data: { status: BookingStatus.PAID },
-      }),
-    ]);
+      });
+      await reconcileBedAllocationsForBooking({
+        bookingId,
+        db: tx,
+        previousRange: {
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        },
+      });
+    });
 
     sendBookingConfirmedEmail(
       booking.member.email,

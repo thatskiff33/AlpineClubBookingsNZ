@@ -23,6 +23,7 @@ import {
   refundPaymentTransactions,
 } from "@/lib/payment-transactions";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export interface CancelBookingResult {
   success: boolean;
@@ -33,6 +34,20 @@ export interface CancelBookingResult {
   creditRestoredCents?: number;
   stripeRefundId?: string;
   message: string;
+}
+
+async function reconcileCancelledBookingBedAllocations(
+  booking: { id: string; checkIn: Date; checkOut: Date },
+  db: Parameters<typeof reconcileBedAllocationsForBooking>[0]["db"] = prisma,
+) {
+  await reconcileBedAllocationsForBooking({
+    bookingId: booking.id,
+    db,
+    previousRange: {
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+    },
+  });
 }
 
 /**
@@ -93,6 +108,7 @@ export async function cancelBooking(
         waitlistPosition: null,
       },
     });
+    await reconcileCancelledBookingBedAllocations(booking);
     await cleanupPromoRedemption(bookingId);
 
     logBookingCancellationAudit({
@@ -160,6 +176,7 @@ export async function cancelBooking(
         where: { id: bookingId },
         data: { status: "CANCELLED" },
       });
+      await reconcileCancelledBookingBedAllocations(booking, tx);
     });
     await cleanupPromoRedemption(bookingId);
 
@@ -232,11 +249,13 @@ export async function cancelBooking(
           data: { status: "CANCELLED" },
         }),
       ]);
+      await reconcileCancelledBookingBedAllocations(booking);
     } else {
       await prisma.booking.update({
         where: { id: bookingId },
         data: { status: "CANCELLED" },
       });
+      await reconcileCancelledBookingBedAllocations(booking);
     }
     await cleanupPromoRedemption(bookingId);
 
@@ -379,6 +398,7 @@ export async function cancelBooking(
       where: { id: bookingId },
       data: { status: "CANCELLED" },
     });
+    await reconcileCancelledBookingBedAllocations(booking);
 
     // Create the local credit ledger entry immediately, then queue the
     // Xero-side open credit note as background work.
@@ -476,6 +496,7 @@ export async function cancelBooking(
       where: { id: bookingId },
       data: { status: "CANCELLED" },
     });
+    await reconcileCancelledBookingBedAllocations(booking);
 
     // Queue the Xero credit note durably (allocated against the original invoice).
     try {
@@ -562,11 +583,13 @@ export async function cancelBooking(
         data: { status: "CANCELLED" },
       }),
     ]);
+    await reconcileCancelledBookingBedAllocations(booking);
   } else {
     await prisma.booking.update({
       where: { id: bookingId },
       data: { status: "CANCELLED" },
     });
+    await reconcileCancelledBookingBedAllocations(booking);
   }
   await cleanupPromoRedemption(bookingId);
 

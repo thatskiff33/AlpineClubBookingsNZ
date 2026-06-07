@@ -44,6 +44,7 @@ import {
 } from "@/lib/pricing";
 import { processWaitlistForDates } from "@/lib/waitlist";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export type ModifyBookingDatesInput = {
   checkIn?: string;
@@ -413,6 +414,15 @@ export async function modifyBookingDates({
         status: newStatus,
       },
       include: { guests: true, payment: true },
+    });
+
+    await reconcileBedAllocationsForBooking({
+      bookingId,
+      db: tx,
+      previousRange: {
+        checkIn: oldCheckIn,
+        checkOut: oldCheckOut,
+      },
     });
 
     if (updatedBooking.payment) {

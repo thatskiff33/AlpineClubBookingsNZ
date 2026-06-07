@@ -32,6 +32,7 @@ import { sendBookingModifiedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 type ModifiedBooking = Booking & {
   guests: BookingGuest[];
@@ -212,6 +213,15 @@ export async function modifyBookingBatch({
         adminReviewedAt: guestPlan.reviewUpdate.adminReviewedAt,
       },
       include: { guests: true, payment: true },
+    });
+
+    await reconcileBedAllocationsForBooking({
+      bookingId,
+      db: tx,
+      previousRange: {
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+      },
     });
 
     const bookingModification = await tx.bookingModification.create({

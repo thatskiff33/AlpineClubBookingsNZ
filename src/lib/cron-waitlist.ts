@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { expireStaleOffers } from "./waitlist";
 import logger from "@/lib/logger";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_ATTEMPTS = 3;
 const DEFAULT_WAITLIST_TRANSACTION_RETRY_DELAY_MS = 500;
@@ -81,7 +82,7 @@ async function processWaitlistCronOnce(): Promise<{
       status: { in: [BookingStatus.WAITLISTED, BookingStatus.WAITLIST_OFFERED] },
       checkOut: { lte: today },
     },
-    select: { id: true },
+    select: { id: true, checkIn: true, checkOut: true },
   });
 
   if (pastWaitlisted.length > 0) {
@@ -96,6 +97,15 @@ async function processWaitlistCronOnce(): Promise<{
         waitlistOfferExpiresAt: null,
       },
     });
+    for (const booking of pastWaitlisted) {
+      await reconcileBedAllocationsForBooking({
+        bookingId: booking.id,
+        previousRange: {
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        },
+      });
+    }
 
     logger.info(
       { count: pastWaitlisted.length, job: "processWaitlistCron" },

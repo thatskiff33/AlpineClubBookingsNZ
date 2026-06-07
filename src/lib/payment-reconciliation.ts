@@ -9,6 +9,7 @@ import { bumpPendingBookings, sendBumpedNotifications } from "@/lib/bumping";
 import { restoreCreditFromBooking } from "@/lib/member-credit";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 type ReconciliationBooking = Prisma.BookingGetPayload<{
   include: {
@@ -114,6 +115,14 @@ export async function markBookingPaymentSucceeded({
     });
 
     if (booking.status === BookingStatus.PAID) {
+      await reconcileBedAllocationsForBooking({
+        bookingId: booking.id,
+        db: tx,
+        previousRange: {
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        },
+      });
       return {
         outcome: "already_paid" as const,
         booking,
@@ -160,6 +169,14 @@ export async function markBookingPaymentSucceeded({
           draftExpiresAt: null,
         },
       });
+      await reconcileBedAllocationsForBooking({
+        bookingId: booking.id,
+        db: tx,
+        previousRange: {
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        },
+      });
 
       await restoreCreditFromBooking(booking.memberId, booking.id, tx);
 
@@ -176,6 +193,14 @@ export async function markBookingPaymentSucceeded({
       data: {
         status: BookingStatus.PAID,
         draftExpiresAt: null,
+      },
+    });
+    await reconcileBedAllocationsForBooking({
+      bookingId: booking.id,
+      db: tx,
+      previousRange: {
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
       },
     });
 

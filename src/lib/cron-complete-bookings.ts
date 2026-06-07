@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { BookingStatus } from "@prisma/client";
 import { getNZSTToday } from "@/lib/nzst-date";
 import logger from "@/lib/logger";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export interface CompleteBookingsResult {
   completedCount: number;
@@ -21,7 +22,7 @@ export async function completeBookings(): Promise<CompleteBookingsResult> {
       status: BookingStatus.PAID,
       checkIn: { lte: today },
     },
-    select: { id: true },
+    select: { id: true, checkIn: true, checkOut: true },
   });
 
   if (bookingsToComplete.length === 0) {
@@ -34,6 +35,15 @@ export async function completeBookings(): Promise<CompleteBookingsResult> {
     where: { id: { in: ids } },
     data: { status: BookingStatus.COMPLETED },
   });
+  for (const booking of bookingsToComplete) {
+    await reconcileBedAllocationsForBooking({
+      bookingId: booking.id,
+      previousRange: {
+        checkIn: booking.checkIn,
+        checkOut: booking.checkOut,
+      },
+    });
+  }
 
   logger.info(
     { job: "complete-bookings", count: ids.length },

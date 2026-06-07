@@ -15,19 +15,11 @@ import {
   type BedAllocationRoom,
   type UnallocatedGuestNight,
 } from "@/lib/bed-allocation";
+import { BED_ALLOCATABLE_BOOKING_STATUSES } from "@/lib/bed-allocation-lifecycle";
 import { prisma } from "@/lib/prisma";
 
 export const BED_ALLOCATION_SETTINGS_ID = "default";
 export const MAX_BED_ALLOCATION_RANGE_NIGHTS = 31;
-
-const ALLOCATABLE_BOOKING_STATUSES = [
-  "PENDING",
-  "PAYMENT_PENDING",
-  "CONFIRMED",
-  "PAID",
-  "AWAITING_REVIEW",
-  "WAITLIST_OFFERED",
-] as const;
 
 export class BedAllocationAdminError extends Error {
   constructor(
@@ -341,7 +333,7 @@ async function loadBookingRecords(
   return db.booking.findMany({
     where: {
       deletedAt: null,
-      status: { in: [...ALLOCATABLE_BOOKING_STATUSES] },
+      status: { in: [...BED_ALLOCATABLE_BOOKING_STATUSES] },
       checkIn: { lt: range.to },
       checkOut: { gt: range.from },
       guests: {
@@ -756,8 +748,8 @@ async function assertManualAllocationInput(input: {
     throw new BedAllocationAdminError("Cannot allocate deleted booking", 409);
   }
   if (
-    !ALLOCATABLE_BOOKING_STATUSES.includes(
-      guest.booking.status as (typeof ALLOCATABLE_BOOKING_STATUSES)[number],
+    !BED_ALLOCATABLE_BOOKING_STATUSES.includes(
+      guest.booking.status as (typeof BED_ALLOCATABLE_BOOKING_STATUSES)[number],
     )
   ) {
     throw new BedAllocationAdminError(

@@ -8,6 +8,7 @@ import { checkCapacity } from "@/lib/capacity";
 import { logAudit } from "@/lib/audit";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 import { z } from "zod";
 
 const forceConfirmSchema = z.object({
@@ -126,6 +127,14 @@ export async function POST(
           },
         });
       }
+      await reconcileBedAllocationsForBooking({
+        bookingId,
+        db: tx,
+        previousRange: {
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        },
+      });
 
       return {
         success: true,

@@ -16,6 +16,7 @@ import logger from "@/lib/logger";
 import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export interface CronConfirmResult {
   confirmedBookingIds: string[];
@@ -79,6 +80,13 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           where: { id: booking.id },
           data: { status: BookingStatus.BUMPED },
         });
+        await reconcileBedAllocationsForBooking({
+          bookingId: booking.id,
+          previousRange: {
+            checkIn: booking.checkIn,
+            checkOut: booking.checkOut,
+          },
+        });
 
         result.bumpedBookingIds.push(booking.id);
 
@@ -111,6 +119,13 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           logger.info({ bookingId: booking.id, job: "confirmPendingBookings" }, "Booking already processed by another handler");
           continue;
         }
+        await reconcileBedAllocationsForBooking({
+          bookingId: booking.id,
+          previousRange: {
+            checkIn: booking.checkIn,
+            checkOut: booking.checkOut,
+          },
+        });
 
         if (booking.payment) {
           await prisma.payment.update({
@@ -257,6 +272,14 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
           await tx.booking.update({
             where: { id: booking.id },
             data: { status: BookingStatus.PENDING },
+          });
+          await reconcileBedAllocationsForBooking({
+            bookingId: booking.id,
+            db: tx,
+            previousRange: {
+              checkIn: booking.checkIn,
+              checkOut: booking.checkOut,
+            },
           });
         });
 

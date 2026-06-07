@@ -37,6 +37,7 @@ import {
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { nameField } from "@/lib/zod-helpers";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 const addGuestsSchema = z.object({
   guests: z
@@ -395,6 +396,15 @@ export async function POST(
           ...reviewFieldUpdates,
         },
         include: { guests: true, payment: true },
+      });
+
+      await reconcileBedAllocationsForBooking({
+        bookingId,
+        db: tx,
+        previousRange: {
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        },
       });
 
       // Create BookingModification record

@@ -7,6 +7,7 @@ import logger from "@/lib/logger";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export interface BumpResult {
   bumpedBookingIds: string[];
@@ -165,6 +166,14 @@ export async function bumpPendingBookings(
     await tx.booking.update({
       where: { id: candidate.id },
       data: { status: BookingStatus.BUMPED },
+    });
+    await reconcileBedAllocationsForBooking({
+      bookingId: candidate.id,
+      db: tx,
+      previousRange: {
+        checkIn: candidate.checkIn,
+        checkOut: candidate.checkOut,
+      },
     });
 
     // Clean up PromoRedemption if this booking used a promo code

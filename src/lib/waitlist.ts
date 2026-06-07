@@ -9,6 +9,7 @@ import {
 } from "./email";
 import { logAudit } from "./audit";
 import logger from "@/lib/logger";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 const WAITLIST_OFFER_HOURS = Number(process.env.WAITLIST_OFFER_HOURS) || 48;
 
@@ -113,6 +114,14 @@ export async function processWaitlistForDates(freedDates: {
               status: BookingStatus.WAITLIST_OFFERED,
               waitlistOfferedAt: new Date(),
               waitlistOfferExpiresAt: expiresAt,
+            },
+          });
+          await reconcileBedAllocationsForBooking({
+            bookingId: candidate.id,
+            db: tx,
+            previousRange: {
+              checkIn: candidate.checkIn,
+              checkOut: candidate.checkOut,
             },
           });
 
@@ -250,6 +259,14 @@ export async function confirmWaitlistOffer(
             waitlistOfferExpiresAt: null,
           },
         });
+        await reconcileBedAllocationsForBooking({
+          bookingId,
+          db: tx,
+          previousRange: {
+            checkIn: booking.checkIn,
+            checkOut: booking.checkOut,
+          },
+        });
         return { success: false, error: "Capacity is no longer available. You've been returned to the waitlist." };
       }
 
@@ -279,6 +296,14 @@ export async function confirmWaitlistOffer(
       await tx.booking.update({
         where: { id: bookingId },
         data: updateData,
+      });
+      await reconcileBedAllocationsForBooking({
+        bookingId,
+        db: tx,
+        previousRange: {
+          checkIn: booking.checkIn,
+          checkOut: booking.checkOut,
+        },
       });
 
       return { success: true, newStatus };
@@ -336,6 +361,14 @@ export async function expireStaleOffers(): Promise<{
           status: BookingStatus.WAITLISTED,
           waitlistOfferedAt: null,
           waitlistOfferExpiresAt: null,
+        },
+      });
+      await reconcileBedAllocationsForBooking({
+        bookingId: offer.id,
+        db: tx,
+        previousRange: {
+          checkIn: offer.checkIn,
+          checkOut: offer.checkOut,
         },
       });
     }

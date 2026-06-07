@@ -14,6 +14,7 @@ import {
 } from "@/lib/booking-review";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { calculateGuestRemovalPaymentImpact } from "@/lib/booking-guest-removal-payment";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export class BookingGuestRemovalError extends Error {
   constructor(
@@ -190,6 +191,15 @@ export async function removeBookingGuestInTransaction({
       adminReviewReason,
     },
     include: { guests: true, payment: true },
+  });
+
+  await reconcileBedAllocationsForBooking({
+    bookingId,
+    db: tx,
+    previousRange: {
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+    },
   });
 
   const bookingModification = await tx.bookingModification.create({

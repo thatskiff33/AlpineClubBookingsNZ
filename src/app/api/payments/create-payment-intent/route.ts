@@ -12,6 +12,7 @@ import { canCreateImmediatePaymentIntent } from "@/lib/booking-payment-flow";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 import { getOccupiedBedsForNight } from "@/lib/capacity";
+import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export async function POST(request: NextRequest) {
   try {
@@ -176,6 +177,14 @@ export async function POST(request: NextRequest) {
         await tx.booking.update({
           where: { id: bookingId },
           data: { status: BookingStatus.PAYMENT_PENDING, draftExpiresAt: null },
+        });
+        await reconcileBedAllocationsForBooking({
+          bookingId,
+          db: tx,
+          previousRange: {
+            checkIn: freshBooking.checkIn,
+            checkOut: freshBooking.checkOut,
+          },
         });
       });
 
