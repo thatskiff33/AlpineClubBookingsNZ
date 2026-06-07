@@ -83,10 +83,23 @@ vi.mock("@/lib/session-guards", () => ({
   requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
 }));
 const mockUpsertPaymentIntentTransaction = vi.fn();
+const mockRecordInternetBankingPaymentTransaction = vi.fn();
 vi.mock("@/lib/payment-transactions", () => ({
   upsertPaymentIntentTransaction: (...args: unknown[]) =>
     mockUpsertPaymentIntentTransaction(...args),
+  recordInternetBankingPaymentTransaction: (...args: unknown[]) =>
+    mockRecordInternetBankingPaymentTransaction(...args),
 }));
+const mockLoadEffectiveModuleFlags = vi.fn();
+vi.mock("@/lib/module-settings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+
+  return {
+    ...actual,
+    loadEffectiveModuleFlags: (...args: unknown[]) =>
+      mockLoadEffectiveModuleFlags(...args),
+  };
+});
 
 vi.mock("@/lib/cancellation", () => ({
   getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
@@ -260,6 +273,16 @@ beforeEach(() => {
   mockTx.promoCodeAssignment.findMany.mockResolvedValue([]);
   mockPrisma.payment.upsert.mockResolvedValue({ id: "payment-1" });
   mockUpsertPaymentIntentTransaction.mockResolvedValue(undefined);
+  mockRecordInternetBankingPaymentTransaction.mockResolvedValue(undefined);
+  mockLoadEffectiveModuleFlags.mockResolvedValue({
+    kiosk: true,
+    chores: true,
+    financeDashboard: true,
+    waitlist: true,
+    xeroIntegration: true,
+    bedAllocation: true,
+    internetBankingPayments: true,
+  });
 });
 
 // ─── Issue 7: Draft Booking Creation ─────────────────────────────────────────
@@ -331,6 +354,95 @@ describe("Issue 7: Draft Booking Creation", () => {
 
     expect(sendBookingConfirmedEmail).not.toHaveBeenCalled();
     expect(sendAdminNewBookingAlert).not.toHaveBeenCalled();
+  });
+});
+
+describe("Internet Banking booking payment flow", () => {
+  it("keeps Stripe as the default booking flow when no payment method is selected", async () => {
+    mockAuth.mockResolvedValue(memberSession());
+
+    const res = await createBooking(makeBookingBody());
+
+    expect(res.status).toBe(201);
+    expect(mockLoadEffectiveModuleFlags).not.toHaveBeenCalled();
+    expect(mockTx.payment.create).not.toHaveBeenCalled();
+    expect(mockRecordInternetBankingPaymentTransaction).not.toHaveBeenCalled();
+  });
+
+  it("creates a pending Internet Banking payment and queues a Xero invoice", async () => {
+    const { enqueueXeroBookingInvoiceOperation } = await import("@/lib/xero-operation-outbox");
+    mockAuth.mockResolvedValue(memberSession());
+    mockTx.booking.create.mockResolvedValue({
+      id: "booking-ib-1",
+      status: "PAYMENT_PENDING",
+      finalPriceCents: 10000,
+      nonMemberHoldUntil: null,
+      guests: [{ id: "g1" }],
+    });
+    mockTx.payment.create.mockResolvedValue({ id: "payment-ib-1" });
+
+    const res = await createBooking(makeBookingBody({
+      paymentMethod: "internet_banking",
+    }));
+
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.status).toBe("PAYMENT_PENDING");
+    expect(mockLoadEffectiveModuleFlags).toHaveBeenCalled();
+    expect(mockTx.booking.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "PAYMENT_PENDING",
+          nonMemberHoldUntil: null,
+        }),
+      })
+    );
+    expect(mockTx.payment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        bookingId: "booking-ib-1",
+        amountCents: 10000,
+        source: "INTERNET_BANKING",
+        reference: "BOOKING-BOOKING-",
+        status: "PENDING",
+      }),
+    });
+    expect(mockRecordInternetBankingPaymentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "payment-ib-1",
+        amountCents: 10000,
+        status: "PENDING",
+        reference: "BOOKING-BOOKING-",
+        reason: "internet_banking_booking_payment",
+      })
+    );
+    expect(enqueueXeroBookingInvoiceOperation).toHaveBeenCalledWith(
+      "booking-ib-1",
+      { createdByMemberId: "member-1" }
+    );
+  });
+
+  it("rejects Internet Banking when the effective modules are disabled", async () => {
+    mockAuth.mockResolvedValue(memberSession());
+    mockLoadEffectiveModuleFlags.mockResolvedValueOnce({
+      kiosk: true,
+      chores: true,
+      financeDashboard: true,
+      waitlist: true,
+      xeroIntegration: true,
+      bedAllocation: true,
+      internetBankingPayments: false,
+    });
+
+    const res = await createBooking(makeBookingBody({
+      paymentMethod: "internet_banking",
+    }));
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: "Internet Banking payments are not available.",
+    });
+    expect(mockTx.booking.create).not.toHaveBeenCalled();
+    expect(mockTx.payment.create).not.toHaveBeenCalled();
   });
 });
 

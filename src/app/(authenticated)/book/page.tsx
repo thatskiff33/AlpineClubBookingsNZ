@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { PromoCodeInput, type PromoResult } from "@/components/promo-code-input";
 import { TimePicker } from "@/components/time-picker";
+import { CreditCard, Landmark } from "lucide-react";
 import {
   getBookingErrorPaymentTargets,
   type BookingErrorPaymentTarget,
@@ -91,6 +92,8 @@ interface SubscriptionStatus {
   invoiceNumber: string | null;
 }
 
+type BookingPaymentMethod = "stripe" | "internet_banking";
+
 const UNKNOWN_SUBSCRIPTION_STATUS: SubscriptionStatus = {
   status: "UNKNOWN",
   seasonDisplay: "",
@@ -141,6 +144,8 @@ export default function BookPage() {
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [useCredit, setUseCredit] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<BookingPaymentMethod>("stripe");
+  const [internetBankingEnabled, setInternetBankingEnabled] = useState(false);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus | null>(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(true);
@@ -280,6 +285,17 @@ export default function BookPage() {
       .then((res) => res.ok ? res.json() : { familyMembers: [] })
       .then((data) => setFamilyMembers(data.familyMembers || []))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/payments/options")
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        setInternetBankingEnabled(
+          Boolean(data?.methods?.internetBanking?.enabled)
+        );
+      })
+      .catch(() => setInternetBankingEnabled(false));
   }, []);
 
   // Fetch subscription status for the current season
@@ -505,6 +521,8 @@ export default function BookPage() {
         promoCode: appliedPromo?.code || undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
+        paymentMethod:
+          paymentMethod === "internet_banking" ? paymentMethod : undefined,
         memberReviewJustification: requiresAdminReviewLocal
           ? memberReviewJustification.trim()
           : undefined,
@@ -675,6 +693,22 @@ export default function BookPage() {
     (subscriptionStatus.status === "UNPAID" || subscriptionStatus.status === "OVERDUE");
   const showInviteFamilyGroupMembersLink =
     shouldShowInviteFamilyGroupMembersLink(familyMembers);
+  const showPaymentMethodChoice =
+    remainingToPay > 0 && !requiresAdminReviewLocal;
+
+  useEffect(() => {
+    if (
+      paymentMethod === "internet_banking" &&
+      (!internetBankingEnabled || remainingToPay <= 0 || requiresAdminReviewLocal)
+    ) {
+      setPaymentMethod("stripe");
+    }
+  }, [
+    internetBankingEnabled,
+    paymentMethod,
+    remainingToPay,
+    requiresAdminReviewLocal,
+  ]);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -1086,6 +1120,50 @@ export default function BookPage() {
                       Credit covers entire booking — no card payment needed
                     </p>
                   )}
+                </div>
+              )}
+
+              {showPaymentMethodChoice && (
+                <div className="space-y-3 rounded-md border border-slate-200 p-4">
+                  <p className="text-sm font-medium text-slate-900">Payment method</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("stripe")}
+                      className={`flex min-h-20 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                        paymentMethod === "stripe"
+                          ? "border-blue-500 bg-blue-50 text-blue-950"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                      }`}
+                    >
+                      <CreditCard className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>
+                        <span className="block font-medium">Card</span>
+                        <span className="block text-xs opacity-80">
+                          Pay now and secure the booking immediately.
+                        </span>
+                      </span>
+                    </button>
+                    {internetBankingEnabled && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentMethod("internet_banking")}
+                        className={`flex min-h-20 items-start gap-3 rounded-md border p-3 text-left text-sm ${
+                          paymentMethod === "internet_banking"
+                            ? "border-blue-500 bg-blue-50 text-blue-950"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                        }`}
+                      >
+                        <Landmark className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>
+                          <span className="block font-medium">Internet Banking</span>
+                          <span className="block text-xs opacity-80">
+                            Receive a Xero invoice by email.
+                          </span>
+                        </span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </CardContent>

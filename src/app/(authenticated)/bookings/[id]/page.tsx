@@ -171,6 +171,8 @@ export default async function BookingDetailPage({
         credits: booking.creditsFromCancellation,
       })
     : null;
+  const internetBankingPayment =
+    booking.payment?.source === "INTERNET_BANKING" ? booking.payment : null;
   const originalPaymentCaptured = hasCapturedPayment(booking.payment);
   const retainedAfterCancellationCents = booking.payment
     ? Math.max(
@@ -430,8 +432,55 @@ export default async function BookingDetailPage({
         />
       )}
 
+      {!isDeleted &&
+        internetBankingPayment &&
+        isPaymentOwedBookingStatus(booking.status) &&
+        internetBankingPayment.status !== "SUCCEEDED" && (
+          <Card className="border-amber-200 bg-amber-50">
+            <CardHeader>
+              <CardTitle className="text-amber-950">Internet Banking Payment</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm text-amber-950">
+              <p>
+                Your Xero invoice will be emailed to you. This booking stays
+                Payment Pending until Xero reconciliation confirms the invoice
+                has been paid.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <span className="text-amber-800">Amount due:</span>{" "}
+                  <span className="font-medium">
+                    {formatCents(internetBankingPayment.amountCents)}
+                  </span>
+                </div>
+                {internetBankingPayment.reference ? (
+                  <div>
+                    <span className="text-amber-800">Reference:</span>{" "}
+                    <span className="font-medium">{internetBankingPayment.reference}</span>
+                  </div>
+                ) : null}
+                {internetBankingPayment.xeroInvoiceNumber ? (
+                  <div>
+                    <span className="text-amber-800">Xero invoice:</span>{" "}
+                    <span className="font-medium">
+                      {internetBankingPayment.xeroInvoiceNumber}
+                    </span>
+                  </div>
+                ) : internetBankingPayment.xeroInvoiceId ? (
+                  <div>
+                    <span className="text-amber-800">Xero invoice:</span>{" "}
+                    <span className="font-medium">
+                      {internetBankingPayment.xeroInvoiceId.slice(0, 8)}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
       {/* Show payment form if payment hasn't been completed */}
-      {(!isDeleted && isPaymentOwedBookingStatus(booking.status) && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
+      {(!isDeleted && !internetBankingPayment && isPaymentOwedBookingStatus(booking.status) && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
         <Card>
           <CardHeader>
             <CardTitle>Complete Payment</CardTitle>
@@ -450,7 +499,7 @@ export default async function BookingDetailPage({
         </Card>
       )}
 
-      {(!isDeleted && booking.status === "PENDING" && (!booking.payment || !booking.payment.stripeSetupIntentId)) && (
+      {(!isDeleted && !internetBankingPayment && booking.status === "PENDING" && (!booking.payment || !booking.payment.stripeSetupIntentId)) && (
         <Card>
           <CardHeader>
             <CardTitle>Save Payment Method</CardTitle>

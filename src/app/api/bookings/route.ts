@@ -26,6 +26,11 @@ import {
 } from "@/lib/booking-guests";
 import { nameField } from "@/lib/zod-helpers";
 import { isFeatureEnabled } from "@/config/features";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
+import {
+  BOOKING_PAYMENT_METHOD_VALUES,
+  DEFAULT_BOOKING_PAYMENT_METHOD,
+} from "@/lib/booking-payment-methods";
 import {
   BookingPromoError,
   BookingReviewJustificationRequiredError,
@@ -64,6 +69,10 @@ const createBookingSchema = z.object({
   applyCreditCents: z.number().int().min(0).optional(),
   forMemberId: z.string().optional(),
   memberReviewJustification: z.string().trim().min(1).max(1000).optional(),
+  paymentMethod: z
+    .enum(BOOKING_PAYMENT_METHOD_VALUES)
+    .optional()
+    .default(DEFAULT_BOOKING_PAYMENT_METHOD),
 });
 
 export async function POST(request: NextRequest) {
@@ -143,7 +152,18 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const { checkIn, checkOut, guests, notes, promoCode: promoCodeStr, draft, waitlist, expectedArrivalTime, memberReviewJustification } = parsed.data;
+  const {
+    checkIn,
+    checkOut,
+    guests,
+    notes,
+    promoCode: promoCodeStr,
+    draft,
+    waitlist,
+    expectedArrivalTime,
+    memberReviewJustification,
+    paymentMethod,
+  } = parsed.data;
   let guestInputs: BookingGuestInput[] = [];
 
   if (checkOut <= checkIn) {
@@ -294,6 +314,16 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  if (paymentMethod === "internet_banking") {
+    const modules = await loadEffectiveModuleFlags();
+    if (!modules.xeroIntegration || !modules.internetBankingPayments) {
+      return NextResponse.json(
+        { error: "Internet Banking payments are not available." },
+        { status: 400 }
+      );
+    }
+  }
+
   const hasNonMembers = guestInputs.some((g) => !g.isMember);
   const holdDays = hasNonMembers ? await getNonMemberHoldDays(checkIn) : 7;
   const { shouldBePending, status } = calculateBookingHoldDecision({
@@ -326,6 +356,7 @@ export async function POST(request: NextRequest) {
       shouldBePending,
       holdDays,
       allMembers: !hasNonMembers,
+      paymentMethod,
       memberReviewJustification,
     });
 

@@ -94,6 +94,7 @@ interface PaymentRow {
   id: string;
   bookingId: string;
   amountCents: number;
+  source: string;
   status: string;
   stripePaymentIntentId: string | null;
   xeroInvoiceId: string | null;
@@ -524,6 +525,11 @@ export default function PaymentsPage() {
                               {displayStatus.detail}
                             </p>
                           )}
+                          {p.source === "INTERNET_BANKING" && (
+                            <Badge variant="outline" className="text-xs">
+                              Internet Banking
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -538,6 +544,10 @@ export default function PaymentsPage() {
                             {p.stripePaymentIntentId.slice(0, 12)}...
                             <ExternalLink className="h-3 w-3" />
                           </a>
+                        ) : p.source === "INTERNET_BANKING" ? (
+                          <span className="text-xs text-slate-600">
+                            Internet Banking
+                          </span>
                         ) : "—"}
                       </TableCell>
                       <TableCell>

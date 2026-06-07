@@ -7,9 +7,17 @@ import {
   type Payment as XeroPayment,
   type XeroClient,
 } from "xero-node";
-import { CreditType, PaymentStatus, type Prisma } from "@prisma/client";
+import {
+  BookingStatus,
+  CreditType,
+  PaymentSource,
+  PaymentStatus,
+  PaymentTransactionKind,
+  type Prisma,
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import logger from "@/lib/logger";
+import { sendBookingConfirmedEmail } from "@/lib/email";
 import { getSeasonYear } from "@/lib/utils";
 import { buildXeroContactUrl, buildXeroInvoiceUrl } from "@/lib/xero-links";
 import {
@@ -1028,6 +1036,193 @@ async function syncLinkedPaymentInvoiceMetadata(
   };
 }
 
+function isPaidXeroInvoice(invoice: Invoice): boolean {
+  const status = String(invoice.status ?? "").toUpperCase();
+  return status === "PAID" || Boolean(invoice.fullyPaidOnDate);
+}
+
+async function syncInternetBankingPaymentsForPaidInvoice(
+  invoice: Invoice,
+  linkedPaymentIds: string[]
+) {
+  const invoiceId = invoice.invoiceID ?? null;
+  const invoiceNumber = invoice.invoiceNumber ?? null;
+  const result = {
+    matchedInternetBankingPayments: 0,
+    paidInternetBankingPayments: 0,
+    paidInternetBankingBookings: 0,
+    skippedAlreadyPaidBookings: 0,
+  };
+
+  if (!invoiceId || !isPaidXeroInvoice(invoice)) {
+    return result;
+  }
+
+  const paymentWhere = [
+    {
+      xeroInvoiceId: invoiceId,
+    },
+    ...(linkedPaymentIds.length > 0
+      ? [
+          {
+            id: {
+              in: linkedPaymentIds,
+            },
+          },
+        ]
+      : []),
+  ];
+  const payments = await prisma.payment.findMany({
+    where: {
+      source: PaymentSource.INTERNET_BANKING,
+      OR: paymentWhere,
+    },
+    include: {
+      booking: {
+        include: {
+          member: true,
+          guests: true,
+          promoRedemption: {
+            include: {
+              promoCode: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  result.matchedInternetBankingPayments = payments.length;
+
+  for (const payment of payments) {
+    const transactionUpdate = await prisma.paymentTransaction.updateMany({
+      where: {
+        paymentId: payment.id,
+        source: PaymentSource.INTERNET_BANKING,
+        kind: PaymentTransactionKind.PRIMARY,
+      },
+      data: {
+        status: PaymentStatus.SUCCEEDED,
+        xeroInvoiceId: invoiceId,
+        xeroInvoiceNumber: invoiceNumber,
+      },
+    });
+
+    if (transactionUpdate.count === 0) {
+      await prisma.paymentTransaction.create({
+        data: {
+          paymentId: payment.id,
+          kind: PaymentTransactionKind.PRIMARY,
+          source: PaymentSource.INTERNET_BANKING,
+          stripePaymentIntentId: null,
+          xeroInvoiceId: invoiceId,
+          xeroInvoiceNumber: invoiceNumber,
+          reference: payment.reference ?? undefined,
+          amountCents: payment.amountCents,
+          status: PaymentStatus.SUCCEEDED,
+          reason: "xero_invoice_paid_reconciliation",
+        },
+      });
+    }
+
+    if (payment.status !== PaymentStatus.SUCCEEDED) {
+      await prisma.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          status: PaymentStatus.SUCCEEDED,
+          xeroInvoiceId: invoiceId,
+          xeroInvoiceNumber: invoiceNumber,
+        },
+      });
+      result.paidInternetBankingPayments += 1;
+    } else if (!payment.xeroInvoiceId || payment.xeroInvoiceNumber !== invoiceNumber) {
+      await prisma.payment.update({
+        where: {
+          id: payment.id,
+        },
+        data: {
+          xeroInvoiceId: invoiceId,
+          xeroInvoiceNumber: invoiceNumber,
+        },
+      });
+    }
+
+    if (payment.booking.status === BookingStatus.PAID) {
+      result.skippedAlreadyPaidBookings += 1;
+      continue;
+    }
+
+    await prisma.booking.update({
+      where: {
+        id: payment.bookingId,
+      },
+      data: {
+        status: BookingStatus.PAID,
+        draftExpiresAt: null,
+      },
+    });
+    result.paidInternetBankingBookings += 1;
+
+    try {
+      await createAuditLog({
+        action: "booking.payment.confirmed",
+        targetId: payment.bookingId,
+        subjectMemberId: payment.booking.memberId,
+        entityType: "Booking",
+        entityId: payment.bookingId,
+        category: "payment",
+        outcome: "success",
+        summary: "Internet Banking payment confirmed from Xero",
+        details: JSON.stringify({
+          source: "xero-inbound-invoice",
+          paymentId: payment.id,
+          xeroInvoiceId: invoiceId,
+          xeroInvoiceNumber: invoiceNumber,
+          amountCents: payment.amountCents,
+        }),
+        metadata: {
+          source: "xero-inbound-invoice",
+          paymentId: payment.id,
+          paymentSource: PaymentSource.INTERNET_BANKING,
+          xeroInvoiceId: invoiceId,
+          xeroInvoiceNumber: invoiceNumber,
+          amountCents: payment.amountCents,
+        },
+      });
+    } catch (err) {
+      logger.error(
+        { err, bookingId: payment.bookingId, paymentId: payment.id },
+        "Failed to audit Internet Banking payment reconciliation"
+      );
+    }
+
+    sendBookingConfirmedEmail(
+      payment.booking.member.email,
+      payment.booking.member.firstName,
+      payment.booking.checkIn,
+      payment.booking.checkOut,
+      payment.booking.guests.length,
+      payment.booking.finalPriceCents,
+      payment.booking.promoRedemption?.promoCode
+        ? {
+            discountCents: payment.booking.discountCents,
+            promoAdjustmentCents: payment.booking.promoAdjustmentCents,
+            promoCode: payment.booking.promoRedemption.promoCode.code,
+          }
+        : undefined
+    ).catch((err) =>
+      logger.error(
+        { err, bookingId: payment.bookingId, paymentId: payment.id },
+        "Failed to send booking confirmation email after Internet Banking reconciliation"
+      )
+    );
+  }
+
+  return result;
+}
+
 async function refreshLinkedSubscriptionsForInvoice(
   invoiceId: string,
   linkedSubscriptionIds: string[]
@@ -1709,6 +1904,11 @@ async function reconcileXeroInvoice(
       invoice.invoiceNumber ?? null,
       linkedPaymentIds
     );
+  const internetBankingPaymentSync =
+    await syncInternetBankingPaymentsForPaidInvoice(
+      invoice,
+      linkedPaymentIds
+    );
 
   const linkedSubscriptionIds = relatedLinks
     .filter(
@@ -1772,6 +1972,7 @@ async function reconcileXeroInvoice(
       invoiceNumber: invoice.invoiceNumber ?? null,
       matchedPayments,
       updatedPayments,
+      internetBankingPaymentSync,
       refreshedSubscriptions: refreshedSubscriptions.size,
       looksLikeSubscriptionInvoice,
     },
@@ -1783,6 +1984,7 @@ async function reconcileXeroInvoice(
     resourceId: invoice.invoiceID,
     invoiceNumber: invoice.invoiceNumber ?? null,
     matchedPayments,
+    internetBankingPaymentSync,
     paymentLinksUpdated: paymentLinks.length,
     updatedPayments,
     refreshedSubscriptions: refreshedSubscriptions.size,

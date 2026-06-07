@@ -62,6 +62,7 @@ type PaymentCandidate = {
   id: string;
   bookingId: string;
   amountCents: number;
+  source: string;
   status: string;
   stripePaymentIntentId: string | null;
   xeroInvoiceId: string | null;
@@ -248,6 +249,7 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
         id: true,
         bookingId: true,
         amountCents: true,
+        source: true,
         status: true,
         stripePaymentIntentId: true,
         xeroInvoiceId: true,

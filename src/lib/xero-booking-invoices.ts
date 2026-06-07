@@ -13,7 +13,9 @@ import {
   LineItem,
   LineAmountTypes,
   Payment as XeroPayment,
+  RequestEmpty,
 } from "xero-node";
+import { PaymentSource, PaymentTransactionKind } from "@prisma/client";
 import { prisma } from "./prisma";
 import logger from "@/lib/logger";
 import { getStayNights } from "./pricing";
@@ -364,6 +366,46 @@ export async function createXeroInvoiceForBooking(
       );
     }
 
+    let invoiceEmailResponseBody: unknown = null;
+    let invoiceEmailError: unknown = null;
+    const shouldEmailInvoice =
+      booking.payment.source === PaymentSource.INTERNET_BANKING;
+
+    if (shouldEmailInvoice) {
+      const invoiceEmailIdempotencyKey = buildXeroIdempotencyKey(
+        "booking",
+        bookingId,
+        "invoice-email",
+        createdInvoice.invoiceID,
+        "v1"
+      );
+
+      try {
+        const emailResponse = await callXeroApi(
+          () =>
+            xero.accountingApi.emailInvoice(
+              tenantId,
+              createdInvoice.invoiceID!,
+              new RequestEmpty(),
+              invoiceEmailIdempotencyKey
+            ),
+          {
+            operation: "emailInvoice",
+            resourceType: "INVOICE",
+            workflow: "createXeroInvoiceForBooking",
+            context: `emailInvoice(booking ${bookingId})`,
+          }
+        );
+        invoiceEmailResponseBody = emailResponse.body ?? null;
+      } catch (error) {
+        invoiceEmailError = error;
+        logger.warn(
+          { err: error, bookingId, invoiceId: createdInvoice.invoiceID },
+          "Created Xero invoice but failed to email it to the contact"
+        );
+      }
+    }
+
     // Store the Xero invoice ID and number on the payment record
     await prisma.payment.update({
       where: { id: booking.payment.id },
@@ -372,9 +414,20 @@ export async function createXeroInvoiceForBooking(
         xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
       },
     });
+    await prisma.paymentTransaction.updateMany({
+      where: {
+        paymentId: booking.payment.id,
+        source: PaymentSource.INTERNET_BANKING,
+        kind: PaymentTransactionKind.PRIMARY,
+      },
+      data: {
+        xeroInvoiceId: createdInvoice.invoiceID,
+        xeroInvoiceNumber: createdInvoice.invoiceNumber ?? null,
+      },
+    });
 
     await completeXeroSyncOperation(operationId!, {
-      status: paymentWriteError ? "PARTIAL" : "SUCCEEDED",
+      status: paymentWriteError || invoiceEmailError ? "PARTIAL" : "SUCCEEDED",
       responsePayload: {
         invoice: response.body,
         payment: paymentResponseBody,
@@ -383,6 +436,9 @@ export async function createXeroInvoiceForBooking(
         paymentSkipReason: paymentSkipped
           ? "Zero-total invoice does not require Xero payment recording."
           : null,
+        invoiceEmail: invoiceEmailResponseBody,
+        invoiceEmailError,
+        invoiceEmailSkipped: !shouldEmailInvoice,
       },
       xeroObjectType: "INVOICE",
       xeroObjectId: createdInvoice.invoiceID,

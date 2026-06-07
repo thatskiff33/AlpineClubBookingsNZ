@@ -22,9 +22,12 @@ const mocks = vi.hoisted(() => ({
   linkFindMany: vi.fn(),
   auditLogCreate: vi.fn(),
   bookingFindMany: vi.fn(),
+  bookingUpdate: vi.fn(),
   bookingModificationFindMany: vi.fn(),
   paymentFindMany: vi.fn(),
   paymentUpdate: vi.fn(),
+  paymentTransactionUpdateMany: vi.fn(),
+  paymentTransactionCreate: vi.fn(),
   subscriptionFindMany: vi.fn(),
   syncContactsFromXero: vi.fn(),
   refreshAllMembershipStatuses: vi.fn(),
@@ -78,6 +81,7 @@ vi.mock("@/lib/prisma", () => ({
     },
     booking: {
       findMany: mocks.bookingFindMany,
+      update: mocks.bookingUpdate,
     },
     bookingModification: {
       findMany: mocks.bookingModificationFindMany,
@@ -85,6 +89,10 @@ vi.mock("@/lib/prisma", () => ({
     payment: {
       findMany: mocks.paymentFindMany,
       update: mocks.paymentUpdate,
+    },
+    paymentTransaction: {
+      updateMany: mocks.paymentTransactionUpdateMany,
+      create: mocks.paymentTransactionCreate,
     },
     memberSubscription: {
       findMany: mocks.subscriptionFindMany,
@@ -100,6 +108,10 @@ vi.mock("@/lib/logger", () => ({
     warn: vi.fn(),
     debug: vi.fn(),
   },
+}));
+
+vi.mock("@/lib/email", () => ({
+  sendBookingConfirmedEmail: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/lib/xero-sync", async (importOriginal) => {
@@ -153,10 +165,12 @@ import {
   replayStoredXeroInboundEvent,
   XeroInboundReplayError,
 } from "@/lib/xero-inbound-reconciliation";
+import { sendBookingConfirmedEmail } from "@/lib/email";
 
 describe("processStoredXeroInboundEvents", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(sendBookingConfirmedEmail).mockResolvedValue(undefined);
     mocks.inboundUpdateMany.mockResolvedValue({ count: 1 });
     mocks.xeroSyncOperationFindMany.mockResolvedValue([]);
     mocks.xeroSyncCursorFindUnique.mockResolvedValue(null);
@@ -230,8 +244,12 @@ describe("processStoredXeroInboundEvents", () => {
     mocks.memberCreditUpdateMany.mockResolvedValue({ count: 0 });
     mocks.auditLogCreate.mockResolvedValue({});
     mocks.bookingFindMany.mockResolvedValue([]);
+    mocks.bookingUpdate.mockResolvedValue({});
     mocks.bookingModificationFindMany.mockResolvedValue([]);
     mocks.paymentFindMany.mockResolvedValue([]);
+    mocks.paymentUpdate.mockResolvedValue({});
+    mocks.paymentTransactionUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.paymentTransactionCreate.mockResolvedValue({});
     mocks.subscriptionFindMany.mockResolvedValue([]);
   });
 
@@ -585,6 +603,164 @@ describe("processStoredXeroInboundEvents", () => {
         }),
       }),
     });
+  });
+
+  it("marks Internet Banking bookings paid when the linked Xero invoice is paid", async () => {
+    mocks.inboundFindMany.mockResolvedValue([
+      {
+        id: "evt_ib_1",
+        source: "webhook",
+        eventCategory: "INVOICE",
+        eventType: "UPDATE",
+        resourceId: "inv_ib_1",
+        correlationKey: "corr_ib_1",
+        payload: { resourceId: "inv_ib_1" },
+      },
+    ]);
+    mocks.processedCreate.mockResolvedValue({ id: "processed_ib_1" });
+    mocks.linkFindMany
+      .mockResolvedValueOnce([
+        {
+          localModel: "Payment",
+          localId: "pay_ib_1",
+          xeroObjectType: "INVOICE",
+          role: "PRIMARY_INVOICE",
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    mocks.paymentFindMany
+      .mockResolvedValueOnce([
+        {
+          id: "pay_ib_1",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_ib_1",
+          bookingId: "booking_ib_1",
+          amountCents: 12345,
+          status: "PENDING",
+          source: "INTERNET_BANKING",
+          reference: "BOOKING-ABC12345",
+          xeroInvoiceId: null,
+          xeroInvoiceNumber: null,
+          booking: {
+            id: "booking_ib_1",
+            memberId: "mem_1",
+            checkIn: new Date("2026-07-10"),
+            checkOut: new Date("2026-07-12"),
+            status: "PAYMENT_PENDING",
+            finalPriceCents: 12345,
+            discountCents: 0,
+            promoAdjustmentCents: 0,
+            member: {
+              email: "member@example.com",
+              firstName: "Alice",
+              lastName: "Smith",
+            },
+            guests: [{ id: "guest_1" }],
+            promoRedemption: null,
+          },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "pay_ib_1",
+          bookingId: "booking_ib_1",
+          booking: { memberId: "mem_1" },
+        },
+      ]);
+    mocks.subscriptionFindMany.mockResolvedValue([]);
+    const accountingApi = {
+      getInvoice: vi.fn().mockResolvedValue({
+        body: {
+          invoices: [
+            {
+              invoiceID: "inv_ib_1",
+              invoiceNumber: "INV-IB-001",
+              date: "2026-07-01",
+              status: "PAID",
+              fullyPaidOnDate: "2026-07-02",
+              contact: { contactID: "contact_1" },
+              payments: [
+                {
+                  paymentID: "xpay_ib_1",
+                  amount: 123.45,
+                  invoiceNumber: "INV-IB-001",
+                  status: "PAID",
+                },
+              ],
+              lineItems: [{ accountCode: "200" }],
+            },
+          ],
+        },
+      }),
+    };
+    mocks.getAuthenticatedXeroClient.mockResolvedValue({
+      xero: { accountingApi },
+      tenantId: "tenant_1",
+    });
+
+    await expect(processStoredXeroInboundEvents()).resolves.toEqual({
+      found: 1,
+      processed: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.paymentTransactionUpdateMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: "pay_ib_1",
+        source: "INTERNET_BANKING",
+        kind: "PRIMARY",
+      },
+      data: {
+        status: "SUCCEEDED",
+        xeroInvoiceId: "inv_ib_1",
+        xeroInvoiceNumber: "INV-IB-001",
+      },
+    });
+    expect(mocks.paymentUpdate).toHaveBeenCalledWith({
+      where: { id: "pay_ib_1" },
+      data: {
+        status: "SUCCEEDED",
+        xeroInvoiceId: "inv_ib_1",
+        xeroInvoiceNumber: "INV-IB-001",
+      },
+    });
+    expect(mocks.bookingUpdate).toHaveBeenCalledWith({
+      where: { id: "booking_ib_1" },
+      data: {
+        status: "PAID",
+        draftExpiresAt: null,
+      },
+    });
+    expect(mocks.auditLogCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "booking.payment.confirmed",
+        subjectMemberId: "mem_1",
+        entityType: "Booking",
+        entityId: "booking_ib_1",
+        category: "payment",
+        metadata: expect.objectContaining({
+          paymentSource: "INTERNET_BANKING",
+          xeroInvoiceId: "inv_ib_1",
+          amountCents: 12345,
+        }),
+      }),
+    });
+    expect(sendBookingConfirmedEmail).toHaveBeenCalledWith(
+      "member@example.com",
+      "Alice",
+      new Date("2026-07-10"),
+      new Date("2026-07-12"),
+      1,
+      12345,
+      undefined
+    );
   });
 
   it("recovers missing supplementary invoice and payment links from the outbound operation ledger", async () => {

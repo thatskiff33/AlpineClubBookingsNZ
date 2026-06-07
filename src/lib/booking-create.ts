@@ -21,6 +21,8 @@ import {
   AdminReviewStatus,
   AgeTier,
   BookingStatus,
+  PaymentSource,
+  PaymentStatus,
   type FixedNightlyMode,
   PromoCodeType,
   type Booking,
@@ -55,6 +57,12 @@ import {
   kickQueuedXeroOutboxOperationsIfConnected,
 } from "@/lib/xero-operation-outbox";
 import { applyCreditToBooking, getMemberCreditBalance } from "@/lib/member-credit";
+import {
+  buildInternetBankingPaymentReference,
+  DEFAULT_BOOKING_PAYMENT_METHOD,
+  type BookingPaymentMethod,
+} from "@/lib/booking-payment-methods";
+import { recordInternetBankingPaymentTransaction } from "@/lib/payment-transactions";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { isFeatureEnabled } from "@/config/features";
@@ -100,6 +108,7 @@ export interface ConfirmedBookingInput extends BaseInput {
   shouldBePending: boolean;
   holdDays: number;
   allMembers: boolean;
+  paymentMethod?: BookingPaymentMethod;
 }
 
 export type ConfirmedBookingOutcome =
@@ -592,6 +601,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     shouldBePending,
     holdDays,
     allMembers,
+    paymentMethod = DEFAULT_BOOKING_PAYMENT_METHOD,
     memberReviewJustification,
   } = input;
 
@@ -605,7 +615,14 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
   // A member-created youth-only booking lands in AWAITING_REVIEW regardless
   // of the caller's requested status — payment is intentionally blocked
   // until an admin approves.
-  const effectiveStatus = review.blockForReview ? BookingStatus.AWAITING_REVIEW : status;
+  const internetBankingPaymentSelected =
+    paymentMethod === "internet_banking" && !review.blockForReview;
+  const requestedStatus = internetBankingPaymentSelected
+    ? BookingStatus.PAYMENT_PENDING
+    : status;
+  const effectiveStatus = review.blockForReview
+    ? BookingStatus.AWAITING_REVIEW
+    : requestedStatus;
 
   let bumpedBookingIds: string[] = [];
   let isZeroDollarConfirmed = false;
@@ -664,7 +681,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // and the member completes payment.
       const creditBalance =
         (applyCreditCents ?? 0) > 0 &&
-        status === BookingStatus.PAYMENT_PENDING &&
+        requestedStatus === BookingStatus.PAYMENT_PENDING &&
         !review.blockForReview
           ? await getMemberCreditBalance(effectiveMemberId, tx)
           : 0;
@@ -672,7 +689,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         requestedCreditCents: review.blockForReview ? 0 : (applyCreditCents ?? 0),
         creditBalanceCents: creditBalance,
         finalPriceCents,
-        status,
+        status: requestedStatus,
       });
 
       // AWAITING_REVIEW holds capacity, so capacity must be verified even
@@ -680,13 +697,13 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // member-paid path).
       if (
         !capacityCheck.available &&
-        (status === BookingStatus.PENDING || effectivePriceCents > 0 || review.blockForReview)
+        (requestedStatus === BookingStatus.PENDING || effectivePriceCents > 0 || review.blockForReview)
       ) {
         capacityFullNights = getCapacityFullNights(capacityCheck.nightDetails);
         throw new Error("CAPACITY_EXCEEDED_SENTINEL");
       }
 
-      const nonMemberHoldUntil = shouldBePending
+      const nonMemberHoldUntil = shouldBePending && !internetBankingPaymentSelected
         ? new Date(checkIn.getTime() - holdDays * 24 * 60 * 60 * 1000)
         : null;
 
@@ -741,7 +758,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       // (including the zero-dollar auto-PAID path) must wait for admin.
       if (
         effectivePriceCents === 0 &&
-        status === BookingStatus.PAYMENT_PENDING &&
+        requestedStatus === BookingStatus.PAYMENT_PENDING &&
         !review.blockForReview
       ) {
         const finalCapacityCheck = await checkCapacityForGuestRanges(
@@ -777,7 +794,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             bookingId: newBooking.id,
             amountCents: 0,
             creditAppliedCents,
-            status: "SUCCEEDED",
+            status: PaymentStatus.SUCCEEDED,
           },
         });
         await tx.booking.update({
@@ -785,6 +802,30 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           data: { status: BookingStatus.PAID },
         });
         newBooking.status = BookingStatus.PAID;
+      } else if (
+        internetBankingPaymentSelected &&
+        effectivePriceCents > 0
+      ) {
+        const reference = buildInternetBankingPaymentReference(newBooking.id);
+        const payment = await tx.payment.create({
+          data: {
+            bookingId: newBooking.id,
+            amountCents: effectivePriceCents,
+            creditAppliedCents,
+            source: PaymentSource.INTERNET_BANKING,
+            reference,
+            status: PaymentStatus.PENDING,
+          },
+        });
+
+        await recordInternetBankingPaymentTransaction({
+          paymentId: payment.id,
+          amountCents: effectivePriceCents,
+          status: PaymentStatus.PENDING,
+          reference,
+          reason: "internet_banking_booking_payment",
+          store: tx,
+        });
       }
 
       await reconcileBedAllocationsForBooking({
@@ -821,6 +862,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       hasNonMembers,
       finalPriceCents: booking.finalPriceCents,
       zeroDollarConfirmed: isZeroDollarConfirmed,
+      paymentMethod,
     },
   });
 
@@ -843,6 +885,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
         guestCount: guests.length,
         hasNonMembers,
         finalPriceCents: booking.finalPriceCents,
+        paymentMethod,
       },
     });
   }
@@ -893,6 +936,26 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       }
     } catch (err) {
       logger.error({ err, bookingId: booking.id }, "Error in post-creation handling for $0 booking");
+    }
+  }
+
+  if (
+    paymentMethod === "internet_banking" &&
+    booking.status === BookingStatus.PAYMENT_PENDING &&
+    !isZeroDollarConfirmed
+  ) {
+    try {
+      const queuedInvoice = await enqueueXeroBookingInvoiceOperation(booking.id, {
+        createdByMemberId: sessionUserId,
+      });
+      if (queuedInvoice.queueOperationId) {
+        await kickQueuedXeroOutboxOperationsIfConnected({ limit: 1 });
+      }
+    } catch (err) {
+      logger.error(
+        { err, bookingId: booking.id },
+        "Failed to queue Xero invoice for Internet Banking booking"
+      );
     }
   }
 

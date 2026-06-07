@@ -22,6 +22,9 @@ const mocks = vi.hoisted(() => {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    paymentTransaction: {
+      updateMany: vi.fn(),
+    },
     xeroObjectLink: {
       findFirst: vi.fn(),
     },
@@ -50,6 +53,7 @@ const mocks = vi.hoisted(() => {
       updateInvoice: vi.fn(),
       createPayment: vi.fn(),
       createPayments: vi.fn(),
+      emailInvoice: vi.fn(),
       createCreditNotes: vi.fn(),
       createContacts: vi.fn(),
       getContacts: vi.fn(),
@@ -93,6 +97,7 @@ vi.mock("xero-node", () => ({
     StatusEnum: { AUTHORISED: "AUTHORISED" },
   },
   Payment: class {},
+  RequestEmpty: class {},
   Phone: {
     PhoneTypeEnum: { MOBILE: "MOBILE" },
   },
@@ -201,9 +206,11 @@ describe("createXeroInvoiceForBooking", () => {
         stripePaymentIntentId: null,
         xeroInvoiceId: null,
         xeroInvoiceNumber: null,
+        source: "STRIPE",
       },
     });
     mocks.prisma.payment.findUnique.mockResolvedValue(null);
+    mocks.prisma.paymentTransaction.updateMany.mockResolvedValue({ count: 0 });
     mocks.prisma.season.findFirst.mockResolvedValue({ type: "WINTER" });
     mocks.prisma.payment.update.mockResolvedValue({ id: "pay_1" });
     mocks.prisma.xeroObjectLink.findFirst.mockResolvedValue(null);
@@ -250,6 +257,7 @@ describe("createXeroInvoiceForBooking", () => {
       "booking:booking_1:invoice:v1"
     );
     expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
+    expect(mocks.xeroClientInstance.accountingApi.emailInvoice).not.toHaveBeenCalled();
     expect(mocks.prisma.payment.update).toHaveBeenCalledWith({
       where: { id: "pay_1" },
       data: {
@@ -268,6 +276,72 @@ describe("createXeroInvoiceForBooking", () => {
           paymentError: null,
           paymentSkipped: true,
           paymentSkipReason: "Zero-total invoice does not require Xero payment recording.",
+          invoiceEmailSkipped: true,
+        }),
+      })
+    );
+  });
+
+  it("emails Internet Banking invoices and updates the Internet Banking transaction", async () => {
+    mocks.prisma.booking.findUnique.mockResolvedValue({
+      id: "booking_1",
+      memberId: "mem_1",
+      member: { id: "mem_1" },
+      checkIn: "2026-07-31T00:00:00.000Z",
+      checkOut: "2026-08-02T00:00:00.000Z",
+      createdAt: "2026-05-15T10:30:00.000Z",
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      guests: [
+        {
+          firstName: "Jordan",
+          lastName: "Hartley-Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          priceCents: 10000,
+        },
+      ],
+      payment: {
+        id: "pay_1",
+        status: "PENDING",
+        amountCents: 10000,
+        stripePaymentIntentId: null,
+        xeroInvoiceId: null,
+        xeroInvoiceNumber: null,
+        source: "INTERNET_BANKING",
+      },
+    });
+    mocks.xeroClientInstance.accountingApi.emailInvoice.mockResolvedValue({
+      body: {},
+    });
+
+    await expect(createXeroInvoiceForBooking("booking_1")).resolves.toBe("inv_1");
+
+    expect(mocks.xeroClientInstance.accountingApi.createPayment).not.toHaveBeenCalled();
+    expect(mocks.xeroClientInstance.accountingApi.emailInvoice).toHaveBeenCalledWith(
+      "tenant_1",
+      "inv_1",
+      expect.any(Object),
+      "booking:booking_1:invoice-email:inv_1:v1"
+    );
+    expect(mocks.prisma.paymentTransaction.updateMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: "pay_1",
+        source: "INTERNET_BANKING",
+        kind: "PRIMARY",
+      },
+      data: {
+        xeroInvoiceId: "inv_1",
+        xeroInvoiceNumber: "INV-1",
+      },
+    });
+    expect(mocks.completeXeroSyncOperation).toHaveBeenCalledWith(
+      "op_1",
+      expect.objectContaining({
+        status: "SUCCEEDED",
+        responsePayload: expect.objectContaining({
+          invoiceEmail: {},
+          invoiceEmailSkipped: false,
         }),
       })
     );
