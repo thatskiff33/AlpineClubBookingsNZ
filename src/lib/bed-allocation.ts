@@ -5,6 +5,7 @@ import {
 } from "@/lib/date-only";
 
 export type BedAllocationSource = "AUTO" | "MANUAL";
+export type BedAllocationAgeTier = "INFANT" | "CHILD" | "YOUTH" | "ADULT";
 
 export interface BedAllocationBed {
   id: string;
@@ -27,6 +28,7 @@ export interface BedAllocationGuest {
   bookingId: string;
   stayStart: Date;
   stayEnd: Date;
+  ageTier?: BedAllocationAgeTier | null;
 }
 
 export interface BedAllocationBooking {
@@ -53,7 +55,7 @@ export interface UnallocatedGuestNight {
   bookingId: string;
   bookingGuestId: string;
   stayDate: string;
-  reason: "NO_ACTIVE_BEDS" | "NO_BED_AVAILABLE";
+  reason: "NO_ACTIVE_BEDS" | "NO_BED_AVAILABLE" | "NO_BOOKING_ADULT";
 }
 
 export interface BuildBedAllocationPlanInput {
@@ -106,20 +108,289 @@ function guestNightKey(bookingGuestId: string, stayDate: string) {
   return `${bookingGuestId}:${stayDate}`;
 }
 
-function sortedActiveBeds(rooms: BedAllocationRoom[]): BedAllocationBed[] {
+interface SortedRoomWithBeds extends BedAllocationRoom {
+  beds: BedAllocationBed[];
+}
+
+function sortedActiveRoomsWithBeds(
+  rooms: BedAllocationRoom[],
+): SortedRoomWithBeds[] {
   return [...rooms]
     .filter((room) => room.active !== false)
     .sort(compareSortThenName)
-    .flatMap((room) =>
-      [...room.beds]
+    .map((room) => ({
+      ...room,
+      beds: [...room.beds]
         .filter((bed) => bed.active !== false)
         .sort(compareSortThenName)
         .map((bed) => ({ ...bed, roomId: room.id })),
-    );
+    }));
 }
 
 function guestStayNights(guest: BedAllocationGuest): string[] {
   return eachDateOnlyInRange(guest.stayStart, guest.stayEnd).map(formatDateOnly);
+}
+
+function bookingStayNights(booking: BedAllocationBooking): Array<{
+  stayDate: string;
+  guests: BedAllocationGuest[];
+}> {
+  const guestsByNight = new Map<string, BedAllocationGuest[]>();
+
+  for (const guest of booking.guests) {
+    for (const stayDate of guestStayNights(guest)) {
+      const guests = guestsByNight.get(stayDate) ?? [];
+      guests.push(guest);
+      guestsByNight.set(stayDate, guests);
+    }
+  }
+
+  return [...guestsByNight.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([stayDate, guests]) => ({ stayDate, guests }));
+}
+
+function isAdultGuest(guest: BedAllocationGuest): boolean {
+  return !guest.ageTier || guest.ageTier === "ADULT";
+}
+
+function roomHasAvailableBeds(
+  room: SortedRoomWithBeds,
+  stayDate: string,
+  occupied: Set<string>,
+): BedAllocationBed[] {
+  return room.beds.filter((bed) => !occupied.has(occupiedKey(bed.id, stayDate)));
+}
+
+function allocationReasonForNoBed(beds: BedAllocationBed[]) {
+  return beds.length === 0 ? "NO_ACTIVE_BEDS" : "NO_BED_AVAILABLE";
+}
+
+function createAllocation(
+  booking: BedAllocationBooking,
+  guest: BedAllocationGuest,
+  bed: BedAllocationBed,
+  stayDate: string,
+  occupied: Set<string>,
+  allocatedGuestNights: Set<string>,
+): BedAllocationCandidate {
+  occupied.add(occupiedKey(bed.id, stayDate));
+  allocatedGuestNights.add(guestNightKey(guest.id, stayDate));
+
+  return {
+    bookingId: booking.id,
+    bookingGuestId: guest.id,
+    roomId: bed.roomId,
+    bedId: bed.id,
+    stayDate,
+    source: "AUTO",
+  };
+}
+
+function allocateGuestsToBeds(
+  booking: BedAllocationBooking,
+  guests: BedAllocationGuest[],
+  beds: BedAllocationBed[],
+  stayDate: string,
+  occupied: Set<string>,
+  allocatedGuestNights: Set<string>,
+  allocations: BedAllocationCandidate[],
+) {
+  for (let index = 0; index < guests.length; index += 1) {
+    allocations.push(
+      createAllocation(
+        booking,
+        guests[index],
+        beds[index],
+        stayDate,
+        occupied,
+        allocatedGuestNights,
+      ),
+    );
+  }
+}
+
+function addUnallocatedGuestNights(
+  bookingId: string,
+  guests: BedAllocationGuest[],
+  stayDate: string,
+  reason: UnallocatedGuestNight["reason"],
+  unallocatedGuestNights: UnallocatedGuestNight[],
+) {
+  for (const guest of guests) {
+    unallocatedGuestNights.push({
+      bookingId,
+      bookingGuestId: guest.id,
+      stayDate,
+      reason,
+    });
+  }
+}
+
+function tryAllocateWholeBookingNight(
+  booking: BedAllocationBooking,
+  guests: BedAllocationGuest[],
+  stayDate: string,
+  rooms: SortedRoomWithBeds[],
+  occupied: Set<string>,
+  allocatedGuestNights: Set<string>,
+  allocations: BedAllocationCandidate[],
+): boolean {
+  const hasMinor = guests.some((guest) => !isAdultGuest(guest));
+  const hasAdult = guests.some(isAdultGuest);
+
+  if (hasMinor && !hasAdult) {
+    return false;
+  }
+
+  for (const room of rooms) {
+    const availableBeds = roomHasAvailableBeds(room, stayDate, occupied);
+
+    if (availableBeds.length >= guests.length) {
+      allocateGuestsToBeds(
+        booking,
+        guests,
+        availableBeds,
+        stayDate,
+        occupied,
+        allocatedGuestNights,
+        allocations,
+      );
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function allocateAdultsAcrossBeds(
+  booking: BedAllocationBooking,
+  adults: BedAllocationGuest[],
+  availableBeds: BedAllocationBed[],
+  stayDate: string,
+  occupied: Set<string>,
+  allocatedGuestNights: Set<string>,
+  allocations: BedAllocationCandidate[],
+  unallocatedGuestNights: UnallocatedGuestNight[],
+  unallocatedReason: UnallocatedGuestNight["reason"],
+) {
+  const allocatedAdults = adults.slice(0, availableBeds.length);
+  const unallocatedAdults = adults.slice(availableBeds.length);
+
+  allocateGuestsToBeds(
+    booking,
+    allocatedAdults,
+    availableBeds.slice(0, allocatedAdults.length),
+    stayDate,
+    occupied,
+    allocatedGuestNights,
+    allocations,
+  );
+  addUnallocatedGuestNights(
+    booking.id,
+    unallocatedAdults,
+    stayDate,
+    unallocatedReason,
+    unallocatedGuestNights,
+  );
+}
+
+function allocateSplitBookingNight(
+  booking: BedAllocationBooking,
+  guests: BedAllocationGuest[],
+  stayDate: string,
+  rooms: SortedRoomWithBeds[],
+  beds: BedAllocationBed[],
+  occupied: Set<string>,
+  allocatedGuestNights: Set<string>,
+  allocations: BedAllocationCandidate[],
+  unallocatedGuestNights: UnallocatedGuestNight[],
+) {
+  const adults = guests.filter(isAdultGuest);
+  const minors = guests.filter((guest) => !isAdultGuest(guest));
+  const roomAvailability = rooms
+    .map((room, roomIndex) => ({
+      roomIndex,
+      beds: roomHasAvailableBeds(room, stayDate, occupied),
+    }))
+    .filter((room) => room.beds.length > 0);
+
+  if (minors.length === 0) {
+    allocateAdultsAcrossBeds(
+      booking,
+      adults,
+      roomAvailability.flatMap((room) => room.beds),
+      stayDate,
+      occupied,
+      allocatedGuestNights,
+      allocations,
+      unallocatedGuestNights,
+      allocationReasonForNoBed(beds),
+    );
+    return;
+  }
+
+  if (adults.length === 0) {
+    addUnallocatedGuestNights(
+      booking.id,
+      minors,
+      stayDate,
+      "NO_BOOKING_ADULT",
+      unallocatedGuestNights,
+    );
+    return;
+  }
+
+  const remainingAdults = [...adults];
+  const remainingMinors = [...minors];
+  const roomsForMinors = roomAvailability
+    .filter((room) => room.beds.length >= 2)
+    .sort((a, b) => {
+      const capacityDiff = b.beds.length - a.beds.length;
+      return capacityDiff !== 0 ? capacityDiff : a.roomIndex - b.roomIndex;
+    });
+
+  for (const room of roomsForMinors) {
+    if (remainingAdults.length === 0 || remainingMinors.length === 0) break;
+
+    const adult = remainingAdults.shift();
+    if (!adult) break;
+
+    const roomMinors = remainingMinors.splice(0, room.beds.length - 1);
+    const roomGuests = [adult, ...roomMinors];
+    const roomBeds = room.beds.splice(0, roomGuests.length);
+
+    allocateGuestsToBeds(
+      booking,
+      roomGuests,
+      roomBeds,
+      stayDate,
+      occupied,
+      allocatedGuestNights,
+      allocations,
+    );
+  }
+
+  const leftoverBeds = roomAvailability.flatMap((room) => room.beds);
+  allocateAdultsAcrossBeds(
+    booking,
+    remainingAdults,
+    leftoverBeds,
+    stayDate,
+    occupied,
+    allocatedGuestNights,
+    allocations,
+    unallocatedGuestNights,
+    allocationReasonForNoBed(beds),
+  );
+
+  addUnallocatedGuestNights(
+    booking.id,
+    remainingMinors,
+    stayDate,
+    allocationReasonForNoBed(beds),
+    unallocatedGuestNights,
+  );
 }
 
 export function buildFirstFitBedAllocationPlan({
@@ -132,7 +403,8 @@ export function buildFirstFitBedAllocationPlan({
     return { allocations: [], unallocatedGuestNights: [] };
   }
 
-  const beds = sortedActiveBeds(rooms);
+  const activeRooms = sortedActiveRoomsWithBeds(rooms);
+  const beds = activeRooms.flatMap((room) => room.beds);
   const occupied = new Set(
     occupiedBedNights.map((night) =>
       occupiedKey(night.bedId, normalizeStayDate(night.stayDate)),
@@ -147,35 +419,37 @@ export function buildFirstFitBedAllocationPlan({
   });
 
   for (const booking of sortedBookings) {
-    for (const guest of booking.guests) {
-      for (const stayDate of guestStayNights(guest)) {
-        const guestKey = guestNightKey(guest.id, stayDate);
-        if (allocatedGuestNights.has(guestKey)) continue;
+    for (const { stayDate, guests } of bookingStayNights(booking)) {
+      const unallocatedGuests = guests.filter(
+        (guest) => !allocatedGuestNights.has(guestNightKey(guest.id, stayDate)),
+      );
+      if (unallocatedGuests.length === 0) continue;
 
-        const bed = beds.find(
-          (candidate) => !occupied.has(occupiedKey(candidate.id, stayDate)),
-        );
-        if (!bed) {
-          unallocatedGuestNights.push({
-            bookingId: booking.id,
-            bookingGuestId: guest.id,
-            stayDate,
-            reason: beds.length === 0 ? "NO_ACTIVE_BEDS" : "NO_BED_AVAILABLE",
-          });
-          continue;
-        }
-
-        occupied.add(occupiedKey(bed.id, stayDate));
-        allocatedGuestNights.add(guestKey);
-        allocations.push({
-          bookingId: booking.id,
-          bookingGuestId: guest.id,
-          roomId: bed.roomId,
-          bedId: bed.id,
+      if (
+        tryAllocateWholeBookingNight(
+          booking,
+          unallocatedGuests,
           stayDate,
-          source: "AUTO",
-        });
+          activeRooms,
+          occupied,
+          allocatedGuestNights,
+          allocations,
+        )
+      ) {
+        continue;
       }
+
+      allocateSplitBookingNight(
+        booking,
+        unallocatedGuests,
+        stayDate,
+        activeRooms,
+        beds,
+        occupied,
+        allocatedGuestNights,
+        allocations,
+        unallocatedGuestNights,
+      );
     }
   }
 

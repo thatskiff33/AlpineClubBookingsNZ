@@ -5,6 +5,8 @@ import { parseDateOnly } from "@/lib/date-only";
 import {
   buildFirstFitBedAllocationPlan,
   replaceBedAllocationsForBooking,
+  type BedAllocationAgeTier,
+  type BedAllocationBooking,
   type BedAllocationRoom,
 } from "@/lib/bed-allocation";
 
@@ -40,6 +42,29 @@ function booking(id: string, createdAt: string, guestId: string) {
         stayEnd: parseDateOnly("2026-07-03"),
       },
     ],
+  };
+}
+
+function multiGuestBooking(
+  id: string,
+  createdAt: string,
+  guests: Array<{
+    id: string;
+    ageTier?: BedAllocationAgeTier;
+    stayStart?: string;
+    stayEnd?: string;
+  }>,
+): BedAllocationBooking {
+  return {
+    id,
+    createdAt: new Date(createdAt),
+    guests: guests.map((guest) => ({
+      id: guest.id,
+      bookingId: id,
+      ageTier: guest.ageTier ?? "ADULT",
+      stayStart: parseDateOnly(guest.stayStart ?? "2026-07-01"),
+      stayEnd: parseDateOnly(guest.stayEnd ?? "2026-07-02"),
+    })),
   };
 }
 
@@ -131,6 +156,285 @@ describe("bed allocation planner", () => {
         bookingGuestId: "guest-newer",
         stayDate: "2026-07-02",
         reason: "NO_BED_AVAILABLE",
+      },
+    ]);
+  });
+
+  it("keeps booking guests together in one room when capacity allows", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [
+            { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 },
+            { id: "bed-a2", roomId: "room-a", name: "A2", sortOrder: 2 },
+            { id: "bed-a3", roomId: "room-a", name: "A3", sortOrder: 3 },
+          ],
+        },
+        {
+          id: "room-b",
+          name: "Room B",
+          sortOrder: 2,
+          beds: [
+            { id: "bed-b1", roomId: "room-b", name: "B1", sortOrder: 1 },
+            { id: "bed-b2", roomId: "room-b", name: "B2", sortOrder: 2 },
+            { id: "bed-b3", roomId: "room-b", name: "B3", sortOrder: 3 },
+          ],
+        },
+      ],
+      bookings: [
+        multiGuestBooking("booking-family", "2026-06-01", [
+          { id: "adult-1", ageTier: "ADULT" },
+          { id: "adult-2", ageTier: "ADULT" },
+          { id: "child-1", ageTier: "CHILD" },
+        ]),
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "adult-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "adult-2",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "child-1",
+        roomId: "room-a",
+        bedId: "bed-a3",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("splits adults with minors when no single room can fit the booking", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [
+            { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 },
+            { id: "bed-a2", roomId: "room-a", name: "A2", sortOrder: 2 },
+          ],
+        },
+        {
+          id: "room-b",
+          name: "Room B",
+          sortOrder: 2,
+          beds: [
+            { id: "bed-b1", roomId: "room-b", name: "B1", sortOrder: 1 },
+            { id: "bed-b2", roomId: "room-b", name: "B2", sortOrder: 2 },
+          ],
+        },
+      ],
+      bookings: [
+        multiGuestBooking("booking-family", "2026-06-01", [
+          { id: "adult-1", ageTier: "ADULT" },
+          { id: "adult-2", ageTier: "ADULT" },
+          { id: "child-1", ageTier: "CHILD" },
+          { id: "youth-1", ageTier: "YOUTH" },
+        ]),
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "adult-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "child-1",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "adult-2",
+        roomId: "room-b",
+        bedId: "bed-b1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "youth-1",
+        roomId: "room-b",
+        bedId: "bed-b2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("does not allocate minors when no booking adult is staying that night", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms,
+      bookings: [
+        multiGuestBooking("booking-youth", "2026-06-01", [
+          { id: "youth-1", ageTier: "YOUTH" },
+        ]),
+      ],
+    });
+
+    expect(plan.allocations).toEqual([]);
+    expect(plan.unallocatedGuestNights).toEqual([
+      {
+        bookingId: "booking-youth",
+        bookingGuestId: "youth-1",
+        stayDate: "2026-07-01",
+        reason: "NO_BOOKING_ADULT",
+      },
+    ]);
+  });
+
+  it("leaves minors unallocated rather than placing them without an adult", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [{ id: "bed-a1", roomId: "room-a", name: "A1" }],
+        },
+        {
+          id: "room-b",
+          name: "Room B",
+          sortOrder: 2,
+          beds: [{ id: "bed-b1", roomId: "room-b", name: "B1" }],
+        },
+      ],
+      bookings: [
+        multiGuestBooking("booking-family", "2026-06-01", [
+          { id: "adult-1", ageTier: "ADULT" },
+          { id: "child-1", ageTier: "CHILD" },
+        ]),
+      ],
+    });
+
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "adult-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+    expect(plan.unallocatedGuestNights).toEqual([
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "child-1",
+        stayDate: "2026-07-01",
+        reason: "NO_BED_AVAILABLE",
+      },
+    ]);
+  });
+
+  it("allocates each booking night independently", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms: [
+        {
+          id: "room-a",
+          name: "Room A",
+          sortOrder: 1,
+          beds: [
+            { id: "bed-a1", roomId: "room-a", name: "A1", sortOrder: 1 },
+            { id: "bed-a2", roomId: "room-a", name: "A2", sortOrder: 2 },
+          ],
+        },
+        {
+          id: "room-b",
+          name: "Room B",
+          sortOrder: 2,
+          beds: [
+            { id: "bed-b1", roomId: "room-b", name: "B1", sortOrder: 1 },
+            { id: "bed-b2", roomId: "room-b", name: "B2", sortOrder: 2 },
+          ],
+        },
+      ],
+      bookings: [
+        multiGuestBooking("booking-family", "2026-06-01", [
+          {
+            id: "adult-1",
+            ageTier: "ADULT",
+            stayStart: "2026-07-01",
+            stayEnd: "2026-07-03",
+          },
+          {
+            id: "child-1",
+            ageTier: "CHILD",
+            stayStart: "2026-07-01",
+            stayEnd: "2026-07-03",
+          },
+        ]),
+      ],
+      occupiedBedNights: [{ bedId: "bed-a2", stayDate: "2026-07-02" }],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "adult-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "child-1",
+        roomId: "room-a",
+        bedId: "bed-a2",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "adult-1",
+        roomId: "room-b",
+        bedId: "bed-b1",
+        stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-family",
+        bookingGuestId: "child-1",
+        roomId: "room-b",
+        bedId: "bed-b2",
+        stayDate: "2026-07-02",
+        source: "AUTO",
       },
     ]);
   });
