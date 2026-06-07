@@ -1248,6 +1248,7 @@ describe("reapStaleWaitingPaymentXeroOutboxOperations", () => {
 
     expect(mocks.findFirstPaymentTransaction).toHaveBeenCalledWith({
       where: {
+        source: "STRIPE",
         stripePaymentIntentId: "pi_failed_abc",
         status: "FAILED",
       },

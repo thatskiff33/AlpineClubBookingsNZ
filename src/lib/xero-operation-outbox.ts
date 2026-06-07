@@ -808,6 +808,7 @@ export async function reapStaleWaitingPaymentXeroOutboxOperations(options?: {
 
     const failedTransaction = await prisma.paymentTransaction.findFirst({
       where: {
+        source: "STRIPE",
         stripePaymentIntentId: paymentIntentId,
         status: "FAILED",
       },

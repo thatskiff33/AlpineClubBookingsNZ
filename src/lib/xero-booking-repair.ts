@@ -1,5 +1,6 @@
 import {
   CreditType,
+  PaymentSource,
   PaymentStatus,
   PaymentTransactionKind,
   Prisma,
@@ -212,6 +213,7 @@ const bookingRepairSelect = Prisma.validator<Prisma.BookingSelect>()({
           id: true,
           paymentId: true,
           kind: true,
+          source: true,
           stripePaymentIntentId: true,
           amountCents: true,
           refundedAmountCents: true,
@@ -265,7 +267,8 @@ type BookingPaymentRecord = NonNullable<BookingRepairRecord["payment"]>;
 
 interface RepairPaymentTransaction {
   kind: PaymentTransactionKind;
-  stripePaymentIntentId: string;
+  source: PaymentSource;
+  stripePaymentIntentId: string | null;
   amountCents: number;
   refundedAmountCents: number;
   status: PaymentStatus;
@@ -329,6 +332,7 @@ function buildRepairPaymentTransactions(
   const ledgerTransactions = (payment.transactions ?? []).map(
     (transaction): RepairPaymentTransaction => ({
       kind: transaction.kind,
+      source: transaction.source,
       stripePaymentIntentId: transaction.stripePaymentIntentId,
       amountCents: transaction.amountCents,
       refundedAmountCents: transaction.refundedAmountCents,
@@ -371,6 +375,7 @@ function buildRepairPaymentTransactions(
   if (payment.stripePaymentIntentId) {
     legacyTransactions.push({
       kind: PaymentTransactionKind.PRIMARY,
+      source: PaymentSource.STRIPE,
       stripePaymentIntentId: payment.stripePaymentIntentId,
       amountCents: primaryAmountCents,
       refundedAmountCents: primaryRefundedAmountCents,
@@ -386,6 +391,7 @@ function buildRepairPaymentTransactions(
   if (payment.additionalPaymentIntentId) {
     legacyTransactions.push({
       kind: PaymentTransactionKind.ADDITIONAL,
+      source: PaymentSource.STRIPE,
       stripePaymentIntentId: payment.additionalPaymentIntentId,
       amountCents: payment.additionalAmountCents,
       refundedAmountCents: additionalRefundedAmountCents,
@@ -404,20 +410,34 @@ function buildRepairPaymentTransactions(
   return legacyTransactions;
 }
 
+function isStripeRepairPaymentTransaction(
+  transaction: RepairPaymentTransaction
+): transaction is RepairPaymentTransaction & {
+  source: typeof PaymentSource.STRIPE;
+  stripePaymentIntentId: string;
+} {
+  return (
+    transaction.source === PaymentSource.STRIPE &&
+    Boolean(transaction.stripePaymentIntentId)
+  );
+}
+
 function getOutstandingRepairTransactions(
   payment: BookingPaymentRecord | null | undefined
 ) {
-  return buildRepairPaymentTransactions(payment).filter((transaction) =>
-    CANCELLABLE_REPAIR_PAYMENT_STATUSES.has(transaction.status)
-  );
+  return buildRepairPaymentTransactions(payment)
+    .filter(isStripeRepairPaymentTransaction)
+    .filter((transaction) =>
+      CANCELLABLE_REPAIR_PAYMENT_STATUSES.has(transaction.status)
+    );
 }
 
 function getCapturedRepairTransactions(
   payment: BookingPaymentRecord | null | undefined
 ) {
-  return buildRepairPaymentTransactions(payment).filter((transaction) =>
-    isCapturedRepairPaymentStatus(transaction.status)
-  );
+  return buildRepairPaymentTransactions(payment)
+    .filter(isStripeRepairPaymentTransaction)
+    .filter((transaction) => isCapturedRepairPaymentStatus(transaction.status));
 }
 
 function getOutstandingCapturedRefundAmountCents(

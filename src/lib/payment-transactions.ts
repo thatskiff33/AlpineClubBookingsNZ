@@ -1,4 +1,9 @@
-import { PaymentStatus, PaymentTransactionKind, Prisma } from "@prisma/client";
+import {
+  PaymentSource,
+  PaymentStatus,
+  PaymentTransactionKind,
+  Prisma,
+} from "@prisma/client";
 import { APP_STRIPE_CURRENCY } from "@/config/operational";
 import { prisma } from "@/lib/prisma";
 import { processRefund } from "@/lib/stripe";
@@ -144,6 +149,23 @@ function getLatestTransaction<
   return latest;
 }
 
+function isStripeTransaction<
+  T extends {
+    source: PaymentSource;
+    stripePaymentIntentId: string | null;
+  },
+>(
+  transaction: T
+): transaction is T & {
+  source: typeof PaymentSource.STRIPE;
+  stripePaymentIntentId: string;
+} {
+  return (
+    transaction.source === PaymentSource.STRIPE &&
+    Boolean(transaction.stripePaymentIntentId)
+  );
+}
+
 async function ensurePaymentTransactionsBackfilled(
   store: PaymentStore,
   paymentId: string
@@ -154,7 +176,9 @@ async function ensurePaymentTransactionsBackfilled(
   }
 
   const knownIntentIds = new Set(
-    payment.transactions.map((transaction) => transaction.stripePaymentIntentId)
+    payment.transactions.flatMap((transaction) =>
+      transaction.stripePaymentIntentId ? [transaction.stripePaymentIntentId] : []
+    )
   );
   const createOperations: Array<Promise<unknown>> = [];
 
@@ -178,6 +202,7 @@ async function ensurePaymentTransactionsBackfilled(
         data: {
           paymentId: payment.id,
           kind: PaymentTransactionKind.PRIMARY,
+          source: PaymentSource.STRIPE,
           stripePaymentIntentId: payment.stripePaymentIntentId,
           amountCents: primaryAmountCents,
           refundedAmountCents: primaryRefundedAmountCents,
@@ -220,6 +245,7 @@ async function ensurePaymentTransactionsBackfilled(
         data: {
           paymentId: payment.id,
           kind: PaymentTransactionKind.ADDITIONAL,
+          source: PaymentSource.STRIPE,
           stripePaymentIntentId: payment.additionalPaymentIntentId,
           amountCents: payment.additionalAmountCents,
           refundedAmountCents: additionalRefundedAmountCents,
@@ -298,8 +324,8 @@ export async function reconcilePaymentAggregates({
     preserveZeroDollarSucceededPayment
       ? 0
       : grossCapturedAmountCents > 0
-      ? grossCapturedAmountCents
-      : latestPrimary?.amountCents ?? payment.amountCents;
+        ? grossCapturedAmountCents
+        : latestPrimary?.amountCents ?? payment.amountCents;
 
   const status = preserveZeroDollarSucceededPayment
     ? PaymentStatus.SUCCEEDED
@@ -309,6 +335,47 @@ export async function reconcilePaymentAggregates({
         refundedAmountCents,
         latestPrimary?.status ?? null
       );
+  const latestPrimaryStripeIntentId =
+    latestPrimary && isStripeTransaction(latestPrimary)
+      ? latestPrimary.stripePaymentIntentId
+      : null;
+  const latestPrimaryStripePaymentMethodId =
+    latestPrimaryStripeIntentId && latestPrimary
+      ? latestPrimary.paymentMethodId ?? null
+      : null;
+  const latestAdditionalStripeIntentId =
+    latestAdditional && isStripeTransaction(latestAdditional)
+      ? latestAdditional.stripePaymentIntentId
+      : null;
+  const nextPaymentSource =
+    preserveZeroDollarSucceededPayment
+      ? payment.source
+      : latestPrimary?.source ?? payment.source;
+  const nextStripePaymentIntentId = preserveZeroDollarSucceededPayment
+    ? payment.stripePaymentIntentId
+    : latestPrimary
+      ? latestPrimaryStripeIntentId
+      : payment.stripePaymentIntentId;
+  const nextStripePaymentMethodId = preserveZeroDollarSucceededPayment
+    ? payment.stripePaymentMethodId
+    : latestPrimary
+      ? latestPrimaryStripePaymentMethodId
+      : payment.stripePaymentMethodId;
+  const nextPaymentReference =
+    !preserveZeroDollarSucceededPayment &&
+    latestPrimary?.source === PaymentSource.INTERNET_BANKING
+      ? latestPrimary.reference ?? payment.reference
+      : payment.reference;
+  const nextXeroInvoiceId =
+    !preserveZeroDollarSucceededPayment &&
+    latestPrimary?.source === PaymentSource.INTERNET_BANKING
+      ? latestPrimary.xeroInvoiceId ?? payment.xeroInvoiceId
+      : payment.xeroInvoiceId;
+  const nextXeroInvoiceNumber =
+    !preserveZeroDollarSucceededPayment &&
+    latestPrimary?.source === PaymentSource.INTERNET_BANKING
+      ? latestPrimary.xeroInvoiceNumber ?? payment.xeroInvoiceNumber
+      : payment.xeroInvoiceNumber;
 
   await store.payment.update({
     where: { id: payment.id },
@@ -316,16 +383,13 @@ export async function reconcilePaymentAggregates({
       amountCents: aggregateAmountCents,
       refundedAmountCents,
       status,
-      stripePaymentIntentId:
-        preserveZeroDollarSucceededPayment
-          ? payment.stripePaymentIntentId
-          : latestPrimary?.stripePaymentIntentId ?? payment.stripePaymentIntentId,
-      stripePaymentMethodId:
-        preserveZeroDollarSucceededPayment
-          ? payment.stripePaymentMethodId
-          : latestPrimary?.paymentMethodId ?? payment.stripePaymentMethodId,
-      additionalPaymentIntentId:
-        latestAdditional?.stripePaymentIntentId ?? null,
+      source: nextPaymentSource,
+      reference: nextPaymentReference,
+      stripePaymentIntentId: nextStripePaymentIntentId,
+      stripePaymentMethodId: nextStripePaymentMethodId,
+      xeroInvoiceId: nextXeroInvoiceId,
+      xeroInvoiceNumber: nextXeroInvoiceNumber,
+      additionalPaymentIntentId: latestAdditionalStripeIntentId,
       additionalAmountCents: latestAdditional?.amountCents ?? 0,
       additionalPaymentStatus: mapAdditionalSummaryStatus(
         latestAdditional?.status ?? null
@@ -475,6 +539,7 @@ export async function upsertPaymentIntentTransaction({
     create: {
       paymentId,
       kind,
+      source: PaymentSource.STRIPE,
       stripePaymentIntentId: paymentIntentId,
       amountCents,
       status,
@@ -484,6 +549,7 @@ export async function upsertPaymentIntentTransaction({
     update: {
       paymentId,
       kind,
+      source: PaymentSource.STRIPE,
       amountCents,
       status,
       ...(paymentMethodId !== undefined
@@ -499,6 +565,45 @@ export async function upsertPaymentIntentTransaction({
       data: { stripeCustomerId },
     });
   }
+
+  return reconcilePaymentAggregates({ paymentId, store });
+}
+
+export async function recordInternetBankingPaymentTransaction({
+  paymentId,
+  kind = PaymentTransactionKind.PRIMARY,
+  amountCents,
+  status = PaymentStatus.PENDING,
+  xeroInvoiceId,
+  xeroInvoiceNumber,
+  reference,
+  reason,
+  store = prisma,
+}: {
+  paymentId: string;
+  kind?: PaymentTransactionKind;
+  amountCents: number;
+  status?: PaymentStatus;
+  xeroInvoiceId?: string | null;
+  xeroInvoiceNumber?: string | null;
+  reference?: string | null;
+  reason?: string;
+  store?: PaymentStore;
+}) {
+  await store.paymentTransaction.create({
+    data: {
+      paymentId,
+      kind,
+      source: PaymentSource.INTERNET_BANKING,
+      stripePaymentIntentId: null,
+      xeroInvoiceId: xeroInvoiceId ?? undefined,
+      xeroInvoiceNumber: xeroInvoiceNumber ?? undefined,
+      reference: reference ?? undefined,
+      amountCents,
+      status,
+      reason,
+    },
+  });
 
   return reconcilePaymentAggregates({ paymentId, store });
 }
@@ -728,6 +833,7 @@ export async function refundPaymentTransactions({
   }
 
   const refundableTransactions = [...payment.transactions]
+    .filter((transaction) => isStripeTransaction(transaction))
     .filter((transaction) => isCapturedTransactionStatus(transaction.status))
     .filter(
       (transaction) =>

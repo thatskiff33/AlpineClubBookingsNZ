@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  PaymentSource,
   PaymentRecoveryOperationStatus,
   PaymentRecoveryOperationType,
   PaymentStatus,
@@ -597,6 +598,7 @@ describe("payment recovery worker", () => {
       transactions: [
         {
           id: "txn-additional",
+          source: PaymentSource.STRIPE,
           stripePaymentIntentId: "pi_additional",
           amountCents: 5000,
           refundedAmountCents: 0,
@@ -604,6 +606,7 @@ describe("payment recovery worker", () => {
         },
         {
           id: "txn-primary",
+          source: PaymentSource.STRIPE,
           stripePaymentIntentId: "pi_primary",
           amountCents: 10000,
           refundedAmountCents: 0,

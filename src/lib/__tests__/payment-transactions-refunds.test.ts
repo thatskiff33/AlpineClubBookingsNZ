@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PaymentSource, PaymentStatus } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   processRefund: vi.fn(),
@@ -14,6 +15,7 @@ vi.mock("@/lib/stripe", () => ({
 
 import {
   markPaymentIntentTransactionFailed,
+  recordInternetBankingPaymentTransaction,
   refundPaymentTransactions,
   syncRefundsFromStripeCharge,
 } from "@/lib/payment-transactions";
@@ -25,8 +27,12 @@ function createRefundStore() {
     amountCents: 5000,
     refundedAmountCents: 0,
     status: "SUCCEEDED",
-    stripePaymentIntentId: "pi_1",
+    source: PaymentSource.STRIPE as PaymentSource,
+    reference: null,
+    stripePaymentIntentId: "pi_1" as string | null,
     stripePaymentMethodId: "pm_1",
+    xeroInvoiceId: null as string | null,
+    xeroInvoiceNumber: null as string | null,
     additionalPaymentIntentId: null,
     additionalPaymentStatus: null,
     additionalAmountCents: 0,
@@ -35,7 +41,11 @@ function createRefundStore() {
     id: "txn_1",
     paymentId: payment.id,
     kind: "PRIMARY",
-    stripePaymentIntentId: "pi_1",
+    source: PaymentSource.STRIPE as PaymentSource,
+    stripePaymentIntentId: "pi_1" as string | null,
+    xeroInvoiceId: null,
+    xeroInvoiceNumber: null,
+    reference: null,
     amountCents: 5000,
     refundedAmountCents: 0,
     status: "SUCCEEDED",
@@ -44,6 +54,7 @@ function createRefundStore() {
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     updatedAt: new Date("2026-01-01T00:00:00.000Z"),
   };
+  const transactions = [transaction];
   const refunds = new Map<string, Record<string, unknown>>();
 
   const store = {
@@ -56,7 +67,7 @@ function createRefundStore() {
         if (args.include?.transactions) {
           return {
             ...payment,
-            transactions: [{ ...transaction }],
+            transactions: transactions.map((item) => ({ ...item })),
           };
         }
 
@@ -72,17 +83,46 @@ function createRefundStore() {
       }),
     },
     paymentTransaction: {
-      create: vi.fn(),
+      create: vi.fn(async ({ data }: any) => {
+        const nextTransaction = {
+          id: data.id ?? `txn_${transactions.length + 1}`,
+          paymentId: data.paymentId,
+          kind: data.kind,
+          source: data.source ?? PaymentSource.STRIPE,
+          stripePaymentIntentId: data.stripePaymentIntentId ?? null,
+          xeroInvoiceId: data.xeroInvoiceId ?? null,
+          xeroInvoiceNumber: data.xeroInvoiceNumber ?? null,
+          reference: data.reference ?? null,
+          amountCents: data.amountCents,
+          refundedAmountCents: data.refundedAmountCents ?? 0,
+          status: data.status ?? "PENDING",
+          paymentMethodId: data.paymentMethodId ?? null,
+          reason: data.reason ?? null,
+          createdAt: new Date("2026-01-02T00:00:00.000Z"),
+          updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+        };
+        transactions.push(nextTransaction);
+        return { ...nextTransaction };
+      }),
       findUnique: vi.fn(async ({ where }: any) => {
-        if (where.stripePaymentIntentId === transaction.stripePaymentIntentId) {
-          return { ...transaction };
+        const found = transactions.find(
+          (item) =>
+            (where.id && item.id === where.id) ||
+            (where.stripePaymentIntentId &&
+              item.stripePaymentIntentId === where.stripePaymentIntentId)
+        );
+
+        if (found) {
+          return { ...found };
         }
 
         return null;
       }),
-      update: vi.fn(async ({ data }: any) => {
-        Object.assign(transaction, data);
-        return { ...transaction };
+      update: vi.fn(async ({ where, data }: any) => {
+        const target =
+          transactions.find((item) => item.id === where.id) ?? transaction;
+        Object.assign(target, data);
+        return { ...target };
       }),
     },
     paymentRefund: {
@@ -119,7 +159,7 @@ function createRefundStore() {
     },
   };
 
-  return { store, payment, transaction, refunds };
+  return { store, payment, transaction, transactions, refunds };
 }
 
 describe("payment refund ledger", () => {
@@ -310,5 +350,71 @@ describe("payment refund ledger", () => {
         stripePaymentMethodId: null,
       }),
     });
+  });
+
+  it("records an Internet Banking transaction without Stripe identifiers", async () => {
+    const { store, payment, transactions } = createRefundStore();
+    transactions.length = 0;
+    payment.source = PaymentSource.INTERNET_BANKING;
+    payment.stripePaymentIntentId = null;
+    payment.stripePaymentMethodId = null;
+    payment.amountCents = 0;
+    payment.status = "PENDING";
+    payment.refundedAmountCents = 0;
+
+    await recordInternetBankingPaymentTransaction({
+      paymentId: payment.id,
+      amountCents: 12500,
+      status: PaymentStatus.PENDING,
+      xeroInvoiceId: "inv_123",
+      xeroInvoiceNumber: "INV-123",
+      reference: "ACB-booking_1",
+      reason: "internet_banking_invoice",
+      store: store as any,
+    });
+
+    expect(store.paymentTransaction.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        paymentId: payment.id,
+        kind: "PRIMARY",
+        source: PaymentSource.INTERNET_BANKING,
+        stripePaymentIntentId: null,
+        xeroInvoiceId: "inv_123",
+        xeroInvoiceNumber: "INV-123",
+        reference: "ACB-booking_1",
+        amountCents: 12500,
+      }),
+    });
+    expect(store.payment.update).toHaveBeenCalledWith({
+      where: { id: payment.id },
+      data: expect.objectContaining({
+        source: PaymentSource.INTERNET_BANKING,
+        reference: "ACB-booking_1",
+        stripePaymentIntentId: null,
+        stripePaymentMethodId: null,
+        xeroInvoiceId: "inv_123",
+        xeroInvoiceNumber: "INV-123",
+      }),
+    });
+    expect(mocks.processRefund).not.toHaveBeenCalled();
+  });
+
+  it("does not send Internet Banking transactions to Stripe refund APIs", async () => {
+    const { store, payment, transaction } = createRefundStore();
+    payment.source = PaymentSource.INTERNET_BANKING;
+    payment.stripePaymentIntentId = null;
+    payment.stripePaymentMethodId = null;
+    transaction.source = PaymentSource.INTERNET_BANKING;
+    transaction.stripePaymentIntentId = null;
+
+    await expect(
+      refundPaymentTransactions({
+        paymentId: payment.id,
+        amountCents: 2500,
+        store: store as any,
+      })
+    ).rejects.toThrow("Refund amount exceeds captured Stripe payments");
+
+    expect(mocks.processRefund).not.toHaveBeenCalled();
   });
 });

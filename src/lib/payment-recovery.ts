@@ -1,4 +1,5 @@
 import {
+  PaymentSource,
   PaymentRecoveryOperationStatus,
   PaymentRecoveryOperationType,
   type PaymentRecoveryOperation,
@@ -150,8 +151,11 @@ export async function enqueueBookingModificationRefundRecovery({
     },
   });
 
-  const capturedTransaction = payment?.transactions.find((transaction) =>
-    CAPTURED_TRANSACTION_STATUSES.has(transaction.status),
+  const capturedTransaction = payment?.transactions.find(
+    (transaction) =>
+      transaction.source === PaymentSource.STRIPE &&
+      Boolean(transaction.stripePaymentIntentId) &&
+      CAPTURED_TRANSACTION_STATUSES.has(transaction.status),
   );
   const representativePaymentIntentId =
     capturedTransaction?.stripePaymentIntentId ??

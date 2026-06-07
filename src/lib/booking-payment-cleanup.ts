@@ -1,4 +1,5 @@
 import {
+  PaymentSource,
   PaymentStatus,
   PaymentTransactionKind,
   type Prisma,
@@ -37,7 +38,9 @@ export async function queueSupersededPrimaryIntentCancellations(
     where: {
       paymentId: options.paymentId,
       kind: PaymentTransactionKind.PRIMARY,
+      source: PaymentSource.STRIPE,
       status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+      stripePaymentIntentId: { not: null },
       amountCents: { gt: 0 },
     },
     select: {
@@ -47,14 +50,19 @@ export async function queueSupersededPrimaryIntentCancellations(
     },
   });
 
-  const superseded: SupersededPrimaryPaymentIntent[] =
-    pendingPrimaryTransactions.map((transaction) => ({
+  const superseded: SupersededPrimaryPaymentIntent[] = [];
+
+  for (const transaction of pendingPrimaryTransactions) {
+    if (!transaction.stripePaymentIntentId) {
+      continue;
+    }
+
+    superseded.push({
       paymentTransactionId: transaction.id,
       paymentIntentId: transaction.stripePaymentIntentId,
       amountCents: transaction.amountCents,
-    }));
+    });
 
-  for (const transaction of pendingPrimaryTransactions) {
     await enqueuePaymentIntentCancellationRecovery({
       bookingId: options.bookingId,
       paymentId: options.paymentId,
@@ -87,6 +95,7 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
     where: {
       paymentId: options.paymentId,
       kind: PaymentTransactionKind.ADDITIONAL,
+      source: PaymentSource.STRIPE,
       status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
       stripePaymentIntentId: { not: options.newPaymentIntentId },
       amountCents: { gt: 0 },
@@ -101,6 +110,10 @@ export async function queueSupersededAdditionalIntentCancellations(options: {
   const queued: { paymentTransactionId: string; paymentIntentId: string }[] =
     [];
   for (const transaction of pendingAdditional) {
+    if (!transaction.stripePaymentIntentId) {
+      continue;
+    }
+
     await enqueuePaymentIntentCancellationRecovery({
       bookingId: options.bookingId,
       paymentId: options.paymentId,

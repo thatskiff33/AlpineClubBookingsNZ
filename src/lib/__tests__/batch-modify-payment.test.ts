@@ -648,7 +648,9 @@ describe("PUT /api/bookings/[id]/modify", () => {
       where: {
         paymentId: "pay_1",
         kind: "PRIMARY",
+        source: "STRIPE",
         status: { in: ["PENDING", "PROCESSING"] },
+        stripePaymentIntentId: { not: null },
         amountCents: { gt: 0 },
       },
       select: {

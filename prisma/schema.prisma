@@ -116,6 +116,11 @@ enum PaymentTransactionKind {
   ADDITIONAL
 }
 
+enum PaymentSource {
+  STRIPE
+  INTERNET_BANKING
+}
+
 enum PaymentRecoveryOperationType {
   CANCEL_PAYMENT_INTENT
   REFUND_SUPERSEDED_PAYMENT
@@ -774,6 +779,8 @@ model Payment {
   id                        String        @id @default(cuid())
   bookingId                 String        @unique
   amountCents               Int
+  source                    PaymentSource @default(STRIPE)
+  reference                 String?
   stripePaymentIntentId     String?       @unique
   stripePaymentMethodId     String?
   stripeSetupIntentId       String?       @unique
@@ -798,6 +805,7 @@ model Payment {
   recoveryOperations PaymentRecoveryOperation[]
 
   @@index([bookingId])
+  @@index([source, status, createdAt])
   @@index([stripePaymentIntentId])
   @@index([additionalPaymentIntentId])
   @@index([status, createdAt])
@@ -807,7 +815,11 @@ model PaymentTransaction {
   id                    String                 @id @default(cuid())
   paymentId             String
   kind                  PaymentTransactionKind
-  stripePaymentIntentId String                 @unique
+  source                PaymentSource          @default(STRIPE)
+  stripePaymentIntentId String?                @unique
+  xeroInvoiceId         String?
+  xeroInvoiceNumber     String?
+  reference             String?
   amountCents           Int
   refundedAmountCents   Int                    @default(0)
   status                PaymentStatus          @default(PENDING)
@@ -822,6 +834,9 @@ model PaymentTransaction {
 
   @@index([paymentId, createdAt])
   @@index([paymentId, kind, createdAt])
+  @@index([source, status, createdAt])
+  @@index([xeroInvoiceId])
+  @@index([reference])
   @@index([status, createdAt])
 }
 
