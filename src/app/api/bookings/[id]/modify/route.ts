@@ -24,10 +24,21 @@ const batchModifySchema = z.object({
         ageTier: ageTierEnum,
         isMember: z.boolean(),
         memberId: z.string().min(1).optional(),
+        stayStart: z.string().optional(),
+        stayEnd: z.string().optional(),
       }),
     )
     .optional(),
   removeGuestIds: z.array(z.string()).optional(),
+  guestStayRanges: z
+    .array(
+      z.object({
+        guestId: z.string().min(1),
+        stayStart: z.string().optional(),
+        stayEnd: z.string().optional(),
+      }),
+    )
+    .optional(),
   promoCode: z.string().optional(),
   removePromoCode: z.boolean().optional(),
   memberReviewJustification: z.string().trim().min(1).max(1000).optional(),

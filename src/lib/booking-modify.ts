@@ -37,7 +37,7 @@ import {
   getNonMemberHoldDays,
 } from "@/lib/cancellation";
 import { calculateChangeFee } from "@/lib/change-fee";
-import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import {
   calculateBookingPrice,
   type SeasonRateData,
@@ -56,6 +56,11 @@ import {
   resolveLinkedBookingMembers,
   type BookingGuestInput,
 } from "@/lib/booking-guests";
+import {
+  BookingGuestStayRangeValidationError,
+  normalizeGuestStayRange,
+  normalizeGuestStayRanges,
+} from "@/lib/booking-guest-stay-range-input";
 import {
   queueSupersededPrimaryIntentCancellations,
   type SupersededPrimaryPaymentIntent,
@@ -76,12 +81,96 @@ export type BatchModifyInput = {
     ageTier: AgeTier;
     isMember: boolean;
     memberId?: string;
+    stayStart?: string | null;
+    stayEnd?: string | null;
   }>;
   removeGuestIds?: string[];
+  guestStayRanges?: Array<{
+    guestId: string;
+    stayStart?: string | null;
+    stayEnd?: string | null;
+  }>;
   promoCode?: string;
   removePromoCode?: boolean;
   memberReviewJustification?: string;
 };
+
+type ProposedGuestPricingInput = {
+  ageTier: AgeTier;
+  isMember: boolean;
+  memberId: string | null;
+  stayStart: Date;
+  stayEnd: Date;
+};
+
+type ProposedRemainingGuest = {
+  guest: BookingGuest;
+  stayStart: Date;
+  stayEnd: Date;
+};
+
+type StayRangeInput = {
+  stayStart?: string | null;
+  stayEnd?: string | null;
+};
+
+function hasStayRangeValue(value: string | null | undefined): boolean {
+  return typeof value === "string" ? value.trim() !== "" : value !== null && value !== undefined;
+}
+
+function hasStayRangeInput(input: StayRangeInput): boolean {
+  return hasStayRangeValue(input.stayStart) || hasStayRangeValue(input.stayEnd);
+}
+
+function hasGuestStayRangeInputs(input: BatchModifyInput): boolean {
+  return (
+    (input.guestStayRanges?.some(hasStayRangeInput) ?? false) ||
+    (input.addGuests?.some(hasStayRangeInput) ?? false)
+  );
+}
+
+function normalizeRangeOrApiError(
+  input: { stayStart?: string | Date | null; stayEnd?: string | Date | null },
+  booking: { checkIn: Date; checkOut: Date },
+  index: number
+) {
+  try {
+    return normalizeGuestStayRange(input, booking, index);
+  } catch (error) {
+    if (error instanceof BookingGuestStayRangeValidationError) {
+      throw new ApiError(error.message, 400);
+    }
+    throw error;
+  }
+}
+
+function normalizeRangesOrApiError<Guest extends { stayStart?: string | Date | null; stayEnd?: string | Date | null }>(
+  guests: Guest[],
+  booking: { checkIn: Date; checkOut: Date }
+) {
+  try {
+    return normalizeGuestStayRanges(guests, booking);
+  } catch (error) {
+    if (error instanceof BookingGuestStayRangeValidationError) {
+      throw new ApiError(error.message, 400);
+    }
+    throw error;
+  }
+}
+
+function getGuestStayRangeInputMap(input: BatchModifyInput) {
+  return new Map(
+    (input.guestStayRanges ?? []).map((range) => [range.guestId, range])
+  );
+}
+
+function minDate(values: Date[]): Date {
+  return values.reduce((earliest, value) => (value < earliest ? value : earliest));
+}
+
+function maxDate(values: Date[]): Date {
+  return values.reduce((latest, value) => (value > latest ? value : latest));
+}
 
 export type LoadedPromoRedemption = PromoRedemption & {
   promoCode: PromoCode & {
@@ -141,14 +230,60 @@ export function resolveTargetDates({
     throw new ApiError("Invalid booking dates", 400);
   }
 
+  let finalRequestedCheckIn = requestedCheckIn;
+  let finalRequestedCheckOut = requestedCheckOut;
+  if (hasGuestStayRangeInputs(input)) {
+    const removeSet = new Set(input.removeGuestIds ?? []);
+    const existingRangeInputs = getGuestStayRangeInputMap(input);
+    const proposedRanges: Array<{ stayStart: Date; stayEnd: Date }> = [];
+    const envelope = {
+      checkIn: requestedCheckIn < booking.checkIn ? requestedCheckIn : booking.checkIn,
+      checkOut: requestedCheckOut > booking.checkOut ? requestedCheckOut : booking.checkOut,
+    };
+
+    for (const guest of booking.guests) {
+      if (removeSet.has(guest.id)) {
+        continue;
+      }
+      const rangeInput = existingRangeInputs.get(guest.id);
+      if (rangeInput && hasStayRangeInput(rangeInput)) {
+        proposedRanges.push(
+          normalizeRangeOrApiError(rangeInput, envelope, proposedRanges.length)
+        );
+      } else {
+        proposedRanges.push({
+          stayStart: normalizeDateOnlyForTimeZone(guest.stayStart ?? booking.checkIn),
+          stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd ?? booking.checkOut),
+        });
+      }
+    }
+
+    for (const addGuest of input.addGuests ?? []) {
+      if (hasStayRangeInput(addGuest)) {
+        proposedRanges.push(
+          normalizeRangeOrApiError(addGuest, envelope, proposedRanges.length)
+        );
+      } else {
+        proposedRanges.push({
+          stayStart: normalizeDateOnlyForTimeZone(requestedCheckIn),
+          stayEnd: normalizeDateOnlyForTimeZone(requestedCheckOut),
+        });
+      }
+    }
+
+    if (proposedRanges.length > 0) {
+      finalRequestedCheckIn = minDate(proposedRanges.map((range) => range.stayStart));
+      finalRequestedCheckOut = maxDate(proposedRanges.map((range) => range.stayEnd));
+    }
+  }
+
   const isInProgressEdit = editPolicy.mode === "in-progress";
   const editableFrom = editPolicy.editableFrom;
   const bookingCheckIn = normalizeDateOnlyForTimeZone(booking.checkIn);
 
   if (isInProgressEdit) {
     if (
-      input.checkIn &&
-      formatDateOnly(normalizeDateOnlyForTimeZone(requestedCheckIn)) !==
+      formatDateOnly(normalizeDateOnlyForTimeZone(finalRequestedCheckIn)) !==
         formatDateOnly(bookingCheckIn)
     ) {
       throw new ApiError(
@@ -156,7 +291,7 @@ export function resolveTargetDates({
         400,
       );
     }
-    if (editableFrom && normalizeDateOnlyForTimeZone(requestedCheckOut) < editableFrom) {
+    if (editableFrom && normalizeDateOnlyForTimeZone(finalRequestedCheckOut) < editableFrom) {
       throw new ApiError(
         "NZ today and earlier are locked for self-service changes",
         400,
@@ -170,7 +305,7 @@ export function resolveTargetDates({
     }
   } else if (
     role !== "ADMIN" &&
-    normalizeDateOnlyForTimeZone(requestedCheckIn) <= editPolicy.today
+    normalizeDateOnlyForTimeZone(finalRequestedCheckIn) <= editPolicy.today
   ) {
     throw new ApiError(
       "NZ today and earlier are locked for self-service changes",
@@ -178,8 +313,8 @@ export function resolveTargetDates({
     );
   }
 
-  const newCheckIn = isInProgressEdit ? booking.checkIn : requestedCheckIn;
-  const newCheckOut = requestedCheckOut;
+  const newCheckIn = isInProgressEdit ? booking.checkIn : finalRequestedCheckIn;
+  const newCheckOut = finalRequestedCheckOut;
 
   if (newCheckOut <= newCheckIn) {
     throw new ApiError("Check-out must be after check-in", 400);
@@ -207,13 +342,10 @@ export function resolveTargetDates({
 
 export type GuestPlan = {
   remainingGuests: BookingGuest[];
+  proposedRemainingGuests: ProposedRemainingGuest[];
   removedGuests: BookingGuest[];
   normalizedAddGuests: BookingGuestInput[] | undefined;
-  guestsForPricing: Array<{
-    ageTier: AgeTier;
-    isMember: boolean;
-    memberId: string | null;
-  }>;
+  guestsForPricing: ProposedGuestPricingInput[];
   totalGuestCount: number;
   requiresAdminReview: boolean;
   adminReviewReason: string | null;
@@ -249,6 +381,7 @@ export async function prepareGuestPlan(
     isInProgressEdit,
     editableFrom,
     newCheckIn,
+    newCheckOut,
   }: {
     booking: LoadedBookingForModify;
     role: Role;
@@ -257,6 +390,7 @@ export async function prepareGuestPlan(
     isInProgressEdit: boolean;
     editableFrom: Date | null;
     newCheckIn: Date;
+    newCheckOut: Date;
   },
 ): Promise<GuestPlan> {
   const linkedMembers = await resolveLinkedBookingMembers(
@@ -270,7 +404,11 @@ export async function prepareGuestPlan(
     onBehalfOfMemberId: role === "ADMIN" ? booking.memberId : null,
   });
   const normalizedAddGuests = input.addGuests
-    ? normalizeBookingGuestInputs(input.addGuests, linkedMembers)
+    ? normalizeBookingGuestInputs(input.addGuests, linkedMembers).map((guest, index) => ({
+        ...guest,
+        stayStart: input.addGuests?.[index]?.stayStart ?? null,
+        stayEnd: input.addGuests?.[index]?.stayEnd ?? null,
+      }))
     : undefined;
 
   const removeSet = new Set(input.removeGuestIds ?? []);
@@ -285,16 +423,46 @@ export async function prepareGuestPlan(
     throw new ApiError("Booking must have at least one guest", 400);
   }
 
+  const hasRangeInputs = hasGuestStayRangeInputs(input);
+  const existingRangeInputs = getGuestStayRangeInputMap(input);
+  const proposedRemainingGuests: ProposedRemainingGuest[] = remainingGuests.map((guest, index) => {
+    if (!hasRangeInputs) {
+      return { guest, stayStart: newCheckIn, stayEnd: newCheckOut };
+    }
+
+    const rangeInput = existingRangeInputs.get(guest.id);
+    const normalizedRange =
+      rangeInput && hasStayRangeInput(rangeInput)
+        ? normalizeRangeOrApiError(rangeInput, { checkIn: newCheckIn, checkOut: newCheckOut }, index)
+        : {
+            stayStart: normalizeDateOnlyForTimeZone(guest.stayStart ?? booking.checkIn),
+            stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd ?? booking.checkOut),
+          };
+
+    return { guest, ...normalizedRange };
+  });
+
+  const normalizedAddGuestsWithRanges = normalizedAddGuests
+    ? normalizeRangesOrApiError(normalizedAddGuests, {
+        checkIn: newCheckIn,
+        checkOut: newCheckOut,
+      })
+    : undefined;
+
   const guestsForPricing = [
-    ...remainingGuests.map((g) => ({
-      ageTier: g.ageTier as AgeTier,
-      isMember: g.isMember,
-      memberId: g.memberId ?? null,
+    ...proposedRemainingGuests.map((entry) => ({
+      ageTier: entry.guest.ageTier as AgeTier,
+      isMember: entry.guest.isMember,
+      memberId: entry.guest.memberId ?? null,
+      stayStart: entry.stayStart,
+      stayEnd: entry.stayEnd,
     })),
-    ...(normalizedAddGuests ?? []).map((g) => ({
+    ...(normalizedAddGuestsWithRanges ?? []).map((g) => ({
       ageTier: g.ageTier as AgeTier,
       isMember: g.isMember,
       memberId: g.memberId ?? null,
+      stayStart: g.stayStart,
+      stayEnd: g.stayEnd,
     })),
   ];
 
@@ -335,8 +503,9 @@ export async function prepareGuestPlan(
 
   return {
     remainingGuests,
+    proposedRemainingGuests,
     removedGuests,
-    normalizedAddGuests,
+    normalizedAddGuests: normalizedAddGuestsWithRanges,
     guestsForPricing,
     totalGuestCount,
     requiresAdminReview,
@@ -488,7 +657,6 @@ export async function calculateModifiedPricing(
     normalizedAddGuests,
     removeGuestIds,
     guestsForPricing,
-    totalGuestCount,
     skipBookingLifecycleRules,
     seasonRateData,
   }: {
@@ -504,8 +672,9 @@ export async function calculateModifiedPricing(
       ageTier: AgeTier;
       isMember: boolean;
       memberId: string | null;
+      stayStart?: Date | null;
+      stayEnd?: Date | null;
     }>;
-    totalGuestCount: number;
     skipBookingLifecycleRules: boolean;
     seasonRateData: SeasonRateData[];
   },
@@ -543,7 +712,13 @@ export async function calculateModifiedPricing(
           bookingId,
           tx,
         )
-      : await checkCapacity(newCheckIn, newCheckOut, totalGuestCount, bookingId, tx);
+      : await checkCapacityForGuestRanges(
+          newCheckIn,
+          newCheckOut,
+          guestsForPricing,
+          bookingId,
+          tx,
+        );
   if (!capacity.available) {
     throw new ApiError("Not enough beds available for these changes", 400);
   }
@@ -572,19 +747,11 @@ export async function calculateModifiedPricing(
   const newTotalPriceCents = priceBreakdown.totalPriceCents;
   const guestNightRates = inProgressPlan
     ? []
-    : guestsForPricing.map((guest) => {
-        const breakdown = calculateBookingPrice(
-          newCheckIn,
-          newCheckOut,
-          [guest],
-          seasonRateData,
-        );
-        return {
-          memberId: guest.memberId ?? null,
-          isMember: guest.isMember,
-          perNightRates: breakdown.guests[0].perNightCents,
-        };
-      });
+    : guestsForPricing.map((guest, index) => ({
+        memberId: guest.memberId ?? null,
+        isMember: guest.isMember,
+        perNightRates: priceBreakdown.guests[index]?.perNightCents ?? [],
+      }));
 
   return {
     inProgressPlan,
@@ -608,6 +775,7 @@ export async function applyPromoCodeChanges(
     bookingId,
     input,
     inProgressPlan,
+    newCheckIn,
     newTotalPriceCents,
     guestNightRates,
   }: {
@@ -615,6 +783,7 @@ export async function applyPromoCodeChanges(
     bookingId: string;
     input: BatchModifyInput;
     inProgressPlan: BookingEditGuestRangePlan | null;
+    newCheckIn: Date;
     newTotalPriceCents: number;
     guestNightRates: Array<{
       memberId: string | null;
@@ -662,7 +831,7 @@ export async function applyPromoCodeChanges(
       promoCode,
       {
         memberId: booking.memberId,
-        bookingCheckIn: input.checkIn ? parseDateOnly(input.checkIn) : booking.checkIn,
+        bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,
       },
@@ -701,7 +870,7 @@ export async function applyPromoCodeChanges(
       promo,
       {
         memberId: booking.memberId,
-        bookingCheckIn: input.checkIn ? parseDateOnly(input.checkIn) : booking.checkIn,
+        bookingCheckIn: newCheckIn,
         totalPriceCents: newTotalPriceCents,
         guests: guestNightRates,
       },
@@ -767,6 +936,7 @@ export async function applyGuestChanges(
     newCheckOut,
     removedGuests,
     remainingGuests,
+    proposedRemainingGuests,
     normalizedAddGuests,
     priceBreakdown,
     inProgressPlan,
@@ -776,6 +946,7 @@ export async function applyGuestChanges(
     newCheckOut: Date;
     removedGuests: BookingGuest[];
     remainingGuests: BookingGuest[];
+    proposedRemainingGuests: ProposedRemainingGuest[];
     normalizedAddGuests: BookingGuestInput[] | undefined;
     priceBreakdown: PricingResult["priceBreakdown"];
     inProgressPlan: BookingEditGuestRangePlan | null;
@@ -836,8 +1007,8 @@ export async function applyGuestChanges(
         ageTier: g.ageTier,
         isMember: g.isMember,
         memberId: g.memberId || null,
-        stayStart: newCheckIn,
-        stayEnd: newCheckOut,
+        stayStart: g.stayStart ?? newCheckIn,
+        stayEnd: g.stayEnd ?? newCheckOut,
         priceCents: priceBreakdown.guests[guestPriceIndex].priceCents,
       },
     });
@@ -845,11 +1016,12 @@ export async function applyGuestChanges(
   }
 
   for (let i = 0; i < remainingGuests.length; i++) {
+    const proposedRange = proposedRemainingGuests[i];
     await tx.bookingGuest.update({
       where: { id: remainingGuests[i].id },
       data: {
-        stayStart: newCheckIn,
-        stayEnd: newCheckOut,
+        stayStart: proposedRange?.stayStart ?? newCheckIn,
+        stayEnd: proposedRange?.stayEnd ?? newCheckOut,
         priceCents: priceBreakdown.guests[i].priceCents,
       },
     });

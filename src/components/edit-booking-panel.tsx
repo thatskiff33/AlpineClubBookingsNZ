@@ -64,6 +64,8 @@ interface NewGuest {
   ageTier: AgeTier;
   isMember: boolean;
   memberId?: string;
+  stayStart?: string;
+  stayEnd?: string;
 }
 
 interface ItemizedChange {
@@ -100,6 +102,13 @@ function previousDateOnly(dateString: string | null) {
   return date.toISOString().slice(0, 10);
 }
 
+function shiftDateOnly(dateString: string, days: number) {
+  const date = new Date(`${dateString}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return dateString;
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function formatSignedCents(cents: number) {
   const prefix = cents > 0 ? "+" : "-";
   return `${prefix}${formatCents(Math.abs(cents))}`;
@@ -120,6 +129,26 @@ export function EditBookingPanel({
   const [checkOut, setCheckOut] = useState(booking.checkOut);
   const [removedGuestIds, setRemovedGuestIds] = useState<Set<string>>(new Set());
   const [addedGuests, setAddedGuests] = useState<NewGuest[]>([]);
+  const [perGuestDatesEnabled, setPerGuestDatesEnabled] = useState(
+    booking.guests.some(
+      (guest) =>
+        (guest.stayStart && guest.stayStart !== booking.checkIn) ||
+        (guest.stayEnd && guest.stayEnd !== booking.checkOut)
+    )
+  );
+  const [existingGuestRanges, setExistingGuestRanges] = useState<
+    Record<string, { stayStart: string; stayEnd: string }>
+  >(() =>
+    Object.fromEntries(
+      booking.guests.map((guest) => [
+        guest.id,
+        {
+          stayStart: guest.stayStart ?? booking.checkIn,
+          stayEnd: guest.stayEnd ?? booking.checkOut,
+        },
+      ])
+    )
+  );
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [promoAction, setPromoAction] = useState<
     { type: "keep" } | { type: "remove" } | { type: "new"; code: string }
@@ -178,11 +207,73 @@ export function EditBookingPanel({
 
   // Check if anything has changed
   const remainingGuests = booking.guests.filter((g) => !removedGuestIds.has(g.id));
+  const canEditPerGuestDates = !isInProgressEdit && totalGuestCountCandidate() > 1;
+  function totalGuestCountCandidate() {
+    return remainingGuests.length + addedGuests.length;
+  }
+
+  useEffect(() => {
+    if (!canEditPerGuestDates && perGuestDatesEnabled) {
+      setPerGuestDatesEnabled(false);
+    }
+  }, [canEditPerGuestDates, perGuestDatesEnabled]);
+
+  const getExistingGuestRange = useCallback((guest: Guest) => {
+    return (
+      existingGuestRanges[guest.id] ?? {
+        stayStart: guest.stayStart ?? booking.checkIn,
+        stayEnd: guest.stayEnd ?? booking.checkOut,
+      }
+    );
+  }, [booking.checkIn, booking.checkOut, existingGuestRanges]);
+
+  function updateExistingGuestRange(
+    guestId: string,
+    field: "stayStart" | "stayEnd",
+    value: string
+  ) {
+    setExistingGuestRanges((prev) => ({
+      ...prev,
+      [guestId]: {
+        stayStart: prev[guestId]?.stayStart ?? booking.checkIn,
+        stayEnd: prev[guestId]?.stayEnd ?? booking.checkOut,
+        [field]: value,
+      },
+    }));
+  }
+
+  function updateAddedGuestRange(
+    key: string,
+    field: "stayStart" | "stayEnd",
+    value: string
+  ) {
+    setAddedGuests((prev) =>
+      prev.map((guest) =>
+        guest.key === key
+          ? {
+              ...guest,
+              [field]: value,
+            }
+          : guest
+      )
+    );
+  }
+
+  const guestRangesChanged =
+    perGuestDatesEnabled &&
+    remainingGuests.some((guest) => {
+      const range = getExistingGuestRange(guest);
+      return (
+        range.stayStart !== (guest.stayStart ?? booking.checkIn) ||
+        range.stayEnd !== (guest.stayEnd ?? booking.checkOut)
+      );
+    });
   const hasChanges =
     checkIn !== booking.checkIn ||
     checkOut !== booking.checkOut ||
     removedGuestIds.size > 0 ||
     addedGuests.length > 0 ||
+    guestRangesChanged ||
     promoAction.type !== "keep";
 
   // Debounced quote fetch
@@ -190,17 +281,69 @@ export function EditBookingPanel({
 
   const buildModificationPayload = useCallback(() => {
     const body: Record<string, unknown> = {};
+    const rangeMode = perGuestDatesEnabled && !isInProgressEdit;
+    let effectiveCheckIn = checkIn;
+    let effectiveCheckOut = checkOut;
+    let rangeAwareAddedGuests: Array<{
+      firstName: string;
+      lastName: string;
+      ageTier: AgeTier;
+      isMember: boolean;
+      memberId?: string;
+      stayStart?: string;
+      stayEnd?: string;
+    }> = addedGuests.map((g) => ({
+      firstName: g.firstName,
+      lastName: g.lastName,
+      ageTier: g.ageTier,
+      isMember: g.isMember,
+      memberId: g.memberId,
+    }));
 
-    if (checkIn !== booking.checkIn) body.checkIn = checkIn;
-    if (checkOut !== booking.checkOut) body.checkOut = checkOut;
-    if (addedGuests.length > 0) {
-      body.addGuests = addedGuests.map((g) => ({
+    if (rangeMode) {
+      const existingRanges = remainingGuests.map((guest) => ({
+        guestId: guest.id,
+        ...getExistingGuestRange(guest),
+      }));
+      rangeAwareAddedGuests = addedGuests.map((g) => ({
         firstName: g.firstName,
         lastName: g.lastName,
         ageTier: g.ageTier,
         isMember: g.isMember,
         memberId: g.memberId,
+        stayStart: g.stayStart ?? checkIn,
+        stayEnd: g.stayEnd ?? checkOut,
       }));
+      const rangeValues = [
+        ...existingRanges.map((range) => ({
+          stayStart: range.stayStart,
+          stayEnd: range.stayEnd,
+        })),
+        ...rangeAwareAddedGuests.map((guest) => ({
+          stayStart: guest.stayStart ?? checkIn,
+          stayEnd: guest.stayEnd ?? checkOut,
+        })),
+      ].filter((range) => range.stayStart && range.stayEnd);
+
+      if (rangeValues.length > 0) {
+        const firstRange = rangeValues[0];
+        effectiveCheckIn = rangeValues.reduce(
+          (earliest, range) => (range.stayStart < earliest ? range.stayStart : earliest),
+          firstRange.stayStart
+        );
+        effectiveCheckOut = rangeValues.reduce(
+          (latest, range) => (range.stayEnd > latest ? range.stayEnd : latest),
+          firstRange.stayEnd
+        );
+      }
+
+      body.guestStayRanges = existingRanges;
+    }
+
+    if (effectiveCheckIn !== booking.checkIn) body.checkIn = effectiveCheckIn;
+    if (effectiveCheckOut !== booking.checkOut) body.checkOut = effectiveCheckOut;
+    if (addedGuests.length > 0) {
+      body.addGuests = rangeAwareAddedGuests;
     }
     if (removedGuestIds.size > 0) {
       body.removeGuestIds = Array.from(removedGuestIds);
@@ -218,7 +361,11 @@ export function EditBookingPanel({
     booking.checkOut,
     checkIn,
     checkOut,
+    getExistingGuestRange,
+    isInProgressEdit,
+    perGuestDatesEnabled,
     promoAction,
+    remainingGuests,
     removedGuestIds,
   ]);
 
@@ -290,6 +437,9 @@ export function EditBookingPanel({
         lastName: addLastName.trim(),
         ageTier: addAgeTier,
         isMember: false,
+        ...(perGuestDatesEnabled && !isInProgressEdit
+          ? { stayStart: checkIn, stayEnd: checkOut }
+          : {}),
       },
     ]);
     setAddFirstName("");
@@ -314,6 +464,9 @@ export function EditBookingPanel({
         ageTier: familyMember.ageTier,
         isMember: true,
         memberId: familyMember.id,
+        ...(perGuestDatesEnabled && !isInProgressEdit
+          ? { stayStart: checkIn, stayEnd: checkOut }
+          : {}),
       },
     ]);
   }
@@ -396,7 +549,7 @@ export function EditBookingPanel({
     return /locked|in-progress|check-in cannot be changed/i.test(message);
   }
 
-  const totalGuestCount = remainingGuests.length + addedGuests.length;
+  const totalGuestCount = totalGuestCountCandidate();
   const showChangeRequestPath =
     (booking.editPolicy.mode === "in-progress" && !hasChanges) ||
     (hasChanges &&
@@ -502,6 +655,18 @@ export function EditBookingPanel({
             </div>
           )}
 
+          {canEditPerGuestDates ? (
+            <label className="flex items-center gap-2 rounded-md border p-3 text-sm">
+              <input
+                type="checkbox"
+                checked={perGuestDatesEnabled}
+                onChange={(e) => setPerGuestDatesEnabled(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <span className="font-medium">Per guest booking dates</span>
+            </label>
+          ) : null}
+
           {/* Existing guests */}
           {booking.guests.map((guest) => {
             const isRemoved = removedGuestIds.has(guest.id);
@@ -525,6 +690,40 @@ export function EditBookingPanel({
                       Stay: {guest.stayStart ?? booking.checkIn} to{" "}
                       {guest.stayEnd ?? booking.checkOut}
                     </p>
+                  ) : null}
+                  {perGuestDatesEnabled && !isRemoved ? (
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label htmlFor={`guest-${guest.id}-stay-start`} className="text-xs">
+                          Date In
+                        </Label>
+                        <Input
+                          id={`guest-${guest.id}-stay-start`}
+                          type="date"
+                          value={getExistingGuestRange(guest).stayStart}
+                          min={checkIn}
+                          max={shiftDateOnly(getExistingGuestRange(guest).stayEnd, -1)}
+                          onChange={(e) =>
+                            updateExistingGuestRange(guest.id, "stayStart", e.target.value)
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor={`guest-${guest.id}-stay-end`} className="text-xs">
+                          Date Out
+                        </Label>
+                        <Input
+                          id={`guest-${guest.id}-stay-end`}
+                          type="date"
+                          value={getExistingGuestRange(guest).stayEnd}
+                          min={shiftDateOnly(getExistingGuestRange(guest).stayStart, 1)}
+                          max={checkOut}
+                          onChange={(e) =>
+                            updateExistingGuestRange(guest.id, "stayEnd", e.target.value)
+                          }
+                        />
+                      </div>
+                    </div>
                   ) : null}
                 </div>
                 <div className="flex items-center gap-3">
@@ -565,6 +764,40 @@ export function EditBookingPanel({
                 <p className="text-sm text-gray-500">
                   {getAgeTierLabel(ageTierOptions, guest.ageTier)} &middot; {guest.isMember ? "Member" : "Non-member"}
                 </p>
+                {perGuestDatesEnabled ? (
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label htmlFor={`added-${guest.key}-stay-start`} className="text-xs">
+                        Date In
+                      </Label>
+                      <Input
+                        id={`added-${guest.key}-stay-start`}
+                        type="date"
+                        value={guest.stayStart ?? checkIn}
+                        min={checkIn}
+                        max={shiftDateOnly(guest.stayEnd ?? checkOut, -1)}
+                        onChange={(e) =>
+                          updateAddedGuestRange(guest.key, "stayStart", e.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor={`added-${guest.key}-stay-end`} className="text-xs">
+                        Date Out
+                      </Label>
+                      <Input
+                        id={`added-${guest.key}-stay-end`}
+                        type="date"
+                        value={guest.stayEnd ?? checkOut}
+                        min={shiftDateOnly(guest.stayStart ?? checkIn, 1)}
+                        max={checkOut}
+                        onChange={(e) =>
+                          updateAddedGuestRange(guest.key, "stayEnd", e.target.value)
+                        }
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </div>
               <Button
                 variant="ghost"

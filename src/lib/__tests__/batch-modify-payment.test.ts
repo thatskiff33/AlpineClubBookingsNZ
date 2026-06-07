@@ -328,6 +328,11 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
 describe("PUT /api/bookings/[id]/modify", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCalculateBookingPrice.mockReset();
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
     mockAuth.mockResolvedValue({
       user: { id: "m1", role: "MEMBER", email: "alice@example.com" },
     });
@@ -1207,5 +1212,136 @@ describe("PUT /api/bookings/[id]/modify", () => {
       bookingModificationId: "mod_1",
       amountCents: 5000,
     });
+  });
+
+  it("persists per-guest stay range edits and checks capacity by active guest nights", async () => {
+    const booking = makeBooking({
+      status: "CONFIRMED",
+      checkIn: new Date("2026-08-20T00:00:00.000Z"),
+      checkOut: new Date("2026-08-22T00:00:00.000Z"),
+      totalPriceCents: 12500,
+      finalPriceCents: 12500,
+      payment: null,
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Alice",
+          lastName: "Member",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "m1",
+          stayStart: new Date("2026-08-20T00:00:00.000Z"),
+          stayEnd: new Date("2026-08-22T00:00:00.000Z"),
+          priceCents: 5000,
+        },
+        {
+          id: "g2",
+          bookingId: "bk1",
+          firstName: "Bob",
+          lastName: "Member",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: null,
+          stayStart: new Date("2026-08-20T00:00:00.000Z"),
+          stayEnd: new Date("2026-08-22T00:00:00.000Z"),
+          priceCents: 5000,
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 12500,
+      guests: [
+        { priceCents: 5000, perNightCents: [2500, 2500] },
+        { priceCents: 7500, perNightCents: [2500, 2500, 2500] },
+      ],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        checkOut: "2026-08-24",
+        guestStayRanges: [
+          {
+            guestId: "g1",
+            stayStart: "2026-08-20",
+            stayEnd: "2026-08-22",
+          },
+          {
+            guestId: "g2",
+            stayStart: "2026-08-21",
+            stayEnd: "2026-08-24",
+          },
+        ],
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockCheckCapacity).toHaveBeenCalledWith(
+      new Date("2026-08-20T00:00:00.000Z"),
+      new Date("2026-08-24T00:00:00.000Z"),
+      [
+        expect.objectContaining({
+          stayStart: new Date("2026-08-20T00:00:00.000Z"),
+          stayEnd: new Date("2026-08-22T00:00:00.000Z"),
+        }),
+        expect.objectContaining({
+          stayStart: new Date("2026-08-21T00:00:00.000Z"),
+          stayEnd: new Date("2026-08-24T00:00:00.000Z"),
+        }),
+      ],
+      "bk1",
+      tx
+    );
+    expect(mockCalculateBookingPrice).toHaveBeenCalledWith(
+      new Date("2026-08-20T00:00:00.000Z"),
+      new Date("2026-08-24T00:00:00.000Z"),
+      [
+        expect.objectContaining({
+          stayStart: new Date("2026-08-20T00:00:00.000Z"),
+          stayEnd: new Date("2026-08-22T00:00:00.000Z"),
+        }),
+        expect.objectContaining({
+          stayStart: new Date("2026-08-21T00:00:00.000Z"),
+          stayEnd: new Date("2026-08-24T00:00:00.000Z"),
+        }),
+      ],
+      expect.any(Array)
+    );
+    expect(tx.bookingGuest.update).toHaveBeenCalledWith({
+      where: { id: "g1" },
+      data: {
+        stayStart: new Date("2026-08-20T00:00:00.000Z"),
+        stayEnd: new Date("2026-08-22T00:00:00.000Z"),
+        priceCents: 5000,
+      },
+    });
+    expect(tx.bookingGuest.update).toHaveBeenCalledWith({
+      where: { id: "g2" },
+      data: {
+        stayStart: new Date("2026-08-21T00:00:00.000Z"),
+        stayEnd: new Date("2026-08-24T00:00:00.000Z"),
+        priceCents: 7500,
+      },
+    });
+    expect(tx.booking.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          checkIn: new Date("2026-08-20T00:00:00.000Z"),
+          checkOut: new Date("2026-08-24T00:00:00.000Z"),
+        }),
+      })
+    );
   });
 });

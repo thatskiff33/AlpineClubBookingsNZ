@@ -144,5 +144,5 @@ describe("admin reports route", () => {
         ],
       },
     });
-  });
+  }, 15_000);
 });

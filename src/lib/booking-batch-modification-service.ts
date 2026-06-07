@@ -121,6 +121,7 @@ export async function modifyBookingBatch({
       isInProgressEdit: dates.isInProgressEdit,
       editableFrom: dates.editableFrom,
       newCheckIn: dates.newCheckIn,
+      newCheckOut: dates.newCheckOut,
     });
 
     const seasonRateData = await loadActiveSeasonRates(tx);
@@ -135,7 +136,6 @@ export async function modifyBookingBatch({
       normalizedAddGuests: guestPlan.normalizedAddGuests,
       removeGuestIds: input.removeGuestIds,
       guestsForPricing: guestPlan.guestsForPricing,
-      totalGuestCount: guestPlan.totalGuestCount,
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
       seasonRateData,
     });
@@ -145,6 +145,7 @@ export async function modifyBookingBatch({
       bookingId,
       input,
       inProgressPlan: pricing.inProgressPlan,
+      newCheckIn: dates.newCheckIn,
       newTotalPriceCents: pricing.newTotalPriceCents,
       guestNightRates: pricing.guestNightRates,
     });
@@ -165,6 +166,7 @@ export async function modifyBookingBatch({
       newCheckOut: dates.newCheckOut,
       removedGuests: guestPlan.removedGuests,
       remainingGuests: guestPlan.remainingGuests,
+      proposedRemainingGuests: guestPlan.proposedRemainingGuests,
       normalizedAddGuests: guestPlan.normalizedAddGuests,
       priceBreakdown: pricing.priceBreakdown,
       inProgressPlan: pricing.inProgressPlan,

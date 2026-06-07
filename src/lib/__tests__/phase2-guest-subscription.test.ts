@@ -63,6 +63,15 @@ vi.mock("@/lib/pricing", () => ({
       { priceCents: 5000, perNightCents: [2500, 2500] },
     ],
   }),
+  getStayNights: vi.fn((checkIn: Date, checkOut: Date) => {
+    const nights: Date[] = [];
+    const current = new Date(checkIn);
+    while (current < checkOut) {
+      nights.push(new Date(current));
+      current.setUTCDate(current.getUTCDate() + 1);
+    }
+    return nights;
+  }),
 }));
 vi.mock("@/lib/booking-policies", () => ({
   validateMinimumStay: vi.fn().mockResolvedValue({ valid: true, violations: [] }),
@@ -419,6 +428,118 @@ describe("P2.3: Guest subscription check", () => {
     const body = await res.json();
     expect(body.code).toBe("GUEST_SUBSCRIPTION_REQUIRED");
     expect(body.unpaidMembers).toContain("Bob Jones");
+  });
+
+  it("quotes per-guest stay range changes by guest-night ranges", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    const { checkCapacityForGuestRanges } = await import("@/lib/capacity");
+    const { calculateBookingPrice } = await import("@/lib/pricing");
+    const mockedRangeCapacity = vi.mocked(checkCapacityForGuestRanges);
+    const mockedPrice = vi.mocked(calculateBookingPrice);
+
+    mockedRangeCapacity.mockResolvedValue({
+      available: true,
+      minAvailable: 29,
+      nightDetails: [],
+    });
+    mockedPrice.mockReturnValue({
+      totalPriceCents: 7500,
+      guests: [
+        { priceCents: 2500, perNightCents: [2500] },
+        { priceCents: 5000, perNightCents: [2500, 2500] },
+      ],
+    });
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      checkIn,
+      checkOut,
+      status: "CONFIRMED",
+      totalPriceCents: 10000,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      finalPriceCents: 10000,
+      guests: [
+        {
+          id: "existing-1",
+          firstName: "Alice",
+          lastName: "Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "member-1",
+          stayStart: checkIn,
+          stayEnd: checkOut,
+          priceCents: 5000,
+        },
+        {
+          id: "existing-2",
+          firstName: "Bob",
+          lastName: "Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: null,
+          stayStart: checkIn,
+          stayEnd: checkOut,
+          priceCents: 5000,
+        },
+      ],
+      payment: null,
+      promoRedemption: null,
+    });
+
+    const req = makeModifyQuoteRequest({
+      checkOut: "2026-12-04",
+      guestStayRanges: [
+        {
+          guestId: "existing-1",
+          stayStart: "2026-12-01",
+          stayEnd: "2026-12-02",
+        },
+        {
+          guestId: "existing-2",
+          stayStart: "2026-12-02",
+          stayEnd: "2026-12-04",
+        },
+      ],
+    });
+
+    const res = await getModifyQuote(req, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.newTotalPriceCents).toBe(7500);
+    expect(mockedRangeCapacity).toHaveBeenCalledWith(
+      new Date("2026-12-01T00:00:00.000Z"),
+      new Date("2026-12-04T00:00:00.000Z"),
+      [
+        expect.objectContaining({
+          stayStart: new Date("2026-12-01T00:00:00.000Z"),
+          stayEnd: new Date("2026-12-02T00:00:00.000Z"),
+        }),
+        expect.objectContaining({
+          stayStart: new Date("2026-12-02T00:00:00.000Z"),
+          stayEnd: new Date("2026-12-04T00:00:00.000Z"),
+        }),
+      ],
+      "booking-1"
+    );
+    expect(mockedPrice).toHaveBeenCalledWith(
+      new Date("2026-12-01T00:00:00.000Z"),
+      new Date("2026-12-04T00:00:00.000Z"),
+      [
+        expect.objectContaining({
+          stayStart: new Date("2026-12-01T00:00:00.000Z"),
+          stayEnd: new Date("2026-12-02T00:00:00.000Z"),
+        }),
+        expect.objectContaining({
+          stayStart: new Date("2026-12-02T00:00:00.000Z"),
+          stayEnd: new Date("2026-12-04T00:00:00.000Z"),
+        }),
+      ],
+      expect.any(Array)
+    );
   });
 
   it("blocks the modify quote flow from pricing incomplete linked member guests", async () => {
