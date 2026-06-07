@@ -800,6 +800,44 @@ describe("Phase 3: Admin Member Management", () => {
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
 
+    it("imports more than nine members in one request", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([]);
+
+      const createMember = vi.fn(async ({ data }: any) => ({
+        id: `new-${data.email}`,
+        email: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+      }));
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: any) => {
+        const tx = {
+          member: { create: createMember },
+        };
+        return fn(tx);
+      });
+
+      const rows = Array.from({ length: 12 }, (_, index) => {
+        const number = index + 1;
+        return {
+          firstName: `First${number}`,
+          lastName: `Last${number}`,
+          email: `member${number}@test.com`,
+        };
+      });
+
+      const req = new NextRequest("http://localhost/api/admin/members/import", {
+        method: "POST",
+        body: JSON.stringify({ rows, sendInvites: false }),
+        headers: { "Content-Type": "application/json" },
+      });
+      const res = await importMembers(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.created).toBe(12);
+      expect(createMember).toHaveBeenCalledTimes(12);
+    });
+
     it("skips members that already exist in DB", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([

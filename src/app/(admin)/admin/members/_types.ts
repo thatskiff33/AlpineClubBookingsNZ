@@ -94,6 +94,9 @@ export interface ImportRow {
   lastName: string
   email: string
   phone?: string
+  phoneCountryCode?: string
+  phoneAreaCode?: string
+  phoneNumber?: string
   dateOfBirth?: string
   role?: string
 }
@@ -102,6 +105,7 @@ export interface ImportResult {
   created: number
   skipped: number
   errors: Array<{ row: number; errors: string[] }>
+  total?: number
 }
 
 export interface PasswordActionTarget {

@@ -147,33 +147,3 @@ export function getMissingFieldsForXeroCreate(form: MemberForm): string[] {
 
   return missing
 }
-
-export function parseCsvLine(line: string): string[] {
-  const result: string[] = []
-  let current = ""
-  let inQuotes = false
-
-  for (let index = 0; index < line.length; index += 1) {
-    const character = line[index]
-    if (inQuotes) {
-      if (character === '"' && line[index + 1] === '"') {
-        current += '"'
-        index += 1
-      } else if (character === '"') {
-        inQuotes = false
-      } else {
-        current += character
-      }
-    } else if (character === '"') {
-      inQuotes = true
-    } else if (character === ",") {
-      result.push(current.trim())
-      current = ""
-    } else {
-      current += character
-    }
-  }
-
-  result.push(current.trim())
-  return result
-}
