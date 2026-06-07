@@ -1439,15 +1439,17 @@ model SetupProgress {
 // ---------------------------------------------------------------------------
 
 model ClubModuleSettings {
-  id                String   @id @default("default")
-  kiosk             Boolean  @default(true)
-  chores            Boolean  @default(true)
-  financeDashboard  Boolean  @default(true)
-  waitlist          Boolean  @default(true)
-  xeroIntegration   Boolean  @default(true)
-  updatedByMemberId String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @default(now()) @updatedAt
+  id                      String   @id @default("default")
+  kiosk                   Boolean  @default(true)
+  chores                  Boolean  @default(true)
+  financeDashboard        Boolean  @default(true)
+  waitlist                Boolean  @default(true)
+  xeroIntegration         Boolean  @default(true)
+  bedAllocation           Boolean  @default(true)
+  internetBankingPayments Boolean  @default(true)
+  updatedByMemberId       String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @default(now()) @updatedAt
 
   @@index([updatedByMemberId])
 }

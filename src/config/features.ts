@@ -9,6 +9,8 @@ const FEATURE_ENV_VARS = {
   financeDashboard: "FEATURE_FINANCE_DASHBOARD",
   waitlist: "FEATURE_WAITLIST",
   xeroIntegration: "FEATURE_XERO_INTEGRATION",
+  bedAllocation: "FEATURE_BED_ALLOCATION",
+  internetBankingPayments: "FEATURE_INTERNET_BANKING_PAYMENTS",
 } as const satisfies Record<keyof FeatureFlags, string>;
 
 /**
@@ -28,6 +30,10 @@ export function loadFeatureFlags(env: NodeJS.ProcessEnv = process.env): FeatureF
     financeDashboard: parseFlag(env[FEATURE_ENV_VARS.financeDashboard]),
     waitlist: parseFlag(env[FEATURE_ENV_VARS.waitlist]),
     xeroIntegration: parseFlag(env[FEATURE_ENV_VARS.xeroIntegration]),
+    bedAllocation: parseFlag(env[FEATURE_ENV_VARS.bedAllocation]),
+    internetBankingPayments: parseFlag(
+      env[FEATURE_ENV_VARS.internetBankingPayments],
+    ),
   };
   return featureFlagsSchema.parse(flags);
 }

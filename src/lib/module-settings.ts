@@ -49,6 +49,8 @@ type ClubModuleSettingsRecord = Pick<
   | "financeDashboard"
   | "waitlist"
   | "xeroIntegration"
+  | "bedAllocation"
+  | "internetBankingPayments"
   | "updatedAt"
   | "updatedByMemberId"
 >;
@@ -64,6 +66,11 @@ export function normalizeClubModuleSettings(
     waitlist: record?.waitlist ?? DEFAULT_MODULE_SETTINGS.waitlist,
     xeroIntegration:
       record?.xeroIntegration ?? DEFAULT_MODULE_SETTINGS.xeroIntegration,
+    bedAllocation:
+      record?.bedAllocation ?? DEFAULT_MODULE_SETTINGS.bedAllocation,
+    internetBankingPayments:
+      record?.internetBankingPayments ??
+      DEFAULT_MODULE_SETTINGS.internetBankingPayments,
   };
 }
 
@@ -154,6 +161,8 @@ const DISABLED_MODULE_FLAGS: FeatureFlags = {
   financeDashboard: false,
   waitlist: false,
   xeroIntegration: false,
+  bedAllocation: false,
+  internetBankingPayments: false,
 };
 
 export async function loadEffectiveModuleFlags(

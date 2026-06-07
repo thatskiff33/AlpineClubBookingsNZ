@@ -164,6 +164,8 @@ checks for Stripe, Xero, cron, or other operator-owned credentials.
 | `FEATURE_FINANCE_DASHBOARD` | Makes finance dashboard routes/navigation and finance sync cron available when Admin Modules activation also allows them. |
 | `FEATURE_WAITLIST` | Makes waitlist routes and waitlist cron available when Admin Modules activation also allows them. |
 | `FEATURE_XERO_INTEGRATION` | Makes operational Xero routes/navigation and Xero cron available when Admin Modules activation also allows them. |
+| `FEATURE_BED_ALLOCATION` | Makes upcoming room/bed setup and guest bed allocation controls available when Admin Modules activation also allows them. |
+| `FEATURE_INTERNET_BANKING_PAYMENTS` | Makes the upcoming Internet Banking payment option available when Admin Modules activation also allows it. Operational Xero still needs its own capability, credentials, and tenant connection before invoices can be issued. |
 
 Cron-backed optional modules check effective module state before doing module
 work. If an Admin Modules setting is disabled while the `.env` capability is
@@ -177,7 +179,8 @@ settings table cannot be read, optional modules fail closed.
 The Admin dashboard includes `/admin/modules` for club-level activation of the
 optional modules covered by the feature flags above. These settings are stored
 in the `ClubModuleSettings` database table as booleans only. They do not store
-secrets, tokens, tenant ids, or external provider credentials.
+secrets, tokens, tenant ids, bank account details, or external provider
+credentials.
 
 The `.env` feature flags remain deploy/operator capability gates. A module is
 ready only when its feature flag is `true` and its Admin Modules activation is

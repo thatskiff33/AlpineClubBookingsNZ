@@ -170,6 +170,16 @@ const MODULE_CONTROLS = [
     label: "Operational Xero",
     envVar: "FEATURE_XERO_INTEGRATION",
   },
+  {
+    key: "bedAllocation",
+    label: "Bed allocation",
+    envVar: "FEATURE_BED_ALLOCATION",
+  },
+  {
+    key: "internetBankingPayments",
+    label: "Internet Banking payments",
+    envVar: "FEATURE_INTERNET_BANKING_PAYMENTS",
+  },
 ] as const satisfies readonly {
   key: AdminModuleKey;
   label: string;

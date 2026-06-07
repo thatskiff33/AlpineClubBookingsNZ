@@ -108,6 +108,8 @@ function cloneSettings(settings: ModuleSettingsValues): ModuleSettingsValues {
     financeDashboard: settings.financeDashboard,
     waitlist: settings.waitlist,
     xeroIntegration: settings.xeroIntegration,
+    bedAllocation: settings.bedAllocation,
+    internetBankingPayments: settings.internetBankingPayments,
   };
 }
 

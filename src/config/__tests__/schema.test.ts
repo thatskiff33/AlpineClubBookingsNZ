@@ -183,6 +183,8 @@ describe("featureFlagsSchema", () => {
         financeDashboard: true,
         waitlist: false,
         xeroIntegration: true,
+        bedAllocation: true,
+        internetBankingPayments: false,
       }),
     ).toBeDefined();
   });
@@ -194,6 +196,8 @@ describe("featureFlagsSchema", () => {
       financeDashboard: false,
       waitlist: false,
       xeroIntegration: false,
+      bedAllocation: false,
+      internetBankingPayments: false,
       mystery: true,
     });
     expect(result.success).toBe(false);
@@ -206,6 +210,8 @@ describe("featureFlagsSchema", () => {
       financeDashboard: false,
       waitlist: false,
       xeroIntegration: false,
+      bedAllocation: false,
+      internetBankingPayments: false,
     });
     expect(result.success).toBe(false);
   });

@@ -12,6 +12,8 @@ const allCapabilitiesOn: FeatureFlags = {
   financeDashboard: true,
   waitlist: true,
   xeroIntegration: true,
+  bedAllocation: true,
+  internetBankingPayments: true,
 };
 
 describe("Admin Modules effective state", () => {
@@ -22,6 +24,8 @@ describe("Admin Modules effective state", () => {
       financeDashboard: true,
       waitlist: true,
       xeroIntegration: true,
+      bedAllocation: true,
+      internetBankingPayments: true,
     });
   });
 
@@ -56,6 +60,8 @@ describe("Admin Modules effective state", () => {
       financeDashboard: true,
       waitlist: false,
       xeroIntegration: true,
+      bedAllocation: true,
+      internetBankingPayments: true,
     });
 
     await expect(
@@ -70,6 +76,8 @@ describe("Admin Modules effective state", () => {
       financeDashboard: true,
       waitlist: false,
       xeroIntegration: true,
+      bedAllocation: true,
+      internetBankingPayments: true,
     });
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: "default" },
@@ -89,6 +97,8 @@ describe("Admin Modules effective state", () => {
       financeDashboard: true,
       waitlist: true,
       xeroIntegration: true,
+      bedAllocation: true,
+      internetBankingPayments: true,
     });
   });
 });

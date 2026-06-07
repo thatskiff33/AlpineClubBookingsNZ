@@ -10,6 +10,8 @@ describe("feature-aware cron registration", () => {
       financeDashboard: false,
       waitlist: false,
       xeroIntegration: false,
+      bedAllocation: false,
+      internetBankingPayments: false,
     };
 
     expect(getOptionalCronRegistrationState(flags)).toEqual({
@@ -26,6 +28,8 @@ describe("feature-aware cron registration", () => {
       financeDashboard: true,
       waitlist: true,
       xeroIntegration: true,
+      bedAllocation: true,
+      internetBankingPayments: true,
     };
 
     expect(getOptionalCronRegistrationState(flags)).toEqual({

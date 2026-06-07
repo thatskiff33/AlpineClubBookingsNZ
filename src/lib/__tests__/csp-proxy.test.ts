@@ -19,6 +19,8 @@ const allFeaturesOn: FeatureFlags = {
   financeDashboard: true,
   waitlist: true,
   xeroIntegration: true,
+  bedAllocation: true,
+  internetBankingPayments: true,
 };
 
 function directive(policy: string, name: string) {

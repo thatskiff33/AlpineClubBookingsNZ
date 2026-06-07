@@ -123,6 +123,8 @@ export const featureFlagsSchema = z
     financeDashboard: z.boolean(),
     waitlist: z.boolean(),
     xeroIntegration: z.boolean(),
+    bedAllocation: z.boolean(),
+    internetBankingPayments: z.boolean(),
   })
   .strict();
 

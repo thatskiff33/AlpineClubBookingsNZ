@@ -10,6 +10,8 @@ const allOn: FeatureFlags = {
   financeDashboard: true,
   waitlist: true,
   xeroIntegration: true,
+  bedAllocation: true,
+  internetBankingPayments: true,
 };
 
 describe("feature-aware navigation", () => {

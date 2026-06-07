@@ -34,6 +34,8 @@ async function getSetupDatabaseSnapshot(): Promise<SetupDatabaseSnapshot> {
         financeDashboard: true,
         waitlist: true,
         xeroIntegration: true,
+        bedAllocation: true,
+        internetBankingPayments: true,
       },
     }),
     prisma.ageTierSetting.count(),

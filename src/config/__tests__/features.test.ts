@@ -9,6 +9,8 @@ describe("loadFeatureFlags", () => {
       financeDashboard: false,
       waitlist: false,
       xeroIntegration: false,
+      bedAllocation: false,
+      internetBankingPayments: false,
     });
   });
 
@@ -36,6 +38,8 @@ describe("loadFeatureFlags", () => {
       FEATURE_FINANCE_DASHBOARD: "true",
       FEATURE_WAITLIST: "true",
       FEATURE_XERO_INTEGRATION: "true",
+      FEATURE_BED_ALLOCATION: "true",
+      FEATURE_INTERNET_BANKING_PAYMENTS: "true",
     });
     expect(flags).toEqual({
       kiosk: true,
@@ -43,6 +47,8 @@ describe("loadFeatureFlags", () => {
       financeDashboard: true,
       waitlist: true,
       xeroIntegration: true,
+      bedAllocation: true,
+      internetBankingPayments: true,
     });
   });
 

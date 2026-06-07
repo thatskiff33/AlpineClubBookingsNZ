@@ -6,6 +6,8 @@ export const MODULE_KEYS = [
   "financeDashboard",
   "waitlist",
   "xeroIntegration",
+  "bedAllocation",
+  "internetBankingPayments",
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
@@ -17,6 +19,8 @@ export const DEFAULT_MODULE_SETTINGS: ModuleSettingsValues = {
   financeDashboard: true,
   waitlist: true,
   xeroIntegration: true,
+  bedAllocation: true,
+  internetBankingPayments: true,
 };
 
 export interface ModuleDefinition {
@@ -69,6 +73,26 @@ export const MODULE_DEFINITIONS: Record<ModuleKey, ModuleDefinition> = {
       "Xero OAuth credentials, tenant tokens, and account mappings are configured outside this table.",
     ],
   },
+  bedAllocation: {
+    key: "bedAllocation",
+    label: "Bed allocation",
+    description: "Room and bed setup plus admin guest-to-bed allocation.",
+    envVar: "FEATURE_BED_ALLOCATION",
+    dependencies: [
+      "Deploy-time bed allocation capability must be enabled.",
+      "Room and bed inventory is configured separately.",
+    ],
+  },
+  internetBankingPayments: {
+    key: "internetBankingPayments",
+    label: "Internet Banking payments",
+    description: "Member Internet Banking payment option backed by Xero invoices.",
+    envVar: "FEATURE_INTERNET_BANKING_PAYMENTS",
+    dependencies: [
+      "Deploy-time Internet Banking payment capability must be enabled.",
+      "Operational Xero must be active before invoices can be issued.",
+    ],
+  },
 };
 
 export function getModuleCapabilityFlags(
@@ -80,6 +104,8 @@ export function getModuleCapabilityFlags(
     financeDashboard: flags.financeDashboard,
     waitlist: flags.waitlist,
     xeroIntegration: flags.xeroIntegration,
+    bedAllocation: flags.bedAllocation,
+    internetBankingPayments: flags.internetBankingPayments,
   };
 }
 
@@ -93,5 +119,8 @@ export function getEffectiveModuleFlags(
     financeDashboard: flags.financeDashboard && settings.financeDashboard,
     waitlist: flags.waitlist && settings.waitlist,
     xeroIntegration: flags.xeroIntegration && settings.xeroIntegration,
+    bedAllocation: flags.bedAllocation && settings.bedAllocation,
+    internetBankingPayments:
+      flags.internetBankingPayments && settings.internetBankingPayments,
   };
 }

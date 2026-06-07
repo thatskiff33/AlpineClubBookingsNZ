@@ -66,6 +66,8 @@ const allEnabled: ModuleSettingsValues = {
   financeDashboard: true,
   waitlist: true,
   xeroIntegration: true,
+  bedAllocation: true,
+  internetBankingPayments: true,
 };
 
 function request(body: unknown) {
@@ -105,15 +107,22 @@ describe("Admin modules schema contract", () => {
       "prisma/migrations/20260518113000_add_club_module_settings/migration.sql",
     );
 
-    expect(model).toContain("kiosk             Boolean  @default(true)");
-    expect(model).toContain("chores            Boolean  @default(true)");
-    expect(model).toContain("financeDashboard  Boolean  @default(true)");
-    expect(model).toContain("waitlist          Boolean  @default(true)");
-    expect(model).toContain("xeroIntegration   Boolean  @default(true)");
+    expect(model).toContain("kiosk                   Boolean  @default(true)");
+    expect(model).toContain("chores                  Boolean  @default(true)");
+    expect(model).toContain("financeDashboard        Boolean  @default(true)");
+    expect(model).toContain("waitlist                Boolean  @default(true)");
+    expect(model).toContain("xeroIntegration         Boolean  @default(true)");
+    expect(model).toContain("bedAllocation           Boolean  @default(true)");
+    expect(model).toContain("internetBankingPayments Boolean  @default(true)");
     expect(model).not.toMatch(/secret|token|credential|tenant/i);
     expect(migration).toContain('CREATE TABLE IF NOT EXISTS "ClubModuleSettings"');
     expect(migration).toContain('"financeDashboard" BOOLEAN NOT NULL DEFAULT true');
     expect(migration).toContain('INSERT INTO "ClubModuleSettings" ("id")');
+    expect(
+      readRepoFile(
+        "prisma/migrations/20260607120000_add_bed_allocation_and_internet_banking_modules/migration.sql",
+      ),
+    ).toContain('"internetBankingPayments" BOOLEAN NOT NULL DEFAULT true');
   });
 });
 
@@ -166,13 +175,15 @@ describe("Admin modules API", () => {
 
     expect(response.status).toBe(200);
     expect(body.settings.waitlist).toBe(false);
-    expect(body.modules).toHaveLength(5);
+    expect(body.modules).toHaveLength(7);
     expect(body.modules.map((module: { key: string }) => module.key)).toEqual([
       "kiosk",
       "chores",
       "financeDashboard",
       "waitlist",
       "xeroIntegration",
+      "bedAllocation",
+      "internetBankingPayments",
     ]);
     expect(body.modules[0]).toEqual(
       expect.objectContaining({
@@ -278,6 +289,8 @@ describe("effective module state", () => {
           financeDashboard: true,
           waitlist: true,
           xeroIntegration: true,
+          bedAllocation: true,
+          internetBankingPayments: true,
         },
         { ...allEnabled, waitlist: false },
       ).waitlist,
@@ -290,6 +303,8 @@ describe("effective module state", () => {
           financeDashboard: true,
           waitlist: false,
           xeroIntegration: true,
+          bedAllocation: true,
+          internetBankingPayments: true,
         },
         { ...allEnabled, waitlist: true },
       ).waitlist,
@@ -302,6 +317,8 @@ describe("effective module state", () => {
           financeDashboard: true,
           waitlist: true,
           xeroIntegration: true,
+          bedAllocation: true,
+          internetBankingPayments: true,
         },
         { ...allEnabled, waitlist: true },
       ).waitlist,
@@ -320,6 +337,8 @@ describe("effective module state", () => {
         financeDashboard: true,
         waitlist: true,
         xeroIntegration: true,
+        bedAllocation: true,
+        internetBankingPayments: true,
       }),
     ).resolves.toEqual({
       kiosk: false,
@@ -327,6 +346,8 @@ describe("effective module state", () => {
       financeDashboard: false,
       waitlist: false,
       xeroIntegration: false,
+      bedAllocation: false,
+      internetBankingPayments: false,
     });
   });
 });
