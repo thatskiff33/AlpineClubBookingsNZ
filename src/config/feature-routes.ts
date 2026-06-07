@@ -49,6 +49,10 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
       /^\/api\/admin\/members\/[^/]+\/xero-(link|push|unlink)$/,
     ],
   },
+  {
+    flag: "bedAllocation",
+    prefixes: ["/admin/bed-allocation", "/api/admin/bed-allocation"],
+  },
 ];
 
 function matchesPrefix(pathname: string, prefix: string): boolean {

@@ -749,6 +749,16 @@ model BedAllocation {
   @@index([approvedByMemberId])
 }
 
+model BedAllocationSettings {
+  id                    String   @id @default("default")
+  autoAllocationEnabled Boolean  @default(true)
+  updatedByMemberId     String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([updatedByMemberId])
+}
+
 // ---------------------------------------------------------------------------
 // Payments
 // ---------------------------------------------------------------------------
