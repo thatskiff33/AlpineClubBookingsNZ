@@ -66,8 +66,8 @@ Minimum production categories:
 - Auth: `AUTH_SECRET`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `AUTH_TRUST_HOST`
 - Public app: `DOMAIN`, `NEXT_PUBLIC_CONTACT_EMAIL`
   `DOMAIN` is the root public host consumed by `Caddyfile` through the
-  `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, `dashboard`, and
-  `xero-mcp` subdomains from that value.
+  `{$DOMAIN}` placeholder. Caddy derives `www`, `bookings`, and `dashboard`
+  subdomains from that value.
 - Module capability flags: `FEATURE_KIOSK`, `FEATURE_CHORES`,
   `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`, and
   `FEATURE_XERO_INTEGRATION` must be explicit `true` or `false` values.
