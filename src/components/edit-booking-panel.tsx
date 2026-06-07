@@ -73,6 +73,16 @@ interface ItemizedChange {
   amountCents: number;
 }
 
+interface SettlementOptions {
+  basisAmountCents: number;
+  cardRefundAmountCents: number;
+  cardRefundPercentage: number;
+  accountCreditAmountCents: number;
+  accountCreditPercentage: number;
+  daysUntilCheckIn: number;
+  requiresSettlementMethod: boolean;
+}
+
 interface QuoteResult {
   newTotalPriceCents: number;
   newDiscountCents: number;
@@ -81,6 +91,7 @@ interface QuoteResult {
   priceDiffCents: number;
   changeFeeCents: number;
   netChargeCents: number;
+  settlementOptions: SettlementOptions | null;
   capacityAvailable: boolean;
   promoStillValid: boolean;
   promoValidation: {
@@ -159,6 +170,7 @@ export function EditBookingPanel({
   const [quote, setQuote] = useState<QuoteResult | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState("");
+  const [settlementMethod, setSettlementMethod] = useState<"card" | "credit" | null>(null);
 
   // Add guest form
   const [showAddForm, setShowAddForm] = useState(false);
@@ -394,6 +406,9 @@ export function EditBookingPanel({
         return;
       }
       setQuote(data);
+      if (!data.settlementOptions?.requiresSettlementMethod) {
+        setSettlementMethod(null);
+      }
     } catch {
       setQuoteError("Failed to get quote");
       setQuote(null);
@@ -484,10 +499,17 @@ export function EditBookingPanel({
 
   async function handleSave() {
     setSaveError("");
+    if (quote?.settlementOptions?.requiresSettlementMethod && !settlementMethod) {
+      setSaveError("Choose a refund or account credit before saving");
+      return;
+    }
     setSaving(true);
 
     try {
       const body = buildModificationPayload();
+      if (settlementMethod) {
+        body.settlementMethod = settlementMethod;
+      }
 
       const res = await fetch(`/api/bookings/${booking.id}/modify`, {
         method: "PUT",
@@ -556,6 +578,7 @@ export function EditBookingPanel({
       (booking.editPolicy.mode === "future" ||
         booking.editPolicy.mode === "in-progress") &&
       (isLockedChangeError(quoteError) || isLockedChangeError(saveError)));
+  const settlementRequired = quote?.settlementOptions?.requiresSettlementMethod ?? false;
 
   return (
     <div className="space-y-6">
@@ -1044,7 +1067,59 @@ export function EditBookingPanel({
                       </p>
                     ) : (
                       <p className="font-medium">
-                        Refund: {formatCents(Math.abs(quote.netChargeCents))}
+                        Booking reduction: {formatCents(Math.abs(quote.netChargeCents))}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {quote.netChargeCents < 0 && quote.settlementOptions && (
+                  <div className="space-y-2 rounded-md border p-3 text-sm">
+                    <p className="font-medium">Return method</p>
+                    {quote.settlementOptions.requiresSettlementMethod ? (
+                      <div className="space-y-2">
+                        <label className="flex cursor-pointer items-start gap-2">
+                          <input
+                            type="radio"
+                            name="settlementMethod"
+                            value="card"
+                            checked={settlementMethod === "card"}
+                            onChange={() => setSettlementMethod("card")}
+                            className="mt-1"
+                          />
+                          <span>
+                            Refund to original card:{" "}
+                            <span className="font-medium">
+                              {formatCents(quote.settlementOptions.cardRefundAmountCents)}
+                            </span>{" "}
+                            <span className="text-gray-500">
+                              ({quote.settlementOptions.cardRefundPercentage}%)
+                            </span>
+                          </span>
+                        </label>
+                        <label className="flex cursor-pointer items-start gap-2">
+                          <input
+                            type="radio"
+                            name="settlementMethod"
+                            value="credit"
+                            checked={settlementMethod === "credit"}
+                            onChange={() => setSettlementMethod("credit")}
+                            className="mt-1"
+                          />
+                          <span>
+                            Hold as account credit:{" "}
+                            <span className="font-medium">
+                              {formatCents(quote.settlementOptions.accountCreditAmountCents)}
+                            </span>{" "}
+                            <span className="text-gray-500">
+                              ({quote.settlementOptions.accountCreditPercentage}%)
+                            </span>
+                          </span>
+                        </label>
+                      </div>
+                    ) : (
+                      <p className="text-gray-600">
+                        No refund or account credit is available for this reduction under the current policy.
                       </p>
                     )}
                   </div>
@@ -1110,7 +1185,8 @@ export function EditBookingPanel({
             saving ||
             quoteLoading ||
             !quote ||
-            !quote.capacityAvailable
+            !quote.capacityAvailable ||
+            (settlementRequired && !settlementMethod)
           }
         >
           {saving ? "Saving..." : "Save Changes"}

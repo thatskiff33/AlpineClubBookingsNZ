@@ -119,6 +119,31 @@ export async function createCancellationCredit(
 }
 
 /**
+ * Create a credit entry for a booking modification refund held as account credit.
+ */
+export async function createBookingModificationCredit(
+  memberId: string,
+  amountCents: number,
+  bookingId: string,
+  bookingModificationId: string,
+  xeroCreditNoteId?: string,
+  tx?: Prisma.TransactionClient
+): Promise<void> {
+  const db = tx || prisma;
+  await db.memberCredit.create({
+    data: {
+      memberId,
+      amountCents,
+      type: CreditType.BOOKING_MODIFICATION_REFUND,
+      description: `Booking reduction credit for booking ${bookingId.slice(0, 8)}`,
+      sourceBookingId: bookingId,
+      sourceBookingModificationId: bookingModificationId,
+      xeroCreditNoteId: xeroCreditNoteId ?? null,
+    },
+  });
+}
+
+/**
  * Apply credit to a booking (creates a negative entry).
  * Validates that the member has sufficient balance.
  * Must be called within a transaction to prevent race conditions.

@@ -13,7 +13,11 @@ interface SourceBooking {
 interface CreditTransaction {
   id: string;
   amountCents: number;
-  type: "CANCELLATION_REFUND" | "ADMIN_ADJUSTMENT" | "BOOKING_APPLIED";
+  type:
+    | "CANCELLATION_REFUND"
+    | "BOOKING_MODIFICATION_REFUND"
+    | "ADMIN_ADJUSTMENT"
+    | "BOOKING_APPLIED";
   description: string;
   createdAt: string;
   sourceBooking: SourceBooking | null;
@@ -27,6 +31,7 @@ interface CreditData {
 
 const TYPE_LABELS: Record<string, string> = {
   CANCELLATION_REFUND: "Cancellation Refund",
+  BOOKING_MODIFICATION_REFUND: "Booking Change Credit",
   ADMIN_ADJUSTMENT: "Admin Adjustment",
   BOOKING_APPLIED: "Booking Applied",
 };

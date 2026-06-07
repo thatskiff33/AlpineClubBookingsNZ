@@ -3,6 +3,7 @@ import logger from "@/lib/logger";
 import {
   enqueueXeroBookingInvoiceOperation,
   enqueueXeroBookingInvoiceUpdateOperation,
+  enqueueXeroModificationAccountCreditNoteOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
   kickQueuedXeroOutboxOperationsIfConnected,
@@ -33,6 +34,11 @@ export type XeroBookingEditFinancialAction =
       type: "modification-credit-note";
       refundAmountCents: number;
       reason: string;
+    }
+  | {
+      type: "modification-account-credit-note";
+      refundAmountCents: number;
+      reason: string;
     };
 
 export type XeroBookingEditPrimaryUpdateAction =
@@ -56,6 +62,8 @@ export interface ClassifyXeroBookingEditSettlementInput {
   createPrimaryInvoiceWhenMissing?: boolean;
   requiresAdditionalStripePayment?: boolean;
   additionalPaymentIntentId?: string | null;
+  settlementMethod?: "card" | "credit" | null;
+  settlementAmountCents?: number | null;
 }
 
 export interface QueueXeroBookingEditSettlementInput
@@ -105,11 +113,25 @@ export function classifyXeroBookingEditSettlement(
         : "Positive booking-edit delta needs an unpaid supplementary invoice; no confirmed additional Stripe payment exists.",
     };
   } else if (xeroNetAmountCents < 0) {
-    financialAction = {
-      type: "modification-credit-note",
-      refundAmountCents: Math.abs(xeroNetAmountCents),
-      reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
-    };
+    const refundAmountCents = input.settlementAmountCents ?? Math.abs(xeroNetAmountCents);
+    if (refundAmountCents <= 0) {
+      financialAction = {
+        type: "none",
+        reason: "Booking edit reduction has no policy-returnable settlement amount.",
+      };
+    } else if (input.settlementMethod === "credit") {
+      financialAction = {
+        type: "modification-account-credit-note",
+        refundAmountCents,
+        reason: "Negative booking-edit delta held as account credit needs an unapplied modification credit note.",
+      };
+    } else {
+      financialAction = {
+        type: "modification-credit-note",
+        refundAmountCents,
+        reason: "Negative booking-edit delta needs a modification credit note instead of mutating the original invoice.",
+      };
+    }
   } else {
     financialAction = {
       type: "none",
@@ -193,6 +215,18 @@ export async function queueXeroBookingEditSettlement(
     }
   } else if (decision.financialAction.type === "modification-credit-note") {
     const queued = await enqueueXeroModificationCreditNoteOperation(
+      {
+        bookingId: input.bookingId,
+        refundAmountCents: decision.financialAction.refundAmountCents,
+        bookingModificationId: input.bookingModificationId,
+      },
+      {
+        createdByMemberId: input.createdByMemberId,
+      }
+    );
+    await kickQueuedXeroOperation(queued);
+  } else if (decision.financialAction.type === "modification-account-credit-note") {
+    const queued = await enqueueXeroModificationAccountCreditNoteOperation(
       {
         bookingId: input.bookingId,
         refundAmountCents: decision.financialAction.refundAmountCents,

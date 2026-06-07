@@ -42,6 +42,7 @@ const batchModifySchema = z.object({
   promoCode: z.string().optional(),
   removePromoCode: z.boolean().optional(),
   memberReviewJustification: z.string().trim().min(1).max(1000).optional(),
+  settlementMethod: z.enum(["card", "credit"]).optional(),
 });
 
 export async function PUT(

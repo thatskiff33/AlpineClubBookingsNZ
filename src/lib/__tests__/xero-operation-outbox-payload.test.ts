@@ -63,6 +63,24 @@ describe("xero operation outbox payload parsing", () => {
     });
   });
 
+  it("normalizes modification account-credit note payloads", () => {
+    expect(
+      readQueuedOutboxPayload({
+        queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+        bookingId: "booking_1",
+        paymentId: "payment_1",
+        refundAmountCents: "3750",
+        bookingModificationId: "mod_1",
+      })
+    ).toEqual({
+      queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+      bookingId: "booking_1",
+      paymentId: "payment_1",
+      refundAmountCents: 3750,
+      bookingModificationId: "mod_1",
+    });
+  });
+
   it("maps queued payload types to guarded sync operation claims", () => {
     expect(getQueuedOutboxExpectedOperation("BOOKING_INVOICE_UPDATE")).toEqual({
       entityType: "INVOICE",
@@ -82,6 +100,11 @@ describe("xero operation outbox payload parsing", () => {
       entityType: "ALLOCATION",
       operationType: "ALLOCATE",
       localModels: ["Payment", "Booking", "BookingModification"],
+    });
+    expect(getQueuedOutboxExpectedOperation("MODIFICATION_ACCOUNT_CREDIT_NOTE")).toEqual({
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModels: ["Booking", "BookingModification"],
     });
   });
 

@@ -65,7 +65,7 @@ export async function reconcileCreditBalances(): Promise<{
       const creditsWithXero = await prisma.memberCredit.count({
         where: {
           xeroCreditNoteId: { not: null },
-          type: "CANCELLATION_REFUND",
+          type: { in: ["CANCELLATION_REFUND", "BOOKING_MODIFICATION_REFUND"] },
         },
       });
 

@@ -22,6 +22,7 @@ import {
   createXeroInvoiceForBooking,
   createXeroSupplementaryInvoice,
   createUnappliedXeroCreditNote,
+  createUnappliedXeroCreditNoteForModification,
   getEntranceFeeContext,
   isXeroConnected,
   updateXeroBookingInvoiceForBooking,
@@ -38,6 +39,7 @@ import {
   XERO_OUTBOX_ENTRANCE_FEE_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CONTACT_TYPE,
   XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE,
+  XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE,
   XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE,
@@ -1056,6 +1058,125 @@ export async function enqueueXeroModificationCreditNoteOperation(
   };
 }
 
+export async function enqueueXeroModificationAccountCreditNoteOperation(
+  params: {
+    bookingId: string;
+    refundAmountCents: number;
+    bookingModificationId: string;
+  },
+  options?: { createdByMemberId?: string }
+) {
+  const {
+    bookingId,
+    refundAmountCents,
+    bookingModificationId,
+  } = params;
+
+  if (refundAmountCents <= 0) {
+    return {
+      queueOperationId: null,
+      message: "No modification account-credit note is required for this change.",
+    };
+  }
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    select: {
+      id: true,
+      payment: {
+        select: {
+          id: true,
+        },
+      },
+    },
+  });
+
+  if (!booking) {
+    throw new Error(`Booking not found: ${bookingId}`);
+  }
+
+  if (!booking.payment?.id) {
+    return {
+      queueOperationId: null,
+      message: "No original payment exists for this booking.",
+    };
+  }
+
+  const existingLink = await prisma.xeroObjectLink.findFirst({
+    where: {
+      localModel: "BookingModification",
+      localId: bookingModificationId,
+      xeroObjectType: "CREDIT_NOTE",
+      role: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+      active: true,
+    },
+    select: { id: true },
+  });
+
+  if (existingLink) {
+    return {
+      queueOperationId: null,
+      message: "Xero modification account-credit note already linked for this change.",
+    };
+  }
+
+  const correlationKey = buildXeroIdempotencyKey(
+    "booking-mod",
+    bookingModificationId,
+    "mod-account-credit-note",
+    refundAmountCents,
+    "v1"
+  );
+
+  const existingQueuedOperation = await prisma.xeroSyncOperation.findFirst({
+    where: {
+      correlationKey,
+      direction: "OUTBOUND",
+      entityType: "CREDIT_NOTE",
+      operationType: "CREATE",
+      localModel: "BookingModification",
+      localId: bookingModificationId,
+      status: {
+        in: ["PENDING", "RUNNING"],
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  if (existingQueuedOperation) {
+    return {
+      queueOperationId: existingQueuedOperation.id,
+      message: "Xero modification account-credit note is already queued for background processing.",
+    };
+  }
+
+  const queuedOperation = await startXeroSyncOperation({
+    direction: "OUTBOUND",
+    entityType: "CREDIT_NOTE",
+    operationType: "CREATE",
+    localModel: "BookingModification",
+    localId: bookingModificationId,
+    status: "PENDING",
+    idempotencyKey: correlationKey,
+    correlationKey,
+    requestPayload: {
+      queueType: XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
+      bookingId,
+      paymentId: booking.payment.id,
+      refundAmountCents,
+      bookingModificationId,
+    },
+    createdByMemberId: options?.createdByMemberId ?? null,
+  });
+
+  return {
+    queueOperationId: queuedOperation.id,
+    message: "Xero modification account-credit note queued for background processing.",
+  };
+}
+
 export async function enqueueXeroCreditNoteAllocationOperation(
   params: {
     localModel: "Payment" | "Booking" | "BookingModification";
@@ -1500,6 +1621,12 @@ export async function processQueuedXeroOutboxOperations(options?: {
         {
           requestPayload: {
             path: ["queueType"],
+            equals: XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE,
+          },
+        },
+        {
+          requestPayload: {
+            path: ["queueType"],
             equals: XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE,
           },
         },
@@ -1592,6 +1719,16 @@ export async function processQueuedXeroOutboxOperations(options?: {
             syncOperationId: queuedOperation.id,
           }
         );
+      } else if (
+        payload?.queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
+      ) {
+        await createUnappliedXeroCreditNoteForModification({
+          paymentId: payload.paymentId,
+          refundAmountCents: payload.refundAmountCents,
+          bookingModificationId: payload.bookingModificationId,
+          createdByMemberId: queuedOperation.createdByMemberId ?? undefined,
+          syncOperationId: queuedOperation.id,
+        });
       } else if (payload?.queueType === XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE) {
         await createXeroSupplementaryInvoice({
           bookingId: payload.bookingId,

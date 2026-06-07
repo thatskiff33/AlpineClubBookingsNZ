@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 
 import { logAudit } from "@/lib/audit";
+import { ApiError } from "@/lib/api-error";
 import {
   applyChoreCleanup,
   applyGuestChanges,
@@ -14,12 +15,14 @@ import {
   applyPaymentAdjustments,
   applyPromoCodeChanges,
   assertBookingModifiable,
+  calculateModificationSettlementOptions,
   calculateModificationChangeFee,
   calculateModifiedPricing,
   loadActiveSeasonRates,
   prepareGuestPlan,
   resolveTargetDates,
   type BatchModifyInput,
+  type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
 } from "@/lib/booking-modify";
 import {
@@ -30,6 +33,7 @@ import {
 } from "@/lib/booking-modification-settlement";
 import { sendBookingModifiedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
+import { createBookingModificationCredit } from "@/lib/member-credit";
 import { prisma } from "@/lib/prisma";
 import { queueXeroBookingEditSettlement } from "@/lib/xero-booking-edit-settlement";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
@@ -45,6 +49,7 @@ type BatchModificationTransactionResult =
     priceDiffCents: number;
     changeFeeCents: number;
     refundAmountCents: number;
+    accountCreditAmountCents: number;
     promoRemoved: boolean;
     promoChanged: boolean;
     choreWarnings: string[];
@@ -57,6 +62,9 @@ type BatchModificationTransactionResult =
     zeroDollarAutoPaid: boolean;
     supersededPrimaryPaymentIntents: { length: number };
     xeroAdditionalAmountCents: number;
+    xeroRefundAmountCents: number;
+    settlementMethod: BookingModificationSettlementMethod | null;
+    policyRetainedAmountCents: number;
   };
 
 export type BatchModificationResponse = {
@@ -64,7 +72,9 @@ export type BatchModificationResponse = {
   priceDiffCents: number;
   changeFeeCents: number;
   refundAmountCents: number;
+  accountCreditAmountCents: number;
   additionalAmountCents: number;
+  settlementMethod: BookingModificationSettlementMethod | null;
   additionalPaymentClientSecret: string | null;
   stripeRefundId: string | null;
   promoRemoved: boolean;
@@ -160,6 +170,14 @@ export async function modifyBookingBatch({
       skipBookingLifecycleRules: dates.skipBookingLifecycleRules,
     });
 
+    const settlementOptions = await calculateModificationSettlementOptions({
+      booking,
+      netChargeCents: priceDiffCents + changeFeeCents,
+    });
+    if (settlementOptions?.requiresSettlementMethod && !input.settlementMethod) {
+      throw new ApiError("Choose a refund or account credit before saving", 400);
+    }
+
     await applyGuestChanges(tx, {
       bookingId,
       newCheckIn: dates.newCheckIn,
@@ -183,6 +201,8 @@ export async function modifyBookingBatch({
       booking,
       priceDiffCents,
       changeFeeCents,
+      settlementOptions,
+      settlementMethod: input.settlementMethod,
     });
 
     const lifecycle = await applyLifecycleTransitions(tx, {
@@ -259,17 +279,32 @@ export async function modifyBookingBatch({
           finalPriceCents: newFinalPriceCents,
           promoRemoved: promo.promoRemoved,
           promoChanged: promo.promoChanged,
+          settlementMethod: payments.settlementMethod,
+          accountCreditAmountCents: payments.accountCreditAmountCents,
+          policyRetainedAmountCents: payments.policyRetainedAmountCents,
         },
         priceDiffCents,
         changeFeeCents,
       },
     });
 
+    if (payments.accountCreditAmountCents > 0) {
+      await createBookingModificationCredit(
+        booking.memberId,
+        payments.accountCreditAmountCents,
+        bookingId,
+        bookingModification.id,
+        undefined,
+        tx,
+      );
+    }
+
     return {
       booking: updatedBooking,
       priceDiffCents,
       changeFeeCents,
       refundAmountCents: payments.refundAmountCents,
+      accountCreditAmountCents: payments.accountCreditAmountCents,
       additionalAmountCents: payments.additionalAmountCents,
       pendingRefundAmountCents: payments.pendingRefundAmountCents,
       promoRemoved: promo.promoRemoved,
@@ -285,6 +320,9 @@ export async function modifyBookingBatch({
       zeroDollarAutoPaid: lifecycle.zeroDollarAutoPaid,
       supersededPrimaryPaymentIntents: lifecycle.supersededPrimaryPaymentIntents,
       xeroAdditionalAmountCents: payments.xeroAdditionalAmountCents,
+      xeroRefundAmountCents: payments.xeroRefundAmountCents,
+      settlementMethod: payments.settlementMethod,
+      policyRetainedAmountCents: payments.policyRetainedAmountCents,
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
       memberEmail: booking.member.email,
@@ -331,7 +369,9 @@ export async function modifyBookingBatch({
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
     refundAmountCents: result.refundAmountCents,
+    accountCreditAmountCents: result.accountCreditAmountCents,
     additionalAmountCents: result.additionalAmountCents,
+    settlementMethod: result.settlementMethod,
     additionalPaymentClientSecret: additionalPaymentClientSecret ?? null,
     stripeRefundId: stripeRefundId ?? null,
     promoRemoved: result.promoRemoved,
@@ -360,9 +400,12 @@ async function dispatchBatchPostTransactionSideEffects({
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
     refundAmountCents: result.refundAmountCents,
+    accountCreditAmountCents: result.accountCreditAmountCents,
     promoRemoved: result.promoRemoved,
     promoChanged: result.promoChanged,
     zeroDollarAutoPaid: result.zeroDollarAutoPaid,
+    settlementMethod: result.settlementMethod,
+    policyRetainedAmountCents: result.policyRetainedAmountCents,
   };
 
   logAudit({
@@ -389,6 +432,8 @@ async function dispatchBatchPostTransactionSideEffects({
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
     datesChanged: result.datesChanged,
+    settlementMethod: result.settlementMethod,
+    settlementAmountCents: result.xeroRefundAmountCents,
     createPrimaryInvoiceWhenMissing:
       result.zeroDollarAutoPaid && !result.hasIssuedXeroInvoice,
     requiresAdditionalStripePayment:
@@ -420,6 +465,7 @@ async function dispatchBatchPostTransactionSideEffects({
     newFinalPriceCents: result.booking.finalPriceCents,
     changeFeeCents: result.changeFeeCents,
     refundAmountCents: result.refundAmountCents,
+    accountCreditAmountCents: result.accountCreditAmountCents,
     additionalAmountCents: result.additionalAmountCents,
   }).catch((err) =>
     logger.error(

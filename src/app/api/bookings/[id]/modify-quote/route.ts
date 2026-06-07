@@ -40,6 +40,7 @@ import {
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
+import { calculateModificationSettlementOptions } from "@/lib/booking-modify";
 import {
   buildInProgressGuestRangePlan,
   type BookingEditGuestRangePlan,
@@ -816,6 +817,10 @@ export async function POST(
     ? inProgressPlan.priceDiffCents
     : newFinalPriceCents - booking.finalPriceCents;
   const netChargeCents = priceDiffCents + changeFeeCents;
+  const settlementOptions = await calculateModificationSettlementOptions({
+    booking,
+    netChargeCents,
+  });
 
   return NextResponse.json({
     newTotalPriceCents,
@@ -825,6 +830,7 @@ export async function POST(
     priceDiffCents,
     changeFeeCents,
     netChargeCents,
+    settlementOptions,
     capacityAvailable: capacity.available,
     minimumStayValid: minimumStayViolations.length === 0,
     minimumStayViolations,

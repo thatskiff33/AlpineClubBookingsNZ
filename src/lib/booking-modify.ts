@@ -32,6 +32,7 @@ import {
   cleanupChoreAssignmentsForGuestStayRanges,
 } from "@/lib/chore-cleanup";
 import {
+  calculateDualRefundAmounts,
   daysUntilDate,
   loadCancellationPolicy,
   getNonMemberHoldDays,
@@ -93,6 +94,19 @@ export type BatchModifyInput = {
   promoCode?: string;
   removePromoCode?: boolean;
   memberReviewJustification?: string;
+  settlementMethod?: BookingModificationSettlementMethod;
+};
+
+export type BookingModificationSettlementMethod = "card" | "credit";
+
+export type BookingModificationSettlementOptions = {
+  basisAmountCents: number;
+  cardRefundAmountCents: number;
+  cardRefundPercentage: number;
+  accountCreditAmountCents: number;
+  accountCreditPercentage: number;
+  daysUntilCheckIn: number;
+  requiresSettlementMethod: boolean;
 };
 
 type ProposedGuestPricingInput = {
@@ -1063,12 +1077,15 @@ export async function applyChoreCleanup(
 
 export type PaymentAdjustmentResult = {
   refundAmountCents: number;
+  accountCreditAmountCents: number;
   additionalAmountCents: number;
   pendingRefundAmountCents: number;
   hasSucceededPayment: boolean;
   hasIssuedXeroInvoice: boolean;
   xeroRefundAmountCents: number;
   xeroAdditionalAmountCents: number;
+  settlementMethod: BookingModificationSettlementMethod | null;
+  policyRetainedAmountCents: number;
 };
 
 const SETTLED_BOOKING_STATUSES = [
@@ -1078,44 +1095,142 @@ const SETTLED_BOOKING_STATUSES = [
   "COMPLETED",
 ] as const;
 
+function isSettledBookingStatus(status: BookingStatus | string) {
+  return (SETTLED_BOOKING_STATUSES as readonly string[]).includes(status);
+}
+
+export async function calculateModificationSettlementOptions({
+  booking,
+  netChargeCents,
+}: {
+  booking: Pick<LoadedBookingForModify, "checkIn" | "status" | "payment">;
+  netChargeCents: number;
+}): Promise<BookingModificationSettlementOptions | null> {
+  const basisAmountCents = Math.max(0, -netChargeCents);
+  const hasSucceededPayment =
+    isSettledBookingStatus(booking.status) &&
+    booking.payment?.status === PaymentStatus.SUCCEEDED;
+
+  if (basisAmountCents <= 0 || !hasSucceededPayment) {
+    return null;
+  }
+
+  const policy = await loadCancellationPolicy(booking.checkIn);
+  const daysUntilCheckIn = daysUntilDate(booking.checkIn);
+  const {
+    cardRefundAmountCents,
+    cardRefundPercentage,
+    creditRefundAmountCents,
+    creditRefundPercentage,
+  } = calculateDualRefundAmounts(basisAmountCents, daysUntilCheckIn, policy);
+
+  return {
+    basisAmountCents,
+    cardRefundAmountCents,
+    cardRefundPercentage,
+    accountCreditAmountCents: creditRefundAmountCents,
+    accountCreditPercentage: creditRefundPercentage,
+    daysUntilCheckIn,
+    requiresSettlementMethod:
+      cardRefundAmountCents > 0 || creditRefundAmountCents > 0,
+  };
+}
+
+function resolveSelectedSettlementAmount({
+  settlementOptions,
+  settlementMethod,
+}: {
+  settlementOptions: BookingModificationSettlementOptions | null | undefined;
+  settlementMethod: BookingModificationSettlementMethod | undefined;
+}) {
+  if (!settlementOptions) {
+    return {
+      settlementMethod: null,
+      amountCents: 0,
+      policyRetainedAmountCents: 0,
+    };
+  }
+
+  if (settlementOptions.requiresSettlementMethod && !settlementMethod) {
+    throw new ApiError("Choose a refund or account credit before saving", 400);
+  }
+
+  if (!settlementOptions.requiresSettlementMethod && !settlementMethod) {
+    return {
+      settlementMethod: null,
+      amountCents: 0,
+      policyRetainedAmountCents: settlementOptions.basisAmountCents,
+    };
+  }
+
+  const resolvedMethod = settlementMethod ?? "card";
+  const amountCents =
+    resolvedMethod === "credit"
+      ? settlementOptions.accountCreditAmountCents
+      : settlementOptions.cardRefundAmountCents;
+
+  return {
+    settlementMethod: resolvedMethod,
+    amountCents,
+    policyRetainedAmountCents: Math.max(
+      0,
+      settlementOptions.basisAmountCents - amountCents,
+    ),
+  };
+}
+
 export async function applyPaymentAdjustments(
   tx: Prisma.TransactionClient,
   {
     booking,
     priceDiffCents,
     changeFeeCents,
+    settlementOptions,
+    settlementMethod,
   }: {
     booking: LoadedBookingForModify;
     priceDiffCents: number;
     changeFeeCents: number;
+    settlementOptions?: BookingModificationSettlementOptions | null;
+    settlementMethod?: BookingModificationSettlementMethod;
   },
 ): Promise<PaymentAdjustmentResult> {
-  const inSettledStatus = (SETTLED_BOOKING_STATUSES as readonly string[]).includes(
-    booking.status,
-  );
+  const inSettledStatus = isSettledBookingStatus(booking.status);
   const hasSucceededPayment =
     inSettledStatus && booking.payment?.status === "SUCCEEDED";
   const hasIssuedXeroInvoice =
     inSettledStatus && !!booking.payment?.xeroInvoiceId;
 
-  const xeroNetAmountCents = hasIssuedXeroInvoice
-    ? priceDiffCents + changeFeeCents
-    : 0;
+  const netAmountCents = priceDiffCents + changeFeeCents;
+  const selectedSettlement = resolveSelectedSettlementAmount({
+    settlementOptions,
+    settlementMethod,
+  });
   const xeroRefundAmountCents =
-    xeroNetAmountCents < 0 ? Math.abs(xeroNetAmountCents) : 0;
+    hasIssuedXeroInvoice && netAmountCents < 0
+      ? selectedSettlement.amountCents
+      : 0;
   const xeroAdditionalAmountCents =
-    xeroNetAmountCents > 0 ? xeroNetAmountCents : 0;
+    hasIssuedXeroInvoice && netAmountCents > 0 ? netAmountCents : 0;
 
   let refundAmountCents = 0;
+  let accountCreditAmountCents = 0;
   let additionalAmountCents = 0;
   let pendingRefundAmountCents = 0;
 
   if (hasSucceededPayment && booking.payment) {
-    if (priceDiffCents < 0) {
-      refundAmountCents = Math.abs(priceDiffCents);
+    if (settlementOptions && netAmountCents < 0) {
+      if (selectedSettlement.settlementMethod === "credit") {
+        accountCreditAmountCents = selectedSettlement.amountCents;
+      } else {
+        refundAmountCents = selectedSettlement.amountCents;
+      }
       pendingRefundAmountCents = refundAmountCents;
-    } else if (priceDiffCents > 0 || changeFeeCents > 0) {
-      additionalAmountCents = Math.max(priceDiffCents, 0) + changeFeeCents;
+    } else if (netAmountCents < 0) {
+      refundAmountCents = Math.abs(netAmountCents);
+      pendingRefundAmountCents = refundAmountCents;
+    } else if (netAmountCents > 0) {
+      additionalAmountCents = netAmountCents;
     }
 
     if (changeFeeCents > 0) {
@@ -1130,12 +1245,15 @@ export async function applyPaymentAdjustments(
 
   return {
     refundAmountCents,
+    accountCreditAmountCents,
     additionalAmountCents,
     pendingRefundAmountCents,
     hasSucceededPayment,
     hasIssuedXeroInvoice,
     xeroRefundAmountCents,
     xeroAdditionalAmountCents,
+    settlementMethod: selectedSettlement.settlementMethod,
+    policyRetainedAmountCents: selectedSettlement.policyRetainedAmountCents,
   };
 }
 

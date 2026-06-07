@@ -241,7 +241,7 @@ export interface LinkParentSearchResult extends ParentMemberSummary {
 export interface CreditHistoryItem {
   id: string
   amountCents: number
-  type: "CANCELLATION_REFUND" | "ADMIN_ADJUSTMENT" | "BOOKING_APPLIED"
+  type: "CANCELLATION_REFUND" | "BOOKING_MODIFICATION_REFUND" | "ADMIN_ADJUSTMENT" | "BOOKING_APPLIED"
   description: string
   createdAt: string
   requestedBy: AdminActor | null

@@ -173,6 +173,7 @@ export type {
 export {
   allocateCreditNoteToInvoice,
   createUnappliedXeroCreditNote,
+  createUnappliedXeroCreditNoteForModification,
   createXeroCreditNote,
 } from "./xero-credit-notes";
 export type {

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   enqueueXeroBookingInvoiceOperation: vi.fn(),
   enqueueXeroBookingInvoiceUpdateOperation: vi.fn(),
+  enqueueXeroModificationAccountCreditNoteOperation: vi.fn(),
   enqueueXeroModificationCreditNoteOperation: vi.fn(),
   enqueueXeroSupplementaryInvoiceOperation: vi.fn(),
   kickQueuedXeroOutboxOperationsIfConnected: vi.fn(),
@@ -80,6 +81,22 @@ describe("classifyXeroBookingEditSettlement", () => {
     });
   });
 
+  it("uses unapplied account-credit notes for credit-settled negative deltas", () => {
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -5000,
+      settlementMethod: "credit",
+      settlementAmountCents: 3750,
+    });
+
+    expect(decision.financialAction).toEqual({
+      type: "modification-account-credit-note",
+      refundAmountCents: 3750,
+      reason: expect.stringContaining("account credit"),
+    });
+  });
+
   it("allows safe primary narration updates for unpaid invoice date-only changes", () => {
     const decision = classifyXeroBookingEditSettlement({
       hasIssuedXeroInvoice: true,
@@ -107,6 +124,9 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
     });
     mocks.enqueueXeroModificationCreditNoteOperation.mockResolvedValue({
       queueOperationId: "op-credit",
+    });
+    mocks.enqueueXeroModificationAccountCreditNoteOperation.mockResolvedValue({
+      queueOperationId: "op-account-credit",
     });
     mocks.enqueueXeroSupplementaryInvoiceOperation.mockResolvedValue({
       queueOperationId: "op-supp",
@@ -181,5 +201,32 @@ describe("queueXeroBookingEditSettlement (side effects)", () => {
       expect.objectContaining({ createdByMemberId: "admin_1" }),
     );
     expect(mocks.enqueueXeroSupplementaryInvoiceOperation).not.toHaveBeenCalled();
+  });
+
+  it("queues a modification account-credit note for a credit-settled negative delta", async () => {
+    const decision = await queueXeroBookingEditSettlement({
+      bookingId: "booking_3",
+      bookingModificationId: "mod_3",
+      createdByMemberId: "admin_1",
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: -5000,
+      settlementMethod: "credit",
+      settlementAmountCents: 3750,
+      datesChanged: false,
+    });
+
+    expect(decision.financialAction.type).toBe("modification-account-credit-note");
+    expect(
+      mocks.enqueueXeroModificationAccountCreditNoteOperation,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bookingId: "booking_3",
+        refundAmountCents: 3750,
+        bookingModificationId: "mod_3",
+      }),
+      expect.objectContaining({ createdByMemberId: "admin_1" }),
+    );
+    expect(mocks.enqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
   });
 });

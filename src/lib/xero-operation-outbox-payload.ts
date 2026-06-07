@@ -10,6 +10,8 @@ export const XERO_OUTBOX_SUPPLEMENTARY_INVOICE_TYPE =
   "SUPPLEMENTARY_INVOICE";
 export const XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE =
   "MODIFICATION_CREDIT_NOTE";
+export const XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE =
+  "MODIFICATION_ACCOUNT_CREDIT_NOTE";
 export const XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE =
   "CREDIT_NOTE_ALLOCATION";
 export const XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE =
@@ -64,6 +66,14 @@ export interface QueuedModificationCreditNoteOutboxPayload {
   bookingModificationId?: string;
 }
 
+export interface QueuedModificationAccountCreditNoteOutboxPayload {
+  queueType: typeof XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE;
+  bookingId: string;
+  paymentId: string;
+  refundAmountCents: number;
+  bookingModificationId: string;
+}
+
 export interface QueuedCreditNoteAllocationOutboxPayload {
   queueType: typeof XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE;
   creditNoteId: string;
@@ -94,6 +104,7 @@ export type QueuedOutboxPayload =
   | QueuedAccountCreditNoteOutboxPayload
   | QueuedSupplementaryInvoiceOutboxPayload
   | QueuedModificationCreditNoteOutboxPayload
+  | QueuedModificationAccountCreditNoteOutboxPayload
   | QueuedCreditNoteAllocationOutboxPayload
   | QueuedMembershipCancellationCreditNoteOutboxPayload
   | QueuedMembershipCancellationContactOutboxPayload;
@@ -261,6 +272,25 @@ export function readQueuedOutboxPayload(
     };
   }
 
+  if (queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE) {
+    const bookingId = readString(payload.bookingId);
+    const paymentId = readString(payload.paymentId);
+    const refundAmountCents = readNumber(payload.refundAmountCents);
+    const bookingModificationId = readString(payload.bookingModificationId);
+
+    if (!bookingId || !paymentId || refundAmountCents === null || !bookingModificationId) {
+      return null;
+    }
+
+    return {
+      queueType,
+      bookingId,
+      paymentId,
+      refundAmountCents,
+      bookingModificationId,
+    };
+  }
+
   if (queueType === XERO_OUTBOX_CREDIT_NOTE_ALLOCATION_TYPE) {
     const creditNoteId = readString(payload.creditNoteId);
     const invoiceId = readString(payload.invoiceId);
@@ -369,13 +399,15 @@ export function getQueuedOutboxExpectedOperation(
     queueType === XERO_OUTBOX_REFUND_CREDIT_NOTE_TYPE ||
     queueType === XERO_OUTBOX_ACCOUNT_CREDIT_NOTE_TYPE ||
     queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE ||
+    queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE ||
     queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE
   ) {
     return {
       entityType: "CREDIT_NOTE",
       operationType: "CREATE",
       localModels:
-        queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE
+        queueType === XERO_OUTBOX_MODIFICATION_CREDIT_NOTE_TYPE ||
+        queueType === XERO_OUTBOX_MODIFICATION_ACCOUNT_CREDIT_NOTE_TYPE
           ? ["Booking", "BookingModification"]
           : queueType === XERO_OUTBOX_MEMBERSHIP_CANCELLATION_CREDIT_NOTE_TYPE
             ? ["MemberSubscription"]

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   upsertXeroObjectLink: vi.fn(),
   getEntranceFeeContext: vi.fn(),
   createUnappliedXeroCreditNote: vi.fn(),
+  createUnappliedXeroCreditNoteForModification: vi.fn(),
   allocateCreditNoteToInvoice: vi.fn(),
   createXeroCreditNote: vi.fn(),
   createXeroCreditNoteForModification: vi.fn(),
@@ -87,6 +88,8 @@ vi.mock("@/lib/xero", () => ({
     amountCents: number
   ) => `member:${memberId}:entrance-fee-invoice:${category}:${amountCents}:v1`,
   createUnappliedXeroCreditNote: mocks.createUnappliedXeroCreditNote,
+  createUnappliedXeroCreditNoteForModification:
+    mocks.createUnappliedXeroCreditNoteForModification,
   createXeroCreditNote: mocks.createXeroCreditNote,
   createXeroCreditNoteForModification: mocks.createXeroCreditNoteForModification,
   getEntranceFeeContext: mocks.getEntranceFeeContext,
@@ -111,6 +114,7 @@ import {
   enqueueXeroEntranceFeeInvoiceOperation,
   enqueueXeroMembershipCancellationContactOperation,
   enqueueXeroMembershipCancellationCreditNoteOperation,
+  enqueueXeroModificationAccountCreditNoteOperation,
   enqueueXeroModificationCreditNoteOperation,
   enqueueXeroRefundCreditNoteOperation,
   enqueueXeroSupplementaryInvoiceOperation,
@@ -646,6 +650,60 @@ describe("enqueueXeroModificationCreditNoteOperation", () => {
           queueType: "MODIFICATION_CREDIT_NOTE",
           bookingId: "booking_1",
           refundAmountCents: 3200,
+          bookingModificationId: "mod_1",
+        },
+      })
+    );
+  });
+});
+
+describe("enqueueXeroModificationAccountCreditNoteOperation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.findFirstLink.mockResolvedValue(null);
+    mocks.findUniqueBooking.mockResolvedValue({
+      id: "booking_1",
+      payment: {
+        id: "payment_1",
+      },
+    });
+    mocks.findFirstOperation.mockResolvedValue(null);
+    mocks.startXeroSyncOperation.mockResolvedValue({ id: "op_mod_account_credit_1" });
+  });
+
+  it("creates a pending Xero sync operation for modification account-credit notes", async () => {
+    await expect(
+      enqueueXeroModificationAccountCreditNoteOperation(
+        {
+          bookingId: "booking_1",
+          refundAmountCents: 3750,
+          bookingModificationId: "mod_1",
+        },
+        {
+          createdByMemberId: "admin_1",
+        }
+      )
+    ).resolves.toEqual({
+      queueOperationId: "op_mod_account_credit_1",
+      message: "Xero modification account-credit note queued for background processing.",
+    });
+
+    expect(mocks.startXeroSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        direction: "OUTBOUND",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        localModel: "BookingModification",
+        localId: "mod_1",
+        status: "PENDING",
+        idempotencyKey: "booking-mod:mod_1:mod-account-credit-note:3750:v1",
+        correlationKey: "booking-mod:mod_1:mod-account-credit-note:3750:v1",
+        createdByMemberId: "admin_1",
+        requestPayload: {
+          queueType: "MODIFICATION_ACCOUNT_CREDIT_NOTE",
+          bookingId: "booking_1",
+          paymentId: "payment_1",
+          refundAmountCents: 3750,
           bookingModificationId: "mod_1",
         },
       })

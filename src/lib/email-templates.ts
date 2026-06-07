@@ -1190,6 +1190,7 @@ export function bookingModifiedTemplate(params: {
   newFinalPriceCents: number;
   changeFeeCents: number;
   refundAmountCents: number;
+  accountCreditAmountCents?: number;
   additionalAmountCents: number;
 }): string {
   const {
@@ -1205,6 +1206,7 @@ export function bookingModifiedTemplate(params: {
     newFinalPriceCents,
     changeFeeCents,
     refundAmountCents,
+    accountCreditAmountCents = 0,
     additionalAmountCents,
   } = params;
 
@@ -1258,6 +1260,11 @@ export function bookingModifiedTemplate(params: {
   if (refundAmountCents > 0) {
     paymentNote = alertBox(
       `A refund of ${formatCents(refundAmountCents)} has been processed to your original payment method.`,
+      "success"
+    );
+  } else if (accountCreditAmountCents > 0) {
+    paymentNote = alertBox(
+      `Account credit of ${formatCents(accountCreditAmountCents)} has been added for future bookings.`,
       "success"
     );
   } else if (additionalAmountCents > 0) {

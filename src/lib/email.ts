@@ -1770,8 +1770,19 @@ export async function sendBookingModifiedEmail(params: {
   newFinalPriceCents: number;
   changeFeeCents: number;
   refundAmountCents: number;
+  accountCreditAmountCents?: number;
   additionalAmountCents: number;
 }) {
+  const accountCreditAmountCents = params.accountCreditAmountCents ?? 0;
+  const paymentNote =
+    params.refundAmountCents > 0
+      ? `A refund of ${formatMoneyCents(params.refundAmountCents)} has been processed to your original payment method.`
+      : accountCreditAmountCents > 0
+        ? `Account credit of ${formatMoneyCents(accountCreditAmountCents)} has been added for future bookings.`
+        : params.additionalAmountCents > 0
+          ? `An additional payment of ${formatMoneyCents(params.additionalAmountCents)} is required.`
+          : "";
+
   await sendEmail({
     to: params.email,
     subject: `Booking Modified - ${CLUB_LODGE_NAME}`,
@@ -1790,13 +1801,9 @@ export async function sendBookingModifiedEmail(params: {
       newTotal: formatMoneyCents(params.newFinalPriceCents),
       changeFee: formatMoneyCents(params.changeFeeCents),
       refundAmount: formatMoneyCents(params.refundAmountCents),
+      accountCreditAmount: formatMoneyCents(accountCreditAmountCents),
       additionalAmount: formatMoneyCents(params.additionalAmountCents),
-      paymentNote:
-        params.refundAmountCents > 0
-          ? `A refund of ${formatMoneyCents(params.refundAmountCents)} has been processed to your original payment method.`
-          : params.additionalAmountCents > 0
-            ? `An additional payment of ${formatMoneyCents(params.additionalAmountCents)} is required.`
-            : "",
+      paymentNote,
     },
   });
 }

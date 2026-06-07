@@ -54,7 +54,25 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
-vi.mock("@/lib/cancellation", () => ({ getNonMemberHoldDays: vi.fn().mockResolvedValue(7) }));
+vi.mock("@/lib/cancellation", () => ({
+  getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
+  daysUntilDate: vi.fn().mockReturnValue(30),
+  loadCancellationPolicy: vi.fn().mockResolvedValue([
+    {
+      daysBeforeStay: 0,
+      refundPercentage: 50,
+      creditRefundPercentage: 75,
+      fixedFeeCents: 0,
+      creditFixedFeeCents: 0,
+    },
+  ]),
+  calculateDualRefundAmounts: (paidAmountCents: number) => ({
+    cardRefundAmountCents: Math.round((paidAmountCents * 50) / 100),
+    cardRefundPercentage: 50,
+    creditRefundAmountCents: Math.round((paidAmountCents * 75) / 100),
+    creditRefundPercentage: 75,
+  }),
+}));
 vi.mock("@/lib/pricing", () => ({
   calculateBookingPrice: vi.fn().mockReturnValue({
     totalPriceCents: 10000,
@@ -540,6 +558,78 @@ describe("P2.3: Guest subscription check", () => {
       ],
       expect.any(Array)
     );
+  });
+
+  it("includes policy-adjusted card refund and account credit options for paid booking reductions", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1", role: "MEMBER" } });
+    const { calculateBookingPrice } = await import("@/lib/pricing");
+    const mockedPrice = vi.mocked(calculateBookingPrice);
+
+    mockedPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      checkIn,
+      checkOut,
+      status: "CONFIRMED",
+      totalPriceCents: 10000,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      finalPriceCents: 10000,
+      guests: [
+        {
+          id: "existing-1",
+          firstName: "Alice",
+          lastName: "Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: "member-1",
+          stayStart: checkIn,
+          stayEnd: checkOut,
+          priceCents: 5000,
+        },
+        {
+          id: "existing-2",
+          firstName: "Bob",
+          lastName: "Smith",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: null,
+          stayStart: checkIn,
+          stayEnd: checkOut,
+          priceCents: 5000,
+        },
+      ],
+      payment: {
+        id: "payment-1",
+        status: "SUCCEEDED",
+      },
+      promoRedemption: null,
+    });
+
+    const req = makeModifyQuoteRequest({
+      removeGuestIds: ["existing-2"],
+    });
+
+    const res = await getModifyQuote(req, {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.netChargeCents).toBe(-5000);
+    expect(body.settlementOptions).toEqual({
+      basisAmountCents: 5000,
+      cardRefundAmountCents: 2500,
+      cardRefundPercentage: 50,
+      accountCreditAmountCents: 3750,
+      accountCreditPercentage: 75,
+      daysUntilCheckIn: 30,
+      requiresSettlementMethod: true,
+    });
   });
 
   it("blocks the modify quote flow from pricing incomplete linked member guests", async () => {

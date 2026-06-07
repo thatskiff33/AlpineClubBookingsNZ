@@ -183,6 +183,7 @@ enum ChoreStatus {
 
 enum CreditType {
   CANCELLATION_REFUND
+  BOOKING_MODIFICATION_REFUND
   ADMIN_ADJUSTMENT
   BOOKING_APPLIED
 }
@@ -1663,6 +1664,7 @@ model BookingModification {
 
   booking              Booking                @relation(fields: [bookingId], references: [id], onDelete: Restrict)
   linkedChangeRequests BookingChangeRequest[] @relation("BookingChangeRequestLinkedModification")
+  creditsFromModification MemberCredit[]      @relation("CreditSourceModification")
 
   @@index([bookingId])
   @@index([memberId])
@@ -2073,6 +2075,7 @@ model MemberCredit {
   approvedById       String? // Admin who approved a manual adjustment
   approvalRequestId  String?    @unique // Links approved manual adjustments to their request
   sourceBookingId    String? // Booking that generated the credit (cancellation)
+  sourceBookingModificationId String? // Booking modification that generated the credit
   appliedToBookingId String? // Booking where credit was spent
   xeroCreditNoteId   String? // Linked Xero credit note ID
   createdAt          DateTime   @default(now())
@@ -2082,12 +2085,14 @@ model MemberCredit {
   approvedBy       Member?                       @relation("ApprovedAdminCredits", fields: [approvedById], references: [id], onDelete: SetNull)
   approvalRequest  AdminCreditAdjustmentRequest? @relation("ApprovedAdminCreditAdjustment", fields: [approvalRequestId], references: [id], onDelete: SetNull)
   sourceBooking    Booking?                      @relation("CreditSource", fields: [sourceBookingId], references: [id], onDelete: SetNull)
+  sourceBookingModification BookingModification?  @relation("CreditSourceModification", fields: [sourceBookingModificationId], references: [id], onDelete: SetNull)
   appliedToBooking Booking?                      @relation("CreditApplied", fields: [appliedToBookingId], references: [id], onDelete: SetNull)
 
   @@index([memberId])
   @@index([requestedById])
   @@index([approvedById])
   @@index([sourceBookingId])
+  @@index([sourceBookingModificationId])
   @@index([appliedToBookingId])
 }
 

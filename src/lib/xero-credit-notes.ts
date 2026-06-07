@@ -59,6 +59,7 @@ export interface CreateXeroRefundCreditNoteOptions
 export interface CreateXeroUnappliedCreditNoteOptions
   extends FindOrCreateXeroContactOptions {
   syncOperationId?: string;
+  bookingModificationId?: string;
 }
 
 export async function createXeroCreditNote(
@@ -369,6 +370,28 @@ async function backfillCancellationCreditXeroNote(params: {
   });
 }
 
+async function backfillBookingModificationCreditXeroNote(params: {
+  memberId: string;
+  bookingId: string;
+  bookingModificationId: string;
+  refundAmountCents: number;
+  creditNoteId: string;
+}) {
+  await prisma.memberCredit.updateMany({
+    where: {
+      memberId: params.memberId,
+      sourceBookingId: params.bookingId,
+      sourceBookingModificationId: params.bookingModificationId,
+      amountCents: params.refundAmountCents,
+      type: CreditType.BOOKING_MODIFICATION_REFUND,
+      xeroCreditNoteId: null,
+    },
+    data: {
+      xeroCreditNoteId: params.creditNoteId,
+    },
+  });
+}
+
 /**
  * Create an UNAPPLIED Xero credit note for account credit refunds.
  * Unlike createXeroCreditNote(), this:
@@ -393,12 +416,18 @@ export async function createUnappliedXeroCreditNote(
 
   if (!payment) throw new Error(`Payment not found: ${paymentId}`);
   const queuedOperationId = options?.syncOperationId ?? null;
+  const bookingModificationId = options?.bookingModificationId ?? null;
+  const linkLocalModel = bookingModificationId ? "BookingModification" : "Payment";
+  const linkLocalId = bookingModificationId ?? paymentId;
+  const linkRole = bookingModificationId
+    ? "MODIFICATION_ACCOUNT_CREDIT_NOTE"
+    : "ACCOUNT_CREDIT_NOTE";
   const existingLink = await prisma.xeroObjectLink.findFirst({
     where: {
-      localModel: "Payment",
-      localId: paymentId,
+      localModel: linkLocalModel,
+      localId: linkLocalId,
       xeroObjectType: "CREDIT_NOTE",
-      role: "ACCOUNT_CREDIT_NOTE",
+      role: linkRole,
       active: true,
     },
     select: {
@@ -408,12 +437,22 @@ export async function createUnappliedXeroCreditNote(
   });
 
   if (existingLink?.xeroObjectId) {
-    await backfillCancellationCreditXeroNote({
-      memberId: payment.booking.memberId,
-      bookingId: payment.booking.id,
-      refundAmountCents,
-      creditNoteId: existingLink.xeroObjectId,
-    });
+    if (bookingModificationId) {
+      await backfillBookingModificationCreditXeroNote({
+        memberId: payment.booking.memberId,
+        bookingId: payment.booking.id,
+        bookingModificationId,
+        refundAmountCents,
+        creditNoteId: existingLink.xeroObjectId,
+      });
+    } else {
+      await backfillCancellationCreditXeroNote({
+        memberId: payment.booking.memberId,
+        bookingId: payment.booking.id,
+        refundAmountCents,
+        creditNoteId: existingLink.xeroObjectId,
+      });
+    }
 
     if (queuedOperationId) {
       await completeXeroSyncOperation(queuedOperationId, {
@@ -425,12 +464,12 @@ export async function createUnappliedXeroCreditNote(
         xeroObjectNumber: existingLink.xeroObjectNumber ?? null,
         extraLinks: [
           {
-            localModel: "Payment",
-            localId: paymentId,
+            localModel: linkLocalModel,
+            localId: linkLocalId,
             xeroObjectType: "CREDIT_NOTE",
             xeroObjectId: existingLink.xeroObjectId,
             xeroObjectNumber: existingLink.xeroObjectNumber ?? null,
-            role: "ACCOUNT_CREDIT_NOTE",
+            role: linkRole,
           },
         ],
       });
@@ -450,7 +489,9 @@ export async function createUnappliedXeroCreditNote(
   const accountCode = refundMapping.code ?? "200";
 
   const creditLineItem: LineItem = {
-    description: `Account credit from booking ${payment.booking.id.slice(0, 8)} (${formatDate(new Date(payment.booking.checkIn))} - ${formatDate(new Date(payment.booking.checkOut))})`,
+    description: bookingModificationId
+      ? `Account credit from booking modification ${bookingModificationId.slice(0, 8)} (Booking ${payment.booking.id.slice(0, 8)})`
+      : `Account credit from booking ${payment.booking.id.slice(0, 8)} (${formatDate(new Date(payment.booking.checkIn))} - ${formatDate(new Date(payment.booking.checkOut))})`,
     quantity: 1,
     unitAmount: refundAmountCents / 100,
     taxType: "OUTPUT2",
@@ -468,14 +509,16 @@ export async function createUnappliedXeroCreditNote(
     date: formatDate(new Date()),
     lineAmountTypes: LineAmountTypes.Inclusive,
     lineItems: [creditLineItem],
-    reference: `Account Credit - Booking ${payment.booking.id.slice(0, 8)}`,
+    reference: bookingModificationId
+      ? `Modification Credit - Booking ${payment.booking.id.slice(0, 8)}`
+      : `Account Credit - Booking ${payment.booking.id.slice(0, 8)}`,
     status: CreditNote.StatusEnum.AUTHORISED,
   });
 
   const idempotencyKey = buildXeroIdempotencyKey(
-    "payment",
-    paymentId,
-    "unapplied-credit-note",
+    bookingModificationId ? "booking-mod" : "payment",
+    linkLocalId,
+    bookingModificationId ? "mod-unapplied-credit-note" : "unapplied-credit-note",
     refundAmountCents,
     "v1"
   );
@@ -494,8 +537,8 @@ export async function createUnappliedXeroCreditNote(
       direction: "OUTBOUND",
       entityType: "CREDIT_NOTE",
       operationType: "CREATE",
-      localModel: "Payment",
-      localId: paymentId,
+      localModel: linkLocalModel,
+      localId: linkLocalId,
       idempotencyKey,
       correlationKey: idempotencyKey,
       requestPayload,
@@ -539,12 +582,22 @@ export async function createUnappliedXeroCreditNote(
       throw new Error("Failed to create unapplied Xero credit note");
     }
 
-    await backfillCancellationCreditXeroNote({
-      memberId: payment.booking.memberId,
-      bookingId: payment.booking.id,
-      refundAmountCents,
-      creditNoteId: createdNote.creditNoteID,
-    });
+    if (bookingModificationId) {
+      await backfillBookingModificationCreditXeroNote({
+        memberId: payment.booking.memberId,
+        bookingId: payment.booking.id,
+        bookingModificationId,
+        refundAmountCents,
+        creditNoteId: createdNote.creditNoteID,
+      });
+    } else {
+      await backfillCancellationCreditXeroNote({
+        memberId: payment.booking.memberId,
+        bookingId: payment.booking.id,
+        refundAmountCents,
+        creditNoteId: createdNote.creditNoteID,
+      });
+    }
 
     await completeXeroSyncOperation(operationId!, {
       responsePayload: response.body,
@@ -553,12 +606,12 @@ export async function createUnappliedXeroCreditNote(
       xeroObjectNumber: createdNote.creditNoteNumber ?? null,
       extraLinks: [
         {
-          localModel: "Payment",
-          localId: paymentId,
+          localModel: linkLocalModel,
+          localId: linkLocalId,
           xeroObjectType: "CREDIT_NOTE",
           xeroObjectId: createdNote.creditNoteID,
           xeroObjectNumber: createdNote.creditNoteNumber ?? null,
-          role: "ACCOUNT_CREDIT_NOTE",
+          role: linkRole,
         },
       ],
     });
@@ -573,6 +626,24 @@ export async function createUnappliedXeroCreditNote(
     await failXeroSyncOperation(operationId!, error);
     throw error;
   }
+}
+
+export async function createUnappliedXeroCreditNoteForModification(params: {
+  paymentId: string;
+  refundAmountCents: number;
+  bookingModificationId: string;
+  createdByMemberId?: string;
+  syncOperationId?: string;
+}): Promise<string> {
+  return createUnappliedXeroCreditNote(
+    params.paymentId,
+    params.refundAmountCents,
+    {
+      createdByMemberId: params.createdByMemberId,
+      syncOperationId: params.syncOperationId,
+      bookingModificationId: params.bookingModificationId,
+    },
+  );
 }
 
 /**

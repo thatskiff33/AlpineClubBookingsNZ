@@ -31,6 +31,7 @@ const mockPaymentTransactionUpdateMany = vi.fn();
 const mockEnqueuePaymentIntentCancellationRecovery = vi.fn();
 const mockProcessPaymentRecoveryOperations = vi.fn();
 const mockEnqueueBookingModificationRefundRecovery = vi.fn();
+const mockLoadCancellationPolicy = vi.fn();
 const mockAssertLinkedBookingMembersCanBeBooked = vi.fn().mockResolvedValue(undefined);
 const mockGetBookingGuestValidationErrorResponse = vi.fn((error: { message: string }) => ({
   error: error.message,
@@ -39,6 +40,7 @@ const mockEnqueueXeroBookingInvoiceOperation = vi.fn().mockResolvedValue({ queue
 const mockEnqueueXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_booking_update", message: "queued" });
 const mockEnqueueXeroSupplementaryInvoiceOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_supplementary", message: "queued" });
 const mockEnqueueXeroModificationCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_credit_note", message: "queued" });
+const mockEnqueueXeroModificationAccountCreditNoteOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_mod_account_credit_note", message: "queued" });
 const mockKickQueuedXeroOutboxOperationsIfConnected = vi.fn().mockResolvedValue(null);
 const mockRecordSkippedXeroBookingInvoiceUpdateOperation = vi.fn().mockResolvedValue({ queueOperationId: "op_skip", message: "skipped" });
 
@@ -90,7 +92,38 @@ vi.mock("@/lib/change-fee", () => ({
 
 vi.mock("@/lib/cancellation", () => ({
   daysUntilDate: vi.fn().mockReturnValue(30),
-  loadCancellationPolicy: vi.fn().mockResolvedValue([]),
+  loadCancellationPolicy: (...args: unknown[]) => mockLoadCancellationPolicy(...args),
+  calculateDualRefundAmounts: (
+    paidAmountCents: number,
+    _daysUntilCheckIn: number,
+    policyRules: Array<{
+      refundPercentage: number;
+      creditRefundPercentage: number;
+      fixedFeeCents?: number;
+      creditFixedFeeCents?: number;
+    }>
+  ) => {
+    const tier = policyRules[0] ?? {
+      refundPercentage: 0,
+      creditRefundPercentage: 0,
+      fixedFeeCents: 0,
+      creditFixedFeeCents: 0,
+    };
+    return {
+      cardRefundAmountCents: Math.max(
+        0,
+        Math.round((paidAmountCents * tier.refundPercentage) / 100) -
+          (tier.fixedFeeCents ?? 0)
+      ),
+      cardRefundPercentage: tier.refundPercentage,
+      creditRefundAmountCents: Math.max(
+        0,
+        Math.round((paidAmountCents * tier.creditRefundPercentage) / 100) -
+          (tier.creditFixedFeeCents ?? 0)
+      ),
+      creditRefundPercentage: tier.creditRefundPercentage,
+    };
+  },
   getNonMemberHoldDays: vi.fn().mockResolvedValue(7),
 }));
 
@@ -151,6 +184,7 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
   enqueueXeroBookingInvoiceUpdateOperation: mockEnqueueXeroBookingInvoiceUpdateOperation,
   enqueueXeroSupplementaryInvoiceOperation: mockEnqueueXeroSupplementaryInvoiceOperation,
   enqueueXeroModificationCreditNoteOperation: mockEnqueueXeroModificationCreditNoteOperation,
+  enqueueXeroModificationAccountCreditNoteOperation: mockEnqueueXeroModificationAccountCreditNoteOperation,
   kickQueuedXeroOutboxOperationsIfConnected: mockKickQueuedXeroOutboxOperationsIfConnected,
   recordSkippedXeroBookingInvoiceUpdateOperation: mockRecordSkippedXeroBookingInvoiceUpdateOperation,
 }));
@@ -297,6 +331,9 @@ function makeTx(booking: ReturnType<typeof makeBooking>) {
         status: "SUCCEEDED",
       }),
     },
+    memberCredit: {
+      create: vi.fn().mockResolvedValue({ id: "credit_1" }),
+    },
     paymentTransaction: {
       findMany: vi.fn().mockResolvedValue([]),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -358,6 +395,15 @@ describe("PUT /api/bookings/[id]/modify", () => {
     mockEnqueueBookingModificationRefundRecovery.mockResolvedValue({
       id: "recovery_refund",
     });
+    mockLoadCancellationPolicy.mockResolvedValue([
+      {
+        daysBeforeStay: 0,
+        refundPercentage: 100,
+        creditRefundPercentage: 100,
+        fixedFeeCents: 0,
+        creditFixedFeeCents: 0,
+      },
+    ]);
     mockProcessPaymentRecoveryOperations.mockResolvedValue({
       found: 1,
       processed: 1,
@@ -945,6 +991,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
         body: JSON.stringify({
           checkOut: "2026-08-22",
           removeGuestIds: ["g1"],
+          settlementMethod: "card",
         }),
       });
 
@@ -1193,7 +1240,7 @@ describe("PUT /api/bookings/[id]/modify", () => {
 
     const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
       method: "PUT",
-      body: JSON.stringify({ removeGuestIds: ["g2"] }),
+      body: JSON.stringify({ removeGuestIds: ["g2"], settlementMethod: "card" }),
     });
 
     const response = await PUT(request, {
@@ -1214,6 +1261,197 @@ describe("PUT /api/bookings/[id]/modify", () => {
       bookingModificationId: "mod_1",
       amountCents: 5000,
     });
+  });
+
+  it("rejects paid reductions without a settlement method", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    booking.guests = [
+      ...booking.guests,
+      {
+        id: "g2",
+        bookingId: "bk1",
+        firstName: "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        memberId: null,
+        priceCents: 5000,
+      },
+    ];
+    booking.totalPriceCents = 10000;
+    booking.finalPriceCents = 10000;
+    booking.payment!.amountCents = 10000;
+
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ removeGuestIds: ["g2"] }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Choose a refund or account credit before saving",
+    });
+    expect(tx.bookingGuest.delete).not.toHaveBeenCalled();
+    expect(tx.booking.update).not.toHaveBeenCalled();
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+  });
+
+  it("creates account credit and skips Stripe refund when credit is selected for a partial policy reduction", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    booking.guests = [
+      ...booking.guests,
+      {
+        id: "g2",
+        bookingId: "bk1",
+        firstName: "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        memberId: null,
+        priceCents: 5000,
+      },
+    ];
+    booking.totalPriceCents = 10000;
+    booking.finalPriceCents = 10000;
+    booking.payment!.amountCents = 10000;
+    mockLoadCancellationPolicy.mockResolvedValueOnce([
+      {
+        daysBeforeStay: 0,
+        refundPercentage: 50,
+        creditRefundPercentage: 75,
+        fixedFeeCents: 0,
+        creditFixedFeeCents: 0,
+      },
+    ]);
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ removeGuestIds: ["g2"], settlementMethod: "credit" }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.refundAmountCents).toBe(0);
+    expect(data.accountCreditAmountCents).toBe(3750);
+    expect(data.settlementMethod).toBe("credit");
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(tx.memberCredit.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        memberId: "m1",
+        amountCents: 3750,
+        type: "BOOKING_MODIFICATION_REFUND",
+        sourceBookingId: "bk1",
+        sourceBookingModificationId: "mod_1",
+      }),
+    });
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationAccountCreditNoteOperation).toHaveBeenCalledWith(
+      {
+        bookingId: "bk1",
+        refundAmountCents: 3750,
+        bookingModificationId: "mod_1",
+      },
+      {
+        createdByMemberId: "m1",
+      }
+    );
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  it("does not require settlement or return value when reduction policy refund is zero", async () => {
+    const booking = makeBooking();
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    booking.guests = [
+      ...booking.guests,
+      {
+        id: "g2",
+        bookingId: "bk1",
+        firstName: "Bob",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        memberId: null,
+        priceCents: 5000,
+      },
+    ];
+    booking.totalPriceCents = 10000;
+    booking.finalPriceCents = 10000;
+    booking.payment!.amountCents = 10000;
+    mockLoadCancellationPolicy.mockResolvedValueOnce([
+      {
+        daysBeforeStay: 0,
+        refundPercentage: 0,
+        creditRefundPercentage: 0,
+        fixedFeeCents: 0,
+        creditFixedFeeCents: 0,
+      },
+    ]);
+    mockCalculateBookingPrice.mockReturnValue({
+      totalPriceCents: 5000,
+      guests: [{ priceCents: 5000, perNightCents: [2500, 2500] }],
+    });
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({ removeGuestIds: ["g2"] }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.refundAmountCents).toBe(0);
+    expect(data.accountCreditAmountCents).toBe(0);
+    expect(data.settlementMethod).toBeNull();
+    expect(mockRefundPaymentTransactions).not.toHaveBeenCalled();
+    expect(tx.memberCredit.create).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+    expect(mockEnqueueXeroModificationCreditNoteOperation).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroModificationAccountCreditNoteOperation).not.toHaveBeenCalled();
   });
 
   it("persists per-guest stay range edits and checks capacity by active guest nights", async () => {

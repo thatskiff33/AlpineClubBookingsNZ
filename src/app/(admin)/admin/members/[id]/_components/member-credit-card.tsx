@@ -200,14 +200,16 @@ export function MemberCreditCard({
                         <Badge
                           variant="secondary"
                           className={
-                            item.type === "CANCELLATION_REFUND"
+                            item.type === "CANCELLATION_REFUND" || item.type === "BOOKING_MODIFICATION_REFUND"
                               ? "bg-orange-100 text-orange-800 border-orange-200"
                               : item.type === "ADMIN_ADJUSTMENT"
                                 ? "bg-blue-100 text-blue-800 border-blue-200"
                                 : "bg-purple-100 text-purple-800 border-purple-200"
                           }
                         >
-                          {item.type.replace(/_/g, " ")}
+                          {item.type === "BOOKING_MODIFICATION_REFUND"
+                            ? "BOOKING CHANGE CREDIT"
+                            : item.type.replace(/_/g, " ")}
                         </Badge>
                       </TableCell>
                       <TableCell
