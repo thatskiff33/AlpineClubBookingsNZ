@@ -16,6 +16,7 @@ import {
   loadCancellationPolicy,
 } from "@/lib/cancellation";
 import { parseJsonRequestBody } from "@/lib/api-json";
+import { ApiError } from "@/lib/api-error";
 import {
   validateAndCalculatePromoDiscount,
   validatePromoCodeFull,
@@ -41,7 +42,10 @@ import {
   getBookingEditPolicy,
   usesActiveBookingEditLifecycle,
 } from "@/lib/booking-edit-policy";
-import { calculateModificationSettlementOptions } from "@/lib/booking-modify";
+import {
+  calculateModificationSettlementOptions,
+  resolveGuestNameUpdates,
+} from "@/lib/booking-modify";
 import {
   buildInProgressGuestRangePlan,
   type BookingEditGuestRangePlan,
@@ -71,6 +75,15 @@ const modifyQuoteSchema = z.object({
         guestId: z.string().min(1),
         stayStart: z.string().optional(),
         stayEnd: z.string().optional(),
+      })
+    )
+    .optional(),
+  guestUpdates: z
+    .array(
+      z.object({
+        guestId: z.string().min(1),
+        firstName: nameField(),
+        lastName: nameField(),
       })
     )
     .optional(),
@@ -223,10 +236,24 @@ export async function POST(
     addGuests,
     removeGuestIds,
     guestStayRanges,
+    guestUpdates,
     promoCode: newPromoCode,
     removePromoCode,
   } = parsed.data;
   let normalizedAddGuests: NormalizedAddGuest[] | undefined = addGuests;
+  let guestNameUpdates: ReturnType<typeof resolveGuestNameUpdates> = [];
+
+  try {
+    guestNameUpdates = resolveGuestNameUpdates({
+      booking,
+      input: { guestUpdates, removeGuestIds },
+    });
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    throw error;
+  }
 
   try {
     const linkedMembers = await resolveLinkedBookingMembers(
@@ -383,6 +410,9 @@ export async function POST(
       { status: 400 }
     );
   }
+  const targetDatesChanged =
+    newCheckIn.getTime() !== new Date(booking.checkIn).getTime() ||
+    newCheckOut.getTime() !== new Date(booking.checkOut).getTime();
 
   // Determine new guest list
   const removeSet = new Set(removeGuestIds ?? []);
@@ -409,7 +439,13 @@ export async function POST(
   try {
     proposedRemainingGuests = remainingGuests.map((guest, index) => {
       if (!hasRangeInputs) {
-        return { guest, stayStart: newCheckIn, stayEnd: newCheckOut };
+        return targetDatesChanged
+          ? { guest, stayStart: newCheckIn, stayEnd: newCheckOut }
+          : {
+              guest,
+              stayStart: normalizeDateOnlyForTimeZone(guest.stayStart ?? booking.checkIn),
+              stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd ?? booking.checkOut),
+            };
       }
 
       const rangeInput = existingRangeInputs.get(guest.id);
@@ -588,12 +624,19 @@ export async function POST(
 
   // --- Build itemized changes ---
   const itemizedChanges: Array<{ label: string; amountCents: number }> = [];
+  if (guestNameUpdates.length > 0) {
+    itemizedChanges.push({
+      label:
+        guestNameUpdates.length === 1
+          ? "Guest name update"
+          : "Guest name updates",
+      amountCents: 0,
+    });
+  }
 
   const oldNights = getStayNights(booking.checkIn, booking.checkOut).length;
   const newNights = getStayNights(newCheckIn, newCheckOut).length;
-  const datesChanged =
-    newCheckIn.getTime() !== new Date(booking.checkIn).getTime() ||
-    newCheckOut.getTime() !== new Date(booking.checkOut).getTime();
+  const datesChanged = targetDatesChanged;
   const guestRangesChanged = proposedRemainingGuests.some((entry) => {
     const currentStayStart = normalizeDateOnlyForTimeZone(
       entry.guest.stayStart ?? booking.checkIn

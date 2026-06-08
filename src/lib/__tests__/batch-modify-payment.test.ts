@@ -256,6 +256,8 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
       stripeCustomerId: null,
       refundedAmountCents: 0,
       changeFeeCents: 0,
+      additionalAmountCents: 0,
+      additionalPaymentStatus: null,
     },
     member: {
       id: "m1",
@@ -597,6 +599,139 @@ describe("PUT /api/bookings/[id]/modify", () => {
       }
     );
     expect(mockKickQueuedXeroOutboxOperationsIfConnected).toHaveBeenCalledWith({ limit: 1 });
+  });
+
+  it("updates non-member guest names while an additional payment is outstanding", async () => {
+    const booking = makeBooking({
+      hasNonMembers: true,
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Old",
+          lastName: "Guest",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 5000,
+        },
+      ],
+      payment: {
+        ...makeBooking().payment,
+        additionalAmountCents: 2000,
+        additionalPaymentStatus: "PENDING",
+      },
+    });
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        guestUpdates: [
+          {
+            guestId: "g1",
+            firstName: "New",
+            lastName: "Guest",
+          },
+        ],
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(tx.bookingGuest.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "g1" },
+        data: expect.objectContaining({
+          firstName: "New",
+          lastName: "Guest",
+        }),
+      })
+    );
+    expect(tx.bookingModification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          modificationType: "GUEST_UPDATE",
+          priceDiffCents: 0,
+          changeFeeCents: 0,
+          previousData: expect.objectContaining({
+            updatedGuests: [
+              {
+                guestId: "g1",
+                firstName: "Old",
+                lastName: "Guest",
+              },
+            ],
+          }),
+          newData: expect.objectContaining({
+            updatedGuests: [
+              {
+                guestId: "g1",
+                firstName: "New",
+                lastName: "Guest",
+              },
+            ],
+          }),
+        }),
+      })
+    );
+  });
+
+  it("rejects non-member guest name changes after the booking is fully paid", async () => {
+    const booking = makeBooking({
+      hasNonMembers: true,
+      guests: [
+        {
+          id: "g1",
+          bookingId: "bk1",
+          firstName: "Old",
+          lastName: "Guest",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 5000,
+        },
+      ],
+    });
+    const tx = makeTx(booking);
+
+    mockTransaction.mockImplementation((fn: (innerTx: typeof tx) => unknown) =>
+      fn(tx)
+    );
+
+    const { PUT } = await import("@/app/api/bookings/[id]/modify/route");
+
+    const request = new NextRequest("http://localhost/api/bookings/bk1/modify", {
+      method: "PUT",
+      body: JSON.stringify({
+        guestUpdates: [
+          {
+            guestId: "g1",
+            firstName: "New",
+            lastName: "Guest",
+          },
+        ],
+      }),
+    });
+
+    const response = await PUT(request, {
+      params: Promise.resolve({ id: "bk1" }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("fully paid"),
+    });
+    expect(tx.bookingGuest.update).not.toHaveBeenCalled();
   });
 
   it("marks a payment-pending booking paid when a batch edit promo reduces the total to zero", async () => {

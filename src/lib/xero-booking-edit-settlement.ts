@@ -59,6 +59,7 @@ export interface ClassifyXeroBookingEditSettlementInput {
   priceDiffCents: number;
   changeFeeCents?: number;
   datesChanged?: boolean;
+  guestIdentityChanged?: boolean;
   createPrimaryInvoiceWhenMissing?: boolean;
   requiresAdditionalStripePayment?: boolean;
   additionalPaymentIntentId?: string | null;
@@ -140,7 +141,9 @@ export function classifyXeroBookingEditSettlement(
   }
 
   let primaryInvoiceUpdateAction: XeroBookingEditPrimaryUpdateAction;
-  if (!input.hasIssuedXeroInvoice || !input.datesChanged) {
+  const primaryInvoiceNarrationChanged =
+    Boolean(input.datesChanged) || Boolean(input.guestIdentityChanged);
+  if (!input.hasIssuedXeroInvoice || !primaryInvoiceNarrationChanged) {
     primaryInvoiceUpdateAction = {
       type: "none",
       reason: "No primary invoice date or narration update is required.",

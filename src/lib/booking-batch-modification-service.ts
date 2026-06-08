@@ -21,10 +21,12 @@ import {
   calculateModifiedPricing,
   loadActiveSeasonRates,
   prepareGuestPlan,
+  resolveGuestNameUpdates,
   resolveTargetDates,
   type BatchModifyInput,
   type BookingModificationSettlementMethod,
   type LoadedBookingForModify,
+  type ResolvedGuestNameUpdate,
 } from "@/lib/booking-modify";
 import {
   createModificationAdditionalPaymentIntent,
@@ -69,6 +71,9 @@ type BatchModificationTransactionResult =
     xeroRefundAmountCents: number;
     settlementMethod: BookingModificationSettlementMethod | null;
     policyRetainedAmountCents: number;
+    guestNameUpdates: ResolvedGuestNameUpdate[];
+    guestIdentityChanged: boolean;
+    identityOnlyModification: boolean;
   };
 
 export type BatchModificationResponse = {
@@ -138,6 +143,18 @@ export async function modifyBookingBatch({
       newCheckIn: dates.newCheckIn,
       newCheckOut: dates.newCheckOut,
     });
+    const guestNameUpdates = resolveGuestNameUpdates({ booking, input });
+    const requestedStructuralChange = Boolean(
+      input.checkIn ||
+        input.checkOut ||
+        input.addGuests?.length ||
+        input.removeGuestIds?.length ||
+        input.guestStayRanges?.length ||
+        input.promoCode ||
+        input.removePromoCode,
+    );
+    const identityOnlyModification =
+      guestNameUpdates.length > 0 && !requestedStructuralChange;
 
     const seasonRateData = await loadActiveSeasonRates(tx);
 
@@ -191,6 +208,7 @@ export async function modifyBookingBatch({
       remainingGuests: guestPlan.remainingGuests,
       proposedRemainingGuests: guestPlan.proposedRemainingGuests,
       normalizedAddGuests: guestPlan.normalizedAddGuests,
+      guestNameUpdates,
       priceBreakdown: pricing.priceBreakdown,
       inProgressPlan: pricing.inProgressPlan,
     });
@@ -256,7 +274,7 @@ export async function modifyBookingBatch({
       data: {
         bookingId,
         memberId: actor.id,
-        modificationType: "BATCH_MODIFY",
+        modificationType: identityOnlyModification ? "GUEST_UPDATE" : "BATCH_MODIFY",
         previousData: {
           checkIn: new Date(booking.checkIn).toISOString().split("T")[0],
           checkOut: new Date(booking.checkOut).toISOString().split("T")[0],
@@ -269,6 +287,11 @@ export async function modifyBookingBatch({
             firstName: g.firstName,
             lastName: g.lastName,
           })),
+          updatedGuests: guestNameUpdates.map((update) => ({
+            guestId: update.guestId,
+            firstName: update.previousFirstName,
+            lastName: update.previousLastName,
+          })),
         },
         newData: {
           checkIn: dates.newCheckIn.toISOString().split("T")[0],
@@ -277,6 +300,11 @@ export async function modifyBookingBatch({
           addedGuests: (guestPlan.normalizedAddGuests ?? []).map((g) => ({
             firstName: g.firstName,
             lastName: g.lastName,
+          })),
+          updatedGuests: guestNameUpdates.map((update) => ({
+            guestId: update.guestId,
+            firstName: update.firstName,
+            lastName: update.lastName,
           })),
           totalPriceCents: pricing.newTotalPriceCents,
           discountCents: promo.newDiscountCents,
@@ -331,6 +359,9 @@ export async function modifyBookingBatch({
       xeroRefundAmountCents: payments.xeroRefundAmountCents,
       settlementMethod: payments.settlementMethod,
       policyRetainedAmountCents: payments.policyRetainedAmountCents,
+      guestNameUpdates,
+      guestIdentityChanged: guestNameUpdates.length > 0,
+      identityOnlyModification,
       paymentId: booking.payment?.id ?? null,
       paymentCustomerId: booking.payment?.stripeCustomerId ?? null,
       memberEmail: booking.member.email,
@@ -411,6 +442,8 @@ async function dispatchBatchPostTransactionSideEffects({
     accountCreditAmountCents: result.accountCreditAmountCents,
     promoRemoved: result.promoRemoved,
     promoChanged: result.promoChanged,
+    updatedGuestCount: result.guestNameUpdates.length,
+    guestIdentityChanged: result.guestIdentityChanged,
     zeroDollarAutoPaid: result.zeroDollarAutoPaid,
     settlementMethod: result.settlementMethod,
     policyRetainedAmountCents: result.policyRetainedAmountCents,
@@ -440,6 +473,7 @@ async function dispatchBatchPostTransactionSideEffects({
     priceDiffCents: result.priceDiffCents,
     changeFeeCents: result.changeFeeCents,
     datesChanged: result.datesChanged,
+    guestIdentityChanged: result.guestIdentityChanged,
     settlementMethod: result.settlementMethod,
     settlementAmountCents: result.xeroRefundAmountCents,
     createPrimaryInvoiceWhenMissing:
@@ -453,6 +487,10 @@ async function dispatchBatchPostTransactionSideEffects({
       "Failed to queue Xero settlement for batch modification",
     ),
   );
+
+  if (result.identityOnlyModification) {
+    return;
+  }
 
   const member = await prisma.member.findUnique({
     where: { id: result.booking.memberId },

@@ -15,6 +15,7 @@ import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { DeleteBookingButton } from "@/components/delete-booking-button";
+import { CopyBookingButton } from "@/components/admin/copy-booking-button";
 import { getBookingEditPolicy } from "@/lib/booking-edit-policy";
 import { getBookingPaymentMode } from "@/lib/booking-payment-flow";
 import { RefundAppealButton } from "@/components/refund-appeal-button";
@@ -31,6 +32,7 @@ import {
   getRemainingRefundableCents,
   hasCapturedPayment,
 } from "@/lib/booking-payment-state";
+import { isBookingFullyPaidForGuestNameEdits } from "@/lib/booking-modify";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 
@@ -157,6 +159,8 @@ export default async function BookingDetailPage({
     checkOut: booking.checkOut,
   });
   const canModify = !isDeleted && editPolicy.canModify;
+  const canEditNonMemberGuestNames =
+    canModify && !isBookingFullyPaidForGuestNameEdits(booking);
   const cancellationSettlement = booking.payment
     ? getCancellationSettlementBreakdown(
         booking.payment.refundedAmountCents,
@@ -232,6 +236,7 @@ export default async function BookingDetailPage({
       : null,
     hasNonMembers: booking.hasNonMembers,
     nonMemberHoldUntil: booking.nonMemberHoldUntil?.toISOString() ?? null,
+    canEditNonMemberGuestNames,
     editPolicy: {
       mode: editPolicy.mode,
       today: editPolicy.today.toISOString().slice(0, 10),
@@ -256,9 +261,19 @@ export default async function BookingDetailPage({
     <div className="max-w-2xl space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Booking Details</h1>
-        <Link href={backHref}>
-          <Button variant="outline">Back to Bookings</Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          {!isDeleted && session.user.role === "ADMIN" ? (
+            <CopyBookingButton
+              bookingId={booking.id}
+              sourceCheckIn={editorData.checkIn}
+              sourceCheckOut={editorData.checkOut}
+              minCheckIn={editorData.editPolicy.today}
+            />
+          ) : null}
+          <Link href={backHref}>
+            <Button variant="outline">Back to Bookings</Button>
+          </Link>
+        </div>
       </div>
 
       {isDeleted ? (

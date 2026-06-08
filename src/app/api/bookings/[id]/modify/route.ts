@@ -39,6 +39,15 @@ const batchModifySchema = z.object({
       }),
     )
     .optional(),
+  guestUpdates: z
+    .array(
+      z.object({
+        guestId: z.string().min(1),
+        firstName: nameField(),
+        lastName: nameField(),
+      }),
+    )
+    .optional(),
   promoCode: z.string().optional(),
   promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
   removePromoCode: z.boolean().optional(),

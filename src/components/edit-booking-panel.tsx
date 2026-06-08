@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgeTier } from "@prisma/client";
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,6 +49,7 @@ interface BookingData {
   discountCents: number;
   promoAdjustmentCents: number;
   promo: PromoInfo | null;
+  canEditNonMemberGuestNames: boolean;
   editPolicy: {
     mode: "future" | "in-progress" | null;
     today: string;
@@ -160,6 +161,16 @@ export function EditBookingPanel({
       ])
     )
   );
+  const [guestNameEdits, setGuestNameEdits] = useState<
+    Record<string, { firstName: string; lastName: string }>
+  >(() =>
+    Object.fromEntries(
+      booking.guests.map((guest) => [
+        guest.id,
+        { firstName: guest.firstName, lastName: guest.lastName },
+      ])
+    )
+  );
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
   const [promoAction, setPromoAction] = useState<
     { type: "keep" } | { type: "remove" } | { type: "new"; code: string }
@@ -254,6 +265,36 @@ export function EditBookingPanel({
     }));
   }
 
+  function getGuestNameEdit(guest: Guest) {
+    return (
+      guestNameEdits[guest.id] ?? {
+        firstName: guest.firstName,
+        lastName: guest.lastName,
+      }
+    );
+  }
+
+  function updateGuestName(
+    guestId: string,
+    field: "firstName" | "lastName",
+    value: string
+  ) {
+    setGuestNameEdits((prev) => ({
+      ...prev,
+      [guestId]: {
+        firstName:
+          prev[guestId]?.firstName ??
+          booking.guests.find((guest) => guest.id === guestId)?.firstName ??
+          "",
+        lastName:
+          prev[guestId]?.lastName ??
+          booking.guests.find((guest) => guest.id === guestId)?.lastName ??
+          "",
+        [field]: value,
+      },
+    }));
+  }
+
   function updateAddedGuestRange(
     key: string,
     field: "stayStart" | "stayEnd",
@@ -280,12 +321,47 @@ export function EditBookingPanel({
         range.stayEnd !== (guest.stayEnd ?? booking.checkOut)
       );
     });
+  const guestNameUpdates = useMemo(
+    () =>
+      booking.canEditNonMemberGuestNames
+        ? booking.guests
+            .filter((guest) => !guest.isMember && !removedGuestIds.has(guest.id))
+            .map((guest) => {
+              const edit = guestNameEdits[guest.id] ?? {
+                firstName: guest.firstName,
+                lastName: guest.lastName,
+              };
+              return {
+                guestId: guest.id,
+                firstName: edit.firstName.trim(),
+                lastName: edit.lastName.trim(),
+                changed:
+                  edit.firstName.trim() !== guest.firstName ||
+                  edit.lastName.trim() !== guest.lastName,
+              };
+            })
+            .filter((update) => update.changed)
+            .map((update) => ({
+              guestId: update.guestId,
+              firstName: update.firstName,
+              lastName: update.lastName,
+            }))
+        : [],
+    [
+      booking.canEditNonMemberGuestNames,
+      booking.guests,
+      guestNameEdits,
+      removedGuestIds,
+    ]
+  );
+  const guestNamesChanged = guestNameUpdates.length > 0;
   const hasChanges =
     checkIn !== booking.checkIn ||
     checkOut !== booking.checkOut ||
     removedGuestIds.size > 0 ||
     addedGuests.length > 0 ||
     guestRangesChanged ||
+    guestNamesChanged ||
     promoAction.type !== "keep";
 
   // Debounced quote fetch
@@ -360,6 +436,9 @@ export function EditBookingPanel({
     if (removedGuestIds.size > 0) {
       body.removeGuestIds = Array.from(removedGuestIds);
     }
+    if (guestNameUpdates.length > 0) {
+      body.guestUpdates = guestNameUpdates;
+    }
     if (promoAction.type === "remove") {
       body.removePromoCode = true;
     } else if (promoAction.type === "new") {
@@ -374,6 +453,7 @@ export function EditBookingPanel({
     checkIn,
     checkOut,
     getExistingGuestRange,
+    guestNameUpdates,
     isInProgressEdit,
     perGuestDatesEnabled,
     promoAction,
@@ -459,7 +539,6 @@ export function EditBookingPanel({
     ]);
     setAddFirstName("");
     setAddLastName("");
-    setAddAgeTier("ADULT");
     setShowAddForm(false);
   }
 
@@ -693,6 +772,9 @@ export function EditBookingPanel({
           {/* Existing guests */}
           {booking.guests.map((guest) => {
             const isRemoved = removedGuestIds.has(guest.id);
+            const canEditGuestName =
+              booking.canEditNonMemberGuestNames && !guest.isMember && !isRemoved;
+            const nameEdit = getGuestNameEdit(guest);
             return (
               <div
                 key={guest.id}
@@ -701,9 +783,38 @@ export function EditBookingPanel({
                 }`}
               >
                 <div>
-                  <p className="font-medium">
-                    {guest.firstName} {guest.lastName}
-                  </p>
+                  {canEditGuestName ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label htmlFor={`guest-${guest.id}-first`} className="text-xs">
+                          First Name
+                        </Label>
+                        <Input
+                          id={`guest-${guest.id}-first`}
+                          value={nameEdit.firstName}
+                          onChange={(e) =>
+                            updateGuestName(guest.id, "firstName", e.target.value)
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor={`guest-${guest.id}-last`} className="text-xs">
+                          Last Name
+                        </Label>
+                        <Input
+                          id={`guest-${guest.id}-last`}
+                          value={nameEdit.lastName}
+                          onChange={(e) =>
+                            updateGuestName(guest.id, "lastName", e.target.value)
+                          }
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="font-medium">
+                      {guest.firstName} {guest.lastName}
+                    </p>
+                  )}
                   <p className="text-sm text-gray-500">
                     {getAgeTierLabel(ageTierOptions, guest.ageTier)} &middot; {guest.isMember ? "Member" : "Non-member"}
                   </p>

@@ -111,6 +111,37 @@ describe("classifyXeroBookingEditSettlement", () => {
       reason: expect.stringContaining("safe primary invoice"),
     });
   });
+
+  it("allows safe primary narration updates for unpaid invoice guest-name changes", () => {
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "PENDING",
+      priceDiffCents: 0,
+      datesChanged: false,
+      guestIdentityChanged: true,
+    });
+
+    expect(decision.financialAction.type).toBe("none");
+    expect(decision.primaryInvoiceUpdateAction).toEqual({
+      type: "queue",
+      reason: expect.stringContaining("safe primary invoice"),
+    });
+  });
+
+  it("skips primary narration updates for paid invoice guest-name changes", () => {
+    const decision = classifyXeroBookingEditSettlement({
+      hasIssuedXeroInvoice: true,
+      originalPaymentStatus: "SUCCEEDED",
+      priceDiffCents: 0,
+      guestIdentityChanged: true,
+    });
+
+    expect(decision.financialAction.type).toBe("none");
+    expect(decision.primaryInvoiceUpdateAction).toEqual({
+      type: "skip",
+      reason: expect.stringContaining("Skipped primary Xero invoice update"),
+    });
+  });
 });
 
 describe("queueXeroBookingEditSettlement (side effects)", () => {

@@ -96,6 +96,11 @@ export type BatchModifyInput = {
     stayStart?: string | null;
     stayEnd?: string | null;
   }>;
+  guestUpdates?: Array<{
+    guestId: string;
+    firstName: string;
+    lastName: string;
+  }>;
   promoCode?: string;
   promoGuestIndexes?: number[];
   removePromoCode?: boolean;
@@ -206,6 +211,133 @@ export type LoadedBookingForModify = Booking & {
   member: Member;
   promoRedemption: LoadedPromoRedemption | null;
 };
+
+export type ResolvedGuestNameUpdate = {
+  guestId: string;
+  firstName: string;
+  lastName: string;
+  previousFirstName: string;
+  previousLastName: string;
+};
+
+type BookingGuestNameEditPayment = Pick<
+  Payment,
+  "status" | "amountCents" | "additionalAmountCents" | "additionalPaymentStatus"
+> | null;
+
+const FULLY_PAID_BOOKING_STATUSES = new Set<BookingStatus | string>([
+  BookingStatus.PAID,
+  BookingStatus.COMPLETED,
+]);
+
+function normalizeGuestName(value: string, fieldName: string) {
+  const normalized = value.replace(/[\r\n]+/g, " ").trim();
+  if (!normalized) {
+    throw new ApiError(`${fieldName} is required`, 400);
+  }
+  if (normalized.length > 100) {
+    throw new ApiError(`${fieldName} must be 100 characters or fewer`, 400);
+  }
+  return normalized;
+}
+
+export function hasOutstandingAdditionalPayment(
+  payment: BookingGuestNameEditPayment,
+) {
+  return Boolean(
+    payment &&
+      payment.additionalAmountCents > 0 &&
+      payment.additionalPaymentStatus !== "SUCCEEDED",
+  );
+}
+
+export function isBookingFullyPaidForGuestNameEdits(booking: {
+  status: BookingStatus | string;
+  finalPriceCents: number;
+  payment: BookingGuestNameEditPayment;
+}) {
+  if (hasOutstandingAdditionalPayment(booking.payment)) {
+    return false;
+  }
+
+  if (hasCapturedPayment(booking.payment)) {
+    return true;
+  }
+
+  return (
+    booking.finalPriceCents <= 0 &&
+    FULLY_PAID_BOOKING_STATUSES.has(booking.status)
+  );
+}
+
+export function resolveGuestNameUpdates({
+  booking,
+  input,
+}: {
+  booking: Pick<
+    LoadedBookingForModify,
+    "guests" | "status" | "finalPriceCents" | "payment"
+  >;
+  input: Pick<BatchModifyInput, "guestUpdates" | "removeGuestIds">;
+}): ResolvedGuestNameUpdate[] {
+  if (!input.guestUpdates?.length) {
+    return [];
+  }
+
+  if (isBookingFullyPaidForGuestNameEdits(booking)) {
+    throw new ApiError(
+      "Non-member guest names cannot be edited after the booking is fully paid",
+      400,
+    );
+  }
+
+  const removedGuestIds = new Set(input.removeGuestIds ?? []);
+  const guestsById = new Map(booking.guests.map((guest) => [guest.id, guest]));
+  const seenGuestIds = new Set<string>();
+  const updates: ResolvedGuestNameUpdate[] = [];
+
+  for (const update of input.guestUpdates) {
+    if (seenGuestIds.has(update.guestId)) {
+      throw new ApiError("Each guest can only be updated once", 400);
+    }
+    seenGuestIds.add(update.guestId);
+
+    if (removedGuestIds.has(update.guestId)) {
+      throw new ApiError(
+        "A guest cannot be renamed and removed in the same change",
+        400,
+      );
+    }
+
+    const guest = guestsById.get(update.guestId);
+    if (!guest) {
+      throw new ApiError(
+        "One or more guest updates referenced a guest not found on this booking",
+        400,
+      );
+    }
+
+    if (guest.isMember || guest.memberId) {
+      throw new ApiError("Member guest names cannot be edited on a booking", 400);
+    }
+
+    const firstName = normalizeGuestName(update.firstName, "First name");
+    const lastName = normalizeGuestName(update.lastName, "Last name");
+    if (firstName === guest.firstName && lastName === guest.lastName) {
+      continue;
+    }
+
+    updates.push({
+      guestId: guest.id,
+      firstName,
+      lastName,
+      previousFirstName: guest.firstName,
+      previousLastName: guest.lastName,
+    });
+  }
+
+  return updates;
+}
 
 export type ResolvedTargetDates = {
   newCheckIn: Date;
@@ -446,10 +578,19 @@ export async function prepareGuestPlan(
   }
 
   const hasRangeInputs = hasGuestStayRangeInputs(input);
+  const datesChanged =
+    newCheckIn.getTime() !== new Date(booking.checkIn).getTime() ||
+    newCheckOut.getTime() !== new Date(booking.checkOut).getTime();
   const existingRangeInputs = getGuestStayRangeInputMap(input);
   const proposedRemainingGuests: ProposedRemainingGuest[] = remainingGuests.map((guest, index) => {
     if (!hasRangeInputs) {
-      return { guest, stayStart: newCheckIn, stayEnd: newCheckOut };
+      return datesChanged
+        ? { guest, stayStart: newCheckIn, stayEnd: newCheckOut }
+        : {
+            guest,
+            stayStart: normalizeDateOnlyForTimeZone(guest.stayStart ?? booking.checkIn),
+            stayEnd: normalizeDateOnlyForTimeZone(guest.stayEnd ?? booking.checkOut),
+          };
     }
 
     const rangeInput = existingRangeInputs.get(guest.id);
@@ -1016,6 +1157,7 @@ export async function applyGuestChanges(
     remainingGuests,
     proposedRemainingGuests,
     normalizedAddGuests,
+    guestNameUpdates,
     priceBreakdown,
     inProgressPlan,
   }: {
@@ -1026,17 +1168,28 @@ export async function applyGuestChanges(
     remainingGuests: BookingGuest[];
     proposedRemainingGuests: ProposedRemainingGuest[];
     normalizedAddGuests: BookingGuestInput[] | undefined;
+    guestNameUpdates?: ResolvedGuestNameUpdate[];
     priceBreakdown: PricingResult["priceBreakdown"];
     inProgressPlan: BookingEditGuestRangePlan | null;
   },
 ): Promise<{ createdGuests: BookingGuest[] }> {
   const createdGuests: BookingGuest[] = [];
+  const nameUpdatesByGuestId = new Map(
+    (guestNameUpdates ?? []).map((update) => [update.guestId, update]),
+  );
 
   if (inProgressPlan) {
     for (const entry of inProgressPlan.proposedExistingGuests) {
+      const nameUpdate = nameUpdatesByGuestId.get(entry.guest.id);
       await tx.bookingGuest.update({
         where: { id: entry.guest.id },
         data: {
+          ...(nameUpdate
+            ? {
+                firstName: nameUpdate.firstName,
+                lastName: nameUpdate.lastName,
+              }
+            : {}),
           stayStart: entry.stayStart,
           stayEnd: entry.stayEnd,
           priceCents: entry.priceCents,
@@ -1095,9 +1248,16 @@ export async function applyGuestChanges(
 
   for (let i = 0; i < remainingGuests.length; i++) {
     const proposedRange = proposedRemainingGuests[i];
+    const nameUpdate = nameUpdatesByGuestId.get(remainingGuests[i].id);
     await tx.bookingGuest.update({
       where: { id: remainingGuests[i].id },
       data: {
+        ...(nameUpdate
+          ? {
+              firstName: nameUpdate.firstName,
+              lastName: nameUpdate.lastName,
+            }
+          : {}),
         stayStart: proposedRange?.stayStart ?? newCheckIn,
         stayEnd: proposedRange?.stayEnd ?? newCheckOut,
         priceCents: priceBreakdown.guests[i].priceCents,
