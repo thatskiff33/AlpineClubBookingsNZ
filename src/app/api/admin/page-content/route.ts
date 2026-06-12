@@ -41,6 +41,12 @@ const updateSchema = z
   })
   .strict();
 
+const deleteSchema = z
+  .object({
+    id: z.string().trim().min(1),
+  })
+  .strict();
+
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }
@@ -48,6 +54,11 @@ function unauthorizedResponse() {
 const adminGuardOptions = {
   forbiddenResponse: unauthorizedResponse,
 };
+
+const SYSTEM_404_SLUG = "404";
+const SYSTEM_404_PATH = "/404";
+const SYSTEM_HOME_SLUG = "home";
+const SYSTEM_HOME_PATH = "/home";
 
 export async function GET() {
   const guard = await requireAdmin(adminGuardOptions);
@@ -100,6 +111,26 @@ export async function POST(request: NextRequest) {
 
   const path = toPagePath(slug);
   const safeHeaderText = sanitizePageContentHtml(parsed.data.headerText);
+
+  if (slug === SYSTEM_404_SLUG || path === SYSTEM_404_PATH) {
+    return NextResponse.json(
+      {
+        error:
+          "The 404 page already exists as a system page. Edit it from Page Content instead of creating a new record.",
+      },
+      { status: 409 },
+    );
+  }
+
+  if (slug === SYSTEM_HOME_SLUG || path === SYSTEM_HOME_PATH) {
+    return NextResponse.json(
+      {
+        error:
+          "The home page already exists as a system page. Edit it from Page Content instead of creating a new record.",
+      },
+      { status: 409 },
+    );
+  }
 
   const existing = await prisma.pageContent.findFirst({
     where: {
@@ -228,6 +259,42 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "Page not found" }, { status: 404 });
   }
 
+  if (existing.path === SYSTEM_404_PATH) {
+    if (slug !== existing.slug || path !== existing.path) {
+      return NextResponse.json(
+        {
+          error:
+            "The 404 page slug and path are locked. You can edit title and content, but not its route.",
+        },
+        { status: 400 },
+      );
+    }
+  } else if (existing.path === SYSTEM_HOME_PATH) {
+    if (slug !== existing.slug || path !== existing.path) {
+      return NextResponse.json(
+        {
+          error:
+            "The home page slug and path are locked. You can edit title and content, but not its route.",
+        },
+        { status: 400 },
+      );
+    }
+  } else if (slug === SYSTEM_404_SLUG || path === SYSTEM_404_PATH) {
+    return NextResponse.json(
+      {
+        error: "The 404 slug/path is reserved for the system not-found page.",
+      },
+      { status: 409 },
+    );
+  } else if (slug === SYSTEM_HOME_SLUG || path === SYSTEM_HOME_PATH) {
+    return NextResponse.json(
+      {
+        error: "The home slug/path is reserved for the system home page.",
+      },
+      { status: 409 },
+    );
+  }
+
   const duplicate = await prisma.pageContent.findFirst({
     where: {
       id: { not: parsed.data.id },
@@ -299,5 +366,74 @@ export async function PUT(request: NextRequest) {
       updatedAt: updated.updatedAt.toISOString(),
       updatedByMemberId: updated.updatedByMemberId,
     },
+  });
+}
+
+export async function DELETE(request: NextRequest) {
+  const guard = await requireAdmin(adminGuardOptions);
+  if (!guard.ok) {
+    return guard.response;
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const parsed = deleteSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  const existing = await prisma.pageContent.findUnique({
+    where: { id: parsed.data.id },
+  });
+
+  if (!existing) {
+    return NextResponse.json({ error: "Page not found" }, { status: 404 });
+  }
+
+  if (existing.path === SYSTEM_404_PATH || existing.path === SYSTEM_HOME_PATH) {
+    return NextResponse.json(
+      { error: "System pages cannot be deleted" },
+      { status: 400 },
+    );
+  }
+
+  await prisma.pageContent.delete({
+    where: { id: parsed.data.id },
+  });
+
+  await prisma.auditLog.create(
+    buildStructuredAuditLogCreateArgs({
+      action: "PAGE_CONTENT_DELETED",
+      actor: { memberId: guard.session.user.id },
+      entity: {
+        type: "PageContent",
+        id: existing.id,
+      },
+      category: "admin",
+      severity: "important",
+      outcome: "success",
+      summary: `Page content deleted for ${existing.slug}`,
+      metadata: {
+        slug: existing.slug,
+        path: existing.path,
+        caption: existing.caption,
+        menuTitle: existing.menuTitle,
+        title: existing.title,
+      },
+      request: getAuditRequestContext(request),
+    }),
+  );
+
+  return NextResponse.json({
+    success: true,
+    deletedId: existing.id,
   });
 }

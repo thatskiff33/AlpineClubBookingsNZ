@@ -4,15 +4,13 @@ import { describe, expect, it } from "vitest";
 import { explicitPublicApiRoutes } from "@/lib/api-route-security";
 
 function listRouteFiles(dir: string): string[] {
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
-    .flatMap((entry) => {
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        return listRouteFiles(entryPath);
-      }
-      return entry.name === "route.ts" ? [entryPath] : [];
-    });
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      return listRouteFiles(entryPath);
+    }
+    return entry.name === "route.ts" ? [entryPath] : [];
+  });
 }
 
 function relativeRoutePath(filePath: string) {
@@ -39,7 +37,7 @@ const issue675MalformedJsonRoutes = [
   "src/app/api/bookings/quote/route.ts",
   "src/app/api/bookings/route.ts",
   "src/app/api/payments/create-payment-intent/route.ts",
-  "src/app/api/promo-codes/validate/route.ts",
+  "src/app/api/promo-codes/validate/route.ts"
 ] as const;
 
 function hasAdminGuard(contents: string) {
@@ -80,10 +78,15 @@ function hasCronGuard(contents: string) {
 
 function hasWebhookSignatureBoundary(routePath: string, contents: string) {
   if (routePath.endsWith("/webhooks/stripe/route.ts")) {
-    return /stripe-signature/.test(contents) && /constructWebhookEvent/.test(contents);
+    return (
+      /stripe-signature/.test(contents) &&
+      /constructWebhookEvent/.test(contents)
+    );
   }
   if (routePath.endsWith("/webhooks/xero/route.ts")) {
-    return /x-xero-signature/.test(contents) && /timingSafeEqual/.test(contents);
+    return (
+      /x-xero-signature/.test(contents) && /timingSafeEqual/.test(contents)
+    );
   }
   if (routePath.endsWith("/webhooks/ses-sns/route.ts")) {
     return /verifySnsWebhookMessage/.test(contents);
@@ -107,7 +110,7 @@ describe("API route boundary metadata", () => {
     .sort();
 
   it("keeps the public route allowlist exact and backed by real files", () => {
-    expect(routeFiles).toHaveLength(230);
+    expect(routeFiles).toHaveLength(232);
 
     const missing = Object.keys(explicitPublicApiRoutes).filter(
       (routePath) => !routeFiles.includes(routePath)
@@ -135,7 +138,9 @@ describe("API route boundary metadata", () => {
       }
 
       if (boundary === "admin" && !hasAdminGuard(contents)) {
-        return [`${routePath}: admin route lacks requireAdmin or legacy admin guard marker`];
+        return [
+          `${routePath}: admin route lacks requireAdmin or legacy admin guard marker`
+        ];
       }
       if (boundary === "finance" && !hasFinanceGuard(contents)) {
         return [`${routePath}: finance route lacks finance API guard marker`];
@@ -144,7 +149,9 @@ describe("API route boundary metadata", () => {
         return [`${routePath}: lodge route lacks lodge guard marker`];
       }
       if (boundary === "cron" && !hasCronGuard(contents)) {
-        return [`${routePath}: cron/deploy route lacks cron secret guard marker`];
+        return [
+          `${routePath}: cron/deploy route lacks cron secret guard marker`
+        ];
       }
       if (boundary === "member" && !hasMemberGuard(contents)) {
         return [`${routePath}: member route lacks active-session guard marker`];
@@ -159,8 +166,7 @@ describe("API route boundary metadata", () => {
   it("keeps issue #675 JSON-consuming routes on the controlled malformed JSON path", () => {
     const violations = issue675MalformedJsonRoutes.flatMap((routePath) => {
       const contents = routeContents(routePath);
-      const directParse =
-        /\bawait\s+(?:req|request)\.json\(\)/.test(contents);
+      const directParse = /\bawait\s+(?:req|request)\.json\(\)/.test(contents);
 
       if (!contents.includes("parseJsonRequestBody(")) {
         return [`${routePath}: route does not use controlled JSON parsing`];

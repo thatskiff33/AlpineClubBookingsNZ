@@ -20,6 +20,7 @@ import {
   List,
   Plus,
   Save,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -598,8 +599,10 @@ export function PageContentPanel() {
   const [pages, setPages] = useState<EditablePageRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [creating, setCreating] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [draftCaption, setDraftCaption] = useState("");
@@ -622,6 +625,9 @@ export function PageContentPanel() {
     () => pages.find((page) => page.id === selectedPageId) ?? null,
     [pages, selectedPageId],
   );
+  const isSystemNotFoundPage = selectedPage?.path === "/404";
+  const isSystemHomePage = selectedPage?.path === "/home";
+  const isSystemPage = isSystemNotFoundPage || isSystemHomePage;
 
   async function loadPages() {
     setLoading(true);
@@ -741,6 +747,20 @@ export function PageContentPanel() {
       return;
     }
 
+    if (slug === "404") {
+      toast.error(
+        "The 404 page is a system page. Edit the existing /404 card instead of creating a new page.",
+      );
+      return;
+    }
+
+    if (slug === "home") {
+      toast.error(
+        "The home page is a system page. Edit the existing /home card instead of creating a new page.",
+      );
+      return;
+    }
+
     setCreating(true);
     try {
       const response = await fetch("/api/admin/page-content", {
@@ -788,6 +808,41 @@ export function PageContentPanel() {
     }
   }
 
+  async function deleteSelectedPage() {
+    if (!selectedPage) {
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const response = await fetch("/api/admin/page-content", {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: selectedPage.id }),
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Failed to delete page");
+      }
+
+      setPages((current) =>
+        current.filter((page) => page.id !== selectedPage.id),
+      );
+      setSelectedPageId(null);
+      setDeleteDialogOpen(false);
+      setDialogOpen(false);
+      toast.success(`${selectedPage.title} deleted`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete page",
+      );
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   if (loading) {
     return <p className="text-sm text-slate-500">Loading editable pages...</p>;
   }
@@ -814,9 +869,14 @@ export function PageContentPanel() {
                     <CardTitle>{page.title}</CardTitle>
                     <CardDescription>{page.path}</CardDescription>
                   </div>
-                  <Badge variant={hasContent ? "default" : "secondary"}>
-                    {hasContent ? "Has content" : "Empty"}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    {page.path === "/404" || page.path === "/home" ? (
+                      <Badge variant="outline">System</Badge>
+                    ) : null}
+                    <Badge variant={hasContent ? "default" : "secondary"}>
+                      {hasContent ? "Has content" : "Empty"}
+                    </Badge>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -953,6 +1013,7 @@ export function PageContentPanel() {
                       setDraftSlug(event.target.value.trim().toLowerCase())
                     }
                     placeholder="page-slug"
+                    disabled={isSystemPage}
                   />
                 </label>
                 <label className="space-y-1">
@@ -973,6 +1034,17 @@ export function PageContentPanel() {
                 <div className="md:col-span-2 text-xs text-slate-600">
                   Public path: /{draftSlug || "page-slug"}
                 </div>
+                {isSystemNotFoundPage ? (
+                  <div className="md:col-span-2 rounded-md border border-slate-300 bg-slate-100 p-2 text-xs text-slate-700">
+                    This is the system 404 page. Its slug/path and menu title
+                    are locked.
+                  </div>
+                ) : isSystemHomePage ? (
+                  <div className="md:col-span-2 rounded-md border border-slate-300 bg-slate-100 p-2 text-xs text-slate-700">
+                    This is the system home page. Its slug/path and menu title
+                    are locked.
+                  </div>
+                ) : null}
                 <div className="md:col-span-2 grid grid-cols-3 gap-3">
                   <label className="space-y-1">
                     <span className="text-xs font-medium text-slate-700">
@@ -994,6 +1066,7 @@ export function PageContentPanel() {
                         setDraftMenuTitle(event.target.value)
                       }
                       placeholder="About"
+                      disabled={isSystemPage}
                     />
                   </label>
                   <label className="space-y-1">
@@ -1031,25 +1104,72 @@ export function PageContentPanel() {
                 editorClassName="min-h-[320px]"
               />
 
-              <div className="flex justify-end gap-2">
+              <div className="flex items-center justify-between gap-2">
                 <Button
                   type="button"
-                  variant="outline"
-                  onClick={() => setDialogOpen(false)}
+                  variant="destructive"
+                  onClick={() => setDeleteDialogOpen(true)}
+                  disabled={saving || deleting || isSystemPage}
                 >
-                  Cancel
+                  <Trash2 className="h-4 w-4" />
+                  Delete
                 </Button>
-                <Button type="button" onClick={saveContent} disabled={saving}>
-                  {saving ? (
-                    <FileText className="h-4 w-4 animate-pulse" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  {saving ? "Saving..." : "Save"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setDialogOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={saveContent}
+                    disabled={saving || deleting}
+                  >
+                    {saving ? (
+                      <FileText className="h-4 w-4 animate-pulse" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    {saving ? "Saving..." : "Save"}
+                  </Button>
+                </div>
               </div>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete Page?</DialogTitle>
+            <DialogDescription>
+              {selectedPage
+                ? `This will permanently delete ${selectedPage.title} (${selectedPage.path}). This action cannot be undone.`
+                : "This will permanently delete this page. This action cannot be undone."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteDialogOpen(false)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={deleteSelectedPage}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Confirm Delete"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </>

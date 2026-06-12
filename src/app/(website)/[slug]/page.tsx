@@ -89,6 +89,7 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
           <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
             {page.title}
           </h1>
+          {/* nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- HTML comes from getSanitizedPageContentByPath() and is sanitized server-side before render. */}
           <div
             className="mt-4 max-w-2xl text-lg text-brand-snow/80"
             dangerouslySetInnerHTML={{ __html: page.headerText }}
@@ -125,6 +126,7 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
                 }
 
                 return (
+                  /* nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- HTML comes from getSanitizedPageContentByPath() and token splitting preserves sanitized segments only. */
                   <div
                     key={`html-${index}`}
                     dangerouslySetInnerHTML={{ __html: part.value }}

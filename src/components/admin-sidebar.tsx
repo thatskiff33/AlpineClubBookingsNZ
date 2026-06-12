@@ -36,6 +36,7 @@ import {
   UserX,
   BedDouble,
   FilePenLine,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -139,6 +140,7 @@ const navSections: NavSection[] = [
       },
       { href: "/admin/age-tier-settings", label: "Age Groups", icon: Sliders },
       { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },
+      { href: "/admin/image-manager", label: "Image Manager", icon: Upload },
       { href: "/admin/committee", label: "Committee", icon: UsersRound },
       { href: "/admin/xero", label: "Xero", icon: RefreshCw },
     ],

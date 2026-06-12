@@ -40,7 +40,7 @@ function seedAgeTierSettings() {
 }
 
 function requireSeedEnv(
-  name: "SEED_ADMIN_EMAIL" | "SEED_ADMIN_PASSWORD" | "SEED_LODGE_PASSWORD"
+  name: "SEED_ADMIN_EMAIL" | "SEED_ADMIN_PASSWORD" | "SEED_LODGE_PASSWORD",
 ) {
   const value = process.env[name]?.trim();
   if (!value) {
@@ -59,6 +59,16 @@ const starterPageContent: Array<{
   sortOrder: number;
   contentHtml: string;
 }> = [
+  {
+    slug: "home",
+    path: "/home",
+    caption: "",
+    menuTitle: "",
+    title: "Home",
+    headerText: "",
+    sortOrder: 0,
+    contentHtml: "",
+  },
   {
     slug: "about",
     path: "/about",
@@ -112,6 +122,17 @@ const starterPageContent: Array<{
       "The club is run entirely by volunteers. Meet the committee members who keep things going.",
     sortOrder: 30,
     contentHtml: "{{committee-members-cards}}",
+  },
+  {
+    slug: "404",
+    path: "/404",
+    caption: "404",
+    menuTitle: "",
+    title: "Page Not Found",
+    headerText: "The page you're looking for doesn't exist or has been moved.",
+    sortOrder: 999,
+    contentHtml:
+      "<p>You can return home or continue to booking from the links below.</p>",
   },
 ];
 
@@ -492,7 +513,7 @@ async function main() {
   if (!existingLodge) {
     const lodgePasswordHash = await bcrypt.hash(
       requireSeedEnv("SEED_LODGE_PASSWORD"),
-      12
+      12,
     );
     await prisma.member.create({
       data: {
