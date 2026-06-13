@@ -604,7 +604,7 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
   });
 
-  it("notifies without charging a request-origin booking after partial bump", async () => {
+  it("moves a no-card booking to payment-owed without charging after partial bump", async () => {
     const booking = makeMixedPendingBooking({ hasPaymentMethod: false, finalPriceCents: 8000 });
     mockBookingFindMany.mockResolvedValue([booking]);
     mockCheckCapacityForGuestRanges
@@ -617,6 +617,11 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(result.partialBumpedBookingIds).toEqual(["b1"]);
     expect(result.confirmedBookingIds).toEqual([]);
     expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    // Routed to payment-owed (not left stranded in PENDING with a cleared hold).
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "b1", status: "PENDING" },
+      data: { status: "PAYMENT_PENDING" },
+    });
     expect(mockSendGuestsRemovedEmail).toHaveBeenCalled();
   });
 

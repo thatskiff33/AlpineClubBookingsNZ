@@ -63,6 +63,24 @@ describe("sanitizePageContentHtml", () => {
       '<img src="/branding/lodge.jpg" />',
     );
   });
+
+  it("keeps uploaded image library URLs but strips data: URIs (#731)", () => {
+    expect(
+      sanitizePageContentHtml('<img src="/api/images/abc123" alt="Hut" />'),
+    ).toBe('<img src="/api/images/abc123" alt="Hut" />');
+
+    expect(
+      sanitizePageContentHtml(
+        '<img src="https://example.nz/api/images/abc123" alt="Hut" />',
+      ),
+    ).toBe('<img src="https://example.nz/api/images/abc123" alt="Hut" />');
+
+    expect(
+      sanitizePageContentHtml(
+        '<img src="data:image/png;base64,aGVsbG8=" alt="Hut" />',
+      ),
+    ).toBe('<img alt="Hut" />');
+  });
 });
 
 describe("pageContentHtmlToPlainText", () => {

@@ -239,14 +239,30 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
         isPartialBump = true;
         result.partialBumpedBookingIds.push(booking.id);
 
-        // Request-origin bookings (#707) have no saved payment method: never
-        // charge them. Notify and leave the members-only booking PENDING (hold
-        // cleared) for an admin/member to settle payment separately.
+        // No saved payment method (e.g. request-origin bookings, #707): never
+        // charge them here. Move the members-only booking to PAYMENT_PENDING
+        // (mirroring the admin "confirm pending guests" path) so it is routed
+        // to payment-owed rather than stranded in PENDING with its hold cleared
+        // — the cron filters on nonMemberHoldUntil, so a null-hold PENDING row
+        // would never be revisited. Idempotent via the status-claim.
         if (
           booking.finalPriceCents > 0 &&
           (!booking.payment?.stripePaymentMethodId ||
             !booking.payment?.stripeCustomerId)
         ) {
+          const claimedPaymentOwed = await prisma.booking.updateMany({
+            where: { id: booking.id, status: BookingStatus.PENDING },
+            data: { status: BookingStatus.PAYMENT_PENDING },
+          });
+          if (claimedPaymentOwed.count === 0) {
+            logger.info(
+              { bookingId: booking.id, job: "confirmPendingBookings" },
+              "Booking already processed by another handler"
+            );
+            continue;
+          }
+          booking.status = BookingStatus.PAYMENT_PENDING;
+
           try {
             await sendBookingGuestsRemovedEmail(
               booking.member.email,

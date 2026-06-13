@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   requireAdmin: vi.fn(),
@@ -170,5 +170,19 @@ describe("POST /api/admin/bookings/[id]/confirm-pending-guests", () => {
 
     const res = await POST(makeRequest(), { params });
     expect(res.status).toBe(404);
+  });
+
+  it("rejects a non-admin via the requireAdmin guard", async () => {
+    mocks.requireAdmin.mockResolvedValue({
+      ok: false,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 403 }),
+    });
+
+    const res = await POST(makeRequest(), { params });
+
+    expect(res.status).toBe(403);
+    expect(mocks.bookingFindUnique).not.toHaveBeenCalled();
+    expect(mocks.chargePaymentMethod).not.toHaveBeenCalled();
+    expect(mocks.bookingUpdateMany).not.toHaveBeenCalled();
   });
 });
