@@ -5,7 +5,11 @@ import {
   upsertPaymentIntentTransaction,
 } from "@/lib/payment-transactions";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
-import { bumpPendingBookings, sendBumpedNotifications } from "@/lib/bumping";
+import {
+  bumpPendingBookings,
+  sendBumpedNotifications,
+  sendPartialBumpNotifications,
+} from "@/lib/bumping";
 import { restoreCreditFromBooking } from "@/lib/member-credit";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -149,6 +153,7 @@ export async function markBookingPaymentSucceeded({
 
     let capacityRestored = capacity.available;
     let bumpedBookingIds: string[] = [];
+    let partiallyBumpedBookingIds: string[] = [];
 
     if (!capacityRestored && isAllMemberBooking(booking)) {
       const bumpResult = await bumpPendingBookings(
@@ -159,6 +164,7 @@ export async function markBookingPaymentSucceeded({
       );
       capacityRestored = bumpResult.capacityRestored;
       bumpedBookingIds = bumpResult.bumpedBookingIds;
+      partiallyBumpedBookingIds = bumpResult.partiallyBumpedBookingIds;
     }
 
     if (!capacityRestored) {
@@ -209,6 +215,7 @@ export async function markBookingPaymentSucceeded({
       booking,
       paymentId: payment.id,
       bumpedBookingIds,
+      partiallyBumpedBookingIds,
     };
   });
 
@@ -263,6 +270,19 @@ export async function markBookingPaymentSucceeded({
         { err, bookingId, bumpedBookingIds: reconciliation.bumpedBookingIds },
         "Failed to send bump notifications after payment capacity claim"
       )
+    );
+  }
+
+  if (
+    reconciliation.outcome === "paid" &&
+    reconciliation.partiallyBumpedBookingIds.length > 0
+  ) {
+    sendPartialBumpNotifications(reconciliation.partiallyBumpedBookingIds).catch(
+      (err) =>
+        logger.error(
+          { err, bookingId },
+          "Failed to send partial-bump notifications after payment capacity claim"
+        )
     );
   }
 

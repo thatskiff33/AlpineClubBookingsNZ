@@ -44,11 +44,28 @@ vi.mock("../waitlist", () => ({
 // Mock email
 const mockSendConfirmedEmail = vi.fn();
 const mockSendBumpedEmail = vi.fn();
+const mockSendGuestsRemovedEmail = vi.fn();
+const mockSendGuestsCancelledEmail = vi.fn();
 const mockSendAdminPaymentFailureAlert = vi.fn().mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
+  sendBookingGuestsRemovedEmail: (...args: unknown[]) => mockSendGuestsRemovedEmail(...args),
+  sendBookingGuestsCancelledEmail: (...args: unknown[]) => mockSendGuestsCancelledEmail(...args),
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
+}));
+
+// Mock the partial-bump helper (its internals are unit-tested separately).
+const mockApplyPartialBump = vi.fn();
+vi.mock("../partial-bump", () => ({
+  applyPartialBumpInTransaction: (...args: unknown[]) => mockApplyPartialBump(...args),
+}));
+
+// Mock promo cleanup used by the whole-bump path.
+const mockDeletePromoRedemption = vi.fn().mockResolvedValue(undefined);
+vi.mock("../promo", () => ({
+  deletePromoRedemptionAndAdjustCount: (...args: unknown[]) =>
+    mockDeletePromoRedemption(...args),
 }));
 
 // Mock capacity
@@ -64,6 +81,7 @@ const mockBookingFindMany = vi.fn();
 const mockBookingUpdate = vi.fn();
 const mockBookingUpdateMany = vi.fn();
 const mockPaymentUpdate = vi.fn();
+const mockPromoRedemptionFindUnique = vi.fn();
 const mockPrismaTransaction = vi.fn();
 
 vi.mock("../prisma", () => ({
@@ -75,6 +93,9 @@ vi.mock("../prisma", () => ({
     },
     payment: {
       update: (...args: unknown[]) => mockPaymentUpdate(...args),
+    },
+    promoRedemption: {
+      findUnique: (...args: unknown[]) => mockPromoRedemptionFindUnique(...args),
     },
     $transaction: (...args: unknown[]) => mockPrismaTransaction(...args),
   },
@@ -162,6 +183,8 @@ describe("Cron: Confirm Pending Bookings", () => {
       skipped: 0,
     });
     mockBookingUpdateMany.mockResolvedValue({ count: 1 });
+    mockPromoRedemptionFindUnique.mockResolvedValue(null);
+    mockDeletePromoRedemption.mockResolvedValue(undefined);
     mockPrismaTransaction.mockImplementation(async (arg: unknown) => {
       if (typeof arg === "function") {
         return arg({
@@ -238,8 +261,9 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(result.bumpedBookingIds).toEqual(["b1"]);
     expect(result.confirmedBookingIds).toHaveLength(0);
 
-    expect(mockBookingUpdate).toHaveBeenCalledWith({
-      where: { id: "b1" },
+    // Whole bump now uses the status-claim pattern for idempotency.
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "b1", status: "PENDING" },
       data: { status: "BUMPED" },
     });
 
@@ -444,5 +468,174 @@ describe("Cron: Confirm Pending Bookings", () => {
     expect(result.failedBookingIds).toEqual(["b1"]);
     expect(mockBookingUpdateMany).not.toHaveBeenCalled();
     expect(mockSendAdminPaymentFailureAlert).not.toHaveBeenCalled();
+  });
+
+  // --- issue #708: flag, partial bump, fallback, request-origin, idempotency ---
+
+  function makeMixedPendingBooking(
+    opts: {
+      id?: string;
+      cancelIfGuestsBumped?: boolean;
+      hasPaymentMethod?: boolean;
+      finalPriceCents?: number;
+    } = {}
+  ) {
+    const {
+      id = "b1",
+      cancelIfGuestsBumped = false,
+      hasPaymentMethod = true,
+      finalPriceCents = 18000,
+    } = opts;
+    const base = makePendingBooking(id, { hasPaymentMethod, finalPriceCents });
+    base.guests = [
+      {
+        id: `${id}_m0`,
+        bookingId: id,
+        firstName: "Member",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: true,
+        memberId: `mem_${id}`,
+        stayStart: base.checkIn,
+        stayEnd: base.checkOut,
+        priceCents: 8000,
+      },
+      {
+        id: `${id}_n0`,
+        bookingId: id,
+        firstName: "NonMember",
+        lastName: "Guest",
+        ageTier: "ADULT",
+        isMember: false,
+        memberId: null,
+        stayStart: base.checkIn,
+        stayEnd: base.checkOut,
+        priceCents: 10000,
+      },
+    ];
+    return { ...base, cancelIfGuestsBumped };
+  }
+
+  function partialResultFor(booking: ReturnType<typeof makeMixedPendingBooking>, finalCents: number) {
+    return {
+      kind: "partial" as const,
+      removedGuests: [booking.guests[1]],
+      remainingGuests: [booking.guests[0]],
+      newTotalPriceCents: finalCents,
+      newDiscountCents: 0,
+      newPromoAdjustmentCents: 0,
+      newFinalPriceCents: finalCents,
+      promoRemoved: false,
+    };
+  }
+
+  it("cancels the whole booking when the cancel-if-guests-bumped flag is set", async () => {
+    const booking = makeMixedPendingBooking({ cancelIfGuestsBumped: true });
+    mockBookingFindMany.mockResolvedValue([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValue({
+      available: false,
+      minAvailable: 0,
+      nightDetails: [],
+    });
+
+    const result = await confirmPendingBookings();
+
+    expect(result.bumpedBookingIds).toEqual(["b1"]);
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "b1", status: "PENDING" },
+      data: { status: "BUMPED" },
+    });
+    expect(mockSendGuestsCancelledEmail).toHaveBeenCalled();
+    expect(mockSendBumpedEmail).not.toHaveBeenCalled();
+    expect(mockApplyPartialBump).not.toHaveBeenCalled();
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+  });
+
+  it("partial-bumps and charges the reduced amount by default", async () => {
+    const booking = makeMixedPendingBooking({ finalPriceCents: 18000 });
+    mockBookingFindMany.mockResolvedValue([booking]);
+    mockCheckCapacityForGuestRanges
+      .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] })
+      .mockResolvedValueOnce({ available: true, minAvailable: 5, nightDetails: [] });
+    mockApplyPartialBump.mockResolvedValue(partialResultFor(booking, 8000));
+    mockChargePaymentMethod.mockResolvedValue({
+      id: "pi_partial",
+      status: "succeeded",
+      amount: 8000,
+    });
+    mockPaymentUpdate.mockResolvedValue({});
+
+    const result = await confirmPendingBookings();
+
+    expect(mockApplyPartialBump).toHaveBeenCalled();
+    expect(mockChargePaymentMethod).toHaveBeenCalledWith(
+      expect.objectContaining({ amountCents: 8000, idempotencyKey: "pending_charge_b1" })
+    );
+    expect(result.partialBumpedBookingIds).toEqual(["b1"]);
+    expect(result.confirmedBookingIds).toEqual(["b1"]);
+    expect(mockSendGuestsRemovedEmail).toHaveBeenCalledWith(
+      "b1@example.com",
+      "Test",
+      booking.checkIn,
+      booking.checkOut,
+      1,
+      8000
+    );
+    expect(mockSendConfirmedEmail).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a whole bump when members alone still don't fit", async () => {
+    const booking = makeMixedPendingBooking();
+    mockBookingFindMany.mockResolvedValue([booking]);
+    mockCheckCapacityForGuestRanges
+      .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] })
+      .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] });
+    mockApplyPartialBump.mockResolvedValue(partialResultFor(booking, 8000));
+
+    const result = await confirmPendingBookings();
+
+    expect(result.bumpedBookingIds).toEqual(["b1"]);
+    expect(result.partialBumpedBookingIds).toEqual([]);
+    expect(mockBookingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "b1", status: "PENDING" },
+      data: { status: "BUMPED" },
+    });
+    expect(mockSendBumpedEmail).toHaveBeenCalled();
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+  });
+
+  it("notifies without charging a request-origin booking after partial bump", async () => {
+    const booking = makeMixedPendingBooking({ hasPaymentMethod: false, finalPriceCents: 8000 });
+    mockBookingFindMany.mockResolvedValue([booking]);
+    mockCheckCapacityForGuestRanges
+      .mockResolvedValueOnce({ available: false, minAvailable: 0, nightDetails: [] })
+      .mockResolvedValueOnce({ available: true, minAvailable: 5, nightDetails: [] });
+    mockApplyPartialBump.mockResolvedValue(partialResultFor(booking, 8000));
+
+    const result = await confirmPendingBookings();
+
+    expect(result.partialBumpedBookingIds).toEqual(["b1"]);
+    expect(result.confirmedBookingIds).toEqual([]);
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockSendGuestsRemovedEmail).toHaveBeenCalled();
+  });
+
+  it("skips when the partial-bump claim was already processed (idempotent)", async () => {
+    const booking = makeMixedPendingBooking();
+    mockBookingFindMany.mockResolvedValue([booking]);
+    mockCheckCapacityForGuestRanges.mockResolvedValueOnce({
+      available: false,
+      minAvailable: 0,
+      nightDetails: [],
+    });
+    mockApplyPartialBump.mockResolvedValue({ kind: "already-processed" });
+
+    const result = await confirmPendingBookings();
+
+    expect(result.confirmedBookingIds).toEqual([]);
+    expect(result.bumpedBookingIds).toEqual([]);
+    expect(result.partialBumpedBookingIds).toEqual([]);
+    expect(mockChargePaymentMethod).not.toHaveBeenCalled();
+    expect(mockSendGuestsRemovedEmail).not.toHaveBeenCalled();
   });
 });

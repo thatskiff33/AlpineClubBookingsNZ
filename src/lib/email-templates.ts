@@ -415,6 +415,46 @@ export function bookingCancelledTemplate(
   `);
 }
 
+export function bookingGuestsRemovedTemplate(
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date,
+  guestCount: number,
+  newTotalCents: number
+): string {
+  return layout(`
+    ${heading("Booking Update")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", the lodge filled up with member bookings, so we couldn't keep the non-member guests on your booking. The rest of your booking continues.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(checkIn) },
+      { label: "Check-out", value: formatNZDate(checkOut) },
+      { label: "Guests", value: String(guestCount) },
+      { label: "New Total", value: formatCents(newTotalCents) },
+    ])}
+    ${alertBox("Only your non-member guests were removed — your booking has not been cancelled.", "info")}
+    ${paragraph("Your updated total reflects the remaining guests. You're welcome to rebook the non-member guests for different dates where availability exists.")}
+    ${button("View Booking", BASE_URL + "/bookings")}
+  `);
+}
+
+export function bookingGuestsCancelledTemplate(
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date
+): string {
+  return layout(`
+    ${heading("Booking Cancelled")}
+    ${paragraph("Hi " + escapeHtml(firstName) + ", you asked us to cancel your whole booking if your non-member guests couldn't come. The lodge filled up with member bookings, so we've cancelled it.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(checkIn) },
+      { label: "Check-out", value: formatNZDate(checkOut) },
+    ])}
+    ${alertBox("Your card has not been charged.", "info")}
+    ${paragraph("You're welcome to rebook for different dates where availability exists.")}
+    ${button("Book Again", BASE_URL + "/book")}
+  `);
+}
+
 export function bookingReviewApprovedTemplate(
   firstName: string,
   checkIn: Date,

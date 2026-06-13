@@ -65,6 +65,7 @@ export async function POST(request: NextRequest) {
     success: true,
     confirmed: confirmResult.confirmedBookingIds,
     bumped: confirmResult.bumpedBookingIds,
+    partialBumped: confirmResult.partialBumpedBookingIds,
     failed: confirmResult.failedBookingIds,
     preArrivalReminders: reminderResult,
   });

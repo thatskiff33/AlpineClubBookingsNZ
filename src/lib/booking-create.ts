@@ -46,6 +46,7 @@ import { resolveWorkPartyEventPromoForBooking } from "@/lib/work-party";
 import {
   bumpPendingBookings,
   sendBumpedNotifications,
+  sendPartialBumpNotifications,
 } from "@/lib/bumping";
 import {
   sendAdminNewBookingAlert,
@@ -101,6 +102,9 @@ interface BaseInput {
   workPartyEventId?: string;
   expectedArrivalTime?: string;
   requestedRoomId?: string;
+  // "Only book if my guests can come": cancel the whole booking instead of the
+  // default partial bump when non-member guests lose capacity.
+  cancelIfGuestsBumped?: boolean;
   groupDiscount?: GroupDiscountConfig;
   memberReviewJustification?: string;
 }
@@ -463,6 +467,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     workPartyEventId,
     expectedArrivalTime,
     requestedRoomId,
+    cancelIfGuestsBumped,
     groupDiscount,
     memberReviewJustification,
   } = input;
@@ -548,6 +553,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
         notes: notes || null,
         expectedArrivalTime: expectedArrivalTime || null,
         requestedRoomId: requestedRoomId || null,
+        cancelIfGuestsBumped: cancelIfGuestsBumped ?? false,
         createdById: isOnBehalf ? sessionUserId : null,
         requiresAdminReview: review.requiresAdminReview,
         adminReviewReason: review.adminReviewReason,
@@ -671,6 +677,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     workPartyEventId,
     expectedArrivalTime,
     requestedRoomId,
+    cancelIfGuestsBumped,
     applyCreditCents,
     groupDiscount,
     status,
@@ -701,6 +708,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     : requestedStatus;
 
   let bumpedBookingIds: string[] = [];
+  let partiallyBumpedBookingIds: string[] = [];
   let isZeroDollarConfirmed = false;
   let capacityFullNights: string[] | null = null;
 
@@ -808,6 +816,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           notes: notes || null,
           expectedArrivalTime: expectedArrivalTime || null,
           requestedRoomId: requestedRoomId || null,
+          cancelIfGuestsBumped: cancelIfGuestsBumped ?? false,
           createdById: isOnBehalf ? sessionUserId : null,
           requiresAdminReview: review.requiresAdminReview,
           adminReviewReason: review.adminReviewReason,
@@ -874,6 +883,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
           }
 
           bumpedBookingIds = bumpResult.bumpedBookingIds;
+          partiallyBumpedBookingIds = bumpResult.partiallyBumpedBookingIds;
         }
 
         isZeroDollarConfirmed = true;
@@ -985,6 +995,12 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       : "Unknown";
     sendBumpedNotifications(bumpedBookingIds, triggeringName).catch((err) =>
       logger.error({ err }, "Failed to send bump notifications"),
+    );
+  }
+
+  if (partiallyBumpedBookingIds.length > 0) {
+    sendPartialBumpNotifications(partiallyBumpedBookingIds).catch((err) =>
+      logger.error({ err }, "Failed to send partial-bump notifications"),
     );
   }
 
@@ -1110,6 +1126,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     workPartyEventId,
     expectedArrivalTime,
     requestedRoomId,
+    cancelIfGuestsBumped,
     groupDiscount,
     memberReviewJustification,
   } = input;
@@ -1213,6 +1230,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
         notes: notes || null,
         expectedArrivalTime: expectedArrivalTime || null,
         requestedRoomId: requestedRoomId || null,
+        cancelIfGuestsBumped: cancelIfGuestsBumped ?? false,
         createdById: isOnBehalf ? sessionUserId : null,
         requiresAdminReview: review.requiresAdminReview,
         adminReviewReason: review.adminReviewReason,

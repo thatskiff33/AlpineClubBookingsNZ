@@ -624,6 +624,10 @@ model Booking {
   promoAdjustmentCents      Int                @default(0)
   finalPriceCents           Int
   hasNonMembers             Boolean            @default(false)
+  // When true, the member asked us to cancel the whole booking if their
+  // non-member guests cannot be accommodated, instead of the default partial
+  // bump (drop the non-members, keep the members). Both happen pre-charge.
+  cancelIfGuestsBumped      Boolean            @default(false)
   nonMemberHoldUntil        DateTime?
   draftExpiresAt            DateTime?
   notes                     String?            @db.VarChar(500)

@@ -166,6 +166,9 @@ export default function BookPage() {
   const [appliedPromo, setAppliedPromo] = useState<PromoResult | null>(null);
   const [expectedArrivalTime, setExpectedArrivalTime] = useState<string | null>(null);
   const [requestedRoomId, setRequestedRoomId] = useState<string | null>(null);
+  // "Only book if my guests can come" — opt into whole-booking cancellation
+  // instead of the default partial bump for non-member guests.
+  const [cancelIfGuestsBumped, setCancelIfGuestsBumped] = useState(false);
   const [roomOptions, setRoomOptions] = useState<RoomOption[]>([]);
   const [roomRequestEnabled, setRoomRequestEnabled] = useState(false);
   const [useCredit, setUseCredit] = useState(false);
@@ -594,6 +597,10 @@ export default function BookPage() {
         workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         requestedRoomId: requestedRoomId || undefined,
+        cancelIfGuestsBumped:
+          guests.some((g) => !g.isMember) && cancelIfGuestsBumped
+            ? true
+            : undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         paymentMethod:
           paymentMethod === "internet_banking" ? paymentMethod : undefined,
@@ -650,6 +657,10 @@ export default function BookPage() {
         workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         requestedRoomId: requestedRoomId || undefined,
+        cancelIfGuestsBumped:
+          guests.some((g) => !g.isMember) && cancelIfGuestsBumped
+            ? true
+            : undefined,
         waitlist: true,
         memberReviewJustification: requiresAdminReviewLocal
           ? memberReviewJustification.trim()
@@ -694,6 +705,10 @@ export default function BookPage() {
         workPartyEventId: attendingWorkParty ? selectedWorkPartyEventId ?? undefined : undefined,
         expectedArrivalTime: expectedArrivalTime || undefined,
         requestedRoomId: requestedRoomId || undefined,
+        cancelIfGuestsBumped:
+          guests.some((g) => !g.isMember) && cancelIfGuestsBumped
+            ? true
+            : undefined,
         applyCreditCents: appliedCreditCents > 0 ? appliedCreditCents : undefined,
         draft: true,
         memberReviewJustification: requiresAdminReviewLocal
@@ -1492,9 +1507,27 @@ export default function BookPage() {
           </Card>
 
           {guests.some((g) => !g.isMember) && (
-            <div className="rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
-              <strong>Note:</strong> This booking includes non-member guests.
-              {" Your booking may be held as PENDING until closer to check-in. Members have priority \u2014 your booking may be bumped if the lodge fills up."}
+            <div className="space-y-3">
+              <div className="rounded-md bg-yellow-50 p-4 text-sm text-yellow-800">
+                <strong>Note:</strong> This booking includes non-member guests.
+                {" Your booking may be held as PENDING until closer to check-in. Members have priority \u2014 your booking may be bumped if the lodge fills up."}
+              </div>
+              <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={cancelIfGuestsBumped}
+                  onChange={(e) => setCancelIfGuestsBumped(e.target.checked)}
+                />
+                <span>
+                  <strong>Only book if my guests can come.</strong> By default, if
+                  the lodge fills up we keep your booking and just remove the
+                  non-member guests (repricing for the remaining guests). Tick
+                  this to cancel the whole booking instead if your non-member
+                  guests can&apos;t be accommodated. Either way, nothing is
+                  charged until your booking is confirmed.
+                </span>
+              </label>
             </div>
           )}
 

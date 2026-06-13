@@ -3,7 +3,11 @@ import { getLodgeCapacity } from "./capacity";
 import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { eachDayOfInterval, subDays, format } from "date-fns";
-import { sendBookingBumpedEmail, sendAdminBookingBumpedAlert } from "./email";
+import {
+  sendBookingBumpedEmail,
+  sendBookingGuestsRemovedEmail,
+  sendAdminBookingBumpedAlert,
+} from "./email";
 import logger from "@/lib/logger";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
 import {
@@ -12,14 +16,30 @@ import {
 } from "@/lib/booking-guest-stay-ranges";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { applyPartialBumpInTransaction } from "@/lib/partial-bump";
 
 export interface BumpResult {
   bumpedBookingIds: string[];
+  // Bookings whose non-member guests were removed but kept their member
+  // guests (the new default). These members get a "your guests didn't fit,
+  // your booking continues" email rather than a bumped email.
+  partiallyBumpedBookingIds: string[];
   capacityRestored: boolean;
 }
 
 type BookingWithGuests = Prisma.BookingGetPayload<{
-  include: { guests: true; member: true };
+  include: {
+    guests: true;
+    member: true;
+    promoRedemption: {
+      include: {
+        guestTargets: { select: { bookingGuestId: true } };
+        promoCode: {
+          include: { assignments: { select: { memberId: true } } };
+        };
+      };
+    };
+  };
 }>;
 
 /**
@@ -83,7 +103,18 @@ export async function findBumpCandidates(
       checkOut: { gt: checkIn },
       status: BookingStatus.PENDING,
     },
-    include: { guests: true, member: true },
+    include: {
+      guests: true,
+      member: true,
+      promoRedemption: {
+        include: {
+          guestTargets: { select: { bookingGuestId: true } },
+          promoCode: {
+            include: { assignments: { select: { memberId: true } } },
+          },
+        },
+      },
+    },
     orderBy: { createdAt: "desc" }, // Most recent pending bookings are bumped first
   });
 }
@@ -129,21 +160,20 @@ function wouldExceedCapacityForGuestRanges(
 }
 
 /**
- * Recalculate occupied beds after removing a bumped booking's guests.
+ * Recalculate occupied beds after freeing a specific set of a booking's guests
+ * (the whole guest list for a full bump, or just the non-members for a partial
+ * bump). The booking's check-in/out range bounds each guest's active nights.
  */
-function removeBumpedBookingFromOccupancy(
+function subtractGuestsFromOccupancy(
   occupiedMap: Map<string, number>,
-  booking: BookingWithGuests
+  guests: GuestStayRange[],
+  range: { checkIn: Date; checkOut: Date }
 ): Map<string, number> {
   const updated = new Map(occupiedMap);
 
   for (const [dateKey, occupied] of updated) {
     const night = new Date(`${dateKey}T00:00:00.000Z`);
-    const activeGuestCount = countActiveGuestsForNight(
-      booking.guests,
-      night,
-      booking
-    );
+    const activeGuestCount = countActiveGuestsForNight(guests, night, range);
 
     if (activeGuestCount > 0) {
       updated.set(dateKey, occupied - activeGuestCount);
@@ -153,19 +183,66 @@ function removeBumpedBookingFromOccupancy(
   return updated;
 }
 
+function removeBumpedBookingFromOccupancy(
+  occupiedMap: Map<string, number>,
+  booking: BookingWithGuests
+): Map<string, number> {
+  return subtractGuestsFromOccupancy(occupiedMap, booking.guests, booking);
+}
+
+/**
+ * Whole-booking bump with the cron-style status claim for idempotency: only
+ * one worker may move the booking PENDING -> BUMPED. On a successful claim we
+ * reconcile bed allocations and clean up any promo redemption. No charge or
+ * refund is involved — bumped bookings are always still PENDING (uncharged).
+ */
+async function claimAndWholeBump(
+  tx: Prisma.TransactionClient,
+  booking: BookingWithGuests
+): Promise<boolean> {
+  const claimed = await tx.booking.updateMany({
+    where: { id: booking.id, status: BookingStatus.PENDING },
+    data: { status: BookingStatus.BUMPED },
+  });
+  if (claimed.count === 0) {
+    return false;
+  }
+
+  await reconcileBedAllocationsForBooking({
+    bookingId: booking.id,
+    db: tx,
+    previousRange: {
+      checkIn: booking.checkIn,
+      checkOut: booking.checkOut,
+    },
+  });
+
+  const promoRedemption = await tx.promoRedemption.findUnique({
+    where: { bookingId: booking.id },
+  });
+  if (promoRedemption) {
+    await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
+  }
+
+  return true;
+}
+
 /**
  * Most-recent-first bumping algorithm.
  *
  * When a MEMBER creates a booking that would push any night past lodge capacity:
  * 1. Find all PENDING bookings overlapping those nights
  * 2. Sort by createdAt DESC (most recently created = first bumped)
- * 3. Bump one at a time until capacity is restored
- * 4. For each bumped booking: set status=BUMPED, send notification email
- * 5. No refund needed (PENDING bookings haven't been charged)
+ * 3. For each candidate, free capacity until the incoming booking fits:
+ *    - Flagged ("only book if my guests can come") => whole-booking bump.
+ *    - Default => partial bump: drop the non-member guests, keep the members,
+ *      reprice. If freeing the non-members isn't enough, fall back to a
+ *      whole-booking bump of that same candidate.
+ * 4. No refund needed — every candidate is PENDING (uncharged).
  *
- * Returns the list of bumped booking IDs and whether capacity was restored.
- * If there aren't enough PENDING bookings to bump, returns capacityRestored=false
- * and the caller should reject the new booking.
+ * Returns the bumped/partially-bumped booking IDs and whether capacity was
+ * restored. If there aren't enough PENDING bookings to free, returns
+ * capacityRestored=false and the caller should reject the new booking.
  */
 export async function bumpPendingBookings(
   checkIn: Date,
@@ -178,80 +255,111 @@ export async function bumpPendingBookings(
   // Get current occupancy excluding nothing (we want the full picture)
   let occupiedMap = await getOccupiedBedsPerNight(checkIn, checkOut, [], tx);
 
-  // Check if bumping is even needed
-  if (
+  const capacityNowRestored = () =>
     !wouldExceedCapacityForGuestRanges(
       occupiedMap,
       checkIn,
       checkOut,
       newGuests,
       lodgeCapacity,
-    )
-  ) {
-    return { bumpedBookingIds: [], capacityRestored: true };
+    );
+
+  // Check if bumping is even needed
+  if (capacityNowRestored()) {
+    return {
+      bumpedBookingIds: [],
+      partiallyBumpedBookingIds: [],
+      capacityRestored: true,
+    };
   }
 
   // Find bump candidates (PENDING, overlapping, most recent first)
   const candidates = await findBumpCandidates(checkIn, checkOut, tx);
 
   if (candidates.length === 0) {
-    return { bumpedBookingIds: [], capacityRestored: false };
+    return {
+      bumpedBookingIds: [],
+      partiallyBumpedBookingIds: [],
+      capacityRestored: false,
+    };
   }
 
   const bumpedBookingIds: string[] = [];
+  const partiallyBumpedBookingIds: string[] = [];
 
   for (const candidate of candidates) {
-    // Bump this booking
-    await tx.booking.update({
-      where: { id: candidate.id },
-      data: { status: BookingStatus.BUMPED },
-    });
-    await reconcileBedAllocationsForBooking({
-      bookingId: candidate.id,
-      db: tx,
-      previousRange: {
-        checkIn: candidate.checkIn,
-        checkOut: candidate.checkOut,
-      },
-    });
+    const nonMemberGuests = candidate.guests.filter((guest) => !guest.isMember);
+    const memberGuests = candidate.guests.filter((guest) => guest.isMember);
 
-    // Clean up PromoRedemption if this booking used a promo code
-    const promoRedemption = await tx.promoRedemption.findUnique({
-      where: { bookingId: candidate.id },
-    });
-    if (promoRedemption) {
-      await deletePromoRedemptionAndAdjustCount(tx, promoRedemption);
+    // Default behaviour: drop only the non-members and keep the members. Only
+    // attempt it when the member opted into the gentler path and there is a
+    // mix of member and non-member guests to split.
+    const canPartialBump =
+      !candidate.cancelIfGuestsBumped &&
+      nonMemberGuests.length > 0 &&
+      memberGuests.length > 0;
+
+    if (canPartialBump) {
+      const partial = await applyPartialBumpInTransaction({
+        tx,
+        booking: candidate,
+      });
+
+      if (partial.kind === "already-processed") {
+        // Another worker handled this booking; nothing more to free here.
+        continue;
+      }
+
+      if (partial.kind === "partial") {
+        // Free just the non-member beds — the member portion stays put.
+        occupiedMap = subtractGuestsFromOccupancy(
+          occupiedMap,
+          partial.removedGuests,
+          candidate
+        );
+
+        if (capacityNowRestored()) {
+          partiallyBumpedBookingIds.push(candidate.id);
+          break;
+        }
+
+        // Removing the non-members alone wasn't enough — fall back to a
+        // whole-booking bump of this candidate (free the member beds too).
+        if (await claimAndWholeBump(tx, candidate)) {
+          occupiedMap = subtractGuestsFromOccupancy(
+            occupiedMap,
+            partial.remainingGuests,
+            candidate
+          );
+          bumpedBookingIds.push(candidate.id);
+        } else {
+          partiallyBumpedBookingIds.push(candidate.id);
+        }
+
+        if (capacityNowRestored()) {
+          break;
+        }
+        continue;
+      }
+      // partial.kind === "no-non-members" / "no-members-remain" falls through
+      // to the whole-booking bump below.
     }
 
-    bumpedBookingIds.push(candidate.id);
+    if (await claimAndWholeBump(tx, candidate)) {
+      occupiedMap = removeBumpedBookingFromOccupancy(occupiedMap, candidate);
+      bumpedBookingIds.push(candidate.id);
+    }
 
-    // Remove this booking's guests from occupancy count
-    occupiedMap = removeBumpedBookingFromOccupancy(occupiedMap, candidate);
-
-    // Check if capacity is now restored
-    if (
-      !wouldExceedCapacityForGuestRanges(
-        occupiedMap,
-        checkIn,
-        checkOut,
-        newGuests,
-        lodgeCapacity,
-      )
-    ) {
+    if (capacityNowRestored()) {
       break;
     }
   }
 
-  // Final check: is capacity restored?
-  const capacityRestored = !wouldExceedCapacityForGuestRanges(
-    occupiedMap,
-    checkIn,
-    checkOut,
-    newGuests,
-    lodgeCapacity,
-  );
-
-  return { bumpedBookingIds, capacityRestored };
+  return {
+    bumpedBookingIds,
+    partiallyBumpedBookingIds,
+    capacityRestored: capacityNowRestored(),
+  };
 }
 
 /**
@@ -293,5 +401,40 @@ export async function sendBumpedNotifications(
     }).catch((err) =>
       logger.error({ err, bookingId }, "Failed to send admin bump alert")
     );
+  }
+}
+
+/**
+ * Notify members whose non-member guests were dropped (partial bump) that their
+ * booking continues at the repriced amount. Called after the transaction
+ * commits so emails aren't sent on rollback. No charge happens here — partial
+ * bumps are pre-charge, so there is never a refund to mention.
+ */
+export async function sendPartialBumpNotifications(
+  partiallyBumpedBookingIds: string[]
+): Promise<void> {
+  for (const bookingId of partiallyBumpedBookingIds) {
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { member: true, guests: true },
+    });
+
+    if (!booking) continue;
+
+    try {
+      await sendBookingGuestsRemovedEmail(
+        booking.member.email,
+        booking.member.firstName,
+        booking.checkIn,
+        booking.checkOut,
+        booking.guests.length,
+        booking.finalPriceCents
+      );
+    } catch (err) {
+      logger.error(
+        { err, bookingId },
+        "Failed to send partial-bump (guests removed) email"
+      );
+    }
   }
 }

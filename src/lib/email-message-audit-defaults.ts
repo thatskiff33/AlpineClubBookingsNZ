@@ -42,6 +42,14 @@ export const EMAIL_AUDIT_DEFAULTS = {
     "defaultSubject": "Booking Update - {{CLUB_LODGE_NAME}}",
     "defaultBody": "Booking Update\n\nHi {{firstName}}, unfortunately your pending lodge booking has been bumped due to member demand.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nYour card has not been charged.\n\nAs a non-member booking, priority is given to club members when the lodge reaches capacity. You're welcome to rebook for different dates where availability exists.\n\nBook Again: {{BASE_URL}}/book\n\nWe apologise for the inconvenience."
   },
+  "booking-guests-removed": {
+    "defaultSubject": "Booking Update - {{CLUB_LODGE_NAME}}",
+    "defaultBody": "Booking Update\n\nHi {{firstName}}, the lodge filled up with member bookings, so we couldn't keep the non-member guests on your booking. The rest of your booking continues.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nNew Total: {{newTotal}}\n\nOnly your non-member guests were removed — your booking has not been cancelled. Your updated total reflects the remaining guests. You're welcome to rebook the non-member guests for different dates where availability exists.\n\nView Booking: {{BASE_URL}}/bookings"
+  },
+  "booking-guests-cancelled": {
+    "defaultSubject": "Booking Cancelled - {{CLUB_LODGE_NAME}}",
+    "defaultBody": "Booking Cancelled\n\nHi {{firstName}}, you asked us to cancel your whole booking if your non-member guests couldn't come. The lodge filled up with member bookings, so we've cancelled it.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nYour card has not been charged.\n\nYou're welcome to rebook for different dates where availability exists.\n\nBook Again: {{BASE_URL}}/book"
+  },
   "booking-cancelled": {
     "defaultSubject": "Booking Cancelled - {{CLUB_LODGE_NAME}}",
     "defaultBody": "Booking Cancelled\n\nHi {{firstName}}, your lodge booking has been cancelled.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\n{{refundMessage}}\n\nYou can make a new booking at any time from your account.\n\nMake a New Booking: {{BASE_URL}}/book"

@@ -375,6 +375,66 @@ Triggers and frequency:
 - Pending-booking cron every 3 hours when a pending booking reaches its hold deadline and capacity is no longer available.
 - One email per bumped booking.
 
+### booking-guests-removed
+
+Subject:
+
+```text
+Booking Update - {{CLUB_LODGE_NAME}}
+```
+
+Body:
+
+```text
+Booking Update
+
+Hi {{firstName}}, the lodge filled up with member bookings, so we couldn't keep the non-member guests on your booking. The rest of your booking continues.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+New Total: {{newTotal}}
+
+Only your non-member guests were removed — your booking has not been cancelled. Your updated total reflects the remaining guests. You're welcome to rebook the non-member guests for different dates where availability exists.
+
+View Booking: {{BASE_URL}}/bookings
+```
+
+Triggers and frequency:
+
+- Default partial bump (`bumping.ts` candidate loop and the pending-booking cron) when a member booking's non-member guests can't be accommodated but the member guests stay.
+- One email per partially bumped booking.
+
+### booking-guests-cancelled
+
+Subject:
+
+```text
+Booking Cancelled - {{CLUB_LODGE_NAME}}
+```
+
+Body:
+
+```text
+Booking Cancelled
+
+Hi {{firstName}}, you asked us to cancel your whole booking if your non-member guests couldn't come. The lodge filled up with member bookings, so we've cancelled it.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+
+Your card has not been charged.
+
+You're welcome to rebook for different dates where availability exists.
+
+Book Again: {{BASE_URL}}/book
+```
+
+Triggers and frequency:
+
+- Pending-booking cron when a booking with the "only book if my guests can come" flag set loses capacity for its non-member guests.
+- One email per cancelled booking. No refund — the booking was never charged.
+
 ### booking-cancelled
 
 Subject:

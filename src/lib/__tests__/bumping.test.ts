@@ -22,6 +22,7 @@ vi.mock("../email", () => ({
   sendBookingBumpedEmail: vi.fn(),
   sendBookingConfirmedEmail: vi.fn(),
   sendBookingPendingEmail: vi.fn(),
+  sendBookingGuestsRemovedEmail: vi.fn(),
   sendAdminBookingBumpedAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -31,9 +32,13 @@ import {
   wouldExceedCapacity,
   bumpPendingBookings,
   sendBumpedNotifications,
+  sendPartialBumpNotifications,
 } from "../bumping";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "../lodge-capacity";
-import { sendBookingBumpedEmail } from "../email";
+import {
+  sendBookingBumpedEmail,
+  sendBookingGuestsRemovedEmail,
+} from "../email";
 
 // Helper mock for promoRedemption (returns null = no promo used)
 const mockPromoRedemption = {
@@ -223,6 +228,7 @@ describe("Bumping Algorithm", () => {
         booking: {
           findMany: vi.fn().mockResolvedValue([]),
           update: vi.fn(),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
         promoRedemption: mockPromoRedemption,
         promoCode: mockPromoCode,
@@ -253,6 +259,7 @@ describe("Bumping Algorithm", () => {
             oneBedLeftSecondNight,
           ]),
           update: vi.fn(),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
         promoRedemption: mockPromoRedemption,
         promoCode: mockPromoCode,
@@ -272,7 +279,7 @@ describe("Bumping Algorithm", () => {
 
       expect(result.bumpedBookingIds).toHaveLength(0);
       expect(result.capacityRestored).toBe(true);
-      expect(txMock.booking.update).not.toHaveBeenCalled();
+      expect(txMock.booking.updateMany).not.toHaveBeenCalled();
     });
 
     it("bumps most recent PENDING booking first when capacity exceeded", async () => {
@@ -298,6 +305,7 @@ describe("Bumping Algorithm", () => {
             return [pendingOld];
           }),
           update: vi.fn().mockResolvedValue({}),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
         promoRedemption: mockPromoRedemption,
         promoCode: mockPromoCode,
@@ -314,8 +322,8 @@ describe("Bumping Algorithm", () => {
       // After bump: 25 + 4 = 29 <= 29. Capacity restored.
       expect(result.bumpedBookingIds).toContain("pend1");
       expect(result.capacityRestored).toBe(true);
-      expect(txMock.booking.update).toHaveBeenCalledWith({
-        where: { id: "pend1" },
+      expect(txMock.booking.updateMany).toHaveBeenCalledWith({
+        where: { id: "pend1", status: "PENDING" },
         data: { status: "BUMPED" },
       });
     });
@@ -343,6 +351,7 @@ describe("Bumping Algorithm", () => {
             return [pendingNew, pendingOld];
           }),
           update: vi.fn().mockResolvedValue({}),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
         promoRedemption: mockPromoRedemption,
         promoCode: mockPromoCode,
@@ -381,6 +390,7 @@ describe("Bumping Algorithm", () => {
             return [pendingNew, pendingOld];
           }),
           update: vi.fn().mockResolvedValue({}),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
         promoRedemption: mockPromoRedemption,
         promoCode: mockPromoCode,
@@ -396,7 +406,7 @@ describe("Bumping Algorithm", () => {
       expect(result.bumpedBookingIds).toEqual(["pend2"]);
       expect(result.capacityRestored).toBe(true);
       // pend1 should NOT be bumped
-      expect(txMock.booking.update).toHaveBeenCalledTimes(1);
+      expect(txMock.booking.updateMany).toHaveBeenCalledTimes(1);
     });
 
     it("returns capacityRestored=false when no PENDING bookings exist", async () => {
@@ -415,6 +425,7 @@ describe("Bumping Algorithm", () => {
             return []; // No PENDING bookings to bump
           }),
           update: vi.fn(),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
         promoRedemption: mockPromoRedemption,
         promoCode: mockPromoCode,
@@ -450,6 +461,7 @@ describe("Bumping Algorithm", () => {
             return [pendingSmall];
           }),
           update: vi.fn().mockResolvedValue({}),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
         promoRedemption: mockPromoRedemption,
         promoCode: mockPromoCode,
@@ -487,6 +499,7 @@ describe("Bumping Algorithm", () => {
             return [pendOverlap];
           }),
           update: vi.fn().mockResolvedValue({}),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
         },
         promoRedemption: mockPromoRedemption,
         promoCode: mockPromoCode,
@@ -542,6 +555,202 @@ describe("Bumping Algorithm", () => {
       await sendBumpedNotifications(["nonexistent"]);
 
       expect(sendBookingBumpedEmail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("bumpPendingBookings — partial bump (issue #708)", () => {
+    const SEASON = {
+      id: "s1",
+      startDate: new Date("2026-01-01"),
+      endDate: new Date("2026-12-31"),
+      rates: [
+        { ageTier: "ADULT", isMember: true, pricePerNightCents: 4000 },
+        { ageTier: "ADULT", isMember: false, pricePerNightCents: 6000 },
+      ],
+    };
+
+    function makeMixedCandidate(opts: {
+      id: string;
+      memberGuests: number;
+      nonMemberGuests: number;
+      cancelIfGuestsBumped?: boolean;
+    }) {
+      const { id, memberGuests, nonMemberGuests, cancelIfGuestsBumped = false } = opts;
+      const guests: Array<Record<string, unknown>> = [];
+      for (let i = 0; i < memberGuests; i++) {
+        guests.push({
+          id: `${id}_m${i}`,
+          bookingId: id,
+          firstName: "Member",
+          lastName: "Guest",
+          ageTier: "ADULT",
+          isMember: true,
+          memberId: `mem_${id}_${i}`,
+          priceCents: 8000,
+        });
+      }
+      for (let i = 0; i < nonMemberGuests; i++) {
+        guests.push({
+          id: `${id}_n${i}`,
+          bookingId: id,
+          firstName: "NonMember",
+          lastName: "Guest",
+          ageTier: "ADULT",
+          isMember: false,
+          memberId: null,
+          priceCents: 12000,
+        });
+      }
+      return {
+        id,
+        checkIn: new Date("2026-07-10"),
+        checkOut: new Date("2026-07-12"),
+        status: "PENDING",
+        createdAt: new Date("2026-03-01"),
+        memberId: `member_${id}`,
+        member: { id: `member_${id}`, email: `${id}@example.com`, firstName: "Test", lastName: "User" },
+        hasNonMembers: nonMemberGuests > 0,
+        cancelIfGuestsBumped,
+        totalPriceCents: 20000,
+        discountCents: 0,
+        promoAdjustmentCents: 0,
+        finalPriceCents: 20000,
+        promoRedemption: null,
+        guests,
+      };
+    }
+
+    function makePartialTx(
+      occupancyBookings: unknown[],
+      candidates: unknown[]
+    ) {
+      let calls = 0;
+      return {
+        booking: {
+          findMany: vi.fn().mockImplementation(() => {
+            calls++;
+            return calls === 1 ? occupancyBookings : candidates;
+          }),
+          updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        choreAssignment: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        bookingGuest: {
+          deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        season: { findMany: vi.fn().mockResolvedValue([SEASON]) },
+        promoRedemption: mockPromoRedemption,
+        promoCode: mockPromoCode,
+      };
+    }
+
+    it("drops non-members and keeps members when that frees enough", async () => {
+      const confirmed = makeBooking("conf1", "2026-07-10", "2026-07-12", LODGE_CAPACITY - 2, "CONFIRMED");
+      const candidate = makeMixedCandidate({ id: "pend1", memberGuests: 1, nonMemberGuests: 1 });
+      const tx = makePartialTx([confirmed, candidate], [candidate]);
+
+      const result = await bumpPendingBookings(
+        new Date("2026-07-10"),
+        new Date("2026-07-12"),
+        1,
+        tx as never
+      );
+
+      expect(result.partiallyBumpedBookingIds).toEqual(["pend1"]);
+      expect(result.bumpedBookingIds).toEqual([]);
+      expect(result.capacityRestored).toBe(true);
+      // Partial claim flips hasNonMembers off — not a whole-booking BUMPED.
+      expect(tx.booking.updateMany).toHaveBeenCalledWith({
+        where: { id: "pend1", status: "PENDING", hasNonMembers: true },
+        data: { hasNonMembers: false, nonMemberHoldUntil: null },
+      });
+      expect(tx.booking.updateMany).not.toHaveBeenCalledWith({
+        where: { id: "pend1", status: "PENDING" },
+        data: { status: "BUMPED" },
+      });
+      expect(tx.bookingGuest.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ["pend1_n0"] } },
+      });
+    });
+
+    it("whole-bumps a flagged candidate instead of partial", async () => {
+      const confirmed = makeBooking("conf1", "2026-07-10", "2026-07-12", LODGE_CAPACITY - 2, "CONFIRMED");
+      const candidate = makeMixedCandidate({
+        id: "pend1",
+        memberGuests: 1,
+        nonMemberGuests: 1,
+        cancelIfGuestsBumped: true,
+      });
+      const tx = makePartialTx([confirmed, candidate], [candidate]);
+
+      const result = await bumpPendingBookings(
+        new Date("2026-07-10"),
+        new Date("2026-07-12"),
+        1,
+        tx as never
+      );
+
+      expect(result.bumpedBookingIds).toEqual(["pend1"]);
+      expect(result.partiallyBumpedBookingIds).toEqual([]);
+      expect(tx.booking.updateMany).toHaveBeenCalledWith({
+        where: { id: "pend1", status: "PENDING" },
+        data: { status: "BUMPED" },
+      });
+      // Flagged path never strips individual guests.
+      expect(tx.bookingGuest.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("falls back to whole bump when dropping non-members isn't enough", async () => {
+      const confirmed = makeBooking("conf1", "2026-07-10", "2026-07-12", LODGE_CAPACITY - 2, "CONFIRMED");
+      const candidate = makeMixedCandidate({ id: "pend1", memberGuests: 1, nonMemberGuests: 1 });
+      const tx = makePartialTx([confirmed, candidate], [candidate]);
+
+      // Incoming booking needs 2 beds; dropping the single non-member frees
+      // only 1, so the candidate is then bumped whole.
+      const result = await bumpPendingBookings(
+        new Date("2026-07-10"),
+        new Date("2026-07-12"),
+        2,
+        tx as never
+      );
+
+      expect(result.bumpedBookingIds).toEqual(["pend1"]);
+      expect(result.partiallyBumpedBookingIds).toEqual([]);
+      expect(result.capacityRestored).toBe(true);
+      // Both the partial claim and the whole-bump claim were made.
+      expect(tx.booking.updateMany).toHaveBeenCalledWith({
+        where: { id: "pend1", status: "PENDING", hasNonMembers: true },
+        data: { hasNonMembers: false, nonMemberHoldUntil: null },
+      });
+      expect(tx.booking.updateMany).toHaveBeenCalledWith({
+        where: { id: "pend1", status: "PENDING" },
+        data: { status: "BUMPED" },
+      });
+    });
+  });
+
+  describe("sendPartialBumpNotifications", () => {
+    it("emails the guests-removed notice with the repriced total", async () => {
+      mockFindUnique.mockResolvedValue({
+        id: "bk1",
+        checkIn: new Date("2026-07-10"),
+        checkOut: new Date("2026-07-12"),
+        finalPriceCents: 8000,
+        member: { email: "m@example.com", firstName: "Pat" },
+        guests: [{ id: "g1" }],
+      });
+
+      await sendPartialBumpNotifications(["bk1"]);
+
+      expect(sendBookingGuestsRemovedEmail).toHaveBeenCalledWith(
+        "m@example.com",
+        "Pat",
+        expect.any(Date),
+        expect.any(Date),
+        1,
+        8000
+      );
     });
   });
 });

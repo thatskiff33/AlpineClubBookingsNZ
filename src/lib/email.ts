@@ -5,6 +5,8 @@ import {
   bookingConfirmedTemplate,
   bookingPendingTemplate,
   bookingBumpedTemplate,
+  bookingGuestsRemovedTemplate,
+  bookingGuestsCancelledTemplate,
   bookingCancelledTemplate,
   bookingReviewApprovedTemplate,
   bookingReviewRejectedTemplate,
@@ -549,6 +551,54 @@ export async function sendBookingBumpedEmail(
       checkIn: formatNZDate(checkIn),
       checkOut: formatNZDate(checkOut),
       guestCount,
+    },
+  });
+}
+
+export async function sendBookingGuestsRemovedEmail(
+  email: string,
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date,
+  guestCount: number,
+  newTotalCents: number
+) {
+  await sendEmail({
+    to: email,
+    subject: `Booking Update - ${CLUB_LODGE_NAME}`,
+    html: bookingGuestsRemovedTemplate(
+      firstName,
+      checkIn,
+      checkOut,
+      guestCount,
+      newTotalCents
+    ),
+    templateName: "booking-guests-removed",
+    templateData: {
+      firstName,
+      checkIn: formatNZDate(checkIn),
+      checkOut: formatNZDate(checkOut),
+      guestCount,
+      newTotal: formatMoneyCents(newTotalCents),
+    },
+  });
+}
+
+export async function sendBookingGuestsCancelledEmail(
+  email: string,
+  firstName: string,
+  checkIn: Date,
+  checkOut: Date
+) {
+  await sendEmail({
+    to: email,
+    subject: `Booking Cancelled - ${CLUB_LODGE_NAME}`,
+    html: bookingGuestsCancelledTemplate(firstName, checkIn, checkOut),
+    templateName: "booking-guests-cancelled",
+    templateData: {
+      firstName,
+      checkIn: formatNZDate(checkIn),
+      checkOut: formatNZDate(checkOut),
     },
   });
 }
