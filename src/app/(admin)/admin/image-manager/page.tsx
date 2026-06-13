@@ -9,7 +9,7 @@ import {
   FolderPlus,
   Image as ImageIcon,
   RefreshCw,
-  Upload,
+  Upload
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,18 +18,14 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
+  CardTitle
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   type ImageManagerDirectoryEntry,
   type ImageManagerImageEntry,
-  type ImageManagerListing,
+  type ImageManagerListing
 } from "@/lib/image-manager";
-
-type SelectedImageInfo = ImageManagerImageEntry & {
-  dimensions: { width: number; height: number } | null;
-};
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
@@ -51,7 +47,7 @@ function formatBytes(bytes: number): string {
 function formatDate(value: string): string {
   return new Date(value).toLocaleString("en-NZ", {
     dateStyle: "medium",
-    timeStyle: "short",
+    timeStyle: "short"
   });
 }
 
@@ -65,14 +61,14 @@ function getDirectoryName(currentDir: string): string {
 }
 
 function buildBreadcrumbs(
-  listing: ImageManagerListing | null,
+  listing: ImageManagerListing | null
 ): Array<{ label: string; relativePath: string }> {
   return listing?.breadcrumbs ?? [{ label: "images", relativePath: "" }];
 }
 
 function FolderTile({
   directory,
-  onOpen,
+  onOpen
 }: {
   directory: ImageManagerDirectoryEntry;
   onOpen: (relativePath: string) => void;
@@ -97,7 +93,7 @@ function FolderTile({
 function ImageTile({
   image,
   selected,
-  onSelect,
+  onSelect
 }: {
   image: ImageManagerImageEntry;
   selected: boolean;
@@ -119,7 +115,7 @@ function ImageTile({
       if (!cancelled) {
         setDimensions({
           width: preview.naturalWidth,
-          height: preview.naturalHeight,
+          height: preview.naturalHeight
         });
       }
     };
@@ -201,7 +197,7 @@ export default function ImageManagerPage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [queuedFiles, setQueuedFiles] = useState<File[]>([]);
   const [selectedImagePath, setSelectedImagePath] = useState<string | null>(
-    null,
+    null
   );
   const [selectedPreviewDimensions, setSelectedPreviewDimensions] = useState<{
     width: number;
@@ -215,7 +211,7 @@ export default function ImageManagerPage() {
     () =>
       listing?.images.find((image) => image.webPath === selectedImagePath) ??
       null,
-    [listing, selectedImagePath],
+    [listing, selectedImagePath]
   );
 
   const breadcrumbs = useMemo(() => buildBreadcrumbs(listing), [listing]);
@@ -228,8 +224,8 @@ export default function ImageManagerPage() {
       const response = await fetch(
         `/api/admin/image-manager?dir=${encodeURIComponent(dir)}`,
         {
-          credentials: "same-origin",
-        },
+          credentials: "same-origin"
+        }
       );
       const body = await response.json().catch(() => null);
 
@@ -279,7 +275,7 @@ export default function ImageManagerPage() {
       if (!cancelled) {
         setSelectedPreviewDimensions({
           width: preview.naturalWidth,
-          height: preview.naturalHeight,
+          height: preview.naturalHeight
         });
       }
     };
@@ -293,7 +289,7 @@ export default function ImageManagerPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedImage?.webPath]);
+  }, [selectedImage]);
 
   function openDirectory(relativePath: string) {
     void loadListing(relativePath);
@@ -317,7 +313,7 @@ export default function ImageManagerPage() {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentDir, folderName: trimmed }),
+        body: JSON.stringify({ currentDir, folderName: trimmed })
       });
 
       const body = await response.json().catch(() => null);
@@ -352,7 +348,7 @@ export default function ImageManagerPage() {
       const response = await fetch("/api/admin/image-manager/upload", {
         method: "POST",
         credentials: "same-origin",
-        body: formData,
+        body: formData
       });
 
       const body = await response.json().catch(() => null);
@@ -365,7 +361,7 @@ export default function ImageManagerPage() {
         fileInputRef.current.value = "";
       }
       toast.success(
-        `Uploaded ${body.files?.length ?? 0} image${body.files?.length === 1 ? "" : "s"}`,
+        `Uploaded ${body.files?.length ?? 0} image${body.files?.length === 1 ? "" : "s"}`
       );
       await loadListing(currentDir);
     } catch (err) {

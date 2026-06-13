@@ -4,7 +4,10 @@ import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
 import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
 import { CommitteeMembersGrid } from "@/components/website/committee-members-grid";
 import { clubIdentity, CLUB_NAME } from "@/config/club-identity";
-import { getSanitizedPageContentByPath } from "@/lib/page-content-html";
+import {
+  getSanitizedPageContentByPath,
+  sanitizePageContentHtml
+} from "@/lib/page-content-html";
 
 type DynamicPageProps = {
   params: Promise<{
@@ -53,21 +56,21 @@ function buildEmbeddedBody(contentHtml: string) {
 }
 
 export async function generateMetadata(
-  props: DynamicPageProps,
+  props: DynamicPageProps
 ): Promise<Metadata> {
   const params = await props.params;
   const page = await getSanitizedPageContentByPath(`/${params.slug}`);
 
   if (!page) {
     return {
-      title: CLUB_NAME,
+      title: CLUB_NAME
     };
   }
 
   return {
     title: page.title,
     description:
-      page.headerText || `${page.title} information for ${CLUB_NAME}.`,
+      page.headerText || `${page.title} information for ${CLUB_NAME}.`
   };
 }
 
@@ -80,6 +83,7 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
   }
 
   const embeddedBody = buildEmbeddedBody(page.contentHtml);
+  const safeHeaderTextHtml = sanitizePageContentHtml(page.headerText);
 
   return (
     <>
@@ -89,10 +93,9 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
           <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
             {page.title}
           </h1>
-          {/* nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- HTML comes from getSanitizedPageContentByPath() and is sanitized server-side before render. */}
           <div
             className="mt-4 max-w-2xl text-lg text-brand-snow/80"
-            dangerouslySetInnerHTML={{ __html: page.headerText }}
+            dangerouslySetInnerHTML={{ __html: safeHeaderTextHtml }}
           />
         </div>
       </section>
