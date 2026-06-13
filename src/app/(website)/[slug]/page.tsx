@@ -18,6 +18,15 @@ type DynamicPageProps = {
 const EMBED_TOKEN_REGEX =
   /\{\{\s*(committee-members-cards|member-application-form|contact-form)\s*\}\}/gi;
 
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>\s*<p>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .trim();
+}
+
 function buildEmbeddedBody(contentHtml: string) {
   const parts: Array<
     | { type: "html"; value: string }
@@ -84,6 +93,7 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
 
   const embeddedBody = buildEmbeddedBody(page.contentHtml);
   const safeHeaderTextHtml = sanitizePageContentHtml(page.headerText);
+  const safeHeaderText = htmlToPlainText(safeHeaderTextHtml);
 
   return (
     <>
@@ -93,11 +103,9 @@ export default async function DynamicWebsitePage(props: DynamicPageProps) {
           <h1 className="font-heading text-4xl font-bold tracking-tight sm:text-5xl">
             {page.title}
           </h1>
-          {/* nosemgrep: typescript.react.security.audit.react-dangerouslysetinnerhtml.react-dangerouslysetinnerhtml -- HTML is sanitized via sanitizePageContentHtml() before rendering. */}
-          <div
-            className="mt-4 max-w-2xl text-lg text-brand-snow/80"
-            dangerouslySetInnerHTML={{ __html: safeHeaderTextHtml }}
-          />
+          <p className="mt-4 max-w-2xl whitespace-pre-line text-lg text-brand-snow/80">
+            {safeHeaderText}
+          </p>
         </div>
       </section>
       <section className="dynamic-body bg-brand-snow py-16 sm:py-20">
