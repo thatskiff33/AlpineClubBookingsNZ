@@ -2,10 +2,21 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import path from "path";
 import { spawnSync } from "child_process";
-import { describe, expect, it } from "vitest";
+  import { describe, expect, it } from "vitest";
+
+const hasBash = (() => {
+  try {
+    const result = spawnSync("bash", ["--version"], { encoding: "utf8" });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+})();
+
+const itOnLinux = hasBash ? it : it.skip;
 
 function readRepoFile(relativePath: string) {
-  return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
+  return readFileSync(path.resolve(process.cwd(), relativePath), "utf8").replace(/\r\n/g, "\n");
 }
 
 function sliceFrom(source: string, startMarker: string, endMarker?: string) {
@@ -332,7 +343,7 @@ describe("review finding source/schema contracts", () => {
     expect(ledger).toContain("old_code_compatible");
   });
 
-  it("requires lock-impact documentation for hot-table migrations", () => {
+  itOnLinux("requires lock-impact documentation for hot-table migrations", () => {
     const fixture = createTempMigration(
       'ALTER TABLE "Payment" ADD COLUMN "processorReference" TEXT;\n',
       "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan\n"
@@ -352,7 +363,7 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
-  it("allows documented hot-table expand migrations without breaking-SQL override", () => {
+  itOnLinux("allows documented hot-table expand migrations without breaking-SQL override", () => {
     const fixture = createTempMigration(
       'ALTER TABLE "Payment" ADD COLUMN "processorReference" TEXT;\n',
       [
@@ -373,7 +384,7 @@ describe("review finding source/schema contracts", () => {
     }
   });
 
-  it("requires operator acknowledgement for documented destructive contract migrations", () => {
+  itOnLinux("requires operator acknowledgement for documented destructive contract migrations", () => {
     const fixture = createTempMigration(
       'ALTER TABLE "Member" DROP COLUMN "legacyPhone";\n',
       [

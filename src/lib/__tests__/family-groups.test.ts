@@ -915,7 +915,7 @@ describe("Admin Family Group Join Requests", () => {
       expect(body.requests[0].type).toBe("CHILD_REQUEST");
       expect(body.requests[0].childFirstName).toBe("Sam");
       expect(body.requests[0].requestedAgeTier).toBe("CHILD");
-      expect(body.requests[0].requestedAgeTierLabel).toBe("Child (5-9)");
+      expect(body.requests[0].requestedAgeTierLabel).toBe("Child (5-12)");
       expect(body.requests[0].canCreateMemberFromRequest).toBe(true);
       expect(body.requests[0].matchingMembers).toEqual([
         expect.objectContaining({

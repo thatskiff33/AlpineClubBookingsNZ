@@ -110,9 +110,10 @@ describe("API route boundary metadata", () => {
     .sort();
 
   it("keeps the public route allowlist exact and backed by real files", () => {
-    // 243 = 240 routes on main (see #706) + 3 work party routes added for
-    // #711: work-parties/active, admin/work-parties, admin/work-parties/[id].
-    expect(routeFiles).toHaveLength(243);
+    // 246 = 243 (#711) + 3 image-manager routes added for
+    // #725: admin/image-manager, admin/image-manager/folders,
+    //       admin/image-manager/upload.
+    expect(routeFiles).toHaveLength(246);
 
     const missing = Object.keys(explicitPublicApiRoutes).filter(
       (routePath) => !routeFiles.includes(routePath)

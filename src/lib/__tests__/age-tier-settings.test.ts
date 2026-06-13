@@ -30,7 +30,7 @@ describe("computeAgeTierWithSettings — TAC default boundaries", () => {
     ).toBe("INFANT");
   });
 
-  it("CHILD: age 5-9", () => {
+  it("CHILD: age 5-12", () => {
     // Age 5 exactly
     expect(
       computeAgeTierWithSettings(new Date("2021-04-01"), ref2026, AGE_TIER_DEFAULTS)
@@ -39,12 +39,20 @@ describe("computeAgeTierWithSettings — TAC default boundaries", () => {
     expect(
       computeAgeTierWithSettings(new Date("2016-04-02"), ref2026, AGE_TIER_DEFAULTS)
     ).toBe("CHILD");
-  });
-
-  it("YOUTH: age 10-17", () => {
-    // Exactly 10
+    // Age 10 - still CHILD (max is 12)
     expect(
       computeAgeTierWithSettings(new Date("2016-04-01"), ref2026, AGE_TIER_DEFAULTS)
+    ).toBe("CHILD");
+    // Age 12 exactly
+    expect(
+      computeAgeTierWithSettings(new Date("2014-04-01"), ref2026, AGE_TIER_DEFAULTS)
+    ).toBe("CHILD");
+  });
+
+  it("YOUTH: age 13-17", () => {
+    // Exactly 13
+    expect(
+      computeAgeTierWithSettings(new Date("2013-04-01"), ref2026, AGE_TIER_DEFAULTS)
     ).toBe("YOUTH");
     // Age 17 (day before 18th birthday)
     expect(
@@ -139,20 +147,20 @@ describe("computeAgeTierWithSettings — custom settings", () => {
 describe("Season start date as reference", () => {
   it("April 1 of season year is used for classification", () => {
     const maliaDOB = new Date("2014-08-28");
-    // On April 1 2026 she is 11 (turns 12 in August)
+    // On April 1 2026 she is 11 (turns 12 in August) -> CHILD (CHILD is 5-12)
     expect(computeAge(maliaDOB, getSeasonStartDate(2026))).toBe(11);
     expect(
       computeAgeTierWithSettings(maliaDOB, getSeasonStartDate(2026), AGE_TIER_DEFAULTS)
-    ).toBe("YOUTH");
+    ).toBe("CHILD");
   });
 
-  it("someone turning 10 on March 31 is YOUTH for that season", () => {
+  it("someone turning 10 on March 31 is CHILD for that season (CHILD goes to 12)", () => {
     // Born March 31 2016: on April 1 2026 they are already 10 (birthday was yesterday)
     const dob = new Date("2016-03-31");
     expect(computeAge(dob, getSeasonStartDate(2026))).toBe(10);
     expect(
       computeAgeTierWithSettings(dob, getSeasonStartDate(2026), AGE_TIER_DEFAULTS)
-    ).toBe("YOUTH");
+    ).toBe("CHILD");
   });
 
   it("someone born April 2 is still CHILD on April 1 of the 10th-birthday year", () => {

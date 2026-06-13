@@ -463,7 +463,7 @@ describe("finance working-capital report page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "The setup status for This working capital report could not be checked right now. Try again shortly.",
+      "This working capital report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync.",
     );
     expect(model.summaryCards).toEqual([]);
     expect(model.periodRows).toEqual([]);
@@ -478,7 +478,7 @@ describe("finance working-capital report page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "This working capital report could not be loaded right now. Try again shortly.",
+      "This working capital report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync.",
     );
     expect(model.periodRows).toEqual([]);
     expect(consoleErrorSpy).toHaveBeenCalled();

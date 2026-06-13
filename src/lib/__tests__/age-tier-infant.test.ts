@@ -25,14 +25,14 @@ describe("AGE_TIER_DEFAULTS includes INFANT", () => {
     expect(tiers).toContain("ADULT");
   });
 
-  it("INFANT covers 0-4, CHILD covers 5-9", () => {
+  it("INFANT covers 0-4, CHILD covers 5-12", () => {
     const infant = AGE_TIER_DEFAULTS.find((d) => d.tier === "INFANT")!;
     const child = AGE_TIER_DEFAULTS.find((d) => d.tier === "CHILD")!;
 
     expect(infant.minAge).toBe(0);
     expect(infant.maxAge).toBe(4);
     expect(child.minAge).toBe(5);
-    expect(child.maxAge).toBe(9);
+    expect(child.maxAge).toBe(12);
   });
 
   it("tiers are contiguous (no gaps)", () => {
@@ -81,7 +81,7 @@ describe("computeAgeTierWithSettings — with INFANT tier", () => {
     ).toBe("CHILD");
   });
 
-  it("CHILD: age 5-9 with new boundaries", () => {
+  it("CHILD: age 5-12 with new boundaries", () => {
     // Age 5 (born March 31, 2021 → age 5 on April 1, 2026)
     expect(
       computeAgeTierWithSettings(new Date("2021-03-31"), ref2026, AGE_TIER_DEFAULTS)
@@ -90,11 +90,16 @@ describe("computeAgeTierWithSettings — with INFANT tier", () => {
     expect(
       computeAgeTierWithSettings(new Date("2016-04-02"), ref2026, AGE_TIER_DEFAULTS)
     ).toBe("CHILD");
-  });
-
-  it("YOUTH: age 10-17 (unchanged)", () => {
+    // Age 10 (born April 1, 2016 → age 10 on April 1, 2026) - still CHILD, max is 12
     expect(
       computeAgeTierWithSettings(new Date("2016-04-01"), ref2026, AGE_TIER_DEFAULTS)
+    ).toBe("CHILD");
+  });
+
+  it("YOUTH: age 13-17", () => {
+    // Age 13 (born April 1, 2013 → age 13 on April 1, 2026)
+    expect(
+      computeAgeTierWithSettings(new Date("2013-04-01"), ref2026, AGE_TIER_DEFAULTS)
     ).toBe("YOUTH");
   });
 

@@ -105,6 +105,13 @@ vi.mock("@/lib/xero-operation-outbox", () => ({
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
+vi.mock("@/lib/lodge-capacity", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/lodge-capacity")>();
+  return {
+    ...actual,
+    getLodgeCapacity: vi.fn().mockResolvedValue(29),
+  };
+});
 
 import { auth } from "@/lib/auth";
 import { checkCapacity, checkCapacityForGuestRanges } from "@/lib/capacity";
@@ -682,7 +689,7 @@ describe("POST /api/bookings/[id]/guests", () => {
 
   it("returns 400 when the add-guests request exceeds lodge capacity in one payload", async () => {
     mockedAuth.mockResolvedValue({ user: { id: "m1", role: "MEMBER" } } as any);
-    const guests = Array.from({ length: 30 }, (_, index) => ({
+    const guests = Array.from({ length: 35 }, (_, index) => ({
       firstName: `Guest${index}`,
       lastName: "Overflow",
       ageTier: "ADULT",

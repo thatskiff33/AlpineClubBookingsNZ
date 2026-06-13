@@ -417,7 +417,7 @@ describe("finance balance-sheet report page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "The setup status for This balance sheet report could not be checked right now. Try again shortly."
+      "This balance sheet report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync."
     );
     expect(model.summaryCards).toEqual([]);
     expect(model.snapshotRows).toEqual([]);
@@ -432,7 +432,7 @@ describe("finance balance-sheet report page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "This balance sheet report could not be loaded right now. Try again shortly."
+      "This balance sheet report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync."
     );
     expect(model.lineItemRows).toEqual([]);
     expect(consoleErrorSpy).toHaveBeenCalled();

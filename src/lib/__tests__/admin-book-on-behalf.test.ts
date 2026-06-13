@@ -417,7 +417,7 @@ describe("Admin Book on Behalf", () => {
         data: expect.objectContaining({
           memberId: "target-m1",
           createdById: "admin1",
-          status: "WAITLISTED",
+          status: "PAYMENT_PENDING",
         }),
       })
     );

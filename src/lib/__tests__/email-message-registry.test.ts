@@ -20,7 +20,7 @@ describe("email message registry", () => {
     );
     const auditTemplateNames = Array.from(
       audit.matchAll(/^### ([^\n]+)$/gm),
-      (match) => match[1],
+      (match) => (match[1] ?? "").trim(),
     ).sort();
     const registryTemplateNames = EMAIL_TEMPLATE_DEFINITIONS.map(
       (definition) => definition.key,

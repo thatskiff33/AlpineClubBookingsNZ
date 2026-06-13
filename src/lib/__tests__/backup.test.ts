@@ -9,6 +9,10 @@ import {
   writeFileSync,
 } from "fs";
 
+// backup.ts hardcodes BACKUP_DIR = "/tmp/tacbookings-backups" (POSIX literal).
+// On Windows path.join converts the slash, so we match both separators.
+const backupDirPattern = /[/\\\\]tmp[/\\\\]tacbookings-backups[/\\\\]/;
+
 vi.mock("child_process", () => ({
   execFileSync: vi.fn(),
 }));
@@ -153,7 +157,7 @@ describe("backup", () => {
     await expect(runDatabaseBackup()).resolves.toMatchObject({
       success: false,
       filename: expect.stringMatching(/^tacbookings-/),
-      filepath: expect.stringContaining("/tmp/tacbookings-backups/"),
+      filepath: expect.stringMatching(backupDirPattern),
       sizeBytes: 1024,
       error: expect.stringContaining("S3 upload/readback failed: AccessDenied"),
     });
@@ -170,7 +174,7 @@ describe("backup", () => {
       [
         "s3",
         "cp",
-        expect.stringContaining("/tmp/tacbookings-backups/"),
+        expect.stringMatching(backupDirPattern),
         expect.stringMatching(/s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/),
         "--region",
         "ap-southeast-2",
@@ -306,7 +310,7 @@ describe("backup", () => {
       [
         "s3",
         "cp",
-        expect.stringContaining("/tmp/tacbookings-backups/"),
+        expect.stringMatching(backupDirPattern),
         expect.stringMatching(/s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/),
         "--region",
         "ap-southeast-2",
@@ -363,7 +367,7 @@ describe("backup", () => {
     );
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "gunzip",
-      ["-c", expect.stringContaining("/tmp/tacbookings-backups/")],
+      ["-c", expect.stringMatching(backupDirPattern)],
       expect.any(Object)
     );
   });

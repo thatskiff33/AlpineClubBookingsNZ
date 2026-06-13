@@ -85,7 +85,7 @@ function request(body: unknown) {
 }
 
 function readRepoFile(relativePath: string) {
-  return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
+  return readFileSync(path.resolve(process.cwd(), relativePath), "utf8").replace(/\r\n/g, "\n");
 }
 
 function sliceFrom(source: string, startMarker: string, endMarker: string) {
@@ -103,7 +103,7 @@ describe("Admin modules schema contract", () => {
     const model = sliceFrom(
       schema,
       "model ClubModuleSettings",
-      "// ---------------------------------------------------------------------------\n// Booking Modifications",
+      "// ---------------------------------------------------------------------------\n// Email Message Configuration",
     );
     const migration = readRepoFile(
       "prisma/migrations/20260518113000_add_club_module_settings/migration.sql",

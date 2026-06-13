@@ -39,8 +39,7 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
     "circle",
     "section",
     "line",
-    "main",
-    "style"
+    "main"
   ],
   allowedAttributes: {
     a: ["href", "name", "target", "rel"],
@@ -88,7 +87,6 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
     img: ["http", "https"]
   },
   allowProtocolRelative: false,
-  allowVulnerableTags: true,
   transformTags: {
     a: (tagName, attribs) => ({
       tagName,

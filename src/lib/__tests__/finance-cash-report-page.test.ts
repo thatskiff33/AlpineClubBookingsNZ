@@ -251,7 +251,7 @@ describe("finance cash report page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "The setup status for This cash report could not be checked right now. Try again shortly."
+      "This cash report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync."
     );
     expect(model.summaryCards).toEqual([]);
     expect(model.snapshotRows).toEqual([]);
@@ -266,7 +266,7 @@ describe("finance cash report page model", () => {
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "This cash report could not be loaded right now. Try again shortly."
+      "This cash report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync."
     );
     expect(model.accountRows).toEqual([]);
     expect(consoleErrorSpy).toHaveBeenCalled();

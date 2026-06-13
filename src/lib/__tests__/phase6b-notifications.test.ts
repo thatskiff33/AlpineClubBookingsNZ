@@ -182,14 +182,16 @@ describe("N-03: checkCapacityWarnings", () => {
     const dayAfter = new Date(tomorrow);
     dayAfter.setDate(dayAfter.getDate() + 1);
 
-    // Create a booking with 25 guests (only 4 beds remaining)
+    const occupiedGuestCount = Math.max(1, LODGE_CAPACITY - 4);
+
+    // Create a booking that leaves <= 5 beds remaining.
     mockPrisma.booking.findMany.mockResolvedValue([
       {
         id: "booking-1",
         checkIn: today,
         checkOut: dayAfter,
-        status: "CONFIRMED",
-        guests: Array.from({ length: 25 }, (_, i) => ({ id: `g-${i}` })),
+        status: "PAID",
+        guests: Array.from({ length: occupiedGuestCount }, (_, i) => ({ id: `g-${i}` })),
       },
     ]);
 

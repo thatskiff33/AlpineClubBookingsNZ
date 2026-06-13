@@ -50,8 +50,13 @@ describe("policy age-tier rules", () => {
     expect(
       computeAgeTierWithSettings(new Date("2021-04-01"), ref2026, AGE_TIER_DEFAULTS)
     ).toBe("CHILD");
+    // Age 10 on April 1 2026 -> CHILD (CHILD is 5-12 per club.json)
     expect(
       computeAgeTierWithSettings(new Date("2016-04-01"), ref2026, AGE_TIER_DEFAULTS)
+    ).toBe("CHILD");
+    // Age 13 on April 1 2026 -> YOUTH
+    expect(
+      computeAgeTierWithSettings(new Date("2013-04-01"), ref2026, AGE_TIER_DEFAULTS)
     ).toBe("YOUTH");
     expect(
       computeAgeTierWithSettings(new Date("2008-04-01"), ref2026, AGE_TIER_DEFAULTS)
