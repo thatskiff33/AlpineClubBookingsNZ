@@ -200,6 +200,19 @@ enum BookingChangeRequestStatus {
   REJECTED
 }
 
+enum BookingRequestType {
+  GENERAL
+}
+
+enum BookingRequestStatus {
+  NEW
+  VERIFIED
+  PRICED
+  APPROVED
+  DECLINED
+  CONVERTED
+}
+
 enum AgeRestriction {
   ANY
   ADULTS_ONLY
@@ -665,6 +678,9 @@ model Booking {
   refundRequests              RefundRequest[]
   paymentRecoveryOperations   PaymentRecoveryOperation[]
   bedAllocations              BedAllocation[]
+  // Present when this booking was created from a public BookingRequest.
+  originBookingRequest        BookingRequest?              @relation("BookingRequestConvertedBooking")
+  paymentLinks                PaymentLink[]
 
   @@index([memberId])
   @@index([createdById])
@@ -711,6 +727,88 @@ model BookingGuest {
   @@index([bookingId, stayStart, stayEnd])
   @@index([stayStart, stayEnd])
   @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Public Booking Requests (non-member request-to-book / request-for-price)
+// ---------------------------------------------------------------------------
+
+model BookingRequest {
+  id               String               @id @default(cuid())
+  type             BookingRequestType   @default(GENERAL)
+  status           BookingRequestStatus @default(NEW)
+  contactFirstName String               @db.VarChar(100)
+  contactLastName  String               @db.VarChar(100)
+  contactEmail     String               @db.VarChar(200)
+  contactPhone     String?              @db.VarChar(30)
+  checkIn          DateTime             @db.Date
+  checkOut         DateTime             @db.Date
+  // Guest list snapshot: array of { firstName, lastName, ageTier }
+  guests           Json
+  message          String?              @db.VarChar(1000)
+
+  // Indicative pricing shown on the public form (when enabled) at submit time.
+  indicativePriceCents Int?
+  // Officer-set price the requester is asked to pay on approval.
+  priceCents           Int?
+
+  // Email verification (SHA-256 hash only; raw token is emailed once).
+  verificationTokenHash      String?   @unique
+  verificationTokenExpiresAt DateTime?
+  verifiedAt                 DateTime?
+
+  pricedByMemberId   String?
+  pricedAt           DateTime?
+  reviewedByMemberId String?
+  reviewedAt         DateTime?
+  declineReason      String?   @db.VarChar(2000)
+
+  convertedBookingId String?   @unique
+  convertedMemberId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  convertedBooking Booking? @relation("BookingRequestConvertedBooking", fields: [convertedBookingId], references: [id], onDelete: SetNull)
+  paymentLinks     PaymentLink[]
+
+  @@index([status, createdAt])
+  @@index([contactEmail])
+  @@index([verificationTokenExpiresAt])
+  @@index([status, reviewedAt])
+  @@index([pricedByMemberId])
+  @@index([reviewedByMemberId])
+}
+
+// Tokenised public payment links (SHA-256 hash only; raw token is emailed once).
+model PaymentLink {
+  id               String    @id @default(cuid())
+  bookingId        String
+  bookingRequestId String?
+  tokenHash        String    @unique
+  expiresAt        DateTime
+  usedAt           DateTime?
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  booking        Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingRequest BookingRequest? @relation(fields: [bookingRequestId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@index([bookingRequestId])
+  @@index([expiresAt])
+}
+
+// Admin-controlled settings for the public booking request flow (single row).
+model BookingRequestSettings {
+  id                      String   @id @default("default")
+  showPricingToNonMembers Boolean  @default(false)
+  updatedByMemberId       String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([updatedByMemberId])
 }
 
 // ---------------------------------------------------------------------------
@@ -2027,6 +2125,7 @@ model NotificationPreference {
   adminBookingChangeRequest Boolean  @default(true)
   adminRefundRequest        Boolean  @default(true)
   adminIssueReport          Boolean  @default(true)
+  adminBookingRequest       Boolean  @default(true)
   createdAt                 DateTime @default(now())
   updatedAt                 DateTime @updatedAt
 

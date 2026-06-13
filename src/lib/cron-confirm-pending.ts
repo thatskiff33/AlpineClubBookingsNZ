@@ -10,6 +10,7 @@ import {
   sendBookingConfirmedEmail,
   sendBookingBumpedEmail,
   sendAdminPaymentFailureAlert,
+  sendAdminBookingRequestHoldExpiredEmail,
 } from "./email";
 import { processWaitlistForDates } from "./waitlist";
 import logger from "@/lib/logger";
@@ -17,12 +18,16 @@ import { PaymentStatus, PaymentTransactionKind } from "@prisma/client";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 import { upsertPaymentIntentTransaction } from "@/lib/payment-transactions";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 
 export interface CronConfirmResult {
   confirmedBookingIds: string[];
   bumpedBookingIds: string[];
   failedBookingIds: string[];
 }
+
+/** How long to extend the hold for request-origin bookings (no saved card) at hold expiry. */
+const REQUEST_HOLD_EXTENSION_MS = 2 * 24 * 60 * 60 * 1000;
 
 /**
  * Process pending bookings that have reached their hold deadline.
@@ -51,6 +56,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
       guests: true,
       payment: true,
       promoRedemption: { include: { promoCode: true } },
+      originBookingRequest: { select: { id: true } },
     },
     orderBy: { createdAt: "asc" }, // Process oldest first
   });
@@ -87,6 +93,7 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
             checkOut: booking.checkOut,
           },
         });
+        await revokePaymentLinksForBooking(booking.id);
 
         result.bumpedBookingIds.push(booking.id);
 
@@ -178,6 +185,39 @@ export async function confirmPendingBookings(): Promise<CronConfirmResult> {
 
       // Beds available - try to charge saved payment method
       if (!booking.payment?.stripePaymentMethodId || !booking.payment?.stripeCustomerId) {
+        if (booking.originBookingRequest) {
+          // Request-origin bookings pay via a tokenised PaymentLink, not a
+          // saved card - never attempt to auto-charge them. Extend the hold
+          // so the booking stays PENDING (capacity-protected) and notify
+          // admins to follow up with the requester.
+          const extendedHoldUntil = new Date(now.getTime() + REQUEST_HOLD_EXTENSION_MS);
+          const claimed = await prisma.booking.updateMany({
+            where: {
+              id: booking.id,
+              status: BookingStatus.PENDING,
+              nonMemberHoldUntil: booking.nonMemberHoldUntil,
+            },
+            data: { nonMemberHoldUntil: extendedHoldUntil },
+          });
+
+          if (claimed.count > 0) {
+            try {
+              await sendAdminBookingRequestHoldExpiredEmail({
+                requesterName: `${booking.member.firstName} ${booking.member.lastName}`,
+                checkIn: booking.checkIn,
+                checkOut: booking.checkOut,
+                guestCount: booking.guests.length,
+                totalCents: booking.finalPriceCents,
+                holdUntil: extendedHoldUntil,
+              });
+            } catch (emailErr) {
+              logger.error({ err: emailErr, bookingId: booking.id, job: "confirmPendingBookings" }, "Failed to send admin hold-expired alert");
+            }
+          }
+
+          continue;
+        }
+
         logger.error({ bookingId: booking.id, job: "confirmPendingBookings" }, "Booking has no saved payment method - cannot auto-confirm");
         result.failedBookingIds.push(booking.id);
         continue;

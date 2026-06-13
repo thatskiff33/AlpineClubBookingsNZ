@@ -45,6 +45,8 @@ const ADMIN_SYSTEM_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
   "admin-family-group-request",
   "admin-email-failure",
   "website-contact",
+  "admin-booking-request-pending",
+  "admin-booking-request-hold-expired",
 ]);
 
 const LOCKED_DELIVERY_TEMPLATE_NAMES = new Set<EmailAuditTemplateName>([
@@ -121,6 +123,8 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
   "admin-issue-report": ["hasScreenshot"],
   "age-up-invitation": ["resetUrl", "targetAgeTier", "targetAgeTierMinAge"],
   "age-up-parent-email-handoff": ["targetAgeTier", "targetAgeTierMinAge"],
+  "booking-request-verification": ["verifyUrl"],
+  "booking-request-approved": ["payUrl"],
 };
 
 const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
@@ -177,6 +181,10 @@ const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>
     "attemptCount",
   ],
   "bulk-communication": ["adminEnteredBody"],
+  "booking-request-verification": ["token"],
+  "booking-request-approved": ["token"],
+  "admin-booking-request-pending": ["requesterName", "reviewUrl"],
+  "admin-booking-request-hold-expired": ["requesterName", "reviewUrl"],
 };
 
 const TEMPLATE_TRIGGER_METADATA: Partial<
@@ -241,6 +249,26 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
   "pre-arrival-reminder": {
     triggerSummary: "Pre-arrival reminder with current lodge access details",
     frequency: "Once per confirmed or paid booking in the reminder window",
+  },
+  "booking-request-verification": {
+    triggerSummary: "Public booking request submitted",
+    frequency: "Per booking request submission (and resend requests)",
+  },
+  "booking-request-approved": {
+    triggerSummary: "Public booking request approved and priced by admin",
+    frequency: "Per booking request approval",
+  },
+  "booking-request-declined": {
+    triggerSummary: "Public booking request declined by admin",
+    frequency: "Per booking request decline",
+  },
+  "admin-booking-request-pending": {
+    triggerSummary: "Public booking request verified and ready for pricing",
+    frequency: "Per verified booking request",
+  },
+  "admin-booking-request-hold-expired": {
+    triggerSummary: "Request-origin booking unpaid at hold expiry",
+    frequency: "Per hold-expiry check on an unpaid request booking",
   },
 };
 
@@ -374,6 +402,7 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "attemptCount",
   "availableBeds",
   "bookingId",
+  "bookingReference",
   "bumpedMemberName",
   "changeFee",
   "checkIn",
@@ -445,9 +474,11 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "pageUrl",
   "paidAmount",
   "parentName",
+  "payUrl",
   "paymentIntentId",
   "paymentReference",
   "paymentNote",
+  "price",
   "percent",
   "participantName",
   "participantSummary",
@@ -506,6 +537,7 @@ export const APPROVED_EMAIL_TEMPLATE_TOKEN_SET = new Set<string>(
 export const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
   "confirmationUrl",
   "doorCode",
+  "payUrl",
   "pin",
   "resetUrl",
   "token",

@@ -61,6 +61,11 @@ import {
   adminBookingChangeRequestTemplate,
   adminIssueReportTemplate,
   preArrivalReminderTemplate,
+  bookingRequestVerificationTemplate,
+  bookingRequestApprovedTemplate,
+  bookingRequestDeclinedTemplate,
+  adminBookingRequestPendingTemplate,
+  adminBookingRequestHoldExpiredTemplate,
   type XeroReconciliationReportEmail,
 } from "./email-templates";
 import {
@@ -132,6 +137,8 @@ const SENSITIVE_EMAIL_LOG_TEMPLATES = new Set([
   "hut-leader-assignment",
   "booking-confirmed",
   "pre-arrival-reminder",
+  "booking-request-verification",
+  "booking-request-approved",
 ]);
 
 // Failure-alert emails should also skip HTML retention so a broken admin
@@ -2072,5 +2079,177 @@ export async function sendAdminIssueReportAlert(data: {
       pageTitle: data.pageTitle ?? data.pageUrl,
     },
     preferenceKey: "adminIssueReport",
+  });
+}
+
+// ---- Public booking request flow (issue #707) ----
+
+export async function sendBookingRequestVerificationEmail(params: {
+  email: string;
+  firstName: string;
+  token: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  expiresAt: Date;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const verifyUrl = `${baseUrl}/booking-requests/verify/${params.token}`;
+
+  await sendEmail({
+    to: params.email,
+    subject: `Confirm your booking request — ${CLUB_NAME}`,
+    html: bookingRequestVerificationTemplate({
+      firstName: params.firstName,
+      verifyUrl,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+      guestCount: params.guestCount,
+      expiresAt: params.expiresAt,
+    }),
+    templateName: "booking-request-verification",
+    templateData: {
+      firstName: params.firstName,
+      token: params.token,
+      verifyUrl,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      guestCount: params.guestCount,
+      expiresAt: formatNZDateTime(params.expiresAt),
+    },
+  });
+}
+
+export async function sendBookingRequestApprovedEmail(params: {
+  email: string;
+  firstName: string;
+  token: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  priceCents: number;
+  bookingReference: string;
+  expiresAt: Date;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const payUrl = `${baseUrl}/pay/${params.token}`;
+
+  await sendEmail({
+    to: params.email,
+    subject: `Your booking request has been approved — ${CLUB_NAME}`,
+    html: bookingRequestApprovedTemplate({
+      firstName: params.firstName,
+      payUrl,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+      guestCount: params.guestCount,
+      priceCents: params.priceCents,
+      expiresAt: params.expiresAt,
+    }),
+    templateName: "booking-request-approved",
+    templateData: {
+      firstName: params.firstName,
+      token: params.token,
+      payUrl,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      guestCount: params.guestCount,
+      priceCents: params.priceCents,
+      price: formatMoneyCents(params.priceCents),
+      bookingReference: params.bookingReference,
+      expiresAt: formatNZDateTime(params.expiresAt),
+    },
+  });
+}
+
+export async function sendBookingRequestDeclinedEmail(params: {
+  email: string;
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  reason?: string | null;
+}) {
+  await sendEmail({
+    to: params.email,
+    subject: `Update on your booking request — ${CLUB_NAME}`,
+    html: bookingRequestDeclinedTemplate({
+      firstName: params.firstName,
+      checkIn: params.checkIn,
+      checkOut: params.checkOut,
+      reason: params.reason,
+    }),
+    templateName: "booking-request-declined",
+    templateData: {
+      firstName: params.firstName,
+      checkIn: formatNZDate(params.checkIn),
+      checkOut: formatNZDate(params.checkOut),
+      reason: params.reason ?? "",
+    },
+  });
+}
+
+export async function sendAdminBookingRequestPendingEmail(data: {
+  requesterName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}${buildBookingRequestsHref("public", {})}`;
+
+  await sendToAdmins({
+    subject: `Booking request ready for review: ${data.requesterName}`,
+    html: adminBookingRequestPendingTemplate({
+      requesterName: data.requesterName,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      guestCount: data.guestCount,
+      reviewUrl,
+    }),
+    templateName: "admin-booking-request-pending",
+    templateData: {
+      requesterName: data.requesterName,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      guestCount: data.guestCount,
+      reviewUrl,
+    },
+    preferenceKey: "adminBookingRequest",
+  });
+}
+
+export async function sendAdminBookingRequestHoldExpiredEmail(data: {
+  requesterName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  holdUntil: Date;
+}) {
+  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const reviewUrl = `${baseUrl}/admin/bookings`;
+
+  await sendToAdmins({
+    subject: `Request booking unpaid at hold expiry: ${data.requesterName}`,
+    html: adminBookingRequestHoldExpiredTemplate({
+      requesterName: data.requesterName,
+      checkIn: data.checkIn,
+      checkOut: data.checkOut,
+      guestCount: data.guestCount,
+      totalCents: data.totalCents,
+      holdUntil: data.holdUntil,
+      reviewUrl,
+    }),
+    templateName: "admin-booking-request-hold-expired",
+    templateData: {
+      requesterName: data.requesterName,
+      checkIn: formatNZDate(data.checkIn),
+      checkOut: formatNZDate(data.checkOut),
+      guestCount: data.guestCount,
+      total: formatMoneyCents(data.totalCents),
+      holdUntil: formatNZDateTime(data.holdUntil),
+      reviewUrl,
+    },
+    preferenceKey: "adminBookingRequest",
   });
 }

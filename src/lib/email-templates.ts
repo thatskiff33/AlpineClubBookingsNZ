@@ -2156,3 +2156,113 @@ export function refundRequestResolvedTemplate(data: {
     ${supportContactSentence("If you have questions, contact the club at ")}
   `);
 }
+
+// ---- Public booking request flow (issue #707) ----
+
+export function bookingRequestVerificationTemplate(data: {
+  firstName: string;
+  verifyUrl: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  expiresAt: Date;
+}): string {
+  return layout(`
+    ${heading("Confirm Your Booking Request")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", thanks for your booking request for " + escapeHtml(CLUB_NAME) + "'s lodge.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+    ])}
+    ${paragraph("Please confirm your email address so the club can review your request. Your request will not be reviewed until you confirm.")}
+    ${button("Confirm My Email", data.verifyUrl)}
+    ${muted("This link expires on " + escapeHtml(formatNZDateTime(data.expiresAt)) + ". If you did not make this request, you can safely ignore this email and the request will be deleted.")}
+  `);
+}
+
+export function bookingRequestApprovedTemplate(data: {
+  firstName: string;
+  payUrl: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  priceCents: number;
+  expiresAt: Date;
+}): string {
+  return layout(`
+    ${heading("Your Booking Request Has Been Approved")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", good news — the club has approved your booking request.")}
+    ${infoTable([
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Price", value: formatCents(data.priceCents) },
+    ])}
+    ${paragraph("Use the secure link below to pay and confirm your stay. You can pay by card, or by internet banking using the reference shown on the payment page.")}
+    ${button("Pay for My Stay", data.payUrl)}
+    ${alertBox("Until payment is received, club members keep priority for these dates and your booking may be bumped if the lodge fills.", "info")}
+    ${muted("This payment link expires on " + escapeHtml(formatNZDateTime(data.expiresAt)) + ". If you have any questions, just reply to this email or contact the club.")}
+  `);
+}
+
+export function bookingRequestDeclinedTemplate(data: {
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  reason?: string | null;
+}): string {
+  return layout(`
+    ${heading("Update on Your Booking Request")}
+    ${paragraph("Hi " + escapeHtml(data.firstName) + ", thank you for your interest in staying at " + escapeHtml(CLUB_NAME) + "'s lodge.")}
+    ${paragraph("Unfortunately the club is unable to accommodate your request for " + escapeHtml(formatNZDate(data.checkIn)) + " to " + escapeHtml(formatNZDate(data.checkOut)) + " at this time.")}
+    ${data.reason ? multilineBlock("<strong>Note from the club:</strong>\n" + escapeHtml(data.reason)) : ""}
+    ${paragraph("You are welcome to submit another request for different dates.")}
+    ${supportContactSentence("If you have questions, contact the club at ")}
+  `);
+}
+
+export function adminBookingRequestPendingTemplate(data: {
+  requesterName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  reviewUrl: string;
+}): string {
+  return layout(`
+    ${heading("Booking Request Ready for Review")}
+    ${paragraph("A public booking request has verified their email address and is ready for pricing and review.")}
+    ${infoTable([
+      { label: "Requester", value: escapeHtml(data.requesterName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+    ])}
+    ${button("Review Booking Requests", data.reviewUrl, { sameOrigin: true })}
+  `);
+}
+
+export function adminBookingRequestHoldExpiredTemplate(data: {
+  requesterName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  totalCents: number;
+  holdUntil: Date;
+  reviewUrl: string;
+}): string {
+  return layout(`
+    ${heading("Request Booking Unpaid at Hold Expiry")}
+    ${paragraph("A booking created from a public booking request reached its hold deadline without payment. There is no saved card to charge, so the hold has been extended and the booking still holds member-priority status.")}
+    ${infoTable([
+      { label: "Requester", value: escapeHtml(data.requesterName) },
+      { label: "Check-in", value: formatNZDate(data.checkIn) },
+      { label: "Check-out", value: formatNZDate(data.checkOut) },
+      { label: "Guests", value: String(data.guestCount) },
+      { label: "Total", value: formatCents(data.totalCents) },
+      { label: "Hold extended to", value: formatNZDateTime(data.holdUntil) },
+    ])}
+    ${paragraph("Consider following up with the requester or cancelling the booking if payment is not expected.")}
+    ${button("View Bookings", data.reviewUrl, { sameOrigin: true })}
+  `);
+}

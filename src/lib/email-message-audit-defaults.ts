@@ -257,6 +257,26 @@ export const EMAIL_AUDIT_DEFAULTS = {
   "credit-applied-to-booking": {
     "defaultSubject": "Account Credit Applied - {{CLUB_LODGE_NAME}}",
     "defaultBody": "Account Credit Applied\n\nHi {{firstName}}, account credit was applied to your booking.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nCredit applied: {{creditUsed}}\nRemaining credit: {{remainingCredit}}"
+  },
+  "booking-request-verification": {
+    "defaultSubject": "Confirm your booking request — {{CLUB_NAME}}",
+    "defaultBody": "Confirm Your Booking Request\n\nHi {{firstName}}, thanks for your booking request with {{CLUB_NAME}}.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nPlease confirm your email address to add your request to our review queue.\n\nConfirm Request: {{BASE_URL}}/booking-requests/verify/{{token}}\n\nThis link expires on {{expiresAt}}. If you did not submit this request, please ignore this email."
+  },
+  "booking-request-approved": {
+    "defaultSubject": "Your booking request has been approved — {{CLUB_NAME}}",
+    "defaultBody": "Booking Request Approved\n\nHi {{firstName}}, great news — your booking request has been approved!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal: {{price}}\nBooking reference: {{bookingReference}}\n\nPlease complete payment to confirm your booking.\n\nPay Now: {{BASE_URL}}/pay/{{token}}\n\nThis payment link expires on {{expiresAt}}. If it expires before you pay, please contact the club to request a new link."
+  },
+  "booking-request-declined": {
+    "defaultSubject": "Update on your booking request — {{CLUB_NAME}}",
+    "defaultBody": "Booking Request Update\n\nHi {{firstName}}, thank you for your interest in staying with {{CLUB_NAME}}.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\n\nUnfortunately we're unable to accommodate this request.\n\nNote: {{reason}} [only when reason exists]\n\nIf you have any questions, please contact the club at {{SUPPORT_EMAIL}}."
+  },
+  "admin-booking-request-pending": {
+    "defaultSubject": "Booking request ready for review: {{requesterName}}",
+    "defaultBody": "Booking Request Ready for Review\n\n{{requesterName}} has verified their email and the request is ready for pricing.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nReview Request: {{reviewUrl}}"
+  },
+  "admin-booking-request-hold-expired": {
+    "defaultSubject": "Request booking unpaid at hold expiry: {{requesterName}}",
+    "defaultBody": "Request Booking Unpaid at Hold Expiry\n\n{{requesterName}}'s request-origin booking has reached its hold deadline without payment.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nTotal due: {{total}}\nHold until: {{holdUntil}}\n\nReview Bookings: {{reviewUrl}}"
   }
 } as const;
 

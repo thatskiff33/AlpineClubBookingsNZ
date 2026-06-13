@@ -1,4 +1,4 @@
-export type BookingRequestsTab = "approvals" | "changes";
+export type BookingRequestsTab = "approvals" | "changes" | "public";
 
 type SearchParamValue = string | string[] | undefined;
 

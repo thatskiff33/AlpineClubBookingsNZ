@@ -49,6 +49,11 @@ export const ADMIN_NOTIFICATION_PREFERENCE_META = {
     label: "Reported issues",
     description: "Alerts when a logged-in user reports a site issue for admin follow-up.",
   },
+  adminBookingRequest: {
+    label: "Public booking requests",
+    description:
+      "Alerts when a public booking request is verified and ready for pricing, or when a request booking's hold expires unpaid.",
+  },
 } as const;
 
 export type AdminNotificationPreferenceKey =
@@ -76,6 +81,7 @@ export const ADMIN_NOTIFICATION_PREFERENCE_SELECT = {
   adminBookingChangeRequest: true,
   adminRefundRequest: true,
   adminIssueReport: true,
+  adminBookingRequest: true,
 } as const;
 
 export function resolveAdminNotificationPreferences(
@@ -94,5 +100,6 @@ export function resolveAdminNotificationPreferences(
     adminBookingChangeRequest: preferences?.adminBookingChangeRequest ?? true,
     adminRefundRequest: preferences?.adminRefundRequest ?? true,
     adminIssueReport: preferences?.adminIssueReport ?? true,
+    adminBookingRequest: preferences?.adminBookingRequest ?? true,
   };
 }

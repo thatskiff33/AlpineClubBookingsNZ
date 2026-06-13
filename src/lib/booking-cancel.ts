@@ -24,6 +24,7 @@ import {
 } from "@/lib/payment-transactions";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 
 export interface CancelBookingResult {
   success: boolean;
@@ -177,6 +178,7 @@ export async function cancelBooking(
         data: { status: "CANCELLED" },
       });
       await reconcileCancelledBookingBedAllocations(booking, tx);
+      await revokePaymentLinksForBooking(bookingId, tx);
     });
     await cleanupPromoRedemption(bookingId);
 

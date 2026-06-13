@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { confirmPendingBookings } from "@/lib/cron-confirm-pending";
 import { sendPreArrivalReminders } from "@/lib/cron-pre-arrival-reminders";
+import { purgeExpiredBookingRequests } from "@/lib/booking-request";
 import { requireCronSecret } from "@/lib/cron-auth";
 import { recordCronJobRunSafe } from "@/lib/cron-job-run";
 import logger from "@/lib/logger";
@@ -61,11 +62,36 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const purgeStartedAt = new Date();
+  let purgeResult: Awaited<ReturnType<typeof purgeExpiredBookingRequests>>;
+  try {
+    purgeResult = await purgeExpiredBookingRequests();
+    await recordCronJobRunSafe({
+      jobName: "purge-booking-requests",
+      startedAt: purgeStartedAt,
+      status: "SUCCESS",
+      resultSummary: purgeResult,
+    });
+  } catch (err) {
+    logger.error({ err }, "Booking request retention purge cron endpoint error");
+    await recordCronJobRunSafe({
+      jobName: "purge-booking-requests",
+      startedAt: purgeStartedAt,
+      status: "FAILURE",
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return NextResponse.json(
+      { error: "Failed to purge expired booking requests" },
+      { status: 500 }
+    );
+  }
+
   return NextResponse.json({
     success: true,
     confirmed: confirmResult.confirmedBookingIds,
     bumped: confirmResult.bumpedBookingIds,
     failed: confirmResult.failedBookingIds,
     preArrivalReminders: reminderResult,
+    bookingRequestPurge: purgeResult,
   });
 }

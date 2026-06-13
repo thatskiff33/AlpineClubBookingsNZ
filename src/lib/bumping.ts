@@ -12,6 +12,7 @@ import {
 } from "@/lib/booking-guest-stay-ranges";
 import { deletePromoRedemptionAndAdjustCount } from "@/lib/promo";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
+import { revokePaymentLinksForBooking } from "@/lib/payment-link";
 
 export interface BumpResult {
   bumpedBookingIds: string[];
@@ -214,6 +215,7 @@ export async function bumpPendingBookings(
         checkOut: candidate.checkOut,
       },
     });
+    await revokePaymentLinksForBooking(candidate.id, tx);
 
     // Clean up PromoRedemption if this booking used a promo code
     const promoRedemption = await tx.promoRedemption.findUnique({

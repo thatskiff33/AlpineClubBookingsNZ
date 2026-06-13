@@ -192,6 +192,12 @@ export const rateLimiters = {
   membershipCancellationConfirmation: { id: "membership-cancellation-confirmation", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
   /** Booking change review requests: 5 per day */
   bookingChangeRequest: { id: "booking-change-request", limit: 5, windowSeconds: 24 * 60 * 60 } as RateLimitConfig,
+  /** Public non-member booking request submission: 5 per hour */
+  bookingRequest: { id: "booking-request", limit: 5, windowSeconds: 60 * 60 } as RateLimitConfig,
+  /** Public booking request verification links: 10 hits per 15 minutes */
+  bookingRequestToken: { id: "booking-request-token", limit: 10, windowSeconds: 15 * 60 } as RateLimitConfig,
+  /** Tokenised public payment link pages and payment intents: 20 hits per 15 minutes */
+  paymentLinkToken: { id: "payment-link-token", limit: 20, windowSeconds: 15 * 60 } as RateLimitConfig,
 } as const;
 
 // Export for testing
