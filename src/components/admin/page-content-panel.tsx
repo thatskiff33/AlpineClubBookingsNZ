@@ -69,11 +69,11 @@ const HOME_EMBED_TOKENS = [
   "join-apply-form"
 ] as const;
 
-type WysiwygEditorHandle = {
+export type WysiwygEditorHandle = {
   getHtml: () => string;
 };
 
-const WysiwygEditor = forwardRef<
+export const WysiwygEditor = forwardRef<
   WysiwygEditorHandle,
   {
     value: string;
