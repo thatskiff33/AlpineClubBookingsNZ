@@ -30,8 +30,66 @@ export type AllowedMediaImageContentType =
 export const MAX_MEDIA_IMAGE_FILENAME_LENGTH = 200;
 export const MAX_MEDIA_IMAGE_ALT_TEXT_LENGTH = 280;
 
-const SVG_PREFIX_PATTERN =
-  /^(?:﻿)?\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg[\s>]/i;
+const BOM = "﻿";
+
+function startsWithCaseInsensitive(
+  text: string,
+  search: string,
+  index: number,
+): boolean {
+  return (
+    text.slice(index, index + search.length).toLowerCase() ===
+    search.toLowerCase()
+  );
+}
+
+function skipWhitespace(text: string, index: number): number {
+  let next = index;
+  while (next < text.length && /\s/.test(text[next])) {
+    next += 1;
+  }
+  return next;
+}
+
+/**
+ * Check whether `head` is the start of an SVG document: optionally
+ * preceded by a BOM, an XML prolog, and/or comments, followed by a
+ * `<svg` root element. Written as a manual scanner (rather than a single
+ * regex) to avoid catastrophic backtracking on adversarial input such as
+ * many repeated, unterminated `<!--` sequences.
+ */
+function isSvgPrefix(head: string): boolean {
+  let index = 0;
+  if (head.startsWith(BOM, index)) {
+    index += 1;
+  }
+  index = skipWhitespace(head, index);
+
+  if (startsWithCaseInsensitive(head, "<?xml", index)) {
+    const end = head.indexOf("?>", index + 5);
+    if (end === -1) {
+      return false;
+    }
+    index = skipWhitespace(head, end + 2);
+  }
+
+  for (;;) {
+    if (!head.startsWith("<!--", index)) {
+      break;
+    }
+    const end = head.indexOf("-->", index + 4);
+    if (end === -1) {
+      return false;
+    }
+    index = skipWhitespace(head, end + 3);
+  }
+
+  if (!startsWithCaseInsensitive(head, "<svg", index)) {
+    return false;
+  }
+  const afterTag = head[index + 4];
+  return afterTag === undefined ? false : /[\s>]/.test(afterTag);
+}
 
 /**
  * Sniff the real image type from file bytes, ignoring the declared
@@ -95,7 +153,7 @@ export function detectImageContentType(
   // (optionally preceded by a BOM, XML prolog, and/or comments) within the
   // first slice of the file.
   const head = bytes.subarray(0, 2048).toString("utf8");
-  if (SVG_PREFIX_PATTERN.test(head)) {
+  if (isSvgPrefix(head)) {
     return "image/svg+xml";
   }
 

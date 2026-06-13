@@ -108,6 +108,21 @@ describe("detectImageContentType", () => {
     ).toBeNull();
   });
 
+  it("recognises an SVG preceded by a BOM and comments", () => {
+    const withComments = Buffer.from(
+      "﻿<!-- comment one -->\n<!-- comment two -->\n<svg xmlns=\"http://www.w3.org/2000/svg\"><rect /></svg>",
+      "utf8",
+    );
+    expect(detectImageContentType(withComments)).toBe("image/svg+xml");
+  });
+
+  it("does not hang on many unterminated comment markers (ReDoS guard)", () => {
+    const adversarial = Buffer.from("<!--".repeat(2000), "utf8");
+    const start = Date.now();
+    expect(detectImageContentType(adversarial)).toBeNull();
+    expect(Date.now() - start).toBeLessThan(100);
+  });
+
   it("rejects unrecognised content even if the declared type claims to be an image", () => {
     expect(detectImageContentType(Buffer.from("not an image", "utf8"))).toBeNull();
   });
