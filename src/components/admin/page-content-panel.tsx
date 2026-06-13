@@ -18,8 +18,11 @@ import {
   FileText,
   ListOrdered,
   List,
+  Loader2,
   Plus,
   Save,
+  Trash2,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -63,6 +66,28 @@ export type WysiwygEditorHandle = {
   getHtml: () => string;
 };
 
+type MediaImageSummary = {
+  id: string;
+  filename: string;
+  url: string;
+  contentType: string;
+  byteSize: number;
+  altText: string | null;
+  width: number | null;
+  height: number | null;
+  createdAt: string;
+};
+
+type PickerImage = {
+  url: string;
+  label: string;
+  source: "uploaded" | "branding";
+  id?: string;
+};
+
+const UPLOADABLE_IMAGE_TYPES =
+  "image/png,image/jpeg,image/gif,image/webp,image/avif,image/svg+xml";
+
 // Exported for reuse by other admin HTML-content editors (lodge instructions).
 export const WysiwygEditor = forwardRef<
   WysiwygEditorHandle,
@@ -87,20 +112,39 @@ export const WysiwygEditor = forwardRef<
   const [imagePickerOpen, setImagePickerOpen] = useState(false);
   const [loadingSiteImages, setLoadingSiteImages] = useState(false);
   const [siteImages, setSiteImages] = useState<string[]>([]);
+  const [loadingUploadedImages, setLoadingUploadedImages] = useState(false);
+  const [uploadedImages, setUploadedImages] = useState<MediaImageSummary[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [imageFilter, setImageFilter] = useState("");
   const [selectedImagePath, setSelectedImagePath] = useState("");
   const [mountTick, setMountTick] = useState(0);
   const editorDivRef = useRef<HTMLDivElement | null>(null);
   const selectionRef = useRef<Range | null>(null);
   const debounceRef = useRef<number | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const filteredSiteImages = useMemo(() => {
+  const pickerImages = useMemo<PickerImage[]>(() => {
+    const uploaded: PickerImage[] = uploadedImages.map((image) => ({
+      url: image.url,
+      label: image.filename,
+      source: "uploaded",
+      id: image.id,
+    }));
+    const branding: PickerImage[] = siteImages.map((path) => ({
+      url: path,
+      label: path,
+      source: "branding",
+    }));
+    return [...uploaded, ...branding];
+  }, [siteImages, uploadedImages]);
+
+  const filteredPickerImages = useMemo(() => {
     const needle = imageFilter.trim().toLowerCase();
     if (!needle) {
-      return siteImages;
+      return pickerImages;
     }
-    return siteImages.filter((img) => img.toLowerCase().includes(needle));
-  }, [imageFilter, siteImages]);
+    return pickerImages.filter((img) => img.label.toLowerCase().includes(needle));
+  }, [imageFilter, pickerImages]);
 
   const setEditorNode = useCallback((node: HTMLDivElement | null) => {
     editorDivRef.current = node;
@@ -142,6 +186,7 @@ export const WysiwygEditor = forwardRef<
 
     let cancelled = false;
     setLoadingSiteImages(true);
+    setLoadingUploadedImages(true);
 
     fetch("/api/admin/site-images", {
       credentials: "same-origin",
@@ -155,7 +200,6 @@ export const WysiwygEditor = forwardRef<
           ? (body.images as string[])
           : [];
         setSiteImages(nextImages);
-        setSelectedImagePath((current) => current || nextImages[0] || "");
       })
       .catch(() => {
         if (!cancelled) {
@@ -168,10 +212,41 @@ export const WysiwygEditor = forwardRef<
         }
       });
 
+    fetch("/api/admin/image-library?pageSize=100", {
+      credentials: "same-origin",
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        if (cancelled) {
+          return;
+        }
+        const nextImages = Array.isArray(body?.images)
+          ? (body.images as MediaImageSummary[])
+          : [];
+        setUploadedImages(nextImages);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUploadedImages([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingUploadedImages(false);
+        }
+      });
+
     return () => {
       cancelled = true;
     };
   }, [imagePickerOpen]);
+
+  useEffect(() => {
+    if (!imagePickerOpen || loadingSiteImages || loadingUploadedImages) {
+      return;
+    }
+    setSelectedImagePath((current) => current || pickerImages[0]?.url || "");
+  }, [imagePickerOpen, loadingSiteImages, loadingUploadedImages, pickerImages]);
 
   function captureSelection() {
     if (showHtmlFallback) return;
@@ -233,6 +308,84 @@ export const WysiwygEditor = forwardRef<
     }
     runCommand("insertImage", selectedImagePath);
     setImagePickerOpen(false);
+  }
+
+  function triggerImageUpload() {
+    imageFileInputRef.current?.click();
+  }
+
+  async function uploadImageFile(file: File) {
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/admin/image-library", {
+        method: "POST",
+        credentials: "same-origin",
+        body: formData,
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Failed to upload image");
+      }
+
+      const uploaded = body.image as MediaImageSummary;
+      setUploadedImages((current) => [uploaded, ...current]);
+      setSelectedImagePath(uploaded.url);
+      toast.success(`Uploaded ${uploaded.filename}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to upload image",
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function deleteUploadedImage(
+    image: MediaImageSummary,
+    event: React.MouseEvent,
+  ) {
+    event.stopPropagation();
+    if (
+      !window.confirm(`Delete ${image.filename}? This cannot be undone.`)
+    ) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/admin/image-library/${image.id}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error ?? "Failed to delete image");
+      }
+
+      setUploadedImages((current) =>
+        current.filter((item) => item.id !== image.id),
+      );
+      if (selectedImagePath === image.url) {
+        setSelectedImagePath("");
+      }
+
+      const referencedBySlugs = Array.isArray(body?.referencedBySlugs)
+        ? (body.referencedBySlugs as string[])
+        : [];
+      if (referencedBySlugs.length > 0) {
+        toast.warning(
+          `Deleted ${image.filename}, but it is still referenced on: ${referencedBySlugs.join(", ")}. Those images will now be broken.`,
+        );
+      } else {
+        toast.success(`Deleted ${image.filename}`);
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to delete image",
+      );
+    }
   }
 
   function addHorizontalRule() {
@@ -499,42 +652,100 @@ export const WysiwygEditor = forwardRef<
       <Dialog open={imagePickerOpen} onOpenChange={setImagePickerOpen}>
         <DialogContent className="max-h-[80vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Insert Image From Site</DialogTitle>
+            <DialogTitle>Insert Image</DialogTitle>
             <DialogDescription>
-              Pick an image deployed with the site (public/branding). New
-              images are added by committing them to the repository.
+              Pick an uploaded image, an image deployed with the site
+              (public/branding), or upload a new image (PNG, JPEG, GIF,
+              WebP, AVIF, or SVG, up to 2MB).
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3">
-            <Input
-              value={imageFilter}
-              onChange={(event) => setImageFilter(event.target.value)}
-              placeholder="Filter images by path"
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                value={imageFilter}
+                onChange={(event) => setImageFilter(event.target.value)}
+                placeholder="Filter images by name"
+                className="flex-1"
+              />
+              <input
+                ref={imageFileInputRef}
+                type="file"
+                accept={UPLOADABLE_IMAGE_TYPES}
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    void uploadImageFile(file);
+                  }
+                  event.target.value = "";
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={triggerImageUpload}
+                disabled={uploading}
+              >
+                {uploading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4" />
+                )}
+                Upload
+              </Button>
+            </div>
 
             <div className="max-h-64 overflow-y-auto rounded-md border border-slate-200">
-              {loadingSiteImages ? (
+              {loadingSiteImages || loadingUploadedImages ? (
                 <p className="p-3 text-sm text-slate-500">Loading images...</p>
-              ) : filteredSiteImages.length === 0 ? (
+              ) : filteredPickerImages.length === 0 ? (
                 <p className="p-3 text-sm text-slate-500">
-                  No images found in public/branding/.
+                  No images found. Upload one to get started.
                 </p>
               ) : (
                 <div className="divide-y divide-slate-200">
-                  {filteredSiteImages.map((imgPath) => (
-                    <button
-                      key={imgPath}
-                      type="button"
-                      onClick={() => setSelectedImagePath(imgPath)}
-                      className={`w-full px-3 py-2 text-left text-sm transition-colors hover:bg-slate-50 ${
-                        selectedImagePath === imgPath
+                  {filteredPickerImages.map((image) => (
+                    <div
+                      key={`${image.source}:${image.url}`}
+                      className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-sm transition-colors hover:bg-slate-50 ${
+                        selectedImagePath === image.url
                           ? "bg-slate-100 font-medium text-slate-900"
                           : "text-slate-700"
                       }`}
                     >
-                      {imgPath}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedImagePath(image.url)}
+                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      >
+                        <Badge
+                          variant={image.source === "uploaded" ? "default" : "secondary"}
+                          className="shrink-0 text-[10px] uppercase"
+                        >
+                          {image.source === "uploaded" ? "Uploaded" : "Branding"}
+                        </Badge>
+                        <span className="truncate">{image.label}</span>
+                      </button>
+                      {image.source === "uploaded" ? (
+                        <button
+                          type="button"
+                          aria-label={`Delete ${image.label}`}
+                          title={`Delete ${image.label}`}
+                          onClick={(event) => {
+                            const uploaded = uploadedImages.find(
+                              (item) => item.id === image.id,
+                            );
+                            if (uploaded) {
+                              void deleteUploadedImage(uploaded, event);
+                            }
+                          }}
+                          className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      ) : null}
+                    </div>
                   ))}
                 </div>
               )}

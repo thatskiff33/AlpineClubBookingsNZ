@@ -1680,6 +1680,25 @@ model PageContent {
   @@index([updatedByMemberId])
 }
 
+// Uploaded images for the page-content image picker, stored in the database
+// (rather than the filesystem) so they survive Docker redeploys. Served
+// publicly via /api/images/[id].
+model MediaImage {
+  id                 String   @id @default(cuid())
+  filename           String
+  contentType        String
+  byteSize           Int
+  data               Bytes
+  altText            String?
+  width              Int?
+  height             Int?
+  uploadedByMemberId String?
+  createdAt          DateTime @default(now())
+
+  @@index([uploadedByMemberId])
+  @@index([createdAt])
+}
+
 enum NotificationDeliveryMode {
   ALWAYS
   CONTENT_ONLY

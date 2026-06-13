@@ -77,6 +77,10 @@ export const explicitPublicApiRoutes = {
     boundary: "public",
     reason: "Public health endpoint with redacted provider detail.",
   },
+  "src/app/api/images/[id]/route.ts": {
+    boundary: "public",
+    reason: "Serves uploaded page-content images embedded in public website pages.",
+  },
   "src/app/api/webhooks/ses-sns/route.ts": {
     boundary: "webhook",
     reason: "AWS SNS signed SES feedback webhook.",
