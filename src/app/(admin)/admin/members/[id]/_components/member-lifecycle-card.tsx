@@ -1,39 +1,39 @@
-"use client";
+"use client"
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Archive } from "lucide-react";
-import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers";
+import Link from "next/link"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Label } from "@/components/ui/label"
+import { Archive } from "lucide-react"
+import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
 import type {
   MemberDetail,
   MemberLifecycleActionRequest,
   OpenCancellationRequestSummary,
-} from "../_types";
-import Link from "next/link";
+} from "../_types"
 
 interface MemberLifecycleCardProps {
-  member: MemberDetail;
-  pendingArchiveRequest: MemberLifecycleActionRequest | null;
-  reviewedArchiveRequests: MemberLifecycleActionRequest[];
-  isArchiveRequester: boolean;
-  canRequestArchive: boolean;
-  canRequestCancellation: boolean;
-  openCancellationRequest: OpenCancellationRequestSummary | null;
-  archiveError: string;
-  archiveReason: string;
-  archiveReviewNotes: Record<string, string>;
-  archiveActionLoading: string | null;
-  cancellationError: string;
-  cancellationReason: string;
-  cancellationSubmitting: boolean;
-  onChangeArchiveReason: (value: string) => void;
-  onChangeArchiveReviewNote: (requestId: string, value: string) => void;
-  onChangeCancellationReason: (value: string) => void;
-  onSubmitArchive: () => void;
-  onSubmitCancellation: () => void;
-  onReviewArchive: (requestId: string, action: "approve" | "reject") => void;
+  member: MemberDetail
+  pendingArchiveRequest: MemberLifecycleActionRequest | null
+  reviewedArchiveRequests: MemberLifecycleActionRequest[]
+  isArchiveRequester: boolean
+  canRequestArchive: boolean
+  canRequestCancellation: boolean
+  openCancellationRequest: OpenCancellationRequestSummary | null
+  archiveError: string
+  archiveReason: string
+  archiveReviewNotes: Record<string, string>
+  archiveActionLoading: string | null
+  cancellationError: string
+  cancellationReason: string
+  cancellationSubmitting: boolean
+  onChangeArchiveReason: (value: string) => void
+  onChangeArchiveReviewNote: (requestId: string, value: string) => void
+  onChangeCancellationReason: (value: string) => void
+  onSubmitArchive: () => void
+  onSubmitCancellation: () => void
+  onReviewArchive: (requestId: string, action: "approve" | "reject") => void
 }
 
 export function MemberLifecycleCard({
@@ -68,47 +68,29 @@ export function MemberLifecycleCard({
       </CardHeader>
       <CardContent className="space-y-4">
         {archiveError && (
-          <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
-            {archiveError}
-          </div>
+          <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{archiveError}</div>
         )}
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="rounded-md border border-slate-200 p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Cancellation
-            </p>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Cancellation</p>
             {member.cancelledAt ? (
               <div className="mt-2 space-y-1 text-sm">
-                <Badge
-                  variant="secondary"
-                  className="bg-amber-100 text-amber-800 border-amber-200"
-                >
+                <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-200">
                   Cancelled {formatMemberDateNz(member.cancelledAt)}
                 </Badge>
-                {member.cancelledReason && (
-                  <p className="text-slate-600">{member.cancelledReason}</p>
-                )}
+                {member.cancelledReason && (<p className="text-slate-600">{member.cancelledReason}</p>)}
               </div>
             ) : openCancellationRequest ? (
-              <p className="mt-2 text-sm text-amber-700">
-                Cancellation request pending review.
-              </p>
+              <p className="mt-2 text-sm text-amber-700">Cancellation request pending review.</p>
             ) : (
-              <p className="mt-2 text-sm text-slate-600">
-                This member has not been cancelled.
-              </p>
+              <p className="mt-2 text-sm text-slate-600">This member has not been cancelled.</p>
             )}
           </div>
           <div className="rounded-md border border-slate-200 p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Archive
-            </p>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Archive</p>
             {member.archivedAt ? (
               <div className="mt-2 space-y-1 text-sm">
-                <Badge
-                  variant="secondary"
-                  className="bg-slate-200 text-slate-800 border-slate-300"
-                >
+                <Badge variant="secondary" className="bg-slate-200 text-slate-800 border-slate-300">
                   Archived {formatMemberDateNz(member.archivedAt)}
                 </Badge>
                 {member.archivedReason && (
@@ -281,8 +263,7 @@ export function MemberLifecycleCard({
                 className="min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               />
               <p className="text-xs text-slate-500">
-                A different admin must approve this request before the member is
-                archived.
+                A different admin must approve this request before the member is archived.
               </p>
             </div>
             <Button
@@ -338,5 +319,5 @@ export function MemberLifecycleCard({
         )}
       </CardContent>
     </Card>
-  );
+  )
 }

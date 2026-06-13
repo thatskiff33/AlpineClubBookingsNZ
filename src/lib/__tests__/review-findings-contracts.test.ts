@@ -1,31 +1,11 @@
-import {
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from "fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { spawnSync } from "child_process";
 import { describe, expect, it } from "vitest";
 
-const hasBash = (() => {
-  try {
-    const result = spawnSync("bash", ["--version"], { encoding: "utf8" });
-    return result.status === 0;
-  } catch {
-    return false;
-  }
-})();
-
-const itOnLinux = hasBash ? it : it.skip;
-
 function readRepoFile(relativePath: string) {
-  return readFileSync(
-    path.resolve(process.cwd(), relativePath),
-    "utf8"
-  ).replace(/\r\n/g, "\n");
+  return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");
 }
 
 function sliceFrom(source: string, startMarker: string, endMarker?: string) {
@@ -64,19 +44,15 @@ function runMigrationSafetyValidator(
   ledgerPath: string,
   env: Record<string, string> = {}
 ) {
-  return spawnSync(
-    "bash",
-    ["scripts/validate-blue-green-migrations.sh", migrationPath],
-    {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        MIGRATION_SAFETY_LEDGER: ledgerPath,
-        ...env
-      },
-      encoding: "utf8"
-    }
-  );
+  return spawnSync("bash", ["scripts/validate-blue-green-migrations.sh", migrationPath], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      MIGRATION_SAFETY_LEDGER: ledgerPath,
+      ...env,
+    },
+    encoding: "utf8",
+  });
 }
 
 describe("review finding source/schema contracts", () => {
@@ -128,15 +104,11 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("uses stable booking-modification idempotency keys instead of Date.now()", () => {
-    const modifyRoute = readRepoFile(
-      "src/app/api/bookings/[id]/modify/route.ts"
-    );
+    const modifyRoute = readRepoFile("src/app/api/bookings/[id]/modify/route.ts");
     const modifyDatesRoute = readRepoFile(
       "src/app/api/bookings/[id]/modify-dates/route.ts"
     );
-    const guestsRoute = readRepoFile(
-      "src/app/api/bookings/[id]/guests/route.ts"
-    );
+    const guestsRoute = readRepoFile("src/app/api/bookings/[id]/guests/route.ts");
 
     expect(modifyRoute).not.toContain("Date.now()");
     expect(modifyDatesRoute).not.toContain("Date.now()");
@@ -148,7 +120,7 @@ describe("review finding source/schema contracts", () => {
     const paymentTransactions = readRepoFile("src/lib/payment-transactions.ts");
     const stripeWebhook = [
       readRepoFile("src/app/api/webhooks/stripe/route.ts"),
-      readRepoFile("src/lib/stripe-webhook-service.ts")
+      readRepoFile("src/lib/stripe-webhook-service.ts"),
     ].join("\n");
 
     expect(schema).toMatch(/model\s+(?!RefundRequest\b)\w*Refund\w*\s*\{/);
@@ -184,13 +156,9 @@ describe("review finding source/schema contracts", () => {
     );
 
     expect(verificationTemplateBlock).toContain("formatNZDateTime");
-    expect(verificationTemplateBlock).not.toContain(
-      "This link expires in 24 hours"
-    );
+    expect(verificationTemplateBlock).not.toContain("This link expires in 24 hours");
     expect(emailChangeTemplateBlock).toContain("formatNZDateTime");
-    expect(emailChangeTemplateBlock).not.toContain(
-      "This link expires in 1 hour"
-    );
+    expect(emailChangeTemplateBlock).not.toContain("This link expires in 1 hour");
   });
 
   it("surfaces email-change outcome query state on the profile page", () => {
@@ -201,12 +169,9 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("validates booking-cancel mutations and removes guest-chore token mutations", () => {
-    const cancelRoute = readRepoFile(
-      "src/app/api/bookings/[id]/cancel/route.ts"
-    );
+    const cancelRoute = readRepoFile("src/app/api/bookings/[id]/cancel/route.ts");
     const guestChoreRoute = readRepoFile("src/app/api/chores/[token]/route.ts");
-    const schemaPattern =
-      /z\.(object|enum|string|number)|safeParse\(|\.parse\(/;
+    const schemaPattern = /z\.(object|enum|string|number)|safeParse\(|\.parse\(/;
 
     expect(cancelRoute).toMatch(schemaPattern);
     expect(guestChoreRoute).not.toContain("guestChoreMutationSchema");
@@ -215,9 +180,7 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("rate-limits public token-bearing verification and guest-chore routes", () => {
-    const verifyEmailRoute = readRepoFile(
-      "src/app/api/auth/verify-email/route.ts"
-    );
+    const verifyEmailRoute = readRepoFile("src/app/api/auth/verify-email/route.ts");
     const confirmEmailChangeRoute = readRepoFile(
       "src/app/api/auth/confirm-email-change/route.ts"
     );
@@ -229,15 +192,14 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("uses schemas for the remaining manual query and search parsing routes", () => {
-    const schemaPattern =
-      /z\.(object|enum|string|number)|safeParse\(|\.parse\(/;
+    const schemaPattern = /z\.(object|enum|string|number)|safeParse\(|\.parse\(/;
     const routes = [
       "src/app/api/availability/route.ts",
       "src/app/api/availability/check/route.ts",
       "src/app/api/booking-policies/check/route.ts",
       "src/app/api/admin/bookings/search/route.ts",
       "src/app/api/admin/xero/search-contacts/route.ts",
-      "src/app/api/admin/xero/sync-memberships/route.ts"
+      "src/app/api/admin/xero/sync-memberships/route.ts",
     ];
 
     for (const route of routes) {
@@ -247,11 +209,7 @@ describe("review finding source/schema contracts", () => {
 
   it("adds the missing foreign-key indexes for Booking.createdById and FamilyGroupJoinRequest.linkedMemberId", () => {
     const schema = readRepoFile("prisma/schema.prisma");
-    const bookingBlock = sliceFrom(
-      schema,
-      "model Booking {",
-      "model Payment {"
-    );
+    const bookingBlock = sliceFrom(schema, "model Booking {", "model Payment {");
     const familyGroupJoinRequestBlock = sliceFrom(
       schema,
       "model FamilyGroupJoinRequest {",
@@ -266,19 +224,19 @@ describe("review finding source/schema contracts", () => {
     const schema = readRepoFile("prisma/schema.prisma");
 
     expect(schema).not.toContain(
-      "booking      Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)"
+      'booking      Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade)'
     );
     expect(schema).not.toContain(
-      "member           Member                        @relation(fields: [memberId], references: [id], onDelete: Cascade)"
+      'member           Member                        @relation(fields: [memberId], references: [id], onDelete: Cascade)'
     );
     expect(schema).not.toContain(
       'member         Member        @relation("AdminCreditAdjustmentTarget", fields: [memberId], references: [id], onDelete: Cascade)'
     );
     expect(schema).not.toContain(
-      "booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)"
+      'booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)'
     );
     expect(schema).not.toContain(
-      "member  Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)"
+      'member  Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)'
     );
   });
 
@@ -324,9 +282,7 @@ describe("review finding source/schema contracts", () => {
   });
 
   it("keeps nomination token page and confirmation lookups hashed at rest", () => {
-    const pageSource = readRepoFile(
-      "src/app/(authenticated)/nominations/[token]/page.tsx"
-    );
+    const pageSource = readRepoFile("src/app/(authenticated)/nominations/[token]/page.tsx");
     const nominationSource = readRepoFile("src/lib/nomination.ts");
     const schema = readRepoFile("prisma/schema.prisma");
 
@@ -376,87 +332,76 @@ describe("review finding source/schema contracts", () => {
     expect(ledger).toContain("old_code_compatible");
   });
 
-  itOnLinux(
-    "requires lock-impact documentation for hot-table migrations",
-    () => {
-      const fixture = createTempMigration(
-        'ALTER TABLE "Payment" ADD COLUMN "processorReference" TEXT;\n',
-        "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan\n"
+  it("requires lock-impact documentation for hot-table migrations", () => {
+    const fixture = createTempMigration(
+      'ALTER TABLE "Payment" ADD COLUMN "processorReference" TEXT;\n',
+      "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan\n"
+    );
+
+    try {
+      const result = runMigrationSafetyValidator(
+        fixture.migrationPath,
+        fixture.ledgerPath
       );
 
-      try {
-        const result = runMigrationSafetyValidator(
-          fixture.migrationPath,
-          fixture.ledgerPath
-        );
-
-        expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain("missing");
-        expect(result.stderr).toContain("blue/green migration safety review");
-      } finally {
-        rmSync(fixture.tempDir, { recursive: true, force: true });
-      }
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("missing");
+      expect(result.stderr).toContain("blue/green migration safety review");
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
     }
-  );
+  });
 
-  itOnLinux(
-    "allows documented hot-table expand migrations without breaking-SQL override",
-    () => {
-      const fixture = createTempMigration(
-        'ALTER TABLE "Payment" ADD COLUMN "processorReference" TEXT;\n',
-        [
-          "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan",
-          "20990101000000_test_migration\texpand\tn/a\tyes\tAdds a nullable Payment column; run during low traffic and verify no long payment writes."
-        ].join("\n")
+  it("allows documented hot-table expand migrations without breaking-SQL override", () => {
+    const fixture = createTempMigration(
+      'ALTER TABLE "Payment" ADD COLUMN "processorReference" TEXT;\n',
+      [
+        "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan",
+        "20990101000000_test_migration\texpand\tn/a\tyes\tAdds a nullable Payment column; run during low traffic and verify no long payment writes.",
+      ].join("\n")
+    );
+
+    try {
+      const result = runMigrationSafetyValidator(
+        fixture.migrationPath,
+        fixture.ledgerPath
       );
 
-      try {
-        const result = runMigrationSafetyValidator(
-          fixture.migrationPath,
-          fixture.ledgerPath
-        );
-
-        expect(result.status).toBe(0);
-      } finally {
-        rmSync(fixture.tempDir, { recursive: true, force: true });
-      }
+      expect(result.status).toBe(0);
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
     }
-  );
+  });
 
-  itOnLinux(
-    "requires operator acknowledgement for documented destructive contract migrations",
-    () => {
-      const fixture = createTempMigration(
-        'ALTER TABLE "Member" DROP COLUMN "legacyPhone";\n',
-        [
-          "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan",
-          "20990101000000_test_migration\tcontract\t20261201000000_member_phone_expand\tyes\tDrops a retired Member column after all runtime callers moved to structured phone fields."
-        ].join("\n")
+  it("requires operator acknowledgement for documented destructive contract migrations", () => {
+    const fixture = createTempMigration(
+      'ALTER TABLE "Member" DROP COLUMN "legacyPhone";\n',
+      [
+        "# migration_name\tphase\tprevious_expand_release\told_code_compatible\tlock_impact_plan",
+        "20990101000000_test_migration\tcontract\t20261201000000_member_phone_expand\tyes\tDrops a retired Member column after all runtime callers moved to structured phone fields.",
+      ].join("\n")
+    );
+
+    try {
+      const blocked = runMigrationSafetyValidator(
+        fixture.migrationPath,
+        fixture.ledgerPath
+      );
+      const allowed = runMigrationSafetyValidator(
+        fixture.migrationPath,
+        fixture.ledgerPath,
+        {
+          ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
+          BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
+            "contract phase verified against previous deployed runtime",
+        }
       );
 
-      try {
-        const blocked = runMigrationSafetyValidator(
-          fixture.migrationPath,
-          fixture.ledgerPath
-        );
-        const allowed = runMigrationSafetyValidator(
-          fixture.migrationPath,
-          fixture.ledgerPath,
-          {
-            ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS: "1",
-            BLUE_GREEN_MIGRATION_OVERRIDE_REASON:
-              "contract phase verified against previous deployed runtime"
-          }
-        );
-
-        expect(blocked.status).not.toBe(0);
-        expect(blocked.stderr).toContain(
-          "ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS"
-        );
-        expect(allowed.status).toBe(0);
-      } finally {
-        rmSync(fixture.tempDir, { recursive: true, force: true });
-      }
+      expect(blocked.status).not.toBe(0);
+      expect(blocked.stderr).toContain("ALLOW_BREAKING_BLUE_GREEN_MIGRATIONS");
+      expect(allowed.status).toBe(0);
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
     }
-  );
+  });
 });

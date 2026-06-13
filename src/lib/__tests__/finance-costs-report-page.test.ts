@@ -2,22 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceSnapshotType } from "@prisma/client";
 
 const { mockListFinanceSnapshots } = vi.hoisted(() => ({
-  mockListFinanceSnapshots: vi.fn()
+  mockListFinanceSnapshots: vi.fn(),
 }));
 
 vi.mock("@/lib/finance-sync-storage", () => ({
   DEFAULT_FINANCE_SNAPSHOT_SCOPE: "default",
-  listFinanceSnapshots: mockListFinanceSnapshots
+  listFinanceSnapshots: mockListFinanceSnapshots,
 }));
 
 vi.mock("@/lib/finance-auth", () => ({
-  hasFinanceManagerAccess: (level: string) => level === "MANAGER"
+  hasFinanceManagerAccess: (level: string) => level === "MANAGER",
 }));
 
 import {
   buildDefaultFinanceCostsReportFilters,
   buildFinanceCostsReportPageModel,
-  resolveFinanceCostsReportFilters
+  resolveFinanceCostsReportFilters,
 } from "@/lib/finance-costs-report-page";
 
 function financeViewer() {
@@ -29,7 +29,7 @@ function financeViewer() {
     role: "MEMBER" as const,
     financeAccessLevel: "VIEWER" as const,
     active: true,
-    forcePasswordChange: false
+    forcePasswordChange: false,
   };
 }
 
@@ -42,7 +42,7 @@ function financeManager() {
     role: "ADMIN" as const,
     financeAccessLevel: "MANAGER" as const,
     active: true,
-    forcePasswordChange: false
+    forcePasswordChange: false,
   };
 }
 
@@ -74,14 +74,14 @@ function profitAndLossSnapshot(input: {
       reportTitles: [
         "Profit and Loss",
         "Example Alpine Club",
-        input.periodLabel
+        input.periodLabel,
       ],
       fields: [
         {
           fieldId: "period",
           description: "Period",
-          value: input.periodLabel
-        }
+          value: input.periodLabel,
+        },
       ],
       rows: [
         {
@@ -93,24 +93,24 @@ function profitAndLossSnapshot(input: {
               rowType: "Row",
               title: null,
               cells: [{ value: "Electricity" }, { value: input.electricity }],
-              rows: []
+              rows: [],
             },
             {
               rowType: "Row",
               title: null,
               cells: [{ value: "Insurance" }, { value: input.insurance }],
-              rows: []
+              rows: [],
             },
             {
               rowType: "SummaryRow",
               title: null,
               cells: [
                 { value: "Total Operating Expenses" },
-                { value: input.totalOperatingExpenses }
+                { value: input.totalOperatingExpenses },
               ],
-              rows: []
-            }
-          ]
+              rows: [],
+            },
+          ],
         },
         {
           rowType: "Section",
@@ -122,26 +122,26 @@ function profitAndLossSnapshot(input: {
               title: null,
               cells: [
                 { value: "Kitchen supplies" },
-                { value: input.kitchenSupplies }
+                { value: input.kitchenSupplies },
               ],
-              rows: []
+              rows: [],
             },
             {
               rowType: "SummaryRow",
               title: null,
               cells: [
                 { value: "Total Direct Costs" },
-                { value: input.totalDirectCosts }
+                { value: input.totalDirectCosts },
               ],
-              rows: []
-            }
-          ]
-        }
-      ]
+              rows: [],
+            },
+          ],
+        },
+      ],
     },
     syncRunId: "run-1",
     createdAt: new Date("2026-05-01T00:20:00.000Z"),
-    updatedAt: new Date("2026-05-01T00:20:00.000Z")
+    updatedAt: new Date("2026-05-01T00:20:00.000Z"),
   };
 }
 
@@ -166,7 +166,7 @@ describe("finance costs report page model", () => {
         insurance: "200.00",
         kitchenSupplies: "150.00",
         totalOperatingExpenses: "500.00",
-        totalDirectCosts: "150.00"
+        totalDirectCosts: "150.00",
       }),
       profitAndLossSnapshot({
         id: "snapshot-march",
@@ -179,8 +179,8 @@ describe("finance costs report page model", () => {
         insurance: "200.00",
         kitchenSupplies: "100.00",
         totalOperatingExpenses: "450.00",
-        totalDirectCosts: "100.00"
-      })
+        totalDirectCosts: "100.00",
+      }),
     ]);
   });
 
@@ -191,18 +191,18 @@ describe("finance costs report page model", () => {
 
   it("uses the latest stored monthly costs snapshots for managers", async () => {
     const model = await buildFinanceCostsReportPageModel({
-      member: financeManager()
+      member: financeManager(),
     });
 
     expect(model.isManager).toBe(true);
     expect(model.filters).toEqual(buildDefaultFinanceCostsReportFilters());
     expect(model.summaryCards[0]).toMatchObject({
       title: "Latest synced month",
-      value: "$650.00"
+      value: "$650.00",
     });
     expect(model.summaryCards[1]).toMatchObject({
       title: "Selected periods total",
-      value: "$1200.00"
+      value: "$1200.00",
     });
     expect(model.coverageSummary).toBe(
       "Showing 2 monthly profit-and-loss snapshots with cost detail from April 2026 backwards."
@@ -212,7 +212,7 @@ describe("finance costs report page model", () => {
       sourceWindow: "1 Apr 2026 to 30 Apr 2026",
       totalCosts: "$650.00",
       lineItemCount: "3",
-      asOfDateLabel: "30 Apr 2026"
+      asOfDateLabel: "30 Apr 2026",
     });
     expect(model.lineItemRows).toEqual([
       {
@@ -220,42 +220,42 @@ describe("finance costs report page model", () => {
         lineItem: "Kitchen supplies",
         latestPeriodAmount: "$150.00",
         selectedPeriodsAmount: "$250.00",
-        periodsPresent: "2"
+        periodsPresent: "2",
       },
       {
         section: "Operating Expenses",
         lineItem: "Electricity",
         latestPeriodAmount: "$300.00",
         selectedPeriodsAmount: "$550.00",
-        periodsPresent: "2"
+        periodsPresent: "2",
       },
       {
         section: "Operating Expenses",
         lineItem: "Insurance",
         latestPeriodAmount: "$200.00",
         selectedPeriodsAmount: "$400.00",
-        periodsPresent: "2"
-      }
+        periodsPresent: "2",
+      },
     ]);
     expect(mockListFinanceSnapshots).toHaveBeenCalledWith({
       snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_MONTHLY,
       scope: "default",
-      limit: 6
+      limit: 6,
     });
   });
 
   it("falls back invalid costs period filters to the default window", () => {
     const resolved = resolveFinanceCostsReportFilters({
       searchParams: {
-        periods: "0"
-      }
+        periods: "0",
+      },
     });
 
     expect(resolved.filters).toEqual({
-      periods: 6
+      periods: 6,
     });
     expect(resolved.warnings).toEqual([
-      "Costs periods must be a whole number between 1 and 24. Showing the default 6-period window."
+      "Costs periods must be a whole number between 1 and 24. Showing the default 6-period window.",
     ]);
   });
 
@@ -263,12 +263,12 @@ describe("finance costs report page model", () => {
     mockListFinanceSnapshots.mockResolvedValue([]);
 
     const model = await buildFinanceCostsReportPageModel({
-      member: financeViewer()
+      member: financeViewer(),
     });
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "This costs report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync."
+      "The setup status for This costs report could not be checked right now. Try again shortly."
     );
     expect(model.summaryCards).toEqual([]);
     expect(model.monthlyRows).toEqual([]);
@@ -278,12 +278,12 @@ describe("finance costs report page model", () => {
     mockListFinanceSnapshots.mockRejectedValue(new Error("database timeout"));
 
     const model = await buildFinanceCostsReportPageModel({
-      member: financeViewer()
+      member: financeViewer(),
     });
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "This costs report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync."
+      "This costs report could not be loaded right now. Try again shortly."
     );
     expect(model.lineItemRows).toEqual([]);
     expect(consoleErrorSpy).toHaveBeenCalled();

@@ -6,15 +6,11 @@ import {
   readdirSync,
   statSync,
   unlinkSync,
-  writeFileSync
+  writeFileSync,
 } from "fs";
 
-// backup.ts hardcodes BACKUP_DIR = "/tmp/tacbookings-backups" (POSIX literal).
-// On Windows path.join converts the slash, so we match both separators.
-const backupDirPattern = /[/\\\\]tmp[/\\\\]tacbookings-backups[/\\\\]/;
-
 vi.mock("child_process", () => ({
-  execFileSync: vi.fn()
+  execFileSync: vi.fn(),
 }));
 
 vi.mock("fs", async () => {
@@ -26,21 +22,21 @@ vi.mock("fs", async () => {
     readdirSync: vi.fn(),
     statSync: vi.fn(),
     unlinkSync: vi.fn(),
-    writeFileSync: vi.fn()
+    writeFileSync: vi.fn(),
   };
 });
 
 vi.mock("@/lib/logger", () => ({
   default: {
     error: vi.fn(),
-    info: vi.fn()
-  }
+    info: vi.fn(),
+  },
 }));
 
 import {
   buildBackupCronOutcome,
   runDatabaseBackup,
-  sanitizePostgresUrlForPgDump
+  sanitizePostgresUrlForPgDump,
 } from "@/lib/backup";
 import logger from "@/lib/logger";
 
@@ -81,13 +77,13 @@ describe("backup", () => {
   it("returns a skipped result when backups are disabled", async () => {
     process.env = {
       ...originalEnv,
-      BACKUP_ENABLED: "false"
+      BACKUP_ENABLED: "false",
     };
 
     await expect(runDatabaseBackup()).resolves.toEqual({
       success: false,
       skipped: true,
-      reason: "Backups are disabled. Set BACKUP_ENABLED=true."
+      reason: "Backups are disabled. Set BACKUP_ENABLED=true.",
     });
   });
 
@@ -97,7 +93,7 @@ describe("backup", () => {
         success: true,
         filename: "backup.sql.gz",
         sizeBytes: 1024,
-        uploadedToS3: true
+        uploadedToS3: true,
       })
     ).toEqual({
       status: "SUCCESS",
@@ -105,8 +101,8 @@ describe("backup", () => {
         filename: "backup.sql.gz",
         sizeBytes: 1024,
         minSizeBytes: 128,
-        s3: true
-      }
+        s3: true,
+      },
     });
   });
 
@@ -115,13 +111,13 @@ describe("backup", () => {
       buildBackupCronOutcome({
         success: false,
         skipped: true,
-        reason: "Backups are disabled. Set BACKUP_ENABLED=true."
+        reason: "Backups are disabled. Set BACKUP_ENABLED=true.",
       })
     ).toEqual({
       status: "SKIPPED",
       resultSummary: {
-        reason: "Backups are disabled. Set BACKUP_ENABLED=true."
-      }
+        reason: "Backups are disabled. Set BACKUP_ENABLED=true.",
+      },
     });
   });
 
@@ -129,11 +125,11 @@ describe("backup", () => {
     expect(
       buildBackupCronOutcome({
         success: false,
-        error: "pg_dump failed"
+        error: "pg_dump failed",
       })
     ).toEqual({
       status: "FAILURE",
-      error: "pg_dump failed"
+      error: "pg_dump failed",
     });
   });
 
@@ -143,7 +139,7 @@ describe("backup", () => {
       BACKUP_ENABLED: "true",
       BACKUP_S3_BUCKET: "tacbookings-backups",
       BACKUP_S3_REGION: "ap-southeast-2",
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings"
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
     };
 
     execFileSyncMock.mockImplementation((file) => {
@@ -157,15 +153,15 @@ describe("backup", () => {
     await expect(runDatabaseBackup()).resolves.toMatchObject({
       success: false,
       filename: expect.stringMatching(/^tacbookings-/),
-      filepath: expect.stringMatching(backupDirPattern),
+      filepath: expect.stringContaining("/tmp/tacbookings-backups/"),
       sizeBytes: 1024,
-      error: expect.stringContaining("S3 upload/readback failed: AccessDenied")
+      error: expect.stringContaining("S3 upload/readback failed: AccessDenied"),
     });
 
     expect(loggerErrorMock).toHaveBeenCalledWith(
       expect.objectContaining({
         err: expect.any(Error),
-        job: "backup"
+        job: "backup",
       }),
       "S3 upload or readback failed"
     );
@@ -174,15 +170,13 @@ describe("backup", () => {
       [
         "s3",
         "cp",
-        expect.stringMatching(backupDirPattern),
-        expect.stringMatching(
-          /s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/
-        ),
+        expect.stringContaining("/tmp/tacbookings-backups/"),
+        expect.stringMatching(/s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/),
         "--region",
-        "ap-southeast-2"
+        "ap-southeast-2",
       ],
       expect.objectContaining({
-        env: expect.objectContaining(process.env)
+        env: expect.objectContaining(process.env),
       })
     );
     expect(mkdirSyncMock).not.toHaveBeenCalled();
@@ -193,7 +187,7 @@ describe("backup", () => {
     process.env = {
       ...originalEnv,
       BACKUP_ENABLED: "true",
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings"
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
     };
 
     execFileSyncMock.mockReturnValue(Buffer.from("-- database dump") as never);
@@ -204,7 +198,7 @@ describe("backup", () => {
       error: "Backup file is suspiciously small",
       sizeBytes: 20,
       minSizeBytes: 128,
-      healthSignal: "backup-suspiciously-small"
+      healthSignal: "backup-suspiciously-small",
     });
 
     expect(unlinkSyncMock).toHaveBeenCalledTimes(1);
@@ -218,7 +212,7 @@ describe("backup", () => {
         filename: "backup.sql.gz",
         sizeBytes: 20,
         minSizeBytes: 128,
-        healthSignal: "backup-suspiciously-small"
+        healthSignal: "backup-suspiciously-small",
       })
     ).toEqual({
       status: "FAILURE",
@@ -227,8 +221,8 @@ describe("backup", () => {
         healthSignal: "backup-suspiciously-small",
         filename: "backup.sql.gz",
         sizeBytes: 20,
-        minSizeBytes: 128
-      }
+        minSizeBytes: 128,
+      },
     });
   });
 
@@ -237,18 +231,18 @@ describe("backup", () => {
       ...originalEnv,
       BACKUP_ENABLED: "true",
       DATABASE_URL:
-        "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10&schema=bookings&sslmode=require"
+        "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10&schema=bookings&sslmode=require",
     };
 
     await expect(runDatabaseBackup()).resolves.toMatchObject({
       success: true,
-      sizeBytes: 1024
+      sizeBytes: 1024,
     });
 
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "pg_dump",
       [
-        "postgresql://postgres:postgres@postgres:5432/tacbookings?sslmode=require"
+        "postgresql://postgres:postgres@postgres:5432/tacbookings?sslmode=require",
       ],
       expect.any(Object)
     );
@@ -272,13 +266,11 @@ describe("backup", () => {
       ...originalEnv,
       BACKUP_ENABLED: "true",
       DATABASE_URL:
-        "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10"
+        "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5&pool_timeout=10",
     };
     execFileSyncMock.mockImplementation((file) => {
       if (file === "pg_dump") {
-        throw new Error(
-          'pg_dump: error: invalid URI query parameter: "connection_limit"'
-        );
+        throw new Error('pg_dump: error: invalid URI query parameter: "connection_limit"');
       }
 
       return Buffer.from("") as never;
@@ -286,7 +278,7 @@ describe("backup", () => {
 
     await expect(runDatabaseBackup()).resolves.toEqual({
       success: false,
-      error: expect.stringContaining("pg_dump failed:")
+      error: expect.stringContaining("pg_dump failed:"),
     });
 
     expect(writeFileSyncMock).not.toHaveBeenCalled();
@@ -298,7 +290,7 @@ describe("backup", () => {
       BACKUP_ENABLED: "true",
       BACKUP_S3_BUCKET: "tacbookings-backups",
       BACKUP_S3_REGION: "ap-southeast-2",
-      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings"
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
     };
 
     await expect(runDatabaseBackup()).resolves.toMatchObject({
@@ -306,7 +298,7 @@ describe("backup", () => {
       uploadedToS3: true,
       s3Key: expect.stringMatching(/^tacbookings_s3backup\/tacbookings-/),
       s3ReadbackVerified: true,
-      s3ReadbackSizeBytes: 1024
+      s3ReadbackSizeBytes: 1024,
     });
 
     expect(execFileSyncMock).toHaveBeenCalledWith(
@@ -314,12 +306,10 @@ describe("backup", () => {
       [
         "s3",
         "cp",
-        expect.stringMatching(backupDirPattern),
-        expect.stringMatching(
-          /s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/
-        ),
+        expect.stringContaining("/tmp/tacbookings-backups/"),
+        expect.stringMatching(/s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/),
         "--region",
-        "ap-southeast-2"
+        "ap-southeast-2",
       ],
       expect.any(Object)
     );
@@ -328,12 +318,10 @@ describe("backup", () => {
       [
         "s3",
         "cp",
-        expect.stringMatching(
-          /s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/
-        ),
+        expect.stringMatching(/s3:\/\/tacbookings-backups\/tacbookings_s3backup\/tacbookings-/),
         expect.stringContaining(".s3-readback"),
         "--region",
-        "ap-southeast-2"
+        "ap-southeast-2",
       ],
       expect.any(Object)
     );
@@ -348,7 +336,7 @@ describe("backup", () => {
       BACKUP_ENABLED: "true",
       DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
       BACKUP_RESTORE_VALIDATION_URL:
-        "postgresql://postgres:postgres@postgres:5432/tacbookings_restore?connection_limit=1"
+        "postgresql://postgres:postgres@postgres:5432/tacbookings_restore?connection_limit=1",
     };
 
     const result = await runDatabaseBackup();
@@ -359,8 +347,8 @@ describe("backup", () => {
         source: "local-file",
         memberCount: 3,
         bookingCount: 4,
-        paymentCount: 5
-      }
+        paymentCount: 5,
+      },
     });
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "psql",
@@ -369,13 +357,13 @@ describe("backup", () => {
         "-v",
         "ON_ERROR_STOP=1",
         "-c",
-        "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
+        "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;",
       ],
       expect.any(Object)
     );
     expect(execFileSyncMock).toHaveBeenCalledWith(
       "gunzip",
-      ["-c", expect.stringMatching(backupDirPattern)],
+      ["-c", expect.stringContaining("/tmp/tacbookings-backups/")],
       expect.any(Object)
     );
   });
@@ -386,7 +374,7 @@ describe("backup", () => {
       BACKUP_ENABLED: "true",
       DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/tacbookings",
       BACKUP_RESTORE_VALIDATION_URL:
-        "postgresql://postgres:postgres@postgres:5432/tacbookings_restore"
+        "postgresql://postgres:postgres@postgres:5432/tacbookings_restore",
     };
     execFileSyncMock.mockImplementation((file, args) => {
       if (file === "psql" && Array.isArray(args) && args.includes("-At")) {
@@ -402,13 +390,13 @@ describe("backup", () => {
 
     await expect(runDatabaseBackup()).resolves.toMatchObject({
       success: false,
-      error: expect.stringContaining("Restore validation failed:")
+      error: expect.stringContaining("Restore validation failed:"),
     });
 
     expect(loggerErrorMock).toHaveBeenCalledWith(
       expect.objectContaining({
         err: expect.any(Error),
-        job: "backup"
+        job: "backup",
       }),
       "Restore validation failed"
     );
@@ -421,13 +409,13 @@ describe("backup", () => {
       DATABASE_URL:
         "postgresql://postgres:postgres@postgres:5432/tacbookings?connection_limit=5",
       BACKUP_RESTORE_VALIDATION_URL:
-        "postgresql://postgres:postgres@postgres:5432/tacbookings"
+        "postgresql://postgres:postgres@postgres:5432/tacbookings",
     };
 
     await expect(runDatabaseBackup()).resolves.toEqual({
       success: false,
       error:
-        "BACKUP_RESTORE_VALIDATION_URL must point at a disposable shadow database, not DATABASE_URL"
+        "BACKUP_RESTORE_VALIDATION_URL must point at a disposable shadow database, not DATABASE_URL",
     });
 
     expect(execFileSyncMock).not.toHaveBeenCalled();
