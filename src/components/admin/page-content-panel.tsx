@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   forwardRef,
   useCallback,
@@ -7,7 +8,7 @@ import {
   useImperativeHandle,
   useMemo,
   useRef,
-  useState,
+  useState
 } from "react";
 import {
   AlignCenter,
@@ -20,7 +21,7 @@ import {
   List,
   Plus,
   Save,
-  Trash2,
+  Trash2
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -32,14 +33,14 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
+  CardTitle
 } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
-  DialogTitle,
+  DialogTitle
 } from "@/components/ui/dialog";
 import type { EditablePageRecord } from "@/lib/page-content";
 import { Label } from "../ui/label";
@@ -57,7 +58,7 @@ function formatUpdatedAt(value: string | null): string {
   }
   return new Date(value).toLocaleString("en-NZ", {
     dateStyle: "medium",
-    timeStyle: "short",
+    timeStyle: "short"
   });
 }
 
@@ -65,7 +66,7 @@ const HOME_EMBED_TOKENS = [
   "committee-members-cards",
   "member-application-form",
   "contact-form",
-  "join-apply-form",
+  "join-apply-form"
 ] as const;
 
 type WysiwygEditorHandle = {
@@ -87,9 +88,9 @@ const WysiwygEditor = forwardRef<
     onChange,
     placeholder,
     editorClassName = "min-h-48",
-    wrapperClassName,
+    wrapperClassName
   },
-  ref,
+  ref
 ) {
   const [showHtmlFallback, setShowHtmlFallback] = useState(false);
   const [imagePickerOpen, setImagePickerOpen] = useState(false);
@@ -123,9 +124,9 @@ const WysiwygEditor = forwardRef<
           return editorDivRef.current.innerHTML ?? "";
         }
         return value;
-      },
+      }
     }),
-    [showHtmlFallback, value],
+    [showHtmlFallback, value]
   );
 
   useEffect(() => {
@@ -152,7 +153,7 @@ const WysiwygEditor = forwardRef<
     setLoadingSiteImages(true);
 
     fetch("/api/admin/site-images", {
-      credentials: "same-origin",
+      credentials: "same-origin"
     })
       .then((response) => (response.ok ? response.json() : null))
       .then((body) => {
@@ -215,7 +216,7 @@ const WysiwygEditor = forwardRef<
 
   function onToolbarMouseDown(
     event: React.MouseEvent<HTMLButtonElement>,
-    action: () => void,
+    action: () => void
   ) {
     event.preventDefault();
     action();
@@ -269,7 +270,7 @@ const WysiwygEditor = forwardRef<
                 variant="outline"
                 onMouseDown={(event) =>
                   onToolbarMouseDown(event, () =>
-                    runCommand("formatBlock", "P"),
+                    runCommand("formatBlock", "P")
                   )
                 }
               >
@@ -282,7 +283,7 @@ const WysiwygEditor = forwardRef<
                 variant="outline"
                 onMouseDown={(event) =>
                   onToolbarMouseDown(event, () =>
-                    runCommand("formatBlock", "H1"),
+                    runCommand("formatBlock", "H1")
                   )
                 }
               >
@@ -295,7 +296,7 @@ const WysiwygEditor = forwardRef<
                 variant="outline"
                 onMouseDown={(event) =>
                   onToolbarMouseDown(event, () =>
-                    runCommand("formatBlock", "H2"),
+                    runCommand("formatBlock", "H2")
                   )
                 }
               >
@@ -308,7 +309,7 @@ const WysiwygEditor = forwardRef<
                 variant="outline"
                 onMouseDown={(event) =>
                   onToolbarMouseDown(event, () =>
-                    runCommand("formatBlock", "H3"),
+                    runCommand("formatBlock", "H3")
                   )
                 }
               >
@@ -356,7 +357,7 @@ const WysiwygEditor = forwardRef<
                 title="Bullet"
                 onMouseDown={(event) =>
                   onToolbarMouseDown(event, () =>
-                    runCommand("insertUnorderedList"),
+                    runCommand("insertUnorderedList")
                   )
                 }
               >
@@ -371,7 +372,7 @@ const WysiwygEditor = forwardRef<
                 title="Numbered"
                 onMouseDown={(event) =>
                   onToolbarMouseDown(event, () =>
-                    runCommand("insertOrderedList"),
+                    runCommand("insertOrderedList")
                   )
                 }
               >
@@ -520,8 +521,8 @@ const WysiwygEditor = forwardRef<
           <DialogHeader>
             <DialogTitle>Insert Image From Site</DialogTitle>
             <DialogDescription>
-              Pick an image deployed with the site (public/branding). New
-              images are added by committing them to the repository.
+              Pick an image deployed with the site (public/branding). New images
+              are added by committing them to the repository.
             </DialogDescription>
           </DialogHeader>
 
@@ -562,11 +563,16 @@ const WysiwygEditor = forwardRef<
             {selectedImagePath ? (
               <div className="space-y-2 rounded-md border border-slate-200 p-3">
                 <p className="text-xs text-slate-500">Preview</p>
-                <img
-                  src={selectedImagePath}
-                  alt="Selected site image"
-                  className="max-h-52 w-auto rounded border border-slate-200"
-                />
+                <div className="relative h-52 w-full overflow-hidden rounded border border-slate-200 bg-slate-50">
+                  <Image
+                    src={selectedImagePath}
+                    alt="Selected site image"
+                    fill
+                    unoptimized
+                    sizes="(max-width: 768px) 100vw, 480px"
+                    className="object-contain"
+                  />
+                </div>
                 <p className="truncate text-xs text-slate-600">
                   {selectedImagePath}
                 </p>
@@ -624,7 +630,7 @@ export function PageContentPanel() {
 
   const selectedPage = useMemo(
     () => pages.find((page) => page.id === selectedPageId) ?? null,
-    [pages, selectedPageId],
+    [pages, selectedPageId]
   );
   const isSystemNotFoundPage = selectedPage?.path === "/404";
   const isSystemHomePage = selectedPage?.path === "/home";
@@ -634,7 +640,7 @@ export function PageContentPanel() {
     setLoading(true);
     try {
       const response = await fetch("/api/admin/page-content", {
-        credentials: "same-origin",
+        credentials: "same-origin"
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
@@ -643,9 +649,7 @@ export function PageContentPanel() {
       setPages(body.pages ?? []);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to load editable pages",
+        error instanceof Error ? error.message : "Failed to load editable pages"
       );
     } finally {
       setLoading(false);
@@ -691,8 +695,8 @@ export function PageContentPanel() {
           headerText: currentHeaderText,
           slug: draftSlug.trim().toLowerCase(),
           sortOrder: draftSortOrder,
-          contentHtml: currentContent,
-        }),
+          contentHtml: currentContent
+        })
       });
 
       const body = await response.json().catch(() => null);
@@ -716,23 +720,23 @@ export function PageContentPanel() {
                   contentHtml: body.page?.contentHtml ?? draftContent,
                   updatedAt: body.page?.updatedAt ?? new Date().toISOString(),
                   updatedByMemberId:
-                    body.page?.updatedByMemberId ?? page.updatedByMemberId,
+                    body.page?.updatedByMemberId ?? page.updatedByMemberId
                 }
-              : page,
+              : page
           )
           .sort((a, b) =>
             a.sortOrder === b.sortOrder
               ? a.title.localeCompare(b.title)
-              : a.sortOrder - b.sortOrder,
-          ),
+              : a.sortOrder - b.sortOrder
+          )
       );
       toast.success(
-        `${draftTitle.trim() || selectedPage.title} page content saved`,
+        `${draftTitle.trim() || selectedPage.title} page content saved`
       );
       setDialogOpen(false);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to save page content",
+        error instanceof Error ? error.message : "Failed to save page content"
       );
     } finally {
       setSaving(false);
@@ -750,14 +754,14 @@ export function PageContentPanel() {
 
     if (slug === "404") {
       toast.error(
-        "The 404 page is a system page. Edit the existing /404 card instead of creating a new page.",
+        "The 404 page is a system page. Edit the existing /404 card instead of creating a new page."
       );
       return;
     }
 
     if (slug === "home") {
       toast.error(
-        "The home page is a system page. Edit the existing /home card instead of creating a new page.",
+        "The home page is a system page. Edit the existing /home card instead of creating a new page."
       );
       return;
     }
@@ -774,8 +778,8 @@ export function PageContentPanel() {
           title,
           headerText: newHeaderText.trim(),
           slug,
-          sortOrder: newSortOrder,
-        }),
+          sortOrder: newSortOrder
+        })
       });
 
       const body = await response.json().catch(() => null);
@@ -788,8 +792,8 @@ export function PageContentPanel() {
         [...current, createdPage].sort((a, b) =>
           a.sortOrder === b.sortOrder
             ? a.title.localeCompare(b.title)
-            : a.sortOrder - b.sortOrder,
-        ),
+            : a.sortOrder - b.sortOrder
+        )
       );
       setNewCaption("");
       setNewMenuTitle("");
@@ -802,7 +806,7 @@ export function PageContentPanel() {
       openEditor(createdPage);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create page",
+        error instanceof Error ? error.message : "Failed to create page"
       );
     } finally {
       setCreating(false);
@@ -820,7 +824,7 @@ export function PageContentPanel() {
         method: "DELETE",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: selectedPage.id }),
+        body: JSON.stringify({ id: selectedPage.id })
       });
 
       const body = await response.json().catch(() => null);
@@ -829,7 +833,7 @@ export function PageContentPanel() {
       }
 
       setPages((current) =>
-        current.filter((page) => page.id !== selectedPage.id),
+        current.filter((page) => page.id !== selectedPage.id)
       );
       setSelectedPageId(null);
       setDeleteDialogOpen(false);
@@ -837,7 +841,7 @@ export function PageContentPanel() {
       toast.success(`${selectedPage.title} deleted`);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to delete page",
+        error instanceof Error ? error.message : "Failed to delete page"
       );
     } finally {
       setDeleting(false);
@@ -932,7 +936,7 @@ export function PageContentPanel() {
                 value={newSortOrder}
                 onChange={(event) =>
                   setNewSortOrder(
-                    Number.parseInt(event.target.value || "0", 10),
+                    Number.parseInt(event.target.value || "0", 10)
                   )
                 }
                 min={0}
@@ -1026,7 +1030,7 @@ export function PageContentPanel() {
                     value={draftSortOrder}
                     onChange={(event) =>
                       setDraftSortOrder(
-                        Number.parseInt(event.target.value || "0", 10),
+                        Number.parseInt(event.target.value || "0", 10)
                       )
                     }
                     min={0}

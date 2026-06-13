@@ -10,25 +10,20 @@ const IMAGE_EXTENSIONS = new Set([
   ".gif",
   ".webp",
   ".svg",
-  ".avif",
+  ".avif"
 ]);
-
-// Only expose the deployed branding/content image folder to the picker,
-// not the whole public/ tree. This endpoint lists repo-committed files
-// only; there is no upload capability.
-const SITE_IMAGES_DIR = "branding";
 
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }
 
 const adminGuardOptions = {
-  forbiddenResponse: unauthorizedResponse,
+  forbiddenResponse: unauthorizedResponse
 };
 
 async function listImagesRecursively(
   baseDir: string,
-  relativeDir = "",
+  relativeDir = ""
 ): Promise<string[]> {
   const currentDir = path.join(baseDir, relativeDir);
   const entries = await fs.readdir(currentDir, { withFileTypes: true });
@@ -76,7 +71,7 @@ export async function GET() {
     console.error("Failed to list site images", error);
     return NextResponse.json(
       { error: "Failed to list site images" },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
