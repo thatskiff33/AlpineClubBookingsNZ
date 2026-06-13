@@ -40,7 +40,7 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
     "section",
     "line",
     "main",
-    "style",
+    "style"
   ],
   allowedAttributes: {
     a: ["href", "name", "target", "rel"],
@@ -56,7 +56,7 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
       "stroke",
       "stroke-width",
       "stroke-linecap",
-      "stroke-linejoin",
+      "stroke-linejoin"
     ],
     path: [
       "d",
@@ -64,7 +64,7 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
       "stroke",
       "stroke-width",
       "stroke-linecap",
-      "stroke-linejoin",
+      "stroke-linejoin"
     ],
     rect: [
       "x",
@@ -77,26 +77,27 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
       "stroke",
       "stroke-width",
       "stroke-linecap",
-      "stroke-linejoin",
+      "stroke-linejoin"
     ],
     circle: ["cx", "cy", "r"],
     line: ["x1", "y1", "x2", "y2"],
-    "*": ["class", "aria-hidden"],
+    "*": ["class", "aria-hidden"]
   },
   allowedSchemes: ["http", "https", "mailto"],
   allowedSchemesByTag: {
-    img: ["http", "https"],
+    img: ["http", "https"]
   },
   allowProtocolRelative: false,
+  allowVulnerableTags: true,
   transformTags: {
     a: (tagName, attribs) => ({
       tagName,
       attribs: {
         ...attribs,
-        rel: "noopener noreferrer",
-      },
-    }),
-  },
+        rel: "noopener noreferrer"
+      }
+    })
+  }
 };
 
 export function sanitizePageContentHtml(contentHtml: string): string {
@@ -136,7 +137,7 @@ function toEditablePageRecord(record: {
     sortOrder: record.sortOrder,
     contentHtml: record.contentHtml,
     updatedAt: record.updatedAt.toISOString(),
-    updatedByMemberId: record.updatedByMemberId,
+    updatedByMemberId: record.updatedByMemberId
   };
 }
 
@@ -162,8 +163,8 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
       headerText: true,
       path: true,
       sortOrder: true,
-      contentHtml: true,
-    },
+      contentHtml: true
+    }
   });
 
   if (!record) {
@@ -185,12 +186,12 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
     headerText: safeHeaderText,
     path: record.path,
     sortOrder: record.sortOrder,
-    contentHtml: safeContentHtml,
+    contentHtml: safeContentHtml
   };
 }
 
 export async function getSanitizedPageContentHtmlByPath(
-  path: string,
+  path: string
 ): Promise<string | null> {
   const record = await getSanitizedPageContentByPath(path);
   return record?.contentHtml ?? null;
@@ -198,7 +199,7 @@ export async function getSanitizedPageContentHtmlByPath(
 
 export async function listEditablePageContent() {
   const records = await prisma.pageContent.findMany({
-    orderBy: [{ sortOrder: "asc" }, { title: "asc" }],
+    orderBy: [{ sortOrder: "asc" }, { title: "asc" }]
   });
 
   return records.map(toEditablePageRecord);
@@ -213,8 +214,8 @@ export async function listWebsiteMenuPages() {
       menuTitle: true,
       title: true,
       path: true,
-      sortOrder: true,
-    },
+      sortOrder: true
+    }
   });
 
   return records.filter((record) => record.menuTitle.trim().length > 0);
