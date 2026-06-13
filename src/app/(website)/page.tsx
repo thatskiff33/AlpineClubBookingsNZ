@@ -4,7 +4,10 @@ import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
 import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
 import { CommitteeMembersGrid } from "@/components/website/committee-members-grid";
 import { clubIdentity, CLUB_NAME } from "@/config/club-identity";
-import { getSanitizedPageContentByPath } from "@/lib/page-content-html";
+import {
+  getSanitizedPageContentByPath,
+  pageContentHtmlToPlainText,
+} from "@/lib/page-content-html";
 
 const HOME_EMBED_TOKEN_REGEX =
   /\{\{\s*(committee-members-cards|member-application-form|contact-form|join-apply-form)\s*\}\}/gi;
@@ -60,7 +63,8 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: page.title,
     description:
-      page.headerText || `${page.title} information for ${CLUB_NAME}.`,
+      pageContentHtmlToPlainText(page.headerText) ||
+      `${page.title} information for ${CLUB_NAME}.`,
   };
 }
 

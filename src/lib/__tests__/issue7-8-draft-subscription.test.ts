@@ -364,7 +364,8 @@ describe("Internet Banking booking payment flow", () => {
     const res = await createBooking(makeBookingBody());
 
     expect(res.status).toBe(201);
-    expect(mockLoadEffectiveModuleFlags).not.toHaveBeenCalled();
+    // The subscription gate consults the effective module flags (Xero-off
+    // bypass), but no Internet Banking payment artefacts are created.
     expect(mockTx.payment.create).not.toHaveBeenCalled();
     expect(mockRecordInternetBankingPaymentTransaction).not.toHaveBeenCalled();
   });
@@ -423,7 +424,9 @@ describe("Internet Banking booking payment flow", () => {
 
   it("rejects Internet Banking when the effective modules are disabled", async () => {
     mockAuth.mockResolvedValue(memberSession());
-    mockLoadEffectiveModuleFlags.mockResolvedValueOnce({
+    // mockResolvedValue (not Once): the subscription gate also reads the
+    // effective flags before the Internet Banking check does.
+    mockLoadEffectiveModuleFlags.mockResolvedValue({
       kiosk: true,
       chores: true,
       financeDashboard: true,
@@ -724,6 +727,38 @@ describe("Issue 10: Subscription check on booking creation", () => {
     mockPrisma.memberSubscription.findFirst.mockResolvedValue(null); // no paid sub
 
     const res = await createBooking(makeBookingBody({ draft: true }));
+    expect(res.status).toBe(403);
+    const data = await res.json();
+    expect(data.error).toContain("subscription");
+  });
+
+  it("allows UNPAID members to book when the Xero module is effectively off", async () => {
+    mockAuth.mockResolvedValue(memberSession());
+    mockPrisma.memberSubscription.findFirst.mockResolvedValue(null); // no paid sub
+    // Subscriptions are invoiced through Xero; with the module off the
+    // booking-time subscription gate must not block members.
+    mockLoadEffectiveModuleFlags.mockResolvedValue({
+      kiosk: true,
+      chores: true,
+      financeDashboard: true,
+      waitlist: true,
+      xeroIntegration: false,
+      bedAllocation: true,
+      internetBankingPayments: false,
+    });
+
+    const res = await createBooking(makeBookingBody());
+    expect(res.status).toBe(201);
+    // The gate short-circuits before querying subscriptions at all.
+    expect(mockPrisma.memberSubscription.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("still blocks UNPAID members when the Xero module is on", async () => {
+    mockAuth.mockResolvedValue(memberSession());
+    mockPrisma.memberSubscription.findFirst.mockResolvedValue(null); // no paid sub
+    // Default beforeEach flags already have xeroIntegration: true; assert the
+    // behaviour is unchanged with the module enabled.
+    const res = await createBooking(makeBookingBody());
     expect(res.status).toBe(403);
     const data = await res.json();
     expect(data.error).toContain("subscription");

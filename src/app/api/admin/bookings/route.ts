@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
-import { getMonthAvailability, LODGE_CAPACITY } from "@/lib/capacity";
+import { getLodgeCapacity, getMonthAvailability } from "@/lib/capacity";
 import {
   buildBookingDeletedWhere,
   parseBookingDeletedVisibility,
@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const [bookings, occupancyMap] = await Promise.all([
+    const [bookings, occupancyMap, lodgeCapacity] = await Promise.all([
       prisma.booking.findMany({
         where: {
           ...statusFilter,
@@ -106,6 +106,7 @@ export async function GET(request: NextRequest) {
         orderBy: { checkIn: "asc" },
       }),
       getMonthAvailability(year, month - 1), // month is 0-indexed in getMonthAvailability
+      getLodgeCapacity(),
     ]);
 
     const result = bookings.map((b) => ({
@@ -125,7 +126,7 @@ export async function GET(request: NextRequest) {
     // Convert occupancy map to availability object: { "2026-04-01": 25, ... }
     const availability: Record<string, number> = {};
     for (const [date, occupied] of occupancyMap.entries()) {
-      availability[date] = LODGE_CAPACITY - occupied;
+      availability[date] = lodgeCapacity - occupied;
     }
 
     return NextResponse.json({ bookings: result, availability });

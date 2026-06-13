@@ -62,7 +62,9 @@ export async function GET(
     },
   });
 
-  if (!promoCode) {
+  // Internal promos (work party events) are managed from the Work Parties
+  // admin page; hide them from the promo-code admin entirely.
+  if (!promoCode || promoCode.internal) {
     return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
   }
 
@@ -82,7 +84,7 @@ export async function PUT(
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const existing = await prisma.promoCode.findUnique({ where: { id } });
-  if (!existing) {
+  if (!existing || existing.internal) {
     return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
   }
 
@@ -316,7 +318,7 @@ export async function DELETE(
     include: { allocations: { select: { id: true } } },
   });
 
-  if (!existing) {
+  if (!existing || existing.internal) {
     return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
   }
 
@@ -357,7 +359,7 @@ export async function PATCH(
   if (!guard.ok) return guard.response;
   const session = guard.session;
   const existing = await prisma.promoCode.findUnique({ where: { id } });
-  if (!existing) {
+  if (!existing || existing.internal) {
     return NextResponse.json({ error: "Promo code not found" }, { status: 404 });
   }
 

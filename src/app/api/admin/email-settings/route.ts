@@ -33,8 +33,25 @@ const settingsSchema = z
       .nullable()
       .optional(),
     lodgeTravelNote: z.string().trim().min(1).max(2000).nullable().optional(),
+    doorCode: z
+      .string()
+      .trim()
+      .max(80)
+      .transform((value) => value || null)
+      .nullable()
+      .optional(),
   })
   .strict();
+
+function redactDoorCodeForAudit<T extends Record<string, unknown> | null>(
+  settings: T,
+): T {
+  if (!settings || !("doorCode" in settings)) return settings;
+  return {
+    ...settings,
+    doorCode: settings.doorCode ? "[set]" : null,
+  } as T;
+}
 
 export async function GET() {
   const guard = await requireAdmin();
@@ -95,8 +112,8 @@ export async function PUT(request: NextRequest) {
       summary: "Email message settings updated",
       metadata: {
         changedKeys: Object.keys(parsed.data),
-        previousSettings: before,
-        newSettings: parsed.data,
+        previousSettings: redactDoorCodeForAudit(before),
+        newSettings: redactDoorCodeForAudit(parsed.data),
       },
       request: getAuditRequestContext(request),
     }),

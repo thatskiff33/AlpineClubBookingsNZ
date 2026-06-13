@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { requireActiveSessionUser } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
   calculateBookingPrice,
   getStayNights,
@@ -493,9 +493,10 @@ export async function POST(
 
   const totalGuestCount = guestsForPricing.length;
 
-  if (totalGuestCount > LODGE_CAPACITY) {
+  const lodgeCapacity = await getLodgeCapacity();
+  if (totalGuestCount > lodgeCapacity) {
     return NextResponse.json(
-      { error: `A booking cannot exceed ${LODGE_CAPACITY} guests` },
+      { error: `A booking cannot exceed ${lodgeCapacity} guests` },
       { status: 400 }
     );
   }
@@ -811,6 +812,9 @@ export async function POST(
       memberId: guest.memberId ?? null,
       isMember: guest.isMember,
       perNightRates: priceBreakdown?.guests[index]?.perNightCents ?? [],
+      // Dates the positional rates so internal work-party promos restrict
+      // the discount to the event's night window.
+      firstNight: guest.stayStart ?? newCheckIn,
     }));
   }
 

@@ -35,7 +35,7 @@ import {
   findLodgeGuestForDate,
   validateRosterAllocationsForDate,
 } from "../lodge-date-scoping";
-import { LODGE_CAPACITY } from "../capacity";
+import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "../lodge-capacity";
 
 function readRepoFile(relativePath: string) {
   return readFileSync(path.resolve(process.cwd(), relativePath), "utf8");

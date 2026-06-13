@@ -19,6 +19,7 @@ import { validateInheritEmailSource } from "@/lib/member-email-inheritance";
 import { buildParentLinks } from "@/lib/member-parent-links";
 import { isXeroLiveMemberGroupLookupsEnabled } from "@/lib/xero-feature-flags";
 import { getMemberSetupInviteExpiryDate } from "@/lib/member-setup-invite";
+import { ensureNotRequiredSubscriptionForRole } from "@/lib/member-subscription-defaults";
 import { issueActionToken } from "@/lib/action-tokens";
 import { hasMemberCompletedAccountSetup } from "@/lib/password-reset";
 import { nameField } from "@/lib/zod-helpers";
@@ -774,6 +775,13 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
           joinedDate: true,
           createdAt: true,
         },
+      });
+
+      // Admin accounts never owe a membership subscription, so they default
+      // to NOT_REQUIRED for the current season at creation time.
+      await ensureNotRequiredSubscriptionForRole(tx, {
+        id: created.id,
+        role: created.role,
       });
 
       // Add to family groups if specified

@@ -1,8 +1,8 @@
-import Image from "next/image";
 import Link from "next/link";
+import { WebsiteLogo } from "@/components/website-logo";
 import { CLUB_FACEBOOK_URL, CLUB_NAME, CLUB_PUBLIC_URL } from "@/config/club-identity";
 
-export function WebsiteFooter() {
+export function WebsiteFooter({ logoDataUrl }: { logoDataUrl?: string | null }) {
   return (
     <footer className="border-t border-brand-gold/15 bg-brand-charcoal text-brand-snow/90">
       <div className="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
@@ -10,12 +10,11 @@ export function WebsiteFooter() {
           {/* Club info */}
           <div>
             <div className="mb-3">
-              <Image
-                src="/branding/logo.png"
-                alt={CLUB_NAME}
-                width={140}
-                height={48}
-                className="h-10 w-auto brightness-110"
+              <WebsiteLogo
+                label={CLUB_NAME}
+                logoDataUrl={logoDataUrl}
+                className="max-h-10 max-w-40 brightness-110"
+                textClassName="text-brand-snow"
               />
             </div>
             <p className="text-sm leading-relaxed">

@@ -19,6 +19,7 @@ const baseSettings: EmailMessageSettings = {
   contactEmail: "bookings@example.org",
   publicUrl: "https://bookings.example.org",
   lodgeTravelNote: "Please allow adequate travel time.",
+  doorCode: null,
 };
 
 describe("email message settings", () => {
@@ -57,5 +58,13 @@ describe("email message settings", () => {
 
     expect(normalized.publicUrl).toMatch(/^https?:\/\//);
     expect(normalized.publicUrl).not.toContain("javascript");
+  });
+
+  it("normalizes blank and configured door codes", () => {
+    expect(normalizeEmailMessageSettings({ doorCode: "  2468  " }).doorCode).toBe(
+      "2468",
+    );
+    expect(normalizeEmailMessageSettings({ doorCode: "   " }).doorCode).toBeNull();
+    expect(normalizeEmailMessageSettings({}).doorCode).toBeNull();
   });
 });

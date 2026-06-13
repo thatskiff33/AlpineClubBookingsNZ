@@ -1,18 +1,22 @@
-import Image from "next/image";
 import Link from "next/link";
 import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { WebsiteLogo } from "@/components/website-logo";
 import { CLUB_NAME } from "@/config/club-identity";
 import { buildBookingLoginPath } from "@/lib/auth-redirect";
 import { listWebsiteMenuPages } from "@/lib/page-content-html";
 
 interface WebsiteHeaderProps {
   isAuthenticated: boolean;
+  logoDataUrl?: string | null;
 }
 
 const staticNavLinks = [{ href: "/contact", label: "Contact" }];
 
-export async function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
+export async function WebsiteHeader({
+  isAuthenticated,
+  logoDataUrl,
+}: WebsiteHeaderProps) {
   const dynamicPages = await listWebsiteMenuPages();
   const dynamicNavLinks = dynamicPages.map((page) => ({
     href: page.path,
@@ -34,13 +38,11 @@ export async function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
           href="/"
           className="flex items-center gap-2 font-bold text-brand-snow transition-opacity hover:opacity-85"
         >
-          <Image
-            src="/branding/logo.png"
-            alt={CLUB_NAME}
-            width={140}
-            height={48}
-            className="h-10 w-auto"
-            priority
+          <WebsiteLogo
+            label={CLUB_NAME}
+            logoDataUrl={logoDataUrl}
+            className="max-h-10 max-w-40"
+            textClassName="max-w-48 text-brand-snow"
           />
         </Link>
 
@@ -108,12 +110,11 @@ export async function WebsiteHeader({ isAuthenticated }: WebsiteHeaderProps) {
           </summary>
           <div className="website-mobile-menu absolute right-0 top-12 w-72 rounded-md border border-brand-ridge/25 bg-brand-charcoal p-5 text-brand-snow shadow-2xl">
             <div className="mb-5">
-              <Image
-                src="/branding/logo.png"
-                alt={CLUB_NAME}
-                width={120}
-                height={40}
-                className="h-8 w-auto"
+              <WebsiteLogo
+                label={CLUB_NAME}
+                logoDataUrl={logoDataUrl}
+                className="max-h-8 max-w-36"
+                textClassName="text-brand-snow"
               />
             </div>
             <nav className="flex max-h-72 flex-col gap-1 overflow-y-auto">

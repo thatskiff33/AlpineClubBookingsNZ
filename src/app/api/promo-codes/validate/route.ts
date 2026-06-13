@@ -20,29 +20,38 @@ import {
   normalizeGuestStayRanges,
 } from "@/lib/booking-guest-stay-range-input";
 import { isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { workPartyWindowOverlapsStay } from "@/lib/work-party";
 
 const dateOnlyString = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
 });
 
-const validateSchema = z.object({
-  code: z.string().min(1, "Promo code is required"),
-  checkIn: dateOnlyString.transform(parseDateOnly),
-  checkOut: dateOnlyString.transform(parseDateOnly),
-  guests: z
-    .array(
-      z.object({
-        ageTier: ageTierEnum,
-        isMember: z.boolean(),
-        memberId: z.string().min(1).optional(),
-        stayStart: z.string().optional(),
-        stayEnd: z.string().optional(),
-      })
-    )
-    .min(1),
-  forMemberId: z.string().optional(),
-  promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
-});
+const validateSchema = z
+  .object({
+    code: z.string().min(1).optional(),
+    // Work party (working bee) event preview: resolves the event's internal
+    // promo server-side; the internal code is never sent to or accepted
+    // from the client.
+    workPartyEventId: z.string().min(1).optional(),
+    checkIn: dateOnlyString.transform(parseDateOnly),
+    checkOut: dateOnlyString.transform(parseDateOnly),
+    guests: z
+      .array(
+        z.object({
+          ageTier: ageTierEnum,
+          isMember: z.boolean(),
+          memberId: z.string().min(1).optional(),
+          stayStart: z.string().optional(),
+          stayEnd: z.string().optional(),
+        })
+      )
+      .min(1),
+    forMemberId: z.string().optional(),
+    promoGuestIndexes: z.array(z.number().int().min(0)).optional(),
+  })
+  .refine((data) => Boolean(data.code) !== Boolean(data.workPartyEventId), {
+    message: "Provide either a promo code or a working bee event, not both",
+  });
 
 export async function POST(req: NextRequest) {
   const rateLimited = applyRateLimit(rateLimiters.bookingQuery, req);
@@ -79,18 +88,62 @@ export async function POST(req: NextRequest) {
     }
     throw error;
   }
-  const normalizedCode = code.toUpperCase().trim();
-
   // Use target member for admin on-behalf bookings
   const effectiveMemberId = (parsed.data.forMemberId && session.user.role === "ADMIN")
     ? parsed.data.forMemberId
     : session.user.id;
 
-  // Look up the promo code with assignments
-  const promoCode = await prisma.promoCode.findUnique({
-    where: { code: normalizedCode },
-    include: { assignments: { select: { memberId: true } } },
-  });
+  let promoCode:
+    | (Awaited<ReturnType<typeof prisma.promoCode.findUnique>> & {
+        assignments: { memberId: string }[];
+      })
+    | null = null;
+  let workPartyEvent: { id: string; name: string; discountPercent: number } | null = null;
+
+  if (parsed.data.workPartyEventId) {
+    const event = await prisma.workPartyEvent.findUnique({
+      where: { id: parsed.data.workPartyEventId },
+      include: {
+        promoCode: { include: { assignments: { select: { memberId: true } } } },
+      },
+    });
+    if (!event) {
+      return NextResponse.json(
+        { valid: false, error: "Working bee event not found" },
+        { status: 400 }
+      );
+    }
+    if (!event.active || !event.promoCode.active || event.promoCode.archivedAt) {
+      return NextResponse.json(
+        { valid: false, error: "This working bee event is no longer active" },
+        { status: 400 }
+      );
+    }
+    if (!workPartyWindowOverlapsStay(event, checkIn, checkOut)) {
+      return NextResponse.json(
+        {
+          valid: false,
+          error: "This working bee event does not overlap your booking dates",
+        },
+        { status: 400 }
+      );
+    }
+    promoCode = event.promoCode;
+    workPartyEvent = {
+      id: event.id,
+      name: event.name,
+      discountPercent: event.discountPercent,
+    };
+  } else if (code) {
+    const normalizedCode = code.toUpperCase().trim();
+    const found = await prisma.promoCode.findUnique({
+      where: { code: normalizedCode },
+      include: { assignments: { select: { memberId: true } } },
+    });
+    // Internal promos (work party events) are system-applied only; a
+    // manually entered internal code behaves like a nonexistent one.
+    promoCode = found && !found.internal ? found : null;
+  }
 
   const assignedMemberIds = promoCode?.assignments?.length
     ? promoCode.assignments.map((a) => a.memberId)
@@ -143,6 +196,9 @@ export async function POST(req: NextRequest) {
       memberId: guests[index].memberId ?? null,
       isMember: g.isMember,
       perNightRates: g.perNightCents,
+      // Dates the positional rates so internal work-party promos restrict
+      // the discount to the event's night window.
+      firstNight: guests[index].stayStart ?? checkIn,
     }));
 
     const application = await validateAndCalculatePromoDiscount(
@@ -177,9 +233,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       valid: true,
-      code: promoCode!.code,
-      description: promoCode!.description,
+      // Never expose the internal code for work-party validations; the
+      // client identifies the discount by the event instead.
+      code: workPartyEvent ? null : promoCode!.code,
+      description: workPartyEvent ? null : promoCode!.description,
       type: promoCode!.type,
+      workPartyEvent,
       discountCents: promoResult.discountCents,
       promoAdjustmentCents: promoResult.priceAdjustmentCents,
       freeNightsUsed: promoResult.freeNightsUsed,

@@ -3,10 +3,10 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { logAudit } from "@/lib/audit";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 
 const groupDiscountSchema = z.object({
-  minGroupSize: z.number().int().min(2).max(LODGE_CAPACITY),
+  minGroupSize: z.number().int().min(2).max(200),
   summerOnly: z.boolean(),
   enabled: z.boolean(),
 });
@@ -34,6 +34,14 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
       { status: 400 }
+    );
+  }
+
+  const lodgeCapacity = await getLodgeCapacity();
+  if (parsed.data.minGroupSize > lodgeCapacity) {
+    return NextResponse.json(
+      { error: `Minimum group size cannot exceed lodge capacity (${lodgeCapacity}).` },
+      { status: 400 },
     );
   }
 

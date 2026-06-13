@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CLUB_NAME } from "@/config/club-identity";
 import { APP_CURRENCY } from "@/config/operational";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -13,7 +13,9 @@ export const metadata: Metadata = {
 const LAST_UPDATED = "1 April 2026";
 const EFFECTIVE_DATE = "1 April 2026";
 
-export default function TermsPage() {
+export default async function TermsPage() {
+  const lodgeCapacity = await getLodgeCapacity();
+
   return (
     <>
       <section className="bg-gradient-to-br from-brand-charcoal to-brand-deep py-16 text-brand-snow sm:py-20">
@@ -72,7 +74,7 @@ export default function TermsPage() {
               <ul className="list-disc pl-6 space-y-2">
                 <li>
                   Lodge bookings are for accommodation at Waldvogel Lodge, Iwikau Village, Mt Ruapehu.
-                  The lodge sleeps a maximum of {LODGE_CAPACITY} guests.
+                  The lodge sleeps a maximum of {lodgeCapacity} guests.
                 </li>
                 <li>
                   Bookings must be made through the System. Verbal or informal bookings are not accepted.

@@ -520,7 +520,8 @@ const WysiwygEditor = forwardRef<
           <DialogHeader>
             <DialogTitle>Insert Image From Site</DialogTitle>
             <DialogDescription>
-              Pick an image from the site&apos;s public directory.
+              Pick an image deployed with the site (public/branding). New
+              images are added by committing them to the repository.
             </DialogDescription>
           </DialogHeader>
 
@@ -536,7 +537,7 @@ const WysiwygEditor = forwardRef<
                 <p className="p-3 text-sm text-slate-500">Loading images...</p>
               ) : filteredSiteImages.length === 0 ? (
                 <p className="p-3 text-sm text-slate-500">
-                  No images found in public/.
+                  No images found in public/branding/.
                 </p>
               ) : (
                 <div className="divide-y divide-slate-200">

@@ -3,11 +3,11 @@
 import { Suspense, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Image from "next/image";
 import Link from "next/link";
 import { useClubIdentity } from "@/components/club-identity-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader } from "@/components/ui/card";
+import { WebsiteLogo } from "@/components/website-logo";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { resolvePostLoginPath } from "@/lib/auth-redirect";
@@ -83,13 +83,10 @@ function LoginForm() {
   return (
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1 items-center">
-        <Image
-          src="/branding/logo.png"
-          alt={club.name}
-          width={180}
-          height={60}
-          className="h-14 w-auto mb-2"
-          priority
+        <WebsiteLogo
+          label={club.name}
+          className="mb-2 max-h-14 max-w-52"
+          textClassName="mb-2 text-center text-2xl text-foreground"
         />
         <CardDescription className="text-center">
           Sign in to your account to manage bookings
@@ -209,12 +206,10 @@ export default function LoginPage() {
     <Suspense fallback={
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 items-center">
-          <Image
-            src="/branding/logo.png"
-            alt={club.name}
-            width={180}
-            height={60}
-            className="h-14 w-auto"
+          <WebsiteLogo
+            label={club.name}
+            className="max-h-14 max-w-52"
+            textClassName="text-center text-2xl text-foreground"
           />
         </CardHeader>
       </Card>

@@ -61,7 +61,7 @@ vi.mock("@/lib/logger", () => ({
   },
 }));
 
-import { LODGE_CAPACITY } from "@/lib/capacity";
+import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
 
 const tx = {

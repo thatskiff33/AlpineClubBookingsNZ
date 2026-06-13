@@ -1,5 +1,5 @@
 import { BookingStatus, PaymentStatus, Prisma } from "@prisma/client";
-import { LODGE_CAPACITY } from "@/lib/capacity";
+import { getLodgeCapacity } from "@/lib/capacity";
 import { prisma } from "@/lib/prisma";
 import { countActiveGuestsForNight } from "@/lib/booking-guest-stay-ranges";
 import {
@@ -295,13 +295,16 @@ function createZeroPaymentSummary(): FinanceBookingMetricsPaymentSummary {
   };
 }
 
-function createEmptyDailyMetric(date: string): FinanceBookingDailyMetric {
+function createEmptyDailyMetric(
+  date: string,
+  lodgeCapacity: number,
+): FinanceBookingDailyMetric {
   return {
     date,
     bookingCount: 0,
     guestNights: 0,
     occupiedBeds: 0,
-    availableBeds: LODGE_CAPACITY,
+    availableBeds: lodgeCapacity,
     occupancyRate: 0,
     bookedRevenueCents: 0,
   };
@@ -434,8 +437,11 @@ function createBucketAccumulator<Status extends string>(
   };
 }
 
-function initializeDateMetrics(dates: string[]): FinanceBookingDailyMetric[] {
-  return dates.map(createEmptyDailyMetric);
+function initializeDateMetrics(
+  dates: string[],
+  lodgeCapacity: number,
+): FinanceBookingDailyMetric[] {
+  return dates.map((date) => createEmptyDailyMetric(date, lodgeCapacity));
 }
 
 function getDailyMetricMap(
@@ -446,9 +452,10 @@ function getDailyMetricMap(
 
 function toOccupancySummary(
   guestNights: number,
-  dayCount: number
+  dayCount: number,
+  lodgeCapacity: number,
 ): FinanceBookingOccupancySummary {
-  const capacityBedNights = dayCount * LODGE_CAPACITY;
+  const capacityBedNights = dayCount * lodgeCapacity;
 
   return {
     occupiedBedNights: guestNights,
@@ -481,20 +488,26 @@ function finalizeStatusBreakdown<Status extends string>(
 
 function finalizeBucketSummary<Status extends string>(
   accumulator: BucketAccumulator<Status>,
-  dayCount: number
+  dayCount: number,
+  lodgeCapacity: number,
 ): FinanceBookingBucketSummary {
   return {
     bookingCount: accumulator.bookingIds.size,
     bookingNights: accumulator.bookingNights,
     guestNights: accumulator.guestNights,
     bookedRevenueCents: accumulator.bookedRevenueCents,
-    occupancy: toOccupancySummary(accumulator.guestNights, dayCount),
+    occupancy: toOccupancySummary(
+      accumulator.guestNights,
+      dayCount,
+      lodgeCapacity,
+    ),
   };
 }
 
 function applyDailyMetrics<Status extends string>(
   accumulator: BucketAccumulator<Status>,
-  dailyMetricMap: Map<string, FinanceBookingDailyMetric>
+  dailyMetricMap: Map<string, FinanceBookingDailyMetric>,
+  lodgeCapacity: number,
 ) {
   for (const [date, dailyAccumulator] of accumulator.byDate.entries()) {
     const row = dailyMetricMap.get(date);
@@ -506,10 +519,10 @@ function applyDailyMetrics<Status extends string>(
     row.bookingCount = dailyAccumulator.bookingCount;
     row.guestNights = dailyAccumulator.guestNights;
     row.occupiedBeds = dailyAccumulator.guestNights;
-    row.availableBeds = LODGE_CAPACITY - dailyAccumulator.guestNights;
+    row.availableBeds = lodgeCapacity - dailyAccumulator.guestNights;
     row.occupancyRate =
-      LODGE_CAPACITY > 0
-        ? Number((dailyAccumulator.guestNights / LODGE_CAPACITY).toFixed(4))
+      lodgeCapacity > 0
+        ? Number((dailyAccumulator.guestNights / lodgeCapacity).toFixed(4))
         : 0;
     row.bookedRevenueCents = dailyAccumulator.bookedRevenueCents;
   }
@@ -708,13 +721,14 @@ function getContributingDates(input: {
 function buildRealizedMetrics(
   window: NormalizedRealizedWindow,
   bookings: BookingMetricsRecord[],
-  contributingBookingIds: Set<string>
+  contributingBookingIds: Set<string>,
+  lodgeCapacity: number,
 ): FinanceRealizedStayMetrics {
   const dates =
     window.effectiveFromDate && window.effectiveToDate
       ? buildIsoDateRange(window.effectiveFromDate, window.effectiveToDate)
       : [];
-  const byDate = initializeDateMetrics(dates);
+  const byDate = initializeDateMetrics(dates, lodgeCapacity);
   const bucket = createBucketAccumulator(
     dates,
     FINANCE_REALIZED_BOOKING_STATUSES
@@ -751,9 +765,9 @@ function buildRealizedMetrics(
     });
   }
 
-  applyDailyMetrics(bucket, getDailyMetricMap(byDate));
+  applyDailyMetrics(bucket, getDailyMetricMap(byDate), lodgeCapacity);
 
-  const totals = finalizeBucketSummary(bucket, window.dayCount);
+  const totals = finalizeBucketSummary(bucket, window.dayCount, lodgeCapacity);
 
   return {
     window: {
@@ -779,7 +793,8 @@ function buildRealizedMetrics(
 function combineDailyMetrics(
   date: string,
   left: FinanceBookingDailyMetric,
-  right: FinanceBookingDailyMetric
+  right: FinanceBookingDailyMetric,
+  lodgeCapacity: number,
 ): FinanceBookingDailyMetric {
   const occupiedBeds = left.occupiedBeds + right.occupiedBeds;
 
@@ -788,10 +803,10 @@ function combineDailyMetrics(
     bookingCount: left.bookingCount + right.bookingCount,
     guestNights: left.guestNights + right.guestNights,
     occupiedBeds,
-    availableBeds: LODGE_CAPACITY - occupiedBeds,
+    availableBeds: lodgeCapacity - occupiedBeds,
     occupancyRate:
-      LODGE_CAPACITY > 0
-        ? Number((occupiedBeds / LODGE_CAPACITY).toFixed(4))
+      lodgeCapacity > 0
+        ? Number((occupiedBeds / lodgeCapacity).toFixed(4))
         : 0,
     bookedRevenueCents:
       left.bookedRevenueCents + right.bookedRevenueCents,
@@ -801,7 +816,8 @@ function combineDailyMetrics(
 function buildForwardMetrics(
   window: NormalizedForwardWindow,
   bookings: BookingMetricsRecord[],
-  contributingBookingIds: Set<string>
+  contributingBookingIds: Set<string>,
+  lodgeCapacity: number,
 ): FinanceForwardBookingMetrics {
   const dates =
     window.effectiveFromDate && window.effectiveToDate
@@ -815,8 +831,8 @@ function buildForwardMetrics(
     dates,
     FINANCE_FORWARD_AT_RISK_BOOKING_STATUSES
   );
-  const committedByDate = initializeDateMetrics(dates);
-  const atRiskByDate = initializeDateMetrics(dates);
+  const committedByDate = initializeDateMetrics(dates, lodgeCapacity);
+  const atRiskByDate = initializeDateMetrics(dates, lodgeCapacity);
 
   for (const booking of bookings) {
     const committedStatus = FINANCE_FORWARD_COMMITTED_BOOKING_STATUSES.includes(
@@ -869,8 +885,16 @@ function buildForwardMetrics(
     }
   }
 
-  applyDailyMetrics(committedBucket, getDailyMetricMap(committedByDate));
-  applyDailyMetrics(atRiskBucket, getDailyMetricMap(atRiskByDate));
+  applyDailyMetrics(
+    committedBucket,
+    getDailyMetricMap(committedByDate),
+    lodgeCapacity,
+  );
+  applyDailyMetrics(
+    atRiskBucket,
+    getDailyMetricMap(atRiskByDate),
+    lodgeCapacity,
+  );
 
   const byDate = dates.map((date, index) => ({
     date,
@@ -879,12 +903,21 @@ function buildForwardMetrics(
     totalPipeline: combineDailyMetrics(
       date,
       committedByDate[index],
-      atRiskByDate[index]
+      atRiskByDate[index],
+      lodgeCapacity,
     ),
   }));
 
-  const committedTotals = finalizeBucketSummary(committedBucket, window.dayCount);
-  const atRiskTotals = finalizeBucketSummary(atRiskBucket, window.dayCount);
+  const committedTotals = finalizeBucketSummary(
+    committedBucket,
+    window.dayCount,
+    lodgeCapacity,
+  );
+  const atRiskTotals = finalizeBucketSummary(
+    atRiskBucket,
+    window.dayCount,
+    lodgeCapacity,
+  );
 
   return {
     window: {
@@ -915,7 +948,8 @@ function buildForwardMetrics(
           committedTotals.bookedRevenueCents + atRiskTotals.bookedRevenueCents,
         occupancy: toOccupancySummary(
           committedTotals.guestNights + atRiskTotals.guestNights,
-          window.dayCount
+          window.dayCount,
+          lodgeCapacity,
         ),
       },
     },
@@ -981,9 +1015,9 @@ export async function getFinanceBookingMetrics(
     } => Boolean(value)
   );
 
-  const bookings =
+  const [bookings, lodgeCapacity] = await Promise.all([
     activeWindows.length > 0
-      ? await prisma.booking.findMany({
+      ? prisma.booking.findMany({
           where: {
             checkIn: {
               lte: maxDateFromList(
@@ -1002,13 +1036,25 @@ export async function getFinanceBookingMetrics(
           orderBy: [{ checkIn: "asc" }, { id: "asc" }],
           select: bookingMetricsSelect,
         })
-      : [];
+      : Promise.resolve([]),
+    getLodgeCapacity(),
+  ]);
   const contributingBookingIds = new Set<string>();
   const realized = realizedWindow
-    ? buildRealizedMetrics(realizedWindow, bookings, contributingBookingIds)
+    ? buildRealizedMetrics(
+        realizedWindow,
+        bookings,
+        contributingBookingIds,
+        lodgeCapacity,
+      )
     : undefined;
   const forward = forwardWindow
-    ? buildForwardMetrics(forwardWindow, bookings, contributingBookingIds)
+    ? buildForwardMetrics(
+        forwardWindow,
+        bookings,
+        contributingBookingIds,
+        lodgeCapacity,
+      )
     : undefined;
   const paymentSummary = summarizePayments(
     bookings.filter((booking) => contributingBookingIds.has(booking.id))

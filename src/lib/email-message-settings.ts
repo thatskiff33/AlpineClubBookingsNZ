@@ -14,6 +14,7 @@ export interface EmailMessageSettings {
   contactEmail: string;
   publicUrl: string;
   lodgeTravelNote: string;
+  doorCode: string | null;
 }
 
 export interface PersistedEmailMessageSettings {
@@ -25,6 +26,7 @@ export interface PersistedEmailMessageSettings {
   contactEmail: string | null;
   publicUrl: string | null;
   lodgeTravelNote: string | null;
+  doorCode: string | null;
   updatedAt?: Date | string | null;
   updatedByMemberId?: string | null;
 }
@@ -68,6 +70,7 @@ export function getDefaultEmailMessageSettings(): EmailMessageSettings {
     publicUrl,
     lodgeTravelNote:
       clubConfig.lodgeTravelNote ?? "Please allow adequate travel time.",
+    doorCode: null,
   };
 }
 
@@ -87,6 +90,7 @@ export function normalizeEmailMessageSettings(
       normalizeEmailMessagePublicUrl(persisted?.publicUrl) ?? defaults.publicUrl,
     lodgeTravelNote:
       trimOptional(persisted?.lodgeTravelNote) ?? defaults.lodgeTravelNote,
+    doorCode: trimOptional(persisted?.doorCode) ?? null,
   };
 }
 

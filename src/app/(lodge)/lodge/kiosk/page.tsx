@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
 import { ThemeSwitcher } from "@/components/theme-switcher";
+import { KioskLodgeInstructions } from "@/components/kiosk-lodge-instructions";
 import type { KioskTier } from "@/lib/kiosk-access";
 
 interface Guest {
@@ -529,6 +530,11 @@ export default function KioskPage() {
             </form>
           )}
         </section>
+      )}
+
+      {/* Lodge instructions for the signed-in hut leader (API re-checks access) */}
+      {(effectiveTier === "admin" || effectiveTier === "hut-leader") && (
+        <KioskLodgeInstructions date={date} />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

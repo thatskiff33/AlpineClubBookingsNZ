@@ -76,7 +76,7 @@ import {
   normalizeDateOnlyForTimeZone,
   parseDateOnly,
 } from "@/lib/date-only";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 
 export type BatchModifyInput = {
   checkIn?: string;
@@ -632,9 +632,10 @@ export async function prepareGuestPlan(
   ];
 
   const totalGuestCount = guestsForPricing.length;
-  if (totalGuestCount > LODGE_CAPACITY) {
+  const lodgeCapacity = await getLodgeCapacity(tx);
+  if (totalGuestCount > lodgeCapacity) {
     throw new ApiError(
-      `A booking cannot exceed ${LODGE_CAPACITY} guests`,
+      `A booking cannot exceed ${lodgeCapacity} guests`,
       400,
     );
   }
@@ -919,6 +920,9 @@ export async function calculateModifiedPricing(
         bookingGuestId: guest.bookingGuestId ?? null,
         isMember: guest.isMember,
         perNightRates: priceBreakdown.guests[index]?.perNightCents ?? [],
+        // Dates the positional rates so internal work-party promos restrict
+        // the discount to the event's night window.
+        firstNight: guest.stayStart ?? newCheckIn,
       }));
 
   return {
@@ -1025,7 +1029,10 @@ export async function applyPromoCodeChanges(
       include: { assignments: { select: { memberId: true } } },
     });
 
-    if (!promoCode) throw new ApiError("Promo code not found", 400);
+    // Internal promos (work party events) cannot be entered as codes.
+    if (!promoCode || promoCode.internal) {
+      throw new ApiError("Promo code not found", 400);
+    }
 
     const assignedMemberIds = promoCode.assignments.length
       ? promoCode.assignments.map((assignment) => assignment.memberId)

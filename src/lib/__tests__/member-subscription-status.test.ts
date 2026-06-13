@@ -14,6 +14,18 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+// The subscription gate consults the effective module flags (Xero-off
+// bypass). Default to Xero on; individual tests flip it off.
+const mockLoadEffectiveModuleFlags = vi.fn();
+vi.mock("@/lib/module-settings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  return {
+    ...actual,
+    loadEffectiveModuleFlags: (...args: unknown[]) =>
+      mockLoadEffectiveModuleFlags(...args),
+  };
+});
+
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { GET } from "@/app/api/member/subscription-status/route";
@@ -30,6 +42,15 @@ describe("GET /api/member/subscription-status", () => {
       role: "MEMBER",
       ageTier: "ADULT",
       subscriptions: [],
+    });
+    mockLoadEffectiveModuleFlags.mockResolvedValue({
+      kiosk: true,
+      chores: true,
+      financeDashboard: true,
+      waitlist: true,
+      xeroIntegration: true,
+      bedAllocation: true,
+      internetBankingPayments: true,
     });
   });
 
@@ -114,6 +135,39 @@ describe("GET /api/member/subscription-status", () => {
     expect(res.status).toBe(200);
     expect(body.status).toBe("NOT_REQUIRED");
     expect(body.invoiceUrl).toBeNull();
+  });
+
+  it("returns not required when the Xero module is effectively off", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-1" } });
+    // Subscriptions are invoiced through Xero; with the module off the
+    // status endpoint must not report an outstanding subscription.
+    mockLoadEffectiveModuleFlags.mockResolvedValue({
+      kiosk: true,
+      chores: true,
+      financeDashboard: true,
+      waitlist: true,
+      xeroIntegration: false,
+      bedAllocation: true,
+      internetBankingPayments: false,
+    });
+    mockFindUnique.mockResolvedValue({
+      role: "MEMBER",
+      ageTier: "ADULT",
+      subscriptions: [{
+        status: "UNPAID",
+        xeroInvoiceId: "inv-1",
+        xeroInvoiceNumber: "INV-0042",
+        xeroOnlineInvoiceUrl: "https://pay.xero.com/invoice/inv-1",
+      }],
+    });
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.status).toBe("NOT_REQUIRED");
+    expect(body.invoiceUrl).toBeNull();
+    expect(body.invoiceNumber).toBeNull();
   });
 
   it("returns 401 when unauthenticated", async () => {

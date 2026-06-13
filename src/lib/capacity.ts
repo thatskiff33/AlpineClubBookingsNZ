@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
   eachDateOnlyInRange,
   formatDateOnly,
@@ -16,7 +16,7 @@ import {
 type PrismaClient = typeof prisma;
 type TransactionClient = Omit<PrismaClient, "$connect" | "$disconnect" | "$on" | "$transaction" | "$use" | "$extends">;
 
-export { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+export { getLodgeCapacity } from "@/lib/lodge-capacity";
 
 export interface NightAvailability {
   date: Date;
@@ -81,6 +81,7 @@ export async function getAvailability(
   checkIn: Date,
   checkOut: Date
 ): Promise<NightAvailability[]> {
+  const lodgeCapacity = await getLodgeCapacity(prisma);
   const start = normalizeDateOnlyForTimeZone(checkIn);
   const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
   const nights = eachDateOnlyInRange(start, exclusiveEnd);
@@ -102,7 +103,7 @@ export async function getAvailability(
     return {
       date: night,
       occupiedBeds,
-      availableBeds: LODGE_CAPACITY - occupiedBeds,
+      availableBeds: lodgeCapacity - occupiedBeds,
     };
   });
 }
@@ -118,6 +119,7 @@ export async function checkCapacity(
   tx?: TransactionClient
 ): Promise<{ available: boolean; minAvailable: number; nightDetails: NightAvailability[] }> {
   const db = tx ?? prisma;
+  const lodgeCapacity = await getLodgeCapacity(db);
   const start = normalizeDateOnlyForTimeZone(checkIn);
   const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
   const nights = eachDateOnlyInRange(start, exclusiveEnd);
@@ -140,7 +142,7 @@ export async function checkCapacity(
     return {
       date: night,
       occupiedBeds,
-      availableBeds: LODGE_CAPACITY - occupiedBeds,
+      availableBeds: lodgeCapacity - occupiedBeds,
     };
   });
 
@@ -161,6 +163,7 @@ export async function checkCapacityForGuestRanges(
   tx?: TransactionClient
 ): Promise<{ available: boolean; minAvailable: number; nightDetails: NightAvailability[] }> {
   const db = tx ?? prisma;
+  const lodgeCapacity = await getLodgeCapacity(db);
   const start = normalizeDateOnlyForTimeZone(checkIn);
   const exclusiveEnd = normalizeDateOnlyForTimeZone(checkOut);
   const nights = eachDateOnlyInRange(start, exclusiveEnd);
@@ -191,7 +194,7 @@ export async function checkCapacityForGuestRanges(
     return {
       date: night,
       occupiedBeds: occupiedBeds + proposedBeds,
-      availableBeds: LODGE_CAPACITY - occupiedBeds - proposedBeds,
+      availableBeds: lodgeCapacity - occupiedBeds - proposedBeds,
     };
   });
 

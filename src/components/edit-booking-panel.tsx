@@ -35,6 +35,9 @@ interface PromoInfo {
   code: string;
   type: string;
   description: string | null;
+  // Set when this discount came from a work party (working bee) event's
+  // internal promo rather than a manually entered code.
+  workPartyEventName?: string | null;
 }
 
 interface BookingData {
@@ -1014,8 +1017,12 @@ export function EditBookingPanel({
           {booking.promo && promoAction.type === "keep" && (
             <div className="flex items-center justify-between">
               <div>
-                <span className="font-medium text-green-700">{booking.promo.code}</span>
-                {booking.promo.description && (
+                <span className="font-medium text-green-700">
+                  {booking.promo.workPartyEventName
+                    ? `Working bee: ${booking.promo.workPartyEventName}`
+                    : booking.promo.code}
+                </span>
+                {booking.promo.description && !booking.promo.workPartyEventName && (
                   <span className="text-sm text-gray-500 ml-2">{booking.promo.description}</span>
                 )}
                 <span className={`text-sm ml-2 ${booking.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
@@ -1036,7 +1043,11 @@ export function EditBookingPanel({
           {promoAction.type === "remove" && booking.promo && (
             <div className="flex items-center justify-between text-gray-400">
               <div>
-                <span className="line-through">{booking.promo.code}</span>
+                <span className="line-through">
+                  {booking.promo.workPartyEventName
+                    ? `Working bee: ${booking.promo.workPartyEventName}`
+                    : booking.promo.code}
+                </span>
                 <span className="text-sm ml-2">(will be removed - available for reuse)</span>
               </div>
               <Button

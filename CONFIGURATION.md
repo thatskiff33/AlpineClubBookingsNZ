@@ -40,7 +40,7 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `socialLinks.facebook` | no | Facebook URL used by public pages/footer. |
 | `beds[].id` | yes | Stable bed or lodge identifier. |
 | `beds[].name` | yes | User-facing bed/lodge name. |
-| `beds[].capacity` | yes | Positive integer capacity. |
+| `beds[].capacity` | yes | Positive integer fallback/import capacity. |
 | `beds[].type` | yes | One of `dormitory`, `private`, or `shared`. |
 | `ageTiers[].id` | yes | One of `INFANT`, `CHILD`, `YOUTH`, or `ADULT`. |
 | `ageTiers[].label` | yes | User-facing age-tier label. |
@@ -53,13 +53,25 @@ does not store API keys, OAuth secrets, SMTP secrets, or bearer tokens.
 | `ageTiers[].nightlyRates.summer.memberCents` | yes | Summer member nightly rate in integer cents. |
 | `ageTiers[].nightlyRates.summer.nonMemberCents` | yes | Summer non-member nightly rate in integer cents. |
 
+When the bed allocation module is effectively enabled and at least one active
+bed exists in Admin -> Configuration -> Rooms & Beds, booking capacity is the
+active bed count from that configurator. If the module is disabled, or the
+module is enabled but no active beds exist yet, the system falls back to the
+`beds[].capacity` total in `config/club.json`. Use the Rooms & Beds import
+action to seed the configurator from `config/club.json` during transition.
+
 Keep all money values in integer cents.
 
 ## Branding Assets
 
-Replace the default assets in `public/branding/`:
+Public website colours, fonts, and the logo are managed by administrators at
+`/admin/site-style`. Fresh deployments show a neutral setup holding page until
+an admin finishes that wizard. The logo is stored in the database as a validated
+image data URL; there is no runtime upload directory to preserve.
 
-- `logo.png`
+The remaining public image assets are still file-based. Replace the default
+assets in `public/branding/`:
+
 - `favicon.ico`
 - `favicon.png`
 - `og-image.png`
@@ -69,6 +81,55 @@ Replace the default assets in `public/branding/`:
 - `sunset.jpg`
 
 The matching `*.example.*` files are placeholders for forks and public docs.
+
+Existing Tokoroa deployments can preserve the former look during the transition
+by running the seed with `SEED_TOKOROA_THEME_COMPLETE=1`. That path records the
+current palette (`#ffcb05`, `#4d4d46`, `#2f2f2b`, `#6a6a63`, `#d9d5c2`,
+`#f7f5ed`, `#ff7c12`), marks site style setup complete, and stores
+`public/branding/logo.png` as the database logo when that file exists and is
+900KB or smaller.
+
+## Website Page Content
+
+Public website pages are database-backed (`PageContent`) and edited in
+Admin > Page Content. The website header menu is generated from each page's
+menu title and menu order; pages with an empty menu title stay out of the
+menu.
+
+- Seeding creates starter pages (`home`, `about`, `join`, `join/apply`,
+  `rules`, `contact`, `committee`) only when they do not already exist, so
+  re-running the seed never overwrites edited content.
+- The home route (`/`) renders the `home` page record. `/contact`, `/join`,
+  and `/join/apply` are code-backed routes that render their matching
+  record; all other records are served by the dynamic catch-all route.
+- Slugs use lowercase letters, numbers, and hyphens, with optional forward
+  slashes between segments (`trip-reports`, `trips/2026`). Application
+  route names (`admin`, `api`, `book`, `dashboard`, `login`, and similar)
+  are reserved and rejected in every segment position.
+- Page HTML supports embed tokens that render interactive sections:
+  `{{committee-members-cards}}`, `{{member-application-form}}`, and
+  `{{contact-form}}`.
+- Content and header HTML are sanitised on save and again on render. The
+  allowlist lives in `src/lib/page-content-html.ts`.
+- The editor's image picker lists images deployed under `public/branding/`
+  only. There is no upload from the admin UI; add images by committing
+  them to the repository.
+
+## Lodge Instructions
+
+Lodge opening, closing, and day-to-day instructions for hut leaders are
+database-backed (`LodgeInstruction`, one row per document) and edited in
+Admin > Lodge Instructions. They are protected content, deliberately separate
+from `PageContent`: they never appear in the public menu or the dynamic
+public page route.
+
+- Readers: admins, plus members with a current or upcoming hut leader
+  assignment, at `/lodge-instructions` (printable). The lodge kiosk shows
+  the documents to the signed-in hut leader tier.
+- HTML is sanitised on save and again on render with the same allowlist as
+  page content (`src/lib/page-content-html.ts`).
+- The migration backfills the three empty documents, so deploy-only
+  environments get editable rows without running the seed.
 
 ## Required Local Setup Variables
 
@@ -86,11 +147,23 @@ test/demo mode or disabled:
 | `CRON_SECRET` | Shared secret for cron and deploy status endpoints. |
 | `SEED_ADMIN_EMAIL` | Email for the first seeded admin account. |
 | `SEED_ADMIN_PASSWORD` | Initial password for the first seeded admin account. |
+| `SEED_ADMIN_FIRST_NAME` | Optional first name for the seeded admin; defaults to `Admin`. |
+| `SEED_ADMIN_LAST_NAME` | Optional last name for the seeded admin; defaults to `User`. |
 | `SEED_LODGE_PASSWORD` | Initial password for the seeded shared lodge kiosk account. |
 
-`prisma/seed.ts` fails before seeding if either `SEED_ADMIN_*` value is unset,
-and fails before creating the lodge kiosk account if `SEED_LODGE_PASSWORD` is
-unset. The seeded admin is forced through `/change-password` on first login.
+`prisma/seed.ts` fails before seeding if `SEED_ADMIN_EMAIL` or
+`SEED_ADMIN_PASSWORD` is unset, and fails before creating the lodge kiosk
+account if `SEED_LODGE_PASSWORD` is unset. The seeded admin is created with
+`role: ADMIN`, `canLogin: true`, `emailVerified: true`, and a `NOT_REQUIRED`
+membership subscription for the current season, and is forced through
+`/change-password` on first login. The seed only creates the admin when no
+`ADMIN` member exists yet, so changing `SEED_ADMIN_*` later has no effect on
+an existing database.
+
+The whole seed is create-if-missing: re-running it against a populated
+database never deletes, overwrites, or duplicates data. Committee entries and
+chore templates are seeded as generic placeholders only when their tables are
+empty; replace them through the admin screens after first login.
 
 ## Setup Readiness
 

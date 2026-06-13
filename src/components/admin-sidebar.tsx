@@ -37,6 +37,8 @@ import {
   BedDouble,
   FilePenLine,
   Upload,
+  Hammer,
+  Palette,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -82,6 +84,11 @@ const navSections: NavSection[] = [
         icon: RotateCcw,
       },
       { href: "/admin/reports", label: "Reports", icon: BarChart2 },
+      {
+        href: "/admin/bed-allocation",
+        label: "Bed Allocation",
+        icon: BedDouble,
+      },
     ],
   },
   {
@@ -94,6 +101,11 @@ const navSections: NavSection[] = [
         href: "/admin/bed-allocation",
         label: "Bed Allocation",
         icon: BedDouble,
+      { href: "/admin/work-parties", label: "Work Parties", icon: Hammer },
+      {
+        href: "/admin/lodge-instructions",
+        label: "Lodge Instructions",
+        icon: BookOpen,
       },
       { href: "/admin/lodge", label: "Lodge Kiosk", icon: Tablet },
     ],
@@ -126,7 +138,9 @@ const navSections: NavSection[] = [
     label: "Configuration",
     items: [
       { href: "/admin/setup", label: "Setup", icon: ListChecks },
+      { href: "/admin/site-style", label: "Site Style", icon: Palette },
       { href: "/admin/modules", label: "Modules", icon: Puzzle },
+      { href: "/admin/rooms-beds", label: "Rooms & Beds", icon: BedDouble },
       {
         href: "/admin/seasons",
         label: "Hut Fees & Seasons",

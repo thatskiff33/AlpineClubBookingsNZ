@@ -28,7 +28,7 @@ import {
   buildFinanceRevenueReportPageModel,
   resolveFinanceRevenueReportFilters,
 } from "@/lib/finance-revenue-report-page";
-import { LODGE_CAPACITY } from "@/lib/capacity";
+import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 function occupiedBedsLabel(occupiedBeds: number): string {
   return `${occupiedBeds} / ${LODGE_CAPACITY}`;

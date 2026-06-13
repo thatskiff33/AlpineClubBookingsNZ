@@ -202,6 +202,7 @@ async function autoAllocateMissingBedNights({
       select: {
         id: true,
         createdAt: true,
+        requestedRoomId: true,
         guests: {
           where: {
             stayStart: { lt: range.checkOut },
@@ -279,6 +280,7 @@ async function autoAllocateMissingBedNights({
         ? {
             id: booking.id,
             createdAt: booking.createdAt,
+            requestedRoomId: booking.requestedRoomId,
             guests,
           }
         : null;

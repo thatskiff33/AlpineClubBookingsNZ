@@ -1,4 +1,5 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type BedAllocation } from "@prisma/client";
+import { clubConfig } from "@/config/club";
 import {
   addDaysDateOnly,
   eachDateOnlyInRange,
@@ -7,6 +8,7 @@ import {
   isDateOnlyString,
   parseDateOnly,
 } from "@/lib/date-only";
+import { getLodgeCapacityStatus, type LodgeCapacityStatus } from "@/lib/lodge-capacity";
 import {
   buildFirstFitBedAllocationPlan,
   type BedAllocationAgeTier,
@@ -80,6 +82,7 @@ interface DashboardBooking {
   checkOut: string;
   memberName: string;
   guests: DashboardGuest[];
+  requestedRoom: DashboardRequestedRoom | null;
 }
 
 interface DashboardGuest {
@@ -116,6 +119,12 @@ interface DashboardGuestNight {
   stayDate: string;
 }
 
+interface DashboardRequestedRoom {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
 export interface BedAllocationDashboardPayload {
   settings: BedAllocationSettingsPayload;
   range: {
@@ -131,7 +140,25 @@ export interface BedAllocationDashboardPayload {
   warnings: AdminBedAllocationWarning[];
 }
 
-type BedAllocationDb = typeof prisma;
+export interface RoomsAndBedsConfigurationPayload {
+  rooms: DashboardRoom[];
+  capacity: LodgeCapacityStatus;
+  canImportFromConfig: boolean;
+  configBeds: Array<{
+    id: string;
+    name: string;
+    capacity: number;
+    type: string;
+  }>;
+}
+
+export interface ImportRoomsAndBedsResult {
+  createdRoomCount: number;
+  createdBedCount: number;
+  rooms: DashboardRoom[];
+}
+
+type BedAllocationDb = typeof prisma | Prisma.TransactionClient;
 
 type DashboardBookingRecord = Awaited<
   ReturnType<typeof loadBookingRecords>
@@ -223,6 +250,106 @@ export async function listBedAllocationRooms(db: BedAllocationDb = prisma) {
   });
 }
 
+export async function getRoomsAndBedsConfiguration(
+  db: BedAllocationDb = prisma,
+): Promise<RoomsAndBedsConfigurationPayload> {
+  const [rooms, capacity] = await Promise.all([
+    listBedAllocationRooms(db),
+    getLodgeCapacityStatus(db),
+  ]);
+  const bedCount = rooms.reduce((total, room) => total + room.beds.length, 0);
+
+  return {
+    rooms: serializeRooms(rooms),
+    capacity,
+    canImportFromConfig: rooms.length === 0 && bedCount === 0,
+    configBeds: clubConfig.beds.map((bed) => ({
+      id: bed.id,
+      name: bed.name,
+      capacity: bed.capacity,
+      type: bed.type,
+    })),
+  };
+}
+
+function uniqueConfigRoomName(
+  bed: (typeof clubConfig.beds)[number],
+  seenNames: Set<string>,
+) {
+  const baseName = bed.name.trim() || bed.id.trim() || "Imported Room";
+  if (!seenNames.has(baseName)) {
+    seenNames.add(baseName);
+    return baseName;
+  }
+
+  const fallbackName = `${baseName} (${bed.id})`;
+  seenNames.add(fallbackName);
+  return fallbackName;
+}
+
+async function assertRoomBedTablesEmpty(db: BedAllocationDb) {
+  const [roomCount, bedCount] = await Promise.all([
+    db.lodgeRoom.count(),
+    db.lodgeBed.count(),
+  ]);
+
+  if (roomCount > 0 || bedCount > 0) {
+    throw new BedAllocationAdminError(
+      "Rooms and beds have already been configured.",
+      409,
+    );
+  }
+}
+
+export async function importRoomsAndBedsFromClubConfig(input: {
+  db?: BedAllocationDb;
+} = {}): Promise<ImportRoomsAndBedsResult> {
+  if (!input.db) {
+    return prisma.$transaction((tx) =>
+      importRoomsAndBedsFromClubConfig({ db: tx }),
+    );
+  }
+
+  const db = input.db ?? prisma;
+  await assertRoomBedTablesEmpty(db);
+
+  const seenNames = new Set<string>();
+  let createdRoomCount = 0;
+  let createdBedCount = 0;
+
+  for (const [roomIndex, configBed] of clubConfig.beds.entries()) {
+    const room = await db.lodgeRoom.create({
+      data: {
+        name: uniqueConfigRoomName(configBed, seenNames),
+        sortOrder: roomIndex + 1,
+        active: true,
+        notes: `${configBed.type} room imported from club config.`,
+      },
+    });
+    createdRoomCount += 1;
+
+    await db.lodgeBed.createMany({
+      data: Array.from({ length: configBed.capacity }, (_, bedIndex) => ({
+        roomId: room.id,
+        name:
+          configBed.capacity === 1
+            ? configBed.name
+            : `Bed ${bedIndex + 1}`,
+        sortOrder: bedIndex + 1,
+        active: true,
+      })),
+    });
+    createdBedCount += configBed.capacity;
+  }
+
+  const rooms = await listBedAllocationRooms(db);
+  return {
+    createdRoomCount,
+    createdBedCount,
+    rooms: serializeRooms(rooms),
+  };
+}
+
 export async function createBedAllocationRoom(input: {
   name: string;
   sortOrder?: number;
@@ -284,14 +411,71 @@ export async function updateBedAllocationBed(input: {
   active?: boolean;
   db?: BedAllocationDb;
 }) {
+  const db = input.db ?? prisma;
+  if (input.active === false) {
+    await assertNoFutureBedAllocations({
+      bedId: input.id,
+      db,
+      action: "deactivate",
+    });
+  }
+
   const data: Prisma.LodgeBedUpdateInput = {};
   if (input.name !== undefined) data.name = input.name.trim();
   if (input.sortOrder !== undefined) data.sortOrder = input.sortOrder;
   if (input.active !== undefined) data.active = input.active;
 
-  return (input.db ?? prisma).lodgeBed.update({
+  return db.lodgeBed.update({
     where: { id: input.id },
     data,
+  });
+}
+
+async function assertNoFutureBedAllocations(input: {
+  bedId: string;
+  db: BedAllocationDb;
+  action: "deactivate" | "delete";
+}) {
+  const blockingAllocations = await input.db.bedAllocation.findMany({
+    where: {
+      bedId: input.bedId,
+      stayDate: { gte: getTodayDateOnly() },
+    },
+    select: { stayDate: true },
+    orderBy: { stayDate: "asc" },
+  });
+
+  if (blockingAllocations.length === 0) {
+    return;
+  }
+
+  const blockingDates = [
+    ...new Set(
+      blockingAllocations.map((allocation) =>
+        formatDateOnly(allocation.stayDate),
+      ),
+    ),
+  ];
+
+  throw new BedAllocationAdminError(
+    `Cannot ${input.action} this bed while future allocations exist on ${blockingDates.join(", ")}. Clear those dates on the bed allocation page first.`,
+    409,
+  );
+}
+
+export async function deleteBedAllocationBed(input: {
+  id: string;
+  db?: BedAllocationDb;
+}) {
+  const db = input.db ?? prisma;
+  await assertNoFutureBedAllocations({
+    bedId: input.id,
+    db,
+    action: "delete",
+  });
+
+  return db.lodgeBed.delete({
+    where: { id: input.id },
   });
 }
 
@@ -349,6 +533,14 @@ async function loadBookingRecords(
       createdAt: true,
       checkIn: true,
       checkOut: true,
+      requestedRoomId: true,
+      requestedRoom: {
+        select: {
+          id: true,
+          name: true,
+          active: true,
+        },
+      },
       member: {
         select: {
           firstName: true,
@@ -462,6 +654,7 @@ function serializeBookings(
       stayStart: formatDateOnly(guest.stayStart),
       stayEnd: formatDateOnly(guest.stayEnd),
     })),
+    requestedRoom: booking.requestedRoom,
   }));
 }
 
@@ -551,6 +744,7 @@ function candidateGuestBookings(
       return {
         id: booking.id,
         createdAt: booking.createdAt,
+        requestedRoomId: booking.requestedRoomId,
         guests,
       };
     })
@@ -717,10 +911,9 @@ export async function runAutoBedAllocation(input: {
   });
 }
 
-async function assertManualAllocationInput(input: {
+async function assertGuestAndBedForAllocation(input: {
   bookingGuestId: string;
   bedId: string;
-  stayDate: Date;
   db: BedAllocationDb;
 }) {
   const [guest, bed] = await Promise.all([
@@ -761,12 +954,31 @@ async function assertManualAllocationInput(input: {
       409,
     );
   }
-  if (!overlapsDateRange(guest.stayStart, guest.stayEnd, {
-    from: input.stayDate,
-    to: addDaysDateOnly(input.stayDate, 1),
-    fromDate: formatDateOnly(input.stayDate),
-    toDate: formatDateOnly(addDaysDateOnly(input.stayDate, 1)),
-  })) {
+
+  return { guest, bed };
+}
+
+function guestIsStayingOn(
+  guest: { stayStart: Date; stayEnd: Date },
+  stayDate: Date,
+): boolean {
+  return overlapsDateRange(guest.stayStart, guest.stayEnd, {
+    from: stayDate,
+    to: addDaysDateOnly(stayDate, 1),
+    fromDate: formatDateOnly(stayDate),
+    toDate: formatDateOnly(addDaysDateOnly(stayDate, 1)),
+  });
+}
+
+async function assertManualAllocationInput(input: {
+  bookingGuestId: string;
+  bedId: string;
+  stayDate: Date;
+  db: BedAllocationDb;
+}) {
+  const { guest, bed } = await assertGuestAndBedForAllocation(input);
+
+  if (!guestIsStayingOn(guest, input.stayDate)) {
     throw new BedAllocationAdminError(
       "Guest is not staying on the selected date",
       400,
@@ -831,6 +1043,106 @@ export async function manuallyAllocateBed(input: {
     }
     throw error;
   }
+}
+
+export interface BulkAllocationConflict {
+  stayDate: string;
+  reason: "BED_TAKEN";
+}
+
+export interface BulkAllocationResult {
+  allocations: BedAllocation[];
+  conflicts: BulkAllocationConflict[];
+  skipped: string[];
+}
+
+/**
+ * Allocates a guest to the same bed across several nights in one pass, used
+ * for "drop a guest's full stay onto a bed" board interactions. Each night is
+ * upserted independently so a bed already taken by another guest on one
+ * night (a 409 in the single-night endpoint) is reported as a conflict
+ * instead of aborting the nights that succeeded.
+ */
+export async function manuallyAllocateBedForNights(input: {
+  bookingGuestId: string;
+  bedId: string;
+  stayDates: string[];
+  db?: BedAllocationDb;
+}): Promise<BulkAllocationResult> {
+  if (input.stayDates.length === 0) {
+    throw new BedAllocationAdminError(
+      "At least one stay date is required",
+      400,
+    );
+  }
+  if (input.stayDates.length > MAX_BED_ALLOCATION_RANGE_NIGHTS) {
+    throw new BedAllocationAdminError(
+      `Cannot allocate more than ${MAX_BED_ALLOCATION_RANGE_NIGHTS} nights at once`,
+      400,
+    );
+  }
+  for (const stayDate of input.stayDates) {
+    if (!isDateOnlyString(stayDate)) {
+      throw new BedAllocationAdminError("Invalid stay date", 400);
+    }
+  }
+
+  const db = input.db ?? prisma;
+  const { guest, bed } = await assertGuestAndBedForAllocation({
+    bookingGuestId: input.bookingGuestId,
+    bedId: input.bedId,
+    db,
+  });
+
+  const allocations: BedAllocation[] = [];
+  const conflicts: BulkAllocationConflict[] = [];
+  const skipped: string[] = [];
+
+  for (const stayDateStr of [...new Set(input.stayDates)].sort()) {
+    const stayDate = parseDateOnly(stayDateStr);
+    if (!guestIsStayingOn(guest, stayDate)) {
+      skipped.push(stayDateStr);
+      continue;
+    }
+
+    try {
+      const allocation = await db.bedAllocation.upsert({
+        where: {
+          bookingGuestId_stayDate: {
+            bookingGuestId: input.bookingGuestId,
+            stayDate,
+          },
+        },
+        create: {
+          bookingId: guest.bookingId,
+          bookingGuestId: guest.id,
+          roomId: bed.roomId,
+          bedId: bed.id,
+          stayDate,
+          source: "MANUAL",
+        },
+        update: {
+          roomId: bed.roomId,
+          bedId: bed.id,
+          source: "MANUAL",
+          approvedAt: null,
+          approvedByMemberId: null,
+        },
+      });
+      allocations.push(allocation);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        conflicts.push({ stayDate: stayDateStr, reason: "BED_TAKEN" });
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return { allocations, conflicts, skipped };
 }
 
 export async function deleteBedAllocation(input: {

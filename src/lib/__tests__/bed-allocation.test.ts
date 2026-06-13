@@ -30,10 +30,16 @@ const rooms: BedAllocationRoom[] = [
   },
 ];
 
-function booking(id: string, createdAt: string, guestId: string) {
+function booking(
+  id: string,
+  createdAt: string,
+  guestId: string,
+  requestedRoomId: string | null = null,
+): BedAllocationBooking {
   return {
     id,
     createdAt: new Date(createdAt),
+    requestedRoomId,
     guests: [
       {
         id: guestId,
@@ -54,10 +60,12 @@ function multiGuestBooking(
     stayStart?: string;
     stayEnd?: string;
   }>,
+  requestedRoomId: string | null = null,
 ): BedAllocationBooking {
   return {
     id,
     createdAt: new Date(createdAt),
+    requestedRoomId,
     guests: guests.map((guest) => ({
       id: guest.id,
       bookingId: id,
@@ -479,6 +487,126 @@ describe("bed allocation planner", () => {
         roomId: "room-b",
         bedId: "bed-b2",
         stayDate: "2026-07-02",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("prefers a booking's requested room over default first-fit ordering", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms,
+      bookings: [
+        multiGuestBooking(
+          "booking-1",
+          "2026-06-01",
+          [{ id: "guest-1", stayStart: "2026-07-01", stayEnd: "2026-07-02" }],
+          "room-b",
+        ),
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-1",
+        bookingGuestId: "guest-1",
+        roomId: "room-b",
+        bedId: "bed-b1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("falls back silently to first-fit when the requested room is full", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms,
+      bookings: [
+        multiGuestBooking(
+          "booking-1",
+          "2026-06-01",
+          [{ id: "guest-1", stayStart: "2026-07-01", stayEnd: "2026-07-02" }],
+          "room-b",
+        ),
+      ],
+      occupiedBedNights: [{ bedId: "bed-b1", stayDate: "2026-07-01" }],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-1",
+        bookingGuestId: "guest-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("leaves bookings without a requested room unaffected by another booking's request", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms,
+      bookings: [
+        multiGuestBooking("booking-no-request", "2026-06-01", [
+          { id: "guest-no-request", stayStart: "2026-07-01", stayEnd: "2026-07-02" },
+        ]),
+        multiGuestBooking(
+          "booking-with-request",
+          "2026-06-02",
+          [{ id: "guest-with-request", stayStart: "2026-07-01", stayEnd: "2026-07-02" }],
+          "room-b",
+        ),
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-no-request",
+        bookingGuestId: "guest-no-request",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+      {
+        bookingId: "booking-with-request",
+        bookingGuestId: "guest-with-request",
+        roomId: "room-b",
+        bedId: "bed-b1",
+        stayDate: "2026-07-01",
+        source: "AUTO",
+      },
+    ]);
+  });
+
+  it("treats a missing or inactive requested room as no preference without erroring", () => {
+    const plan = buildFirstFitBedAllocationPlan({
+      enabled: true,
+      rooms,
+      bookings: [
+        multiGuestBooking(
+          "booking-1",
+          "2026-06-01",
+          [{ id: "guest-1", stayStart: "2026-07-01", stayEnd: "2026-07-02" }],
+          "room-now-inactive",
+        ),
+      ],
+    });
+
+    expect(plan.unallocatedGuestNights).toEqual([]);
+    expect(plan.allocations).toEqual([
+      {
+        bookingId: "booking-1",
+        bookingGuestId: "guest-1",
+        roomId: "room-a",
+        bedId: "bed-a1",
+        stayDate: "2026-07-01",
         source: "AUTO",
       },
     ]);

@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
-import { LODGE_CAPACITY } from "./capacity";
+import { getLodgeCapacity } from "./capacity";
+import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { eachDayOfInterval, subDays, format } from "date-fns";
 import { sendBookingBumpedEmail, sendAdminBookingBumpedAlert } from "./email";
@@ -92,10 +93,11 @@ export async function findBumpCandidates(
  */
 export function wouldExceedCapacity(
   occupiedBedsPerNight: Map<string, number>,
-  newGuestCount: number
+  newGuestCount: number,
+  lodgeCapacity = FALLBACK_LODGE_CAPACITY,
 ): boolean {
   for (const [, occupied] of occupiedBedsPerNight) {
-    if (occupied + newGuestCount > LODGE_CAPACITY) {
+    if (occupied + newGuestCount > lodgeCapacity) {
       return true;
     }
   }
@@ -106,7 +108,8 @@ function wouldExceedCapacityForGuestRanges(
   occupiedBedsPerNight: Map<string, number>,
   checkIn: Date,
   checkOut: Date,
-  newGuests: number | GuestStayRange[]
+  newGuests: number | GuestStayRange[],
+  lodgeCapacity: number,
 ): boolean {
   for (const [dateKey, occupied] of occupiedBedsPerNight) {
     const proposedBeds = Array.isArray(newGuests)
@@ -117,7 +120,7 @@ function wouldExceedCapacityForGuestRanges(
         )
       : newGuests;
 
-    if (occupied + proposedBeds > LODGE_CAPACITY) {
+    if (occupied + proposedBeds > lodgeCapacity) {
       return true;
     }
   }
@@ -170,11 +173,21 @@ export async function bumpPendingBookings(
   newGuests: number | GuestStayRange[],
   tx: Prisma.TransactionClient
 ): Promise<BumpResult> {
+  const lodgeCapacity = await getLodgeCapacity(tx);
+
   // Get current occupancy excluding nothing (we want the full picture)
   let occupiedMap = await getOccupiedBedsPerNight(checkIn, checkOut, [], tx);
 
   // Check if bumping is even needed
-  if (!wouldExceedCapacityForGuestRanges(occupiedMap, checkIn, checkOut, newGuests)) {
+  if (
+    !wouldExceedCapacityForGuestRanges(
+      occupiedMap,
+      checkIn,
+      checkOut,
+      newGuests,
+      lodgeCapacity,
+    )
+  ) {
     return { bumpedBookingIds: [], capacityRestored: true };
   }
 
@@ -216,7 +229,15 @@ export async function bumpPendingBookings(
     occupiedMap = removeBumpedBookingFromOccupancy(occupiedMap, candidate);
 
     // Check if capacity is now restored
-    if (!wouldExceedCapacityForGuestRanges(occupiedMap, checkIn, checkOut, newGuests)) {
+    if (
+      !wouldExceedCapacityForGuestRanges(
+        occupiedMap,
+        checkIn,
+        checkOut,
+        newGuests,
+        lodgeCapacity,
+      )
+    ) {
       break;
     }
   }
@@ -226,7 +247,8 @@ export async function bumpPendingBookings(
     occupiedMap,
     checkIn,
     checkOut,
-    newGuests
+    newGuests,
+    lodgeCapacity,
   );
 
   return { bumpedBookingIds, capacityRestored };

@@ -32,7 +32,7 @@ import {
   bumpPendingBookings,
   sendBumpedNotifications,
 } from "../bumping";
-import { LODGE_CAPACITY } from "../capacity";
+import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "../lodge-capacity";
 import { sendBookingBumpedEmail } from "../email";
 
 // Helper mock for promoRedemption (returns null = no promo used)

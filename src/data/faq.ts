@@ -1,4 +1,4 @@
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 export interface FaqItem {
   question: string;
@@ -77,7 +77,7 @@ const faqSections: FaqSection[] = [
       {
         question: "What facilities does the lodge have?",
         answer:
-          `Waldvogel Lodge at Iwikau Village, Mt Ruapehu sleeps up to ${LODGE_CAPACITY} guests across 6 rooms. The lodge has a fully equipped communal kitchen, dining area, lounge, drying room, and ski storage. Bedding is provided. The lodge is accessible by 2WD vehicle in summer and requires 4WD or chains in winter snow conditions.`,
+          `Waldvogel Lodge at Iwikau Village, Mt Ruapehu sleeps up to ${FALLBACK_LODGE_CAPACITY} guests across 6 rooms. The lodge has a fully equipped communal kitchen, dining area, lounge, drying room, and ski storage. Bedding is provided. The lodge is accessible by 2WD vehicle in summer and requires 4WD or chains in winter snow conditions.`,
       },
       {
         question: "What should I bring?",

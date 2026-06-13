@@ -32,7 +32,7 @@ export const EMAIL_AUDIT_DEFAULTS = {
   },
   "booking-confirmed": {
     "defaultSubject": "Booking Confirmed - {{CLUB_LODGE_NAME}}",
-    "defaultBody": "Booking Confirmed\n\nHi {{firstName}}, your lodge booking has been confirmed!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nSubtotal: {{subtotal}}                  [only when discountCents > 0]\nDiscount ({{promoCode}}): -{{discount}} [only when promoCode exists]\nDiscount: -{{discount}}                 [only when discount exists without promoCode]\nTotal Paid: {{totalPaid}}\n\nPayment has been processed successfully.\n\nYou can view your booking details and manage your stay from your account.\n\nView Booking: {{BASE_URL}}/bookings"
+    "defaultBody": "Booking Confirmed\n\nHi {{firstName}}, your lodge booking has been confirmed!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nSubtotal: {{subtotal}}                  [only when discountCents > 0]\nDiscount ({{promoCode}}): -{{discount}} [only when promoCode exists]\nDiscount: -{{discount}}                 [only when discount exists without promoCode]\nTotal Paid: {{totalPaid}}\n\nPayment has been processed successfully.\n\nHow to get to the lodge\n\n{{CLUB_LODGE_TRAVEL_NOTE}}\n\nDoor code: {{doorCode}} [only when a door code is set]\n\nYou can view your booking details and manage your stay from your account.\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "booking-pending": {
     "defaultSubject": "Booking Pending - {{CLUB_LODGE_NAME}}",
@@ -53,6 +53,10 @@ export const EMAIL_AUDIT_DEFAULTS = {
   "checkin-reminder": {
     "defaultSubject": "Check-in Reminder - {{CLUB_LODGE_NAME}}",
     "defaultBody": "Check-in Reminder\n\nHi {{firstName}}, your lodge stay begins tomorrow!\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\n\nGuest list:\n\n{{guestFirstName}} {{guestLastName}}\n...\n\nYour arrival day chores:        [only when chores exist]\n\n{{choreName}}: {{choreDescription}}\n...\n\nPlease ensure you arrive prepared for alpine conditions. Check the weather forecast before departing.\n\n{{CLUB_LODGE_TRAVEL_NOTE}}\n\nView Booking: {{BASE_URL}}/bookings"
+  },
+  "pre-arrival-reminder": {
+    "defaultSubject": "Pre-arrival Information - {{CLUB_LODGE_NAME}}",
+    "defaultBody": "Upcoming Lodge Stay\n\nHi {{firstName}}, your lodge stay is coming up.\n\nCheck-in: {{checkIn}}\nCheck-out: {{checkOut}}\nGuests: {{guestCount}}\nExpected arrival: {{expectedArrivalTime}} [only when provided]\n\nHow to get to the lodge\n\n{{CLUB_LODGE_TRAVEL_NOTE}}\n\nDoor code: {{doorCode}} [only when a door code is set]\n\nView Booking: {{BASE_URL}}/bookings"
   },
   "chore-roster": {
     "defaultSubject": "Your chore roster for {{formattedDate}} - {{CLUB_LODGE_NAME}}",

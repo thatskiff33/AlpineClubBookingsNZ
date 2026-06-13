@@ -23,6 +23,9 @@ fork for another organisation. See `NOTICE.md`.
 - Admin tools for members, CSV import, bookings, bed allocation, payments,
   seasons, policies, reports, email, audit logs, issue reports, waitlist,
   lodge, Xero operations, and hut leaders
+- Admin-editable public website pages with sanitised HTML content, embed
+  tokens for interactive sections, and a menu generated from page settings
+  (see `CONFIGURATION.md`, "Website Page Content")
 - Lodge kiosk with PIN access, arrivals/departures, chores, and issue reporting
 - Xero integrations for operational accounting plus a separate finance Xero
   boundary and finance reports
@@ -54,9 +57,11 @@ fork for another organisation. See `NOTICE.md`.
    name, contact emails, public URL, beds, age tiers, and integer-cent rates.
    If `config/club.json` is absent, the app falls back to
    `config/club.example.json`.
-3. Replace the images in `public/branding/` with your own logo, favicon, Open
-   Graph image, and public website photos. Keep the `*.example.*` files as
-   reusable placeholders for forks.
+3. Complete `/admin/site-style` after first sign-in to set public colours,
+   fonts, and the database-stored logo. Replace the remaining images in
+   `public/branding/` with your own favicon, Open Graph image, and public
+   website photos. Keep the `*.example.*` files as reusable placeholders for
+   forks.
 4. Set deploy capability flags in `.env`: `FEATURE_KIOSK`,
    `FEATURE_CHORES`, `FEATURE_FINANCE_DASHBOARD`, `FEATURE_WAITLIST`,
    `FEATURE_XERO_INTEGRATION`, `FEATURE_BED_ALLOCATION`, and
@@ -227,7 +232,7 @@ forks or public CI. Configure your own service accounts and secrets.
   validation and first deployment
 - `docs/ARCHITECTURE.md` - system structure, data model, business logic,
   integrations, cron, and deployment shape
-- `CONFIGURATION.md` - environment variables, module controls, branding assets,
+- `CONFIGURATION.md` - environment variables, module controls, site style,
   and `config/club.json` schema
 - `DEPLOYMENT.md` - reference Lightsail, Docker Compose, Caddy, blue/green, and
   recovery guide

@@ -132,6 +132,17 @@ vi.mock("@/lib/logger", () => ({ default: { debug: vi.fn(), info: vi.fn(), warn:
 vi.mock("@/lib/waitlist", () => ({ getWaitlistPosition: vi.fn().mockResolvedValue(1) }));
 vi.mock("@/lib/member-credit", () => ({ getMemberCreditBalance: vi.fn().mockResolvedValue(0), applyCreditToBooking: vi.fn() }));
 vi.mock("@/lib/session-guards", () => ({ requireActiveSessionUser: vi.fn().mockResolvedValue(null) }));
+// The booking-time subscription gates consult the effective module flags
+// (Xero-off bypass); default to Xero on so guest checks behave as before.
+const mockLoadEffectiveModuleFlags = vi.fn();
+vi.mock("@/lib/module-settings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/module-settings")>();
+  return {
+    ...actual,
+    loadEffectiveModuleFlags: (...args: unknown[]) =>
+      mockLoadEffectiveModuleFlags(...args),
+  };
+});
 
 // ─── Imports ──────────────────────────────────────────────────────────────────
 
@@ -180,6 +191,17 @@ function makeModifyQuoteRequest(body: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+
+  // Xero module effectively on so subscription enforcement is active.
+  mockLoadEffectiveModuleFlags.mockResolvedValue({
+    kiosk: true,
+    chores: true,
+    financeDashboard: true,
+    waitlist: true,
+    xeroIntegration: true,
+    bedAllocation: true,
+    internetBankingPayments: false,
+  });
 
   // Active, verified member by default
   mockPrisma.member.count.mockResolvedValue(1);

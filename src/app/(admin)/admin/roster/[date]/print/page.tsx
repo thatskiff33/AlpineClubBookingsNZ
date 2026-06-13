@@ -120,10 +120,7 @@ export default function PrintRosterPage() {
           <button onClick={() => window.print()} className="app-button-brand">
             Print Roster
           </button>
-          <Link
-            href="/admin/roster"
-            className="font-medium text-brand-charcoal hover:underline"
-          >
+          <Link href="/admin/roster" className="font-medium text-brand-charcoal hover:underline">
             Back to Roster
           </Link>
         </div>

@@ -2,6 +2,7 @@ import {
   EMAIL_AUDIT_DEFAULTS,
   type EmailAuditTemplateName,
 } from "@/lib/email-message-audit-defaults";
+import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 export type EmailTemplateAudience = "member" | "admin" | "system";
 export type NotificationDeliveryModeValue = "always" | "content_only" | "disabled";
@@ -123,6 +124,8 @@ const EXTRA_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> =
 };
 
 const REQUIRED_TEMPLATE_TOKENS: Partial<Record<EmailAuditTemplateName, string[]>> = {
+  "booking-confirmed": ["CLUB_LODGE_TRAVEL_NOTE", "doorCode"],
+  "pre-arrival-reminder": ["CLUB_LODGE_TRAVEL_NOTE", "doorCode"],
   "password-reset": ["token"],
   "admin-password-reset": ["token"],
   "member-setup-invite": ["token"],
@@ -235,6 +238,10 @@ const TEMPLATE_TRIGGER_METADATA: Partial<
     triggerSummary: "Website contact form submission",
     frequency: "Per contact form submission",
   },
+  "pre-arrival-reminder": {
+    triggerSummary: "Pre-arrival reminder with current lodge access details",
+    frequency: "Once per confirmed or paid booking in the reminder window",
+  },
 };
 
 function titleCaseTemplateKey(key: string): string {
@@ -276,7 +283,9 @@ function sampleValue(token: string): string {
   if (token === "SUPPORT_EMAIL" || token === "CONTACT_EMAIL") {
     return "support@example.org";
   }
-  if (token === "LODGE_CAPACITY") return "29";
+  if (token === "LODGE_CAPACITY") return String(FALLBACK_LODGE_CAPACITY);
+  if (token === "doorCode") return "1234";
+  if (token === "expectedArrivalTime") return "16:30";
   if (token.endsWith("Email") || token === "email") return "member@example.org";
   if (token.endsWith("Url") || token.endsWith("URL")) {
     return "https://bookings.example.org/admin";
@@ -382,11 +391,13 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
   "description",
   "details",
   "discount",
+  "doorCode",
   "email",
   "endDate",
   "entityType",
   "errorMessage",
   "errorType",
+  "expectedArrivalTime",
   "expiresAt",
   "expiryLabel",
   "failureCount",
@@ -486,6 +497,23 @@ export const APPROVED_EMAIL_TEMPLATE_TOKENS = [
 
 export const APPROVED_EMAIL_TEMPLATE_TOKEN_SET = new Set<string>(
   APPROVED_EMAIL_TEMPLATE_TOKENS,
+);
+
+// Tokens whose rendered values must never appear in an email subject line.
+// Subjects are persisted in EmailLog for every template (including the
+// sensitive ones whose HTML bodies are deliberately not retained) and travel
+// in clear mail headers, so secret values are restricted to message bodies.
+export const SENSITIVE_EMAIL_SUBJECT_TOKENS = [
+  "confirmationUrl",
+  "doorCode",
+  "pin",
+  "resetUrl",
+  "token",
+  "verifyUrl",
+] as const;
+
+export const SENSITIVE_EMAIL_SUBJECT_TOKEN_SET = new Set<string>(
+  SENSITIVE_EMAIL_SUBJECT_TOKENS,
 );
 
 export function getEmailTemplateDefinition(templateName: string) {

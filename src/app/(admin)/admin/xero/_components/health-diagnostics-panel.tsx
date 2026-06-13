@@ -683,12 +683,7 @@ function ContactGroupMismatchPanel({
                   : "The shared Xero contact-group cache has not been refreshed yet."}
               </p>
             </div>
-            <Link
-              href="/admin/age-tier-settings"
-              className="text-sm text-blue-600 hover:underline"
-            >
-              Open Age Group Settings
-            </Link>
+            <Link href="/admin/age-tier-settings" className="text-sm text-blue-600 hover:underline">Open Age Group Settings</Link>
           </div>
           {!data.cacheReady ? (
             <p className="text-sm text-muted-foreground">

@@ -9,7 +9,7 @@ import { requireActiveSessionUser } from "@/lib/session-guards";
 import { sendAdminBookingChangeRequestAlert } from "@/lib/email";
 import { ageTierEnum } from "@/lib/age-tier-schema";
 import { nameField } from "@/lib/zod-helpers";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { checkRateLimit, getClientIp, rateLimiters } from "@/lib/rate-limit";
 import logger from "@/lib/logger";
 import { z } from "zod";
@@ -29,9 +29,9 @@ const createChangeRequestSchema = z.object({
         stayEnd: z.string().optional(),
       })
     )
-    .max(LODGE_CAPACITY)
+    .max(200)
     .optional(),
-  removeGuestIds: z.array(z.string().trim().min(1)).max(LODGE_CAPACITY).optional(),
+  removeGuestIds: z.array(z.string().trim().min(1)).max(200).optional(),
   guestStayRanges: z
     .array(
       z.object({
@@ -40,7 +40,7 @@ const createChangeRequestSchema = z.object({
         stayEnd: z.string().optional(),
       })
     )
-    .max(LODGE_CAPACITY)
+    .max(200)
     .optional(),
   requestedEffectiveDate: z.string().optional(),
   reason: z.string().max(2000).optional(),
@@ -313,6 +313,17 @@ export async function POST(
       { status: 400 }
     );
   }
+
+  const lodgeCapacity = await getLodgeCapacity();
+  const proposedGuestCount =
+    booking.guests.length - removeSet.size + (addGuests?.length ?? 0);
+  if (proposedGuestCount > lodgeCapacity) {
+    return NextResponse.json(
+      { error: `A booking cannot exceed ${lodgeCapacity} guests` },
+      { status: 400 },
+    );
+  }
+
   const invalidRangeGuestIds = (guestStayRanges ?? [])
     .map((range) => range.guestId)
     .filter((guestId) => !booking.guests.some((guest) => guest.id === guestId));

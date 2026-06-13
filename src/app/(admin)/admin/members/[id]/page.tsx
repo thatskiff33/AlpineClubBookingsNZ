@@ -1465,31 +1465,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
 
       <MemberInfoCard member={member} onEditFamilyGroup={setFamilyGroupEditorId} />
 
-      <MemberLifecycleCard
-        member={member}
-        pendingArchiveRequest={pendingArchiveRequest}
-        reviewedArchiveRequests={reviewedArchiveRequests}
-        isArchiveRequester={isArchiveRequester}
-        canRequestArchive={canRequestArchive}
-        canRequestCancellation={canRequestCancellation}
-        openCancellationRequest={openCancellationRequest}
-        archiveError={archiveError}
-        archiveReason={archiveReason}
-        archiveReviewNotes={archiveReviewNotes}
-        archiveActionLoading={archiveActionLoading}
-        cancellationError={cancellationError}
-        cancellationReason={cancellationReason}
-        cancellationSubmitting={cancellationSubmitting}
-        onChangeArchiveReason={setArchiveReason}
-        onChangeArchiveReviewNote={(requestId, value) =>
-          setArchiveReviewNotes((current) => ({ ...current, [requestId]: value }))
-        }
-        onChangeCancellationReason={setCancellationReason}
-        onSubmitArchive={handleSubmitArchiveRequest}
-        onSubmitCancellation={handleSubmitCancellationRequest}
-        onReviewArchive={handleReviewArchiveRequest}
-      />
-
       <MemberParentLinksCard
         member={member}
         memberIsArchived={memberIsArchived}
@@ -1537,6 +1512,31 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             onReviewAdjustment={handleReviewAdjustmentRequest}
           />
         }
+      />
+
+      <MemberLifecycleCard
+        member={member}
+        pendingArchiveRequest={pendingArchiveRequest}
+        reviewedArchiveRequests={reviewedArchiveRequests}
+        isArchiveRequester={isArchiveRequester}
+        canRequestArchive={canRequestArchive}
+        canRequestCancellation={canRequestCancellation}
+        openCancellationRequest={openCancellationRequest}
+        archiveError={archiveError}
+        archiveReason={archiveReason}
+        archiveReviewNotes={archiveReviewNotes}
+        archiveActionLoading={archiveActionLoading}
+        cancellationError={cancellationError}
+        cancellationReason={cancellationReason}
+        cancellationSubmitting={cancellationSubmitting}
+        onChangeArchiveReason={setArchiveReason}
+        onChangeArchiveReviewNote={(requestId, value) =>
+          setArchiveReviewNotes((current) => ({ ...current, [requestId]: value }))
+        }
+        onChangeCancellationReason={setCancellationReason}
+        onSubmitArchive={handleSubmitArchiveRequest}
+        onSubmitCancellation={handleSubmitCancellationRequest}
+        onReviewArchive={handleReviewArchiveRequest}
       />
 
       <FamilyGroupEditorDialog

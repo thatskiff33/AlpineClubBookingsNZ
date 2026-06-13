@@ -51,7 +51,11 @@ export const FEATURE_ROUTE_RULES: FeatureRouteRule[] = [
   },
   {
     flag: "bedAllocation",
-    prefixes: ["/admin/bed-allocation", "/api/admin/bed-allocation"],
+    prefixes: [
+      "/admin/bed-allocation",
+      "/admin/rooms-beds",
+      "/api/admin/bed-allocation",
+    ],
   },
 ];
 

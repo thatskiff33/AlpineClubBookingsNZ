@@ -34,6 +34,12 @@ export function bedAllocationErrorResponse(error: unknown) {
     if (error.code === "P2025") {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
+    if (error.code === "P2003") {
+      return NextResponse.json(
+        { error: "Cannot delete a bed with allocation history; deactivate it instead." },
+        { status: 409 },
+      );
+    }
   }
 
   return NextResponse.json(

@@ -219,6 +219,14 @@ enum ChoreFrequencyMode {
   SPECIFIC_DAYS
 }
 
+enum ClubThemeFont {
+  INTER
+  LEAGUE_SPARTAN
+  LORA
+  SOURCE_SERIF_4
+  NUNITO_SANS
+}
+
 // ---------------------------------------------------------------------------
 // Member & Auth
 // ---------------------------------------------------------------------------
@@ -620,6 +628,8 @@ model Booking {
   draftExpiresAt            DateTime?
   notes                     String?            @db.VarChar(500)
   expectedArrivalTime       String?            @db.VarChar(5)
+  requestedRoomId           String?
+  preArrivalReminderSentAt  DateTime?
   createdById               String? // Admin who created this booking on behalf of the member
   requiresAdminReview       Boolean            @default(false)
   adminReviewReason         String?            @db.VarChar(300)
@@ -637,23 +647,24 @@ model Booking {
   createdAt                 DateTime           @default(now())
   updatedAt                 DateTime           @updatedAt
 
-  member                     Member                      @relation(fields: [memberId], references: [id], onDelete: Restrict)
-  createdBy                  Member?                     @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  deletedBy                  Member?                     @relation("BookingsDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
-  adminReviewedBy            Member?                     @relation("BookingsAdminReviewed", fields: [adminReviewedById], references: [id], onDelete: SetNull)
-  guests                     BookingGuest[]
-  payment                    Payment?
-  choreAssignments           ChoreAssignment[]
-  promoRedemption            PromoRedemption?
-  promoRedemptionAllocations PromoRedemptionAllocation[]
+  member                      Member                       @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  createdBy                   Member?                      @relation("BookingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  deletedBy                   Member?                      @relation("BookingsDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  adminReviewedBy             Member?                      @relation("BookingsAdminReviewed", fields: [adminReviewedById], references: [id], onDelete: SetNull)
+  requestedRoom               LodgeRoom?                   @relation("BookingRequestedRoom", fields: [requestedRoomId], references: [id], onDelete: SetNull)
+  guests                      BookingGuest[]
+  payment                     Payment?
+  choreAssignments            ChoreAssignment[]
+  promoRedemption             PromoRedemption?
+  promoRedemptionAllocations  PromoRedemptionAllocation[]
   promoRedemptionGuestTargets PromoRedemptionGuestTarget[]
-  modifications              BookingModification[]
-  changeRequests             BookingChangeRequest[]
-  creditsFromCancellation    MemberCredit[]              @relation("CreditSource")
-  creditsApplied             MemberCredit[]              @relation("CreditApplied")
-  refundRequests             RefundRequest[]
-  paymentRecoveryOperations  PaymentRecoveryOperation[]
-  bedAllocations             BedAllocation[]
+  modifications               BookingModification[]
+  changeRequests              BookingChangeRequest[]
+  creditsFromCancellation     MemberCredit[]               @relation("CreditSource")
+  creditsApplied              MemberCredit[]               @relation("CreditApplied")
+  refundRequests              RefundRequest[]
+  paymentRecoveryOperations   PaymentRecoveryOperation[]
+  bedAllocations              BedAllocation[]
 
   @@index([memberId])
   @@index([createdById])
@@ -667,8 +678,10 @@ model Booking {
   @@index([status, deletedAt, updatedAt])
   @@index([status, deletedAt, checkIn, checkOut])
   @@index([status, checkIn, checkOut, createdAt])
+  @@index([status, preArrivalReminderSentAt, checkIn])
   @@index([adminReviewStatus, createdAt])
   @@index([adminReviewedById])
+  @@index([requestedRoomId])
 }
 
 model BookingGuest {
@@ -713,8 +726,9 @@ model LodgeRoom {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  beds        LodgeBed[]
-  allocations BedAllocation[]
+  beds                LodgeBed[]
+  allocations         BedAllocation[]
+  requestedByBookings Booking[]       @relation("BookingRequestedRoom")
 
   @@unique([name])
   @@index([active, sortOrder])
@@ -937,15 +951,19 @@ model PromoCode {
   // wins unless xeroAccountCode is also explicitly supplied (in which case it overrides).
   xeroItemCode            String?
   xeroAccountCode         String?
+  // Internal promos are auto-applied by the system (e.g. work party events).
+  // They are hidden from all promo listings and rejected at manual code entry.
+  internal                Boolean       @default(false)
   active                  Boolean       @default(true)
   archivedAt              DateTime?
   createdAt               DateTime      @default(now())
   updatedAt               DateTime      @updatedAt
 
   // Relations
-  redemptions PromoRedemption[]
-  allocations PromoRedemptionAllocation[]
-  assignments PromoCodeAssignment[]
+  redemptions    PromoRedemption[]
+  allocations    PromoRedemptionAllocation[]
+  assignments    PromoCodeAssignment[]
+  workPartyEvent WorkPartyEvent?
 
   @@index([code])
   @@index([active])
@@ -1027,6 +1045,33 @@ model PromoCodeAssignment {
   @@unique([promoCodeId, memberId])
   @@index([promoCodeId])
   @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Work Party (Working Bee) Events
+// ---------------------------------------------------------------------------
+
+// Admin-created working bee events. Each event owns an internal auto-applied
+// PromoCode (type PERCENTAGE) so redemption tracking, pricing, Xero, the $0
+// confirmation path, and bump cleanup all reuse the existing promo machinery.
+// The discount applies only to guest nights within startDate..endDate
+// (both inclusive, matching Season night semantics).
+model WorkPartyEvent {
+  id              String   @id @default(cuid())
+  name            String   @db.VarChar(200)
+  description     String?  @db.VarChar(1000)
+  startDate       DateTime @db.Date
+  endDate         DateTime @db.Date
+  discountPercent Int      @default(100)
+  active          Boolean  @default(true)
+  promoCodeId     String   @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+
+  @@index([active])
+  @@index([startDate, endDate])
 }
 
 // ---------------------------------------------------------------------------
@@ -1597,6 +1642,7 @@ model EmailMessageSetting {
   contactEmail      String?
   publicUrl         String?
   lodgeTravelNote   String?
+  doorCode          String?  @db.VarChar(80)
   updatedByMemberId String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -1863,6 +1909,31 @@ model HutLeaderAssignment {
 
   @@index([memberId])
   @@index([startDate, endDate])
+}
+
+// ---------------------------------------------------------------------------
+// Lodge Instructions (issue #710)
+//
+// Protected lodge procedure documents for hut leaders (opening, closing, and
+// day-to-day running). Deliberately separate from PageContent: these must
+// never appear in the public website menu or the dynamic public page route.
+// ---------------------------------------------------------------------------
+
+enum LodgeInstructionKey {
+  OPEN
+  CLOSE
+  DAY_TO_DAY
+}
+
+model LodgeInstruction {
+  id                String              @id @default(cuid())
+  key               LodgeInstructionKey @unique
+  contentHtml       String
+  updatedByMemberId String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@index([updatedByMemberId])
 }
 
 // ---------------------------------------------------------------------------
@@ -2168,6 +2239,27 @@ model GroupDiscountSetting {
   enabled      Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Club Theme (public website visual branding)
+// ---------------------------------------------------------------------------
+
+model ClubTheme {
+  id             String        @id @default("default")
+  brandGold      String
+  brandCharcoal  String
+  brandDeep      String
+  brandRidge     String
+  brandMist      String
+  brandSnow      String
+  brandSafety    String
+  headingFontKey ClubThemeFont @default(LEAGUE_SPARTAN)
+  bodyFontKey    ClubThemeFont @default(INTER)
+  logoDataUrl    String?
+  completedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 }
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import { WebsiteHeader } from "@/components/website-header";
 import { WebsiteFooter } from "@/components/website-footer";
 import { clubIdentity } from "@/config/club-identity";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 
 const websiteBodyFont = Inter({
   subsets: ["latin"],
@@ -21,11 +22,15 @@ const websiteHeadingFont = League_Spartan({
 });
 
 export default async function PublicLayout({ children }: { children: React.ReactNode }) {
-  const session = await auth();
+  const [session, lodgeCapacity] = await Promise.all([
+    auth(),
+    getLodgeCapacity(),
+  ]);
+  const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
 
   return (
-    <AppProviders clubIdentity={clubIdentity} nonce={nonce}>
+    <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
       <div
         className={`${websiteBodyFont.variable} ${websiteHeadingFont.variable} app-theme-scope min-h-screen flex flex-col bg-background text-foreground`}
       >

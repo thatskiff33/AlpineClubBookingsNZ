@@ -11,7 +11,7 @@ import {
 } from "@/config/club-identity";
 import { APP_LOCALE, APP_TIME_ZONE } from "@/config/operational";
 import { formatCents as formatMoneyCents } from "@/lib/utils";
-import { LODGE_CAPACITY } from "./capacity";
+import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 import { SUPPORT_EMAIL } from "./email-sender";
 import { MEMBER_SETUP_INVITE_TTL_DAYS } from "./member-setup-invite";
 import { formatNZDate, formatNZDateTime } from "./nzst-date";
@@ -195,6 +195,32 @@ function alertBox(
 </div>`;
 }
 
+function arrivalInstructionsSection({
+  travelNote,
+  doorCode,
+}: {
+  travelNote: string;
+  doorCode?: string | null;
+}): string {
+  const safeTravelNote = travelNote.trim();
+  const safeDoorCode = doorCode?.trim() || null;
+  const doorCodeTable = safeDoorCode
+    ? infoTable([
+        {
+          label: "Door code",
+          value: `<strong style="font-size: 18px; letter-spacing: 1px;">${escapeHtml(safeDoorCode)}</strong>`,
+        },
+      ])
+    : "";
+
+  return `
+    ${paragraph("<strong>How to get to the lodge</strong>")}
+    ${safeTravelNote ? multilineBlock(escapeHtml(safeTravelNote)) : ""}
+    ${doorCodeTable}
+    ${safeDoorCode ? muted("Please keep the door code private and use the current code when you arrive.") : ""}
+  `;
+}
+
 // ---- Exported template functions ----
 
 function formatCents(cents: number): string {
@@ -263,7 +289,13 @@ export function bookingConfirmedTemplate(
   checkOut: Date,
   guestCount: number,
   totalCents: number,
-  options?: { discountCents?: number; promoAdjustmentCents?: number; promoCode?: string }
+  options?: {
+    discountCents?: number;
+    promoAdjustmentCents?: number;
+    promoCode?: string;
+    lodgeTravelNote?: string;
+    doorCode?: string | null;
+  }
 ): string {
   const promoAdjustmentCents =
     options?.promoAdjustmentCents ??
@@ -296,6 +328,10 @@ export function bookingConfirmedTemplate(
     ${paragraph("Hi " + escapeHtml(firstName) + ", your lodge booking has been confirmed!")}
     ${infoTable(rows)}
     ${alertBox("Payment has been processed successfully.", "success")}
+    ${arrivalInstructionsSection({
+      travelNote: options?.lodgeTravelNote ?? CLUB_LODGE_TRAVEL_NOTE,
+      doorCode: options?.doorCode ?? null,
+    })}
     ${paragraph("You can view your booking details and manage your stay from your account.")}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
@@ -550,6 +586,7 @@ export function hutLeaderAssignmentTemplate(params: {
     ${paragraph("When you arrive, open the lodge kiosk and use this PIN to unlock hut leader controls for arrivals, departures, and roster management.")}
     ${alertBox("Please keep this PIN private and share it only with the assigned hut leader team for these dates.", "warning")}
     ${paragraph("Responsibilities include checking the lodge list, helping guests settle in, marking arrivals and departures, and making sure the daily chore roster is set up and completed.")}
+    ${paragraph(`Before your stay, please read the <a href="${escapeHtml(BASE_URL + "/lodge-instructions")}" style="color: ${BRAND_CHARCOAL}; font-weight: 600; text-decoration: underline;">lodge instructions</a> covering opening, closing, and day-to-day running of the lodge.`)}
     ${button("Open Lodge View", BASE_URL + "/lodge")}
     ${muted("If you have any issues accessing the kiosk, please contact a club administrator.")}
   `);
@@ -585,6 +622,40 @@ export function checkinReminderTemplate(
     ${choreSection}
     ${alertBox("Please ensure you arrive prepared for alpine conditions. Check the weather forecast before departing.", "info")}
     ${paragraph(CLUB_LODGE_TRAVEL_NOTE)}
+    ${button("View Booking", BASE_URL + "/bookings")}
+  `);
+}
+
+export function preArrivalReminderTemplate(params: {
+  firstName: string;
+  checkIn: Date;
+  checkOut: Date;
+  guestCount: number;
+  expectedArrivalTime?: string | null;
+  lodgeTravelNote: string;
+  doorCode?: string | null;
+}): string {
+  const rows: Array<{ label: string; value: string }> = [
+    { label: "Check-in", value: formatNZDate(params.checkIn) },
+    { label: "Check-out", value: formatNZDate(params.checkOut) },
+    { label: "Guests", value: String(params.guestCount) },
+  ];
+
+  if (params.expectedArrivalTime) {
+    rows.push({
+      label: "Expected arrival",
+      value: escapeHtml(params.expectedArrivalTime),
+    });
+  }
+
+  return layout(`
+    ${heading("Upcoming Lodge Stay")}
+    ${paragraph("Hi " + escapeHtml(params.firstName) + ", your lodge stay is coming up.")}
+    ${infoTable(rows)}
+    ${arrivalInstructionsSection({
+      travelNote: params.lodgeTravelNote,
+      doorCode: params.doorCode,
+    })}
     ${button("View Booking", BASE_URL + "/bookings")}
   `);
 }
@@ -791,15 +862,18 @@ export function adminCapacityWarningTemplate(days: Array<{
   date: Date;
   occupiedBeds: number;
   availableBeds: number;
-}>): string {
+}>, lodgeCapacity = FALLBACK_LODGE_CAPACITY): string {
   const tableRowsHtml = days
     .map((d) => {
-      const pct = Math.round((d.occupiedBeds / LODGE_CAPACITY) * 100);
+      const pct =
+        lodgeCapacity > 0
+          ? Math.round((d.occupiedBeds / lodgeCapacity) * 100)
+          : 0;
       const color = d.availableBeds <= 2 ? "#dc2626" : d.availableBeds <= 5 ? "#d97706" : TEXT_COLOR;
       return `
     <tr>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${formatNZDate(d.date)}</td>
-      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${d.occupiedBeds}/${LODGE_CAPACITY}</td>
+      <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${TEXT_COLOR};">${d.occupiedBeds}/${lodgeCapacity}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${color}; font-weight: 700;">${d.availableBeds}</td>
       <td style="padding: 8px 12px; font-size: 14px; border-bottom: 1px solid ${BORDER_COLOR}; color: ${color}; font-weight: 700;">${pct}%</td>
     </tr>`;

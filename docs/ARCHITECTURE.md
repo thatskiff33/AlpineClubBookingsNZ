@@ -299,7 +299,8 @@ disable cron with `CRON_ENABLED=false`.
 | `age-up` | Daily | Process age-tier/member transitions |
 | `capacity-warnings` | Daily | Alert when lodge occupancy approaches limits |
 | `admin-digest` | Daily | Send admin summary email |
-| `checkin-reminders` | Daily | Send pre-arrival reminders |
+| `pre-arrival-reminders` | Every 3 hours | Send current directions and door-code reminders before check-in |
+| `checkin-reminders` | Daily | Send next-day check-in reminders |
 | `feedback-requests` | Daily | Send post-stay feedback requests |
 | `backup` | Configurable | Upload PostgreSQL dumps to S3 |
 

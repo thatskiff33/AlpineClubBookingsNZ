@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
         unknownTokens: validation.unknownTokens,
         disallowedTokens: validation.disallowedTokens,
         missingRequiredTokens: validation.missingRequiredTokens,
+        sensitiveSubjectTokens: validation.sensitiveSubjectTokens,
         unsafeLinks: validation.unsafeLinks,
       },
       { status: 400 },

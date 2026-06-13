@@ -9,7 +9,7 @@ import {
   subscriptionStatusClasses,
   subscriptionStatusClass,
 } from "@/lib/status-colors";
-import { LODGE_CAPACITY } from "@/lib/capacity";
+import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 describe("bookingStatusClasses", () => {
   it("defines all booking statuses", () => {

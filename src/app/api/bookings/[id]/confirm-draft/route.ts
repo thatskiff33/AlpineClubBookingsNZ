@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { BookingStatus } from "@prisma/client";
-import { getOccupiedBedsForNight, LODGE_CAPACITY } from "@/lib/capacity";
-import { eachDayOfInterval, subDays } from "date-fns";
+import { checkCapacityForGuestRanges } from "@/lib/capacity";
 import { getSeasonYear } from "@/lib/utils";
 import {
   enqueueXeroBookingInvoiceOperation,
@@ -12,8 +11,7 @@ import {
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
-import { CAPACITY_HOLDING_BOOKING_STATUSES } from "@/lib/booking-status";
-import { requiresPaidSubscriptionForAgeTierFromSettings } from "@/lib/member-subscription-eligibility";
+import { requiresPaidSubscriptionForBooking } from "@/lib/member-subscription-eligibility";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
 
 export async function POST(
@@ -56,10 +54,11 @@ export async function POST(
     );
   }
 
-  // Subscription check (non-admins only)
+  // Subscription check (non-admins only; bypassed when the Xero module is
+  // effectively off, because subscriptions are invoiced through Xero)
   if (
     session.user.role !== "ADMIN" &&
-    await requiresPaidSubscriptionForAgeTierFromSettings(booking.member.ageTier)
+    await requiresPaidSubscriptionForBooking(booking.member.ageTier)
   ) {
     const seasonYear = getSeasonYear(new Date(booking.checkIn));
     const paidSub = await prisma.memberSubscription.findFirst({
@@ -89,26 +88,15 @@ export async function POST(
       throw new Error("Booking is no longer a draft");
     }
 
-    const overlapping = await tx.booking.findMany({
-      where: {
-        id: { not: id },
-        checkIn: { lt: freshBooking.checkOut },
-        checkOut: { gt: freshBooking.checkIn },
-        status: { in: [...CAPACITY_HOLDING_BOOKING_STATUSES] },
-      },
-      include: { guests: true },
-    });
-
-    const nights = eachDayOfInterval({
-      start: new Date(freshBooking.checkIn),
-      end: subDays(new Date(freshBooking.checkOut), 1),
-    });
-
-    for (const night of nights) {
-      const occupiedBeds = getOccupiedBedsForNight(night, overlapping);
-      if (occupiedBeds + freshBooking.guests.length > LODGE_CAPACITY) {
-        throw new Error("Not enough beds available for your dates.");
-      }
+    const capacity = await checkCapacityForGuestRanges(
+      freshBooking.checkIn,
+      freshBooking.checkOut,
+      freshBooking.guests,
+      id,
+      tx,
+    );
+    if (!capacity.available) {
+      throw new Error("Not enough beds available for your dates.");
     }
 
     await tx.payment.create({

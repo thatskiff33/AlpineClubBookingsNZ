@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
 import { BookingStatus, SubscriptionStatus } from "@prisma/client";
-import { getOccupiedBedsForNight, LODGE_CAPACITY } from "@/lib/capacity";
+import { getLodgeCapacity, getOccupiedBedsForNight } from "@/lib/capacity";
 import { eachDayOfInterval, format } from "date-fns";
 import logger from "@/lib/logger";
 import { buildRevenueSeries } from "@/lib/admin-reports";
@@ -67,6 +67,7 @@ export async function GET(request: NextRequest) {
       unpaidMembers,
       overdueMembers,
       newMembers,
+      lodgeCapacity,
     ] = await Promise.all([
       prisma.booking.findMany({
         where: {
@@ -126,6 +127,7 @@ export async function GET(request: NextRequest) {
           ],
         },
       }),
+      getLodgeCapacity(),
     ]);
 
     // 1. Occupancy by date
@@ -136,8 +138,9 @@ export async function GET(request: NextRequest) {
       return {
         date: format(day, "yyyy-MM-dd"),
         occupiedBeds: beds,
-        availableBeds: LODGE_CAPACITY - beds,
-        occupancyRate: Math.round((beds / LODGE_CAPACITY) * 100),
+        availableBeds: lodgeCapacity - beds,
+        occupancyRate:
+          lodgeCapacity > 0 ? Math.round((beds / lodgeCapacity) * 100) : 0,
       };
     });
 

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { updateBedAllocationBed } from "@/lib/admin-bed-allocation";
+import {
+  deleteBedAllocationBed,
+  updateBedAllocationBed,
+} from "@/lib/admin-bed-allocation";
 import {
   bedAllocationErrorResponse,
   requireBedAllocationAdmin,
@@ -47,6 +50,33 @@ export async function PATCH(
       outcome: "success",
       summary: "Bed allocation bed updated",
       metadata: { bedId: bed.id, changes: body.data },
+    });
+
+    return NextResponse.json({ bed });
+  } catch (error) {
+    return bedAllocationErrorResponse(error);
+  }
+}
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const guard = await requireBedAllocationAdmin();
+  if (!guard.ok) return guard.response;
+
+  try {
+    const { id } = await params;
+    const bed = await deleteBedAllocationBed({ id });
+    logAudit({
+      action: "BED_ALLOCATION_BED_DELETED",
+      memberId: guard.session.user.id,
+      entityType: "LodgeBed",
+      entityId: bed.id,
+      category: "admin",
+      outcome: "success",
+      summary: "Bed allocation bed deleted",
+      metadata: { bedId: bed.id, roomId: bed.roomId, name: bed.name },
     });
 
     return NextResponse.json({ bed });

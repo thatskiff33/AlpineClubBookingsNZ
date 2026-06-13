@@ -531,4 +531,25 @@ html:not(.dark) .app-theme-scope .theme-aware-kiosk :is(
   .reports-print-root .recharts-text tspan {
     fill: #334155 !important;
   }
+
+  /* Lodge instructions: print each document on its own page so a hut
+     leader can pin the sheets up separately in the lodge. */
+  .lodge-instructions-print-root {
+    width: 100% !important;
+    margin: 0 !important;
+    color: #0f172a !important;
+  }
+
+  .lodge-instructions-print-section {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .lodge-instructions-print-section + .lodge-instructions-print-section {
+    break-before: page;
+    page-break-before: always;
+  }
 }

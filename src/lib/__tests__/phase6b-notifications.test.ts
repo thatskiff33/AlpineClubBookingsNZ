@@ -3,7 +3,7 @@ import {
   CLUB_EMAIL_FROM_NAME,
   CLUB_SUPPORT_EMAIL,
 } from "@/config/club-identity";
-import { LODGE_CAPACITY } from "@/lib/capacity";
+import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter } = vi.hoisted(() => {

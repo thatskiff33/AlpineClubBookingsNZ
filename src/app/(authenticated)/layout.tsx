@@ -11,6 +11,7 @@ import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { clubIdentity } from "@/config/club-identity";
 import { hasFinanceViewerAccess } from "@/lib/finance-auth";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
   MEMBER_ONBOARDING_GATE_SELECT,
   shouldShowMemberOnboarding,
@@ -82,11 +83,15 @@ export default async function AuthenticatedLayout({
     isStayingGuest,
   };
   const showOnboardingWizard = shouldShowMemberOnboarding(member);
-  const effectiveModules = await loadEffectiveModuleFlags();
+  const [effectiveModules, lodgeCapacity] = await Promise.all([
+    loadEffectiveModuleFlags(),
+    getLodgeCapacity(),
+  ]);
+  const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
 
   return (
-    <AppProviders clubIdentity={clubIdentity} nonce={nonce}>
+    <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
       <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
         <NavBar user={user} features={effectiveModules} />
         <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">

@@ -15,6 +15,14 @@ settings so administrators can edit shared email variables and template wording
 without changing TypeScript files. Admin/system notification delivery policies
 are managed from `/admin/notifications`.
 
+Sensitive tokens (`{{doorCode}}`, `{{token}}`, `{{pin}}`, `{{resetUrl}}`,
+`{{verifyUrl}}`, `{{confirmationUrl}}`) are body-only: subjects are persisted
+in `EmailLog` for every template and travel in clear mail headers, so template
+override subjects containing these tokens are rejected at save time, and the
+renderer never substitutes their values into a subject line. Required tokens
+must appear in the template body; a token in the subject does not satisfy the
+requirement.
+
 ## Runtime Placeholders
 
 The public checkout has no `config/club.json`, so the checked-in fallback values
@@ -279,6 +287,12 @@ Total Paid: {{totalPaid}}
 
 Payment has been processed successfully.
 
+How to get to the lodge
+
+{{CLUB_LODGE_TRAVEL_NOTE}}
+
+Door code: {{doorCode}} [only when a door code is set]
+
 You can view your booking details and manage your stay from your account.
 
 View Booking: {{BASE_URL}}/bookings
@@ -508,6 +522,41 @@ Triggers and frequency:
 - Cron job `checkin-reminders`, scheduled daily at 9:00 AM NZST.
 - Sends for paid/operational bookings checking in tomorrow.
 - Skips if a sent `checkin-reminder` email to the same recipient with the same subject exists within the last 48 hours.
+
+### pre-arrival-reminder
+
+Subject:
+
+```text
+Pre-arrival Information - {{CLUB_LODGE_NAME}}
+```
+
+Body:
+
+```text
+Upcoming Lodge Stay
+
+Hi {{firstName}}, your lodge stay is coming up.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+Expected arrival: {{expectedArrivalTime}} [only when provided]
+
+How to get to the lodge
+
+{{CLUB_LODGE_TRAVEL_NOTE}}
+
+Door code: {{doorCode}} [only when a door code is set]
+
+View Booking: {{BASE_URL}}/bookings
+```
+
+Triggers and frequency:
+
+- Cron job `pre-arrival-reminders`, run by `POST /api/cron` every 3 hours.
+- Sends once for confirmed or paid bookings checking in within the 3-day NZ date-only reminder window.
+- Claims each booking through `Booking.preArrivalReminderSentAt` before sending to prevent duplicate reminders.
 
 ### chore-roster
 

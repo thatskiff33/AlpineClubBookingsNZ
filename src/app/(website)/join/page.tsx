@@ -2,14 +2,17 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { CLUB_NAME } from "@/config/club-identity";
-import { getSanitizedPageContentByPath } from "@/lib/page-content-html";
+import {
+  getSanitizedPageContentByPath,
+  pageContentHtmlToPlainText,
+} from "@/lib/page-content-html";
 
 export async function generateMetadata(): Promise<Metadata> {
   const page = await getSanitizedPageContentByPath("/join");
   return {
     title: page?.title ?? "Join the Club",
     description:
-      page?.headerText ||
+      pageContentHtmlToPlainText(page?.headerText ?? "") ||
       `How to become a member of the ${CLUB_NAME}. Nomination by two existing members, entrance fee, induction process, and membership details.`,
   };
 }

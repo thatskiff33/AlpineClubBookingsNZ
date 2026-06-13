@@ -12,6 +12,7 @@ import {
   adminPendingDeadlineTemplate,
   adminIssueReportTemplate,
   adminRefundRequestTemplate,
+  preArrivalReminderTemplate,
   waitlistOfferTemplate,
 } from "../email-templates";
 import { getAppBaseUrl } from "../app-url";
@@ -91,6 +92,29 @@ describe("email-templates", () => {
       const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000);
       expect(html).toContain("/bookings");
     });
+
+    it("includes lodge directions and the configured door code", () => {
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, {
+        lodgeTravelNote: "Take the Bruce Road and carry chains.",
+        doorCode: "A1234",
+      });
+
+      expect(html).toContain("How to get to the lodge");
+      expect(html).toContain("Take the Bruce Road and carry chains.");
+      expect(html).toContain("Door code");
+      expect(html).toContain("A1234");
+    });
+
+    it("includes lodge directions without a door-code field when no code is set", () => {
+      const html = bookingConfirmedTemplate("Test", checkIn, checkOut, 1, 10000, {
+        lodgeTravelNote: "Take the Bruce Road and carry chains.",
+        doorCode: null,
+      });
+
+      expect(html).toContain("How to get to the lodge");
+      expect(html).toContain("Take the Bruce Road and carry chains.");
+      expect(html).not.toContain("Door code");
+    });
   });
 
   describe("bookingPendingTemplate", () => {
@@ -112,6 +136,50 @@ describe("email-templates", () => {
     it("shows the exact NZ-local hold deadline", () => {
       const html = bookingPendingTemplate("Test", checkIn, checkOut, 1, holdUntil);
       expect(html).toContain(formatNZDateTime(holdUntil));
+    });
+
+    it("does not include lodge directions or door codes", () => {
+      const html = bookingPendingTemplate("Test", checkIn, checkOut, 1, holdUntil);
+      expect(html).not.toContain("How to get to the lodge");
+      expect(html).not.toContain("Door code");
+      expect(html).not.toContain("A1234");
+    });
+  });
+
+  describe("preArrivalReminderTemplate", () => {
+    const checkIn = new Date("2026-07-15");
+    const checkOut = new Date("2026-07-18");
+
+    it("includes directions and current door code when set", () => {
+      const html = preArrivalReminderTemplate({
+        firstName: "Alice",
+        checkIn,
+        checkOut,
+        guestCount: 2,
+        expectedArrivalTime: "16:30",
+        lodgeTravelNote: "Park below the lodge and walk up.",
+        doorCode: "9876",
+      });
+
+      expect(html).toContain("Upcoming Lodge Stay");
+      expect(html).toContain("Park below the lodge and walk up.");
+      expect(html).toContain("Door code");
+      expect(html).toContain("9876");
+      expect(html).toContain("16:30");
+    });
+
+    it("omits the door-code field when no code is set", () => {
+      const html = preArrivalReminderTemplate({
+        firstName: "Alice",
+        checkIn,
+        checkOut,
+        guestCount: 2,
+        lodgeTravelNote: "Park below the lodge and walk up.",
+        doorCode: null,
+      });
+
+      expect(html).toContain("Park below the lodge and walk up.");
+      expect(html).not.toContain("Door code");
     });
   });
 

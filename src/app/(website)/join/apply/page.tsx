@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import { JoinApplyPageClient } from "@/app/(website)/join/apply/join-apply-page-client";
 import { clubIdentity } from "@/config/club-identity";
 import { CLUB_NAME } from "@/config/club-identity";
-import { getSanitizedPageContentByPath } from "@/lib/page-content-html";
+import {
+  getSanitizedPageContentByPath,
+  pageContentHtmlToPlainText,
+} from "@/lib/page-content-html";
 
 const JOIN_APPLY_EMBED_TOKEN_REGEX =
   /\{\{\s*(join-apply-form|member-application-form)\s*\}\}/gi;
@@ -37,7 +40,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: page?.title ?? "Apply for Membership",
     description:
-      page?.headerText ||
+      pageContentHtmlToPlainText(page?.headerText ?? "") ||
       `Apply for membership with ${CLUB_NAME}. Provide your details and two nominators for committee review.`,
   };
 }

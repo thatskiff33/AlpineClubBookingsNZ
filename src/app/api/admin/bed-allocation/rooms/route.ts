@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createBedAllocationRoom } from "@/lib/admin-bed-allocation";
+import {
+  createBedAllocationRoom,
+  getRoomsAndBedsConfiguration,
+} from "@/lib/admin-bed-allocation";
 import {
   bedAllocationErrorResponse,
   requireBedAllocationAdmin,
@@ -17,6 +20,17 @@ const roomSchema = z
     notes: z.string().trim().max(500).nullable().optional(),
   })
   .strict();
+
+export async function GET() {
+  const guard = await requireBedAllocationAdmin();
+  if (!guard.ok) return guard.response;
+
+  try {
+    return NextResponse.json(await getRoomsAndBedsConfiguration());
+  } catch (error) {
+    return bedAllocationErrorResponse(error);
+  }
+}
 
 export async function POST(request: Request) {
   const guard = await requireBedAllocationAdmin();

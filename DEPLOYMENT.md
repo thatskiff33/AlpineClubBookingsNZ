@@ -129,11 +129,15 @@ docker compose up -d --build app app_blue app_green caddy
 docker compose ps
 ```
 
-Create or seed accounts only for the intended environment. The demo seed admin
+Create or seed accounts only for the intended environment. The first admin
 from `prisma/seed.ts` is controlled by `SEED_ADMIN_EMAIL` and
-`SEED_ADMIN_PASSWORD`, and the shared lodge kiosk account by
-`SEED_LODGE_PASSWORD`; they are for local and staging use and must be changed
-before any shared environment is exposed.
+`SEED_ADMIN_PASSWORD` (optionally `SEED_ADMIN_FIRST_NAME` and
+`SEED_ADMIN_LAST_NAME`), and the shared lodge kiosk account by
+`SEED_LODGE_PASSWORD`. The seeded admin can log in immediately and is forced
+to change password on first login; change all seed credentials before any
+shared environment is exposed. The seed is create-if-missing throughout, so
+re-running it against an existing database changes nothing; committee and
+chore placeholders are only inserted when those tables are empty.
 
 ## Routine Production Deploy
 
@@ -233,7 +237,7 @@ external scheduler. Auth is the `x-cron-secret` header set to `CRON_SECRET`.
 | Endpoint | Task | Required cadence | Purpose | `CronJobRun.jobName` |
 | -------- | ---- | ---------------- | ------- | -------------------- |
 | `POST /api/cron/payments?task=recovery` | `recovery` | every 5 minutes | Process the durable Stripe payment recovery queue and reap stale `WAITING_PAYMENT` Xero outbox rows. | `payment-recovery` |
-| `POST /api/cron` | pending booking confirmation | every 3 hours at minute 0 | Confirm or bump pending bookings whose non-member holds have expired. | `confirm-pending` |
+| `POST /api/cron` | pending booking confirmation and pre-arrival reminders | every 3 hours at minute 0 | Confirm or bump pending bookings whose non-member holds have expired, then send one pre-arrival directions/door-code reminder for confirmed or paid bookings checking in within 3 NZ date-only days. | `confirm-pending`, `pre-arrival-reminders` |
 | `POST /api/cron/xero?task=memberships` | `memberships` | daily at 02:00 Pacific/Auckland when `XERO_ENABLE_DAILY_MEMBERSHIP_REFRESH=true` | Refresh Xero-backed membership statuses as an optional safety net. | `xero-membership-refresh` |
 | `POST /api/cron/xero?task=outbox` | `outbox` | every 15 minutes | Process queued outbound Xero operations. | `xero-outbox` |
 | `POST /api/cron/xero?task=retries` | `retries` | every 15 minutes | Replay failed retryable Xero operations. | `xero-operation-replay` |

@@ -87,6 +87,7 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
   allowedSchemesByTag: {
     img: ["http", "https"],
   },
+  allowProtocolRelative: false,
   transformTags: {
     a: (tagName, attribs) => ({
       tagName,
@@ -100,6 +101,15 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
 
 export function sanitizePageContentHtml(contentHtml: string): string {
   return sanitizeHtml(contentHtml, SANITIZE_OPTIONS).trim();
+}
+
+/**
+ * Strips all markup, for contexts that need plain text (meta descriptions).
+ */
+export function pageContentHtmlToPlainText(html: string): string {
+  return sanitizeHtml(html, { allowedTags: [], allowedAttributes: {} })
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function toEditablePageRecord(record: {
@@ -160,6 +170,9 @@ export async function getSanitizedPageContentByPath(path: string): Promise<{
     return null;
   }
 
+  // Defence in depth: stored values are sanitised on write, but render
+  // paths inject both fields with dangerouslySetInnerHTML, so sanitise
+  // again on read in case a record was written through another path.
   const safeContentHtml = sanitizePageContentHtml(record.contentHtml);
   const safeHeaderText = sanitizePageContentHtml(record.headerText);
 

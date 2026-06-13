@@ -12,7 +12,7 @@ const { mockPrisma } = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 import { getFinanceBookingMetrics } from "@/lib/finance-booking-metrics";
-import { LODGE_CAPACITY } from "@/lib/capacity";
+import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 function availableBeds(occupiedBeds: number): number {
   return LODGE_CAPACITY - occupiedBeds;

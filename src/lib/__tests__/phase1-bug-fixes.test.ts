@@ -107,6 +107,7 @@ vi.mock("@/lib/session-guards", () => ({
 
 vi.mock("@/lib/capacity", () => ({
   getMonthAvailability: vi.fn().mockResolvedValue(new Map()),
+  getLodgeCapacity: vi.fn().mockResolvedValue(29),
   LODGE_CAPACITY: 29,
 }));
 

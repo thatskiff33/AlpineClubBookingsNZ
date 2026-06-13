@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { sendAdminCapacityWarningAlert } from "./email";
-import { getOccupiedBedsForNight, LODGE_CAPACITY } from "./capacity";
+import { getLodgeCapacity, getOccupiedBedsForNight } from "./capacity";
 import { getNZSTToday } from "./nzst-date";
 import { eachDayOfInterval, addDays } from "date-fns";
 import logger from "@/lib/logger";
@@ -16,6 +16,7 @@ const WARN_THRESHOLD_BEDS = 5; // Alert when <= 5 beds remaining
 export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> {
   const todayNZ = getNZSTToday();
   const endDate = addDays(todayNZ, 14);
+  const lodgeCapacity = await getLodgeCapacity();
 
   const nights = eachDayOfInterval({
     start: todayNZ,
@@ -41,7 +42,7 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
   for (const night of nights) {
     const occupiedBeds = getOccupiedBedsForNight(night, overlappingBookings);
 
-    const availableBeds = LODGE_CAPACITY - occupiedBeds;
+    const availableBeds = lodgeCapacity - occupiedBeds;
     if (availableBeds <= WARN_THRESHOLD_BEDS) {
       highOccupancyDays.push({ date: night, occupiedBeds, availableBeds });
     }
@@ -52,7 +53,7 @@ export async function checkCapacityWarnings(): Promise<{ alertedDays: number }> 
   }
 
   try {
-    await sendAdminCapacityWarningAlert(highOccupancyDays);
+    await sendAdminCapacityWarningAlert(highOccupancyDays, lodgeCapacity);
   } catch (err) {
     logger.error({ err }, "Failed to send capacity warning admin alert");
   }

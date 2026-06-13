@@ -8,6 +8,7 @@ import {
 } from "@/lib/email-message-settings";
 import {
   APPROVED_EMAIL_TEMPLATE_TOKEN_SET,
+  SENSITIVE_EMAIL_SUBJECT_TOKEN_SET,
   getEmailTemplateDefinition,
 } from "@/lib/email-message-registry";
 import { prisma } from "@/lib/prisma";
@@ -36,6 +37,7 @@ export interface EmailTemplateValidationIssue {
     | "unknown_token"
     | "disallowed_token"
     | "missing_required_token"
+    | "sensitive_subject_token"
     | "subject_line_break"
     | "raw_html"
     | "unsafe_link";
@@ -51,6 +53,7 @@ export interface EmailTemplateValidationResult {
   unknownTokens: string[];
   disallowedTokens: string[];
   missingRequiredTokens: string[];
+  sensitiveSubjectTokens: string[];
   unsafeLinks: string[];
 }
 
@@ -129,7 +132,9 @@ export function validateEmailTemplateContent({
   const definition = getEmailTemplateDefinition(templateName);
   const issues: EmailTemplateValidationIssue[] = [];
   const values = [subject, bodyText];
-  const tokens = Array.from(new Set(values.flatMap(extractTemplateTokens)));
+  const subjectTokens = Array.from(new Set(extractTemplateTokens(subject)));
+  const bodyTokens = Array.from(new Set(extractTemplateTokens(bodyText)));
+  const tokens = Array.from(new Set([...subjectTokens, ...bodyTokens]));
   const unknownTokens = tokens.filter(
     (token) => !APPROVED_EMAIL_TEMPLATE_TOKEN_SET.has(token),
   );
@@ -161,16 +166,36 @@ export function validateEmailTemplateContent({
     });
   }
 
+  // Required tokens are body content (door codes, credential links), so they
+  // must be present in the body itself — a token in the subject does not
+  // satisfy the requirement. An empty body override falls back to the default
+  // body, which already carries the required tokens, so it is not checked.
   const requiredTokenSet = new Set(definition?.requiredTokens ?? []);
-  const presentTokenSet = new Set(tokens);
-  const missingRequiredTokens = Array.from(requiredTokenSet).filter(
-    (token) => !presentTokenSet.has(token),
-  );
+  const bodyTokenSet = new Set(bodyTokens);
+  const missingRequiredTokens =
+    bodyText.trim().length > 0
+      ? Array.from(requiredTokenSet).filter((token) => !bodyTokenSet.has(token))
+      : [];
   if (missingRequiredTokens.length > 0) {
     issues.push({
       code: "missing_required_token",
-      message: "Required template tokens are missing",
+      message: "Required template tokens are missing from the body",
       tokens: missingRequiredTokens,
+    });
+  }
+
+  // Subjects are persisted in EmailLog and travel in clear mail headers, so
+  // secret-bearing tokens are never allowed in a subject line.
+  const sensitiveSubjectTokens = subjectTokens.filter((token) =>
+    SENSITIVE_EMAIL_SUBJECT_TOKEN_SET.has(token),
+  );
+  if (sensitiveSubjectTokens.length > 0) {
+    issues.push({
+      code: "sensitive_subject_token",
+      field: "subject",
+      message:
+        "Sensitive tokens such as door codes and credential links cannot be used in email subjects",
+      tokens: sensitiveSubjectTokens,
     });
   }
 
@@ -205,6 +230,7 @@ export function validateEmailTemplateContent({
     unknownTokens,
     disallowedTokens,
     missingRequiredTokens,
+    sensitiveSubjectTokens,
     unsafeLinks,
   };
 }
@@ -219,6 +245,47 @@ export function renderTemplateString(
     if (value === null || value === undefined) return "";
     return String(value);
   });
+}
+
+// Defence in depth for subject rendering: even if a stored override slips a
+// sensitive token into a subject (for example a row saved before save-time
+// validation existed), the live value must never reach the subject, because
+// EmailLog persists subjects for every template and mail headers travel in
+// the clear.
+function buildSubjectSafeTemplateData(data: EmailTemplateData): EmailTemplateData {
+  const safe: EmailTemplateData = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (!SENSITIVE_EMAIL_SUBJECT_TOKEN_SET.has(key)) safe[key] = value;
+  }
+  return safe;
+}
+
+const SENSITIVE_SUBJECT_TOKEN_PATTERN = new RegExp(
+  `\\{\\{\\s*(?:${Array.from(SENSITIVE_EMAIL_SUBJECT_TOKEN_SET).join("|")})\\s*\\}\\}`,
+  "g",
+);
+
+// Minimum length for the literal-value scrub below; shorter strings are too
+// likely to collide with legitimate subject text, and they can never be
+// template-substituted into a subject because of buildSubjectSafeTemplateData.
+const SENSITIVE_SUBJECT_VALUE_MIN_LENGTH = 3;
+
+export function neutraliseSensitiveSubjectContent(
+  subject: string,
+  data: EmailTemplateData,
+): string {
+  let result = subject.replace(SENSITIVE_SUBJECT_TOKEN_PATTERN, "");
+  // Last-resort scrub: drop any live sensitive value that somehow reached the
+  // subject string through a non-template path.
+  for (const token of SENSITIVE_EMAIL_SUBJECT_TOKEN_SET) {
+    const value = data[token];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed.length < SENSITIVE_SUBJECT_VALUE_MIN_LENGTH) continue;
+    result = result.split(trimmed).join("");
+  }
+  if (result === subject) return subject;
+  return result.replace(/\s{2,}/g, " ").trim();
 }
 
 async function loadTemplateOverride(
@@ -271,7 +338,12 @@ export async function prepareEmailMessage({
   let overrideApplied = false;
 
   if (override?.subject?.trim()) {
-    nextSubject = renderTemplateString(override.subject.trim(), data);
+    // Subjects render without sensitive values so a stored override can never
+    // substitute a door code or credential link into the subject line.
+    nextSubject = renderTemplateString(
+      override.subject.trim(),
+      buildSubjectSafeTemplateData(data),
+    );
     overrideApplied = true;
   }
 
@@ -283,7 +355,10 @@ export async function prepareEmailMessage({
   }
 
   return {
-    subject: applyEmailMessageSettingsToSubject(nextSubject, settings),
+    subject: applyEmailMessageSettingsToSubject(
+      neutraliseSensitiveSubjectContent(nextSubject, data),
+      settings,
+    ),
     html: applyEmailMessageSettingsToHtml(nextHtml, settings),
     settings,
     overrideApplied,
@@ -301,8 +376,13 @@ export async function renderEmailTemplatePreview({
 }) {
   const settings = await loadEmailMessageSettings();
   const data = buildEmailTemplateData(settings, templateData);
+  // Preview subjects render with the same sensitive-token stripping as real
+  // sends so the admin preview matches delivered mail.
   const renderedSubject = applyEmailMessageSettingsToSubject(
-    renderTemplateString(subject, data),
+    neutraliseSensitiveSubjectContent(
+      renderTemplateString(subject, buildSubjectSafeTemplateData(data)),
+      data,
+    ),
     settings,
   );
   const html = applyEmailMessageSettingsToHtml(

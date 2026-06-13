@@ -1,3 +1,8 @@
+// Club-agnostic first-run seed. Every section is create-if-missing: re-running
+// the seed against a populated database must never delete, overwrite, or
+// duplicate data. Clubs customise the placeholders through the admin screens.
+import fs from "node:fs";
+import path from "node:path";
 import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { clubConfig } from "../src/config/club";
@@ -5,7 +10,22 @@ import {
   CLUB_CONTACT_EMAIL,
   clubDomainEmail,
 } from "../src/config/club-identity";
+import {
+  CLUB_THEME_ID,
+  DEFAULT_CLUB_THEME_VALUES,
+  MAX_LOGO_DATA_URL_BYTES,
+  TOKOROA_CLUB_THEME_VALUES,
+  isValidLogoDataUrl,
+} from "../src/lib/club-theme-schema";
+import { ensureNotRequiredSubscriptionForRole } from "../src/lib/member-subscription-defaults";
 import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
+import {
+  buildSeedAdminMemberData,
+  buildSeedChoreTemplates,
+  buildSeedCommitteePlaceholders,
+  buildSeedLodgeMemberData,
+} from "./seed-data";
+import { starterPageContent } from "./starter-page-content";
 
 const prisma = new PrismaClient({
   adapter: createPrismaPgAdapter(),
@@ -40,7 +60,7 @@ function seedAgeTierSettings() {
 }
 
 function requireSeedEnv(
-  name: "SEED_ADMIN_EMAIL" | "SEED_ADMIN_PASSWORD" | "SEED_LODGE_PASSWORD",
+  name: "SEED_ADMIN_EMAIL" | "SEED_ADMIN_PASSWORD" | "SEED_LODGE_PASSWORD"
 ) {
   const value = process.env[name]?.trim();
   if (!value) {
@@ -136,7 +156,67 @@ const starterPageContent: Array<{
   },
 ];
 
-async function upsertSeasonRates(
+function readBrandingLogoDataUrl() {
+  const logoPath = path.join(process.cwd(), "public", "branding", "logo.png");
+  if (!fs.existsSync(logoPath)) {
+    return null;
+  }
+
+  const logo = fs.readFileSync(logoPath);
+  if (logo.byteLength > MAX_LOGO_DATA_URL_BYTES) {
+    throw new Error(
+      `public/branding/logo.png is ${logo.byteLength} bytes; the site style logo cap is ${MAX_LOGO_DATA_URL_BYTES} bytes.`,
+    );
+  }
+
+  const dataUrl = `data:image/png;base64,${logo.toString("base64")}`;
+  if (!isValidLogoDataUrl(dataUrl)) {
+    throw new Error("public/branding/logo.png could not be converted to a valid logo data URL.");
+  }
+
+  return dataUrl;
+}
+
+async function seedClubTheme() {
+  if (process.env.SEED_TOKOROA_THEME_COMPLETE === "1") {
+    const logoDataUrl = readBrandingLogoDataUrl();
+    await prisma.clubTheme.upsert({
+      where: { id: CLUB_THEME_ID },
+      update: {
+        ...TOKOROA_CLUB_THEME_VALUES,
+        logoDataUrl,
+        completedAt: new Date(),
+      },
+      create: {
+        id: CLUB_THEME_ID,
+        ...TOKOROA_CLUB_THEME_VALUES,
+        logoDataUrl,
+        completedAt: new Date(),
+      },
+    });
+    console.log(
+      logoDataUrl
+        ? "Tokoroa site style seeded with palette and logo"
+        : "Tokoroa site style seeded with palette; public/branding/logo.png was not present",
+    );
+    return;
+  }
+
+  await prisma.clubTheme.upsert({
+    where: { id: CLUB_THEME_ID },
+    update: {},
+    create: {
+      id: CLUB_THEME_ID,
+      ...DEFAULT_CLUB_THEME_VALUES,
+      completedAt: null,
+    },
+  });
+  console.log("Default site style seeded");
+}
+
+// Create any missing per-tier rates for a season without touching existing
+// rows, so rates edited by admins survive a re-run.
+async function createMissingSeasonRates(
   seasonId: string,
   season: "winter" | "summer",
 ) {
@@ -149,9 +229,7 @@ async function upsertSeasonRates(
           isMember: rate.isMember,
         },
       },
-      update: {
-        pricePerNightCents: rate.pricePerNightCents,
-      },
+      update: {},
       create: {
         seasonId,
         ...rate,
@@ -161,12 +239,12 @@ async function upsertSeasonRates(
 }
 
 async function main() {
-  console.log("Seeding database...");
+  console.log("Seeding database (create-if-missing; re-runs change nothing)...");
 
   const seedAdminEmail = requireSeedEnv("SEED_ADMIN_EMAIL").toLowerCase();
   const seedAdminPassword = requireSeedEnv("SEED_ADMIN_PASSWORD");
 
-  // Seed default cancellation policy
+  // Seed default cancellation policy tiers (create-if-missing).
   const policies = [
     { daysBeforeStay: 14, refundPercentage: 100 },
     { daysBeforeStay: 7, refundPercentage: 50 },
@@ -176,335 +254,51 @@ async function main() {
   for (const policy of policies) {
     await prisma.cancellationPolicy.upsert({
       where: { daysBeforeStay: policy.daysBeforeStay },
-      update: { refundPercentage: policy.refundPercentage },
+      update: {},
       create: policy,
     });
   }
 
   console.log("Cancellation policies seeded");
 
-  // Seed chore templates (17 chores with full lodge allocation rules)
-  // Clear old chore templates first (safe - no assignments in seed)
-  await prisma.choreTemplate.deleteMany({});
-
-  const choreTemplates: Array<{
-    name: string;
-    description: string;
-    recommendedPeopleMin: number;
-    recommendedPeopleMax: number;
-    isEssential: boolean;
-    ageRestriction:
-      | "ANY"
-      | "ADULTS_ONLY"
-      | "MIXED_PREFERRED"
-      | "ADULT_SUPERVISED";
-    conditionalNote: string | null;
-    minAge: number;
-    sortOrder: number;
-    timeOfDay: "MORNING" | "EVENING" | "ANYTIME";
-    frequencyMode: "DAILY" | "EVERY_X_DAYS" | "SPECIFIC_DAYS";
-    frequencyDays: number | null;
-    frequencyDaysOfWeek: number[];
-  }> = [
-    {
-      name: "Breakfast",
-      description: "Prepare, cook and serve",
-      recommendedPeopleMin: 2,
-      recommendedPeopleMax: 2,
-      isEssential: true,
-      ageRestriction: "ADULTS_ONLY",
-      conditionalNote: null,
-      minAge: 18,
-      sortOrder: 1,
-      timeOfDay: "MORNING",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Fridge",
-      description: "Clear out old food and clean",
-      recommendedPeopleMin: 1,
-      recommendedPeopleMax: 1,
-      isEssential: false,
-      ageRestriction: "ADULTS_ONLY",
-      conditionalNote: "Essential if closing down lodge",
-      minAge: 18,
-      sortOrder: 2,
-      timeOfDay: "MORNING",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Breakfast dishes",
-      description: "Wash, dry, put away and wipe tables",
-      recommendedPeopleMin: 4,
-      recommendedPeopleMax: 4,
-      isEssential: true,
-      ageRestriction: "MIXED_PREFERRED",
-      conditionalNote: null,
-      minAge: 0,
-      sortOrder: 3,
-      timeOfDay: "MORNING",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Dining room and kitchen floor",
-      description: "Sweep and mop",
-      recommendedPeopleMin: 1,
-      recommendedPeopleMax: 1,
-      isEssential: true,
-      ageRestriction: "ANY",
-      conditionalNote: null,
-      minAge: 0,
-      sortOrder: 4,
-      timeOfDay: "MORNING",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Oven, microwave and hob",
-      description: "Clean (may be combined with dishes)",
-      recommendedPeopleMin: 1,
-      recommendedPeopleMax: 1,
-      isEssential: false,
-      ageRestriction: "ANY",
-      conditionalNote: null,
-      minAge: 0,
-      sortOrder: 5,
-      timeOfDay: "MORNING",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Tea towels",
-      description:
-        "Boil, wring and hang in drying room; when dry, fold and put away",
-      recommendedPeopleMin: 1,
-      recommendedPeopleMax: 1,
-      isEssential: false,
-      ageRestriction: "ADULTS_ONLY",
-      conditionalNote: "Involves boiling water and heavy pot",
-      minAge: 18,
-      sortOrder: 6,
-      timeOfDay: "MORNING",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Firewood",
-      description:
-        "Fill wood cupboard, cut kindling, clean hearth, empty ash to galvanised bin at lodge entrance (keep lid closed)",
-      recommendedPeopleMin: 1,
-      recommendedPeopleMax: 2,
-      isEssential: false,
-      ageRestriction: "ADULT_SUPERVISED",
-      conditionalNote:
-        "Adult or responsible teenager required. Children under 7 can assist alongside 1-2 youth or 1 adult",
-      minAge: 7,
-      sortOrder: 7,
-      timeOfDay: "ANYTIME",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Rubbish",
-      description:
-        "Check kitchen, bathrooms and ski room. Take all rubbish and recycling to Iwikau Recycling Centre. Line bins and wipe spills. Check with stores person re food needs. Cold ashes can go with rubbish.",
-      recommendedPeopleMin: 1,
-      recommendedPeopleMax: 1,
-      isEssential: true,
-      ageRestriction: "ADULTS_ONLY",
-      conditionalNote: null,
-      minAge: 18,
-      sortOrder: 8,
-      timeOfDay: "ANYTIME",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Dinner",
-      description: "Cook and serve",
-      recommendedPeopleMin: 2,
-      recommendedPeopleMax: 3,
-      isEssential: true,
-      ageRestriction: "ADULTS_ONLY",
-      conditionalNote: null,
-      minAge: 18,
-      sortOrder: 9,
-      timeOfDay: "EVENING",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Pre-dinner dishes",
-      description: "Wash, dry and put away",
-      recommendedPeopleMin: 2,
-      recommendedPeopleMax: 2,
-      isEssential: false,
-      ageRestriction: "ANY",
-      conditionalNote: "Only required for full lodge",
-      minAge: 0,
-      sortOrder: 10,
-      timeOfDay: "EVENING",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Dinner dishes",
-      description:
-        "Wash, dry, put away and wipe tables. Includes pots and pans.",
-      recommendedPeopleMin: 4,
-      recommendedPeopleMax: 6,
-      isEssential: true,
-      ageRestriction: "MIXED_PREFERRED",
-      conditionalNote: null,
-      minAge: 0,
-      sortOrder: 11,
-      timeOfDay: "EVENING",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Women's bathroom and toilets",
-      description:
-        "Clean toilets and all surfaces including inside showers. Glass clean mirror.",
-      recommendedPeopleMin: 2,
-      recommendedPeopleMax: 2,
-      isEssential: true,
-      ageRestriction: "MIXED_PREFERRED",
-      conditionalNote: "Ideal pairing: adult + child",
-      minAge: 0,
-      sortOrder: 12,
-      timeOfDay: "ANYTIME",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Men's bathroom and toilets",
-      description:
-        "Clean toilets and all surfaces including inside showers. Glass clean mirror.",
-      recommendedPeopleMin: 2,
-      recommendedPeopleMax: 2,
-      isEssential: true,
-      ageRestriction: "MIXED_PREFERRED",
-      conditionalNote: "Ideal pairing: adult + child",
-      minAge: 0,
-      sortOrder: 13,
-      timeOfDay: "ANYTIME",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Ski room, drying room and foyer",
-      description:
-        "Sweep and mop. Tip dirty water under deck outside entrance.",
-      recommendedPeopleMin: 1,
-      recommendedPeopleMax: 1,
-      isEssential: false,
-      ageRestriction: "ANY",
-      conditionalNote: null,
-      minAge: 0,
-      sortOrder: 14,
-      timeOfDay: "ANYTIME",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Lounge",
-      description:
-        "Vacuum floors, wipe up dust, wipe moisture from window sills",
-      recommendedPeopleMin: 1,
-      recommendedPeopleMax: 2,
-      isEssential: false,
-      ageRestriction: "ANY",
-      conditionalNote: null,
-      minAge: 0,
-      sortOrder: 15,
-      timeOfDay: "ANYTIME",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Bunkrooms, corridor, stairs and dining room carpet",
-      description:
-        "Vacuum floors, wipe up dust, wipe moisture from window sills",
-      recommendedPeopleMin: 1,
-      recommendedPeopleMax: 1,
-      isEssential: false,
-      ageRestriction: "ANY",
-      conditionalNote: null,
-      minAge: 0,
-      sortOrder: 16,
-      timeOfDay: "ANYTIME",
-      frequencyMode: "DAILY",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [],
-    },
-    {
-      name: "Stores",
-      description:
-        "Stocktake ready for supply order on Sunday and Thursday mornings. Pick up stores on Mondays and Fridays as required.",
-      recommendedPeopleMin: 1,
-      recommendedPeopleMax: 2,
-      isEssential: true,
-      ageRestriction: "ADULTS_ONLY",
-      conditionalNote: null,
-      minAge: 18,
-      sortOrder: 17,
-      timeOfDay: "ANYTIME",
-      frequencyMode: "SPECIFIC_DAYS",
-      frequencyDays: null,
-      frequencyDaysOfWeek: [1, 4, 5, 7],
-    },
-  ];
-
-  for (const chore of choreTemplates) {
-    await prisma.choreTemplate.create({ data: chore });
+  // Seed example chore templates only when none exist yet, so re-runs never
+  // resurrect templates an admin has deleted or renamed.
+  const choreTemplateCount = await prisma.choreTemplate.count();
+  if (choreTemplateCount === 0) {
+    const choreTemplates = buildSeedChoreTemplates();
+    for (const chore of choreTemplates) {
+      await prisma.choreTemplate.create({ data: chore });
+    }
+    console.log(`Chore templates seeded: ${choreTemplates.length} example templates`);
+  } else {
+    console.log("Chore templates already present; skipping");
   }
 
-  console.log("Chore templates seeded: 17 templates");
-
-  // Seed admin user (only if no admin exists)
+  // Seed the first admin account (only if no admin exists). canLogin and
+  // emailVerified are required for the credentials login flow to accept the
+  // account; forcePasswordChange routes the first login to /change-password.
   const existingAdmin = await prisma.member.findFirst({
     where: { role: "ADMIN" },
   });
 
   if (!existingAdmin) {
     const passwordHash = await bcrypt.hash(seedAdminPassword, 12);
-    await prisma.member.create({
-      data: {
+    const admin = await prisma.member.create({
+      data: buildSeedAdminMemberData({
         email: seedAdminEmail,
         passwordHash,
-        firstName: "Admin",
-        lastName: "User",
-        role: "ADMIN",
-        ageTier: "ADULT",
-        emailVerified: true,
-        forcePasswordChange: true,
-      },
+        firstName: process.env.SEED_ADMIN_FIRST_NAME,
+        lastName: process.env.SEED_ADMIN_LAST_NAME,
+      }),
     });
+    // Admin accounts never owe a membership subscription.
+    await ensureNotRequiredSubscriptionForRole(prisma, admin);
     console.log(
       `Admin user seeded: ${seedAdminEmail} (password change required on first login)`,
     );
   }
 
-  // Seed lodge account (shared iPad in lodge)
+  // Seed the shared lodge kiosk account (create-if-missing).
   const lodgeAccountEmail = clubDomainEmail("lodge");
   const existingLodge = await prisma.member.findFirst({
     where: { email: lodgeAccountEmail },
@@ -513,24 +307,19 @@ async function main() {
   if (!existingLodge) {
     const lodgePasswordHash = await bcrypt.hash(
       requireSeedEnv("SEED_LODGE_PASSWORD"),
-      12,
+      12
     );
-    await prisma.member.create({
-      data: {
+    const lodge = await prisma.member.create({
+      data: buildSeedLodgeMemberData({
         email: lodgeAccountEmail,
         passwordHash: lodgePasswordHash,
-        firstName: "Lodge",
-        lastName: "Kiosk",
-        role: "LODGE",
-        ageTier: "ADULT",
-        emailVerified: true,
-        forcePasswordChange: false,
-      },
+      }),
     });
+    await ensureNotRequiredSubscriptionForRole(prisma, lodge);
     console.log(`Lodge account seeded: ${lodgeAccountEmail}`);
   }
 
-  // Seed Winter 2026 season (June - September) with rates
+  // Seed Winter 2026 season (June - September) with rates from club config.
   const winter2026 = await prisma.season.upsert({
     where: { id: "seed-winter-2026" },
     update: {},
@@ -541,15 +330,12 @@ async function main() {
       startDate: new Date("2026-06-01"),
       endDate: new Date("2026-09-30"),
       active: true,
-      rates: {
-        create: seedRatesForSeason("winter"),
-      },
     },
   });
-  await upsertSeasonRates(winter2026.id, "winter");
+  await createMissingSeasonRates(winter2026.id, "winter");
   console.log(`Season seeded: ${winter2026.name}`);
 
-  // Seed Summer 2026-27 season (November - March) with rates
+  // Seed Summer 2026-27 season (November - March) with rates from club config.
   const summer2026 = await prisma.season.upsert({
     where: { id: "seed-summer-2026" },
     update: {},
@@ -560,15 +346,12 @@ async function main() {
       startDate: new Date("2026-11-01"),
       endDate: new Date("2027-03-31"),
       active: true,
-      rates: {
-        create: seedRatesForSeason("summer"),
-      },
     },
   });
-  await upsertSeasonRates(summer2026.id, "summer");
+  await createMissingSeasonRates(summer2026.id, "summer");
   console.log(`Season seeded: ${summer2026.name}`);
 
-  // Seed Xero account mappings with current defaults (XAM-01)
+  // Seed Xero account mappings with current defaults (create-if-missing).
   const accountMappings = [
     { key: "hutFeesIncome", code: "200" },
     { key: "hutFeeRefunds", code: "200" },
@@ -586,20 +369,13 @@ async function main() {
   }
   console.log("Xero account mappings seeded");
 
-  // Seed age tier settings with correct TAC boundaries (Issue 14)
+  // Seed age tier settings from club config (create-if-missing so settings
+  // edited by admins survive a re-run).
   const ageTierSettings = seedAgeTierSettings();
   for (const setting of ageTierSettings) {
     await prisma.ageTierSetting.upsert({
       where: { tier: setting.tier },
-      update: {
-        minAge: setting.minAge,
-        maxAge: setting.maxAge,
-        label: setting.label,
-        subscriptionRequiredForBooking: setting.subscriptionRequiredForBooking,
-        familyGroupRequestCreateMemberAllowed:
-          setting.familyGroupRequestCreateMemberAllowed,
-        sortOrder: setting.sortOrder,
-      },
+      update: {},
       create: setting,
     });
   }
@@ -624,179 +400,25 @@ async function main() {
   }
   console.log(`Page content seeded: ${starterPageContent.length} pages`);
 
-  // Seed committee members (replaces hardcoded src/data/committee.ts)
-  const committeeData = [
-    {
-      role: "President",
-      name: "Judy Clark",
-      phone: "+64 27 484 3060",
-      email: clubDomainEmail("president"),
-      contactKey: "president",
-      description: "Chairs meetings and oversees club operations.",
-      sortOrder: 0,
-    },
-    {
-      role: "Vice President",
-      name: "Andy Thomson",
-      phone: "+64 21 049 8886",
-      email: clubDomainEmail("vicePresident"),
-      contactKey: "vicePresident",
-      description: "Backup to the President and assists with club operations.",
-      sortOrder: 1,
-    },
-    {
-      role: "Secretary",
-      name: "Dale Thompson",
-      phone: "+64 21 212 9488",
-      email: clubDomainEmail("secretary"),
-      contactKey: "secretary",
-      description: "Manages club correspondence and meeting minutes.",
-      sortOrder: 2,
-    },
-    {
-      role: "Treasurer",
-      name: "Katie Bridge",
-      phone: "+64 27 634 8525",
-      email: clubDomainEmail("treasurer"),
-      contactKey: "treasurer",
-      description: "Manages club finances, subscriptions, and accounts.",
-      sortOrder: 2,
-    },
-    {
-      role: "Membership Officer",
-      name: "Kath Eastham",
-      phone: "+64 021 452 842",
-      email: clubDomainEmail("membership"),
-      contactKey: "membership",
-      description: "Manages club membership, renewals, and member records.",
-      sortOrder: 3,
-    },
-    {
-      role: "Booking Officer",
-      name: "Andy Schulz",
-      phone: "+64 21 031 1144",
-      email: CLUB_CONTACT_EMAIL,
-      contactKey: "bookings",
-      description:
-        "Manages lodge bookings, confirms non-member stays, and handles booking enquiries.",
-      sortOrder: 4,
-    },
-    {
-      role: "Media/Communications Officer",
-      name: "Kent Le Quesne",
-      phone: "+64 22 428 9146",
-      email: clubDomainEmail("media"),
-      contactKey: "media",
-      description:
-        "Manages club communications, media, newsletters, and public information.",
-      sortOrder: 5,
-    },
-    {
-      role: "Lodge Maintenance Officer",
-      name: "Joe Clark",
-      phone: "+64 21 708 648",
-      email: clubDomainEmail("works"),
-      contactKey: "works",
-      description:
-        "Coordinates lodge maintenance, working bees, and improvement projects.",
-      sortOrder: 6,
-    },
-    {
-      role: "Tramping Representative",
-      name: "Noel Bigwood",
-      phone: "+64 27 645 3474",
-      email: clubDomainEmail("tramping"),
-      contactKey: "tramping",
-      description:
-        "Coordinates tramping activities and represents the club in tramping matters.",
-      sortOrder: 7,
-    },
-    {
-      role: "Food Officer",
-      name: "Rebekah Thompson",
-      phone: "+64 21 252 0714",
-      email: clubDomainEmail("food"),
-      contactKey: "food",
-      description:
-        "Coordinates food-related activities and manages club catering.",
-      sortOrder: 8,
-    },
-    {
-      role: "Patron",
-      name: "Noel Bigwood",
-      phone: "+64 27 645 3474",
-      email: clubDomainEmail("patron"),
-      contactKey: "patron",
-      description:
-        "The Patron is an honorary position, recognizing significant contributions to the club.",
-      sortOrder: 9,
-    },
-    {
-      role: "Committee Member 1",
-      name: "Liza-Tanya Buckley",
-      phone: "+64 21 166 4912",
-      email: null,
-      contactKey: "committeeMember1",
-      description: "Committee member responsible for various club activities.",
-      sortOrder: 10,
-    },
-    {
-      role: "Committee Member 2",
-      name: "Natasha Thomason",
-      phone: "+64 21 240 8221",
-      email: null,
-      contactKey: "committeeMember2",
-      description: "Committee member responsible for various club activities.",
-      sortOrder: 11,
-    },
-    {
-      role: "Committee Member 3",
-      name: "Steven Thomason",
-      phone: "+64 27 393 3648",
-      email: null,
-      contactKey: "committeeMember3",
-      description: "Committee member responsible for various club activities.",
-      sortOrder: 12,
-    },
-    {
-      role: "Committee Member 4",
-      name: "Jason Donovan",
-      phone: "+64 27 323 9671",
-      email: null,
-      contactKey: "committeeMember4",
-      description: "Committee member responsible for various club activities.",
-      sortOrder: 13,
-    },
-    {
-      role: "Custodian",
-      name: "Custodian LWTC",
-      phone: "+64 21 000 0000",
-      email: clubDomainEmail("custodian"),
-      contactKey: "custodian",
-      description: "Responsible for the care and maintenance of club property.",
-      sortOrder: 14,
-    },
-  ];
-
-  for (const cm of committeeData) {
-    await prisma.committeeMember.upsert({
-      where: { id: `seed-committee-${cm.sortOrder}` },
-      update: {
-        role: cm.role,
-        name: cm.name,
-        phone: cm.phone,
-        email: cm.email,
-        contactKey: cm.contactKey,
-        description: cm.description,
-        sortOrder: cm.sortOrder,
-      },
-      create: {
-        id: `seed-committee-${cm.sortOrder}`,
-        ...cm,
-      },
+  // Seed generic committee placeholders only when the table is empty, so a
+  // populated production committee is never touched by a re-run.
+  const committeeCount = await prisma.committeeMember.count();
+  if (committeeCount === 0) {
+    const committeeData = buildSeedCommitteePlaceholders({
+      domainEmail: clubDomainEmail,
+      contactEmail: CLUB_CONTACT_EMAIL,
     });
+    for (const cm of committeeData) {
+      await prisma.committeeMember.create({ data: cm });
+    }
+    console.log(
+      `Committee placeholders seeded: ${committeeData.length} entries (replace in Admin -> Committee)`,
+    );
+  } else {
+    console.log("Committee members already present; skipping");
   }
-  console.log(`Committee members seeded: ${committeeData.length} members`);
+
+  await seedClubTheme();
 
   console.log("Seeding complete!");
 }

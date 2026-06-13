@@ -9,7 +9,7 @@ import {
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { checkCapacityForGuestRanges } from "@/lib/capacity";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import {
   calculateBookingPrice,
   type SeasonRateData,
@@ -59,7 +59,7 @@ const addGuestsSchema = z.object({
       })
     )
     .min(1)
-    .max(LODGE_CAPACITY),
+    .max(200),
 });
 
 type PromoRedemptionWithTargets = {
@@ -133,6 +133,22 @@ export async function POST(
   }
 
   const { guests: newGuests } = parsed.data;
+  const payloadCapacity = await getLodgeCapacity();
+  if (newGuests.length > payloadCapacity) {
+    return NextResponse.json(
+      {
+        error: "Invalid input",
+        details: {
+          formErrors: [],
+          fieldErrors: {
+            guests: [`A booking cannot exceed ${payloadCapacity} guests`],
+          },
+        },
+      },
+      { status: 400 },
+    );
+  }
+
   const ipAddress =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
 
@@ -191,6 +207,14 @@ export async function POST(
         throw new ApiError(
           "Use the full booking edit flow for in-progress booking guest changes",
           400
+        );
+      }
+
+      const lodgeCapacity = await getLodgeCapacity(tx);
+      if (booking.guests.length + newGuests.length > lodgeCapacity) {
+        throw new ApiError(
+          `A booking cannot exceed ${lodgeCapacity} guests`,
+          400,
         );
       }
 
@@ -344,6 +368,10 @@ export async function POST(
         memberId: guest.memberId ?? null,
         isMember: guest.isMember,
         perNightRates: fullPriceBreakdown.guests[index].perNightCents,
+        // Guests are priced over the full booking range here, so the first
+        // rate is the check-in night. Dates the rates so internal
+        // work-party promos restrict the discount to the event's window.
+        firstNight: booking.checkIn,
       }));
 
       const newTotalPriceCents = fullPriceBreakdown.totalPriceCents;

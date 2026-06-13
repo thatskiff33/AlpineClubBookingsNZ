@@ -35,6 +35,13 @@ export interface BedAllocationBooking {
   id: string;
   createdAt: Date;
   guests: BedAllocationGuest[];
+  /**
+   * Preferred room from the booking's room request, if any. Auto-allocation
+   * tries this room first before falling back to family-grouping and
+   * first-fit. A missing/inactive room (filtered out of `activeRooms`) is
+   * treated as no preference — never an error.
+   */
+  requestedRoomId: string | null;
 }
 
 export interface OccupiedBedNight {
@@ -133,6 +140,28 @@ function sortedActiveRoomsWithBeds(
         .sort(compareSortThenName)
         .map((bed) => ({ ...bed, roomId: room.id })),
     }));
+}
+
+/**
+ * Returns `rooms` reordered so the booking's requested room (if active and
+ * present) is tried first. If there is no request, or the requested room is
+ * not in `rooms` (inactive, deleted, or never set), the original order is
+ * returned unchanged — the request is silently treated as no preference.
+ */
+function roomsForBooking(
+  rooms: SortedRoomWithBeds[],
+  booking: BedAllocationBooking,
+): SortedRoomWithBeds[] {
+  const requestedRoomId = booking.requestedRoomId;
+  if (!requestedRoomId) return rooms;
+
+  const requestedIndex = rooms.findIndex((room) => room.id === requestedRoomId);
+  if (requestedIndex <= 0) return rooms;
+
+  const reordered = [...rooms];
+  const [requestedRoom] = reordered.splice(requestedIndex, 1);
+  reordered.unshift(requestedRoom);
+  return reordered;
 }
 
 function guestStayNights(guest: BedAllocationGuest): string[] {
@@ -510,6 +539,8 @@ export function buildFirstFitBedAllocationPlan({
   });
 
   for (const booking of sortedBookings) {
+    const roomsForThisBooking = roomsForBooking(activeRooms, booking);
+
     for (const { stayDate, guests } of bookingStayNights(booking)) {
       const existingAdultRooms = existingAdultRoomIds(
         existingByBookingNight.get(bookingNightKey(booking.id, stayDate)) ?? [],
@@ -525,7 +556,7 @@ export function buildFirstFitBedAllocationPlan({
           booking,
           unallocatedGuests,
           stayDate,
-          activeRooms,
+          roomsForThisBooking,
           occupied,
           allocatedGuestNights,
           allocations,
@@ -539,7 +570,7 @@ export function buildFirstFitBedAllocationPlan({
         booking,
         unallocatedGuests,
         stayDate,
-        activeRooms,
+        roomsForThisBooking,
         beds,
         occupied,
         allocatedGuestNights,

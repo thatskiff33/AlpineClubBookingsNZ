@@ -24,6 +24,9 @@ interface PromoInfo {
   code: string;
   type: string;
   description: string | null;
+  // Set when this discount came from a work party (working bee) event's
+  // internal promo rather than a manually entered code.
+  workPartyEventName?: string | null;
 }
 
 interface EditPolicyInfo {
@@ -193,9 +196,17 @@ export function BookingEditor({
           {booking.promoAdjustmentCents !== 0 && (
             <div className={`flex justify-between ${booking.promoAdjustmentCents > 0 ? "text-orange-700" : "text-green-600"}`}>
               <span>
-                Promo adjustment
-                {booking.promo?.code && (
-                  <span className="ml-1 text-xs">({booking.promo.code})</span>
+                {booking.promo?.workPartyEventName
+                  ? "Working bee discount"
+                  : "Promo adjustment"}
+                {booking.promo?.workPartyEventName ? (
+                  <span className="ml-1 text-xs">
+                    ({booking.promo.workPartyEventName})
+                  </span>
+                ) : (
+                  booking.promo?.code && (
+                    <span className="ml-1 text-xs">({booking.promo.code})</span>
+                  )
                 )}
               </span>
               <span>

@@ -5,6 +5,7 @@ import { NavBar } from "@/components/nav-bar";
 import { ReportIssueWidget } from "@/components/report-issue-widget";
 import { CLUB_NAME, clubIdentity } from "@/config/club-identity";
 import { CSP_NONCE_HEADER } from "@/lib/csp";
+import { getLodgeCapacity } from "@/lib/lodge-capacity";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import {
   hasFinanceManagerAccess,
@@ -19,11 +20,15 @@ export default async function FinanceLayout({
   const member = await requireFinanceViewer("/finance");
   const fullName = `${member.firstName} ${member.lastName}`.trim() || "Member";
   const isManager = hasFinanceManagerAccess(member.financeAccessLevel);
-  const effectiveModules = await loadEffectiveModuleFlags();
+  const [effectiveModules, lodgeCapacity] = await Promise.all([
+    loadEffectiveModuleFlags(),
+    getLodgeCapacity(),
+  ]);
+  const liveClubIdentity = { ...clubIdentity, lodgeCapacity };
   const nonce = (await headers()).get(CSP_NONCE_HEADER) ?? undefined;
 
   return (
-    <AppProviders clubIdentity={clubIdentity} nonce={nonce}>
+    <AppProviders clubIdentity={liveClubIdentity} nonce={nonce}>
       <div className="app-theme-scope min-h-screen flex flex-col bg-background text-foreground">
         <NavBar
           features={effectiveModules}

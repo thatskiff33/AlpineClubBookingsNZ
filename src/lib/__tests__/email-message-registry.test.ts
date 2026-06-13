@@ -6,6 +6,7 @@ import {
   getDefaultDeliveryMode,
 } from "@/lib/email-message-registry";
 import {
+  neutraliseSensitiveSubjectContent,
   renderTemplateString,
   validateApprovedTemplateTokens,
   validateEmailTemplateContent,
@@ -111,6 +112,80 @@ describe("email message registry", () => {
 
     expect(validation.valid).toBe(false);
     expect(validation.missingRequiredTokens).toContain("token");
+  });
+
+  it("accepts required tokens that appear only in the body", () => {
+    const validation = validateEmailTemplateContent({
+      templateName: "booking-confirmed",
+      subject: "Your booking is confirmed",
+      bodyText:
+        "Hi {{firstName}}, see you soon.\n\n{{CLUB_LODGE_TRAVEL_NOTE}}\n\nDoor code: {{doorCode}}",
+    });
+
+    expect(validation.valid).toBe(true);
+    expect(validation.missingRequiredTokens).toEqual([]);
+  });
+
+  it("does not let subject tokens satisfy required body tokens", () => {
+    const validation = validateEmailTemplateContent({
+      templateName: "age-up-parent-email-handoff",
+      subject: "Update about {{memberName}}",
+      bodyText: "Hello, an account update has occurred.",
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.missingRequiredTokens).toContain("memberName");
+  });
+
+  it("skips required token checks when the body override is empty", () => {
+    // An empty body override falls back to the default body, which already
+    // carries the required tokens.
+    const validation = validateEmailTemplateContent({
+      templateName: "booking-confirmed",
+      subject: "Your booking is confirmed",
+      bodyText: "",
+    });
+
+    expect(validation.valid).toBe(true);
+    expect(validation.missingRequiredTokens).toEqual([]);
+  });
+
+  it("rejects the door code token in subject lines", () => {
+    const validation = validateEmailTemplateContent({
+      templateName: "booking-confirmed",
+      subject: "Door code {{doorCode}}",
+      bodyText: "{{CLUB_LODGE_TRAVEL_NOTE}}\n\nDoor code: {{doorCode}}",
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.sensitiveSubjectTokens).toEqual(["doorCode"]);
+    expect(validation.issues.map((issue) => issue.code)).toContain(
+      "sensitive_subject_token",
+    );
+  });
+
+  it("rejects credential tokens in subject lines", () => {
+    const validation = validateEmailTemplateContent({
+      templateName: "password-reset",
+      subject: "Your reset code is {{token}}",
+      bodyText: "Reset here {{BASE_URL}}/reset-password?token={{token}}",
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.sensitiveSubjectTokens).toEqual(["token"]);
+  });
+
+  it("strips sensitive placeholders and live values from rendered subjects", () => {
+    expect(
+      neutraliseSensitiveSubjectContent("Door code {{doorCode}} is 97531", {
+        doorCode: "97531",
+      }),
+    ).toBe("Door code is");
+    expect(
+      neutraliseSensitiveSubjectContent("Booking Confirmed - Example Lodge", {
+        doorCode: "97531",
+      }),
+    ).toBe("Booking Confirmed - Example Lodge");
   });
 
   it("rejects subject line breaks, raw HTML, and unsafe links", () => {

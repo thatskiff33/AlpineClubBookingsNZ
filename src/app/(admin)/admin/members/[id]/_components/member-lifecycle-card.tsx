@@ -156,14 +156,7 @@ export function MemberLifecycleCard({
                 )
               </p>
               <p className="text-xs text-amber-800">
-                Review in the{" "}
-                <Link
-                  href="/admin/membership-cancellations"
-                  className="underline"
-                >
-                  cancellation review queue
-                </Link>
-                .
+                Review in the <Link href="/admin/membership-cancellations" className="underline">cancellation review queue</Link>.
               </p>
             </div>
           </div>

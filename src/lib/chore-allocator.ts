@@ -6,7 +6,7 @@
  */
 
 import { AgeTier, AgeRestriction } from "@prisma/client";
-import { LODGE_CAPACITY } from "@/lib/lodge-capacity";
+import { FALLBACK_LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -121,7 +121,7 @@ export function scalePeopleCount(
   min: number,
   max: number,
   guestCount: number,
-  capacity: number = LODGE_CAPACITY
+  capacity: number = FALLBACK_LODGE_CAPACITY,
 ): number {
   if (guestCount >= capacity) return max;
   if (min === max) return min;

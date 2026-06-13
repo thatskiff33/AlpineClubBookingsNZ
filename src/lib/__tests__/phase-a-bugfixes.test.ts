@@ -73,19 +73,14 @@ describe("#19: modify-quote promo fallback removed", () => {
 // ============================================================
 describe("#20: Lodge account seed and admin API", () => {
   it("lodge seed has forcePasswordChange: false", async () => {
-    const fs = await import("fs");
-    const path = await import("path");
-    const seedPath = path.resolve(process.cwd(), "prisma", "seed.ts");
-    const content = fs.readFileSync(seedPath, "utf-8");
+    // The seeded lodge account data now comes from prisma/seed-data.ts.
+    const { buildSeedLodgeMemberData } = await import("../../../prisma/seed-data");
+    const lodge = buildSeedLodgeMemberData({
+      email: "lodge@example.org",
+      passwordHash: "hash",
+    });
 
-    // Find the lodge account section
-    const lodgeSection = content.slice(
-      content.indexOf("// Seed lodge account"),
-      content.indexOf("console.log(\"Lodge account seeded")
-    );
-
-    expect(lodgeSection).toContain("forcePasswordChange: false");
-    expect(lodgeSection).not.toContain("forcePasswordChange: true");
+    expect(lodge.forcePasswordChange).toBe(false);
   });
 
   it("admin lodge API route file exists", async () => {

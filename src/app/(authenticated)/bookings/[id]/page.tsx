@@ -13,6 +13,7 @@ import { BookingEditor, type BookingEditorData } from "@/components/booking-edit
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
+import { RequestedRoomEditor } from "@/components/requested-room-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
 import { DeleteBookingButton } from "@/components/delete-booking-button";
 import { CopyBookingButton } from "@/components/admin/copy-booking-button";
@@ -34,6 +35,8 @@ import {
 } from "@/lib/booking-payment-state";
 import { isBookingFullyPaidForGuestNameEdits } from "@/lib/booking-modify";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { loadEmailMessageSettings } from "@/lib/email-message-settings";
+import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
 
 const historyToneClasses: Record<BookingHistoryTone, string> = {
@@ -60,9 +63,20 @@ export default async function BookingDetailPage({
     include: {
       guests: true,
       payment: true,
+      requestedRoom: {
+        select: { id: true, name: true, active: true },
+      },
       promoRedemption: {
         include: {
-          promoCode: { select: { code: true, type: true, description: true } },
+          promoCode: {
+            select: {
+              code: true,
+              type: true,
+              description: true,
+              internal: true,
+              workPartyEvent: { select: { name: true } },
+            },
+          },
         },
       },
       creditsFromCancellation: {
@@ -152,6 +166,9 @@ export default async function BookingDetailPage({
   const isDeleted = Boolean(booking.deletedAt);
   const canCancel = !isDeleted && ["PAYMENT_PENDING", "CONFIRMED", "PAID", "PENDING", "WAITLISTED", "WAITLIST_OFFERED"].includes(booking.status);
   const showArrivalTime = !isDeleted && !["CANCELLED", "COMPLETED"].includes(booking.status);
+  const modules = await loadEffectiveModuleFlags();
+  const showRequestedRoom =
+    !isDeleted && (modules.bedAllocation || Boolean(booking.requestedRoomId));
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
     role: session.user.role,
@@ -232,6 +249,8 @@ export default async function BookingDetailPage({
           code: booking.promoRedemption.promoCode.code,
           type: booking.promoRedemption.promoCode.type,
           description: booking.promoRedemption.promoCode.description,
+          workPartyEventName:
+            booking.promoRedemption.promoCode.workPartyEvent?.name ?? null,
         }
       : null,
     hasNonMembers: booking.hasNonMembers,
@@ -256,6 +275,13 @@ export default async function BookingDetailPage({
     !isDeleted &&
     booking.status === "CANCELLED" &&
     session.user.role === "ADMIN";
+  const showMemberArrivalInstructions =
+    !isDeleted &&
+    booking.memberId === session.user.id &&
+    ["CONFIRMED", "PAID"].includes(booking.status);
+  const memberArrivalInstructions = showMemberArrivalInstructions
+    ? await loadEmailMessageSettings()
+    : null;
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -389,6 +415,44 @@ export default async function BookingDetailPage({
           </CardContent>
         </Card>
       )}
+
+      {showRequestedRoom && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Preferred Room</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <RequestedRoomEditor
+              bookingId={booking.id}
+              initialRoom={booking.requestedRoom}
+              canEdit={session.user.role === "ADMIN" && canModify}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {memberArrivalInstructions ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>How to Get to the Lodge</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-slate-700">
+            <p className="whitespace-pre-wrap">
+              {memberArrivalInstructions.lodgeTravelNote}
+            </p>
+            {memberArrivalInstructions.doorCode ? (
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Door code
+                </p>
+                <p className="mt-1 text-lg font-semibold tracking-wide text-slate-950">
+                  {memberArrivalInstructions.doorCode}
+                </p>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Draft booking: $0 confirm or payment to complete */}
       {!isDeleted && isDraft && booking.finalPriceCents === 0 && (

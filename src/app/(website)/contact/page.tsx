@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import { ContactPageClient } from "@/app/(website)/contact/contact-page-client";
 import { clubIdentity, CLUB_NAME } from "@/config/club-identity";
-import { getSanitizedPageContentByPath } from "@/lib/page-content-html";
+import {
+  getSanitizedPageContentByPath,
+  pageContentHtmlToPlainText,
+} from "@/lib/page-content-html";
 
 const CONTACT_EMBED_TOKEN_REGEX = /\{\{\s*(contact-form)\s*\}\}/gi;
 
@@ -35,7 +38,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: page?.title ?? "Contact Us",
     description:
-      page?.headerText ||
+      pageContentHtmlToPlainText(page?.headerText ?? "") ||
       `Get in touch with ${CLUB_NAME} about the club, lodge, or booking enquiries.`,
   };
 }

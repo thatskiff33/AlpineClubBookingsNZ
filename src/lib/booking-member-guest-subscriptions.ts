@@ -1,6 +1,9 @@
 import type { AgeTier, SubscriptionStatus } from "@prisma/client";
 import { getAgeTierSettings } from "@/lib/age-tier";
-import { requiresPaidSubscriptionForAgeTier } from "@/lib/member-subscription-eligibility";
+import {
+  isSubscriptionEnforcementActive,
+  requiresPaidSubscriptionForAgeTier,
+} from "@/lib/member-subscription-eligibility";
 import { getSeasonYear } from "@/lib/utils";
 
 interface BookingGuestLike {
@@ -66,6 +69,12 @@ export async function findUnpaidMemberGuests(
     .map((guest) => guest.memberId as string);
 
   if (memberGuestIds.length === 0) {
+    return [];
+  }
+
+  // With the Xero module effectively off, subscriptions cannot be invoiced or
+  // paid, so member guests are never blocked on subscription status.
+  if (!(await isSubscriptionEnforcementActive())) {
     return [];
   }
 

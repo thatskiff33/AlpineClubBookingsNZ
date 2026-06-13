@@ -7,6 +7,7 @@ import crypto from "crypto";
 import { z } from "zod";
 import { nameField } from "@/lib/zod-helpers";
 import { clubDomainEmail } from "@/config/club-identity";
+import { ensureNotRequiredSubscriptionForRole } from "@/lib/member-subscription-defaults";
 
 const LODGE_ACCOUNT_EMAIL = clubDomainEmail("lodge");
 
@@ -43,6 +44,9 @@ export async function GET() {
         role: "LODGE",
         financeAccessLevel: "NONE",
         ageTier: "ADULT",
+        // canLogin must be true or the credentials login flow rejects the
+        // kiosk account outright.
+        canLogin: true,
         emailVerified: true,
         forcePasswordChange: true,
       },
@@ -54,6 +58,11 @@ export async function GET() {
         createdAt: true,
         updatedAt: true,
       },
+    });
+    // LODGE accounts never owe a membership subscription.
+    await ensureNotRequiredSubscriptionForRole(prisma, {
+      id: lodge.id,
+      role: "LODGE",
     });
     logAudit({
       action: "LODGE_ACCOUNT_CREATED",

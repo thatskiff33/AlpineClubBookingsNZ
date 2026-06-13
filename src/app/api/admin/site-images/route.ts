@@ -13,6 +13,11 @@ const IMAGE_EXTENSIONS = new Set([
   ".avif",
 ]);
 
+// Only expose the deployed branding/content image folder to the picker,
+// not the whole public/ tree. This endpoint lists repo-committed files
+// only; there is no upload capability.
+const SITE_IMAGES_DIR = "branding";
+
 function unauthorizedResponse() {
   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 }

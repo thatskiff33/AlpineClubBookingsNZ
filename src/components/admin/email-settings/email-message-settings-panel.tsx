@@ -25,6 +25,7 @@ interface EmailSettings {
   contactEmail: string;
   publicUrl: string;
   lodgeTravelNote: string;
+  doorCode: string | null;
 }
 
 interface TemplateOverride {
@@ -60,6 +61,7 @@ const settingFields: Array<{
   { key: "contactEmail", label: "Contact email" },
   { key: "publicUrl", label: "Public URL" },
   { key: "lodgeTravelNote", label: "Lodge travel note", multiline: true },
+  { key: "doorCode", label: "Door code" },
 ];
 
 export function EmailMessageSettingsPanel() {
@@ -247,7 +249,7 @@ export function EmailMessageSettingsPanel() {
                 <Textarea
                   id={`email-setting-${field.key}`}
                   className="mt-1 min-h-24"
-                  value={settings[field.key]}
+                  value={settings[field.key] ?? ""}
                   onChange={(event) =>
                     setSettings((current) =>
                       current
@@ -260,7 +262,7 @@ export function EmailMessageSettingsPanel() {
                 <Input
                   id={`email-setting-${field.key}`}
                   className="mt-1"
-                  value={settings[field.key]}
+                  value={settings[field.key] ?? ""}
                   onChange={(event) =>
                     setSettings((current) =>
                       current

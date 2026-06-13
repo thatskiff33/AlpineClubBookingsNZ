@@ -45,7 +45,11 @@ export async function GET(req: NextRequest) {
   const showArchived = searchParams.get("archived") === "true";
 
   const promoCodes = await prisma.promoCode.findMany({
-    where: showArchived ? { archivedAt: { not: null } } : { archivedAt: null },
+    // Internal promos (work party events) are managed from the Work
+    // Parties admin page, never the promo code listings.
+    where: showArchived
+      ? { archivedAt: { not: null }, internal: false }
+      : { archivedAt: null, internal: false },
     include: {
       allocations: {
         select: {

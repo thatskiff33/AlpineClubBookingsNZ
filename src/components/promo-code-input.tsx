@@ -7,7 +7,9 @@ import { Label } from "@/components/ui/label";
 import { formatLocalDateOnly } from "@/lib/date-only";
 
 export interface PromoResult {
-  code: string;
+  // Null when the discount comes from a work party event's internal promo
+  // (the internal code is never sent to the client).
+  code: string | null;
   description: string | null;
   type: string;
   discountCents: number;
@@ -15,6 +17,9 @@ export interface PromoResult {
   totalPriceCents: number;
   finalPriceCents: number;
   selectedGuestIndexes?: number[];
+  // Set when this discount came from a selected work party event rather
+  // than a manually entered promo code.
+  workPartyEvent?: { id: string; name: string; discountPercent: number } | null;
 }
 
 interface PromoCodeInputProps {
@@ -33,6 +38,10 @@ interface PromoCodeInputProps {
   appliedPromo: PromoResult | null;
   forMemberId?: string;
   prefillCode?: string;
+  // Disables entry (e.g. while a working bee discount is selected) and
+  // explains why.
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export function PromoCodeInput({
@@ -43,6 +52,8 @@ export function PromoCodeInput({
   appliedPromo,
   forMemberId,
   prefillCode,
+  disabled = false,
+  disabledReason,
 }: PromoCodeInputProps) {
   const [code, setCode] = useState(appliedPromo?.code || "");
   const [validating, setValidating] = useState(false);
@@ -168,7 +179,7 @@ export function PromoCodeInput({
   return (
     <div className="space-y-2">
       <Label htmlFor="promoCode">Promo Code (optional)</Label>
-      {appliedPromo ? (
+      {appliedPromo && !appliedPromo.workPartyEvent ? (
         <div className="flex items-center justify-between rounded-md bg-green-50 p-3 text-sm">
           <div>
             <span className="font-medium text-green-700">
@@ -201,16 +212,20 @@ export function PromoCodeInput({
             onChange={(e) => handleCodeChange(e.target.value)}
             placeholder="Enter promo code"
             className="flex-1"
+            disabled={disabled}
           />
           <Button
             type="button"
             variant="outline"
             onClick={handleApply}
-            disabled={validating || !code.trim() || (selectionRequired && selectedGuestIndexes.length === 0)}
+            disabled={disabled || validating || !code.trim() || (selectionRequired && selectedGuestIndexes.length === 0)}
           >
             {validating ? "Checking..." : selectionRequired ? "Apply Selected" : "Apply"}
           </Button>
         </div>
+      )}
+      {disabled && disabledReason && (
+        <p className="text-sm text-muted-foreground">{disabledReason}</p>
       )}
       {!appliedPromo && selectionRequired && (
         <div className="rounded-md border p-3">
