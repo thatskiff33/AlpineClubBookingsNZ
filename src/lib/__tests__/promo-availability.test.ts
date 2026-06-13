@@ -107,7 +107,7 @@ describe("getAvailablePromoCodesForMember", () => {
       },
     ]);
     expect(prisma.promoCodeAssignment.findMany).toHaveBeenCalledWith({
-      where: { memberId: "member-1" },
+      where: { memberId: "member-1", promoCode: { internal: false } },
       include: {
         promoCode: {
           include: {

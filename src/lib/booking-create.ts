@@ -42,6 +42,7 @@ import {
   validateAndCalculatePromoDiscount,
   type PromoBeneficiaryAllocation,
 } from "@/lib/promo";
+import { resolveWorkPartyEventPromoForBooking } from "@/lib/work-party";
 import {
   bumpPendingBookings,
   sendBumpedNotifications,
@@ -95,6 +96,9 @@ interface BaseInput {
   notes?: string;
   promoCodeStr?: string;
   promoGuestIndexes?: number[];
+  // Work party (working bee) event the booker is attending. Mutually
+  // exclusive with promoCodeStr; resolves to the event's internal promo.
+  workPartyEventId?: string;
   expectedArrivalTime?: string;
   requestedRoomId?: string;
   groupDiscount?: GroupDiscountConfig;
@@ -267,6 +271,7 @@ type LockedPromoRow = {
   maxNightlyValueCents: number | null;
   code: string;
   assignedMembersOnlyOwnNights: boolean;
+  internal: boolean;
 };
 
 function getPromoTargetBookingGuestIds(
@@ -284,6 +289,9 @@ function getPromoTargetBookingGuestIds(
  * Locks the row for update so concurrent bookings cannot over-redeem.
  * Throws BookingPromoError on validation failure so the caller can
  * roll back and return a 400.
+ *
+ * Internal promos (work party events) are rejected like unknown codes
+ * unless allowInternal is set by the work-party resolution path.
  */
 async function resolvePromoInTransaction(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
@@ -295,6 +303,7 @@ async function resolvePromoInTransaction(
     totalPriceCents: number;
     perNightCentsByGuest: number[][];
     promoGuestIndexes?: number[];
+    allowInternal?: boolean;
   },
 ): Promise<ResolvedPromo> {
   const {
@@ -305,12 +314,17 @@ async function resolvePromoInTransaction(
     totalPriceCents,
     perNightCentsByGuest,
     promoGuestIndexes,
+    allowInternal,
   } = options;
   const normalizedCode = promoCodeStr.toUpperCase().trim();
   const lockedRows = await tx.$queryRaw<LockedPromoRow[]>`
     SELECT * FROM "PromoCode" WHERE "code" = ${normalizedCode} FOR UPDATE
   `;
   const promoCode = lockedRows.length > 0 ? lockedRows[0] : null;
+
+  if (promoCode?.internal && !allowInternal) {
+    throw new BookingPromoError("Promo code not found");
+  }
 
   let assignedMemberIds: string[] | null = null;
   if (promoCode) {
@@ -327,6 +341,7 @@ async function resolvePromoInTransaction(
     memberId: guest.memberId ?? null,
     isMember: guest.isMember,
     perNightRates: perNightCentsByGuest[index],
+    firstNight: guest.stayStart ?? checkIn,
   }));
   const application = await validateAndCalculatePromoDiscount(
     promoCode,
@@ -354,6 +369,46 @@ async function resolvePromoInTransaction(
     promoShouldPersist: shouldPersistPromoRedemption(promoResult),
     promoCodeRecord: promoCode,
   };
+}
+
+const PROMO_WORK_PARTY_EXCLUSION_MESSAGE =
+  "A promo code cannot be combined with a working bee discount. Please remove one of them and try again.";
+
+/**
+ * Resolve the effective promo source for a booking: either the
+ * member-entered code or the selected work party event's internal promo.
+ * Only one PromoRedemption can exist per booking, so the two are mutually
+ * exclusive. Throws BookingPromoError when both are supplied or the event
+ * is not bookable for these dates.
+ */
+async function resolveEffectivePromoSource(
+  db: Parameters<typeof resolveWorkPartyEventPromoForBooking>[0],
+  options: {
+    promoCodeStr?: string;
+    workPartyEventId?: string;
+    checkIn: Date;
+    checkOut: Date;
+  }
+): Promise<{ promoCodeStr: string; allowInternal: boolean } | null> {
+  if (options.workPartyEventId && options.promoCodeStr) {
+    throw new BookingPromoError(PROMO_WORK_PARTY_EXCLUSION_MESSAGE);
+  }
+  if (options.workPartyEventId) {
+    const resolution = await resolveWorkPartyEventPromoForBooking(
+      db,
+      options.workPartyEventId,
+      options.checkIn,
+      options.checkOut
+    );
+    if (!resolution.ok) {
+      throw new BookingPromoError(resolution.error);
+    }
+    return { promoCodeStr: resolution.promoCodeStr, allowInternal: true };
+  }
+  if (options.promoCodeStr) {
+    return { promoCodeStr: options.promoCodeStr, allowInternal: false };
+  }
+  return null;
 }
 
 function buildGuestCreateData(guests: BookingGuestInput[], price: { guests: { priceCents: number }[] }, checkIn: Date, checkOut: Date) {
@@ -405,6 +460,7 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     notes,
     promoCodeStr,
     promoGuestIndexes,
+    workPartyEventId,
     expectedArrivalTime,
     requestedRoomId,
     groupDiscount,
@@ -446,9 +502,16 @@ export async function createDraftBooking(input: DraftBookingInput): Promise<Book
     let promoSelectedGuestIndexes: number[] | undefined;
     let promoShouldPersist = false;
     let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
-    if (promoCodeStr) {
+    const promoSource = await resolveEffectivePromoSource(tx, {
+      promoCodeStr,
+      workPartyEventId,
+      checkIn,
+      checkOut,
+    });
+    if (promoSource) {
       const resolved = await resolvePromoInTransaction(tx, {
-        promoCodeStr,
+        promoCodeStr: promoSource.promoCodeStr,
+        allowInternal: promoSource.allowInternal,
         effectiveMemberId,
         checkIn,
         guests,
@@ -605,6 +668,7 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     notes,
     promoCodeStr,
     promoGuestIndexes,
+    workPartyEventId,
     expectedArrivalTime,
     requestedRoomId,
     applyCreditCents,
@@ -670,9 +734,16 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
       let promoSelectedGuestIndexes: number[] | undefined;
       let promoShouldPersist = false;
       let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
-      if (promoCodeStr) {
+      const promoSource = await resolveEffectivePromoSource(tx, {
+        promoCodeStr,
+        workPartyEventId,
+        checkIn,
+        checkOut,
+      });
+      if (promoSource) {
         const resolved = await resolvePromoInTransaction(tx, {
-          promoCodeStr,
+          promoCodeStr: promoSource.promoCodeStr,
+          allowInternal: promoSource.allowInternal,
           effectiveMemberId,
           checkIn,
           guests,
@@ -921,7 +992,15 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
     try {
       const fullBooking = await prisma.booking.findUnique({
         where: { id: booking.id },
-        include: { member: true, guests: true, promoRedemption: { include: { promoCode: true } } },
+        include: {
+          member: true,
+          guests: true,
+          promoRedemption: {
+            include: {
+              promoCode: { include: { workPartyEvent: { select: { name: true } } } },
+            },
+          },
+        },
       });
       if (fullBooking) {
         sendBookingConfirmedEmail(
@@ -935,7 +1014,11 @@ export async function createConfirmedBooking(input: ConfirmedBookingInput): Prom
             ? {
                 discountCents: fullBooking.discountCents,
                 promoAdjustmentCents: fullBooking.promoAdjustmentCents,
-                promoCode: fullBooking.promoRedemption.promoCode.code,
+                // Internal work-party promo codes are meaningless to
+                // members; label the discount with the event name instead.
+                promoCode:
+                  fullBooking.promoRedemption.promoCode.workPartyEvent?.name ??
+                  fullBooking.promoRedemption.promoCode.code,
               }
             : undefined,
         ).catch((err) => logger.error({ err, bookingId: booking.id }, "Failed to send confirmation email for $0 booking"));
@@ -1024,6 +1107,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
     notes,
     promoCodeStr,
     promoGuestIndexes,
+    workPartyEventId,
     expectedArrivalTime,
     requestedRoomId,
     groupDiscount,
@@ -1059,12 +1143,21 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
   let promoShouldPersist = false;
   let promoCodeRecord: ResolvedPromo["promoCodeRecord"] = null;
 
-  if (promoCodeStr) {
-    const normalizedCode = promoCodeStr.toUpperCase().trim();
+  const promoSource = await resolveEffectivePromoSource(prisma, {
+    promoCodeStr,
+    workPartyEventId,
+    checkIn,
+    checkOut,
+  });
+  if (promoSource) {
+    const normalizedCode = promoSource.promoCodeStr.toUpperCase().trim();
     const promoCode = await prisma.promoCode.findUnique({
       where: { code: normalizedCode },
       include: { assignments: { select: { memberId: true } } },
     });
+    if (promoCode?.internal && !promoSource.allowInternal) {
+      throw new BookingPromoError("Promo code not found");
+    }
     const assignedMemberIds = promoCode?.assignments?.length
       ? promoCode.assignments.map((a) => a.memberId)
       : null;
@@ -1072,6 +1165,7 @@ export async function createWaitlistedBooking(input: WaitlistedBookingInput): Pr
       memberId: guest.memberId ?? null,
       isMember: guest.isMember,
       perNightRates: price.guests[index].perNightCents,
+      firstNight: guest.stayStart ?? checkIn,
     }));
     const application = await validateAndCalculatePromoDiscount(
       promoCode,

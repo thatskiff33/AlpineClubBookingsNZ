@@ -9,6 +9,10 @@ import {
   type PromoDiscountResult,
 } from "@/lib/pricing";
 import { formatDateOnly, formatDateOnlyForTimeZone } from "@/lib/date-only";
+import {
+  getWorkPartyNightWindowForPromo,
+  restrictPerNightRatesToWindow,
+} from "@/lib/work-party";
 
 type PrismaTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 type PromoUsageClient = typeof prisma | Prisma.TransactionClient;
@@ -82,10 +86,20 @@ export interface AssignedPromoCodeSummary extends AvailablePromoCode {
   statusReason: string;
 }
 
+/**
+ * PromoDiscountGuest plus the date of perNightRates[0] (the guest's
+ * effective stay start when the rates were priced). Required to apply an
+ * internal work party promo's night window; without it those guests'
+ * nights are excluded from the discount (fail safe, never over-discount).
+ */
+export interface PromoDiscountGuestWithNights extends PromoDiscountGuest {
+  firstNight?: Date | null;
+}
+
 export interface BookingDetailsForPromo {
   totalPriceCents: number;
   memberId: string;
-  guests: PromoDiscountGuest[];
+  guests: PromoDiscountGuestWithNights[];
   bookingCheckIn?: Date;
 }
 
@@ -101,6 +115,9 @@ export interface PromoApplicationSubject extends PromoRuleSubject {
   maxNightlyValueCents: number | null;
   memberGuestsOnly: boolean;
   assignedMembersOnlyOwnNights?: boolean | null;
+  // System-applied promo (work party events). Discount is restricted to the
+  // linked event's night window; the code is rejected at manual entry.
+  internal?: boolean | null;
 }
 
 export interface PromoApplicationResult {
@@ -476,7 +493,7 @@ export async function getAssignedPromoCodeSummariesForMember(
   now: Date = new Date()
 ): Promise<AssignedPromoCodeSummary[]> {
   const assignments = await prisma.promoCodeAssignment.findMany({
-    where: { memberId },
+    where: { memberId, promoCode: { internal: false } },
     include: {
       promoCode: {
         include: {
@@ -745,13 +762,36 @@ export async function validateAndCalculatePromoDiscount(
   }
 
   const db = options.db ?? prisma;
+
+  // Internal work party promos discount only the nights inside the linked
+  // event's window. Restrict each guest's per-night rates up front so all
+  // downstream eligibility and discount maths see in-window nights only.
+  // Guests without a firstNight cannot be dated, so their nights are
+  // excluded entirely (fail safe, never over-discount).
+  let detailGuests = bookingDetails.guests;
+  if (promoCode.internal) {
+    const nightWindow = await getWorkPartyNightWindowForPromo(db, promoCode.id);
+    if (nightWindow) {
+      detailGuests = bookingDetails.guests.map((guest) => ({
+        ...guest,
+        perNightRates: guest.firstNight
+          ? restrictPerNightRatesToWindow(
+              guest.perNightRates,
+              guest.firstNight,
+              nightWindow
+            )
+          : [],
+      }));
+    }
+  }
+
   const requiresGuestSelection = assignmentRequiresGuestSelection(promoCode, assignedMemberIds);
   const selectableGuestIndexes = requiresGuestSelection
-    ? selectablePromoGuestIndexes(promoCode, bookingDetails.guests)
+    ? selectablePromoGuestIndexes(promoCode, detailGuests)
     : undefined;
   const selectedGuestIndexes = normalizeSelectedGuestIndexes(
     options.selectedGuestIndexes,
-    bookingDetails.guests.length
+    detailGuests.length
   );
   if (selectedGuestIndexes.error) {
     return {
@@ -791,8 +831,8 @@ export async function validateAndCalculatePromoDiscount(
     }
   }
   const guestsForPromo = requiresGuestSelection
-    ? filterGuestsByIndexes(bookingDetails.guests, selectedGuestIndexes.indexes)
-    : bookingDetails.guests;
+    ? filterGuestsByIndexes(detailGuests, selectedGuestIndexes.indexes)
+    : detailGuests;
   const assignedGuestScopeMemberIds = scopedAssignmentMemberIds(
     promoCode,
     assignedMemberIds
@@ -989,7 +1029,9 @@ export async function validatePromoCodeFull(
     include: { assignments: { select: { memberId: true } } },
   });
 
-  if (!promoCode) {
+  // Internal promos (work party events) are system-applied only; treat a
+  // manually entered internal code exactly like a nonexistent one.
+  if (!promoCode || promoCode.internal) {
     return { valid: false, error: "Promo code not found" };
   }
 

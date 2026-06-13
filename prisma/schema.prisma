@@ -1049,15 +1049,19 @@ model PromoCode {
   // wins unless xeroAccountCode is also explicitly supplied (in which case it overrides).
   xeroItemCode            String?
   xeroAccountCode         String?
+  // Internal promos are auto-applied by the system (e.g. work party events).
+  // They are hidden from all promo listings and rejected at manual code entry.
+  internal                Boolean       @default(false)
   active                  Boolean       @default(true)
   archivedAt              DateTime?
   createdAt               DateTime      @default(now())
   updatedAt               DateTime      @updatedAt
 
   // Relations
-  redemptions PromoRedemption[]
-  allocations PromoRedemptionAllocation[]
-  assignments PromoCodeAssignment[]
+  redemptions    PromoRedemption[]
+  allocations    PromoRedemptionAllocation[]
+  assignments    PromoCodeAssignment[]
+  workPartyEvent WorkPartyEvent?
 
   @@index([code])
   @@index([active])
@@ -1139,6 +1143,33 @@ model PromoCodeAssignment {
   @@unique([promoCodeId, memberId])
   @@index([promoCodeId])
   @@index([memberId])
+}
+
+// ---------------------------------------------------------------------------
+// Work Party (Working Bee) Events
+// ---------------------------------------------------------------------------
+
+// Admin-created working bee events. Each event owns an internal auto-applied
+// PromoCode (type PERCENTAGE) so redemption tracking, pricing, Xero, the $0
+// confirmation path, and bump cleanup all reuse the existing promo machinery.
+// The discount applies only to guest nights within startDate..endDate
+// (both inclusive, matching Season night semantics).
+model WorkPartyEvent {
+  id              String   @id @default(cuid())
+  name            String   @db.VarChar(200)
+  description     String?  @db.VarChar(1000)
+  startDate       DateTime @db.Date
+  endDate         DateTime @db.Date
+  discountPercent Int      @default(100)
+  active          Boolean  @default(true)
+  promoCodeId     String   @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  promoCode PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+
+  @@index([active])
+  @@index([startDate, endDate])
 }
 
 // ---------------------------------------------------------------------------

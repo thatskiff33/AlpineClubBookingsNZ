@@ -40,6 +40,12 @@ export interface DashboardGuestNight {
   stayDate: string;
 }
 
+export interface DashboardRequestedRoom {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
 export interface DashboardBookingSummary {
   id: string;
   status: string;
@@ -47,6 +53,9 @@ export interface DashboardBookingSummary {
   checkIn: string;
   checkOut: string;
   memberName: string;
+  // Preferred room requested at booking time (#706). Inactive rooms are
+  // surfaced as a warning chip rather than treated as a preference.
+  requestedRoom: DashboardRequestedRoom | null;
 }
 
 export interface DashboardWarning {

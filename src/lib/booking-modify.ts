@@ -920,6 +920,9 @@ export async function calculateModifiedPricing(
         bookingGuestId: guest.bookingGuestId ?? null,
         isMember: guest.isMember,
         perNightRates: priceBreakdown.guests[index]?.perNightCents ?? [],
+        // Dates the positional rates so internal work-party promos restrict
+        // the discount to the event's night window.
+        firstNight: guest.stayStart ?? newCheckIn,
       }));
 
   return {
@@ -1026,7 +1029,10 @@ export async function applyPromoCodeChanges(
       include: { assignments: { select: { memberId: true } } },
     });
 
-    if (!promoCode) throw new ApiError("Promo code not found", 400);
+    // Internal promos (work party events) cannot be entered as codes.
+    if (!promoCode || promoCode.internal) {
+      throw new ApiError("Promo code not found", 400);
+    }
 
     const assignedMemberIds = promoCode.assignments.length
       ? promoCode.assignments.map((assignment) => assignment.memberId)

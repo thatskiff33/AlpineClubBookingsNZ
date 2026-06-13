@@ -35,6 +35,7 @@ import {
   Puzzle,
   UserX,
   BedDouble,
+  Hammer,
   FilePenLine,
   Palette,
 } from "lucide-react";
@@ -95,6 +96,7 @@ const navSections: NavSection[] = [
       { href: "/admin/roster", label: "Roster", icon: ClipboardList },
       { href: "/admin/chores", label: "Chores", icon: CheckSquare },
       { href: "/admin/hut-leaders", label: "Hut Leaders", icon: UserCheck },
+      { href: "/admin/work-parties", label: "Work Parties", icon: Hammer },
       {
         href: "/admin/lodge-instructions",
         label: "Lodge Instructions",

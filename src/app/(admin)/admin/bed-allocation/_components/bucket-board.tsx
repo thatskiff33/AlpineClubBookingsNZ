@@ -72,6 +72,16 @@ export function BucketBoard({
                 <span className="text-xs text-muted-foreground">
                   {booking.checkIn} – {booking.checkOut}
                 </span>
+                {booking.requestedRoom &&
+                  (booking.requestedRoom.active ? (
+                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">
+                      Requested: {booking.requestedRoom.name}
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                      Requested room no longer active: {booking.requestedRoom.name}
+                    </span>
+                  ))}
               </div>
               <div className="space-y-2">
                 {groups.map((group) => (

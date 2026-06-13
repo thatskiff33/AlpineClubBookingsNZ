@@ -812,6 +812,9 @@ export async function POST(
       memberId: guest.memberId ?? null,
       isMember: guest.isMember,
       perNightRates: priceBreakdown?.guests[index]?.perNightCents ?? [],
+      // Dates the positional rates so internal work-party promos restrict
+      // the discount to the event's night window.
+      firstNight: guest.stayStart ?? newCheckIn,
     }));
   }
 

@@ -107,10 +107,9 @@ describe("API route boundary metadata", () => {
     .sort();
 
   it("keeps the public route allowlist exact and backed by real files", () => {
-    // 240 = 238 routes on main (237 plus the bed allocation bulk-allocate
-    // route) + member room-request lookup (bookings/rooms) + admin
-    // requested-room editor (admin/bookings/[id]/requested-room), added for #706.
-    expect(routeFiles).toHaveLength(240);
+    // 243 = 240 routes on main (see #706) + 3 work party routes added for
+    // #711: work-parties/active, admin/work-parties, admin/work-parties/[id].
+    expect(routeFiles).toHaveLength(243);
 
     const missing = Object.keys(explicitPublicApiRoutes).filter(
       (routePath) => !routeFiles.includes(routePath)
