@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import {
   getEffectiveModuleFlags,
-  type ModuleSettingsValues,
+  type ModuleSettingsValues
 } from "@/config/modules";
 
 const mocks = vi.hoisted(() => ({
@@ -18,42 +18,42 @@ const mocks = vi.hoisted(() => ({
   getAuditRequestContext: vi.fn(() => ({
     id: "req-1",
     ipAddress: "127.0.0.1",
-    userAgent: "vitest",
-  })),
+    userAgent: "vitest"
+  }))
 }));
 
 vi.mock("@/lib/auth", () => ({
-  auth: mocks.auth,
+  auth: mocks.auth
 }));
 
 vi.mock("@/lib/session-guards", () => ({
   requireAdmin: async () =>
     (await import("./helpers/require-admin-mock")).evaluateRequireAdminMock(),
-  requireActiveSessionUser: mocks.requireActiveSessionUser,
+  requireActiveSessionUser: mocks.requireActiveSessionUser
 }));
 
 vi.mock("@/lib/audit", () => ({
   buildStructuredAuditLogCreateArgs: mocks.buildStructuredAuditLogCreateArgs,
-  getAuditRequestContext: mocks.getAuditRequestContext,
+  getAuditRequestContext: mocks.getAuditRequestContext
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     clubModuleSettings: {
       findUnique: mocks.clubModuleSettingsFindUnique,
-      upsert: mocks.clubModuleSettingsUpsert,
+      upsert: mocks.clubModuleSettingsUpsert
     },
     auditLog: {
-      create: mocks.auditLogCreate,
+      create: mocks.auditLogCreate
     },
-    $transaction: mocks.transaction,
-  },
+    $transaction: mocks.transaction
+  }
 }));
 
 vi.mock("@/lib/logger", () => ({
   default: {
-    error: vi.fn(),
-  },
+    error: vi.fn()
+  }
 }));
 
 import { GET, PUT } from "@/app/api/admin/modules/route";
@@ -69,7 +69,7 @@ const allEnabled: ModuleSettingsValues = {
   waitlist: true,
   xeroIntegration: true,
   bedAllocation: true,
-  internetBankingPayments: true,
+  internetBankingPayments: true
 };
 
 function request(body: unknown) {
@@ -79,13 +79,16 @@ function request(body: unknown) {
     headers: {
       "Content-Type": "application/json",
       "x-request-id": "req-1",
-      "user-agent": "vitest",
-    },
+      "user-agent": "vitest"
+    }
   });
 }
 
 function readRepoFile(relativePath: string) {
-  return readFileSync(path.resolve(process.cwd(), relativePath), "utf8").replace(/\r\n/g, "\n");
+  return readFileSync(
+    path.resolve(process.cwd(), relativePath),
+    "utf8"
+  ).replace(/\r\n/g, "\n");
 }
 
 function sliceFrom(source: string, startMarker: string, endMarker: string) {
@@ -103,10 +106,10 @@ describe("Admin modules schema contract", () => {
     const model = sliceFrom(
       schema,
       "model ClubModuleSettings",
-      "// ---------------------------------------------------------------------------\n// Email Message Configuration",
+      "// ---------------------------------------------------------------------------\n// Email Message Configuration"
     );
     const migration = readRepoFile(
-      "prisma/migrations/20260518113000_add_club_module_settings/migration.sql",
+      "prisma/migrations/20260518113000_add_club_module_settings/migration.sql"
     );
 
     expect(model).toContain("kiosk                   Boolean  @default(true)");
@@ -117,13 +120,17 @@ describe("Admin modules schema contract", () => {
     expect(model).toContain("bedAllocation           Boolean  @default(true)");
     expect(model).toContain("internetBankingPayments Boolean  @default(true)");
     expect(model).not.toMatch(/secret|token|credential|tenant/i);
-    expect(migration).toContain('CREATE TABLE IF NOT EXISTS "ClubModuleSettings"');
-    expect(migration).toContain('"financeDashboard" BOOLEAN NOT NULL DEFAULT true');
+    expect(migration).toContain(
+      'CREATE TABLE IF NOT EXISTS "ClubModuleSettings"'
+    );
+    expect(migration).toContain(
+      '"financeDashboard" BOOLEAN NOT NULL DEFAULT true'
+    );
     expect(migration).toContain('INSERT INTO "ClubModuleSettings" ("id")');
     expect(
       readRepoFile(
-        "prisma/migrations/20260607120000_add_bed_allocation_and_internet_banking_modules/migration.sql",
-      ),
+        "prisma/migrations/20260607120000_add_bed_allocation_and_internet_banking_modules/migration.sql"
+      )
     ).toContain('"internetBankingPayments" BOOLEAN NOT NULL DEFAULT true');
   });
 });
@@ -141,15 +148,17 @@ describe("Admin modules API", () => {
 
     mocks.requireActiveSessionUser.mockResolvedValue(null);
     mocks.clubModuleSettingsFindUnique.mockResolvedValue(null);
-    mocks.clubModuleSettingsUpsert.mockImplementation(async ({ create, update }) => ({
-      id: "default",
-      ...create,
-      ...update,
-      updatedAt: new Date("2026-05-18T11:00:00.000Z"),
-    }));
+    mocks.clubModuleSettingsUpsert.mockImplementation(
+      async ({ create, update }) => ({
+        id: "default",
+        ...create,
+        ...update,
+        updatedAt: new Date("2026-05-18T11:00:00.000Z")
+      })
+    );
     mocks.auditLogCreate.mockResolvedValue({ id: "audit-1" });
     mocks.transaction.mockImplementation(async (operations) =>
-      Promise.all(operations),
+      Promise.all(operations)
     );
   });
 
@@ -169,7 +178,7 @@ describe("Admin modules API", () => {
       ...allEnabled,
       waitlist: false,
       updatedAt: new Date("2026-05-18T11:00:00.000Z"),
-      updatedByMemberId: "admin-1",
+      updatedByMemberId: "admin-1"
     });
 
     const response = await GET();
@@ -185,14 +194,14 @@ describe("Admin modules API", () => {
       "waitlist",
       "xeroIntegration",
       "bedAllocation",
-      "internetBankingPayments",
+      "internetBankingPayments"
     ]);
     expect(body.modules[0]).toEqual(
       expect.objectContaining({
         key: "kiosk",
         adminEnabled: true,
-        envVar: "FEATURE_KIOSK",
-      }),
+        envVar: "FEATURE_KIOSK"
+      })
     );
   });
 
@@ -203,9 +212,9 @@ describe("Admin modules API", () => {
       request({
         settings: {
           ...allEnabled,
-          xeroClientSecret: "should-not-store",
-        },
-      }),
+          xeroClientSecret: "should-not-store"
+        }
+      })
     );
 
     expect(response.status).toBe(400);
@@ -228,13 +237,13 @@ describe("Admin modules API", () => {
       id: "default",
       ...allEnabled,
       updatedAt: new Date("2026-05-18T10:00:00.000Z"),
-      updatedByMemberId: "admin-0",
+      updatedByMemberId: "admin-0"
     });
 
     const nextSettings: ModuleSettingsValues = {
       ...allEnabled,
       waitlist: false,
-      xeroIntegration: false,
+      xeroIntegration: false
     };
 
     const response = await PUT(request({ settings: nextSettings }));
@@ -247,12 +256,12 @@ describe("Admin modules API", () => {
       create: {
         id: "default",
         ...nextSettings,
-        updatedByMemberId: "admin-1",
+        updatedByMemberId: "admin-1"
       },
       update: {
         ...nextSettings,
-        updatedByMemberId: "admin-1",
-      },
+        updatedByMemberId: "admin-1"
+      }
     });
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
     expect(mocks.auditLogCreate).toHaveBeenCalledWith(
@@ -266,13 +275,13 @@ describe("Admin modules API", () => {
             changedModuleKeys: ["waitlist", "xeroIntegration"],
             changes: [
               { key: "waitlist", previous: true, next: false },
-              { key: "xeroIntegration", previous: true, next: false },
+              { key: "xeroIntegration", previous: true, next: false }
             ],
             previousSettings: allEnabled,
-            newSettings: nextSettings,
-          },
-        }),
-      }),
+            newSettings: nextSettings
+          }
+        })
+      })
     );
   });
 });
@@ -292,10 +301,10 @@ describe("effective module state", () => {
           waitlist: true,
           xeroIntegration: true,
           bedAllocation: true,
-          internetBankingPayments: true,
+          internetBankingPayments: true
         },
-        { ...allEnabled, waitlist: false },
-      ).waitlist,
+        { ...allEnabled, waitlist: false }
+      ).waitlist
     ).toBe(false);
     expect(
       getEffectiveModuleFlags(
@@ -306,10 +315,10 @@ describe("effective module state", () => {
           waitlist: false,
           xeroIntegration: true,
           bedAllocation: true,
-          internetBankingPayments: true,
+          internetBankingPayments: true
         },
-        { ...allEnabled, waitlist: true },
-      ).waitlist,
+        { ...allEnabled, waitlist: true }
+      ).waitlist
     ).toBe(false);
     expect(
       getEffectiveModuleFlags(
@@ -320,16 +329,16 @@ describe("effective module state", () => {
           waitlist: true,
           xeroIntegration: true,
           bedAllocation: true,
-          internetBankingPayments: true,
+          internetBankingPayments: true
         },
-        { ...allEnabled, waitlist: true },
-      ).waitlist,
+        { ...allEnabled, waitlist: true }
+      ).waitlist
     ).toBe(true);
   });
 
   it("fails closed when module settings cannot be read", async () => {
     mocks.clubModuleSettingsFindUnique.mockRejectedValue(
-      new Error("database unavailable"),
+      new Error("database unavailable")
     );
 
     await expect(
@@ -340,8 +349,8 @@ describe("effective module state", () => {
         waitlist: true,
         xeroIntegration: true,
         bedAllocation: true,
-        internetBankingPayments: true,
-      }),
+        internetBankingPayments: true
+      })
     ).resolves.toEqual({
       kiosk: false,
       chores: false,
@@ -349,7 +358,7 @@ describe("effective module state", () => {
       waitlist: false,
       xeroIntegration: false,
       bedAllocation: false,
-      internetBankingPayments: false,
+      internetBankingPayments: false
     });
   });
 });

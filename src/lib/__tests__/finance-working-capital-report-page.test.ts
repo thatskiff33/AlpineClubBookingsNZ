@@ -2,22 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceSnapshotType } from "@prisma/client";
 
 const { mockListFinanceSnapshots } = vi.hoisted(() => ({
-  mockListFinanceSnapshots: vi.fn(),
+  mockListFinanceSnapshots: vi.fn()
 }));
 
 vi.mock("@/lib/finance-sync-storage", () => ({
   DEFAULT_FINANCE_SNAPSHOT_SCOPE: "default",
-  listFinanceSnapshots: mockListFinanceSnapshots,
+  listFinanceSnapshots: mockListFinanceSnapshots
 }));
 
 vi.mock("@/lib/finance-auth", () => ({
-  hasFinanceManagerAccess: (level: string) => level === "MANAGER",
+  hasFinanceManagerAccess: (level: string) => level === "MANAGER"
 }));
 
 import {
   buildDefaultFinanceWorkingCapitalReportFilters,
   buildFinanceWorkingCapitalReportPageModel,
-  resolveFinanceWorkingCapitalReportFilters,
+  resolveFinanceWorkingCapitalReportFilters
 } from "@/lib/finance-working-capital-report-page";
 
 function financeViewer() {
@@ -29,7 +29,7 @@ function financeViewer() {
     role: "MEMBER" as const,
     financeAccessLevel: "VIEWER" as const,
     active: true,
-    forcePasswordChange: false,
+    forcePasswordChange: false
   };
 }
 
@@ -42,7 +42,7 @@ function financeManager() {
     role: "ADMIN" as const,
     financeAccessLevel: "MANAGER" as const,
     active: true,
-    forcePasswordChange: false,
+    forcePasswordChange: false
   };
 }
 
@@ -79,14 +79,14 @@ function balanceSheetSnapshot(input: {
       reportTitles: [
         "Balance Sheet",
         "Example Alpine Club",
-        `As at ${input.asOfDate}`,
+        `As at ${input.asOfDate}`
       ],
       fields: [
         {
           fieldId: "period",
           description: "Period",
-          value: input.asOfDate,
-        },
+          value: input.asOfDate
+        }
       ],
       rows: [
         {
@@ -103,16 +103,16 @@ function balanceSheetSnapshot(input: {
                   rowType: "Row",
                   title: null,
                   cells: [{ value: "Bank" }, { value: input.bankBalance }],
-                  rows: [],
+                  rows: []
                 },
                 {
                   rowType: "Row",
                   title: null,
                   cells: [
                     { value: "Accounts receivable" },
-                    { value: input.receivables },
+                    { value: input.receivables }
                   ],
-                  rows: [],
+                  rows: []
                 },
                 {
                   rowType: "SummaryRow",
@@ -123,12 +123,12 @@ function balanceSheetSnapshot(input: {
                       value: (
                         Number.parseFloat(input.bankBalance) +
                         Number.parseFloat(input.receivables)
-                      ).toFixed(2),
-                    },
+                      ).toFixed(2)
+                    }
                   ],
-                  rows: [],
-                },
-              ],
+                  rows: []
+                }
+              ]
             },
             {
               rowType: "Section",
@@ -139,26 +139,26 @@ function balanceSheetSnapshot(input: {
                   rowType: "Row",
                   title: null,
                   cells: [{ value: "Equipment" }, { value: input.equipment }],
-                  rows: [],
+                  rows: []
                 },
                 {
                   rowType: "SummaryRow",
                   title: null,
                   cells: [
                     { value: "Total Fixed Assets" },
-                    { value: input.equipment },
+                    { value: input.equipment }
                   ],
-                  rows: [],
-                },
-              ],
+                  rows: []
+                }
+              ]
             },
             {
               rowType: "SummaryRow",
               title: null,
               cells: [{ value: "Total Assets" }, { value: input.totalAssets }],
-              rows: [],
-            },
-          ],
+              rows: []
+            }
+          ]
         },
         {
           rowType: "Section",
@@ -176,30 +176,30 @@ function balanceSheetSnapshot(input: {
                       title: null,
                       cells: [
                         { value: "Accounts payable" },
-                        { value: input.payables },
+                        { value: input.payables }
                       ],
-                      rows: [],
+                      rows: []
                     },
                     {
                       rowType: "SummaryRow",
                       title: null,
                       cells: [
                         { value: "Total Current Liabilities" },
-                        { value: input.totalLiabilities },
+                        { value: input.totalLiabilities }
                       ],
-                      rows: [],
-                    },
-                  ],
+                      rows: []
+                    }
+                  ]
                 },
                 {
                   rowType: "SummaryRow",
                   title: null,
                   cells: [
                     { value: "Total Liabilities" },
-                    { value: input.totalLiabilities },
+                    { value: input.totalLiabilities }
                   ],
-                  rows: [],
-                },
+                  rows: []
+                }
               ]
             : [
                 {
@@ -207,11 +207,11 @@ function balanceSheetSnapshot(input: {
                   title: null,
                   cells: [
                     { value: "Total Liabilities" },
-                    { value: input.totalLiabilities },
+                    { value: input.totalLiabilities }
                   ],
-                  rows: [],
-                },
-              ],
+                  rows: []
+                }
+              ]
         },
         {
           rowType: "Section",
@@ -223,32 +223,32 @@ function balanceSheetSnapshot(input: {
               title: null,
               cells: [
                 { value: "Retained earnings" },
-                { value: input.retainedEarnings },
+                { value: input.retainedEarnings }
               ],
-              rows: [],
+              rows: []
             },
             {
               rowType: "Row",
               title: null,
               cells: [
                 { value: "Current earnings" },
-                { value: input.currentEarnings },
+                { value: input.currentEarnings }
               ],
-              rows: [],
+              rows: []
             },
             {
               rowType: "SummaryRow",
               title: null,
               cells: [{ value: "Total Equity" }, { value: input.totalEquity }],
-              rows: [],
-            },
-          ],
-        },
-      ],
+              rows: []
+            }
+          ]
+        }
+      ]
     },
     syncRunId: "run-1",
     createdAt: new Date("2026-05-01T00:20:00.000Z"),
-    updatedAt: new Date("2026-05-01T00:20:00.000Z"),
+    updatedAt: new Date("2026-05-01T00:20:00.000Z")
   };
 }
 
@@ -275,7 +275,7 @@ describe("finance working-capital report page model", () => {
         totalLiabilities: "450.00",
         retainedEarnings: "1200.00",
         currentEarnings: "350.00",
-        totalEquity: "1550.00",
+        totalEquity: "1550.00"
       }),
       balanceSheetSnapshot({
         id: "snapshot-april-29",
@@ -290,8 +290,8 @@ describe("finance working-capital report page model", () => {
         totalLiabilities: "500.00",
         retainedEarnings: "1100.00",
         currentEarnings: "300.00",
-        totalEquity: "1400.00",
-      }),
+        totalEquity: "1400.00"
+      })
     ]);
   });
 
@@ -302,31 +302,31 @@ describe("finance working-capital report page model", () => {
 
   it("uses the latest stored working-capital snapshots for managers", async () => {
     const model = await buildFinanceWorkingCapitalReportPageModel({
-      member: financeManager(),
+      member: financeManager()
     });
 
     expect(model.isManager).toBe(true);
     expect(model.filters).toEqual(
-      buildDefaultFinanceWorkingCapitalReportFilters(),
+      buildDefaultFinanceWorkingCapitalReportFilters()
     );
     expect(model.summaryCards[0]).toMatchObject({
       title: "Latest current assets",
-      value: "$1400.00",
+      value: "$1400.00"
     });
     expect(model.summaryCards[1]).toMatchObject({
       title: "Latest current liabilities",
-      value: "$450.00",
+      value: "$450.00"
     });
     expect(model.summaryCards[2]).toMatchObject({
       title: "Latest working capital",
-      value: "$950.00",
+      value: "$950.00"
     });
     expect(model.summaryCards[3]).toMatchObject({
       title: "Current-assets coverage",
-      value: "3.11x",
+      value: "3.11x"
     });
     expect(model.coverageSummary).toBe(
-      "Showing 2 stored working-capital snapshots from 30 Apr 2026 backwards.",
+      "Showing 2 stored working-capital snapshots from 30 Apr 2026 backwards."
     );
     expect(model.periodRows).toEqual([
       {
@@ -339,7 +339,7 @@ describe("finance working-capital report page model", () => {
         currentRatio: "3.11x",
         currentAssetLineItemCount: "2",
         currentLiabilityLineItemCount: "1",
-        sourceUpdatedAtLabel: "1 May 2026, 12:15 pm",
+        sourceUpdatedAtLabel: "1 May 2026, 12:15 pm"
       },
       {
         snapshotId: "snapshot-april-29",
@@ -351,28 +351,28 @@ describe("finance working-capital report page model", () => {
         currentRatio: "2.50x",
         currentAssetLineItemCount: "2",
         currentLiabilityLineItemCount: "1",
-        sourceUpdatedAtLabel: "30 Apr 2026, 12:15 pm",
-      },
+        sourceUpdatedAtLabel: "30 Apr 2026, 12:15 pm"
+      }
     ]);
     expect(mockListFinanceSnapshots).toHaveBeenCalledWith({
       snapshotType: FinanceSnapshotType.BALANCE_SHEET,
       scope: "default",
-      limit: 6,
+      limit: 6
     });
   });
 
   it("falls back invalid working-capital period filters to the default window", () => {
     const resolved = resolveFinanceWorkingCapitalReportFilters({
       searchParams: {
-        periods: "0",
-      },
+        periods: "0"
+      }
     });
 
     expect(resolved.filters).toEqual({
-      periods: 6,
+      periods: 6
     });
     expect(resolved.warnings).toEqual([
-      "Working-capital periods must be a whole number between 1 and 24. Showing the default 6-period window.",
+      "Working-capital periods must be a whole number between 1 and 24. Showing the default 6-period window."
     ]);
   });
 
@@ -391,18 +391,18 @@ describe("finance working-capital report page model", () => {
         totalLiabilities: "0.00",
         retainedEarnings: "1650.00",
         currentEarnings: "350.00",
-        totalEquity: "2000.00",
-      }),
+        totalEquity: "2000.00"
+      })
     ]);
 
     const model = await buildFinanceWorkingCapitalReportPageModel({
-      member: financeViewer(),
+      member: financeViewer()
     });
 
     expect(model.isManager).toBe(false);
     expect(model.summaryCards[3]).toMatchObject({
       title: "Current-assets coverage",
-      value: "—",
+      value: "—"
     });
     expect(model.periodRows[0]?.currentRatio).toBe("—");
   });
@@ -423,7 +423,7 @@ describe("finance working-capital report page model", () => {
         retainedEarnings: "1200.00",
         currentEarnings: "350.00",
         totalEquity: "1550.00",
-        includeCurrentLiabilities: false,
+        includeCurrentLiabilities: false
       }),
       balanceSheetSnapshot({
         id: "snapshot-april-29",
@@ -438,19 +438,19 @@ describe("finance working-capital report page model", () => {
         totalLiabilities: "500.00",
         retainedEarnings: "1100.00",
         currentEarnings: "300.00",
-        totalEquity: "1400.00",
-      }),
+        totalEquity: "1400.00"
+      })
     ]);
 
     const model = await buildFinanceWorkingCapitalReportPageModel({
-      member: financeViewer(),
+      member: financeViewer()
     });
 
     expect(model.loadError).toBeUndefined();
     expect(model.periodRows).toHaveLength(1);
     expect(model.periodRows[0]?.snapshotId).toBe("snapshot-april-29");
     expect(model.filterWarnings).toContain(
-      "30 Apr 2026 did not expose both current-asset and current-liability sections and was ignored.",
+      "30 Apr 2026 did not expose both current-asset and current-liability sections and was ignored."
     );
   });
 
@@ -458,12 +458,12 @@ describe("finance working-capital report page model", () => {
     mockListFinanceSnapshots.mockResolvedValue([]);
 
     const model = await buildFinanceWorkingCapitalReportPageModel({
-      member: financeViewer(),
+      member: financeViewer()
     });
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "This working capital report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync.",
+      "This working capital report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync."
     );
     expect(model.summaryCards).toEqual([]);
     expect(model.periodRows).toEqual([]);
@@ -473,12 +473,12 @@ describe("finance working-capital report page model", () => {
     mockListFinanceSnapshots.mockRejectedValue(new Error("database timeout"));
 
     const model = await buildFinanceWorkingCapitalReportPageModel({
-      member: financeViewer(),
+      member: financeViewer()
     });
 
     expect(model.isManager).toBe(false);
     expect(model.loadError).toBe(
-      "This working capital report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync.",
+      "This working capital report is waiting for its first finance sync. Ask a finance manager to connect finance Xero and run the first sync."
     );
     expect(model.periodRows).toEqual([]);
     expect(consoleErrorSpy).toHaveBeenCalled();

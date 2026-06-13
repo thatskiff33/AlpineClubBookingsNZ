@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   CLUB_EMAIL_FROM_NAME,
-  CLUB_SUPPORT_EMAIL,
+  CLUB_SUPPORT_EMAIL
 } from "@/config/club-identity";
 import { FALLBACK_LODGE_CAPACITY as LODGE_CAPACITY } from "@/lib/lodge-capacity";
 
 // Use vi.hoisted so the mock objects are available at hoist time
 const { mockPrisma, mockTransporter } = vi.hoisted(() => {
   const mockTransporter = {
-    sendMail: vi.fn().mockResolvedValue({ messageId: "msg-456" }),
+    sendMail: vi.fn().mockResolvedValue({ messageId: "msg-456" })
   };
   const mockPrisma = {
     emailLog: {
@@ -17,11 +17,11 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
       findFirst: vi.fn().mockResolvedValue(null),
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
-      groupBy: vi.fn().mockResolvedValue([]),
+      groupBy: vi.fn().mockResolvedValue([])
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({}),
-      findMany: vi.fn().mockResolvedValue([]),
+      findMany: vi.fn().mockResolvedValue([])
     },
     emailSuppression: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -29,13 +29,13 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
       create: vi.fn().mockResolvedValue({}),
       update: vi.fn().mockResolvedValue({}),
       count: vi.fn().mockResolvedValue(0),
-      findMany: vi.fn().mockResolvedValue([]),
+      findMany: vi.fn().mockResolvedValue([])
     },
     member: {
-      findMany: vi.fn().mockResolvedValue([]),
+      findMany: vi.fn().mockResolvedValue([])
     },
     booking: {
-      findMany: vi.fn().mockResolvedValue([]),
+      findMany: vi.fn().mockResolvedValue([])
     },
     notificationPreference: {
       findUnique: vi.fn().mockResolvedValue(null),
@@ -45,7 +45,7 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
         bookingBumped: true,
         bookingCancelled: true,
         choreRoster: true,
-        marketingEmails: false,
+        marketingEmails: false
       }),
       upsert: vi.fn().mockResolvedValue({
         bookingConfirmation: true,
@@ -53,14 +53,14 @@ const { mockPrisma, mockTransporter } = vi.hoisted(() => {
         bookingBumped: true,
         bookingCancelled: true,
         choreRoster: true,
-        marketingEmails: false,
-      }),
+        marketingEmails: false
+      })
     },
     notificationDeliveryPolicy: {
       findUnique: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
-      upsert: vi.fn().mockResolvedValue({}),
-    },
+      upsert: vi.fn().mockResolvedValue({})
+    }
   };
   return { mockPrisma, mockTransporter };
 });
@@ -69,12 +69,12 @@ vi.mock("@/lib/prisma", () => ({ prisma: mockPrisma }));
 
 vi.mock("nodemailer", () => ({
   default: {
-    createTransport: () => mockTransporter,
-  },
+    createTransport: () => mockTransporter
+  }
 }));
 
 vi.mock("@/lib/logger", () => ({
-  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 }));
 
 async function flushAsyncEmailSends() {
@@ -110,10 +110,12 @@ describe("N-08: shouldSendEmail", () => {
       bookingBumped: true,
       bookingCancelled: true,
       choreRoster: true,
-      marketingEmails: false,
+      marketingEmails: false
     });
     const { shouldSendEmail } = await import("../email");
-    expect(await shouldSendEmail("member-1", "bookingConfirmation")).toBe(false);
+    expect(await shouldSendEmail("member-1", "bookingConfirmation")).toBe(
+      false
+    );
   });
 
   it("respects stored preference (true)", async () => {
@@ -123,7 +125,7 @@ describe("N-08: shouldSendEmail", () => {
       bookingBumped: true,
       bookingCancelled: true,
       choreRoster: true,
-      marketingEmails: true,
+      marketingEmails: true
     });
     const { shouldSendEmail } = await import("../email");
     expect(await shouldSendEmail("member-1", "marketingEmails")).toBe(true);
@@ -148,14 +150,14 @@ describe("sendEmail logging safeguards", () => {
       to: "admin@example.com",
       subject: "Email delivery permanently failed",
       html: "<p>Alert body</p>",
-      templateName: "admin-email-failure",
+      templateName: "admin-email-failure"
     });
 
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         templateName: "admin-email-failure",
-        htmlBody: null,
-      }),
+        htmlBody: null
+      })
     });
   });
 });
@@ -169,7 +171,9 @@ describe("N-03: checkCapacityWarnings", () => {
     vi.clearAllMocks();
     vi.resetModules();
     mockPrisma.notificationDeliveryPolicy.findUnique.mockResolvedValue(null);
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
+    mockPrisma.member.findMany.mockResolvedValue([
+      { email: "support@example.org" }
+    ]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
   });
@@ -191,8 +195,10 @@ describe("N-03: checkCapacityWarnings", () => {
         checkIn: today,
         checkOut: dayAfter,
         status: "PAID",
-        guests: Array.from({ length: occupiedGuestCount }, (_, i) => ({ id: `g-${i}` })),
-      },
+        guests: Array.from({ length: occupiedGuestCount }, (_, i) => ({
+          id: `g-${i}`
+        }))
+      }
     ]);
 
     const { checkCapacityWarnings } = await import("../cron-capacity-warnings");
@@ -223,7 +229,9 @@ describe("N-05: notifyXeroSyncError", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
+    mockPrisma.member.findMany.mockResolvedValue([
+      { email: "support@example.org" }
+    ]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
     mockPrisma.emailLog.findFirst.mockResolvedValue(null);
@@ -234,14 +242,14 @@ describe("N-05: notifyXeroSyncError", () => {
     await notifyXeroSyncError({
       errorType: "API Error",
       operation: "createInvoice",
-      errorMessage: "Rate limit exceeded",
+      errorMessage: "Rate limit exceeded"
     });
     await flushAsyncEmailSends();
 
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        templateName: "admin-xero-sync-error",
-      }),
+        templateName: "admin-xero-sync-error"
+      })
     });
   });
 
@@ -251,11 +259,13 @@ describe("N-05: notifyXeroSyncError", () => {
       errorType: "API Error",
       operation: "createInvoice",
       errorMessage:
-        "Xero failed with access_token=live-access and pi_123_secret_liveSecret",
+        "Xero failed with access_token=live-access and pi_123_secret_liveSecret"
     });
     await flushAsyncEmailSends();
 
-    const htmlBody = String(mockPrisma.emailLog.create.mock.calls[0][0].data.htmlBody);
+    const htmlBody = String(
+      mockPrisma.emailLog.create.mock.calls[0][0].data.htmlBody
+    );
     expect(htmlBody).toContain("access_token=[REDACTED]");
     expect(htmlBody).toContain("[REDACTED]");
     expect(htmlBody).not.toContain("live-access");
@@ -265,14 +275,14 @@ describe("N-05: notifyXeroSyncError", () => {
   it("suppresses duplicate alerts within 1 hour", async () => {
     mockPrisma.emailLog.findFirst.mockResolvedValue({
       id: "existing-alert",
-      templateName: "admin-xero-sync-error",
+      templateName: "admin-xero-sync-error"
     });
 
     const { notifyXeroSyncError } = await import("../xero-error-alert");
     await notifyXeroSyncError({
       errorType: "API Error",
       operation: "createInvoice",
-      errorMessage: "Rate limit exceeded",
+      errorMessage: "Rate limit exceeded"
     });
 
     // Should not create a new email log (alert suppressed)
@@ -298,8 +308,8 @@ describe("N-11: retryFailedEmails", () => {
         subject: "Test Subject",
         htmlBody: "<p>Test body</p>",
         attempts: 1,
-        status: "FAILED",
-      },
+        status: "FAILED"
+      }
     ]);
     mockPrisma.emailLog.update.mockResolvedValue({});
 
@@ -313,12 +323,12 @@ describe("N-11: retryFailedEmails", () => {
       where: { id: "log-fail-1" },
       data: expect.objectContaining({
         status: "SENT",
-        attempts: 2,
-      }),
+        attempts: 2
+      })
     });
     expect(mockTransporter.sendMail).toHaveBeenCalledWith(
       expect.objectContaining({
-        from: `"${CLUB_EMAIL_FROM_NAME}" <${CLUB_SUPPORT_EMAIL}>`,
+        from: `"${CLUB_EMAIL_FROM_NAME}" <${CLUB_SUPPORT_EMAIL}>`
       })
     );
   });
@@ -331,8 +341,8 @@ describe("N-11: retryFailedEmails", () => {
         subject: "Test",
         htmlBody: "<p>Test</p>",
         attempts: 2,
-        status: "FAILED",
-      },
+        status: "FAILED"
+      }
     ]);
     mockTransporter.sendMail.mockRejectedValueOnce(new Error("SMTP error"));
     mockPrisma.emailLog.update.mockResolvedValue({});
@@ -350,8 +360,8 @@ describe("N-11: retryFailedEmails", () => {
       where: { id: "log-fail-2" },
       data: expect.objectContaining({
         attempts: 3,
-        errorMessage: "SMTP error",
-      }),
+        errorMessage: "SMTP error"
+      })
     });
 
     (process.env as Record<string, string>).NODE_ENV = origEnv!;
@@ -366,8 +376,8 @@ describe("N-11: retryFailedEmails", () => {
         templateName: "admin-email-failure",
         htmlBody: "<p>Alert</p>",
         attempts: 2,
-        status: "FAILED",
-      },
+        status: "FAILED"
+      }
     ]);
     mockTransporter.sendMail.mockRejectedValueOnce(new Error("SMTP error"));
     mockPrisma.emailLog.update.mockResolvedValue({});
@@ -383,8 +393,8 @@ describe("N-11: retryFailedEmails", () => {
       where: { id: "log-fail-3" },
       data: expect.objectContaining({
         attempts: 3,
-        errorMessage: "SMTP error",
-      }),
+        errorMessage: "SMTP error"
+      })
     });
     expect(mockPrisma.member.findMany).not.toHaveBeenCalled();
     expect(mockPrisma.emailLog.create).not.toHaveBeenCalled();
@@ -404,8 +414,8 @@ describe("N-11: retryFailedEmails", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           htmlBody: { not: null },
-          attempts: { lt: 3 },
-        }),
+          attempts: { lt: 3 }
+        })
       })
     );
   });
@@ -436,7 +446,7 @@ describe("exhausted email failure review", () => {
         attempts: 3,
         lastAttemptAt: new Date("2026-05-15T01:00:00.000Z"),
         errorMessage: "SMTP rejected",
-        createdAt: new Date("2026-05-15T00:00:00.000Z"),
+        createdAt: new Date("2026-05-15T00:00:00.000Z")
       },
       {
         id: "reviewed-failure",
@@ -446,8 +456,8 @@ describe("exhausted email failure review", () => {
         attempts: 3,
         lastAttemptAt: new Date("2026-05-14T01:00:00.000Z"),
         errorMessage: "SMTP rejected",
-        createdAt: new Date("2026-05-14T00:00:00.000Z"),
-      },
+        createdAt: new Date("2026-05-14T00:00:00.000Z")
+      }
     ]);
     mockPrisma.auditLog.findMany.mockResolvedValue([
       {
@@ -455,24 +465,27 @@ describe("exhausted email failure review", () => {
         actorMemberId: "admin_1",
         memberId: "admin_1",
         createdAt: new Date("2026-05-15T02:00:00.000Z"),
-        metadata: { reason: "Old alert reviewed" },
-      },
+        metadata: { reason: "Old alert reviewed" }
+      }
     ]);
 
-    const { getExhaustedEmailFailureReviewQueue } = await import("../email-failure-review");
+    const { getExhaustedEmailFailureReviewQueue } =
+      await import("../email-failure-review");
     const queue = await getExhaustedEmailFailureReviewQueue();
 
     expect(queue.summary).toMatchObject({
       activeCount: 1,
       reviewedCount: 1,
       scannedCount: 2,
-      maxAttempts: 3,
+      maxAttempts: 3
     });
-    expect(queue.failures.map((failure) => failure.id)).toEqual(["active-failure"]);
+    expect(queue.failures.map((failure) => failure.id)).toEqual([
+      "active-failure"
+    ]);
     expect(queue.recentlyReviewed[0]).toMatchObject({
       id: "reviewed-failure",
       reviewedById: "admin_1",
-      reviewNote: "Old alert reviewed",
+      reviewNote: "Old alert reviewed"
     });
   });
 
@@ -484,19 +497,20 @@ describe("exhausted email failure review", () => {
       templateName: "booking-confirmation",
       status: "FAILED",
       attempts: 3,
-      errorMessage: "SMTP rejected",
+      errorMessage: "SMTP rejected"
     });
 
-    const { markExhaustedEmailFailureReviewed } = await import("../email-failure-review");
+    const { markExhaustedEmailFailureReviewed } =
+      await import("../email-failure-review");
     await expect(
       markExhaustedEmailFailureReviewed("log_1", {
         reviewedByMemberId: "admin_1",
-        reason: "Confirmed recipient was already contacted manually",
+        reason: "Confirmed recipient was already contacted manually"
       })
     ).resolves.toEqual({
       id: "log_1",
       reviewed: true,
-      reason: "Confirmed recipient was already contacted manually",
+      reason: "Confirmed recipient was already contacted manually"
     });
 
     expect(mockPrisma.emailLog.update).not.toHaveBeenCalled();
@@ -505,8 +519,8 @@ describe("exhausted email failure review", () => {
         action: "email.failure.reviewed",
         targetId: "log_1",
         actorMemberId: "admin_1",
-        category: "communication",
-      }),
+        category: "communication"
+      })
     });
   });
 });
@@ -519,7 +533,9 @@ describe("N-13: sendAdminDigest", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
+    mockPrisma.member.findMany.mockResolvedValue([
+      { email: "support@example.org" }
+    ]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
     mockPrisma.notificationDeliveryPolicy.findUnique.mockResolvedValue(null);
@@ -531,7 +547,10 @@ describe("N-13: sendAdminDigest", () => {
       { templateName: "admin-new-booking", subject: "New booking: Bob" },
       { templateName: "admin-new-booking", subject: "New booking: Carol" },
       { templateName: "admin-payment-failure", subject: "Payment failed: xyz" },
-      { templateName: "admin-xero-repeated-failure", subject: "Repeated Xero Failure: booking:1" },
+      {
+        templateName: "admin-xero-repeated-failure",
+        subject: "Repeated Xero Failure: booking:1"
+      }
     ]);
 
     const { sendAdminDigest } = await import("../cron-admin-digest");
@@ -542,8 +561,8 @@ describe("N-13: sendAdminDigest", () => {
     expect(result.sent).toBe(true);
     expect(mockPrisma.emailLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        templateName: "admin-daily-digest",
-      }),
+        templateName: "admin-daily-digest"
+      })
     });
   });
 
@@ -560,8 +579,8 @@ describe("N-13: sendAdminDigest", () => {
     expect(mockPrisma.emailLog.create).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          templateName: "admin-daily-digest",
-        }),
+          templateName: "admin-daily-digest"
+        })
       })
     );
   });
@@ -570,7 +589,7 @@ describe("N-13: sendAdminDigest", () => {
     mockPrisma.emailLog.findMany.mockResolvedValue([]);
     mockPrisma.notificationDeliveryPolicy.findUnique.mockResolvedValue({
       templateName: "admin-daily-digest",
-      mode: "ALWAYS",
+      mode: "ALWAYS"
     });
 
     const { sendAdminDigest } = await import("../cron-admin-digest");
@@ -583,11 +602,11 @@ describe("N-13: sendAdminDigest", () => {
 
   it("does not send digest when policy is disabled", async () => {
     mockPrisma.emailLog.findMany.mockResolvedValue([
-      { templateName: "admin-new-booking", subject: "New booking: Alice" },
+      { templateName: "admin-new-booking", subject: "New booking: Alice" }
     ]);
     mockPrisma.notificationDeliveryPolicy.findUnique.mockResolvedValue({
       templateName: "admin-daily-digest",
-      mode: "DISABLED",
+      mode: "DISABLED"
     });
 
     const { sendAdminDigest } = await import("../cron-admin-digest");
@@ -600,9 +619,9 @@ describe("N-13: sendAdminDigest", () => {
     expect(mockPrisma.emailLog.create).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          templateName: "admin-daily-digest",
-        }),
-      }),
+          templateName: "admin-daily-digest"
+        })
+      })
     );
   });
 });
@@ -618,7 +637,7 @@ describe("Email templates - Phase 6b", () => {
       errorType: "<script>xss</script>",
       operation: "createInvoice",
       errorMessage: "Something <b>bad</b> happened",
-      timestamp: new Date("2026-04-06T10:00:00Z"),
+      timestamp: new Date("2026-04-06T10:00:00Z")
     });
 
     expect(html).not.toContain("<script>xss</script>");
@@ -630,7 +649,7 @@ describe("Email templates - Phase 6b", () => {
     const { adminCapacityWarningTemplate } = await import("../email-templates");
     const html = adminCapacityWarningTemplate([
       { date: new Date("2026-04-10"), occupiedBeds: 26, availableBeds: 3 },
-      { date: new Date("2026-04-11"), occupiedBeds: 28, availableBeds: 1 },
+      { date: new Date("2026-04-11"), occupiedBeds: 28, availableBeds: 1 }
     ]);
 
     expect(html).toContain("Capacity Warning");
@@ -647,7 +666,7 @@ describe("Email templates - Phase 6b", () => {
       bookingsBumped: 2,
       pendingDeadlines: 0,
       xeroErrors: 0,
-      totalAlerts: 8,
+      totalAlerts: 8
     });
 
     expect(html).toContain("Admin Daily Digest");
@@ -669,14 +688,15 @@ describe("Email templates - Phase 6b", () => {
       bookingsBumped: 0,
       pendingDeadlines: 0,
       xeroErrors: 0,
-      totalAlerts: 0,
+      totalAlerts: 0
     });
 
     expect(html).toContain("No alerts were triggered");
   });
 
   it("adminXeroRepeatedFailureTemplate escapes HTML and renders links", async () => {
-    const { adminXeroRepeatedFailureTemplate } = await import("../email-templates");
+    const { adminXeroRepeatedFailureTemplate } =
+      await import("../email-templates");
     const html = adminXeroRepeatedFailureTemplate({
       correlationKey: "booking:<script>",
       failureCount: 3,
@@ -686,9 +706,10 @@ describe("Email templates - Phase 6b", () => {
       localModel: "Payment",
       localId: "pay_123",
       localUrl: "/admin/xero/records/Payment/pay_123",
-      xeroObjectUrl: "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv-123",
+      xeroObjectUrl:
+        "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv-123",
       latestErrorMessage: "Something <b>bad</b> happened",
-      timestamp: new Date("2026-04-13T10:00:00Z"),
+      timestamp: new Date("2026-04-13T10:00:00Z")
     });
 
     expect(html).toContain("Repeated Xero Failures");
@@ -698,7 +719,8 @@ describe("Email templates - Phase 6b", () => {
   });
 
   it("adminXeroReconciliationReportTemplate renders summary counts", async () => {
-    const { adminXeroReconciliationReportTemplate } = await import("../email-templates");
+    const { adminXeroReconciliationReportTemplate } =
+      await import("../email-templates");
     const html = adminXeroReconciliationReportTemplate({
       generatedAt: new Date("2026-04-13T10:00:00Z"),
       lookbackHours: 24,
@@ -717,7 +739,7 @@ describe("Email templates - Phase 6b", () => {
         unsupportedPartialOperations: 1,
         repeatedFailureCorrelations: 2,
         issueCategoryCount: 11,
-        issueTotalCount: 19,
+        issueTotalCount: 19
       },
       issueSections: [
         {
@@ -741,11 +763,12 @@ describe("Email templates - Phase 6b", () => {
               operationStatus: "PARTIAL",
               operationType: "CONTACT CREATE",
               correlationKey: null,
-              detail: "This partial <script>alert(1)</script> operation does not have a repair handler yet.",
+              detail:
+                "This partial <script>alert(1)</script> operation does not have a repair handler yet.",
               latestErrorMessage: null,
-              createdAt: new Date("2026-04-13T10:05:00Z"),
-            },
-          ],
+              createdAt: new Date("2026-04-13T10:05:00Z")
+            }
+          ]
         },
         {
           id: "repeated-failures",
@@ -753,7 +776,8 @@ describe("Email templates - Phase 6b", () => {
           severity: "critical",
           count: 1,
           whatWentWrong: "The same correlation key keeps failing.",
-          howToFix: "Open the booking record and retry after checking the record.",
+          howToFix:
+            "Open the booking record and retry after checking the record.",
           items: [
             {
               label: "Payment pay_1",
@@ -763,17 +787,18 @@ describe("Email templates - Phase 6b", () => {
               xeroObjectType: "INVOICE",
               xeroObjectId: "inv_1",
               xeroObjectNumber: "INV-001",
-              xeroObjectUrl: "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv_1",
+              xeroObjectUrl:
+                "https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=inv_1",
               operationId: "op_failed_1",
               operationStatus: "FAILED",
               operationType: "INVOICE CREATE",
               correlationKey: "payment:pay_1:invoice:v1",
               detail: "3 failures for this correlation key.",
               latestErrorMessage: "Rate limit exceeded",
-              createdAt: new Date("2026-04-13T10:10:00Z"),
-            },
-          ],
-        },
+              createdAt: new Date("2026-04-13T10:10:00Z")
+            }
+          ]
+        }
       ],
       repeatedFailures: [
         {
@@ -784,8 +809,8 @@ describe("Email templates - Phase 6b", () => {
           localModel: "Payment",
           localId: "pay_1",
           localUrl: "/admin/xero/records/Payment/pay_1",
-          latestErrorMessage: "Rate limit exceeded",
-        },
+          latestErrorMessage: "Rate limit exceeded"
+        }
       ],
       unsupportedPartials: [
         {
@@ -795,10 +820,11 @@ describe("Email templates - Phase 6b", () => {
           localModel: "Member",
           localId: "mem_1",
           localUrl: "/admin/xero/records/Member/mem_1",
-          reason: "This partial Xero operation does not have a repair handler yet.",
-          createdAt: new Date("2026-04-13T10:05:00Z"),
-        },
-      ],
+          reason:
+            "This partial Xero operation does not have a repair handler yet.",
+          createdAt: new Date("2026-04-13T10:05:00Z")
+        }
+      ]
     });
 
     expect(html).toContain("Xero Reconciliation Report");
@@ -811,7 +837,9 @@ describe("Email templates - Phase 6b", () => {
     expect(html).toContain("19");
     expect(html).toContain("payment:pay_1:invoice:v1");
     expect(html).toContain("op_partial_gap");
-    expect(html).toMatch(/https?:\/\/[^"]+\/admin\/xero\/records\/Member\/mem_1/);
+    expect(html).toMatch(
+      /https?:\/\/[^"]+\/admin\/xero\/records\/Member\/mem_1/
+    );
     expect(html).toContain("https://go.xero.com/Contacts/View/contact_1");
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
   });

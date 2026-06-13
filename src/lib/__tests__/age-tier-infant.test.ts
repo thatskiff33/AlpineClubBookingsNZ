@@ -6,7 +6,7 @@ import {
   computeAgeTierWithSettings,
   AGE_TIER_DEFAULTS,
   getSeasonStartDate,
-  type AgeTierSettingData,
+  type AgeTierSettingData
 } from "../age-tier";
 import { ageTierEnum } from "../age-tier-schema";
 import { AgeTier } from "@prisma/client";
@@ -36,7 +36,9 @@ describe("AGE_TIER_DEFAULTS includes INFANT", () => {
   });
 
   it("tiers are contiguous (no gaps)", () => {
-    const sorted = [...AGE_TIER_DEFAULTS].sort((a, b) => a.sortOrder - b.sortOrder);
+    const sorted = [...AGE_TIER_DEFAULTS].sort(
+      (a, b) => a.sortOrder - b.sortOrder
+    );
     for (let i = 0; i < sorted.length - 1; i++) {
       const cur = sorted[i];
       const next = sorted[i + 1];
@@ -58,54 +60,94 @@ describe("computeAgeTierWithSettings — with INFANT tier", () => {
   it("INFANT: age 0-4", () => {
     // Age 0 (born late 2025)
     expect(
-      computeAgeTierWithSettings(new Date("2025-12-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2025-12-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("INFANT");
     // Age 4 (turns 5 later in 2026)
     expect(
-      computeAgeTierWithSettings(new Date("2021-08-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2021-08-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("INFANT");
     // Age 4 exactly on April 1 (born April 1, 2022)
     expect(
-      computeAgeTierWithSettings(new Date("2022-04-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2022-04-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("INFANT");
   });
 
   it("boundary: age 4 on April 1 is INFANT, age 5 on April 1 is CHILD", () => {
     // Born April 2, 2021 → age 4 on April 1, 2026 → INFANT
     expect(
-      computeAgeTierWithSettings(new Date("2021-04-02"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2021-04-02"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("INFANT");
     // Born April 1, 2021 → age 5 on April 1, 2026 → CHILD
     expect(
-      computeAgeTierWithSettings(new Date("2021-04-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2021-04-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
   });
 
   it("CHILD: age 5-12 with new boundaries", () => {
     // Age 5 (born March 31, 2021 → age 5 on April 1, 2026)
     expect(
-      computeAgeTierWithSettings(new Date("2021-03-31"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2021-03-31"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
     // Age 9 (born April 2, 2016 → age 9 on April 1, 2026)
     expect(
-      computeAgeTierWithSettings(new Date("2016-04-02"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2016-04-02"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
     // Age 10 (born April 1, 2016 → age 10 on April 1, 2026) - still CHILD, max is 12
     expect(
-      computeAgeTierWithSettings(new Date("2016-04-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2016-04-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
   });
 
   it("YOUTH: age 13-17", () => {
     // Age 13 (born April 1, 2013 → age 13 on April 1, 2026)
     expect(
-      computeAgeTierWithSettings(new Date("2013-04-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2013-04-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("YOUTH");
   });
 
   it("ADULT: age 18+ (unchanged)", () => {
     expect(
-      computeAgeTierWithSettings(new Date("2008-04-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2008-04-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("ADULT");
   });
 });
@@ -118,10 +160,34 @@ describe("computeAgeTierWithSettings — custom 4-tier settings", () => {
   const ref = new Date("2026-04-01");
 
   const customSettings: AgeTierSettingData[] = [
-    { tier: "INFANT" as AgeTier, minAge: 0, maxAge: 2, label: "Baby (0-2)", sortOrder: 0 },
-    { tier: "CHILD" as AgeTier, minAge: 3, maxAge: 12, label: "Child (3-12)", sortOrder: 1 },
-    { tier: "YOUTH" as AgeTier, minAge: 13, maxAge: 17, label: "Teen (13-17)", sortOrder: 2 },
-    { tier: "ADULT" as AgeTier, minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
+    {
+      tier: "INFANT" as AgeTier,
+      minAge: 0,
+      maxAge: 2,
+      label: "Baby (0-2)",
+      sortOrder: 0
+    },
+    {
+      tier: "CHILD" as AgeTier,
+      minAge: 3,
+      maxAge: 12,
+      label: "Child (3-12)",
+      sortOrder: 1
+    },
+    {
+      tier: "YOUTH" as AgeTier,
+      minAge: 13,
+      maxAge: 17,
+      label: "Teen (13-17)",
+      sortOrder: 2
+    },
+    {
+      tier: "ADULT" as AgeTier,
+      minAge: 18,
+      maxAge: null,
+      label: "Adult (18+)",
+      sortOrder: 3
+    }
   ];
 
   it("respects custom INFANT boundary", () => {
@@ -173,21 +239,28 @@ describe("ageTierEnum (shared Zod validator)", () => {
 
 describe("getAgeTierOptionsFromSettings — dynamic ordering", () => {
   it("sorts by sortOrder from DB, not hardcoded order", async () => {
-    const { getAgeTierOptionsFromSettings } = await import("../use-age-tier-options");
+    const { getAgeTierOptionsFromSettings } =
+      await import("../use-age-tier-options");
 
     const settings = [
       { tier: "ADULT" as AgeTier, label: "Adult", sortOrder: 3 },
       { tier: "INFANT" as AgeTier, label: "Infant", sortOrder: 0 },
       { tier: "CHILD" as AgeTier, label: "Child", sortOrder: 1 },
-      { tier: "YOUTH" as AgeTier, label: "Youth", sortOrder: 2 },
+      { tier: "YOUTH" as AgeTier, label: "Youth", sortOrder: 2 }
     ];
 
     const options = getAgeTierOptionsFromSettings(settings);
-    expect(options.map((o) => o.tier)).toEqual(["INFANT", "CHILD", "YOUTH", "ADULT"]);
+    expect(options.map((o) => o.tier)).toEqual([
+      "INFANT",
+      "CHILD",
+      "YOUTH",
+      "ADULT"
+    ]);
   });
 
   it("falls back to defaults when no settings provided", async () => {
-    const { getAgeTierOptionsFromSettings } = await import("../use-age-tier-options");
+    const { getAgeTierOptionsFromSettings } =
+      await import("../use-age-tier-options");
     const options = getAgeTierOptionsFromSettings(undefined);
     expect(options).toHaveLength(4);
     expect(options[0].tier).toBe("INFANT");

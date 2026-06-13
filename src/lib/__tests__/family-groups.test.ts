@@ -9,21 +9,21 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
-      delete: vi.fn(),
+      delete: vi.fn()
     },
     familyGroupMember: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
       createMany: vi.fn(),
       deleteMany: vi.fn(),
-      upsert: vi.fn(),
+      upsert: vi.fn()
     },
     familyGroupJoinRequest: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
       findUnique: vi.fn(),
       create: vi.fn(),
-      update: vi.fn(),
+      update: vi.fn()
     },
     member: {
       findUnique: vi.fn(),
@@ -32,38 +32,41 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
-      count: vi.fn(),
+      count: vi.fn()
     },
     xeroContactCache: { findUnique: vi.fn().mockResolvedValue(null) },
-    $transaction: vi.fn(),
-  },
+    $transaction: vi.fn()
+  }
 }));
 
 vi.mock("@/lib/auth", () => ({ auth: vi.fn() }));
 const mockRequireActiveSessionUser = vi.fn(async () => null);
 const mockRequireAdmin = vi.fn();
 vi.mock("@/lib/session-guards", () => ({
-  requireActiveSessionUser: (...args: unknown[]) => mockRequireActiveSessionUser(...args),
-  requireAdmin: (...args: unknown[]) => mockRequireAdmin(...args),
+  requireActiveSessionUser: (...args: unknown[]) =>
+    mockRequireActiveSessionUser(...args),
+  requireAdmin: (...args: unknown[]) => mockRequireAdmin(...args)
 }));
 vi.mock("@/lib/logger", () => ({
-  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 }));
 vi.mock("@/lib/audit", () => ({ logAudit: vi.fn() }));
 vi.mock("@/lib/email", () => ({
   sendAdminFamilyGroupRequestAlert: vi.fn().mockResolvedValue(undefined),
   sendJoinRequestConfirmationEmail: vi.fn().mockResolvedValue(undefined),
   sendChildRequestApprovedEmail: vi.fn().mockResolvedValue(undefined),
-  sendChildRequestRejectedEmail: vi.fn().mockResolvedValue(undefined),
+  sendChildRequestRejectedEmail: vi.fn().mockResolvedValue(undefined)
 }));
 vi.mock("@/lib/rate-limit", () => ({
   applyRateLimit: vi.fn().mockReturnValue(null),
-  rateLimiters: { familyGroupJoinRequest: { id: "fgjr", limit: 3, windowSeconds: 3600 } },
+  rateLimiters: {
+    familyGroupJoinRequest: { id: "fgjr", limit: 3, windowSeconds: 3600 }
+  }
 }));
 vi.mock("@/lib/xero", () => ({
   isXeroConnected: vi.fn().mockResolvedValue(false),
   syncManagedXeroContactGroupForMember: vi.fn(),
-  updateXeroContact: vi.fn(),
+  updateXeroContact: vi.fn()
 }));
 
 import { prisma } from "@/lib/prisma";
@@ -71,7 +74,7 @@ import { auth } from "@/lib/auth";
 import {
   isXeroConnected,
   syncManagedXeroContactGroupForMember,
-  updateXeroContact,
+  updateXeroContact
 } from "@/lib/xero";
 
 const mockedAuth = vi.mocked(auth);
@@ -112,7 +115,7 @@ function completeMember(overrides: Record<string, unknown> = {}) {
     detailsConfirmedByMemberId: id,
     onboardingConfirmedAt: new Date("2026-01-01"),
     familyGroupMemberships: [],
-    ...overrides,
+    ...overrides
   };
 }
 
@@ -120,7 +123,12 @@ function completeMember(overrides: Record<string, unknown> = {}) {
 function makeReq(url: string, method: string, body?: unknown) {
   return new NextRequest(`http://localhost${url}`, {
     method,
-    ...(body ? { body: JSON.stringify(body), headers: { "Content-Type": "application/json" } } : {}),
+    ...(body
+      ? {
+          body: JSON.stringify(body),
+          headers: { "Content-Type": "application/json" }
+        }
+      : {})
   });
 }
 
@@ -153,12 +161,20 @@ describe("Admin Family Groups API", () => {
           updatedAt: new Date(),
           memberships: [
             {
-              member: { id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com", ageTier: "ADULT", active: true, canLogin: true },
-              role: "MEMBER",
-            },
+              member: {
+                id: "m1",
+                firstName: "John",
+                lastName: "Smith",
+                email: "john@test.com",
+                ageTier: "ADULT",
+                active: true,
+                canLogin: true
+              },
+              role: "MEMBER"
+            }
           ],
-          _count: { joinRequests: 0 },
-        },
+          _count: { joinRequests: 0 }
+        }
       ] as any);
 
       const { GET } = await import("@/app/api/admin/family-groups/route");
@@ -175,49 +191,103 @@ describe("Admin Family Groups API", () => {
     it("returns 403 for non-admin", async () => {
       mockedAuth.mockResolvedValue(memberSession);
       const { POST } = await import("@/app/api/admin/family-groups/route");
-      const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "Test", memberIds: ["m1"] }));
+      const res = await POST(
+        makeReq("/api/admin/family-groups", "POST", {
+          name: "Test",
+          memberIds: ["m1"]
+        })
+      );
       expect(res.status).toBe(403);
     });
 
     it("creates a family group and assigns members", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockedPrisma.member.findMany.mockResolvedValue([
-        { id: "m1", firstName: "John", lastName: "Smith", active: true, canLogin: true },
-        { id: "m2", firstName: "Jane", lastName: "Smith", active: true, canLogin: true },
+        {
+          id: "m1",
+          firstName: "John",
+          lastName: "Smith",
+          active: true,
+          canLogin: true
+        },
+        {
+          id: "m2",
+          firstName: "Jane",
+          lastName: "Smith",
+          active: true,
+          canLogin: true
+        }
       ] as any);
 
       const createdGroup = {
         id: "fg-new",
         name: "Smith Family",
         memberships: [
-          { member: { id: "m1", firstName: "John", lastName: "Smith", email: "j@t.com", ageTier: "ADULT" }, role: "MEMBER" },
-          { member: { id: "m2", firstName: "Jane", lastName: "Smith", email: "j@t.com", ageTier: "ADULT" }, role: "MEMBER" },
-        ],
+          {
+            member: {
+              id: "m1",
+              firstName: "John",
+              lastName: "Smith",
+              email: "j@t.com",
+              ageTier: "ADULT"
+            },
+            role: "MEMBER"
+          },
+          {
+            member: {
+              id: "m2",
+              firstName: "Jane",
+              lastName: "Smith",
+              email: "j@t.com",
+              ageTier: "ADULT"
+            },
+            role: "MEMBER"
+          }
+        ]
       };
       mockedPrisma.$transaction.mockImplementation(async () => createdGroup);
 
       const { POST } = await import("@/app/api/admin/family-groups/route");
-      const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "Smith Family", memberIds: ["m1", "m2"] }));
+      const res = await POST(
+        makeReq("/api/admin/family-groups", "POST", {
+          name: "Smith Family",
+          memberIds: ["m1", "m2"]
+        })
+      );
       expect(res.status).toBe(201);
     });
 
     it("accepts all member types including youth and children", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockedPrisma.member.findMany.mockResolvedValue([
-        { id: "m1", firstName: "Child", lastName: "Smith", active: true },
+        { id: "m1", firstName: "Child", lastName: "Smith", active: true }
       ] as any);
 
       const createdGroup = {
         id: "fg-new",
         name: "Test",
         memberships: [
-          { member: { id: "m1", firstName: "Child", lastName: "Smith", email: "parent@test.com", ageTier: "CHILD" }, role: "MEMBER" },
-        ],
+          {
+            member: {
+              id: "m1",
+              firstName: "Child",
+              lastName: "Smith",
+              email: "parent@test.com",
+              ageTier: "CHILD"
+            },
+            role: "MEMBER"
+          }
+        ]
       };
       mockedPrisma.$transaction.mockImplementation(async () => createdGroup);
 
       const { POST } = await import("@/app/api/admin/family-groups/route");
-      const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "Test", memberIds: ["m1"] }));
+      const res = await POST(
+        makeReq("/api/admin/family-groups", "POST", {
+          name: "Test",
+          memberIds: ["m1"]
+        })
+      );
       expect(res.status).toBe(201);
     });
 
@@ -225,18 +295,40 @@ describe("Admin Family Groups API", () => {
       mockedAuth.mockResolvedValue(adminSession);
       // Members can now belong to multiple groups — no restriction on existing group membership
       mockedPrisma.member.findMany.mockResolvedValue([
-        { id: "m1", firstName: "John", lastName: "Smith", active: true, canLogin: true },
+        {
+          id: "m1",
+          firstName: "John",
+          lastName: "Smith",
+          active: true,
+          canLogin: true
+        }
       ] as any);
 
       const createdGroup = {
         id: "fg-new",
         name: "New Group",
-        memberships: [{ member: { id: "m1", firstName: "John", lastName: "Smith", email: "j@t.com", ageTier: "ADULT" }, role: "MEMBER" }],
+        memberships: [
+          {
+            member: {
+              id: "m1",
+              firstName: "John",
+              lastName: "Smith",
+              email: "j@t.com",
+              ageTier: "ADULT"
+            },
+            role: "MEMBER"
+          }
+        ]
       };
       mockedPrisma.$transaction.mockImplementation(async () => createdGroup);
 
       const { POST } = await import("@/app/api/admin/family-groups/route");
-      const res = await POST(makeReq("/api/admin/family-groups", "POST", { name: "New Group", memberIds: ["m1"] }));
+      const res = await POST(
+        makeReq("/api/admin/family-groups", "POST", {
+          name: "New Group",
+          memberIds: ["m1"]
+        })
+      );
       // Should succeed — multi-group is now allowed
       expect(res.status).toBe(201);
     });
@@ -245,12 +337,15 @@ describe("Admin Family Groups API", () => {
   describe("DELETE /api/admin/family-groups/[id]", () => {
     it("deletes group and clears member links", async () => {
       mockedAuth.mockResolvedValue(adminSession);
-      mockedPrisma.familyGroup.findUnique.mockResolvedValue({ id: "fg1" } as any);
+      mockedPrisma.familyGroup.findUnique.mockResolvedValue({
+        id: "fg1"
+      } as any);
       mockedPrisma.$transaction.mockImplementation(async () => {
         return undefined;
       });
 
-      const { DELETE } = await import("@/app/api/admin/family-groups/[id]/route");
+      const { DELETE } =
+        await import("@/app/api/admin/family-groups/[id]/route");
       const res = await DELETE(
         makeReq("/api/admin/family-groups/fg1", "DELETE"),
         { params: Promise.resolve({ id: "fg1" }) }
@@ -262,7 +357,8 @@ describe("Admin Family Groups API", () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockedPrisma.familyGroup.findUnique.mockResolvedValue(null);
 
-      const { DELETE } = await import("@/app/api/admin/family-groups/[id]/route");
+      const { DELETE } =
+        await import("@/app/api/admin/family-groups/[id]/route");
       const res = await DELETE(
         makeReq("/api/admin/family-groups/nope", "DELETE"),
         { params: Promise.resolve({ id: "nope" }) }
@@ -295,7 +391,7 @@ describe("GET /api/members/family", () => {
       firstName: "John",
       lastName: "Smith",
       ageTier: "ADULT",
-      familyGroupMemberships: [],
+      familyGroupMemberships: []
     } as any);
 
     const { GET } = await import("@/app/api/members/family/route");
@@ -315,15 +411,39 @@ describe("GET /api/members/family", () => {
       lastName: "Smith",
       ageTier: "ADULT",
       familyGroupMemberships: [
-        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
-      ],
+        {
+          familyGroupId: "fg1",
+          familyGroup: { id: "fg1", name: "Smith Family" }
+        }
+      ]
     } as any);
 
     // All group members (including children/youth)
     mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
-      { member: { id: "member-2", firstName: "Jane", lastName: "Smith", ageTier: "ADULT" } },
-      { member: { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" } },
-      { member: { id: "youth-1", firstName: "Liam", lastName: "Smith", ageTier: "YOUTH" } },
+      {
+        member: {
+          id: "member-2",
+          firstName: "Jane",
+          lastName: "Smith",
+          ageTier: "ADULT"
+        }
+      },
+      {
+        member: {
+          id: "child-1",
+          firstName: "Emma",
+          lastName: "Smith",
+          ageTier: "CHILD"
+        }
+      },
+      {
+        member: {
+          id: "youth-1",
+          firstName: "Liam",
+          lastName: "Smith",
+          ageTier: "YOUTH"
+        }
+      }
     ] as any);
 
     const { GET } = await import("@/app/api/members/family/route");
@@ -340,14 +460,19 @@ describe("GET /api/members/family", () => {
 
   it("marks admin and lodge family accounts as exempt from member confirmation", async () => {
     mockedAuth.mockResolvedValue(memberSession);
-    mockedPrisma.member.findUnique.mockResolvedValue(completeMember({
-      id: "member-1",
-      firstName: "Support",
-      lastName: "Member",
-      familyGroupMemberships: [
-        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Admin Family" } },
-      ],
-    }) as any);
+    mockedPrisma.member.findUnique.mockResolvedValue(
+      completeMember({
+        id: "member-1",
+        firstName: "Support",
+        lastName: "Member",
+        familyGroupMemberships: [
+          {
+            familyGroupId: "fg1",
+            familyGroup: { id: "fg1", name: "Admin Family" }
+          }
+        ]
+      }) as any
+    );
 
     mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
       {
@@ -361,9 +486,12 @@ describe("GET /api/members/family", () => {
           detailsConfirmedByMemberId: null,
           onboardingConfirmedAt: null,
           familyGroupMemberships: [
-            { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Admin Family" } },
-          ],
-        }),
+            {
+              familyGroupId: "fg1",
+              familyGroup: { id: "fg1", name: "Admin Family" }
+            }
+          ]
+        })
       },
       {
         member: completeMember({
@@ -376,17 +504,24 @@ describe("GET /api/members/family", () => {
           detailsConfirmedByMemberId: null,
           onboardingConfirmedAt: null,
           familyGroupMemberships: [
-            { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Admin Family" } },
-          ],
-        }),
-      },
+            {
+              familyGroupId: "fg1",
+              familyGroup: { id: "fg1", name: "Admin Family" }
+            }
+          ]
+        })
+      }
     ] as any);
 
     const { GET } = await import("@/app/api/members/family/route");
     const res = await GET();
     const body = await res.json();
-    const admin = body.familyMembers.find((member: any) => member.id === "admin-2");
-    const lodge = body.familyMembers.find((member: any) => member.id === "lodge-1");
+    const admin = body.familyMembers.find(
+      (member: any) => member.id === "admin-2"
+    );
+    const lodge = body.familyMembers.find(
+      (member: any) => member.id === "lodge-1"
+    );
 
     expect(res.status).toBe(200);
     for (const account of [admin, lodge]) {
@@ -406,16 +541,43 @@ describe("GET /api/members/family", () => {
       lastName: "Smith",
       ageTier: "ADULT",
       familyGroupMemberships: [
-        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
-        { familyGroupId: "fg2", familyGroup: { id: "fg2", name: "Jones Family" } },
-      ],
+        {
+          familyGroupId: "fg1",
+          familyGroup: { id: "fg1", name: "Smith Family" }
+        },
+        {
+          familyGroupId: "fg2",
+          familyGroup: { id: "fg2", name: "Jones Family" }
+        }
+      ]
     } as any);
 
     // Members from both groups — child-1 appears in both
     mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
-      { member: { id: "member-2", firstName: "Jane", lastName: "Smith", ageTier: "ADULT" } },
-      { member: { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" } },
-      { member: { id: "child-1", firstName: "Emma", lastName: "Smith", ageTier: "CHILD" } },
+      {
+        member: {
+          id: "member-2",
+          firstName: "Jane",
+          lastName: "Smith",
+          ageTier: "ADULT"
+        }
+      },
+      {
+        member: {
+          id: "child-1",
+          firstName: "Emma",
+          lastName: "Smith",
+          ageTier: "CHILD"
+        }
+      },
+      {
+        member: {
+          id: "child-1",
+          firstName: "Emma",
+          lastName: "Smith",
+          ageTier: "CHILD"
+        }
+      }
     ] as any);
 
     const { GET } = await import("@/app/api/members/family/route");
@@ -429,15 +591,23 @@ describe("GET /api/members/family", () => {
 
   it("keeps a multi-group member bookable when a pending removal only affects one shared group", async () => {
     mockedAuth.mockResolvedValue(memberSession);
-    mockedPrisma.member.findUnique.mockResolvedValue(completeMember({
-      id: "member-1",
-      firstName: "Dad",
-      lastName: "Smith",
-      familyGroupMemberships: [
-        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
-        { familyGroupId: "fg2", familyGroup: { id: "fg2", name: "Jones Family" } },
-      ],
-    }) as any);
+    mockedPrisma.member.findUnique.mockResolvedValue(
+      completeMember({
+        id: "member-1",
+        firstName: "Dad",
+        lastName: "Smith",
+        familyGroupMemberships: [
+          {
+            familyGroupId: "fg1",
+            familyGroup: { id: "fg1", name: "Smith Family" }
+          },
+          {
+            familyGroupId: "fg2",
+            familyGroup: { id: "fg2", name: "Jones Family" }
+          }
+        ]
+      }) as any
+    );
 
     const child = completeMember({
       id: "child-1",
@@ -447,13 +617,19 @@ describe("GET /api/members/family", () => {
       canLogin: false,
       detailsConfirmedByMemberId: "member-1",
       familyGroupMemberships: [
-        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
-        { familyGroupId: "fg2", familyGroup: { id: "fg2", name: "Jones Family" } },
-      ],
+        {
+          familyGroupId: "fg1",
+          familyGroup: { id: "fg1", name: "Smith Family" }
+        },
+        {
+          familyGroupId: "fg2",
+          familyGroup: { id: "fg2", name: "Jones Family" }
+        }
+      ]
     });
     mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
       { member: child },
-      { member: child },
+      { member: child }
     ] as any);
     mockedPrisma.familyGroupJoinRequest.findMany.mockResolvedValue([
       {
@@ -464,14 +640,16 @@ describe("GET /api/members/family", () => {
         requesterId: "member-1",
         invitedMemberId: null,
         linkedMemberId: null,
-        subjectMemberId: "child-1",
-      },
+        subjectMemberId: "child-1"
+      }
     ] as any);
 
     const { GET } = await import("@/app/api/members/family/route");
     const res = await GET();
     const body = await res.json();
-    const emma = body.familyMembers.find((member: any) => member.id === "child-1");
+    const emma = body.familyMembers.find(
+      (member: any) => member.id === "child-1"
+    );
 
     expect(res.status).toBe(200);
     expect(emma.canBeBooked).toBe(true);
@@ -484,21 +662,26 @@ describe("GET /api/members/family", () => {
         id: "remove-req-1",
         type: "REMOVAL_REQUEST",
         status: "PENDING",
-        familyGroupId: "fg1",
-      },
+        familyGroupId: "fg1"
+      }
     ]);
   });
 
   it("blocks a member when every shared membership has a pending removal request", async () => {
     mockedAuth.mockResolvedValue(memberSession);
-    mockedPrisma.member.findUnique.mockResolvedValue(completeMember({
-      id: "member-1",
-      firstName: "Dad",
-      lastName: "Smith",
-      familyGroupMemberships: [
-        { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
-      ],
-    }) as any);
+    mockedPrisma.member.findUnique.mockResolvedValue(
+      completeMember({
+        id: "member-1",
+        firstName: "Dad",
+        lastName: "Smith",
+        familyGroupMemberships: [
+          {
+            familyGroupId: "fg1",
+            familyGroup: { id: "fg1", name: "Smith Family" }
+          }
+        ]
+      }) as any
+    );
 
     mockedPrisma.familyGroupMember.findMany.mockResolvedValue([
       {
@@ -510,10 +693,13 @@ describe("GET /api/members/family", () => {
           canLogin: false,
           detailsConfirmedByMemberId: "member-1",
           familyGroupMemberships: [
-            { familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } },
-          ],
-        }),
-      },
+            {
+              familyGroupId: "fg1",
+              familyGroup: { id: "fg1", name: "Smith Family" }
+            }
+          ]
+        })
+      }
     ] as any);
     mockedPrisma.familyGroupJoinRequest.findMany.mockResolvedValue([
       {
@@ -524,14 +710,16 @@ describe("GET /api/members/family", () => {
         requesterId: "member-1",
         invitedMemberId: null,
         linkedMemberId: null,
-        subjectMemberId: "child-1",
-      },
+        subjectMemberId: "child-1"
+      }
     ] as any);
 
     const { GET } = await import("@/app/api/members/family/route");
     const res = await GET();
     const body = await res.json();
-    const emma = body.familyMembers.find((member: any) => member.id === "child-1");
+    const emma = body.familyMembers.find(
+      (member: any) => member.id === "child-1"
+    );
 
     expect(res.status).toBe(200);
     expect(emma.canBeBooked).toBe(false);
@@ -574,11 +762,13 @@ describe("PUT /api/members/family/[memberId]/details", () => {
     detailsConfirmedAt: new Date(),
     detailsConfirmedByMemberId: "adult-1",
     onboardingConfirmedAt: new Date(),
-    familyGroupMemberships: [{ familyGroupId: "fg1" }],
+    familyGroupMemberships: [{ familyGroupId: "fg1" }]
   };
 
   it("allows an adult in the same family group to confirm non-login member details", async () => {
-    mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "MEMBER" } } as any);
+    mockedAuth.mockResolvedValue({
+      user: { id: "adult-1", role: "MEMBER" }
+    } as any);
     vi.mocked(isXeroConnected).mockResolvedValue(true);
     mockedPrisma.member.findUnique
       .mockResolvedValueOnce(completeAdult as any)
@@ -606,7 +796,7 @@ describe("PUT /api/members/family/[memberId]/details", () => {
         postalPostalCode: null,
         postalCountry: null,
         detailsConfirmedAt: null,
-        detailsConfirmedByMemberId: null,
+        detailsConfirmedByMemberId: null
       } as any);
     mockedPrisma.member.update.mockResolvedValue({
       ...completeAdult,
@@ -617,40 +807,43 @@ describe("PUT /api/members/family/[memberId]/details", () => {
       ageTier: "CHILD",
       xeroContactId: "xc-child",
       dateOfBirth: new Date("2018-01-01"),
-      detailsConfirmedByMemberId: "adult-1",
+      detailsConfirmedByMemberId: "adult-1"
     } as any);
 
-    const { PUT } = await import("@/app/api/members/family/[memberId]/details/route");
+    const { PUT } =
+      await import("@/app/api/members/family/[memberId]/details/route");
     const res = await PUT(
       makeReq("/api/members/family/child-1/details", "PUT", {
         firstName: "Sam",
         lastName: "Smith",
         dateOfBirth: "2018-01-01",
-        inheritContactFromSelf: true,
+        inheritContactFromSelf: true
       }),
       { params: Promise.resolve({ memberId: "child-1" }) }
     );
 
     expect(res.status).toBe(200);
-    expect(mockedPrisma.member.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "child-1" },
-      data: expect.objectContaining({
-        phoneCountryCode: "64",
-        streetAddressLine1: "1 Main St",
-        detailsConfirmedByMemberId: "adult-1",
-      }),
-    }));
+    expect(mockedPrisma.member.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "child-1" },
+        data: expect.objectContaining({
+          phoneCountryCode: "64",
+          streetAddressLine1: "1 Main St",
+          detailsConfirmedByMemberId: "adult-1"
+        })
+      })
+    );
     expect(updateXeroContact).toHaveBeenCalledWith(
       "xc-child",
       expect.objectContaining({
         phoneCountryCode: "64",
-        streetAddressLine1: "1 Main St",
+        streetAddressLine1: "1 Main St"
       }),
       expect.objectContaining({
         localModel: "Member",
         localId: "child-1",
         createdByMemberId: "adult-1",
-        preserveXeroName: true,
+        preserveXeroName: true
       })
     );
     expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
@@ -665,8 +858,13 @@ describe("POST /api/members/family/request-join", () => {
 
   it("returns 401 for unauthenticated", async () => {
     mockedAuth.mockResolvedValue(null as any);
-    const { POST } = await import("@/app/api/members/family/request-join/route");
-    const res = await POST(makeReq("/api/members/family/request-join", "POST", { targetEmail: "test@test.com" }));
+    const { POST } =
+      await import("@/app/api/members/family/request-join/route");
+    const res = await POST(
+      makeReq("/api/members/family/request-join", "POST", {
+        targetEmail: "test@test.com"
+      })
+    );
     expect(res.status).toBe(401);
   });
 
@@ -677,11 +875,16 @@ describe("POST /api/members/family/request-join", () => {
       firstName: "Child",
       lastName: "Smith",
       canLogin: false,
-      active: true,
+      active: true
     } as any);
 
-    const { POST } = await import("@/app/api/members/family/request-join/route");
-    const res = await POST(makeReq("/api/members/family/request-join", "POST", { targetEmail: "jane@test.com" }));
+    const { POST } =
+      await import("@/app/api/members/family/request-join/route");
+    const res = await POST(
+      makeReq("/api/members/family/request-join", "POST", {
+        targetEmail: "jane@test.com"
+      })
+    );
     expect(res.status).toBe(403);
   });
 
@@ -692,13 +895,18 @@ describe("POST /api/members/family/request-join", () => {
       firstName: "John",
       lastName: "Smith",
       canLogin: true,
-      active: true,
+      active: true
     } as any);
     mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue(null);
     mockedPrisma.member.findFirst.mockResolvedValue(null);
 
-    const { POST } = await import("@/app/api/members/family/request-join/route");
-    const res = await POST(makeReq("/api/members/family/request-join", "POST", { targetEmail: "nobody@test.com" }));
+    const { POST } =
+      await import("@/app/api/members/family/request-join/route");
+    const res = await POST(
+      makeReq("/api/members/family/request-join", "POST", {
+        targetEmail: "nobody@test.com"
+      })
+    );
     expect(res.status).toBe(404);
   });
 
@@ -709,24 +917,34 @@ describe("POST /api/members/family/request-join", () => {
       firstName: "John",
       lastName: "Smith",
       canLogin: true,
-      active: true,
+      active: true
     } as any);
     mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue(null);
     mockedPrisma.member.findFirst.mockResolvedValue({
       id: "member-2",
       firstName: "Jane",
       lastName: "Smith",
-      familyGroupMemberships: [{ familyGroupId: "fg1", familyGroup: { id: "fg1", name: "Smith Family" } }],
+      familyGroupMemberships: [
+        {
+          familyGroupId: "fg1",
+          familyGroup: { id: "fg1", name: "Smith Family" }
+        }
+      ]
     } as any);
     mockedPrisma.familyGroupJoinRequest.create.mockResolvedValue({
       id: "req-1",
       familyGroupId: "fg1",
       requesterId: "member-1",
-      status: "PENDING",
+      status: "PENDING"
     } as any);
 
-    const { POST } = await import("@/app/api/members/family/request-join/route");
-    const res = await POST(makeReq("/api/members/family/request-join", "POST", { targetEmail: "jane@test.com" }));
+    const { POST } =
+      await import("@/app/api/members/family/request-join/route");
+    const res = await POST(
+      makeReq("/api/members/family/request-join", "POST", {
+        targetEmail: "jane@test.com"
+      })
+    );
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.requestId).toBe("req-1");
@@ -739,15 +957,20 @@ describe("POST /api/members/family/request-join", () => {
       firstName: "John",
       lastName: "Smith",
       canLogin: true,
-      active: true,
+      active: true
     } as any);
     mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue({
       id: "existing-req",
-      status: "PENDING",
+      status: "PENDING"
     } as any);
 
-    const { POST } = await import("@/app/api/members/family/request-join/route");
-    const res = await POST(makeReq("/api/members/family/request-join", "POST", { targetEmail: "jane@test.com" }));
+    const { POST } =
+      await import("@/app/api/members/family/request-join/route");
+    const res = await POST(
+      makeReq("/api/members/family/request-join", "POST", {
+        targetEmail: "jane@test.com"
+      })
+    );
     expect(res.status).toBe(422);
     const body = await res.json();
     expect(body.error).toContain("pending join request");
@@ -767,19 +990,26 @@ describe("Family change request endpoints", () => {
       active: true,
       ageTier: "ADULT",
       canLogin: true,
-      familyGroupMemberships: [{ familyGroupId: "fg1" }],
+      familyGroupMemberships: [{ familyGroupId: "fg1" }]
     } as any);
     mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue(null);
-    mockedPrisma.familyGroupJoinRequest.create.mockResolvedValue({ id: "adult-req-1" } as any);
-    mockedPrisma.familyGroup.findUnique.mockResolvedValue({ name: "Smith Family" } as any);
+    mockedPrisma.familyGroupJoinRequest.create.mockResolvedValue({
+      id: "adult-req-1"
+    } as any);
+    mockedPrisma.familyGroup.findUnique.mockResolvedValue({
+      name: "Smith Family"
+    } as any);
 
-    const { POST } = await import("@/app/api/members/family/request-adult/route");
-    const res = await POST(makeReq("/api/members/family/request-adult", "POST", {
-      familyGroupId: "fg1",
-      firstName: "Mum",
-      lastName: "Smith",
-      dateOfBirth: "1991-01-01",
-    }));
+    const { POST } =
+      await import("@/app/api/members/family/request-adult/route");
+    const res = await POST(
+      makeReq("/api/members/family/request-adult", "POST", {
+        familyGroupId: "fg1",
+        firstName: "Mum",
+        lastName: "Smith",
+        dateOfBirth: "1991-01-01"
+      })
+    );
 
     expect(res.status).toBe(201);
     expect(mockedPrisma.familyGroupJoinRequest.create).toHaveBeenCalledWith({
@@ -787,8 +1017,8 @@ describe("Family change request endpoints", () => {
         type: "ADULT_REQUEST",
         requestedFirstName: "Mum",
         requestedLastName: "Smith",
-        requestedEmail: "dad@test.com",
-      }),
+        requestedEmail: "dad@test.com"
+      })
     });
   });
 
@@ -801,29 +1031,39 @@ describe("Family change request endpoints", () => {
       active: true,
       ageTier: "ADULT",
       canLogin: true,
-      familyGroupMemberships: [{ familyGroupId: "fg1" }],
+      familyGroupMemberships: [{ familyGroupId: "fg1" }]
     } as any);
     mockedPrisma.familyGroupMember.findUnique.mockResolvedValue({
-      member: { id: "wrong-1", firstName: "Wrong", lastName: "Person", active: true },
-      familyGroup: { id: "fg1", name: "Smith Family" },
+      member: {
+        id: "wrong-1",
+        firstName: "Wrong",
+        lastName: "Person",
+        active: true
+      },
+      familyGroup: { id: "fg1", name: "Smith Family" }
     } as any);
     mockedPrisma.familyGroupJoinRequest.findFirst.mockResolvedValue(null);
-    mockedPrisma.familyGroupJoinRequest.create.mockResolvedValue({ id: "remove-req-1" } as any);
+    mockedPrisma.familyGroupJoinRequest.create.mockResolvedValue({
+      id: "remove-req-1"
+    } as any);
 
-    const { POST } = await import("@/app/api/members/family/request-removal/route");
-    const res = await POST(makeReq("/api/members/family/request-removal", "POST", {
-      familyGroupId: "fg1",
-      memberId: "wrong-1",
-      notes: "Not in our family",
-    }));
+    const { POST } =
+      await import("@/app/api/members/family/request-removal/route");
+    const res = await POST(
+      makeReq("/api/members/family/request-removal", "POST", {
+        familyGroupId: "fg1",
+        memberId: "wrong-1",
+        notes: "Not in our family"
+      })
+    );
 
     expect(res.status).toBe(201);
     expect(mockedPrisma.familyGroupJoinRequest.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         type: "REMOVAL_REQUEST",
         subjectMemberId: "wrong-1",
-        requestNotes: "Not in our family",
-      }),
+        requestNotes: "Not in our family"
+      })
     });
   });
 });
@@ -836,7 +1076,7 @@ describe("Admin Family Group Join Requests", () => {
     vi.clearAllMocks();
     mockRequireAdmin.mockResolvedValue({
       ok: true,
-      session: { user: { id: "admin-1", role: "ADMIN" } },
+      session: { user: { id: "admin-1", role: "ADMIN" } }
     });
   });
 
@@ -845,9 +1085,12 @@ describe("Admin Family Group Join Requests", () => {
       mockedAuth.mockResolvedValue(memberSession);
       mockRequireAdmin.mockResolvedValueOnce({
         ok: false,
-        response: new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 }),
+        response: new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401
+        })
       });
-      const { GET } = await import("@/app/api/admin/family-groups/requests/route");
+      const { GET } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await GET();
       expect(res.status).toBe(401);
     });
@@ -858,12 +1101,18 @@ describe("Admin Family Group Join Requests", () => {
         {
           id: "req-1",
           createdAt: new Date(),
-          requester: { id: "m1", firstName: "John", lastName: "Smith", email: "john@test.com" },
-          familyGroup: { id: "fg1", name: "Smith Family", memberships: [] },
-        },
+          requester: {
+            id: "m1",
+            firstName: "John",
+            lastName: "Smith",
+            email: "john@test.com"
+          },
+          familyGroup: { id: "fg1", name: "Smith Family", memberships: [] }
+        }
       ] as any);
 
-      const { GET } = await import("@/app/api/admin/family-groups/requests/route");
+      const { GET } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await GET();
       expect(res.status).toBe(200);
       const body = await res.json();
@@ -882,16 +1131,27 @@ describe("Admin Family Group Join Requests", () => {
           childFirstName: "Sam",
           childLastName: "Smith",
           childDateOfBirth: new Date("2018-03-15T00:00:00.000Z"),
-          requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
+          requester: {
+            id: "parent-1",
+            firstName: "Alice",
+            lastName: "Smith",
+            email: "alice@test.com"
+          },
           familyGroupId: "fg1",
           familyGroup: {
             id: "fg1",
             name: "Smith Family",
             memberships: [
-              { member: { id: "parent-1", firstName: "Alice", lastName: "Smith" } },
-            ],
-          },
-        },
+              {
+                member: {
+                  id: "parent-1",
+                  firstName: "Alice",
+                  lastName: "Smith"
+                }
+              }
+            ]
+          }
+        }
       ] as any);
       mockedPrisma.member.findMany.mockResolvedValue([
         {
@@ -902,11 +1162,12 @@ describe("Admin Family Group Join Requests", () => {
           ageTier: "CHILD",
           active: true,
           dateOfBirth: new Date("2018-03-15T00:00:00.000Z"),
-          familyGroupMemberships: [],
-        },
+          familyGroupMemberships: []
+        }
       ] as any);
 
-      const { GET } = await import("@/app/api/admin/family-groups/requests/route");
+      const { GET } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await GET();
       expect(res.status).toBe(200);
 
@@ -922,8 +1183,8 @@ describe("Admin Family Group Join Requests", () => {
           id: "child-1",
           firstName: "Sam",
           ageTier: "CHILD",
-          alreadyInGroup: false,
-        }),
+          alreadyInGroup: false
+        })
       ]);
     });
 
@@ -937,18 +1198,24 @@ describe("Admin Family Group Join Requests", () => {
           childFirstName: "Sam",
           childLastName: "Smith",
           childDateOfBirth: null,
-          requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
+          requester: {
+            id: "parent-1",
+            firstName: "Alice",
+            lastName: "Smith",
+            email: "alice@test.com"
+          },
           familyGroupId: "fg1",
           familyGroup: {
             id: "fg1",
             name: "Smith Family",
-            memberships: [],
-          },
-        },
+            memberships: []
+          }
+        }
       ] as any);
       mockedPrisma.member.findMany.mockResolvedValue([] as any);
 
-      const { GET } = await import("@/app/api/admin/family-groups/requests/route");
+      const { GET } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await GET();
       expect(res.status).toBe(200);
 
@@ -961,16 +1228,19 @@ describe("Admin Family Group Join Requests", () => {
 
   describe("PUT /api/admin/family-groups/requests", () => {
     it("returns 422 for invalid review input", async () => {
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await PUT(
         makeReq("/api/admin/family-groups/requests", "PUT", {
           requestId: "",
-          action: "approve",
+          action: "approve"
         })
       );
 
       expect(res.status).toBe(422);
-      expect(mockedPrisma.familyGroupJoinRequest.findUnique).not.toHaveBeenCalled();
+      expect(
+        mockedPrisma.familyGroupJoinRequest.findUnique
+      ).not.toHaveBeenCalled();
     });
 
     it("approves a request and sets familyGroupId", async () => {
@@ -980,12 +1250,23 @@ describe("Admin Family Group Join Requests", () => {
         familyGroupId: "fg1",
         requesterId: "m1",
         status: "PENDING",
-        requester: { id: "m1", firstName: "John", lastName: "Smith", familyGroupId: null },
+        requester: {
+          id: "m1",
+          firstName: "John",
+          lastName: "Smith",
+          familyGroupId: null
+        }
       } as any);
       mockedPrisma.$transaction.mockImplementation(async () => undefined);
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
-      const res = await PUT(makeReq("/api/admin/family-groups/requests", "PUT", { requestId: "req-1", action: "approve" }));
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
+      const res = await PUT(
+        makeReq("/api/admin/family-groups/requests", "PUT", {
+          requestId: "req-1",
+          action: "approve"
+        })
+      );
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.action).toBe("approve");
@@ -1001,15 +1282,21 @@ describe("Admin Family Group Join Requests", () => {
         type: "CHILD_REQUEST",
         childFirstName: "Sam",
         childLastName: "Smith",
-        requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
-        familyGroup: { id: "fg1", name: "Smith Family" },
+        requester: {
+          id: "parent-1",
+          firstName: "Alice",
+          lastName: "Smith",
+          email: "alice@test.com"
+        },
+        familyGroup: { id: "fg1", name: "Smith Family" }
       } as any);
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await PUT(
         makeReq("/api/admin/family-groups/requests", "PUT", {
           requestId: "req-child-1",
-          action: "approve",
+          action: "approve"
         })
       );
 
@@ -1028,8 +1315,16 @@ describe("Admin Family Group Join Requests", () => {
         type: "CHILD_REQUEST",
         childFirstName: "Sam",
         childLastName: "Smith",
-        requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com", active: true, ageTier: "ADULT", inheritEmailFromId: null },
-        familyGroup: { id: "fg1", name: "Smith Family" },
+        requester: {
+          id: "parent-1",
+          firstName: "Alice",
+          lastName: "Smith",
+          email: "alice@test.com",
+          active: true,
+          ageTier: "ADULT",
+          inheritEmailFromId: null
+        },
+        familyGroup: { id: "fg1", name: "Smith Family" }
       } as any);
       mockedPrisma.member.findUnique.mockResolvedValue({
         id: "child-1",
@@ -1041,35 +1336,37 @@ describe("Admin Family Group Join Requests", () => {
         parent: null,
         secondaryParent: null,
         dependents: [],
-        secondaryDependents: [],
+        secondaryDependents: []
       } as any);
 
       const txUpsert = vi.fn();
       const txUpdate = vi.fn();
       const txMemberUpdate = vi.fn();
-      mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
-        callback({
-          member: {
-            findUnique: vi.fn().mockResolvedValue({
-              id: "parent-1",
-              ageTier: "ADULT",
-              parentMemberId: null,
-              secondaryParentId: null,
-              inheritEmailFromId: null,
-            }),
-            update: txMemberUpdate,
-          },
-          familyGroupMember: { upsert: txUpsert },
-          familyGroupJoinRequest: { update: txUpdate },
-        })
+      mockedPrisma.$transaction.mockImplementation(
+        async (callback: (tx: any) => Promise<unknown>) =>
+          callback({
+            member: {
+              findUnique: vi.fn().mockResolvedValue({
+                id: "parent-1",
+                ageTier: "ADULT",
+                parentMemberId: null,
+                secondaryParentId: null,
+                inheritEmailFromId: null
+              }),
+              update: txMemberUpdate
+            },
+            familyGroupMember: { upsert: txUpsert },
+            familyGroupJoinRequest: { update: txUpdate }
+          })
       );
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await PUT(
         makeReq("/api/admin/family-groups/requests", "PUT", {
           requestId: "req-child-1",
           action: "approve",
-          linkedMemberId: "child-1",
+          linkedMemberId: "child-1"
         })
       );
 
@@ -1079,30 +1376,30 @@ describe("Admin Family Group Join Requests", () => {
         data: expect.objectContaining({
           parent: { connect: { id: "parent-1" } },
           inheritParentEmail: true,
-          inheritEmailFrom: { connect: { id: "parent-1" } },
-        }),
+          inheritEmailFrom: { connect: { id: "parent-1" } }
+        })
       });
       expect(txUpsert).toHaveBeenCalledWith({
         where: {
           familyGroupId_memberId: {
             familyGroupId: "fg1",
-            memberId: "child-1",
-          },
+            memberId: "child-1"
+          }
         },
         create: {
           familyGroupId: "fg1",
           memberId: "child-1",
-          role: "MEMBER",
+          role: "MEMBER"
         },
-        update: {},
+        update: {}
       });
       expect(txUpdate).toHaveBeenCalledWith({
         where: { id: "req-child-1" },
         data: expect.objectContaining({
           status: "APPROVED",
           reviewedBy: "admin-1",
-          linkedMemberId: "child-1",
-        }),
+          linkedMemberId: "child-1"
+        })
       });
     });
 
@@ -1140,9 +1437,9 @@ describe("Admin Family Group Join Requests", () => {
           postalCity: "Example",
           postalRegion: "Waikato",
           postalPostalCode: "3420",
-          postalCountry: "NZ",
+          postalCountry: "NZ"
         },
-        familyGroup: { id: "fg1", name: "Smith Family" },
+        familyGroup: { id: "fg1", name: "Smith Family" }
       } as any);
       mockedPrisma.member.findUnique.mockResolvedValue({
         id: "parent-1",
@@ -1151,26 +1448,28 @@ describe("Admin Family Group Join Requests", () => {
         archivedAt: null,
         parentMemberId: null,
         secondaryParentId: null,
-        inheritEmailFromId: null,
+        inheritEmailFromId: null
       } as any);
 
       const txMemberCreate = vi.fn().mockResolvedValue({ id: "child-created" });
       const txUpsert = vi.fn();
       const txUpdate = vi.fn();
-      mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
-        callback({
-          member: { create: txMemberCreate },
-          familyGroupMember: { upsert: txUpsert },
-          familyGroupJoinRequest: { update: txUpdate },
-        })
+      mockedPrisma.$transaction.mockImplementation(
+        async (callback: (tx: any) => Promise<unknown>) =>
+          callback({
+            member: { create: txMemberCreate },
+            familyGroupMember: { upsert: txUpsert },
+            familyGroupJoinRequest: { update: txUpdate }
+          })
       );
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await PUT(
         makeReq("/api/admin/family-groups/requests", "PUT", {
           requestId: "req-child-create",
           action: "approve",
-          createNewMember: true,
+          createNewMember: true
         })
       );
 
@@ -1191,31 +1490,31 @@ describe("Admin Family Group Join Requests", () => {
           emailVerified: true,
           phoneCountryCode: "64",
           streetAddressLine1: "1 Main St",
-          postalAddressLine1: "PO Box 1",
+          postalAddressLine1: "PO Box 1"
         }),
-        select: { id: true },
+        select: { id: true }
       });
       expect(txUpsert).toHaveBeenCalledWith({
         where: {
           familyGroupId_memberId: {
             familyGroupId: "fg1",
-            memberId: "child-created",
-          },
+            memberId: "child-created"
+          }
         },
         create: {
           familyGroupId: "fg1",
           memberId: "child-created",
-          role: "MEMBER",
+          role: "MEMBER"
         },
-        update: {},
+        update: {}
       });
       expect(txUpdate).toHaveBeenCalledWith({
         where: { id: "req-child-create" },
         data: expect.objectContaining({
           status: "APPROVED",
           reviewedBy: "admin-1",
-          linkedMemberId: "child-created",
-        }),
+          linkedMemberId: "child-created"
+        })
       });
     });
 
@@ -1238,17 +1537,18 @@ describe("Admin Family Group Join Requests", () => {
           active: true,
           ageTier: "ADULT",
           archivedAt: null,
-          inheritEmailFromId: null,
+          inheritEmailFromId: null
         },
-        familyGroup: { id: "fg1", name: "Smith Family" },
+        familyGroup: { id: "fg1", name: "Smith Family" }
       } as any);
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await PUT(
         makeReq("/api/admin/family-groups/requests", "PUT", {
           requestId: "req-youth-create",
           action: "approve",
-          createNewMember: true,
+          createNewMember: true
         })
       );
 
@@ -1277,17 +1577,18 @@ describe("Admin Family Group Join Requests", () => {
           active: true,
           ageTier: "ADULT",
           archivedAt: null,
-          inheritEmailFromId: null,
+          inheritEmailFromId: null
         },
-        familyGroup: { id: "fg1", name: "Smith Family" },
+        familyGroup: { id: "fg1", name: "Smith Family" }
       } as any);
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await PUT(
         makeReq("/api/admin/family-groups/requests", "PUT", {
           requestId: "req-legacy-create",
           action: "approve",
-          createNewMember: true,
+          createNewMember: true
         })
       );
 
@@ -1307,21 +1608,27 @@ describe("Admin Family Group Join Requests", () => {
         type: "CHILD_REQUEST",
         childFirstName: "Sam",
         childLastName: "Smith",
-        requester: { id: "parent-1", firstName: "Alice", lastName: "Smith", email: "alice@test.com" },
-        familyGroup: { id: "fg1", name: "Smith Family" },
+        requester: {
+          id: "parent-1",
+          firstName: "Alice",
+          lastName: "Smith",
+          email: "alice@test.com"
+        },
+        familyGroup: { id: "fg1", name: "Smith Family" }
       } as any);
       mockedPrisma.member.findUnique.mockResolvedValue({
         id: "adult-1",
         active: true,
-        ageTier: "ADULT",
+        ageTier: "ADULT"
       } as any);
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await PUT(
         makeReq("/api/admin/family-groups/requests", "PUT", {
           requestId: "req-child-1",
           action: "approve",
-          linkedMemberId: "adult-1",
+          linkedMemberId: "adult-1"
         })
       );
 
@@ -1339,25 +1646,32 @@ describe("Admin Family Group Join Requests", () => {
         subjectMemberId: "child-1",
         status: "PENDING",
         type: "REMOVAL_REQUEST",
-        requester: { id: "member-1", firstName: "Dad", lastName: "Smith", email: "dad@test.com" },
+        requester: {
+          id: "member-1",
+          firstName: "Dad",
+          lastName: "Smith",
+          email: "dad@test.com"
+        },
         familyGroup: { id: "fg1", name: "Smith Family" },
-        subjectMember: { id: "child-1", firstName: "Emma", lastName: "Smith" },
+        subjectMember: { id: "child-1", firstName: "Emma", lastName: "Smith" }
       } as any);
 
       const txDeleteMany = vi.fn();
       const txUpdate = vi.fn();
-      mockedPrisma.$transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
-        callback({
-          familyGroupMember: { deleteMany: txDeleteMany },
-          familyGroupJoinRequest: { update: txUpdate },
-        })
+      mockedPrisma.$transaction.mockImplementation(
+        async (callback: (tx: any) => Promise<unknown>) =>
+          callback({
+            familyGroupMember: { deleteMany: txDeleteMany },
+            familyGroupJoinRequest: { update: txUpdate }
+          })
       );
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
       const res = await PUT(
         makeReq("/api/admin/family-groups/requests", "PUT", {
           requestId: "remove-req-1",
-          action: "approve",
+          action: "approve"
         })
       );
 
@@ -1365,15 +1679,15 @@ describe("Admin Family Group Join Requests", () => {
       expect(txDeleteMany).toHaveBeenCalledWith({
         where: {
           familyGroupId: "fg1",
-          memberId: "child-1",
-        },
+          memberId: "child-1"
+        }
       });
       expect(txUpdate).toHaveBeenCalledWith({
         where: { id: "remove-req-1" },
         data: expect.objectContaining({
           status: "APPROVED",
-          reviewedBy: "admin-1",
-        }),
+          reviewedBy: "admin-1"
+        })
       });
     });
 
@@ -1384,12 +1698,23 @@ describe("Admin Family Group Join Requests", () => {
         familyGroupId: "fg1",
         requesterId: "m1",
         status: "PENDING",
-        requester: { id: "m1", firstName: "John", lastName: "Smith", familyGroupId: null },
+        requester: {
+          id: "m1",
+          firstName: "John",
+          lastName: "Smith",
+          familyGroupId: null
+        }
       } as any);
       mockedPrisma.familyGroupJoinRequest.update.mockResolvedValue({} as any);
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
-      const res = await PUT(makeReq("/api/admin/family-groups/requests", "PUT", { requestId: "req-1", action: "reject" }));
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
+      const res = await PUT(
+        makeReq("/api/admin/family-groups/requests", "PUT", {
+          requestId: "req-1",
+          action: "reject"
+        })
+      );
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.action).toBe("reject");
@@ -1399,8 +1724,14 @@ describe("Admin Family Group Join Requests", () => {
       mockedAuth.mockResolvedValue(adminSession);
       mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue(null);
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
-      const res = await PUT(makeReq("/api/admin/family-groups/requests", "PUT", { requestId: "nope", action: "approve" }));
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
+      const res = await PUT(
+        makeReq("/api/admin/family-groups/requests", "PUT", {
+          requestId: "nope",
+          action: "approve"
+        })
+      );
       expect(res.status).toBe(404);
     });
 
@@ -1409,11 +1740,17 @@ describe("Admin Family Group Join Requests", () => {
       mockedPrisma.familyGroupJoinRequest.findUnique.mockResolvedValue({
         id: "req-1",
         status: "APPROVED",
-        requester: { id: "m1", familyGroupId: "fg1" },
+        requester: { id: "m1", familyGroupId: "fg1" }
       } as any);
 
-      const { PUT } = await import("@/app/api/admin/family-groups/requests/route");
-      const res = await PUT(makeReq("/api/admin/family-groups/requests", "PUT", { requestId: "req-1", action: "approve" }));
+      const { PUT } =
+        await import("@/app/api/admin/family-groups/requests/route");
+      const res = await PUT(
+        makeReq("/api/admin/family-groups/requests", "PUT", {
+          requestId: "req-1",
+          action: "approve"
+        })
+      );
       expect(res.status).toBe(422);
     });
   });

@@ -4,27 +4,27 @@ import { FinanceSnapshotType } from "@prisma/client";
 const { mockListFinanceSnapshots, mockGetFinanceBookingMetrics } = vi.hoisted(
   () => ({
     mockListFinanceSnapshots: vi.fn(),
-    mockGetFinanceBookingMetrics: vi.fn(),
+    mockGetFinanceBookingMetrics: vi.fn()
   })
 );
 
 vi.mock("@/lib/finance-sync-storage", () => ({
   DEFAULT_FINANCE_SNAPSHOT_SCOPE: "default",
-  listFinanceSnapshots: mockListFinanceSnapshots,
+  listFinanceSnapshots: mockListFinanceSnapshots
 }));
 
 vi.mock("@/lib/finance-booking-metrics", () => ({
-  getFinanceBookingMetrics: mockGetFinanceBookingMetrics,
+  getFinanceBookingMetrics: mockGetFinanceBookingMetrics
 }));
 
 vi.mock("@/lib/finance-auth", () => ({
-  hasFinanceManagerAccess: (level: string) => level === "MANAGER",
+  hasFinanceManagerAccess: (level: string) => level === "MANAGER"
 }));
 
 import {
   buildDefaultFinancePricingSensitivityFilters,
   buildFinancePricingSensitivityPageModel,
-  resolveFinancePricingSensitivityFilters,
+  resolveFinancePricingSensitivityFilters
 } from "@/lib/finance-pricing-sensitivity-page";
 
 function financeViewer() {
@@ -36,7 +36,7 @@ function financeViewer() {
     role: "MEMBER" as const,
     financeAccessLevel: "VIEWER" as const,
     active: true,
-    forcePasswordChange: false,
+    forcePasswordChange: false
   };
 }
 
@@ -49,7 +49,7 @@ function financeManager() {
     role: "ADMIN" as const,
     financeAccessLevel: "MANAGER" as const,
     active: true,
-    forcePasswordChange: false,
+    forcePasswordChange: false
   };
 }
 
@@ -81,14 +81,14 @@ function profitAndLossSnapshot(input: {
       reportTitles: [
         "Profit and Loss",
         "Example Alpine Club",
-        input.periodLabel,
+        input.periodLabel
       ],
       fields: [
         {
           fieldId: "period",
           description: "Period",
-          value: input.periodLabel,
-        },
+          value: input.periodLabel
+        }
       ],
       rows: [
         {
@@ -100,24 +100,24 @@ function profitAndLossSnapshot(input: {
               rowType: "Row",
               title: null,
               cells: [{ value: "Electricity" }, { value: input.electricity }],
-              rows: [],
+              rows: []
             },
             {
               rowType: "Row",
               title: null,
               cells: [{ value: "Insurance" }, { value: input.insurance }],
-              rows: [],
+              rows: []
             },
             {
               rowType: "SummaryRow",
               title: null,
               cells: [
                 { value: "Total Operating Expenses" },
-                { value: input.totalOperatingExpenses },
+                { value: input.totalOperatingExpenses }
               ],
-              rows: [],
-            },
-          ],
+              rows: []
+            }
+          ]
         },
         {
           rowType: "Section",
@@ -129,26 +129,26 @@ function profitAndLossSnapshot(input: {
               title: null,
               cells: [
                 { value: "Kitchen supplies" },
-                { value: input.kitchenSupplies },
+                { value: input.kitchenSupplies }
               ],
-              rows: [],
+              rows: []
             },
             {
               rowType: "SummaryRow",
               title: null,
               cells: [
                 { value: "Total Direct Costs" },
-                { value: input.totalDirectCosts },
+                { value: input.totalDirectCosts }
               ],
-              rows: [],
-            },
-          ],
-        },
-      ],
+              rows: []
+            }
+          ]
+        }
+      ]
     },
     syncRunId: "run-1",
     createdAt: new Date("2026-05-01T00:20:00.000Z"),
-    updatedAt: new Date("2026-05-01T00:20:00.000Z"),
+    updatedAt: new Date("2026-05-01T00:20:00.000Z")
   };
 }
 
@@ -175,20 +175,20 @@ function realizedMetrics(input: {
         FAILED: 0,
         REFUNDED: 0,
         PARTIALLY_REFUNDED: 0,
-        NONE: 0,
+        NONE: 0
       },
       additionalPaymentStatusBreakdown: {
         PENDING: 0,
         SUCCEEDED: 0,
         FAILED: 0,
-        NONE: 3,
+        NONE: 3
       },
       capturedPrimaryCents: input.bookedRevenueCents,
       capturedAdditionalCents: 0,
       refundedCents: 0,
       netCollectedCents: input.bookedRevenueCents,
       creditAppliedCents: 0,
-      changeFeeCents: 0,
+      changeFeeCents: 0
     },
     realized: {
       window: {
@@ -197,7 +197,7 @@ function realizedMetrics(input: {
         cutoffDate: input.to,
         effectiveFrom: input.from,
         effectiveTo: input.to,
-        dayCount: input.dayCount,
+        dayCount: input.dayCount
       },
       totals: {
         bookingCount: 3,
@@ -211,21 +211,21 @@ function realizedMetrics(input: {
         occupancy: {
           occupiedBedNights: input.guestNights,
           capacityBedNights: input.capacityBedNights,
-          occupancyRate: input.occupancyRate,
-        },
+          occupancyRate: input.occupancyRate
+        }
       },
       statusBreakdown: {
         CONFIRMED: {
           bookingCount: 1,
           bookingNights: 3,
           guestNights: Math.floor(input.guestNights / 3),
-          bookedRevenueCents: Math.round(input.bookedRevenueCents / 3),
+          bookedRevenueCents: Math.round(input.bookedRevenueCents / 3)
         },
         PAID: {
           bookingCount: 1,
           bookingNights: 4,
           guestNights: Math.floor(input.guestNights / 3),
-          bookedRevenueCents: Math.round(input.bookedRevenueCents / 3),
+          bookedRevenueCents: Math.round(input.bookedRevenueCents / 3)
         },
         COMPLETED: {
           bookingCount: 1,
@@ -234,11 +234,11 @@ function realizedMetrics(input: {
             input.guestNights - 2 * Math.floor(input.guestNights / 3),
           bookedRevenueCents:
             input.bookedRevenueCents -
-            2 * Math.round(input.bookedRevenueCents / 3),
-        },
+            2 * Math.round(input.bookedRevenueCents / 3)
+        }
       },
-      byDate: [],
-    },
+      byDate: []
+    }
   };
 }
 
@@ -263,7 +263,7 @@ describe("finance pricing sensitivity page model", () => {
         insurance: "200.00",
         kitchenSupplies: "150.00",
         totalOperatingExpenses: "500.00",
-        totalDirectCosts: "150.00",
+        totalDirectCosts: "150.00"
       }),
       profitAndLossSnapshot({
         id: "snapshot-march",
@@ -276,8 +276,8 @@ describe("finance pricing sensitivity page model", () => {
         insurance: "200.00",
         kitchenSupplies: "100.00",
         totalOperatingExpenses: "450.00",
-        totalDirectCosts: "100.00",
-      }),
+        totalDirectCosts: "100.00"
+      })
     ]);
     mockGetFinanceBookingMetrics
       .mockResolvedValueOnce(
@@ -288,7 +288,7 @@ describe("finance pricing sensitivity page model", () => {
           guestNights: 20,
           bookedRevenueCents: 160000,
           occupancyRate: 0.023,
-          capacityBedNights: 870,
+          capacityBedNights: 870
         })
       )
       .mockResolvedValueOnce(
@@ -299,7 +299,7 @@ describe("finance pricing sensitivity page model", () => {
           guestNights: 16,
           bookedRevenueCents: 124000,
           occupancyRate: 0.0178,
-          capacityBedNights: 899,
+          capacityBedNights: 899
         })
       );
   });
@@ -311,7 +311,7 @@ describe("finance pricing sensitivity page model", () => {
 
   it("builds a pricing-sensitivity view from matched monthly costs and realized booking metrics", async () => {
     const model = await buildFinancePricingSensitivityPageModel({
-      member: financeManager(),
+      member: financeManager()
     });
 
     expect(model.isManager).toBe(true);
@@ -324,22 +324,22 @@ describe("finance pricing sensitivity page model", () => {
     expect(model.summaryCards).toEqual([
       expect.objectContaining({
         title: "Average monthly costs",
-        value: "$600.00",
+        value: "$600.00"
       }),
       expect.objectContaining({
         title: "Average realized guest nights",
         value: "18.0",
-        footnote: "Average realized occupancy 2.0%.",
+        footnote: "Average realized occupancy 2.0%."
       }),
       expect.objectContaining({
         title: "Average realized revenue / guest night",
-        value: "$78.89",
+        value: "$78.89"
       }),
       expect.objectContaining({
         title: "Average booked revenue less costs",
         value: "+$820.00",
-        footnote: "Break-even at realized demand: $33.33 per guest night.",
-      }),
+        footnote: "Break-even at realized demand: $33.33 per guest night."
+      })
     ]);
     expect(model.periodRows).toEqual([
       {
@@ -351,7 +351,7 @@ describe("finance pricing sensitivity page model", () => {
         occupancyRate: "2.3%",
         averageRevenuePerGuestNight: "$80.00",
         breakEvenRevenuePerGuestNight: "$32.50",
-        bookedRevenueLessCosts: "+$950.00",
+        bookedRevenueLessCosts: "+$950.00"
       },
       {
         snapshotId: "snapshot-march",
@@ -362,56 +362,56 @@ describe("finance pricing sensitivity page model", () => {
         occupancyRate: "1.8%",
         averageRevenuePerGuestNight: "$77.50",
         breakEvenRevenuePerGuestNight: "$34.38",
-        bookedRevenueLessCosts: "+$690.00",
-      },
+        bookedRevenueLessCosts: "+$690.00"
+      }
     ]);
     expect(model.scenarioRows[0]).toEqual({
       occupancyAssumption: "20.0%",
       impliedGuestNights: "176.9",
       requiredRevenuePerGuestNight: "$3.39",
       impliedRevenueAtActualRate: "$13955.64",
-      bookedRevenueLessCosts: "+$13355.64",
+      bookedRevenueLessCosts: "+$13355.64"
     });
     expect(model.scenarioRows[4]).toEqual({
       occupancyAssumption: "80.0%",
       impliedGuestNights: "707.6",
       requiredRevenuePerGuestNight: "$0.85",
       impliedRevenueAtActualRate: "$55822.56",
-      bookedRevenueLessCosts: "+$55222.56",
+      bookedRevenueLessCosts: "+$55222.56"
     });
     expect(mockListFinanceSnapshots).toHaveBeenCalledWith({
       snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_MONTHLY,
       scope: "default",
-      limit: 6,
+      limit: 6
     });
     expect(mockGetFinanceBookingMetrics).toHaveBeenNthCalledWith(1, {
       realized: {
         from: "2026-04-01",
         to: "2026-04-30",
-        cutoffDate: "2026-04-30",
-      },
+        cutoffDate: "2026-04-30"
+      }
     });
     expect(mockGetFinanceBookingMetrics).toHaveBeenNthCalledWith(2, {
       realized: {
         from: "2026-03-01",
         to: "2026-03-31",
-        cutoffDate: "2026-03-31",
-      },
+        cutoffDate: "2026-03-31"
+      }
     });
   });
 
   it("falls back invalid pricing-sensitivity period filters to the default window", () => {
     const resolved = resolveFinancePricingSensitivityFilters({
       searchParams: {
-        periods: "0",
-      },
+        periods: "0"
+      }
     });
 
     expect(resolved.filters).toEqual({
-      periods: 6,
+      periods: 6
     });
     expect(resolved.warnings).toEqual([
-      "Pricing-sensitivity periods must be a whole number between 1 and 24. Showing the default 6-period window.",
+      "Pricing-sensitivity periods must be a whole number between 1 and 24. Showing the default 6-period window."
     ]);
   });
 
@@ -427,12 +427,12 @@ describe("finance pricing sensitivity page model", () => {
           guestNights: 16,
           bookedRevenueCents: 124000,
           occupancyRate: 0.0178,
-          capacityBedNights: 899,
+          capacityBedNights: 899
         })
       );
 
     const model = await buildFinancePricingSensitivityPageModel({
-      member: financeViewer(),
+      member: financeViewer()
     });
 
     expect(model.isManager).toBe(false);
@@ -448,7 +448,7 @@ describe("finance pricing sensitivity page model", () => {
     mockListFinanceSnapshots.mockResolvedValue([]);
 
     const model = await buildFinancePricingSensitivityPageModel({
-      member: financeViewer(),
+      member: financeViewer()
     });
 
     expect(model.isManager).toBe(false);

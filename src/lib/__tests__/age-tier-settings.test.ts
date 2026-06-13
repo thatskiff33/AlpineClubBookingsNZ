@@ -9,7 +9,7 @@ import {
   computeAge,
   invalidateAgeTierCache,
   normalizeAgeTierSettings,
-  type AgeTierSettingData,
+  type AgeTierSettingData
 } from "../age-tier";
 
 // ---------------------------------------------------------------------------
@@ -22,52 +22,92 @@ describe("computeAgeTierWithSettings — TAC default boundaries", () => {
   it("INFANT: age 0-4", () => {
     // Newborn-ish
     expect(
-      computeAgeTierWithSettings(new Date("2025-06-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2025-06-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("INFANT");
     // Age 4 exactly
     expect(
-      computeAgeTierWithSettings(new Date("2021-04-02"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2021-04-02"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("INFANT");
   });
 
   it("CHILD: age 5-12", () => {
     // Age 5 exactly
     expect(
-      computeAgeTierWithSettings(new Date("2021-04-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2021-04-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
     // Age 9 exactly
     expect(
-      computeAgeTierWithSettings(new Date("2016-04-02"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2016-04-02"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
     // Age 10 - still CHILD (max is 12)
     expect(
-      computeAgeTierWithSettings(new Date("2016-04-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2016-04-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
     // Age 12 exactly
     expect(
-      computeAgeTierWithSettings(new Date("2014-04-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2014-04-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
   });
 
   it("YOUTH: age 13-17", () => {
     // Exactly 13
     expect(
-      computeAgeTierWithSettings(new Date("2013-04-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2013-04-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("YOUTH");
     // Age 17 (day before 18th birthday)
     expect(
-      computeAgeTierWithSettings(new Date("2008-04-02"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2008-04-02"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("YOUTH");
   });
 
   it("ADULT: age 18+", () => {
     // Exactly 18
     expect(
-      computeAgeTierWithSettings(new Date("2008-04-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("2008-04-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("ADULT");
     // Age 40
     expect(
-      computeAgeTierWithSettings(new Date("1985-01-01"), ref2026, AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        new Date("1985-01-01"),
+        ref2026,
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("ADULT");
   });
 
@@ -115,9 +155,27 @@ describe("computeAgeTierWithSettings — custom settings", () => {
 
   it("respects custom boundaries", () => {
     const custom: AgeTierSettingData[] = [
-      { tier: "CHILD", minAge: 0, maxAge: 12, label: "Child (under 13)", sortOrder: 1 },
-      { tier: "YOUTH", minAge: 13, maxAge: 17, label: "Youth (13-17)", sortOrder: 2 },
-      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult (18+)", sortOrder: 3 },
+      {
+        tier: "CHILD",
+        minAge: 0,
+        maxAge: 12,
+        label: "Child (under 13)",
+        sortOrder: 1
+      },
+      {
+        tier: "YOUTH",
+        minAge: 13,
+        maxAge: 17,
+        label: "Youth (13-17)",
+        sortOrder: 2
+      },
+      {
+        tier: "ADULT",
+        minAge: 18,
+        maxAge: null,
+        label: "Adult (18+)",
+        sortOrder: 3
+      }
     ];
     // Age 11 on April 1 2026 (Malia DOB 2014-08-28)
     expect(
@@ -130,7 +188,7 @@ describe("computeAgeTierWithSettings — custom settings", () => {
     const weirdSettings: AgeTierSettingData[] = [
       { tier: "CHILD", minAge: 0, maxAge: 5, label: "Child", sortOrder: 1 },
       // gap: 6-17 not covered
-      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", sortOrder: 2 },
+      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", sortOrder: 2 }
     ];
     // Age 10 -> not matched by CHILD (max 5) and not matched by ADULT (min 18)
     // falls back to ADULT
@@ -150,7 +208,11 @@ describe("Season start date as reference", () => {
     // On April 1 2026 she is 11 (turns 12 in August) -> CHILD (CHILD is 5-12)
     expect(computeAge(maliaDOB, getSeasonStartDate(2026))).toBe(11);
     expect(
-      computeAgeTierWithSettings(maliaDOB, getSeasonStartDate(2026), AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        maliaDOB,
+        getSeasonStartDate(2026),
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
   });
 
@@ -159,7 +221,11 @@ describe("Season start date as reference", () => {
     const dob = new Date("2016-03-31");
     expect(computeAge(dob, getSeasonStartDate(2026))).toBe(10);
     expect(
-      computeAgeTierWithSettings(dob, getSeasonStartDate(2026), AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        dob,
+        getSeasonStartDate(2026),
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
   });
 
@@ -168,7 +234,11 @@ describe("Season start date as reference", () => {
     const dob = new Date("2016-04-02");
     expect(computeAge(dob, getSeasonStartDate(2026))).toBe(9);
     expect(
-      computeAgeTierWithSettings(dob, getSeasonStartDate(2026), AGE_TIER_DEFAULTS)
+      computeAgeTierWithSettings(
+        dob,
+        getSeasonStartDate(2026),
+        AGE_TIER_DEFAULTS
+      )
     ).toBe("CHILD");
   });
 
@@ -207,12 +277,13 @@ describe("getAgeTierSettings fallback", () => {
     vi.doMock("../prisma", () => ({
       prisma: {
         ageTierSetting: {
-          findMany: vi.fn().mockRejectedValue(new Error("DB unavailable")),
-        },
-      },
+          findMany: vi.fn().mockRejectedValue(new Error("DB unavailable"))
+        }
+      }
     }));
 
-    const { getAgeTierSettings, AGE_TIER_DEFAULTS: defaults } = await import("../age-tier");
+    const { getAgeTierSettings, AGE_TIER_DEFAULTS: defaults } =
+      await import("../age-tier");
     const result = await getAgeTierSettings();
     expect(result).toEqual(defaults);
   });
@@ -222,15 +293,34 @@ describe("getAgeTierSettings fallback", () => {
       prisma: {
         ageTierSetting: {
           findMany: vi.fn().mockResolvedValue([
-            { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
-            { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
-            { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", sortOrder: 3 },
-          ]),
-        },
-      },
+            {
+              tier: "CHILD",
+              minAge: 0,
+              maxAge: 9,
+              label: "Child (under 10)",
+              sortOrder: 1
+            },
+            {
+              tier: "YOUTH",
+              minAge: 10,
+              maxAge: 17,
+              label: "Youth (10-17)",
+              sortOrder: 2
+            },
+            {
+              tier: "ADULT",
+              minAge: 18,
+              maxAge: null,
+              label: "Adult",
+              sortOrder: 3
+            }
+          ])
+        }
+      }
     }));
 
-    const { getAgeTierSettings, AGE_TIER_DEFAULTS: defaults } = await import("../age-tier");
+    const { getAgeTierSettings, AGE_TIER_DEFAULTS: defaults } =
+      await import("../age-tier");
     const result = await getAgeTierSettings();
     expect(result).toEqual(defaults);
   });
@@ -239,9 +329,21 @@ describe("getAgeTierSettings fallback", () => {
 describe("normalizeAgeTierSettings", () => {
   it("rewrites the legacy 3-tier settings to the default 4-tier layout", () => {
     const legacyRows: AgeTierSettingData[] = [
-      { tier: "CHILD", minAge: 0, maxAge: 9, label: "Child (under 10)", sortOrder: 1 },
-      { tier: "YOUTH", minAge: 10, maxAge: 17, label: "Youth (10-17)", sortOrder: 2 },
-      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", sortOrder: 3 },
+      {
+        tier: "CHILD",
+        minAge: 0,
+        maxAge: 9,
+        label: "Child (under 10)",
+        sortOrder: 1
+      },
+      {
+        tier: "YOUTH",
+        minAge: 10,
+        maxAge: 17,
+        label: "Youth (10-17)",
+        sortOrder: 2
+      },
+      { tier: "ADULT", minAge: 18, maxAge: null, label: "Adult", sortOrder: 3 }
     ];
 
     expect(normalizeAgeTierSettings(legacyRows)).toEqual(AGE_TIER_DEFAULTS);
@@ -255,7 +357,7 @@ describe("normalizeAgeTierSettings", () => {
         maxAge: 2,
         label: "Baby (0-2)",
         xeroAcceptedContactGroups: [],
-        sortOrder: 0,
+        sortOrder: 0
       },
       {
         tier: "CHILD",
@@ -263,7 +365,7 @@ describe("normalizeAgeTierSettings", () => {
         maxAge: 12,
         label: "Child (3-12)",
         xeroAcceptedContactGroups: [],
-        sortOrder: 1,
+        sortOrder: 1
       },
       {
         tier: "YOUTH",
@@ -271,7 +373,7 @@ describe("normalizeAgeTierSettings", () => {
         maxAge: 17,
         label: "Teen (13-17)",
         xeroAcceptedContactGroups: [],
-        sortOrder: 2,
+        sortOrder: 2
       },
       {
         tier: "ADULT",
@@ -279,15 +381,15 @@ describe("normalizeAgeTierSettings", () => {
         maxAge: null,
         label: "Adult (18+)",
         xeroAcceptedContactGroups: [],
-        sortOrder: 3,
-      },
+        sortOrder: 3
+      }
     ];
 
     expect(normalizeAgeTierSettings(customRows)).toEqual(
       customRows.map((row) => ({
         ...row,
         subscriptionRequiredForBooking: true,
-        familyGroupRequestCreateMemberAllowed: false,
+        familyGroupRequestCreateMemberAllowed: false
       }))
     );
   });
@@ -302,7 +404,7 @@ describe("normalizeAgeTierSettings", () => {
         subscriptionRequiredForBooking: false,
         familyGroupRequestCreateMemberAllowed: true,
         xeroAcceptedContactGroups: [],
-        sortOrder: 0,
+        sortOrder: 0
       },
       {
         tier: "CHILD",
@@ -312,8 +414,8 @@ describe("normalizeAgeTierSettings", () => {
         subscriptionRequiredForBooking: false,
         familyGroupRequestCreateMemberAllowed: false,
         xeroAcceptedContactGroups: [],
-        sortOrder: 1,
-      },
+        sortOrder: 1
+      }
     ];
 
     expect(normalizeAgeTierSettings(customRows)).toEqual(customRows);
@@ -330,7 +432,7 @@ describe("Age tier contiguity validation rules", () => {
     const sorted = [
       { tier: "CHILD", minAge: 0, maxAge: 8 },
       { tier: "YOUTH", minAge: 10, maxAge: 17 }, // gap: 9 is uncovered
-      { tier: "ADULT", minAge: 18, maxAge: null },
+      { tier: "ADULT", minAge: 18, maxAge: null }
     ];
     let hasGap = false;
     for (let i = 0; i < sorted.length - 1; i++) {
@@ -348,7 +450,7 @@ describe("Age tier contiguity validation rules", () => {
     const sorted = [
       { tier: "CHILD", minAge: 0, maxAge: 9 },
       { tier: "YOUTH", minAge: 10, maxAge: 17 },
-      { tier: "ADULT", minAge: 18, maxAge: null },
+      { tier: "ADULT", minAge: 18, maxAge: null }
     ];
     let hasGap = false;
     for (let i = 0; i < sorted.length - 1; i++) {

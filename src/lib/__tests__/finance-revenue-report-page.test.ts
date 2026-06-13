@@ -2,22 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FinanceSnapshotType } from "@prisma/client";
 
 const { mockListFinanceSnapshots } = vi.hoisted(() => ({
-  mockListFinanceSnapshots: vi.fn(),
+  mockListFinanceSnapshots: vi.fn()
 }));
 
 vi.mock("@/lib/finance-sync-storage", () => ({
   DEFAULT_FINANCE_SNAPSHOT_SCOPE: "default",
-  listFinanceSnapshots: mockListFinanceSnapshots,
+  listFinanceSnapshots: mockListFinanceSnapshots
 }));
 
 vi.mock("@/lib/finance-auth", () => ({
-  hasFinanceManagerAccess: (level: string) => level === "MANAGER",
+  hasFinanceManagerAccess: (level: string) => level === "MANAGER"
 }));
 
 import {
   buildDefaultFinanceRevenueReportFilters,
   buildFinanceRevenueReportPageModel,
-  resolveFinanceRevenueReportFilters,
+  resolveFinanceRevenueReportFilters
 } from "@/lib/finance-revenue-report-page";
 
 function financeViewer() {
@@ -29,7 +29,7 @@ function financeViewer() {
     role: "MEMBER" as const,
     financeAccessLevel: "VIEWER" as const,
     active: true,
-    forcePasswordChange: false,
+    forcePasswordChange: false
   };
 }
 
@@ -42,7 +42,7 @@ function financeManager() {
     role: "ADMIN" as const,
     financeAccessLevel: "MANAGER" as const,
     active: true,
-    forcePasswordChange: false,
+    forcePasswordChange: false
   };
 }
 
@@ -72,14 +72,14 @@ function profitAndLossSnapshot(input: {
       reportTitles: [
         "Profit and Loss",
         "Example Alpine Club",
-        input.periodLabel,
+        input.periodLabel
       ],
       fields: [
         {
           fieldId: "period",
           description: "Period",
-          value: input.periodLabel,
-        },
+          value: input.periodLabel
+        }
       ],
       rows: [
         {
@@ -92,29 +92,29 @@ function profitAndLossSnapshot(input: {
               title: null,
               cells: [
                 { value: "Accommodation income" },
-                { value: input.accommodationIncome },
+                { value: input.accommodationIncome }
               ],
-              rows: [],
+              rows: []
             },
             {
               rowType: "Row",
               title: null,
               cells: [{ value: "Retail sales" }, { value: input.retailSales }],
-              rows: [],
+              rows: []
             },
             {
               rowType: "SummaryRow",
               title: null,
               cells: [{ value: "Total Income" }, { value: input.totalIncome }],
-              rows: [],
-            },
-          ],
-        },
-      ],
+              rows: []
+            }
+          ]
+        }
+      ]
     },
     syncRunId: "run-1",
     createdAt: new Date("2026-05-01T00:20:00.000Z"),
-    updatedAt: new Date("2026-05-01T00:20:00.000Z"),
+    updatedAt: new Date("2026-05-01T00:20:00.000Z")
   };
 }
 
@@ -137,7 +137,7 @@ describe("finance revenue report page model", () => {
         sourceUpdatedAt: "2026-05-01T00:15:00.000Z",
         accommodationIncome: "1450.00",
         retailSales: "50.00",
-        totalIncome: "1500.00",
+        totalIncome: "1500.00"
       }),
       profitAndLossSnapshot({
         id: "snapshot-march",
@@ -148,8 +148,8 @@ describe("finance revenue report page model", () => {
         sourceUpdatedAt: "2026-04-01T00:15:00.000Z",
         accommodationIncome: "1200.00",
         retailSales: "100.00",
-        totalIncome: "1300.00",
-      }),
+        totalIncome: "1300.00"
+      })
     ]);
   });
 
@@ -160,18 +160,18 @@ describe("finance revenue report page model", () => {
 
   it("uses the latest stored monthly revenue snapshots for managers", async () => {
     const model = await buildFinanceRevenueReportPageModel({
-      member: financeManager(),
+      member: financeManager()
     });
 
     expect(model.isManager).toBe(true);
     expect(model.filters).toEqual(buildDefaultFinanceRevenueReportFilters());
     expect(model.summaryCards[0]).toMatchObject({
       title: "Latest synced month",
-      value: "$1500.00",
+      value: "$1500.00"
     });
     expect(model.summaryCards[1]).toMatchObject({
       title: "Selected periods total",
-      value: "$2800.00",
+      value: "$2800.00"
     });
     expect(model.coverageSummary).toBe(
       "Showing 2 monthly profit-and-loss snapshots from April 2026 backwards."
@@ -181,41 +181,41 @@ describe("finance revenue report page model", () => {
       sourceWindow: "1 Apr 2026 to 30 Apr 2026",
       totalRevenue: "$1500.00",
       lineItemCount: "2",
-      asOfDateLabel: "30 Apr 2026",
+      asOfDateLabel: "30 Apr 2026"
     });
     expect(model.lineItemRows).toEqual([
       {
         lineItem: "Accommodation income",
         latestPeriodAmount: "$1450.00",
         selectedPeriodsAmount: "$2650.00",
-        periodsPresent: "2",
+        periodsPresent: "2"
       },
       {
         lineItem: "Retail sales",
         latestPeriodAmount: "$50.00",
         selectedPeriodsAmount: "$150.00",
-        periodsPresent: "2",
-      },
+        periodsPresent: "2"
+      }
     ]);
     expect(mockListFinanceSnapshots).toHaveBeenCalledWith({
       snapshotType: FinanceSnapshotType.PROFIT_AND_LOSS_MONTHLY,
       scope: "default",
-      limit: 6,
+      limit: 6
     });
   });
 
   it("falls back invalid revenue period filters to the default window", () => {
     const resolved = resolveFinanceRevenueReportFilters({
       searchParams: {
-        periods: "0",
-      },
+        periods: "0"
+      }
     });
 
     expect(resolved.filters).toEqual({
-      periods: 6,
+      periods: 6
     });
     expect(resolved.warnings).toEqual([
-      "Revenue periods must be a whole number between 1 and 24. Showing the default 6-period window.",
+      "Revenue periods must be a whole number between 1 and 24. Showing the default 6-period window."
     ]);
   });
 
@@ -223,7 +223,7 @@ describe("finance revenue report page model", () => {
     mockListFinanceSnapshots.mockResolvedValue([]);
 
     const model = await buildFinanceRevenueReportPageModel({
-      member: financeViewer(),
+      member: financeViewer()
     });
 
     expect(model.isManager).toBe(false);
@@ -238,7 +238,7 @@ describe("finance revenue report page model", () => {
     mockListFinanceSnapshots.mockRejectedValue(new Error("database timeout"));
 
     const model = await buildFinanceRevenueReportPageModel({
-      member: financeViewer(),
+      member: financeViewer()
     });
 
     expect(model.isManager).toBe(false);
