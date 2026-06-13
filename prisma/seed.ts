@@ -3,59 +3,54 @@
 // duplicate data. Clubs customise the placeholders through the admin screens.
 import fs from "node:fs";
 import path from "node:path";
-import { type AgeTier, PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { clubConfig } from "../src/config/club";
 import {
   CLUB_CONTACT_EMAIL,
-  clubDomainEmail,
+  clubDomainEmail
 } from "../src/config/club-identity";
 import {
   CLUB_THEME_ID,
   DEFAULT_CLUB_THEME_VALUES,
   MAX_LOGO_DATA_URL_BYTES,
   TOKOROA_CLUB_THEME_VALUES,
-  isValidLogoDataUrl,
+  isValidLogoDataUrl
 } from "../src/lib/club-theme-schema";
 import { ensureNotRequiredSubscriptionForRole } from "../src/lib/member-subscription-defaults";
-import { createPrismaPgAdapter } from "../src/lib/prisma-adapter";
 import {
   buildSeedAdminMemberData,
   buildSeedChoreTemplates,
   buildSeedCommitteePlaceholders,
-  buildSeedLodgeMemberData,
+  buildSeedLodgeMemberData
 } from "./seed-data";
 import { starterPageContent } from "./starter-page-content";
-
-const prisma = new PrismaClient({
-  adapter: createPrismaPgAdapter(),
-});
+import { prisma } from "../src/lib/prisma";
 
 function seedRatesForSeason(season: "winter" | "summer") {
   return clubConfig.ageTiers.flatMap((tier) => [
     {
-      ageTier: tier.id as AgeTier,
+      ageTier: tier.id,
       isMember: true,
-      pricePerNightCents: tier.nightlyRates[season].memberCents,
+      pricePerNightCents: tier.nightlyRates[season].memberCents
     },
     {
-      ageTier: tier.id as AgeTier,
+      ageTier: tier.id,
       isMember: false,
-      pricePerNightCents: tier.nightlyRates[season].nonMemberCents,
-    },
+      pricePerNightCents: tier.nightlyRates[season].nonMemberCents
+    }
   ]);
 }
 
 function seedAgeTierSettings() {
   return clubConfig.ageTiers.map((tier, sortOrder) => ({
-    tier: tier.id as AgeTier,
+    tier: tier.id,
     minAge: tier.minAge,
     maxAge: tier.maxAge,
     label: tier.label,
     subscriptionRequiredForBooking: tier.subscriptionRequiredForBooking,
     familyGroupRequestCreateMemberAllowed:
       tier.familyGroupRequestCreateMemberAllowed,
-    sortOrder,
+    sortOrder
   }));
 }
 
@@ -69,93 +64,6 @@ function requireSeedEnv(
   return value;
 }
 
-const starterPageContent: Array<{
-  slug: string;
-  path: string;
-  caption: string;
-  menuTitle: string;
-  title: string;
-  headerText: string;
-  sortOrder: number;
-  contentHtml: string;
-}> = [
-  {
-    slug: "home",
-    path: "/home",
-    caption: "",
-    menuTitle: "",
-    title: "Home",
-    headerText: "",
-    sortOrder: 0,
-    contentHtml: "",
-  },
-  {
-    slug: "about",
-    path: "/about",
-    caption: "About the Club",
-    menuTitle: "About",
-    title: "About",
-    headerText: "Learn about our club history, values, and alpine community.",
-    sortOrder: 10,
-    contentHtml: `<h2>About the Club</h2>`.trim(),
-  },
-  {
-    slug: "join",
-    path: "/join",
-    caption: "Join the Club",
-    menuTitle: "Join",
-    title: "Join",
-    headerText:
-      "Nomination by two current members, induction process, and membership details.",
-    sortOrder: 20,
-    contentHtml: `<h2>Becoming a Member</h2>`.trim(),
-  },
-  {
-    slug: "join/apply",
-    path: "/join/apply",
-    caption: "Membership Application",
-    menuTitle: "",
-    title: "Apply for Membership",
-    headerText:
-      "Enter your details, nominate two current club members, and we will move your application through nomination confirmation and committee approval.",
-    sortOrder: 25,
-    contentHtml: "{{member-application-form}}",
-  },
-  {
-    slug: "contact",
-    path: "/contact",
-    caption: "Get in touch",
-    menuTitle: "",
-    title: "Contact Us",
-    headerText:
-      "Have a question about the club, the lodge, or booking a stay? Get in touch and we'll get back to you.",
-    sortOrder: 27,
-    contentHtml: "{{contact-form}}",
-  },
-  {
-    slug: "committee",
-    path: "/committee",
-    caption: "Volunteer leadership",
-    menuTitle: "Committee",
-    title: "Committee",
-    headerText:
-      "The club is run entirely by volunteers. Meet the committee members who keep things going.",
-    sortOrder: 30,
-    contentHtml: "{{committee-members-cards}}",
-  },
-  {
-    slug: "404",
-    path: "/404",
-    caption: "404",
-    menuTitle: "",
-    title: "Page Not Found",
-    headerText: "The page you're looking for doesn't exist or has been moved.",
-    sortOrder: 999,
-    contentHtml:
-      "<p>You can return home or continue to booking from the links below.</p>",
-  },
-];
-
 function readBrandingLogoDataUrl() {
   const logoPath = path.join(process.cwd(), "public", "branding", "logo.png");
   if (!fs.existsSync(logoPath)) {
@@ -165,13 +73,15 @@ function readBrandingLogoDataUrl() {
   const logo = fs.readFileSync(logoPath);
   if (logo.byteLength > MAX_LOGO_DATA_URL_BYTES) {
     throw new Error(
-      `public/branding/logo.png is ${logo.byteLength} bytes; the site style logo cap is ${MAX_LOGO_DATA_URL_BYTES} bytes.`,
+      `public/branding/logo.png is ${logo.byteLength} bytes; the site style logo cap is ${MAX_LOGO_DATA_URL_BYTES} bytes.`
     );
   }
 
   const dataUrl = `data:image/png;base64,${logo.toString("base64")}`;
   if (!isValidLogoDataUrl(dataUrl)) {
-    throw new Error("public/branding/logo.png could not be converted to a valid logo data URL.");
+    throw new Error(
+      "public/branding/logo.png could not be converted to a valid logo data URL."
+    );
   }
 
   return dataUrl;
@@ -185,19 +95,19 @@ async function seedClubTheme() {
       update: {
         ...TOKOROA_CLUB_THEME_VALUES,
         logoDataUrl,
-        completedAt: new Date(),
+        completedAt: new Date()
       },
       create: {
         id: CLUB_THEME_ID,
         ...TOKOROA_CLUB_THEME_VALUES,
         logoDataUrl,
-        completedAt: new Date(),
-      },
+        completedAt: new Date()
+      }
     });
     console.log(
       logoDataUrl
         ? "Tokoroa site style seeded with palette and logo"
-        : "Tokoroa site style seeded with palette; public/branding/logo.png was not present",
+        : "Tokoroa site style seeded with palette; public/branding/logo.png was not present"
     );
     return;
   }
@@ -208,8 +118,8 @@ async function seedClubTheme() {
     create: {
       id: CLUB_THEME_ID,
       ...DEFAULT_CLUB_THEME_VALUES,
-      completedAt: null,
-    },
+      completedAt: null
+    }
   });
   console.log("Default site style seeded");
 }
@@ -218,7 +128,7 @@ async function seedClubTheme() {
 // rows, so rates edited by admins survive a re-run.
 async function createMissingSeasonRates(
   seasonId: string,
-  season: "winter" | "summer",
+  season: "winter" | "summer"
 ) {
   for (const rate of seedRatesForSeason(season)) {
     await prisma.seasonRate.upsert({
@@ -226,20 +136,22 @@ async function createMissingSeasonRates(
         seasonId_ageTier_isMember: {
           seasonId,
           ageTier: rate.ageTier,
-          isMember: rate.isMember,
-        },
+          isMember: rate.isMember
+        }
       },
       update: {},
       create: {
         seasonId,
-        ...rate,
-      },
+        ...rate
+      }
     });
   }
 }
 
 async function main() {
-  console.log("Seeding database (create-if-missing; re-runs change nothing)...");
+  console.log(
+    "Seeding database (create-if-missing; re-runs change nothing)..."
+  );
 
   const seedAdminEmail = requireSeedEnv("SEED_ADMIN_EMAIL").toLowerCase();
   const seedAdminPassword = requireSeedEnv("SEED_ADMIN_PASSWORD");
@@ -248,14 +160,14 @@ async function main() {
   const policies = [
     { daysBeforeStay: 14, refundPercentage: 100 },
     { daysBeforeStay: 7, refundPercentage: 50 },
-    { daysBeforeStay: 0, refundPercentage: 0 },
+    { daysBeforeStay: 0, refundPercentage: 0 }
   ];
 
   for (const policy of policies) {
     await prisma.cancellationPolicy.upsert({
       where: { daysBeforeStay: policy.daysBeforeStay },
       update: {},
-      create: policy,
+      create: policy
     });
   }
 
@@ -269,7 +181,9 @@ async function main() {
     for (const chore of choreTemplates) {
       await prisma.choreTemplate.create({ data: chore });
     }
-    console.log(`Chore templates seeded: ${choreTemplates.length} example templates`);
+    console.log(
+      `Chore templates seeded: ${choreTemplates.length} example templates`
+    );
   } else {
     console.log("Chore templates already present; skipping");
   }
@@ -278,7 +192,7 @@ async function main() {
   // emailVerified are required for the credentials login flow to accept the
   // account; forcePasswordChange routes the first login to /change-password.
   const existingAdmin = await prisma.member.findFirst({
-    where: { role: "ADMIN" },
+    where: { role: "ADMIN" }
   });
 
   if (!existingAdmin) {
@@ -288,20 +202,20 @@ async function main() {
         email: seedAdminEmail,
         passwordHash,
         firstName: process.env.SEED_ADMIN_FIRST_NAME,
-        lastName: process.env.SEED_ADMIN_LAST_NAME,
-      }),
+        lastName: process.env.SEED_ADMIN_LAST_NAME
+      })
     });
     // Admin accounts never owe a membership subscription.
     await ensureNotRequiredSubscriptionForRole(prisma, admin);
     console.log(
-      `Admin user seeded: ${seedAdminEmail} (password change required on first login)`,
+      `Admin user seeded: ${seedAdminEmail} (password change required on first login)`
     );
   }
 
   // Seed the shared lodge kiosk account (create-if-missing).
   const lodgeAccountEmail = clubDomainEmail("lodge");
   const existingLodge = await prisma.member.findFirst({
-    where: { email: lodgeAccountEmail },
+    where: { email: lodgeAccountEmail }
   });
 
   if (!existingLodge) {
@@ -312,8 +226,8 @@ async function main() {
     const lodge = await prisma.member.create({
       data: buildSeedLodgeMemberData({
         email: lodgeAccountEmail,
-        passwordHash: lodgePasswordHash,
-      }),
+        passwordHash: lodgePasswordHash
+      })
     });
     await ensureNotRequiredSubscriptionForRole(prisma, lodge);
     console.log(`Lodge account seeded: ${lodgeAccountEmail}`);
@@ -329,8 +243,8 @@ async function main() {
       type: "WINTER",
       startDate: new Date("2026-06-01"),
       endDate: new Date("2026-09-30"),
-      active: true,
-    },
+      active: true
+    }
   });
   await createMissingSeasonRates(winter2026.id, "winter");
   console.log(`Season seeded: ${winter2026.name}`);
@@ -345,8 +259,8 @@ async function main() {
       type: "SUMMER",
       startDate: new Date("2026-11-01"),
       endDate: new Date("2027-03-31"),
-      active: true,
-    },
+      active: true
+    }
   });
   await createMissingSeasonRates(summer2026.id, "summer");
   console.log(`Season seeded: ${summer2026.name}`);
@@ -358,13 +272,13 @@ async function main() {
     { key: "stripeBankAccount", code: "606" },
     { key: "stripeFees", code: null },
     { key: "subscriptionIncome", code: "203" },
-    { key: "membershipCancellationCredit", code: "203" },
+    { key: "membershipCancellationCredit", code: "203" }
   ];
   for (const mapping of accountMappings) {
     await prisma.xeroAccountMapping.upsert({
       where: { key: mapping.key },
       update: {},
-      create: mapping,
+      create: mapping
     });
   }
   console.log("Xero account mappings seeded");
@@ -376,7 +290,7 @@ async function main() {
     await prisma.ageTierSetting.upsert({
       where: { tier: setting.tier },
       update: {},
-      create: setting,
+      create: setting
     });
   }
   console.log("Age tier settings seeded");
@@ -394,8 +308,8 @@ async function main() {
         title: page.title,
         headerText: page.headerText,
         sortOrder: page.sortOrder,
-        contentHtml: page.contentHtml,
-      },
+        contentHtml: page.contentHtml
+      }
     });
   }
   console.log(`Page content seeded: ${starterPageContent.length} pages`);
@@ -406,13 +320,13 @@ async function main() {
   if (committeeCount === 0) {
     const committeeData = buildSeedCommitteePlaceholders({
       domainEmail: clubDomainEmail,
-      contactEmail: CLUB_CONTACT_EMAIL,
+      contactEmail: CLUB_CONTACT_EMAIL
     });
     for (const cm of committeeData) {
       await prisma.committeeMember.create({ data: cm });
     }
     console.log(
-      `Committee placeholders seeded: ${committeeData.length} entries (replace in Admin -> Committee)`,
+      `Committee placeholders seeded: ${committeeData.length} entries (replace in Admin -> Committee)`
     );
   } else {
     console.log("Committee members already present; skipping");
