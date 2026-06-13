@@ -299,7 +299,7 @@ export async function removeBookingGuestInTransaction({
   };
 }
 
-async function loadSeasonRateData(tx: Prisma.TransactionClient): Promise<SeasonRateData[]> {
+export async function loadSeasonRateData(tx: Prisma.TransactionClient): Promise<SeasonRateData[]> {
   const seasons = await tx.season.findMany({
     where: { active: true },
     include: { rates: true },
@@ -345,7 +345,7 @@ async function removeGuestChoreAssignments(
   return choreWarnings;
 }
 
-async function recalculateBookingPromo({
+export async function recalculateBookingPromo({
   tx,
   bookingId,
   booking,
@@ -372,6 +372,7 @@ async function recalculateBookingPromo({
     memberId: string | null;
     isMember: boolean;
     perNightRates: number[];
+    firstNight?: Date | null;
   }>;
 }) {
   let newDiscountCents = 0;

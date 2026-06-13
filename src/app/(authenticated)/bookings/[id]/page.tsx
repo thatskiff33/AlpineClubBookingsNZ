@@ -12,6 +12,7 @@ import { BookingNotesEditor } from "@/components/booking-notes-editor";
 import { BookingEditor, type BookingEditorData } from "@/components/booking-editor";
 import { AdditionalPaymentCard } from "@/components/additional-payment-card";
 import { ConfirmDraftButton } from "@/components/confirm-draft-button";
+import { ConfirmPendingGuestsButton } from "@/components/admin/confirm-pending-guests-button";
 import { ArrivalTimeEditor } from "@/components/arrival-time-editor";
 import { RequestedRoomEditor } from "@/components/requested-room-editor";
 import { WaitlistOfferCard } from "@/components/waitlist-offer-card";
@@ -453,6 +454,21 @@ export default async function BookingDetailPage({
           </CardContent>
         </Card>
       ) : null}
+
+      {/* Admin: force-confirm non-member guests still on hold (issue #708) */}
+      {!isDeleted &&
+        session.user.role === "ADMIN" &&
+        booking.status === "PENDING" &&
+        booking.hasNonMembers &&
+        booking.nonMemberHoldUntil && (
+          <ConfirmPendingGuestsButton
+            bookingId={booking.id}
+            hasSavedPaymentMethod={Boolean(
+              booking.payment?.stripePaymentMethodId &&
+                booking.payment?.stripeCustomerId
+            )}
+          />
+        )}
 
       {/* Draft booking: $0 confirm or payment to complete */}
       {!isDeleted && isDraft && booking.finalPriceCents === 0 && (

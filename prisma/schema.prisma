@@ -637,6 +637,10 @@ model Booking {
   promoAdjustmentCents      Int                @default(0)
   finalPriceCents           Int
   hasNonMembers             Boolean            @default(false)
+  // When true, the member asked us to cancel the whole booking if their
+  // non-member guests cannot be accommodated, instead of the default partial
+  // bump (drop the non-members, keep the members). Both happen pre-charge.
+  cancelIfGuestsBumped      Boolean            @default(false)
   nonMemberHoldUntil        DateTime?
   draftExpiresAt            DateTime?
   notes                     String?            @db.VarChar(500)
@@ -1776,6 +1780,25 @@ model PageContent {
 
   @@index([sortOrder])
   @@index([updatedByMemberId])
+}
+
+// Uploaded images for the page-content image picker, stored in the database
+// (rather than the filesystem) so they survive Docker redeploys. Served
+// publicly via /api/images/[id].
+model MediaImage {
+  id                 String   @id @default(cuid())
+  filename           String
+  contentType        String
+  byteSize           Int
+  data               Bytes
+  altText            String?
+  width              Int?
+  height             Int?
+  uploadedByMemberId String?
+  createdAt          DateTime @default(now())
+
+  @@index([uploadedByMemberId])
+  @@index([createdAt])
 }
 
 enum NotificationDeliveryMode {

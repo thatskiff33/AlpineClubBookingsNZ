@@ -101,6 +101,10 @@ export const explicitPublicApiRoutes = {
     boundary: "public",
     reason: "Token-authenticated public payment link page data; only the matching token resolves a booking and it is rate limited.",
   },
+  "src/app/api/images/[id]/route.ts": {
+    boundary: "public",
+    reason: "Serves uploaded page-content images embedded in public website pages.",
+  },
   "src/app/api/webhooks/ses-sns/route.ts": {
     boundary: "webhook",
     reason: "AWS SNS signed SES feedback webhook.",

@@ -75,6 +75,7 @@ const createBookingSchema = z.object({
   waitlist: z.boolean().optional(),
   expectedArrivalTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]0$/).optional(),
   requestedRoomId: z.string().min(1).optional(),
+  cancelIfGuestsBumped: z.boolean().optional(),
   applyCreditCents: z.number().int().min(0).optional(),
   forMemberId: z.string().optional(),
   memberReviewJustification: z.string().trim().min(1).max(1000).optional(),
@@ -175,6 +176,7 @@ export async function POST(request: NextRequest) {
     waitlist,
     expectedArrivalTime,
     requestedRoomId,
+    cancelIfGuestsBumped,
     memberReviewJustification,
     paymentMethod,
   } = parsed.data;
@@ -333,6 +335,7 @@ export async function POST(request: NextRequest) {
         workPartyEventId,
         expectedArrivalTime,
         requestedRoomId,
+        cancelIfGuestsBumped,
         groupDiscount,
         memberReviewJustification,
       });
@@ -392,6 +395,7 @@ export async function POST(request: NextRequest) {
       workPartyEventId,
       expectedArrivalTime,
       requestedRoomId,
+      cancelIfGuestsBumped,
       applyCreditCents: parsed.data.applyCreditCents,
       groupDiscount,
       status,
