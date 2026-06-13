@@ -57,6 +57,22 @@ export const explicitPublicApiRoutes = {
     boundary: "public",
     reason: "Token-bearing email verification endpoint.",
   },
+  "src/app/api/booking-requests/quote/route.ts": {
+    boundary: "public",
+    reason: "Anonymous indicative non-member pricing quote for the booking request form, gated by the pricing-visibility setting and rate limited.",
+  },
+  "src/app/api/booking-requests/route.ts": {
+    boundary: "public",
+    reason: "Anonymous non-member booking request submission with validation, CRLF stripping and rate limiting; creates only an unverified BookingRequest, never a booking.",
+  },
+  "src/app/api/booking-requests/settings/route.ts": {
+    boundary: "public",
+    reason: "Public read of the booking request pricing-visibility flag used to label the request form; rate limited.",
+  },
+  "src/app/api/booking-requests/verify/[token]/route.ts": {
+    boundary: "public",
+    reason: "Token-bearing booking request email verification endpoint; returns only non-PII summary fields and is rate limited.",
+  },
   "src/app/api/chores/[token]/route.ts": {
     boundary: "public",
     reason: "Guest chore token endpoint with rate limiting and read-only mutation behavior.",
@@ -76,6 +92,14 @@ export const explicitPublicApiRoutes = {
   "src/app/api/health/route.ts": {
     boundary: "public",
     reason: "Public health endpoint with redacted provider detail.",
+  },
+  "src/app/api/pay/[token]/payment-intent/route.ts": {
+    boundary: "public",
+    reason: "Token-authenticated Stripe payment intent for a tokenised booking payment link; revalidates status/capacity like the session path and is rate limited.",
+  },
+  "src/app/api/pay/[token]/route.ts": {
+    boundary: "public",
+    reason: "Token-authenticated public payment link page data; only the matching token resolves a booking and it is rate limited.",
   },
   "src/app/api/webhooks/ses-sns/route.ts": {
     boundary: "webhook",

@@ -107,9 +107,12 @@ describe("API route boundary metadata", () => {
     .sort();
 
   it("keeps the public route allowlist exact and backed by real files", () => {
-    // 243 = 240 routes on main (see #706) + 3 work party routes added for
-    // #711: work-parties/active, admin/work-parties, admin/work-parties/[id].
-    expect(routeFiles).toHaveLength(243);
+    // 254 = 243 routes on main (see #711) + 11 routes added for the #707
+    // public booking request flow: 6 public (booking-requests, its quote/
+    // settings/verify, pay/[token] and pay/[token]/payment-intent) and 5
+    // admin (admin/booking-requests list, settings, and [id] price/approve/
+    // decline).
+    expect(routeFiles).toHaveLength(254);
 
     const missing = Object.keys(explicitPublicApiRoutes).filter(
       (routePath) => !routeFiles.includes(routePath)

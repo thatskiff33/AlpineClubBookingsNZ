@@ -437,10 +437,12 @@ describe("Schema changes for Phase C1", () => {
     const fs = await import("fs");
     const path = await import("path");
     const schema = fs.readFileSync(path.resolve("prisma/schema.prisma"), "utf-8");
-    // Payment should have xeroInvoiceNumber
+    // Payment should have xeroInvoiceNumber. Match "model Payment {" exactly so
+    // the matcher does not pick up other models whose name starts with
+    // "Payment" (e.g. PaymentLink, added for the #707 booking request flow).
     const paymentSection = schema.substring(
-      schema.indexOf("model Payment"),
-      schema.indexOf("}", schema.indexOf("model Payment")) + 1
+      schema.indexOf("model Payment {"),
+      schema.indexOf("}", schema.indexOf("model Payment {")) + 1
     );
     expect(paymentSection).toContain("xeroInvoiceNumber");
   });

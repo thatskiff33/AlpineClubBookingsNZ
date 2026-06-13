@@ -25,6 +25,12 @@ vi.mock("../email", () => ({
   sendAdminBookingBumpedAlert: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Bumping revokes any tokenised payment links for the bumped booking
+// (issue #707); the behaviour itself is covered in payment-link.test.ts.
+vi.mock("@/lib/payment-link", () => ({
+  revokePaymentLinksForBooking: vi.fn().mockResolvedValue(0),
+}));
+
 import {
   getOccupiedBedsPerNight,
   findBumpCandidates,

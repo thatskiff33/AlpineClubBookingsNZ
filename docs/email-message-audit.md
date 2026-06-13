@@ -2155,3 +2155,148 @@ Check-out: {{checkOut}}
 Credit applied: {{creditUsed}}
 Remaining credit: {{remainingCredit}}
 ```
+
+### booking-request-verification
+
+Subject:
+
+```text
+Confirm your booking request — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Confirm Your Booking Request
+
+Hi {{firstName}}, thanks for your booking request with {{CLUB_NAME}}.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+
+Please confirm your email address to add your request to our review queue.
+
+Confirm Request: {{BASE_URL}}/booking-requests/verify/{{token}}
+
+This link expires on {{expiresAt}}. If you did not submit this request, please ignore this email.
+```
+
+Triggers and frequency:
+
+- `POST /api/booking-requests`: when a non-member submits the public booking request form. Per booking request submission. Rate limit: 5 requests per hour per IP.
+
+### booking-request-approved
+
+Subject:
+
+```text
+Your booking request has been approved — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Booking Request Approved
+
+Hi {{firstName}}, great news — your booking request has been approved!
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+Total: {{price}}
+Booking reference: {{bookingReference}}
+
+Please complete payment to confirm your booking.
+
+Pay Now: {{BASE_URL}}/pay/{{token}}
+
+This payment link expires on {{expiresAt}}. If it expires before you pay, please contact the club to request a new link.
+```
+
+Triggers and frequency:
+
+- `POST /api/admin/booking-requests/[id]/approve`: when a booking officer approves a priced request and it converts to a PENDING booking with a tokenised payment link. Per booking request approval.
+
+### booking-request-declined
+
+Subject:
+
+```text
+Update on your booking request — {{CLUB_NAME}}
+```
+
+Body:
+
+```text
+Booking Request Update
+
+Hi {{firstName}}, thank you for your interest in staying with {{CLUB_NAME}}.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+
+Unfortunately we're unable to accommodate this request.
+
+Note: {{reason}} [only when reason exists]
+
+If you have any questions, please contact the club at {{SUPPORT_EMAIL}}.
+```
+
+Triggers and frequency:
+
+- `POST /api/admin/booking-requests/[id]/decline`: when a booking officer declines a verified or priced request. Per booking request decline.
+
+### admin-booking-request-pending
+
+Subject:
+
+```text
+Booking request ready for review: {{requesterName}}
+```
+
+Body:
+
+```text
+Booking Request Ready for Review
+
+{{requesterName}} has verified their email and the request is ready for pricing.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+
+Review Request: {{reviewUrl}}
+```
+
+Triggers and frequency:
+
+- `GET /api/booking-requests/verify/[token]`: when a requester confirms their email and the request enters the admin queue. Per verified booking request. Sent to admins who opt in to the "Public booking requests" notification.
+
+### admin-booking-request-hold-expired
+
+Subject:
+
+```text
+Request booking unpaid at hold expiry: {{requesterName}}
+```
+
+Body:
+
+```text
+Request Booking Unpaid at Hold Expiry
+
+{{requesterName}}'s request-origin booking has reached its hold deadline without payment.
+
+Check-in: {{checkIn}}
+Check-out: {{checkOut}}
+Guests: {{guestCount}}
+Total due: {{total}}
+Hold until: {{holdUntil}}
+
+Review Bookings: {{reviewUrl}}
+```
+
+Triggers and frequency:
+
+- `POST /api/cron` (confirm-pending job): when a request-origin booking (no saved card) reaches its hold deadline unpaid; the hold is extended and admins are alerted instead of auto-charging. Per hold-expiry check on an unpaid request booking. Sent to admins who opt in to the "Public booking requests" notification.

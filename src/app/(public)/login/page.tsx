@@ -193,6 +193,16 @@ function LoginForm() {
               Apply for membership
             </Link>
           </p>
+
+          <p className="text-sm text-center text-muted-foreground">
+            Just want to stay with us?{" "}
+            <Link
+              href="/booking-requests"
+              className="text-foreground font-medium underline-offset-4 hover:underline"
+            >
+              Request a booking without an account
+            </Link>
+          </p>
         </CardFooter>
       </form>
     </Card>

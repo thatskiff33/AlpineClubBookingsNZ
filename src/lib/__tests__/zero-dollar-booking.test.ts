@@ -156,6 +156,12 @@ vi.mock("@/lib/stripe", () => ({
   chargePaymentMethod: vi.fn(),
 }));
 
+// The confirm-pending cron revokes payment links for bumped bookings
+// (issue #707); the behaviour itself is covered in payment-link.test.ts.
+vi.mock("@/lib/payment-link", () => ({
+  revokePaymentLinksForBooking: vi.fn().mockResolvedValue(0),
+}));
+
 vi.mock("@/lib/logger", () => ({
   default: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));

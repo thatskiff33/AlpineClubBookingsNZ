@@ -45,10 +45,19 @@ vi.mock("../waitlist", () => ({
 const mockSendConfirmedEmail = vi.fn();
 const mockSendBumpedEmail = vi.fn();
 const mockSendAdminPaymentFailureAlert = vi.fn().mockResolvedValue(undefined);
+const mockSendAdminHoldExpiredAlert = vi.fn().mockResolvedValue(undefined);
 vi.mock("../email", () => ({
   sendBookingConfirmedEmail: (...args: unknown[]) => mockSendConfirmedEmail(...args),
   sendBookingBumpedEmail: (...args: unknown[]) => mockSendBumpedEmail(...args),
   sendAdminPaymentFailureAlert: (...args: unknown[]) => mockSendAdminPaymentFailureAlert(...args),
+  sendAdminBookingRequestHoldExpiredEmail: (...args: unknown[]) =>
+    mockSendAdminHoldExpiredAlert(...args),
+}));
+
+// The confirm-pending cron revokes payment links for bumped bookings
+// (issue #707); the behaviour itself is covered in payment-link.test.ts.
+vi.mock("@/lib/payment-link", () => ({
+  revokePaymentLinksForBooking: vi.fn().mockResolvedValue(0),
 }));
 
 // Mock capacity
