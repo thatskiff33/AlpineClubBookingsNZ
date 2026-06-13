@@ -3,7 +3,7 @@ import { buildBookingLoginPath } from "@/lib/auth-redirect";
 import { getSanitizedPageContentByPath } from "@/lib/page-content-html";
 
 export default async function NotFound() {
-  const page = await getSanitizedPageContentByPath("/404");
+  const page = await getSanitizedPageContentByPath("/404").catch(() => null);
 
   const heading = page?.caption?.trim() || "404";
   const title = page?.title?.trim() || "Page Not Found";
