@@ -5,9 +5,8 @@ import path from "path";
 import {
   ALLOWED_IMAGE_EXTS,
   ALLOWED_IMAGE_MIME,
-  ImageStorageUnavailableError,
-  ensureImageDir,
   resolveInImagesRoot,
+  storageUnavailableMessage,
 } from "@/lib/image-storage";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file
@@ -51,15 +50,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid directory" }, { status: 400 });
   }
 
-  // Surface a clear, actionable reason when the storage volume is missing or
-  // read-only instead of throwing a raw 500 the UI shows as "Upload failed".
+  // Create the target directory. Surface a clear, actionable reason when the
+  // storage volume is missing or read-only instead of the raw 500 the UI used
+  // to show as a generic "Upload failed". The mkdir stays inline here (right
+  // after the containment check above) so the path-traversal barrier is local.
   try {
-    await ensureImageDir(absDir);
+    await fs.mkdir(absDir, { recursive: true });
   } catch (err) {
-    if (err instanceof ImageStorageUnavailableError) {
-      return NextResponse.json({ error: err.message }, { status: 500 });
-    }
-    throw err;
+    const e = err as NodeJS.ErrnoException;
+    console.error(
+      "image-manager: failed to create upload directory:",
+      absDir,
+      e.code,
+      e.message,
+    );
+    return NextResponse.json(
+      { error: storageUnavailableMessage(e.code) },
+      { status: 500 },
+    );
   }
 
   const results: Array<{ filename: string; ok: boolean; error?: string }> = [];

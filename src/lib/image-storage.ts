@@ -54,48 +54,23 @@ export function imagePublicUrl(absPath: string): string {
   return rel ? `${PUBLIC_URL_PREFIX}/${rel}` : PUBLIC_URL_PREFIX;
 }
 
-// Raised when the images root cannot be created/written — typically a missing
-// or non-writable volume under a read-only container filesystem.
-export class ImageStorageUnavailableError extends Error {
-  readonly code: string;
-  constructor(cause: NodeJS.ErrnoException) {
-    super(
-      `Image storage directory is not writable (${cause.code ?? "unknown"}). ` +
-        `Ensure a persistent, writable volume is mounted at ${IMAGES_ROOT} ` +
-        `and owned by the app user (uid 1001).`,
-    );
-    this.name = "ImageStorageUnavailableError";
-    this.code = cause.code ?? "UNKNOWN";
-  }
+// Build the clear, actionable message returned when a write fails because the
+// storage volume is missing or read-only. The mkdir/writeFile sinks stay inline
+// in the route handlers (right after resolveInImagesRoot's containment check) so
+// the path-traversal barrier is intra-route and statically verifiable; this
+// helper only formats the error text.
+export function storageUnavailableMessage(code: string | undefined): string {
+  return (
+    `Image storage directory is not writable (${code ?? "unknown"}). ` +
+    `Ensure a persistent, writable volume is mounted at ${IMAGES_ROOT} ` +
+    `and owned by the app user (uid 1001).`
+  );
 }
 
-// Ensure a directory exists, surfacing a clear error when the underlying volume
-// is missing or read-only. Used before writes (upload, create-directory).
-export async function ensureImageDir(absDir: string): Promise<void> {
-  // Defence-in-depth: never create a directory outside the images root, even if
-  // a caller passes an unvalidated path. Keeping the containment check in the
-  // same function as the mkdir sink also lets static path-injection analysis see
-  // the barrier.
-  const resolved = path.resolve(absDir);
-  if (resolved !== IMAGES_ROOT && !resolved.startsWith(IMAGES_ROOT + path.sep)) {
-    throw new Error("Refusing to create a directory outside the images root");
-  }
-  try {
-    await fs.mkdir(resolved, { recursive: true });
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException;
-    // EEXIST on a recursive mkdir is not an error.
-    if (e.code === "EEXIST") return;
-    // The path is passed as a separate argument (not interpolated into the
-    // format string) so a tainted value can never act as a format directive.
-    console.error(
-      "image-storage: failed to create directory:",
-      resolved,
-      e.code,
-      e.message,
-    );
-    throw new ImageStorageUnavailableError(e);
-  }
+// Error codes that indicate the storage volume itself is unavailable rather than
+// an ordinary failure (e.g. EEXIST).
+export function isStorageUnavailableCode(code: string | undefined): boolean {
+  return code === "EACCES" || code === "EROFS" || code === "ENOENT";
 }
 
 // Best-effort ensure of the images root for read paths (listing). A missing or

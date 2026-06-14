@@ -1,22 +1,16 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import fs from "fs/promises";
-import os from "os";
+import { describe, expect, it } from "vitest";
 import path from "path";
 import {
   ALLOWED_IMAGE_EXTS,
   ALLOWED_IMAGE_MIME,
   IMAGES_ROOT,
-  ImageStorageUnavailableError,
-  ensureImageDir,
   imagePublicUrl,
+  isStorageUnavailableCode,
   resolveInImagesRoot,
+  storageUnavailableMessage,
 } from "@/lib/image-storage";
 
 describe("image-storage", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   describe("allowlists", () => {
     it("never permits SVG (stored XSS guard)", () => {
       // SVG can carry inline <script>; images served without a restrictive CSP
@@ -61,48 +55,24 @@ describe("image-storage", () => {
     });
   });
 
-  describe("ensureImageDir", () => {
-    it("creates a directory when the volume is writable", async () => {
-      const base = path.join(IMAGES_ROOT, "__ensure_test__");
-      const target = path.join(base, "nested", "dir");
-      try {
-        await expect(ensureImageDir(target)).resolves.toBeUndefined();
-        const stat = await fs.stat(target);
-        expect(stat.isDirectory()).toBe(true);
-      } finally {
-        await fs.rm(base, { recursive: true, force: true });
+  describe("storage error helpers", () => {
+    it("classifies volume-unavailable error codes", () => {
+      for (const code of ["EACCES", "EROFS", "ENOENT"]) {
+        expect(isStorageUnavailableCode(code)).toBe(true);
       }
+      expect(isStorageUnavailableCode("EEXIST")).toBe(false);
+      expect(isStorageUnavailableCode(undefined)).toBe(false);
     });
 
-    it("refuses to create a directory outside the images root", async () => {
-      const mkdir = vi.spyOn(fs, "mkdir");
-      await expect(
-        ensureImageDir(path.join(os.tmpdir(), "escape")),
-      ).rejects.toThrow(/outside the images root/);
-      // The containment guard must short-circuit before any filesystem write.
-      expect(mkdir).not.toHaveBeenCalled();
+    it("builds an actionable message naming the storage path and code", () => {
+      const msg = storageUnavailableMessage("EROFS");
+      expect(msg).toContain("EROFS");
+      expect(msg).toContain(IMAGES_ROOT);
+      expect(msg).toContain("uid 1001");
     });
 
-    it("throws a clear error when the storage volume is read-only", async () => {
-      const err = Object.assign(new Error("read-only file system"), {
-        code: "EROFS",
-      });
-      vi.spyOn(fs, "mkdir").mockRejectedValueOnce(err);
-
-      await expect(
-        ensureImageDir(path.join(IMAGES_ROOT, "x")),
-      ).rejects.toBeInstanceOf(ImageStorageUnavailableError);
-    });
-
-    it("surfaces the underlying error code on the thrown error", async () => {
-      const err = Object.assign(new Error("permission denied"), {
-        code: "EACCES",
-      });
-      vi.spyOn(fs, "mkdir").mockRejectedValueOnce(err);
-
-      await expect(
-        ensureImageDir(path.join(IMAGES_ROOT, "x")),
-      ).rejects.toMatchObject({ code: "EACCES" });
+    it("falls back to 'unknown' when no code is given", () => {
+      expect(storageUnavailableMessage(undefined)).toContain("unknown");
     });
   });
 });

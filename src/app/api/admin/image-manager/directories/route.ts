@@ -4,10 +4,10 @@ import fs from "fs/promises";
 import path from "path";
 import {
   IMAGES_ROOT,
-  ImageStorageUnavailableError,
-  ensureImageDir,
   ensureImagesRootForRead,
+  isStorageUnavailableCode,
   resolveInImagesRoot,
+  storageUnavailableMessage,
 } from "@/lib/image-storage";
 
 async function collectDirs(absDir: string, relBase: string): Promise<string[]> {
@@ -83,19 +83,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
 
-  // Ensure the parent (and the images root on a freshly-mounted volume) exists,
-  // surfacing a clear reason if the storage volume is missing or read-only.
   try {
-    await ensureImageDir(parentAbs);
-  } catch (err) {
-    if (err instanceof ImageStorageUnavailableError) {
-      return NextResponse.json({ error: err.message }, { status: 500 });
-    }
-    throw err;
-  }
-
-  try {
-    // Non-recursive: a pre-existing directory throws EEXIST -> 409.
+    // Non-recursive: a pre-existing directory throws EEXIST -> 409. The mkdir
+    // stays inline here (right after the containment check above) so the
+    // path-traversal barrier is local. The images root and parent already exist
+    // (GET ensures the root; the UI only creates inside an existing directory).
     await fs.mkdir(newAbs);
     return NextResponse.json({ ok: true });
   } catch (err) {
@@ -114,6 +106,14 @@ export async function POST(request: NextRequest) {
       e.code,
       e.message,
     );
+    // A missing/read-only storage volume gets the clear, actionable message;
+    // anything else is an opaque failure.
+    if (isStorageUnavailableCode(e.code)) {
+      return NextResponse.json(
+        { error: storageUnavailableMessage(e.code) },
+        { status: 500 },
+      );
+    }
     return NextResponse.json(
       { error: "Failed to create directory" },
       { status: 500 },
