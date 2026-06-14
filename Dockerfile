@@ -53,6 +53,12 @@ COPY --from=builder /app/node_modules ./node_modules
 
 RUN mkdir -p .next/cache && chown nextjs:nodejs .next/cache
 
+# Image Manager uploads are written here at runtime. Create the directory owned
+# by the app user so that a freshly-mounted named volume (docker-compose:
+# image_uploads -> /app/public/images) inherits uid 1001 ownership on first init
+# and is writable under the read-only container root filesystem.
+RUN mkdir -p public/images && chown -R nextjs:nodejs public/images
+
 USER nextjs
 
 EXPOSE 3000

@@ -2,30 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import fs from "fs/promises";
 import path from "path";
-
-const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
-
-// SVG excluded — see upload/route.ts comment.
-const ALLOWED_EXTS = new Set([
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".webp",
-  ".avif",
-]);
-
-function safeResolve(rel: string): string | null {
-  const normalized = path.normalize(rel);
-  const resolved = path.resolve(IMAGES_ROOT, normalized);
-  if (
-    resolved !== IMAGES_ROOT &&
-    !resolved.startsWith(IMAGES_ROOT + path.sep)
-  ) {
-    return null;
-  }
-  return resolved;
-}
+import {
+  ALLOWED_IMAGE_EXTS,
+  ensureImagesRootForRead,
+  imagePublicUrl,
+  resolveInImagesRoot,
+} from "@/lib/image-storage";
 
 // GET /api/admin/image-manager/images?dir=<relative-path> – list images in a directory
 export async function GET(request: NextRequest) {
@@ -33,12 +15,12 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response;
 
   const dir = request.nextUrl.searchParams.get("dir") ?? "";
-  const absDir = safeResolve(dir);
+  const absDir = resolveInImagesRoot(dir);
   if (!absDir) {
     return NextResponse.json({ error: "Invalid directory" }, { status: 400 });
   }
 
-  await fs.mkdir(IMAGES_ROOT, { recursive: true });
+  await ensureImagesRootForRead();
 
   let entries;
   try {
@@ -48,18 +30,16 @@ export async function GET(request: NextRequest) {
   }
 
   const imageFiles = entries.filter(
-    (e) => e.isFile() && ALLOWED_EXTS.has(path.extname(e.name).toLowerCase()),
+    (e) => e.isFile() && ALLOWED_IMAGE_EXTS.has(path.extname(e.name).toLowerCase()),
   );
 
   const images = await Promise.all(
     imageFiles.map(async (e) => {
       const filePath = path.join(absDir, e.name);
       const stat = await fs.stat(filePath);
-      const publicRoot = path.join(process.cwd(), "public");
-      const relUrl = path.relative(publicRoot, filePath).replace(/\\/g, "/");
       return {
         filename: e.name,
-        url: `/${relUrl}`,
+        url: imagePublicUrl(filePath),
         byteSize: stat.size,
         modifiedAt: stat.mtime.toISOString(),
       };
@@ -104,11 +84,11 @@ export async function DELETE(request: NextRequest) {
   }
 
   const ext = path.extname(filename).toLowerCase();
-  if (!ALLOWED_EXTS.has(ext)) {
+  if (!ALLOWED_IMAGE_EXTS.has(ext)) {
     return NextResponse.json({ error: "Not an image file" }, { status: 400 });
   }
 
-  const absDir = safeResolve(dir);
+  const absDir = resolveInImagesRoot(dir);
   if (!absDir) {
     return NextResponse.json({ error: "Invalid directory" }, { status: 400 });
   }

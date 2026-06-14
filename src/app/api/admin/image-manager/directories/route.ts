@@ -2,21 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import fs from "fs/promises";
 import path from "path";
-
-const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
-
-/** Resolve a client-supplied relative path safely inside IMAGES_ROOT. */
-function safeResolve(rel: string): string | null {
-  const normalized = path.normalize(rel);
-  const resolved = path.resolve(IMAGES_ROOT, normalized);
-  if (
-    resolved !== IMAGES_ROOT &&
-    !resolved.startsWith(IMAGES_ROOT + path.sep)
-  ) {
-    return null;
-  }
-  return resolved;
-}
+import {
+  IMAGES_ROOT,
+  ImageStorageUnavailableError,
+  ensureImageDir,
+  ensureImagesRootForRead,
+  resolveInImagesRoot,
+} from "@/lib/image-storage";
 
 async function collectDirs(absDir: string, relBase: string): Promise<string[]> {
   let entries;
@@ -42,7 +34,7 @@ export async function GET() {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  await fs.mkdir(IMAGES_ROOT, { recursive: true });
+  await ensureImagesRootForRead();
   const dirs = await collectDirs(IMAGES_ROOT, "");
   return NextResponse.json({ directories: ["", ...dirs] });
 }
@@ -81,7 +73,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const parentAbs = safeResolve(parent);
+  const parentAbs = resolveInImagesRoot(parent);
   if (!parentAbs) {
     return NextResponse.json({ error: "Invalid parent path" }, { status: 400 });
   }
@@ -91,20 +83,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
 
+  // Ensure the parent (and the images root on a freshly-mounted volume) exists,
+  // surfacing a clear reason if the storage volume is missing or read-only.
   try {
+    await ensureImageDir(parentAbs);
+  } catch (err) {
+    if (err instanceof ImageStorageUnavailableError) {
+      return NextResponse.json({ error: err.message }, { status: 500 });
+    }
+    throw err;
+  }
+
+  try {
+    // Non-recursive: a pre-existing directory throws EEXIST -> 409.
     await fs.mkdir(newAbs);
     return NextResponse.json({ ok: true });
-  } catch (err: unknown) {
-    if (
-      err instanceof Error &&
-      "code" in err &&
-      (err as NodeJS.ErrnoException).code === "EEXIST"
-    ) {
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "EEXIST") {
       return NextResponse.json(
         { error: "Directory already exists" },
         { status: 409 },
       );
     }
+    console.error(
+      `image-manager: failed to create directory ${newAbs}:`,
+      e.code,
+      e.message,
+    );
     return NextResponse.json(
       { error: "Failed to create directory" },
       { status: 500 },
@@ -152,7 +158,7 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  const oldAbs = safeResolve(rel);
+  const oldAbs = resolveInImagesRoot(rel);
   if (!oldAbs || oldAbs === IMAGES_ROOT) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
@@ -203,7 +209,7 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
-  const absPath = safeResolve(rel);
+  const absPath = resolveInImagesRoot(rel);
   if (!absPath || absPath === IMAGES_ROOT) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }

@@ -17,12 +17,26 @@ npm run quality:report
 git diff --check
 ```
 
+Migration/schema parity is enforced by a dedicated check. The committed
+migrations in `prisma/migrations` must reproduce `prisma/schema.prisma` exactly,
+or the blue/green deploy migration-safety gate aborts. Run it locally against a
+throwaway database (`SHADOW_DATABASE_URL` must point at an empty, existing DB
+that Prisma resets):
+
+```bash
+SHADOW_DATABASE_URL=postgresql://user:pass@localhost:5432/drift_shadow \
+  npm run db:check-drift   # exit 0 = in sync, 2 = drift
+```
+
 CI also runs independent static and container checks:
 
 - `npm audit --audit-level=high --package-lock-only` on pull requests
 - Semgrep with Next.js, TypeScript, JavaScript, and React rules
 - gitleaks full-history and pull-request diff scans
 - TypeScript, test, and Docker image build validation
+- Migration drift check (`migration-drift` job) running `db:check-drift` against
+  a throwaway Postgres, so schema-vs-migration drift fails the PR rather than the
+  deploy
 - Trivy critical vulnerability gate with high-severity warnings
 
 ## Dependency Policy
@@ -64,6 +78,25 @@ Accepted residual risk:
   GHCR package publish job.
 - The `npm audit --audit-level=high` gate keeps high/critical npm advisories
   blocking, while lower severity advisories remain review-driven.
+
+## Image Uploads Storage
+
+Admin Image Manager uploads are written at runtime under `public/images` (served
+at `/images/...`). The deployed app runs with a read-only root filesystem and
+multiple replicas (blue/green), so this path must be a persistent, writable,
+shared volume:
+
+- `docker-compose.yml` mounts the `image_uploads` named volume at
+  `/app/public/images` for every app replica, so uploads survive redeploys and
+  are visible to all instances.
+- The app runs as uid 1001. The `Dockerfile` creates `public/images` owned by
+  uid 1001 so a freshly-initialised named volume inherits writable ownership.
+- `IMAGE_STORAGE_DIR` can relocate storage, but the chosen path must back the
+  `/images` URL prefix. Prefer the named volume default.
+- When the volume is missing or not writable, upload and create-directory
+  requests return a clear "image storage directory is not writable" message
+  (with the underlying error code) instead of a generic failure, and the cause
+  is logged server-side.
 
 ## Maintainability Budgets
 

@@ -76,6 +76,13 @@ x-app-service: &app-service
   tmpfs:
     - /tmp
     - /app/.next/cache:uid=1001,gid=1001,mode=0755
+  # Image Manager uploads. A named volume shared by all app replicas keeps
+  # uploads persistent across redeploys and visible to every instance (the
+  # read-only root filesystem above otherwise has no writable path here). The
+  # volume inherits uid 1001 ownership from the image's /app/public/images on
+  # first init (see Dockerfile), so the app user can write to it.
+  volumes:
+    - image_uploads:/app/public/images
   security_opt:
     - no-new-privileges:true
   mem_limit: 1g
@@ -192,3 +199,4 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+  image_uploads:

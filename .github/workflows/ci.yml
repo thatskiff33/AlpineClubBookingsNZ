@@ -165,6 +165,56 @@ jobs:
       - name: Build
         run: npm run build
 
+  migration-drift:
+    name: Migration drift check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: drift_main
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/drift_main
+      # Prisma replays prisma/migrations into this shadow database to derive the
+      # migration-history schema, then diffs it against schema.prisma. It must
+      # already exist (Prisma 7 does not auto-create an explicit shadow DB).
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/drift_shadow
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create shadow database
+        run: psql "$DATABASE_URL" -c "CREATE DATABASE drift_shadow"
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      # Fails (exit 2) if the committed migrations do not reproduce
+      # schema.prisma — the parity gate enforced at deploy time. See issue #760.
+      - name: Check migrations reproduce schema.prisma
+        run: npm run db:check-drift
+
   docker-image-security:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -215,6 +265,7 @@ jobs:
     timeout-minutes: 45
     needs:
       - verify
+      - migration-drift
       - static-analysis
       - gitleaks-full-repo
       - docker-image-security

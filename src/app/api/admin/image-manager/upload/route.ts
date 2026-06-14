@@ -2,43 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/session-guards";
 import fs from "fs/promises";
 import path from "path";
-
-const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
-
-// SVG is intentionally excluded: it is an XML dialect that can embed inline
-// <script> and event-handler attributes.  Files under public/images/ are
-// served directly by Next.js/Caddy with no restrictive CSP, so an uploaded
-// SVG opened in-browser would execute in the site origin (stored XSS).
-const ALLOWED_MIME = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/avif",
-]);
-
-const ALLOWED_EXTS = new Set([
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".webp",
-  ".avif",
-]);
+import {
+  ALLOWED_IMAGE_EXTS,
+  ALLOWED_IMAGE_MIME,
+  ImageStorageUnavailableError,
+  ensureImageDir,
+  resolveInImagesRoot,
+} from "@/lib/image-storage";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file
-
-function safeResolve(rel: string): string | null {
-  const normalized = path.normalize(rel);
-  const resolved = path.resolve(IMAGES_ROOT, normalized);
-  if (
-    resolved !== IMAGES_ROOT &&
-    !resolved.startsWith(IMAGES_ROOT + path.sep)
-  ) {
-    return null;
-  }
-  return resolved;
-}
 
 function sanitizeFilename(name: string): string {
   // Strip any path components, then replace unsafe characters
@@ -74,17 +46,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No files provided" }, { status: 400 });
   }
 
-  const absDir = safeResolve(dir);
+  const absDir = resolveInImagesRoot(dir);
   if (!absDir) {
     return NextResponse.json({ error: "Invalid directory" }, { status: 400 });
   }
 
-  await fs.mkdir(absDir, { recursive: true });
+  // Surface a clear, actionable reason when the storage volume is missing or
+  // read-only instead of throwing a raw 500 the UI shows as "Upload failed".
+  try {
+    await ensureImageDir(absDir);
+  } catch (err) {
+    if (err instanceof ImageStorageUnavailableError) {
+      return NextResponse.json({ error: err.message }, { status: 500 });
+    }
+    throw err;
+  }
 
   const results: Array<{ filename: string; ok: boolean; error?: string }> = [];
 
   for (const file of files) {
-    if (!ALLOWED_MIME.has(file.type)) {
+    if (!ALLOWED_IMAGE_MIME.has(file.type)) {
       results.push({
         filename: file.name,
         ok: false,
@@ -103,7 +84,7 @@ export async function POST(request: NextRequest) {
     }
 
     const ext = path.extname(file.name).toLowerCase();
-    if (!ALLOWED_EXTS.has(ext)) {
+    if (!ALLOWED_IMAGE_EXTS.has(ext)) {
       results.push({
         filename: file.name,
         ok: false,
@@ -125,11 +106,17 @@ export async function POST(request: NextRequest) {
       const buffer = Buffer.from(await file.arrayBuffer());
       await fs.writeFile(filePath, buffer);
       results.push({ filename: safeName, ok: true });
-    } catch {
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      console.error(
+        `image-manager: failed to write ${filePath}:`,
+        e.code,
+        e.message,
+      );
       results.push({
         filename: file.name,
         ok: false,
-        error: "Failed to save file",
+        error: `Failed to save file (${e.code ?? "unknown error"})`,
       });
     }
   }

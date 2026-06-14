@@ -142,8 +142,14 @@ export function ImageManagerClient() {
           body: formData,
         });
         const data = (await res.json()) as {
-          results: Array<{ filename: string; ok: boolean; error?: string }>;
+          results?: Array<{ filename: string; ok: boolean; error?: string }>;
+          error?: string;
         };
+        // A non-ok response (e.g. storage volume missing/read-only) carries a
+        // single { error } message rather than per-file results — surface it.
+        if (!res.ok || !data.results) {
+          throw new Error(data.error ?? "Upload failed");
+        }
         const failed = data.results.filter((r) => !r.ok);
         const succeeded = data.results.filter((r) => r.ok);
 
@@ -156,8 +162,8 @@ export function ImageManagerClient() {
         for (const f of failed) {
           toast.error(`${f.filename}: ${f.error ?? "Upload failed"}`);
         }
-      } catch {
-        toast.error("Upload failed");
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : "Upload failed");
       } finally {
         setUploading(false);
         if (fileInputRef.current) fileInputRef.current.value = "";
