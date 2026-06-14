@@ -108,8 +108,11 @@ export async function POST(request: NextRequest) {
       results.push({ filename: safeName, ok: true });
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
+      // Path passed as a separate argument so a tainted value cannot act as a
+      // format directive.
       console.error(
-        `image-manager: failed to write ${filePath}:`,
+        "image-manager: failed to write file:",
+        filePath,
         e.code,
         e.message,
       );

@@ -106,8 +106,11 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
+    // Path passed as a separate argument so a tainted value cannot act as a
+    // format directive.
     console.error(
-      `image-manager: failed to create directory ${newAbs}:`,
+      "image-manager: failed to create directory:",
+      newAbs,
       e.code,
       e.message,
     );

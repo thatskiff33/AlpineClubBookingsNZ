@@ -63,12 +63,24 @@ describe("image-storage", () => {
 
   describe("ensureImageDir", () => {
     it("creates a directory when the volume is writable", async () => {
-      const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "img-store-"));
-      const target = path.join(tmp, "nested", "dir");
-      await expect(ensureImageDir(target)).resolves.toBeUndefined();
-      const stat = await fs.stat(target);
-      expect(stat.isDirectory()).toBe(true);
-      await fs.rm(tmp, { recursive: true, force: true });
+      const base = path.join(IMAGES_ROOT, "__ensure_test__");
+      const target = path.join(base, "nested", "dir");
+      try {
+        await expect(ensureImageDir(target)).resolves.toBeUndefined();
+        const stat = await fs.stat(target);
+        expect(stat.isDirectory()).toBe(true);
+      } finally {
+        await fs.rm(base, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses to create a directory outside the images root", async () => {
+      const mkdir = vi.spyOn(fs, "mkdir");
+      await expect(
+        ensureImageDir(path.join(os.tmpdir(), "escape")),
+      ).rejects.toThrow(/outside the images root/);
+      // The containment guard must short-circuit before any filesystem write.
+      expect(mkdir).not.toHaveBeenCalled();
     });
 
     it("throws a clear error when the storage volume is read-only", async () => {
@@ -77,9 +89,9 @@ describe("image-storage", () => {
       });
       vi.spyOn(fs, "mkdir").mockRejectedValueOnce(err);
 
-      await expect(ensureImageDir("/app/public/images/x")).rejects.toBeInstanceOf(
-        ImageStorageUnavailableError,
-      );
+      await expect(
+        ensureImageDir(path.join(IMAGES_ROOT, "x")),
+      ).rejects.toBeInstanceOf(ImageStorageUnavailableError);
     });
 
     it("surfaces the underlying error code on the thrown error", async () => {
@@ -88,9 +100,9 @@ describe("image-storage", () => {
       });
       vi.spyOn(fs, "mkdir").mockRejectedValueOnce(err);
 
-      await expect(ensureImageDir("/app/public/images/x")).rejects.toMatchObject({
-        code: "EACCES",
-      });
+      await expect(
+        ensureImageDir(path.join(IMAGES_ROOT, "x")),
+      ).rejects.toMatchObject({ code: "EACCES" });
     });
   });
 });

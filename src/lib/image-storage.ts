@@ -81,14 +81,25 @@ export class ImageStorageUnavailableError extends Error {
 // Ensure a directory exists, surfacing a clear error when the underlying volume
 // is missing or read-only. Used before writes (upload, create-directory).
 export async function ensureImageDir(absDir: string): Promise<void> {
+  // Defence-in-depth: never create a directory outside the images root, even if
+  // a caller passes an unvalidated path. Keeping the containment check in the
+  // same function as the mkdir sink also lets static path-injection analysis see
+  // the barrier.
+  const resolved = path.resolve(absDir);
+  if (resolved !== IMAGES_ROOT && !resolved.startsWith(IMAGES_ROOT + path.sep)) {
+    throw new Error("Refusing to create a directory outside the images root");
+  }
   try {
-    await fs.mkdir(absDir, { recursive: true });
+    await fs.mkdir(resolved, { recursive: true });
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     // EEXIST on a recursive mkdir is not an error.
     if (e.code === "EEXIST") return;
+    // The path is passed as a separate argument (not interpolated into the
+    // format string) so a tainted value can never act as a format directive.
     console.error(
-      `image-storage: failed to create directory ${absDir}:`,
+      "image-storage: failed to create directory:",
+      resolved,
       e.code,
       e.message,
     );
@@ -106,8 +117,10 @@ export async function ensureImagesRootForRead(): Promise<void> {
     const e = err as NodeJS.ErrnoException;
     if (e.code === "EEXIST") return;
     console.warn(
-      `image-storage: images root ${IMAGES_ROOT} is not creatable (${e.code}); ` +
-        `listing will proceed against the existing path if present.`,
+      "image-storage: images root is not creatable; listing will proceed " +
+        "against the existing path if present:",
+      IMAGES_ROOT,
+      e.code,
     );
   }
 }
