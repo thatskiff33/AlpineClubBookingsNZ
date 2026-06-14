@@ -91,8 +91,9 @@ shared volume:
   are visible to all instances.
 - The app runs as uid 1001. The `Dockerfile` creates `public/images` owned by
   uid 1001 so a freshly-initialised named volume inherits writable ownership.
-- `IMAGE_STORAGE_DIR` can relocate storage, but the chosen path must back the
-  `/images` URL prefix. Prefer the named volume default.
+- Relocate storage at the deployment layer by bind-mounting your chosen path at
+  `/app/public/images`. The application path stays `public/images` (a trusted
+  constant), which keeps the upload path-traversal checks statically verifiable.
 - When the volume is missing or not writable, upload and create-directory
   requests return a clear "image storage directory is not writable" message
   (with the underlying error code) instead of a generic failure, and the cause

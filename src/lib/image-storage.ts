@@ -1,25 +1,16 @@
 import fs from "fs/promises";
 import path from "path";
 
-// Where uploaded images are stored on disk.
+// Where uploaded images are stored on disk: `public/images`, so local dev and
+// `next start` serve uploads directly at `/images/...`.
 //
-// Defaults to `public/images` so local dev and `next start` serve uploads
-// directly at `/images/...`. Containerised deploys run with a read-only root
-// filesystem, so this directory MUST be backed by a persistent, writable volume
-// that is shared across replicas (see docker-compose.yml: the `image_uploads`
-// named volume mounted at /app/public/images, owned by uid 1001).
-//
-// IMAGE_STORAGE_DIR can relocate storage, but whatever path is chosen must back
-// the `/images` URL prefix (the volume approach above is the supported default).
-// An absolute IMAGE_STORAGE_DIR is used as-is; a relative value resolves against
-// the working directory.
-export const IMAGES_ROOT = (() => {
-  const configured = process.env.IMAGE_STORAGE_DIR?.trim();
-  if (configured) {
-    return path.resolve(process.cwd(), configured);
-  }
-  return path.join(process.cwd(), "public", "images");
-})();
+// Containerised deploys run with a read-only root filesystem, so this path MUST
+// be backed by a persistent, writable volume shared across replicas. Relocation
+// is done at the deployment layer by mounting that volume here, not via an env
+// var (see docker-compose.yml: the `image_uploads` named volume mounted at
+// /app/public/images, owned by uid 1001). Keeping the root a trusted constant
+// also keeps the path-traversal containment checks below statically verifiable.
+export const IMAGES_ROOT = path.join(process.cwd(), "public", "images");
 
 // Public URL prefix that serves IMAGES_ROOT. Stored image URLs are always of the
 // form `/images/<relative-path>` regardless of where IMAGES_ROOT lives on disk.
