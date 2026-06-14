@@ -61,7 +61,7 @@ import type { ImportResult } from "../_types"
 interface MemberImportDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onImported: () => void
+  onImported: (result: ImportResult) => void
   onError: (message: string) => void
 }
 
@@ -391,9 +391,9 @@ export function MemberImportDialog({
       if (!res.ok) throw new Error(data.error || "Import failed")
       setImportResult(data)
       if (data.errors.length > 0) {
-        onError("Import validation failed")
-      } else {
-        onImported()
+        onError("No members were created")
+      } else if (data.created > 0) {
+        onImported(data)
       }
     } catch (err) {
       setWizardStep("validation")
@@ -567,6 +567,23 @@ export function MemberImportDialog({
               )}
               {importResult && (
                 <div className="space-y-3">
+                  {importResult.errors.length > 0 && (
+                    <div className="flex gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p>No members were created. Fix the row errors and try again.</p>
+                    </div>
+                  )}
+                  {importResult.errors.length === 0 && importResult.created === 0 && (
+                    <div className="flex gap-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p>No members were imported. Review the skipped rows below.</p>
+                    </div>
+                  )}
+                  {importResult.errors.length === 0 && importResult.created > 0 && (
+                    <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+                      Imported {importResult.created} member(s), skipped {importResult.skipped}.
+                    </div>
+                  )}
                   <div className="grid gap-3 md:grid-cols-3">
                     <div className="rounded-md border p-3">
                       <p className="text-xs uppercase text-slate-500">Created</p>

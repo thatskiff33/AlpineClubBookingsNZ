@@ -19,7 +19,7 @@ import { MemberPasswordActionDialog } from "./_components/member-password-action
 import { MemberTable } from "./_components/member-table"
 import { useMembersQueryState } from "./_hooks/use-members-query-state"
 import { useXeroContactGroups } from "./_hooks/use-xero-contact-groups"
-import type { BulkAction, Member, PasswordActionTarget } from "./_types"
+import type { BulkAction, ImportResult, Member, PasswordActionTarget } from "./_types"
 
 interface MembersResponse {
   members: Member[]
@@ -202,6 +202,16 @@ export default function MembersPage() {
     void fetchMembers()
   }
 
+  const handleImported = (result: ImportResult) => {
+    const skippedText = result.skipped > 0 ? `, skipped ${result.skipped}` : ""
+    const filterNote =
+      search.trim() || debouncedSearch.trim() || activeFilterCount > 0
+        ? " Current search or filters may hide newly imported members."
+        : ""
+    showSuccess(`Imported ${result.created} member(s)${skippedText}.${filterNote}`, 7000)
+    void fetchMembers()
+  }
+
   const handlePasswordComplete = (message: string) => {
     showSuccess(message, 5000)
     setPasswordActionTarget(null)
@@ -350,7 +360,7 @@ export default function MembersPage() {
       <MemberImportDialog
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
-        onImported={() => void fetchMembers()}
+        onImported={handleImported}
         onError={setError}
       />
     </div>

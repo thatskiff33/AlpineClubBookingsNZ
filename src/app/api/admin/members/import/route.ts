@@ -282,6 +282,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(results, { status: 200 });
   }
 
+  if (validatedRows.length === 0) {
+    return NextResponse.json(results, { status: 200 });
+  }
+
   // All-or-nothing: create all members in a transaction
   try {
     const createdMembers = await prisma.$transaction(async (tx) => {

@@ -1009,6 +1009,46 @@ describe("Phase 3: Admin Member Management", () => {
       expect(body.created).toBe(1);
     });
 
+    it("returns an explicit no-op result when all rows already exist", async () => {
+      mockedAuth.mockResolvedValue(adminSession);
+      vi.mocked(prisma.member.findMany).mockResolvedValue([
+        { email: "existing-a@test.com" },
+        { email: "existing-b@test.com" },
+      ] as any);
+
+      const req = new NextRequest("http://localhost/api/admin/members/import", {
+        method: "POST",
+        body: JSON.stringify({
+          rows: [
+            { firstName: "Existing", lastName: "A", email: "existing-a@test.com" },
+            { firstName: "Existing", lastName: "B", email: "existing-b@test.com" },
+          ],
+          sendInvites: false,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const res = await importMembers(req);
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.created).toBe(0);
+      expect(body.skipped).toBe(2);
+      expect(body.skippedRows).toEqual([
+        {
+          row: 1,
+          email: "existing-a@test.com",
+          reason: "Login email already exists",
+        },
+        {
+          row: 2,
+          email: "existing-b@test.com",
+          reason: "Login email already exists",
+        },
+      ]);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
     it("returns 500 if transaction fails (no partial import)", async () => {
       mockedAuth.mockResolvedValue(adminSession);
       vi.mocked(prisma.member.findMany).mockResolvedValue([]);
