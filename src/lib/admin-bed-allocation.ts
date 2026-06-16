@@ -1158,6 +1158,30 @@ export async function deleteBedAllocation(input: {
   });
 }
 
+/**
+ * Whether an admin has confirmed (locked) the bed allocation for a booking.
+ *
+ * Issue #776: members may set/clear their requested room until the lodge
+ * confirms beds. The lock signal is the presence of at least one approved
+ * BedAllocation row for the booking — `approveBedAllocations` stamps
+ * `approvedAt`/`approvedByMemberId` when an admin explicitly confirms beds.
+ * Unapproved (auto-suggested or pending manual) allocations do not lock it.
+ */
+export async function isBookingBedAllocationLocked(input: {
+  bookingId: string;
+  db?: BedAllocationDb;
+}): Promise<boolean> {
+  const db = input.db ?? prisma;
+  const approved = await db.bedAllocation.findFirst({
+    where: {
+      bookingId: input.bookingId,
+      approvedAt: { not: null },
+    },
+    select: { id: true },
+  });
+  return approved !== null;
+}
+
 export async function approveBedAllocations(input: {
   approvedByMemberId: string;
   allocationIds?: string[];

@@ -26,13 +26,28 @@ interface RequestedRoomEditorProps {
   bookingId: string;
   initialRoom: RequestedRoom | null;
   canEdit: boolean;
+  /**
+   * API base path for the save/clear calls. Defaults to the admin route so
+   * existing admin usage is unchanged; members pass the member route
+   * (`/api/bookings/[id]/requested-room`). Issue #776.
+   */
+  endpoint?: string;
+  /**
+   * Read-only explanation shown when editing is locked (e.g. the lodge has
+   * confirmed the bed allocation). Only rendered when `canEdit` is false.
+   */
+  lockedNote?: string;
 }
 
 export function RequestedRoomEditor({
   bookingId,
   initialRoom,
   canEdit,
+  endpoint,
+  lockedNote,
 }: RequestedRoomEditorProps) {
+  const basePath =
+    endpoint ?? `/api/admin/bookings/${bookingId}/requested-room`;
   const [room, setRoom] = useState(initialRoom);
   const [roomOptions, setRoomOptions] = useState<RoomOption[]>([]);
   const [saving, setSaving] = useState(false);
@@ -53,10 +68,10 @@ export function RequestedRoomEditor({
 
     try {
       if (value === "none") {
-        await fetch(`/api/admin/bookings/${bookingId}/requested-room`, { method: "DELETE" });
+        await fetch(basePath, { method: "DELETE" });
         setRoom(null);
       } else {
-        await fetch(`/api/admin/bookings/${bookingId}/requested-room`, {
+        await fetch(basePath, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ requestedRoomId: value }),
@@ -81,9 +96,14 @@ export function RequestedRoomEditor({
 
   if (!canEdit) {
     return (
-      <div className="flex items-center gap-2">
-        <p className="text-sm text-gray-600">{room ? room.name : "No preference"}</p>
-        {inactiveChip}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <p className="text-sm text-gray-600">{room ? room.name : "No preference"}</p>
+          {inactiveChip}
+        </div>
+        {lockedNote ? (
+          <p className="text-sm text-gray-500">{lockedNote}</p>
+        ) : null}
       </div>
     );
   }

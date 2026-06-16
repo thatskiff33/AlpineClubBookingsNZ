@@ -41,6 +41,7 @@ import {
 } from "@/lib/booking-payment-state";
 import { isBookingFullyPaidForGuestNameEdits } from "@/lib/booking-modify";
 import { isPaymentOwedBookingStatus } from "@/lib/booking-status";
+import { isBookingBedAllocationLocked } from "@/lib/admin-bed-allocation";
 import { loadEmailMessageSettings } from "@/lib/email-message-settings";
 import { loadEffectiveModuleFlags } from "@/lib/module-settings";
 import { resolveInternalReturnPath } from "@/lib/internal-return-path";
@@ -244,6 +245,27 @@ export default async function BookingDetailPage({
   const modules = await loadEffectiveModuleFlags();
   const showRequestedRoom =
     !isDeleted && (modules.bedAllocation || Boolean(booking.requestedRoomId));
+  // Issue #776: the booking owner may request a room until an admin confirms
+  // (locks) the bed allocation; admins can always edit while the booking is
+  // modifiable. Only check the lock when the editor will actually render and
+  // the module is on (the admin route also gates on bedAllocation).
+  const isBookingOwner = booking.memberId === session.user.id;
+  const bedAllocationLocked =
+    showRequestedRoom && modules.bedAllocation
+      ? await isBookingBedAllocationLocked({ bookingId: booking.id })
+      : false;
+  const requestedRoomEditableStatus =
+    booking.status !== "CANCELLED" && booking.status !== "COMPLETED";
+  const canEditRequestedRoom = isDeleted
+    ? false
+    : session.user.role === "ADMIN"
+      ? canModify
+      : // Members (owners) may request a room before and after payment, until
+        // the lodge confirms beds. Not tied to the paid/edit policy.
+        isBookingOwner &&
+        modules.bedAllocation &&
+        requestedRoomEditableStatus &&
+        !bedAllocationLocked;
   const editPolicy = getBookingEditPolicy({
     status: booking.status,
     role: session.user.role,
@@ -374,6 +396,37 @@ export default async function BookingDetailPage({
     booking.status === "PENDING" &&
     booking.cancelIfGuestsBumped &&
     booking.hasNonMembers;
+
+  // Issue #777: a provisional/on-hold PENDING booking shows no pay control,
+  // which left testers unsure whether one should exist. The "Save Payment
+  // Method" card below already explains the save-card flow, so the on-hold
+  // explanation is only needed when that card is not showing.
+  const showSavePaymentMethodCard =
+    !isDeleted &&
+    !internetBankingPayment &&
+    booking.status === "PENDING" &&
+    (!booking.payment || !booking.payment.stripeSetupIntentId);
+  // Suppress when a more specific provisional banner already explains the
+  // on-hold/no-charge state (the split-booking child and the bumped-guest
+  // flagged-provisional notices both render near the top of the page).
+  const showPaymentOnHoldNotice =
+    !isDeleted &&
+    booking.status === "PENDING" &&
+    !showSavePaymentMethodCard &&
+    !isProvisionalChild &&
+    !isFlaggedProvisional;
+
+  // Issue #778: surface auto-applied member credit (display only). Credit nets
+  // off the booking price, so amount due = finalPriceCents - creditAppliedCents.
+  const creditAppliedCents = booking.payment?.creditAppliedCents ?? 0;
+  const showCreditApplied =
+    creditAppliedCents > 0 &&
+    isPaymentOwedBookingStatus(booking.status) &&
+    booking.payment?.status !== "SUCCEEDED";
+  const amountDueAfterCreditCents = Math.max(
+    booking.finalPriceCents - creditAppliedCents,
+    0
+  );
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -569,13 +622,30 @@ export default async function BookingDetailPage({
       {showRequestedRoom && (
         <Card>
           <CardHeader>
-            <CardTitle>Preferred Room</CardTitle>
+            <CardTitle>Room Request</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
+            {canEditRequestedRoom && session.user.role !== "ADMIN" ? (
+              <p className="text-sm text-slate-600">
+                Let us know if you&apos;d prefer a particular room. This is a
+                request, not a guaranteed allocation. The lodge confirms beds
+                closer to your stay.
+              </p>
+            ) : null}
             <RequestedRoomEditor
               bookingId={booking.id}
               initialRoom={booking.requestedRoom}
-              canEdit={session.user.role === "ADMIN" && canModify}
+              canEdit={canEditRequestedRoom}
+              endpoint={
+                session.user.role === "ADMIN"
+                  ? undefined
+                  : `/api/bookings/${booking.id}/requested-room`
+              }
+              lockedNote={
+                bedAllocationLocked && session.user.role !== "ADMIN"
+                  ? "Your beds have been allocated by the lodge and can no longer be changed here."
+                  : undefined
+              }
             />
           </CardContent>
         </Card>
@@ -723,6 +793,23 @@ export default async function BookingDetailPage({
           </Card>
         )}
 
+      {/* Provisional/on-hold booking: explain why no payment is collected yet
+          (issue #777). */}
+      {showPaymentOnHoldNotice && (
+        <Card className="border-sky-200 bg-sky-50">
+          <CardHeader>
+            <CardTitle className="text-sky-900">Payment on hold</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-sky-900">
+              This is a provisional booking. We&apos;ll confirm your place and
+              collect payment once your guests are confirmed, closer to your
+              stay.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Show payment form if payment hasn't been completed */}
       {(!isDeleted && !internetBankingPayment && isPaymentOwedBookingStatus(booking.status) && (!booking.payment || booking.payment.status !== "SUCCEEDED")) && (
         <Card>
@@ -733,9 +820,29 @@ export default async function BookingDetailPage({
             <p className="text-sm text-gray-600 mb-4">
               Payment is required to secure this booking. Availability may change until payment succeeds.
             </p>
+            {showCreditApplied && (
+              <div className="mb-4 space-y-1 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                <div className="flex items-center justify-between">
+                  <span>Booking total</span>
+                  <span>{formatCents(booking.finalPriceCents)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Credit applied</span>
+                  <span>-{formatCents(creditAppliedCents)}</span>
+                </div>
+                <div className="flex items-center justify-between font-medium">
+                  <span>Amount due</span>
+                  <span>{formatCents(amountDueAfterCreditCents)}</span>
+                </div>
+              </div>
+            )}
             <BookingPaymentSection
               bookingId={booking.id}
-              amountCents={booking.finalPriceCents}
+              amountCents={
+                showCreditApplied
+                  ? amountDueAfterCreditCents
+                  : booking.finalPriceCents
+              }
               paymentMode={getBookingPaymentMode(booking.status)}
               returnUrl={`${process.env.NEXTAUTH_URL || "http://localhost:3000"}/bookings/${booking.id}`}
             />
@@ -743,7 +850,7 @@ export default async function BookingDetailPage({
         </Card>
       )}
 
-      {(!isDeleted && !internetBankingPayment && booking.status === "PENDING" && (!booking.payment || !booking.payment.stripeSetupIntentId)) && (
+      {showSavePaymentMethodCard && (
         <Card>
           <CardHeader>
             <CardTitle>Save Payment Method</CardTitle>
