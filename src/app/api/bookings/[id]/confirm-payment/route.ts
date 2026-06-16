@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getPaymentIntent } from "@/lib/stripe";
 import { markBookingPaymentSucceeded } from "@/lib/payment-reconciliation";
+import { sendBookingConfirmedEmail } from "@/lib/email";
 import { logAudit } from "@/lib/audit";
 import logger from "@/lib/logger";
 import { requireActiveSessionUser } from "@/lib/session-guards";
@@ -131,6 +132,45 @@ export async function POST(
         },
         { status: 409 }
       );
+    }
+
+    // Send the confirmation email only on a fresh transition to PAID. If the
+    // Stripe webhook reconciled this payment first, markBookingPaymentSucceeded
+    // returns "already_paid" here and we skip the send, so the email goes out
+    // exactly once whichever path wins the race (issue #772).
+    if (reconciliation.outcome === "paid") {
+      try {
+        const booking = await prisma.booking.findUnique({
+          where: { id: bookingId },
+          include: {
+            member: true,
+            guests: true,
+            promoRedemption: { include: { promoCode: true } },
+          },
+        });
+        if (booking) {
+          await sendBookingConfirmedEmail(
+            booking.member.email,
+            booking.member.firstName,
+            booking.checkIn,
+            booking.checkOut,
+            booking.guests.length,
+            booking.finalPriceCents,
+            booking.promoRedemption?.promoCode
+              ? {
+                  discountCents: booking.discountCents,
+                  promoAdjustmentCents: booking.promoAdjustmentCents,
+                  promoCode: booking.promoRedemption.promoCode.code,
+                }
+              : undefined
+          );
+        }
+      } catch (emailErr) {
+        logger.error(
+          { err: emailErr, bookingId },
+          "Failed to send confirmation email"
+        );
+      }
     }
 
     logAudit({

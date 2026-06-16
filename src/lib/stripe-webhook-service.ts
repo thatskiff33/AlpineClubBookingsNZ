@@ -285,31 +285,36 @@ async function handlePaymentIntentSucceeded(
 
   logger.info({ bookingId, paymentIntentId: paymentIntent.id }, "Booking paid via PaymentIntent");
 
-  // Send confirmation email
-  try {
-    const booking = await prisma.booking.findUnique({
-      where: { id: bookingId },
-      include: { member: true, guests: true, promoRedemption: { include: { promoCode: true } } },
-    });
-    if (booking) {
-      await sendBookingConfirmedEmail(
-        booking.member.email,
-        booking.member.firstName,
-        booking.checkIn,
-        booking.checkOut,
-        booking.guests.length,
-        booking.finalPriceCents,
-        booking.promoRedemption?.promoCode
-          ? {
-              discountCents: booking.discountCents,
-              promoAdjustmentCents: booking.promoAdjustmentCents,
-              promoCode: booking.promoRedemption.promoCode.code,
-            }
-          : undefined
-      );
+  // Send confirmation email only on a fresh transition to PAID. An
+  // "already_paid" outcome means the synchronous confirm-payment route (or a
+  // prior delivery) already reconciled this payment and sent the email, so we
+  // skip here to keep the send exactly-once across both paths (issue #772).
+  if (reconciliation.outcome === "paid") {
+    try {
+      const booking = await prisma.booking.findUnique({
+        where: { id: bookingId },
+        include: { member: true, guests: true, promoRedemption: { include: { promoCode: true } } },
+      });
+      if (booking) {
+        await sendBookingConfirmedEmail(
+          booking.member.email,
+          booking.member.firstName,
+          booking.checkIn,
+          booking.checkOut,
+          booking.guests.length,
+          booking.finalPriceCents,
+          booking.promoRedemption?.promoCode
+            ? {
+                discountCents: booking.discountCents,
+                promoAdjustmentCents: booking.promoAdjustmentCents,
+                promoCode: booking.promoRedemption.promoCode.code,
+              }
+            : undefined
+        );
+      }
+    } catch (emailErr) {
+      logger.error({ err: emailErr, bookingId }, "Failed to send confirmation email");
     }
-  } catch (emailErr) {
-    logger.error({ err: emailErr, bookingId }, "Failed to send confirmation email");
   }
 
   // Queue the booking invoice durably, then opportunistically kick the worker.

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   markBookingSetupIntentSucceeded: vi.fn(),
   logAudit: vi.fn(),
   upsertPaymentIntentTransaction: vi.fn(),
+  sendBookingConfirmedEmail: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -47,6 +48,10 @@ vi.mock("@/lib/payment-transactions", () => ({
 
 vi.mock("@/lib/audit", () => ({
   logAudit: mocks.logAudit,
+}));
+
+vi.mock("@/lib/email", () => ({
+  sendBookingConfirmedEmail: mocks.sendBookingConfirmedEmail,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -95,6 +100,7 @@ beforeEach(() => {
     bookingId: "booking-1",
     bumpedBookingIds: [],
   });
+  mocks.sendBookingConfirmedEmail.mockResolvedValue(undefined);
 });
 
 describe("payment intent routes", () => {
@@ -287,5 +293,141 @@ describe("payment intent routes", () => {
       paymentMethodId: "pm_123",
     });
     expect(mocks.logAudit).toHaveBeenCalled();
+  });
+});
+
+// Issue #772: the synchronous confirm-payment route must send the booking
+// confirmation email when the webhook never arrives, but only once across both
+// paths. The send is gated on a fresh "paid" reconciliation outcome; an
+// "already_paid" outcome means the other path already reconciled and emailed.
+describe("confirm-payment route: booking confirmation email (issue #772)", () => {
+  function setupConfirmPayment() {
+    mockPrisma.payment.findUnique.mockResolvedValue({
+      id: "payment-1",
+      stripePaymentIntentId: "pi_success",
+      status: "PROCESSING",
+      booking: {
+        memberId: "member-1",
+        finalPriceCents: 12500,
+        status: "CONFIRMED",
+        hasNonMembers: false,
+      },
+    });
+    mockGetPaymentIntent.mockResolvedValue({
+      id: "pi_success",
+      amount: 12500,
+      payment_method: "pm_123",
+      status: "succeeded",
+    });
+    // Post-reconciliation lookup used to build the confirmation email.
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      checkIn: new Date("2026-08-15"),
+      checkOut: new Date("2026-08-17"),
+      finalPriceCents: 12500,
+      discountCents: 0,
+      promoAdjustmentCents: 0,
+      member: { email: "member@example.com", firstName: "Test" },
+      guests: [{ id: "g1" }, { id: "g2" }],
+      promoRedemption: null,
+    });
+  }
+
+  function makeRequest() {
+    return new NextRequest(
+      "http://localhost/api/bookings/booking-1/confirm-payment",
+      {
+        method: "POST",
+        body: JSON.stringify({ paymentIntentId: "pi_success" }),
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+
+  it("sends exactly one confirmation email on a fresh paid outcome", async () => {
+    setupConfirmPayment();
+    mocks.markBookingPaymentSucceeded.mockResolvedValue({
+      outcome: "paid",
+      bookingId: "booking-1",
+      bumpedBookingIds: [],
+    });
+
+    const res = await confirmPaymentRoute(makeRequest(), {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendBookingConfirmedEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.sendBookingConfirmedEmail).toHaveBeenCalledWith(
+      "member@example.com",
+      "Test",
+      expect.any(Date),
+      expect.any(Date),
+      2,
+      12500,
+      undefined
+    );
+  });
+
+  it("does not send when the webhook already reconciled (already_paid)", async () => {
+    setupConfirmPayment();
+    mocks.markBookingPaymentSucceeded.mockResolvedValue({
+      outcome: "already_paid",
+      bookingId: "booking-1",
+      bumpedBookingIds: [],
+    });
+
+    const res = await confirmPaymentRoute(makeRequest(), {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendBookingConfirmedEmail).not.toHaveBeenCalled();
+  });
+
+  it("sends exactly once when both paths run: the first wins, the second is a no-op", async () => {
+    setupConfirmPayment();
+
+    // First caller wins the advisory-locked transition and gets "paid".
+    mocks.markBookingPaymentSucceeded.mockResolvedValueOnce({
+      outcome: "paid",
+      bookingId: "booking-1",
+      bumpedBookingIds: [],
+    });
+    // Second caller (e.g. webhook arriving after the sync confirm) sees the
+    // booking already PAID and gets "already_paid".
+    mocks.markBookingPaymentSucceeded.mockResolvedValueOnce({
+      outcome: "already_paid",
+      bookingId: "booking-1",
+      bumpedBookingIds: [],
+    });
+
+    await confirmPaymentRoute(makeRequest(), {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+    await confirmPaymentRoute(makeRequest(), {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(mocks.sendBookingConfirmedEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fail the request if the confirmation email throws", async () => {
+    setupConfirmPayment();
+    mocks.markBookingPaymentSucceeded.mockResolvedValue({
+      outcome: "paid",
+      bookingId: "booking-1",
+      bumpedBookingIds: [],
+    });
+    mocks.sendBookingConfirmedEmail.mockRejectedValueOnce(
+      new Error("SMTP unavailable")
+    );
+
+    const res = await confirmPaymentRoute(makeRequest(), {
+      params: Promise.resolve({ id: "booking-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ success: true });
   });
 });
