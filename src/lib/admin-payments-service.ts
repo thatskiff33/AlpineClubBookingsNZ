@@ -499,7 +499,12 @@ export async function listAdminPayments(query: AdminPaymentsQuery): Promise<Json
 
     const summary = filteredCandidates.reduce(
       (acc, payment) => {
-        acc.totalRevenueCents += payment.amountCents;
+        // Total Revenue should reflect retained revenue only. A cancelled
+        // booking's payment must not count toward it (issue #773), even though
+        // the row still appears in the list and its refund is tracked below.
+        if (payment.booking.status !== "CANCELLED") {
+          acc.totalRevenueCents += payment.amountCents;
+        }
         acc.refundedCents += payment.refundedAmountCents;
         acc.count += 1;
         return acc;
