@@ -256,6 +256,13 @@ export default async function BookingDetailPage({
       : false;
   const requestedRoomEditableStatus =
     booking.status !== "CANCELLED" && booking.status !== "COMPLETED";
+  const editPolicy = getBookingEditPolicy({
+    status: booking.status,
+    role: session.user.role,
+    checkIn: booking.checkIn,
+    checkOut: booking.checkOut,
+  });
+  const canModify = !isDeleted && editPolicy.canModify;
   const canEditRequestedRoom = isDeleted
     ? false
     : session.user.role === "ADMIN"
@@ -266,13 +273,6 @@ export default async function BookingDetailPage({
         modules.bedAllocation &&
         requestedRoomEditableStatus &&
         !bedAllocationLocked;
-  const editPolicy = getBookingEditPolicy({
-    status: booking.status,
-    role: session.user.role,
-    checkIn: booking.checkIn,
-    checkOut: booking.checkOut,
-  });
-  const canModify = !isDeleted && editPolicy.canModify;
   const canEditNonMemberGuestNames =
     canModify && !isBookingFullyPaidForGuestNameEdits(booking);
   const cancellationSettlement = booking.payment
