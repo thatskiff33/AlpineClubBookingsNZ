@@ -286,37 +286,48 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(results, { status: 200 });
   }
 
+  // Pre-compute password hashes BEFORE opening the transaction. bcrypt at cost
+  // 13 takes a few hundred ms each; hashing inside an interactive transaction
+  // exceeded Prisma's default 5s timeout at ~10 rows and rolled back the whole
+  // import (issue #768). The transaction below now only does fast inserts.
+  const membersToCreate = await Promise.all(
+    validatedRows.map(async (row) => ({
+      ...row,
+      passwordHash: await hash(randomBytes(16).toString("hex"), 13),
+    }))
+  );
+
   // All-or-nothing: create all members in a transaction
   try {
-    const createdMembers = await prisma.$transaction(async (tx) => {
-      const created: Array<{ id: string; email: string; firstName: string; lastName: string }> = [];
-      for (const row of validatedRows) {
-        const randomPassword = randomBytes(16).toString("hex");
-        const passwordHash = await hash(randomPassword, 13);
-
-        const member = await tx.member.create({
-          data: {
-            email: row.email,
-            firstName: row.firstName,
-            lastName: row.lastName,
-            phoneCountryCode: row.phoneCountryCode,
-            phoneAreaCode: row.phoneAreaCode,
-            phoneNumber: row.phoneNumber,
-            dateOfBirth: row.dateOfBirth,
-            joinedDate: row.joinedDate,
-            role: row.role,
-            ageTier: row.ageTier,
-            active: true,
-            canLogin: true,
-            emailVerified: true, // Admin-imported members don't need email verification
-            passwordHash,
-          },
-          select: { id: true, email: true, firstName: true, lastName: true },
-        });
-        created.push(member);
-      }
-      return created;
-    });
+    const createdMembers = await prisma.$transaction(
+      async (tx) => {
+        const created: Array<{ id: string; email: string; firstName: string; lastName: string }> = [];
+        for (const row of membersToCreate) {
+          const member = await tx.member.create({
+            data: {
+              email: row.email,
+              firstName: row.firstName,
+              lastName: row.lastName,
+              phoneCountryCode: row.phoneCountryCode,
+              phoneAreaCode: row.phoneAreaCode,
+              phoneNumber: row.phoneNumber,
+              dateOfBirth: row.dateOfBirth,
+              joinedDate: row.joinedDate,
+              role: row.role,
+              ageTier: row.ageTier,
+              active: true,
+              canLogin: true,
+              emailVerified: true, // Admin-imported members don't need email verification
+              passwordHash: row.passwordHash,
+            },
+            select: { id: true, email: true, firstName: true, lastName: true },
+          });
+          created.push(member);
+        }
+        return created;
+      },
+      { timeout: 30000 }
+    );
 
     results.created = createdMembers.length;
 
