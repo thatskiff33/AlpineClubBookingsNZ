@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Tabs,
@@ -7,6 +8,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { BookingApprovalsPanel } from "@/components/admin/booking-requests/booking-approvals-panel";
 import { BookingChangeRequestsPanel } from "@/components/admin/booking-requests/booking-change-requests-panel";
 import { PublicBookingRequestsPanel } from "@/components/admin/booking-requests/public-booking-requests-panel";
@@ -35,6 +37,28 @@ export default function BookingRequestsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeTab = parseBookingRequestsTab(searchParams.get("tab"));
+
+  // Pending public-request count, so admins can see at a glance that
+  // verified non-member requests are waiting on the Public Requests tab
+  // (issue #779 — they previously looked under Approvals/Bookings/Waitlist).
+  const [publicQueueCount, setPublicQueueCount] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/admin/booking-requests?status=QUEUE&pageSize=1")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data && typeof data.total === "number") {
+          setPublicQueueCount(data.total);
+        }
+      })
+      .catch(() => {
+        /* badge is best-effort; ignore fetch errors */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function handleTabChange(value: string) {
     const nextTab = parseBookingRequestsTab(value);
@@ -78,7 +102,17 @@ export default function BookingRequestsPage() {
         <TabsList className="grid w-full grid-cols-3 sm:w-auto">
           <TabsTrigger value="approvals">Approvals</TabsTrigger>
           <TabsTrigger value="changes">Changes</TabsTrigger>
-          <TabsTrigger value="public">Public Requests</TabsTrigger>
+          <TabsTrigger value="public" className="gap-2">
+            Public Requests
+            {publicQueueCount > 0 && (
+              <Badge
+                variant="secondary"
+                className="border-amber-200 bg-amber-100 text-amber-800"
+              >
+                {publicQueueCount}
+              </Badge>
+            )}
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="approvals" className="mt-6">
           {activeTab === "approvals" ? (
@@ -98,10 +132,20 @@ export default function BookingRequestsPage() {
         </TabsContent>
         <TabsContent value="public" className="mt-6">
           {activeTab === "public" ? (
-            <PublicBookingRequestsPanel
-              fixedSearchParams={PUBLIC_SEARCH_PARAMS}
-              showHeading={false}
-            />
+            <div className="space-y-4">
+              <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                How a non-member request flows: the requester submits it and
+                confirms their email, then it appears here under{" "}
+                <span className="font-medium">Queue</span>. Price it, approve
+                it, and it becomes a booking. Verified requests only show on
+                this tab, not under Approvals, the Bookings list, or the
+                Waitlist.
+              </p>
+              <PublicBookingRequestsPanel
+                fixedSearchParams={PUBLIC_SEARCH_PARAMS}
+                showHeading={false}
+              />
+            </div>
           ) : null}
         </TabsContent>
       </Tabs>
