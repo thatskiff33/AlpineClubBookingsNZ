@@ -715,7 +715,7 @@ export default function BookingPoliciesPage() {
                 id="holdDays"
                 type="number"
                 min="1"
-                max="30"
+                max="365"
                 value={defaultHoldDays}
                 onChange={(e) => setDefaultHoldDays(parseInt(e.target.value) || 7)}
                 className={`w-20 ${!editingDefaults ? "bg-slate-50 text-slate-700" : ""}`}
@@ -796,7 +796,7 @@ export default function BookingPoliciesPage() {
                       id="pHold"
                       type="number"
                       min="1"
-                      max="30"
+                      max="365"
                       value={periodHoldDays}
                       onChange={(e) => setPeriodHoldDays(parseInt(e.target.value) || 5)}
                       className="w-24"

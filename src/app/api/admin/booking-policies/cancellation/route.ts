@@ -15,7 +15,7 @@ const policySchema = z.object({
       creditFixedFeeCents: z.number().int().min(0).optional(),
     })
   ).min(1, "At least one rule is required"),
-  nonMemberHoldDays: z.number().int().min(1).max(30).optional(),
+  nonMemberHoldDays: z.number().int().min(1).max(365).optional(),
 })
 
 export async function GET() {
