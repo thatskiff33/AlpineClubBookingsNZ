@@ -44,7 +44,10 @@ export function FamilyGroupLoginHolderSection({
       </div>
       {clusters.length === 0 ? (
         <p className="rounded-md border border-dashed border-slate-200 p-3 text-sm text-slate-500">
-          No shared-email clusters in this family group.
+          No shared-email clusters in this family group. This section only
+          applies when two or more adults here share the same email address.
+          When they do, you can choose which adult holds the login for that
+          address.
         </p>
       ) : (
         clusters.map((cluster) => {
