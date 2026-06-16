@@ -1443,24 +1443,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">{xeroError}</div>
       )}
 
-      <MemberDeletionCard
-        deleteEligibility={member.deleteEligibility}
-        deleteRequests={deleteRequests}
-        pendingDeleteRequest={pendingDeleteRequest}
-        approvalBlockerCount={approvalBlockers.length}
-        canReviewPendingDeleteRequest={canReviewPendingDeleteRequest}
-        onOpenRequestDialog={() => {
-          setDeleteDialogOpen(true)
-          setDeleteReason("")
-          setDeleteError("")
-        }}
-        onOpenReviewDialog={(request, action) => {
-          setDeleteReviewDialog({ request, action })
-          setDeleteReviewNote("")
-          setDeleteReviewError("")
-        }}
-      />
-
       <MemberStatsCards member={member} />
 
       <MemberInfoCard member={member} onEditFamilyGroup={setFamilyGroupEditorId} />
@@ -1537,6 +1519,24 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         onSubmitArchive={handleSubmitArchiveRequest}
         onSubmitCancellation={handleSubmitCancellationRequest}
         onReviewArchive={handleReviewArchiveRequest}
+      />
+
+      <MemberDeletionCard
+        deleteEligibility={member.deleteEligibility}
+        deleteRequests={deleteRequests}
+        pendingDeleteRequest={pendingDeleteRequest}
+        approvalBlockerCount={approvalBlockers.length}
+        canReviewPendingDeleteRequest={canReviewPendingDeleteRequest}
+        onOpenRequestDialog={() => {
+          setDeleteDialogOpen(true)
+          setDeleteReason("")
+          setDeleteError("")
+        }}
+        onOpenReviewDialog={(request, action) => {
+          setDeleteReviewDialog({ request, action })
+          setDeleteReviewNote("")
+          setDeleteReviewError("")
+        }}
       />
 
       <FamilyGroupEditorDialog
