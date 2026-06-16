@@ -1570,8 +1570,8 @@ export default function BookPage() {
                     and we&apos;ll keep your whole party together as a single
                     provisional booking instead of booking your place now:{" "}
                     <strong>no beds are held and nothing is charged up front</strong>
-                    , and we only confirm \u2014 and take payment \u2014 once your guests
-                    are confirmed closer to your stay.
+                    , and we only confirm and take payment once your guests are
+                    confirmed closer to your stay.
                   </span>
                 </label>
               )}
