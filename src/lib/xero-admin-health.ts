@@ -4,6 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { getFailedXeroOperationOverview } from "@/lib/xero-admin-failures";
 import { getTodaysXeroUsageSummary } from "@/lib/xero-api-usage";
 import { getXeroContactLinkMismatchSnapshot } from "@/lib/xero-contact-link-mismatches";
+import {
+  STALE_RUNNING_XERO_OPERATION_MINUTES,
+  countStaleRunningXeroOperations,
+} from "@/lib/xero-stale-operations";
 
 const MEMBERSHIP_SYNC_CURSOR_RESOURCE = "MEMBERSHIP_INVOICE_SYNC";
 
@@ -36,6 +40,10 @@ export interface XeroAdminHealthSnapshot {
   };
   pendingOperations: {
     count: number;
+  };
+  staleRunningOperations: {
+    count: number;
+    thresholdMinutes: number;
   };
   lastMembershipRefresh: {
     at: string | null;
@@ -176,6 +184,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     unlinkedMemberCount,
     failedOperationOverview,
     pendingOperationCount,
+    staleRunningOperationCount,
     latestMembershipCursor,
     latestMembershipCron,
     missingInvoices,
@@ -193,6 +202,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     prisma.xeroSyncOperation.count({
       where: { status: "PENDING" },
     }),
+    countStaleRunningXeroOperations(),
     prisma.xeroSyncCursor.findFirst({
       where: {
         resourceType: MEMBERSHIP_SYNC_CURSOR_RESOURCE,
@@ -242,6 +252,10 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     },
     pendingOperations: {
       count: pendingOperationCount,
+    },
+    staleRunningOperations: {
+      count: staleRunningOperationCount,
+      thresholdMinutes: STALE_RUNNING_XERO_OPERATION_MINUTES,
     },
     lastMembershipRefresh: {
       at: latestMembershipCursor?.lastSuccessfulSyncAt?.toISOString() ?? null,
