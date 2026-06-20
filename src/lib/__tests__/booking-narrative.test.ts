@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BookingEventType } from "@prisma/client";
+import { BookingEventType, BookingStatus } from "@prisma/client";
 import {
   resolveBookingNarrative,
   type NarrativeBooking,
@@ -332,5 +332,25 @@ describe("resolveBookingNarrative", () => {
       expect(result.message).not.toMatch(/contact the booking officer/i);
       expect(result.nextStep).not.toMatch(/contact the booking officer/i);
     }
+  });
+
+  // Issue #822 UX review: no booking state should leave a member without
+  // page-level guidance. Every BookingStatus must yield a non-empty headline,
+  // message, and a concrete next step (including DRAFT / WAITLISTED /
+  // WAITLIST_OFFERED, which fall through to the specific fallback narrative).
+  it("gives every BookingStatus a non-empty headline, message, and concrete next step", () => {
+    const missingGuidance = Object.values(BookingStatus).filter((status) => {
+      const result = resolveBookingNarrative({
+        booking: booking({ status }),
+        events: [],
+      });
+      return (
+        !result.headline.trim() ||
+        !result.message.trim() ||
+        !result.nextStep.trim()
+      );
+    });
+
+    expect(missingGuidance).toEqual([]);
   });
 });
