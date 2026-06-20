@@ -1039,6 +1039,17 @@ export async function approveMemberApplication(
   };
 }
 
+// Applications an admin may reject: those still gathering nominations and those
+// pending admin review. APPROVED/REJECTED are terminal and cannot be rejected.
+const REJECTABLE_APPLICATION_STATUSES: readonly ApplicationStatus[] = [
+  ApplicationStatus.PENDING_NOMINATORS,
+  ApplicationStatus.PENDING_ADMIN,
+];
+
+function isRejectableApplicationStatus(status: ApplicationStatus): boolean {
+  return REJECTABLE_APPLICATION_STATUSES.includes(status);
+}
+
 export async function rejectMemberApplication(
   applicationId: string,
   adminMemberId: string,
@@ -1052,8 +1063,19 @@ export async function rejectMemberApplication(
     throw new MembershipApplicationError("Application not found", 404);
   }
 
-  if (application.status !== ApplicationStatus.PENDING_ADMIN) {
-    throw new MembershipApplicationError("Only applications pending admin review can be rejected", 409);
+  // Admins can reject an application that is still gathering nominations as well
+  // as one pending admin review. A PENDING_NOMINATORS application whose
+  // nomination tokens have expired would otherwise be stuck forever, and it
+  // keeps blocking a fresh application for the same email (the duplicate-
+  // application check blocks on PENDING_NOMINATORS/PENDING_ADMIN). Rejecting it
+  // sets REJECTED, which is excluded from that block, so a new application can
+  // be submitted. confirmNomination already returns a clean 409 if a nominator
+  // opens a token after the application was rejected (issue #817).
+  if (!isRejectableApplicationStatus(application.status)) {
+    throw new MembershipApplicationError(
+      "Only pending applications can be rejected",
+      409
+    );
   }
 
   const rejected = await prisma.$transaction(async (tx) => {
@@ -1067,9 +1089,9 @@ export async function rejectMemberApplication(
       throw new MembershipApplicationError("Application not found", 404);
     }
 
-    if (lockedApplication.status !== ApplicationStatus.PENDING_ADMIN) {
+    if (!isRejectableApplicationStatus(lockedApplication.status)) {
       throw new MembershipApplicationError(
-        "Only applications pending admin review can be rejected",
+        "Only pending applications can be rejected",
         409
       );
     }

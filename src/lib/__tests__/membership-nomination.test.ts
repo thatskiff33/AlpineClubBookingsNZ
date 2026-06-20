@@ -104,6 +104,7 @@ import {
   approveMemberApplication,
   confirmNomination,
   createMemberApplication,
+  rejectMemberApplication,
 } from "@/lib/nomination";
 import {
   assertLinkedBookingMembersCanBeBooked,
@@ -112,6 +113,7 @@ import {
 import {
   sendAdminMembershipApplicationPendingEmail,
   sendMembershipApplicationApprovedEmail,
+  sendMembershipApplicationRejectedEmail,
   sendNominationRequestEmail,
 } from "@/lib/email";
 import {
@@ -752,6 +754,74 @@ describe("membership nomination workflow", () => {
       approveMemberApplication("app-legacy", "admin-1", "Need DOB")
     ).rejects.toMatchObject({
       message: "Applicant date of birth is required before approval",
+      status: 409,
+    });
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  // Issue #817: a PENDING_NOMINATORS application whose nomination tokens have
+  // expired must be recoverable. An admin reject sets REJECTED, which the
+  // duplicate-application check excludes, so a fresh application can be filed.
+  it("lets an admin reject a stuck PENDING_NOMINATORS application", async () => {
+    vi.mocked(prisma.memberApplication.findUnique).mockResolvedValue({
+      id: "app-nom",
+      applicantEmail: "stuck@test.com",
+      applicantFirstName: "Stuck",
+      status: "PENDING_NOMINATORS",
+    } as never);
+
+    const txUpdate = vi.fn().mockResolvedValue({
+      id: "app-nom",
+      applicantEmail: "stuck@test.com",
+      applicantFirstName: "Stuck",
+      status: "REJECTED",
+    });
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
+      memberApplication: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "app-nom",
+          applicantEmail: "stuck@test.com",
+          applicantFirstName: "Stuck",
+          status: "PENDING_NOMINATORS",
+        }),
+        update: txUpdate,
+      },
+    };
+    vi.mocked(prisma.$transaction).mockImplementation(
+      async (callback: any) => callback(tx)
+    );
+
+    const result = await rejectMemberApplication(
+      "app-nom",
+      "admin-1",
+      "Nomination window lapsed"
+    );
+
+    expect(result.status).toBe("REJECTED");
+    expect(txUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "app-nom" },
+        data: expect.objectContaining({ status: "REJECTED" }),
+      })
+    );
+    expect(sendMembershipApplicationRejectedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "stuck@test.com" })
+    );
+  });
+
+  it("refuses to reject an application that is already approved", async () => {
+    vi.mocked(prisma.memberApplication.findUnique).mockResolvedValue({
+      id: "app-approved",
+      applicantEmail: "done@test.com",
+      status: "APPROVED",
+    } as never);
+
+    await expect(
+      rejectMemberApplication("app-approved", "admin-1")
+    ).rejects.toMatchObject({
+      message: "Only pending applications can be rejected",
       status: 409,
     });
 

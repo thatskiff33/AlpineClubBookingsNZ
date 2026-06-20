@@ -99,8 +99,13 @@ Known statuses: `PENDING_NOMINATORS`, `PENDING_ADMIN`, `APPROVED`, `REJECTED`.
 application submitted -> PENDING_NOMINATORS
 nominations complete -> PENDING_ADMIN
 admin approves -> APPROVED -> member/setup/invoice path
-admin rejects -> REJECTED
+admin rejects (from PENDING_NOMINATORS or PENDING_ADMIN) -> REJECTED
 ```
+
+An admin may reject from either pending state. Rejecting a PENDING_NOMINATORS
+application is the recovery path for one whose nomination tokens have expired:
+REJECTED is excluded from the duplicate-application check, so the applicant can
+submit a fresh application (issue #817).
 
 To verify: duplicate applicant behavior, nomination expiry, setup invite
 creation, Xero entrance-fee invoice path, and email retry behavior.
