@@ -89,6 +89,28 @@ export async function PUT(
       );
     }
 
+    // Claim the request before moving any money. Winning the PENDING ->
+    // APPROVED transition is what authorises the refund, so two admins
+    // approving the same request concurrently cannot both issue a Stripe
+    // refund — the loser gets a 409 and never calls Stripe (issue #818).
+    const claim = await prisma.refundRequest.updateMany({
+      where: { id, status: "PENDING" },
+      data: {
+        status: "APPROVED",
+        adminNotes,
+        approvedAmountCents,
+        reviewedBy: session.user.id,
+        reviewedAt: new Date(),
+      },
+    });
+
+    if (claim.count !== 1) {
+      return NextResponse.json(
+        { error: "This refund request has already been reviewed" },
+        { status: 409 }
+      );
+    }
+
     try {
       await refundPaymentTransactions({
         paymentId: payment.id,
@@ -101,33 +123,30 @@ export async function PUT(
         idempotencyKeyPrefix: `refund_request_${id}`,
       });
     } catch (err) {
+      // Release the claim back to PENDING so the refund can be retried. The
+      // stable idempotency key (refund_request_<id>) makes a retry safe
+      // against double-refunding if Stripe did process the first attempt.
+      await prisma.refundRequest
+        .updateMany({
+          where: { id, status: "APPROVED" },
+          data: {
+            status: "PENDING",
+            approvedAmountCents: null,
+            reviewedBy: null,
+            reviewedAt: null,
+          },
+        })
+        .catch((revertErr) => {
+          logger.error(
+            { err: revertErr, refundRequestId: id },
+            "Failed to revert refund request claim after Stripe refund failure"
+          );
+        });
       logger.error({ err, refundRequestId: id }, "Failed to process Stripe refund for appeal");
       return NextResponse.json(
         { error: "Failed to process Stripe refund" },
         { status: 500 }
       );
-    }
-
-    try {
-      const claim = await prisma.refundRequest.updateMany({
-        where: { id, status: "PENDING" },
-        data: {
-          status: "APPROVED",
-          adminNotes,
-          approvedAmountCents,
-          reviewedBy: session.user.id,
-          reviewedAt: new Date(),
-        },
-      });
-
-      if (claim.count !== 1) {
-        return NextResponse.json(
-          { error: "This refund request has already been reviewed" },
-          { status: 409 }
-        );
-      }
-    } catch (err) {
-      throw err;
     }
 
     // Queue the Xero credit note durably and try to kick the worker.

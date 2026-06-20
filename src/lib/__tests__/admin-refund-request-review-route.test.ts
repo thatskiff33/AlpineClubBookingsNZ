@@ -199,4 +199,79 @@ describe("PUT /api/admin/refund-requests/[id]", () => {
       limit: 1,
     });
   });
+
+  function approvedRefundRequest() {
+    return {
+      id: "refund_1",
+      status: "PENDING",
+      booking: {
+        id: "booking_1",
+        checkIn: new Date("2026-07-01"),
+        checkOut: new Date("2026-07-03"),
+        payment: {
+          id: "payment_1",
+          stripePaymentIntentId: "pi_1",
+          amountCents: 10000,
+          refundedAmountCents: 0,
+          status: "SUCCEEDED",
+        },
+        member: { email: "member@example.com" },
+      },
+      member: {
+        id: "member_1",
+        firstName: "Alice",
+        lastName: "Example",
+        email: "member@example.com",
+      },
+    };
+  }
+
+  function approveRequest() {
+    return new NextRequest("http://localhost/api/admin/refund-requests/refund_1", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "x-forwarded-for": "127.0.0.1",
+      },
+      body: JSON.stringify({ status: "APPROVED", approvedAmountCents: 2500 }),
+    });
+  }
+
+  // Issue #818: the refund must be claimed before any Stripe money movement, so
+  // a concurrent approval that loses the claim never issues a refund.
+  it("does not issue a Stripe refund when the claim is lost to a concurrent approval", async () => {
+    mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+    mocks.refundRequestUpdateMany.mockResolvedValue({ count: 0 });
+
+    const response = await PUT(approveRequest(), {
+      params: Promise.resolve({ id: "refund_1" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(mocks.refundPaymentTransactions).not.toHaveBeenCalled();
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
+
+  // Issue #818: if the Stripe refund fails after the claim, the claim is
+  // released back to PENDING so the appeal can be retried.
+  it("releases the claim back to PENDING when the Stripe refund fails", async () => {
+    mocks.refundRequestFindUnique.mockResolvedValue(approvedRefundRequest());
+    mocks.refundRequestUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.refundPaymentTransactions.mockRejectedValue(new Error("stripe down"));
+
+    const response = await PUT(approveRequest(), {
+      params: Promise.resolve({ id: "refund_1" }),
+    });
+
+    expect(response.status).toBe(500);
+    // First updateMany claims (PENDING -> APPROVED); second reverts to PENDING.
+    expect(mocks.refundRequestUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.refundRequestUpdateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { id: "refund_1", status: "APPROVED" },
+        data: expect.objectContaining({ status: "PENDING", approvedAmountCents: null }),
+      })
+    );
+    expect(mocks.enqueueXeroRefundCreditNoteOperation).not.toHaveBeenCalled();
+  });
 });
