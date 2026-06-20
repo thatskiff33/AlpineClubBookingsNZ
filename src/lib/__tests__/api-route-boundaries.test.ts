@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { explicitPublicApiRoutes } from "@/lib/api-route-security";
+import {
+  explicitPublicApiRoutes,
+  mixedMethodApiRoutes,
+} from "@/lib/api-route-security";
 
 function listRouteFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -94,6 +97,25 @@ function hasWebhookSignatureBoundary(routePath: string, contents: string) {
   return false;
 }
 
+// Slice a route file into per-method segments so a mixed-method file can be
+// checked one exported HTTP handler at a time instead of treating the whole
+// file as a single boundary (issue #812).
+function extractMethodBodies(contents: string): Record<string, string> {
+  const methodPattern =
+    /export\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE)\s*\(/g;
+  const matches = [...contents.matchAll(methodPattern)];
+  const bodies: Record<string, string> = {};
+  for (let index = 0; index < matches.length; index += 1) {
+    const start = matches[index].index ?? 0;
+    const end =
+      index + 1 < matches.length
+        ? (matches[index + 1].index ?? contents.length)
+        : contents.length;
+    bodies[matches[index][1]] = contents.slice(start, end);
+  }
+  return bodies;
+}
+
 function expectedBoundaryFor(routePath: string) {
   if (routePath in explicitPublicApiRoutes) return "public";
   if (routePath.startsWith("src/app/api/admin/")) return "admin";
@@ -157,6 +179,75 @@ describe("API route boundary metadata", () => {
 
       return [];
     });
+
+    expect(violations).toEqual([]);
+  });
+
+  it("enforces per-method boundaries for documented mixed-method routes", () => {
+    const violations = Object.entries(mixedMethodApiRoutes).flatMap(
+      ([routePath, metadata]) => {
+        if (!routeFiles.includes(routePath)) {
+          return [`${routePath}: documented mixed-method route file is missing`];
+        }
+
+        const bodies = extractMethodBodies(routeContents(routePath));
+        const issues: string[] = [];
+
+        for (const [method, methodMetadata] of Object.entries(
+          metadata.methods,
+        )) {
+          const body = bodies[method];
+          if (!body) {
+            issues.push(`${routePath}#${method}: documented method is not exported`);
+            continue;
+          }
+
+          if (methodMetadata.boundary === "public") {
+            // A genuinely public method must not depend on a session, admin or
+            // finance guard. If one is added later, the boundary metadata must
+            // be updated to match (or the method is no longer public).
+            if (
+              hasMemberGuard(body) ||
+              hasAdminGuard(body) ||
+              hasFinanceGuard(body)
+            ) {
+              issues.push(
+                `${routePath}#${method}: documented public method contains an auth guard`,
+              );
+            }
+          } else if (methodMetadata.boundary === "member") {
+            if (!hasMemberGuard(body) && !/\bauth\s*\(/.test(body)) {
+              issues.push(
+                `${routePath}#${method}: documented member method lacks an active-session guard`,
+              );
+            }
+          } else if (methodMetadata.boundary === "admin" && !hasAdminGuard(body)) {
+            issues.push(
+              `${routePath}#${method}: documented admin method lacks requireAdmin`,
+            );
+          } else if (
+            methodMetadata.boundary === "finance" &&
+            !hasFinanceGuard(body)
+          ) {
+            issues.push(
+              `${routePath}#${method}: documented finance method lacks finance guard`,
+            );
+          }
+        }
+
+        // Every exported HTTP method in a mixed-method file must be documented,
+        // so a newly added handler cannot silently inherit the wrong boundary.
+        for (const method of Object.keys(bodies)) {
+          if (!(method in metadata.methods)) {
+            issues.push(
+              `${routePath}#${method}: exported method is not documented in mixedMethodApiRoutes`,
+            );
+          }
+        }
+
+        return issues;
+      },
+    );
 
     expect(violations).toEqual([]);
   });

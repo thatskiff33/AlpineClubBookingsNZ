@@ -201,6 +201,17 @@ describe("redact-sensitive-json", () => {
         "GET /booking-requests/verify/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       )
     ).toBe("GET /booking-requests/verify/[REDACTED]");
+
+    expect(
+      redactSensitiveText(
+        "GET /api/group-bookings/join/verify/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef 200 OK"
+      )
+    ).toBe("GET /api/group-bookings/join/verify/[REDACTED] 200 OK");
+
+    // Subsequent path segments stay intact for the group-join token path too.
+    expect(
+      redactSensitiveText("/group-bookings/join/verify/aA1_-/extra?keep=true")
+    ).toBe("/group-bookings/join/verify/[REDACTED]/extra?keep=true");
   });
 
   it("redacts token-bearing callback URLs after URL encoding", () => {
@@ -228,6 +239,14 @@ describe("redact-sensitive-json", () => {
       )
     ).toBe(
       "GET /login?callbackUrl=%2Fbooking-requests%2Fverify%2F[REDACTED] 302"
+    );
+
+    expect(
+      redactSensitiveText(
+        "GET /login?callbackUrl=%2Fgroup-bookings%2Fjoin%2Fverify%2F0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef 302"
+      )
+    ).toBe(
+      "GET /login?callbackUrl=%2Fgroup-bookings%2Fjoin%2Fverify%2F[REDACTED] 302"
     );
   });
 

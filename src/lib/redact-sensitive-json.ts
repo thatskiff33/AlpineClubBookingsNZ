@@ -105,9 +105,9 @@ function redactJsonStringCandidate(value: string): string | null {
 // observability access logs. Redact both literal paths and URL-encoded callback
 // paths so opaque action tokens do not leak through login redirects.
 const TOKEN_PATH_PATTERN =
-  /(\/(?:membership-cancellation|chores|nominations|pay)\/|\/booking-requests\/verify\/)[A-Za-z0-9_-]+/g;
+  /(\/(?:membership-cancellation|chores|nominations|pay)\/|\/booking-requests\/verify\/|\/group-bookings\/join\/verify\/)[A-Za-z0-9_-]+/g;
 const ENCODED_TOKEN_PATH_PATTERN =
-  /(%2F(?:membership-cancellation|chores|nominations|pay)%2F|%2Fbooking-requests%2Fverify%2F)[A-Za-z0-9_-]+/gi;
+  /(%2F(?:membership-cancellation|chores|nominations|pay)%2F|%2Fbooking-requests%2Fverify%2F|%2Fgroup-bookings%2Fjoin%2Fverify%2F)[A-Za-z0-9_-]+/gi;
 
 export function redactSensitiveText(value: string): string {
   const redactedJsonCandidate = redactJsonStringCandidate(value);

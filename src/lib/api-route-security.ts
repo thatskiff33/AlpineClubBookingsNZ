@@ -155,3 +155,38 @@ export const explicitPublicApiRoutes = {
 export function getExplicitPublicApiRoute(path: string) {
   return explicitPublicApiRoutes[path as keyof typeof explicitPublicApiRoutes];
 }
+
+export type ApiRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export type MixedMethodApiRouteMetadata = {
+  methods: Partial<
+    Record<ApiRouteMethod, { boundary: ApiRouteBoundary; reason: string }>
+  >;
+};
+
+/**
+ * Route files where different exported HTTP methods sit on different boundaries
+ * (for example a public read paired with a member-only write in the same file).
+ *
+ * The file-level boundary allowlist/test classifies a whole route.ts by the
+ * single strongest guard marker it can find, so a mixed file like this would
+ * otherwise be recorded only as "member" and its genuinely public method would
+ * become an invisible boundary. Listing it here documents each method's intended
+ * boundary and lets the boundary test enforce per-method guards (issue #812).
+ */
+export const mixedMethodApiRoutes = {
+  "src/app/api/group-bookings/[code]/route.ts": {
+    methods: {
+      GET: {
+        boundary: "public",
+        reason:
+          "Anonymous join-code summary returning only safe non-PII fields (code, status, payment mode, organiser first name, dates, joinable flag); rate limited; unknown codes 404 uniformly.",
+      },
+      PATCH: {
+        boundary: "member",
+        reason:
+          "Organiser close/reopen; requires an active session and service-level ownership before mutating the group.",
+      },
+    },
+  },
+} as const satisfies Record<string, MixedMethodApiRouteMetadata>;
