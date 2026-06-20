@@ -20,10 +20,10 @@ import {
 } from "@/lib/payment-transactions";
 import { sendAdminPaymentFailureAlert } from "@/lib/email";
 import logger from "@/lib/logger";
+import { MAX_PAYMENT_RECOVERY_ATTEMPTS } from "@/lib/payment-recovery-constants";
 
 type PaymentRecoveryStore = Prisma.TransactionClient | typeof prisma;
 
-const MAX_PAYMENT_RECOVERY_ATTEMPTS = 5;
 const STALE_PROCESSING_MINUTES = 30;
 // One entry per attempt: nextRetryDate(attempts) reads RETRY_BACKOFF_MINUTES[attempts - 1].
 const RETRY_BACKOFF_MINUTES: readonly number[] = [5, 15, 60, 240, 720];

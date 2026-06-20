@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getRuntimeConfigCheck } from "@/lib/runtime-config";
 import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
+import { countExhaustedPaymentRecoveryOperations } from "@/lib/payment-recovery-health";
 
 export interface CheckResult {
   status: "ok" | "error";
@@ -169,20 +170,36 @@ async function checkPaymentRecoveryQueue(): Promise<CheckResult> {
     const staleThreshold = new Date(
       Date.now() - PAYMENT_RECOVERY_STALE_THRESHOLD_MS,
     );
-    const stale = await withTimeout(
-      prisma.paymentRecoveryOperation.count({
-        where: {
-          status: "PENDING",
-          createdAt: { lt: staleThreshold },
-        },
-      }),
+    const [stale, exhausted] = await withTimeout(
+      Promise.all([
+        prisma.paymentRecoveryOperation.count({
+          where: {
+            status: "PENDING",
+            createdAt: { lt: staleThreshold },
+          },
+        }),
+        countExhaustedPaymentRecoveryOperations(),
+      ]),
       CHECK_TIMEOUT_MS,
     );
+
+    const problems: string[] = [];
     if (stale > 0) {
+      problems.push(
+        `${stale} payment recovery operation(s) pending > 15 minutes; check /api/cron/payments scheduler`,
+      );
+    }
+    if (exhausted > 0) {
+      problems.push(
+        `${exhausted} payment recovery operation(s) exhausted retries and need manual reconciliation`,
+      );
+    }
+
+    if (problems.length > 0) {
       return {
         status: "error",
         latencyMs: Date.now() - start,
-        error: `${stale} payment recovery operation(s) pending > 15 minutes; check /api/cron/payments scheduler`,
+        error: problems.join("; "),
       };
     }
     return { status: "ok", latencyMs: Date.now() - start };
