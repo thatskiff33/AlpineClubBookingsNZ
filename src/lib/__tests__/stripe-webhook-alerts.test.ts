@@ -761,4 +761,72 @@ describe("Stripe webhook Xero alerting", () => {
     expect(mockMarkPaymentIntentTransactionFailed).not.toHaveBeenCalled();
     expect(mockPaymentUpdate).not.toHaveBeenCalled();
   });
+
+  // Issue #815 / #814(#6): duplicate Stripe delivery must be a no-op. The
+  // ProcessedWebhookEvent claim is the idempotency boundary; when the claim
+  // already exists (P2002) the handler chain must not run again.
+  it("short-circuits a duplicate Stripe event without re-running handlers", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_dup",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_dup",
+          amount: 5000,
+          metadata: { bookingId: "booking-1" },
+          payment_method: "pm_123",
+        },
+      },
+    } as any);
+    // The event was already processed: claiming it hits the unique constraint.
+    mockProcessedWebhookCreate.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ received: true });
+
+    // No downstream payment, booking, Xero, recovery, or email side effects.
+    expect(mockQueueSupersededPaymentIntentRefundRecovery).not.toHaveBeenCalled();
+    expect(mockFindPaymentTransactionByIntentId).not.toHaveBeenCalled();
+    expect(mockMarkBookingPaymentSucceeded).not.toHaveBeenCalled();
+    expect(mockEnqueueXeroBookingInvoiceOperation).not.toHaveBeenCalled();
+    expect(mockSendBookingConfirmedEmail).not.toHaveBeenCalled();
+
+    // The existing claim is left intact (it belongs to the first delivery) and
+    // the early return happens before the success webhook log is recorded.
+    expect(mockProcessedWebhookDeleteMany).not.toHaveBeenCalled();
+    expect(mockRecordWebhookLog).not.toHaveBeenCalled();
+  });
+
+  // Issue #815: when a handler fails after the event was claimed, the claim
+  // must be released so Stripe's automatic retry can reprocess the event.
+  it("releases the processed-event claim when a handler throws so retries work", async () => {
+    mockConstructWebhookEvent.mockReturnValue({
+      id: "evt_fail",
+      type: "payment_intent.succeeded",
+      data: {
+        object: {
+          id: "pi_fail",
+          amount: 5000,
+          metadata: { bookingId: "booking-1" },
+          payment_method: "pm_123",
+        },
+      },
+    } as any);
+    mockProcessedWebhookCreate.mockResolvedValue({}); // claim succeeds
+    // Force the handler to throw after the claim is taken.
+    mockFindPaymentTransactionByIntentId.mockRejectedValue(
+      new Error("database unavailable"),
+    );
+
+    const response = await POST(makeRequest());
+
+    expect(response.status).toBe(500);
+    expect(mockProcessedWebhookDeleteMany).toHaveBeenCalledWith({
+      where: { eventId: "evt_fail", source: "stripe" },
+    });
+  });
 });
