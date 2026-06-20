@@ -17,6 +17,15 @@ import { prisma } from "@/lib/prisma";
 
 type BedAllocationLifecycleDb = Prisma.TransactionClient | typeof prisma;
 
+// Statuses whose bookings may own a per-night BedAllocation row.
+//
+// This is a deliberate superset of CAPACITY_HOLDING_BOOKING_STATUSES (in
+// booking-status.ts). Every capacity-holding status appears here, plus the
+// provisional/offered "pre-assignment" statuses (PENDING, PAYMENT_PENDING,
+// WAITLIST_OFFERED) that may be assigned a bed before they commit lodge
+// capacity. The two sets are kept distinct on purpose; the ownership boundary
+// is locked down by booking-status-bed-allocation-ownership.test.ts (issue
+// #813), so any change here must keep capacity-holding ⊆ bed-allocatable.
 export const BED_ALLOCATABLE_BOOKING_STATUSES = [
   BookingStatus.PENDING,
   BookingStatus.PAYMENT_PENDING,
