@@ -35,3 +35,61 @@ export async function countStaleRunningXeroOperations(
     where: staleRunningXeroOperationFilter(now),
   });
 }
+
+// Issue #819/#815: an inbound webhook event is claimed by flipping it from
+// RECEIVED/FAILED to PROCESSING (which restamps @updatedAt). If the worker dies
+// mid-reconciliation the row stays PROCESSING forever, manual replay refuses it
+// ("already being processed"), and no sweep resets it. The inbound
+// reconciliation cycle runs on roughly the same cadence as the outbox worker, so
+// a PROCESSING row whose updatedAt is older than this threshold is almost
+// certainly orphaned rather than genuinely in flight.
+export const STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES = 15;
+
+/**
+ * Prisma `where` filter matching XeroInboundEvent rows stuck in PROCESSING past
+ * the staleness threshold. updatedAt is restamped when the row is claimed, so
+ * only rows that have been PROCESSING longer than the threshold are matched.
+ */
+export function staleProcessingXeroInboundEventFilter(now: Date = new Date()) {
+  const threshold = new Date(
+    now.getTime() - STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES * 60_000,
+  );
+
+  return {
+    status: "PROCESSING",
+    updatedAt: { lt: threshold },
+  } as const;
+}
+
+/**
+ * Count inbound events stuck in PROCESSING past the staleness threshold. Pure
+ * visibility; it does not reset or mutate the events. Recovery happens via the
+ * guarded manual replay takeover in `replayStoredXeroInboundEvent`.
+ */
+export async function countStaleProcessingXeroInboundEvents(
+  now: Date = new Date(),
+): Promise<number> {
+  return prisma.xeroInboundEvent.count({
+    where: staleProcessingXeroInboundEventFilter(now),
+  });
+}
+
+/**
+ * True when a PROCESSING inbound event's last update is older than the staleness
+ * threshold, i.e. it is safe for an operator to take over and replay it. A null
+ * updatedAt is treated as not-stale so a genuinely fresh claim is never stolen.
+ */
+export function isStaleProcessingXeroInboundEvent(
+  updatedAt: Date | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!updatedAt) {
+    return false;
+  }
+
+  const threshold = new Date(
+    now.getTime() - STALE_PROCESSING_XERO_INBOUND_EVENT_MINUTES * 60_000,
+  );
+
+  return updatedAt.getTime() < threshold.getTime();
+}

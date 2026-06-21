@@ -2301,4 +2301,44 @@ describe("replayStoredXeroInboundEvent", () => {
 
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
+
+  it("allows an operator to take over a stale PROCESSING event (issue #819/#815)", async () => {
+    // Claimed PROCESSING 30 minutes ago, well past the staleness threshold, so
+    // the worker is presumed dead and the row should be recoverable.
+    const staleClaimedAt = new Date(Date.now() - 30 * 60_000);
+    mocks.inboundFindUnique
+      .mockResolvedValueOnce({
+        id: "evt_stale",
+        correlationKey: "corr_stale",
+        status: "PROCESSING",
+        errorMessage: null,
+        processedAt: null,
+        updatedAt: staleClaimedAt,
+      })
+      .mockResolvedValueOnce({
+        id: "evt_stale",
+        status: "RECEIVED",
+        errorMessage: null,
+        processedAt: null,
+      });
+    // Nothing is reprocessed in this focused test; we only assert the takeover
+    // path resets the row instead of refusing it with a 409.
+    mocks.inboundFindMany.mockResolvedValue([]);
+
+    await expect(
+      replayStoredXeroInboundEvent("evt_stale"),
+    ).resolves.toMatchObject({
+      event: { id: "evt_stale", status: "RECEIVED" },
+    });
+
+    expect(mocks.transaction).toHaveBeenCalled();
+    expect(mocks.inboundUpdate).toHaveBeenCalledWith({
+      where: { id: "evt_stale" },
+      data: {
+        status: "RECEIVED",
+        errorMessage: null,
+        processedAt: null,
+      },
+    });
+  });
 });

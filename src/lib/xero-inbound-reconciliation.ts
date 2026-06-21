@@ -42,6 +42,7 @@ import {
 } from "@/lib/xero-sync";
 import { createAuditLog } from "@/lib/audit";
 import { redactSensitiveText } from "@/lib/redact-sensitive-json";
+import { isStaleProcessingXeroInboundEvent } from "@/lib/xero-stale-operations";
 
 interface StoredXeroInboundEvent {
   id: string;
@@ -3111,6 +3112,7 @@ export async function replayStoredXeroInboundEvent(eventId: string) {
       status: true,
       errorMessage: true,
       processedAt: true,
+      updatedAt: true,
     },
   });
 
@@ -3118,7 +3120,16 @@ export async function replayStoredXeroInboundEvent(eventId: string) {
     throw new XeroInboundReplayError("Xero inbound event not found.", 404);
   }
 
-  if (event.status === "PROCESSING") {
+  // A row claimed as PROCESSING is normally genuinely in flight, so replay is
+  // refused. But if the worker died after claiming it the row would stay
+  // PROCESSING forever with no sweep to reset it (issue #819/#815). Once the
+  // claim is older than the staleness threshold, allow an operator to take it
+  // over and replay it; the replay path below resets it to RECEIVED and
+  // reprocesses idempotently.
+  if (
+    event.status === "PROCESSING" &&
+    !isStaleProcessingXeroInboundEvent(event.updatedAt)
+  ) {
     throw new XeroInboundReplayError(
       "This inbound event is already being processed.",
       409
