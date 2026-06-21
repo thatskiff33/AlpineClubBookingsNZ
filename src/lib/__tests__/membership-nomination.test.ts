@@ -122,11 +122,13 @@ import {
 import {
   enqueueXeroEntranceFeeInvoiceOperation,
 } from "@/lib/xero-operation-outbox";
+import { logAudit } from "@/lib/audit";
 import { hashActionToken } from "@/lib/action-tokens";
 
 describe("membership nomination workflow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.memberApplication.update).mockResolvedValue({} as never);
   });
 
   it("creates an application and sends nomination emails to two verified nominators", async () => {
@@ -724,6 +726,123 @@ describe("membership nomination workflow", () => {
       })
     );
     expect(result.warnings).toEqual([]);
+  });
+
+  it("persists post-approval side-effect warnings for admin recovery visibility", async () => {
+    vi.mocked(prisma.memberApplication.findUnique).mockResolvedValue({
+      id: "app-warn",
+      applicantFirstName: "Jane",
+      applicantLastName: "Doe",
+      applicantEmail: "jane@test.com",
+      applicantDateOfBirth: new Date("1990-05-01T00:00:00.000Z"),
+      applicantPhone: "64 21 5551234",
+      applicantAddress: null,
+      familyMembers: [],
+      nominator1Email: "nominator1@test.com",
+      nominator2Email: "nominator2@test.com",
+      nominator1Id: null,
+      nominator2Id: null,
+      nominator1ConfirmedAt: new Date("2026-04-12T01:00:00.000Z"),
+      nominator2ConfirmedAt: new Date("2026-04-12T02:00:00.000Z"),
+      status: "PENDING_ADMIN",
+      adminNotes: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      createdAt: new Date("2026-04-12T00:00:00.000Z"),
+      updatedAt: new Date("2026-04-12T00:00:00.000Z"),
+    } as never);
+
+    const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(undefined),
+      member: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockResolvedValue({
+          id: "member-1",
+          email: "jane@test.com",
+          firstName: "Jane",
+          lastName: "Doe",
+        }),
+        update: vi.fn().mockResolvedValue({ id: "member-1" }),
+      },
+      familyGroup: {
+        create: vi.fn(),
+      },
+      familyGroupMember: {
+        create: vi.fn(),
+      },
+      passwordResetToken: {
+        deleteMany: vi.fn().mockResolvedValue(undefined),
+        create: vi.fn().mockResolvedValue(undefined),
+      },
+      memberApplication: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "app-warn",
+          applicantFirstName: "Jane",
+          applicantLastName: "Doe",
+          applicantEmail: "jane@test.com",
+          applicantDateOfBirth: new Date("1990-05-01T00:00:00.000Z"),
+          applicantPhone: "64 21 5551234",
+          applicantAddress: null,
+          familyMembers: [],
+          nominator1Email: "nominator1@test.com",
+          nominator2Email: "nominator2@test.com",
+          nominator1Id: null,
+          nominator2Id: null,
+          nominator1ConfirmedAt: new Date("2026-04-12T01:00:00.000Z"),
+          nominator2ConfirmedAt: new Date("2026-04-12T02:00:00.000Z"),
+          status: "PENDING_ADMIN",
+          adminNotes: null,
+          reviewedBy: null,
+          reviewedAt: null,
+          createdAt: new Date("2026-04-12T00:00:00.000Z"),
+          updatedAt: new Date("2026-04-12T00:00:00.000Z"),
+        }),
+        update: vi.fn().mockResolvedValue({
+          id: "app-warn",
+          status: "APPROVED",
+          adminNotes: "Committee approved",
+          nominator1Id: null,
+          nominator2Id: null,
+        }),
+      },
+    };
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback: any) => callback(tx));
+    vi.mocked(findOrCreateXeroContact).mockRejectedValue(new Error("xero down"));
+    vi.mocked(enqueueXeroEntranceFeeInvoiceOperation).mockRejectedValue(
+      new Error("queue down")
+    );
+    vi.mocked(sendMembershipApplicationApprovedEmail).mockRejectedValue(
+      new Error("smtp down")
+    );
+
+    const result = await approveMemberApplication(
+      "app-warn",
+      "admin-1",
+      "Committee approved"
+    );
+
+    expect(result.warnings).toEqual([
+      "Xero contact sync failed for member member-1",
+      "Entrance fee invoice could not be queued automatically",
+      "The approval email could not be sent automatically",
+    ]);
+    expect(prisma.memberApplication.update).toHaveBeenCalledWith({
+      where: { id: "app-warn" },
+      data: {
+        adminNotes:
+          "Committee approved\n\nPost-approval follow-up warnings:\n- Xero contact sync failed for member member-1\n- Entrance fee invoice could not be queued automatically\n- The approval email could not be sent automatically",
+      },
+    });
+    expect(logAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "MEMBERSHIP_APPLICATION_APPROVED",
+        details: JSON.stringify({
+          applicantMemberId: "member-1",
+          createdMemberCount: 1,
+          postApprovalWarnings: result.warnings,
+        }),
+      })
+    );
   });
 
   it("blocks approval of legacy applications that are missing the applicant date of birth", async () => {

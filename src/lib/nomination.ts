@@ -119,6 +119,25 @@ function cleanNullableString(value?: string | null) {
   return trimmed || null;
 }
 
+function appendPostApprovalWarnings(
+  adminNotes: string | null | undefined,
+  warnings: string[]
+) {
+  if (warnings.length === 0) {
+    return cleanNullableString(adminNotes);
+  }
+
+  const warningBlock = [
+    "Post-approval follow-up warnings:",
+    ...warnings.map((warning) => `- ${warning}`),
+  ].join("\n");
+  const existingNotes = cleanNullableString(adminNotes);
+
+  return existingNotes
+    ? `${existingNotes}\n\n${warningBlock}`
+    : warningBlock;
+}
+
 function serializeApplicantPhone(parts: {
   phoneCountryCode?: string | null;
   phoneAreaCode?: string | null;
@@ -1023,6 +1042,25 @@ export async function approveMemberApplication(
     warnings.push("The induction record could not be created automatically");
   }
 
+  if (warnings.length > 0) {
+    await prisma.memberApplication
+      .update({
+        where: { id: applicationId },
+        data: {
+          adminNotes: appendPostApprovalWarnings(
+            approved.application.adminNotes ?? adminNotes,
+            warnings
+          ),
+        },
+      })
+      .catch((err) => {
+        logger.error(
+          { err, applicationId, warnings },
+          "Failed to persist membership approval follow-up warnings"
+        );
+      });
+  }
+
   logAudit({
     action: "MEMBERSHIP_APPLICATION_APPROVED",
     memberId: adminMemberId,
@@ -1030,6 +1068,7 @@ export async function approveMemberApplication(
     details: JSON.stringify({
       applicantMemberId: approved.applicantMember.id,
       createdMemberCount: approved.createdMemberIds.length,
+      postApprovalWarnings: warnings,
     }),
   });
 
