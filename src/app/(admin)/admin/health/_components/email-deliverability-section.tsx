@@ -9,17 +9,20 @@ export function EmailDeliverabilitySection({
   emailDeliverability,
   emailFailures,
   adminAlertDelivery,
+  tokenEmailRecovery,
   onRefresh,
   onError,
 }: {
   emailDeliverability: HealthData["emailDeliverability"];
   emailFailures: HealthData["emailFailures"];
   adminAlertDelivery: HealthData["adminAlertDelivery"];
+  tokenEmailRecovery: HealthData["tokenEmailRecovery"];
   onRefresh: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
   const [clearingSuppressionId, setClearingSuppressionId] = useState<string | null>(null);
   const [reviewingEmailFailureId, setReviewingEmailFailureId] = useState<string | null>(null);
+  const [reissuingTokenEmailId, setReissuingTokenEmailId] = useState<string | null>(null);
 
   async function clearSuppression(id: string, email: string) {
     if (!window.confirm(`Clear email suppression for ${email}?`)) {
@@ -64,6 +67,31 @@ export function EmailDeliverabilitySection({
       onError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setReviewingEmailFailureId(null);
+    }
+  }
+
+  async function reissueTokenEmail(id: string, to: string) {
+    if (!window.confirm(`Reissue and resend token email for ${to}?`)) {
+      return;
+    }
+
+    setReissuingTokenEmailId(id);
+    try {
+      const res = await fetch(`/api/admin/email-failures/${id}/reissue-token`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to reissue token email");
+      }
+      if (Array.isArray(data.emailWarnings) && data.emailWarnings.length > 0) {
+        onError(data.emailWarnings.join(" "));
+      }
+      await onRefresh();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setReissuingTokenEmailId(null);
     }
   }
 
@@ -139,6 +167,83 @@ export function EmailDeliverabilitySection({
                     >
                       <CheckCircle className="h-3.5 w-3.5" />
                       Clear
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Token Email Recovery */}
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+          <Mail className="h-5 w-5" />
+          Token Email Recovery
+        </h2>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Active failures</p>
+            <p className="text-2xl font-bold text-red-600">
+              {tokenEmailRecovery.summary.activeCount}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Reissued</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {tokenEmailRecovery.summary.reissuedCount}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Scanned</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {tokenEmailRecovery.summary.scannedCount}
+            </p>
+          </div>
+        </div>
+
+        {tokenEmailRecovery.failures.length === 0 ? (
+          <div className="bg-white border rounded-lg p-4 text-slate-500">
+            No active failed token-bearing lifecycle emails.
+          </div>
+        ) : (
+          <div className="bg-white border rounded-lg overflow-x-auto">
+            <div className="min-w-[980px]">
+              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_140px_100px_140px_88px] gap-3 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-b">
+                <span>Recipient</span>
+                <span>Subject</span>
+                <span>Template</span>
+                <span>Status</span>
+                <span>Last attempt</span>
+                <span className="text-right">Action</span>
+              </div>
+              <div className="divide-y">
+                {tokenEmailRecovery.failures.map((failure) => (
+                  <div
+                    key={failure.id}
+                    className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_140px_100px_140px_88px] gap-3 px-4 py-3 text-sm items-center"
+                  >
+                    <span className="font-medium text-slate-900 truncate">
+                      {failure.to}
+                    </span>
+                    <span className="text-slate-700 truncate" title={failure.subject}>
+                      {failure.subject}
+                    </span>
+                    <span className="text-slate-600 truncate">
+                      {failure.templateName}
+                    </span>
+                    <StatusBadge status={failure.status} />
+                    <span className="text-slate-500">
+                      {formatDate(failure.lastAttemptAt)}
+                    </span>
+                    <button
+                      onClick={() => reissueTokenEmail(failure.id, failure.to)}
+                      disabled={reissuingTokenEmailId === failure.id}
+                      className="inline-flex justify-self-end items-center gap-1.5 px-2.5 py-1.5 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors disabled:opacity-50"
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                      Reissue
                     </button>
                   </div>
                 ))}

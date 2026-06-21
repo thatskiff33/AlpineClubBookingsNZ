@@ -102,6 +102,19 @@ export interface AdminAlertDeliveryEscalation {
   createdAt: string;
 }
 
+export interface TokenEmailRecoveryFailure {
+  id: string;
+  to: string;
+  subject: string;
+  templateName: string;
+  status: string;
+  lastAttemptAt: string;
+  errorMessage: string | null;
+  createdAt: string;
+  reissuedAt: string | null;
+  reissuedById: string | null;
+}
+
 export interface HealthData {
   health: {
     status: string;
@@ -144,6 +157,15 @@ export interface HealthData {
       lookbackDays: number;
     };
     escalations: AdminAlertDeliveryEscalation[];
+  };
+  tokenEmailRecovery: {
+    summary: {
+      activeCount: number;
+      reissuedCount: number;
+      scannedCount: number;
+    };
+    failures: TokenEmailRecoveryFailure[];
+    recentlyReissued: TokenEmailRecoveryFailure[];
   };
   systemInfo: {
     version: string;

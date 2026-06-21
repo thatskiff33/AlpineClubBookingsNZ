@@ -6,6 +6,7 @@ import { getWebhookStats } from "@/lib/webhook-log";
 import { getExhaustedEmailFailureReviewQueue } from "@/lib/email-failure-review";
 import { getEmailDeliverabilityTelemetry } from "@/lib/email-suppression";
 import { getAdminAlertDeliveryEscalations } from "@/lib/email-admin-alert-escalation";
+import { getTokenEmailRecoveryQueue } from "@/lib/token-email-recovery";
 import {
   buildCronHealthReport,
   getAdminCronJobDefinitions,
@@ -213,11 +214,13 @@ export async function GET() {
       emailDeliverability,
       emailFailures,
       adminAlertDelivery,
+      tokenEmailRecovery,
     ] = await Promise.all([
       getWebhookStats(24),
       getEmailDeliverabilityTelemetry(),
       getExhaustedEmailFailureReviewQueue(),
       getAdminAlertDeliveryEscalations(),
+      getTokenEmailRecoveryQueue(),
     ]);
 
     // Recent webhook logs (last 10)
@@ -249,6 +252,7 @@ export async function GET() {
       emailDeliverability,
       emailFailures,
       adminAlertDelivery,
+      tokenEmailRecovery,
       systemInfo,
     });
   } catch (err) {

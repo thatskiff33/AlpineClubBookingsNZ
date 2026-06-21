@@ -280,6 +280,11 @@ message registry and surfaced in Admin Setup and Admin Notifications.
 If an admin/system alert cannot be delivered to any opted-in admin recipient
 because every send is suppressed or fails, the app records a critical
 communication audit event and surfaces it in Admin Email Deliverability.
+Failed token-bearing lifecycle emails for nomination requests, member setup
+invites, and membership cancellation confirmations are not auto-retried because
+their HTML is redacted; Admin Email Deliverability exposes a reissue action that
+creates a fresh token and resends the lifecycle email after any active
+suppression has been cleared.
 Membership cancellation, archive, and hard-delete lifecycle messages use that
 registry so operators can preview and override copy without bypassing the
 shared `sendEmail` path.

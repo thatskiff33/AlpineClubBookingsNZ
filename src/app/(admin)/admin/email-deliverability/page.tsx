@@ -60,6 +60,7 @@ export default function EmailDeliverabilityPage() {
             emailDeliverability={data.emailDeliverability}
             emailFailures={data.emailFailures}
             adminAlertDelivery={data.adminAlertDelivery}
+            tokenEmailRecovery={data.tokenEmailRecovery}
             onRefresh={refresh}
             onError={setError}
           />
