@@ -31,6 +31,27 @@ export interface MissingXeroInvoicesSnapshot {
   bookings: MissingXeroInvoiceBooking[];
 }
 
+// Issue #818: a Stripe refund moves money immediately, but the matching Xero
+// refund credit note is created best-effort after the fact. Once an invoiced,
+// refunded payment has gone this long without xeroRefundCreditNoteId being set,
+// the accounting follow-up has almost certainly failed/been dropped rather than
+// still being in flight, so it should be surfaced as a local↔Xero divergence.
+export const REFUND_CREDIT_NOTE_GRACE_HOURS = 24;
+
+export interface RefundMissingCreditNote {
+  paymentId: string;
+  bookingId: string;
+  memberName: string;
+  memberEmail: string;
+  refundedAmountCents: number;
+  refundedAt: string;
+}
+
+export interface RefundsMissingCreditNotesSnapshot {
+  count: number;
+  payments: RefundMissingCreditNote[];
+}
+
 export interface XeroAdminHealthSnapshot {
   unlinkedMembers: {
     count: number;
@@ -58,6 +79,10 @@ export interface XeroAdminHealthSnapshot {
   };
   missingInvoices: {
     count: number;
+  };
+  refundsMissingCreditNotes: {
+    count: number;
+    graceHours: number;
   };
   contactGroupMismatches: {
     count: number;
@@ -185,6 +210,67 @@ export async function getMissingXeroInvoiceBookings(options?: {
   };
 }
 
+/**
+ * Issue #818: detect refunds whose Xero credit-note follow-up never completed.
+ * Local-only signal (no live Xero calls): a Stripe-source payment that was
+ * invoiced (xeroInvoiceId set, so a credit note is expected), has been refunded
+ * (refundedAmountCents > 0), still has no xeroRefundCreditNoteId, and has not
+ * changed for longer than the grace window. This surfaces the "money refunded
+ * but accounting follow-up failed" divergence the operator otherwise can't see.
+ */
+export async function getRefundsMissingXeroCreditNotes(options?: {
+  limit?: number;
+  now?: Date;
+}): Promise<RefundsMissingCreditNotesSnapshot> {
+  const now = options?.now ?? new Date();
+  const graceThreshold = new Date(
+    now.getTime() - REFUND_CREDIT_NOTE_GRACE_HOURS * 60 * 60 * 1000,
+  );
+
+  const payments = await prisma.payment.findMany({
+    where: {
+      source: "STRIPE",
+      refundedAmountCents: { gt: 0 },
+      xeroRefundCreditNoteId: null,
+      xeroInvoiceId: { not: null },
+      updatedAt: { lt: graceThreshold },
+    },
+    select: {
+      id: true,
+      bookingId: true,
+      refundedAmountCents: true,
+      updatedAt: true,
+      booking: {
+        select: {
+          member: {
+            select: { firstName: true, lastName: true, email: true },
+          },
+        },
+      },
+    },
+    orderBy: { updatedAt: "asc" },
+  });
+
+  const formatted: RefundMissingCreditNote[] = payments.map((payment) => ({
+    paymentId: payment.id,
+    bookingId: payment.bookingId,
+    memberName: payment.booking?.member
+      ? `${payment.booking.member.firstName} ${payment.booking.member.lastName}`
+      : "Unknown",
+    memberEmail: payment.booking?.member?.email ?? "",
+    refundedAmountCents: payment.refundedAmountCents,
+    refundedAt: payment.updatedAt.toISOString(),
+  }));
+
+  return {
+    count: formatted.length,
+    payments:
+      typeof options?.limit === "number"
+        ? formatted.slice(0, Math.max(1, options.limit))
+        : formatted,
+  };
+}
+
 export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnapshot> {
   const [
     unlinkedMemberCount,
@@ -195,6 +281,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     latestMembershipCursor,
     latestMembershipCron,
     missingInvoices,
+    refundsMissingCreditNotes,
     contactGroupMismatches,
     contactLinkMismatches,
     usageSummaryResult,
@@ -232,6 +319,7 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
       },
     }),
     getMissingXeroInvoiceBookings({ limit: 1 }),
+    getRefundsMissingXeroCreditNotes({ limit: 1 }),
     getXeroContactGroupMismatchSnapshot({ limit: 1 }),
     getXeroContactLinkMismatchSnapshot({ limit: 1 }),
     getTodaysXeroUsageSummary()
@@ -276,6 +364,10 @@ export async function getXeroAdminHealthSnapshot(): Promise<XeroAdminHealthSnaps
     },
     missingInvoices: {
       count: missingInvoices.count,
+    },
+    refundsMissingCreditNotes: {
+      count: refundsMissingCreditNotes.count,
+      graceHours: REFUND_CREDIT_NOTE_GRACE_HOURS,
     },
     contactGroupMismatches: {
       count: contactGroupMismatches.count,
