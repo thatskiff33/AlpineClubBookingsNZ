@@ -548,6 +548,28 @@ export default function MemberApplicationsPage() {
                     </Button>
                   </div>
                 )}
+
+                {application.status === "PENDING_NOMINATORS" && (
+                  <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm">
+                    <p className="text-slate-700">
+                      This application is still waiting on its nominators and cannot
+                      be approved until both have confirmed. If the nomination links
+                      have expired or the applicant has asked to withdraw, you can
+                      reject it to clear the stuck application — this also unblocks a
+                      fresh application for the same email address.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={submittingId === application.id}
+                      onClick={() => reviewApplication(application.id, "REJECT")}
+                    >
+                      {submittingId === application.id
+                        ? "Working..."
+                        : "Reject stuck application"}
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}

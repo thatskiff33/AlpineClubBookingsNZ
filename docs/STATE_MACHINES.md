@@ -127,7 +127,10 @@ admin rejects (from PENDING_NOMINATORS or PENDING_ADMIN) -> REJECTED
 An admin may reject from either pending state. Rejecting a PENDING_NOMINATORS
 application is the recovery path for one whose nomination tokens have expired:
 REJECTED is excluded from the duplicate-application check, so the applicant can
-submit a fresh application (issue #817).
+submit a fresh application (issue #817). The admin member-applications screen
+exposes a "Reject stuck application" control on the "Waiting on nominators"
+queue so operators can clear these without an API call; approval stays
+restricted to PENDING_ADMIN.
 
 To verify: duplicate applicant behavior, nomination expiry, setup invite
 creation, Xero entrance-fee invoice path, and email retry behavior.
