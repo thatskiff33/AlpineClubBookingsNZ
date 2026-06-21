@@ -11,6 +11,7 @@ import {
   removeBookingGuestInTransaction,
 } from "@/lib/booking-guest-removal-service";
 import { refundPaymentTransactions } from "@/lib/payment-transactions";
+import { enqueueBookingModificationRefundRecovery } from "@/lib/payment-recovery";
 
 export async function DELETE(
   request: NextRequest,
@@ -54,7 +55,24 @@ export async function DELETE(
         stripeRefundId = refundResult.refunds[0]?.refundId;
       } catch (refundErr) {
         logger.error({ err: refundErr, bookingId, amount: result.refundAmountCents },
-          "Stripe refund failed after guest removal - requires manual reconciliation");
+          "Stripe refund failed after guest removal - enqueuing durable recovery");
+        // Match the booking-modification settlement path: enqueue a durable,
+        // admin-visible REFUND_BOOKING_MODIFICATION recovery operation so the
+        // refund is retried instead of silently needing manual reconciliation
+        // (issue #818). Idempotent on the booking modification id.
+        try {
+          await enqueueBookingModificationRefundRecovery({
+            bookingId,
+            paymentId: result.paymentId,
+            bookingModificationId: result.bookingModificationId,
+            amountCents: result.refundAmountCents,
+          });
+        } catch (recoveryErr) {
+          logger.error(
+            { err: recoveryErr, bookingId, amount: result.refundAmountCents },
+            "Failed to enqueue guest-removal refund recovery - manual reconciliation required",
+          );
+        }
       }
     }
 
