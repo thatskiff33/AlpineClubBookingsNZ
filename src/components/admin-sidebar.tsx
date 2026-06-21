@@ -31,6 +31,7 @@ import {
   UsersRound,
   Bell,
   Bug,
+  AlertTriangle,
   RotateCcw,
   ListChecks,
   Puzzle,
@@ -151,6 +152,7 @@ const navSections: NavSection[] = [
   {
     label: "Monitoring & Support",
     items: [
+      { href: "/admin/stuck-states", label: "Stuck States", icon: AlertTriangle },
       { href: "/admin/health", label: "System Health", icon: Activity },
       {
         href: "/admin/email-deliverability",

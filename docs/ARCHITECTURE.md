@@ -119,6 +119,12 @@ captures without re-entering the normal booking-confirmation path.
 
 ### Admin/member layer
 
+`/admin/stuck-states` is the consolidated operator queue for cross-domain
+recovery visibility. `src/lib/stuck-state-dashboard.ts` aggregates local
+payment recovery, operational Xero, email deliverability, waitlist,
+bed-allocation, hut-leader, and issue-report signals into severity, owner, and
+target links without making live provider calls during page render.
+
 The `/admin/xero` and `/admin/members` routes are route shells with local
 `_components` and `_hooks` folders. Shared admin/member logic lives in
 `src/lib/`: `admin-member-xero-actions` wraps the Xero contact actions used by
