@@ -21,6 +21,20 @@ To verify in later review: exact terminal transitions, capacity-holding
 statuses, non-member hold expiry, admin force-confirm behavior, school group
 `CONFIRMED` semantics, and payment-failure back paths.
 
+### BookingEvent Scope
+
+`BookingEvent` is a durable narrative fact store, not the complete transition
+ledger. It stores the facts needed to explain member/admin-visible events such
+as creation, payment, bumping, cancellation, refund, and credit outcomes after
+AuditLog retention pruning.
+
+Transitions that do not need a narrative fact remain durable through their
+own state fields or operational ledgers. For example, waitlist offers and
+expiries use booking waitlist fields plus waitlist/audit records, admin review
+and force-confirm actions use booking status/admin review fields plus AuditLog,
+scheduled completion uses booking status plus CronJobRun, and money/provider
+work uses payment, transaction, refund, recovery, and Xero outbox ledgers.
+
 ## Booking Modification Lifecycle
 
 Known change request statuses: `REQUESTED`, `APPROVED`, `REJECTED`.

@@ -135,6 +135,19 @@ describe("review finding source/schema contracts", () => {
     expect(stripeWebhook).toContain("syncRefundsFromStripeCharge");
   });
 
+  it("documents BookingEvent as narrative facts rather than the full transition ledger", () => {
+    const source = readRepoFile("src/lib/booking-events.ts");
+    const docs = readRepoFile("docs/STATE_MACHINES.md");
+
+    expect(source).toContain("not a complete transition");
+    expect(source).toContain("durable narrative fact store");
+    expect(source).toContain("Status fields, AuditLog, CronJobRun");
+    expect(source).not.toContain("Every booking/payment transition writes one BookingEvent");
+    expect(docs).toContain("### BookingEvent Scope");
+    expect(docs).toContain("not the complete transition");
+    expect(docs).toContain("payment, transaction, refund, recovery, and Xero outbox ledgers");
+  });
+
   it("does not rely on regex tag stripping in the booking notes route", () => {
     const source = readRepoFile("src/app/api/bookings/[id]/notes/route.ts");
 

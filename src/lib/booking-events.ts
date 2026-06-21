@@ -1,11 +1,17 @@
 /**
  * Durable booking-lifecycle event store (issue #740).
  *
- * Every booking/payment transition writes one BookingEvent at the moment it
- * happens, capturing the facts needed to render a plain-language narrative
- * later (amounts, dates, cancellation-policy snapshot, bump reason). Unlike
- * AuditLog these rows are never retention-pruned, so the narratives in
- * `src/lib/booking-narrative.ts` survive audit-log pruning.
+ * BookingEvent is a durable narrative fact store, not a complete transition
+ * ledger. It captures the facts needed to render a plain-language narrative
+ * later (amounts, dates, cancellation-policy snapshot, bump reason) for the
+ * transitions that affect member/admin storytelling. Unlike AuditLog these rows
+ * are never retention-pruned, so the narratives in `src/lib/booking-narrative.ts`
+ * survive audit-log pruning.
+ *
+ * Status fields, AuditLog, CronJobRun, and provider/payment ledgers remain the
+ * complete lifecycle evidence for transitions that do not need narrative facts
+ * here, such as waitlist offers, admin review approval, force-confirm, and
+ * scheduled completion.
  *
  * BookingEvent is additive: structured AuditLog writes for admin actions still
  * apply. This is a write helper only — it never throws into the caller's
