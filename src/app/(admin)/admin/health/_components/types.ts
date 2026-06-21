@@ -92,6 +92,16 @@ export interface ExhaustedEmailFailure {
   reviewNote: string | null;
 }
 
+export interface AdminAlertDeliveryEscalation {
+  id: string;
+  templateName: string;
+  preferenceKey: string;
+  attemptedRecipientCount: number;
+  suppressedRecipientCount: number;
+  failedRecipientCount: number;
+  createdAt: string;
+}
+
 export interface HealthData {
   health: {
     status: string;
@@ -127,6 +137,13 @@ export interface HealthData {
     };
     failures: ExhaustedEmailFailure[];
     recentlyReviewed: ExhaustedEmailFailure[];
+  };
+  adminAlertDelivery: {
+    summary: {
+      recentCount: number;
+      lookbackDays: number;
+    };
+    escalations: AdminAlertDeliveryEscalation[];
   };
   systemInfo: {
     version: string;

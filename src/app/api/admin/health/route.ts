@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getWebhookStats } from "@/lib/webhook-log";
 import { getExhaustedEmailFailureReviewQueue } from "@/lib/email-failure-review";
 import { getEmailDeliverabilityTelemetry } from "@/lib/email-suppression";
+import { getAdminAlertDeliveryEscalations } from "@/lib/email-admin-alert-escalation";
 import {
   buildCronHealthReport,
   getAdminCronJobDefinitions,
@@ -207,10 +208,16 @@ export async function GET() {
     });
 
     // Webhook stats and SES suppression telemetry
-    const [webhookStats, emailDeliverability, emailFailures] = await Promise.all([
+    const [
+      webhookStats,
+      emailDeliverability,
+      emailFailures,
+      adminAlertDelivery,
+    ] = await Promise.all([
       getWebhookStats(24),
       getEmailDeliverabilityTelemetry(),
       getExhaustedEmailFailureReviewQueue(),
+      getAdminAlertDeliveryEscalations(),
     ]);
 
     // Recent webhook logs (last 10)
@@ -241,6 +248,7 @@ export async function GET() {
       recentWebhooks,
       emailDeliverability,
       emailFailures,
+      adminAlertDelivery,
       systemInfo,
     });
   } catch (err) {

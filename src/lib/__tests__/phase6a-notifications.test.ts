@@ -31,6 +31,9 @@ const { mockPrisma, mockTransporter, mockLogger } = vi.hoisted(() => {
       count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([]),
     },
+    auditLog: {
+      create: vi.fn().mockResolvedValue({}),
+    },
     member: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
@@ -197,7 +200,11 @@ describe("N-10: EmailLog tracking", () => {
         html: "<p>Test</p>",
         templateName: "test-template",
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({
+      status: "sent",
+      emailLogId: "log-1",
+      messageId: "msg-123",
+    });
 
     expect(mockTransporter.sendMail).toHaveBeenCalled();
 
@@ -481,6 +488,9 @@ describe("N-02: sendAdminNewBookingAlert", () => {
     mockPrisma.member.findMany.mockResolvedValue([{ email: "support@example.org" }]);
     mockPrisma.emailLog.create.mockResolvedValue({ id: "log-1" });
     mockPrisma.emailLog.update.mockResolvedValue({});
+    mockPrisma.emailSuppression.findFirst.mockResolvedValue(null);
+    mockPrisma.auditLog.create.mockResolvedValue({});
+    mockTransporter.sendMail.mockResolvedValue({ messageId: "msg-123" });
   });
 
   it("sends email to all admins with booking details", async () => {
@@ -535,6 +545,67 @@ describe("N-02: sendAdminNewBookingAlert", () => {
     expect(recipients).toContain("enabled@example.org");
     expect(recipients).toContain("default@example.org");
     expect(recipients).not.toContain("disabled@example.org");
+  });
+
+  it("records a critical audit escalation when no admin alert recipient receives the alert", async () => {
+    mockPrisma.member.findMany.mockResolvedValue([
+      {
+        email: "suppressed@example.org",
+        notificationPreference: null,
+      },
+      {
+        email: "failed@example.org",
+        notificationPreference: null,
+      },
+    ]);
+    mockPrisma.emailSuppression.findFirst.mockImplementation(async (args) => {
+      const email = (args as { where: { email: string } }).where.email;
+      if (email !== "suppressed@example.org") {
+        return null;
+      }
+
+      return {
+        id: "suppression-1",
+        email,
+        reason: "BOUNCE",
+        eventCount: 1,
+        suppressedAt: new Date("2026-06-21T00:00:00.000Z"),
+        lastEventAt: new Date("2026-06-21T00:00:00.000Z"),
+        lastEventType: "bounce",
+        lastBounceType: "Permanent",
+        lastBounceSubType: "General",
+        lastComplaintFeedbackType: null,
+        lastSesMessageId: "ses-1",
+      };
+    });
+    mockTransporter.sendMail.mockRejectedValueOnce(new Error("SMTP down"));
+
+    const { sendAdminNewBookingAlert } = await import("../email");
+    await sendAdminNewBookingAlert({
+      memberName: "John Doe",
+      checkIn: new Date("2026-04-10"),
+      checkOut: new Date("2026-04-12"),
+      guestCount: 3,
+      totalCents: 45000,
+      status: "CONFIRMED",
+    });
+
+    expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: "email.admin-alert-undeliverable",
+        category: "communication",
+        severity: "critical",
+        outcome: "failure",
+        summary: "Admin alert delivery failed for admin-new-booking",
+        metadata: expect.objectContaining({
+          templateName: "admin-new-booking",
+          preferenceKey: "adminNewBooking",
+          attemptedRecipientCount: 2,
+          suppressedRecipientCount: 1,
+          failedRecipientCount: 1,
+        }),
+      }),
+    });
   });
 });
 

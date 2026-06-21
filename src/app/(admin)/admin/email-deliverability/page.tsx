@@ -59,6 +59,7 @@ export default function EmailDeliverabilityPage() {
           <EmailDeliverabilitySection
             emailDeliverability={data.emailDeliverability}
             emailFailures={data.emailFailures}
+            adminAlertDelivery={data.adminAlertDelivery}
             onRefresh={refresh}
             onError={setError}
           />

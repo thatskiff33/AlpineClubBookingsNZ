@@ -81,6 +81,13 @@ function healthResponse() {
       failures: [],
       recentlyReviewed: [],
     },
+    adminAlertDelivery: {
+      summary: {
+        recentCount: 0,
+        lookbackDays: 7,
+      },
+      escalations: [],
+    },
     systemInfo: {
       version: "0.1.0",
       nodeVersion: "v20.0.0",

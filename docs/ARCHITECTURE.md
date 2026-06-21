@@ -277,6 +277,9 @@ and complaint suppression. Email templates should avoid embedding secrets and
 should use effective recipient logic for dependents where required. Editable
 templates and admin/system delivery policies are registered in the email
 message registry and surfaced in Admin Setup and Admin Notifications.
+If an admin/system alert cannot be delivered to any opted-in admin recipient
+because every send is suppressed or fails, the app records a critical
+communication audit event and surfaces it in Admin Email Deliverability.
 Membership cancellation, archive, and hard-delete lifecycle messages use that
 registry so operators can preview and override copy without bypassing the
 shared `sendEmail` path.

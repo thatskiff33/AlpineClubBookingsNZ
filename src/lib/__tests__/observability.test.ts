@@ -49,6 +49,7 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
   },
   auditLog: {
+    count: vi.fn(),
     findMany: vi.fn(),
   },
   cronJobRun: {
@@ -590,6 +591,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.webhookLog.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
       httpStatus: 200,
       report: {
@@ -651,6 +653,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
       httpStatus: 200,
@@ -693,6 +696,13 @@ describe("OBS-07: GET /api/admin/health", () => {
       },
       failures: [],
       recentlyReviewed: [],
+    });
+    expect(data.adminAlertDelivery).toEqual({
+      summary: {
+        recentCount: 0,
+        lookbackDays: 7,
+      },
+      escalations: [],
     });
     expect(data.systemInfo).toBeDefined();
     expect(data.systemInfo.nodeVersion).toBeTruthy();
@@ -775,6 +785,7 @@ describe("OBS-07: GET /api/admin/health", () => {
     vi.mocked(prisma.emailSuppression.count).mockResolvedValue(0);
     vi.mocked(prisma.emailSuppression.findMany).mockResolvedValue([]);
     vi.mocked(prisma.emailLog.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.auditLog.count).mockResolvedValue(0);
     vi.mocked(prisma.auditLog.findMany).mockResolvedValue([]);
     vi.mocked(getDetailedHealthReport).mockResolvedValue({
       httpStatus: 200,

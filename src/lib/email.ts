@@ -112,12 +112,29 @@ import {
   type SesEmailFeedbackEvent,
 } from "@/lib/email-suppression";
 import { resolveEmailDeliveryConfig } from "@/lib/email-delivery";
+import {
+  recordAdminAlertDeliveryEscalation,
+  type AdminAlertRecipientDeliveryOutcome,
+} from "@/lib/email-admin-alert-escalation";
 
 type EmailAttachment = {
   filename: string;
   content: Buffer;
   contentType?: string;
 };
+
+export type EmailSendOutcome =
+  | {
+      status: "sent";
+      emailLogId: string | null;
+      messageId: string | null;
+    }
+  | {
+      status: "suppressed";
+      emailLogId: string | null;
+      emailSuppressionId: string;
+      reason: string;
+    };
 
 let cachedTransporter: nodemailer.Transporter | null = null;
 let cachedTransportSignature: string | null = null;
@@ -201,7 +218,7 @@ export async function sendEmail({
   templateName?: string;
   templateData?: EmailTemplateData;
   attachments?: EmailAttachment[];
-}) {
+}): Promise<EmailSendOutcome> {
   const prepared = await prepareEmailMessage({
     templateName,
     subject,
@@ -277,7 +294,12 @@ export async function sendEmail({
       },
       "Skipped email to suppressed recipient",
     );
-    return;
+    return {
+      status: "suppressed",
+      emailLogId,
+      emailSuppressionId: activeSuppression.id,
+      reason: activeSuppression.reason,
+    };
   }
 
   if (process.env.NODE_ENV === "development") {
@@ -304,7 +326,11 @@ export async function sendEmail({
         logger.error({ err, to, templateName }, "Failed to update EmailLog");
       }
     }
-    return;
+    return {
+      status: "sent",
+      emailLogId,
+      messageId: null,
+    };
   }
 
   try {
@@ -335,6 +361,11 @@ export async function sendEmail({
         logger.error({ err }, "Failed to update EmailLog to SENT");
       }
     }
+    return {
+      status: "sent",
+      emailLogId,
+      messageId: result.messageId || null,
+    };
   } catch (err) {
     // Update EmailLog to FAILED
     if (emailLogId) {
@@ -418,23 +449,44 @@ async function sendToAdmins({
   }
 
   const emails = await getAdminAlertEmails(preferenceKey);
-  await Promise.all(
-    emails.map((email) =>
-      sendEmail({
-        to: email,
-        subject,
-        html,
-        templateName,
-        templateData,
-        attachments,
-      }).catch((err) =>
+  const outcomes = await Promise.all(
+    emails.map(async (email): Promise<AdminAlertRecipientDeliveryOutcome> => {
+      try {
+        const outcome = await sendEmail({
+          to: email,
+          subject,
+          html,
+          templateName,
+          templateData,
+          attachments,
+        });
+
+        return { status: outcome.status };
+      } catch (err) {
         logger.error(
           { err, to: email, templateName },
           "Failed to send admin alert",
-        ),
-      ),
-    ),
+        );
+        return { status: "failed" };
+      }
+    }),
   );
+
+  if (
+    outcomes.length > 0 &&
+    outcomes.every((outcome) => outcome.status !== "sent")
+  ) {
+    await recordAdminAlertDeliveryEscalation({
+      templateName,
+      preferenceKey,
+      outcomes,
+    }).catch((err) =>
+      logger.error(
+        { err, templateName },
+        "Failed to record undeliverable admin alert escalation",
+      ),
+    );
+  }
 }
 
 async function shouldSendDirectAdminSystemEmail(templateName: string) {

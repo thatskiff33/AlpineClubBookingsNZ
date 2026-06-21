@@ -8,11 +8,13 @@ import type { HealthData } from "./types";
 export function EmailDeliverabilitySection({
   emailDeliverability,
   emailFailures,
+  adminAlertDelivery,
   onRefresh,
   onError,
 }: {
   emailDeliverability: HealthData["emailDeliverability"];
   emailFailures: HealthData["emailFailures"];
+  adminAlertDelivery: HealthData["adminAlertDelivery"];
   onRefresh: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
@@ -221,6 +223,70 @@ export function EmailDeliverabilitySection({
                       <CheckCircle className="h-3.5 w-3.5" />
                       Archive
                     </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Admin Alert Delivery Escalations */}
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900 mb-3 flex items-center gap-2">
+          <Mail className="h-5 w-5" />
+          Admin Alert Delivery
+        </h2>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Undelivered alerts</p>
+            <p className="text-2xl font-bold text-red-600">
+              {adminAlertDelivery.summary.recentCount}
+            </p>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="text-sm text-slate-500">Lookback</p>
+            <p className="text-2xl font-bold text-slate-900">
+              {adminAlertDelivery.summary.lookbackDays}d
+            </p>
+          </div>
+        </div>
+
+        {adminAlertDelivery.escalations.length === 0 ? (
+          <div className="bg-white border rounded-lg p-4 text-slate-500">
+            No recent admin alerts failed for every recipient.
+          </div>
+        ) : (
+          <div className="bg-white border rounded-lg overflow-x-auto">
+            <div className="min-w-[780px]">
+              <div className="grid grid-cols-[minmax(0,1.4fr)_120px_120px_120px_150px] gap-3 px-4 py-2 text-xs font-medium text-slate-500 bg-slate-50 border-b">
+                <span>Template</span>
+                <span>Attempted</span>
+                <span>Suppressed</span>
+                <span>Failed</span>
+                <span>Recorded</span>
+              </div>
+              <div className="divide-y">
+                {adminAlertDelivery.escalations.map((escalation) => (
+                  <div
+                    key={escalation.id}
+                    className="grid grid-cols-[minmax(0,1.4fr)_120px_120px_120px_150px] gap-3 px-4 py-3 text-sm items-center"
+                  >
+                    <span className="font-medium text-slate-900 truncate">
+                      {escalation.templateName}
+                    </span>
+                    <span className="text-slate-600">
+                      {escalation.attemptedRecipientCount}
+                    </span>
+                    <span className="text-slate-600">
+                      {escalation.suppressedRecipientCount}
+                    </span>
+                    <span className="text-slate-600">
+                      {escalation.failedRecipientCount}
+                    </span>
+                    <span className="text-slate-500">
+                      {formatDate(escalation.createdAt)}
+                    </span>
                   </div>
                 ))}
               </div>
