@@ -655,6 +655,98 @@ describe("PUT /api/members/family/[memberId]/details", () => {
     );
     expect(syncManagedXeroContactGroupForMember).not.toHaveBeenCalled();
   });
+
+  // Owner-boundary regressions (issue #812): an adult must not be able to
+  // confirm details for a member they have no shared family group with, for a
+  // member who owns their own login, and a non-adult/non-login requester must
+  // not be able to act at all. None of these may mutate the target member.
+  it("rejects confirming details for a member outside the requester's family groups", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "MEMBER" } } as any);
+    mockedPrisma.member.findUnique
+      .mockResolvedValueOnce(completeAdult as any)
+      .mockResolvedValueOnce({
+        ...completeAdult,
+        id: "stranger-child",
+        canLogin: false,
+        ageTier: "CHILD",
+        familyGroupMemberships: [{ familyGroupId: "other-group" }],
+      } as any);
+
+    const { PUT } = await import("@/app/api/members/family/[memberId]/details/route");
+    const res = await PUT(
+      makeReq("/api/members/family/stranger-child/details", "PUT", {
+        firstName: "Sam",
+        lastName: "Other",
+        dateOfBirth: "2018-01-01",
+        inheritContactFromSelf: true,
+      }),
+      { params: Promise.resolve({ memberId: "stranger-child" }) }
+    );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "You can only confirm details for members in your family group",
+    });
+    expect(mockedPrisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects confirming details for a member who owns their own login", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "adult-1", role: "MEMBER" } } as any);
+    mockedPrisma.member.findUnique
+      .mockResolvedValueOnce(completeAdult as any)
+      .mockResolvedValueOnce({
+        ...completeAdult,
+        id: "adult-2",
+        canLogin: true,
+        ageTier: "ADULT",
+        familyGroupMemberships: [{ familyGroupId: "fg1" }],
+      } as any);
+
+    const { PUT } = await import("@/app/api/members/family/[memberId]/details/route");
+    const res = await PUT(
+      makeReq("/api/members/family/adult-2/details", "PUT", {
+        firstName: "Other",
+        lastName: "Adult",
+        dateOfBirth: "1991-01-01",
+        inheritContactFromSelf: true,
+      }),
+      { params: Promise.resolve({ memberId: "adult-2" }) }
+    );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      error: "Members with their own login must sign in and confirm their own details",
+    });
+    expect(mockedPrisma.member.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-adult requester confirming another member's details", async () => {
+    mockedAuth.mockResolvedValue({ user: { id: "youth-1", role: "MEMBER" } } as any);
+    mockedPrisma.member.findUnique.mockResolvedValueOnce({
+      ...completeAdult,
+      id: "youth-1",
+      ageTier: "YOUTH",
+      familyGroupMemberships: [{ familyGroupId: "fg1" }],
+    } as any);
+
+    const { PUT } = await import("@/app/api/members/family/[memberId]/details/route");
+    const res = await PUT(
+      makeReq("/api/members/family/child-1/details", "PUT", {
+        firstName: "Sam",
+        lastName: "Smith",
+        dateOfBirth: "2018-01-01",
+        inheritContactFromSelf: true,
+      }),
+      { params: Promise.resolve({ memberId: "child-1" }) }
+    );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      error:
+        "Only active adult members with login accounts can confirm family member details",
+    });
+    expect(mockedPrisma.member.update).not.toHaveBeenCalled();
+  });
 });
 
 // =========================================================================
