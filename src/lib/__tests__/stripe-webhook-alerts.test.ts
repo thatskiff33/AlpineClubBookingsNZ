@@ -788,6 +788,13 @@ describe("Stripe webhook Xero alerting", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ received: true });
 
+    // Issue #815: the claim is scoped to the stripe source so the composite
+    // (source, eventId) idempotency key is always fully populated and a Stripe
+    // event ID can never collide with a Xero/SES event that shares the same id.
+    expect(mockProcessedWebhookCreate).toHaveBeenCalledWith({
+      data: { eventId: "evt_dup", source: "stripe", eventType: "payment_intent.succeeded" },
+    });
+
     // No downstream payment, booking, Xero, recovery, or email side effects.
     expect(mockQueueSupersededPaymentIntentRefundRecovery).not.toHaveBeenCalled();
     expect(mockFindPaymentTransactionByIntentId).not.toHaveBeenCalled();

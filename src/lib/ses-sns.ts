@@ -20,6 +20,11 @@ export type SnsVerificationResult =
 
 const SNS_CERT_HOST_REGEX = /^sns\.[a-z0-9-]+\.amazonaws\.com(\.cn)?$/;
 const UNSAFE_MISSING_TOPIC_OVERRIDE = "SES_SNS_ALLOW_UNSAFE_MISSING_TOPIC_ARN";
+// Issue #815: SNS SignatureVersion 1 uses SHA1, which is no longer acceptable.
+// AWS supports SignatureVersion 2 (SHA256) and it can be enabled per topic. We
+// require v2 by default and only fall back to SHA1 when an operator explicitly
+// opts in during a topic migration.
+const ALLOW_LEGACY_SHA1_OVERRIDE = "SES_SNS_ALLOW_SIGNATURE_V1";
 
 function isString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
@@ -127,6 +132,11 @@ function allowsUnsafeMissingTopicArn() {
   );
 }
 
+function allowsLegacySha1Signature() {
+  const value = process.env[ALLOW_LEGACY_SHA1_OVERRIDE]?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
 export async function verifySnsWebhookMessage(
   envelope: SnsWebhookEnvelope,
   fetchImpl: typeof fetch = fetch
@@ -147,12 +157,18 @@ export async function verifySnsWebhookMessage(
   const algorithm =
     envelope.SignatureVersion === "2"
       ? "RSA-SHA256"
-      : envelope.SignatureVersion === "1"
+      : envelope.SignatureVersion === "1" && allowsLegacySha1Signature()
         ? "RSA-SHA1"
         : null;
 
   if (!algorithm) {
-    return { ok: false, error: "Unsupported SNS signature version" };
+    return {
+      ok: false,
+      error:
+        envelope.SignatureVersion === "1"
+          ? "SNS SignatureVersion 1 (SHA1) is rejected; enable SignatureVersion 2 on the SNS topic, or set SES_SNS_ALLOW_SIGNATURE_V1 to permit legacy SHA1 during migration"
+          : "Unsupported SNS signature version",
+    };
   }
 
   try {

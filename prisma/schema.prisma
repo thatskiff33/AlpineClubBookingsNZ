@@ -1855,11 +1855,15 @@ model XeroContactGroupMembershipCache {
 
 model ProcessedWebhookEvent {
   id          String   @id @default(cuid())
-  eventId     String   @unique
-  source      String // "stripe" or "xero"
+  eventId     String
+  source      String // "stripe", "xero", or "ses-sns"
   eventType   String
   processedAt DateTime @default(now())
 
+  // Idempotency is scoped per provider (issue #815): provider event IDs are only
+  // unique within a provider, so a global unique on eventId could let a Stripe
+  // and a Xero/SES event with the same ID collide and silently drop one.
+  @@unique([source, eventId])
   @@index([source])
 }
 

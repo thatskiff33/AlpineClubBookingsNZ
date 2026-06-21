@@ -40,6 +40,36 @@ function signedEnvelope(topicArn = TOPIC_ARN) {
   };
 }
 
+function signedEnvelopeV1(topicArn = TOPIC_ARN) {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+  });
+  const envelope: SnsWebhookEnvelope = {
+    Type: "Notification",
+    MessageId: "sns-message-v1",
+    TopicArn: topicArn,
+    Message: JSON.stringify({
+      notificationType: "Bounce",
+      mail: { messageId: "ses-message-v1" },
+      bounce: { bouncedRecipients: [{ emailAddress: "member@example.com" }] },
+    }),
+    Timestamp: "2026-05-09T00:00:00.000Z",
+    SignatureVersion: "1",
+    Signature: "",
+    SigningCertURL:
+      "https://sns.ap-southeast-2.amazonaws.com/SimpleNotificationService-test.pem",
+  };
+
+  const signer = createSign("RSA-SHA1");
+  signer.update(buildSnsSigningString(envelope), "utf8");
+  envelope.Signature = signer.sign(privateKey, "base64");
+
+  return {
+    envelope,
+    publicKeyPem: publicKey.export({ format: "pem", type: "spki" }).toString(),
+  };
+}
+
 describe("verifySnsWebhookMessage", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -87,5 +117,35 @@ describe("verifySnsWebhookMessage", () => {
     expect(fetchImpl).toHaveBeenCalledWith(envelope.SigningCertURL, {
       cache: "no-store",
     });
+  });
+
+  // Issue #815: SignatureVersion 1 (SHA1) is rejected by default; operators must
+  // enable SignatureVersion 2 on the SNS topic.
+  it("rejects SignatureVersion 1 (SHA1) by default before fetching the certificate", async () => {
+    vi.stubEnv("SES_SNS_TOPIC_ARN", TOPIC_ARN);
+    const { envelope } = signedEnvelopeV1();
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+
+    const result = await verifySnsWebhookMessage(envelope, fetchImpl);
+
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({
+      error: expect.stringContaining("SignatureVersion 1"),
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("accepts SignatureVersion 1 only when the legacy SHA1 override is set", async () => {
+    vi.stubEnv("SES_SNS_TOPIC_ARN", TOPIC_ARN);
+    vi.stubEnv("SES_SNS_ALLOW_SIGNATURE_V1", "true");
+    const { envelope, publicKeyPem } = signedEnvelopeV1();
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => publicKeyPem,
+    }) as unknown as typeof fetch;
+
+    const result = await verifySnsWebhookMessage(envelope, fetchImpl);
+
+    expect(result).toEqual({ ok: true, topicArnConfigured: true });
   });
 });
