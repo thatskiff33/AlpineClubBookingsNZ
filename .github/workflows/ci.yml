@@ -29,7 +29,7 @@ jobs:
       contents: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -50,7 +50,7 @@ jobs:
       SEMGREP_IMAGE: semgrep/semgrep:1.161.0
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Run Semgrep static analysis
         run: |
@@ -87,7 +87,7 @@ jobs:
       pull-requests: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -106,7 +106,7 @@ jobs:
       contents: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -139,7 +139,7 @@ jobs:
       XERO_ENABLE_AUTOLOAD_XERO_CONTACT_GROUPS: "false"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -193,7 +193,7 @@ jobs:
       SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/drift_shadow
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -229,7 +229,7 @@ jobs:
       IMAGE_REF: tacbookings-ci:${{ github.sha }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build Docker image
         run: |
@@ -280,7 +280,7 @@ jobs:
       NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Validate production build variables
         run: |
