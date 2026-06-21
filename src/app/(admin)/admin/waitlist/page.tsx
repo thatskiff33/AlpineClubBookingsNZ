@@ -48,6 +48,14 @@ interface WaitlistEntry {
   offerEmailDelivery: OfferEmailDelivery | null;
 }
 
+interface ForceConfirmReport {
+  bookingId: string;
+  status: string | null;
+  overbooked: boolean;
+  overbookDates: string[];
+  auditAction: string | null;
+}
+
 function parsePositiveInteger(value: string | null, fallback: number) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -85,6 +93,16 @@ function getErrorMessage(data: unknown, fallback: string) {
   }
 
   return fallback;
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 function getWaitlistActionContext(entry: WaitlistEntry) {
@@ -149,6 +167,17 @@ function formatOfferEmailDetail(delivery: OfferEmailDelivery) {
   return null;
 }
 
+function buildForceConfirmAuditPath(report: ForceConfirmReport) {
+  const params = new URLSearchParams({
+    eventType: report.auditAction ?? "waitlist.force_confirmed_overbook",
+    entityType: "Booking",
+    severity: "critical",
+    q: report.bookingId,
+  });
+
+  return buildPathWithSearch("/admin/audit-log", params);
+}
+
 export default function AdminWaitlistPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -165,6 +194,8 @@ export default function AdminWaitlistPage() {
     bookingId: string;
     dates: string[];
   } | null>(null);
+  const [forceConfirmReport, setForceConfirmReport] =
+    useState<ForceConfirmReport | null>(null);
   const [error, setError] = useState("");
   const [from, setFrom] = useState(fromParam);
   const [to, setTo] = useState(toParam);
@@ -305,10 +336,19 @@ export default function AdminWaitlistPage() {
 
     if (res.ok && data.success) {
       setOverbookDialog(null);
+      setForceConfirmReport({
+        bookingId,
+        status: readString(data.status),
+        overbooked: data.overbooked === true,
+        overbookDates: readStringArray(data.overbookDates),
+        auditAction: readString(data.auditAction),
+      });
       await loadEntries();
     } else if (data.error === "CAPACITY_EXCEEDED" && data.overbookDates) {
+      setForceConfirmReport(null);
       setOverbookDialog({ bookingId, dates: data.overbookDates });
     } else {
+      setForceConfirmReport(null);
       setError(data.error || "Failed to force-confirm booking");
     }
 
@@ -328,6 +368,36 @@ export default function AdminWaitlistPage() {
 
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{error}</div>
+      )}
+
+      {forceConfirmReport?.overbooked && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="pt-6 space-y-3">
+            <div>
+              <p className="font-medium text-red-900">
+                Force-confirmed overbooked booking
+              </p>
+              {forceConfirmReport.status && (
+                <p className="text-sm text-red-800">
+                  New status: {bookingStatusLabel(forceConfirmReport.status)}
+                </p>
+              )}
+            </div>
+            {forceConfirmReport.overbookDates.length > 0 && (
+              <ul className="list-disc list-inside text-sm text-red-800">
+                {forceConfirmReport.overbookDates.map((date) => (
+                  <li key={date}>{date}</li>
+                ))}
+              </ul>
+            )}
+            <Link
+              href={buildForceConfirmAuditPath(forceConfirmReport)}
+              className="text-sm text-blue-700 hover:underline"
+            >
+              View critical audit record
+            </Link>
+          </CardContent>
+        </Card>
       )}
 
       <Card>

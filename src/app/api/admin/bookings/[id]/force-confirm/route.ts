@@ -3,8 +3,11 @@ import { requireAdmin } from "@/lib/session-guards";
 import { prisma } from "@/lib/prisma";
 import { AdminReviewStatus, BookingStatus } from "@prisma/client";
 import { requiresAdultSupervisionReview } from "@/lib/booking-review";
-import { checkCapacityForGuestRanges } from "@/lib/capacity";
-import { logAudit } from "@/lib/audit";
+import {
+  checkCapacityForGuestRanges,
+  type NightAvailability,
+} from "@/lib/capacity";
+import { createAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { sendBookingConfirmedEmail } from "@/lib/email";
 import logger from "@/lib/logger";
 import { reconcileBedAllocationsForBooking } from "@/lib/bed-allocation-lifecycle";
@@ -13,6 +16,19 @@ import { z } from "zod";
 const forceConfirmSchema = z.object({
   allowOverbook: z.boolean().optional(),
 });
+
+function formatOverbookDate(night: NightAvailability) {
+  return night.date.toISOString().slice(0, 10);
+}
+
+function getOverbookedNights(nightDetails: NightAvailability[]) {
+  return nightDetails
+    .filter((night) => night.availableBeds < 0)
+    .map((night) => ({
+      date: formatOverbookDate(night),
+      availableBeds: night.availableBeds,
+    }));
+}
 
 export async function POST(
   request: NextRequest,
@@ -26,6 +42,7 @@ export async function POST(
   const body = await request.json().catch(() => ({}));
   const parsed = forceConfirmSchema.safeParse(body);
   const allowOverbook = parsed.success ? parsed.data.allowOverbook : false;
+  const auditRequest = getAuditRequestContext(request);
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -52,12 +69,10 @@ export async function POST(
         undefined,
         tx
       );
+      const overbookedNights = getOverbookedNights(nightDetails);
+      const overbookDates = overbookedNights.map((night) => night.date);
 
       if (!available && !allowOverbook) {
-        const overbookDates = nightDetails
-          .filter((n) => n.availableBeds < 0)
-          .map((n) => n.date.toISOString().split("T")[0]);
-
         return {
           error: "CAPACITY_EXCEEDED",
           overbookDates,
@@ -130,11 +145,60 @@ export async function POST(
           checkOut: booking.checkOut,
         },
       });
+      const overbooked = !available;
+      const auditAction = overbooked
+        ? "waitlist.force_confirmed_overbook"
+        : "waitlist.force_confirmed";
+
+      await createAuditLog(
+        {
+          action: auditAction,
+          memberId: session.user.id,
+          actorMemberId: session.user.id,
+          subjectMemberId: booking.memberId,
+          targetId: bookingId,
+          entityType: "Booking",
+          entityId: bookingId,
+          category: "booking",
+          severity: overbooked ? "critical" : "important",
+          outcome: "success",
+          summary: overbooked
+            ? "Waitlist booking force-confirmed with overbook"
+            : "Waitlist booking force-confirmed",
+          details:
+            nextStatus === BookingStatus.AWAITING_REVIEW
+              ? "Admin force-confirmed waitlisted booking but it was parked for admin review."
+              : overbooked
+                ? "Admin force-confirmed waitlisted booking despite capacity being exceeded."
+                : "Admin force-confirmed waitlisted booking.",
+          metadata: {
+            previousStatus: booking.status,
+            nextStatus,
+            allowOverbook,
+            overbooked,
+            overbookDates,
+            overbookedNights,
+            checkIn: booking.checkIn.toISOString(),
+            checkOut: booking.checkOut.toISOString(),
+            guestCount: booking.guests.length,
+            finalPriceCents: booking.finalPriceCents,
+            parkedForAdminReview: nextStatus === BookingStatus.AWAITING_REVIEW,
+          },
+          requestId: auditRequest.id,
+          ipAddress: auditRequest.ipAddress,
+          userAgent: auditRequest.userAgent,
+          retentionClass: overbooked ? "critical" : undefined,
+          incidentPreserved: overbooked,
+        },
+        tx,
+      );
 
       return {
         success: true,
         booking,
-        overbooked: !available,
+        auditAction,
+        overbookDates,
+        overbooked,
         status: nextStatus,
       };
     });
@@ -146,19 +210,7 @@ export async function POST(
       );
     }
 
-    const { booking, overbooked, status } = result;
-
-    logAudit({
-      action: "waitlist.force_confirmed",
-      memberId: session.user.id,
-      targetId: bookingId,
-      details:
-        status === BookingStatus.AWAITING_REVIEW
-          ? "Admin force-confirmed waitlisted booking but it was parked for admin review (no adult on booking)"
-          : overbooked
-            ? `Admin force-confirmed waitlisted booking (OVERBOOKED)`
-            : `Admin force-confirmed waitlisted booking`,
-    });
+    const { booking, overbooked, overbookDates, auditAction, status } = result;
 
     if (status === BookingStatus.PAID) {
       sendBookingConfirmedEmail(
@@ -180,7 +232,9 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
+      auditAction,
       overbooked,
+      overbookDates,
       status,
     });
   } catch (err) {

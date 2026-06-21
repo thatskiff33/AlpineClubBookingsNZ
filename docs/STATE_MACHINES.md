@@ -18,8 +18,8 @@ AWAITING_REVIEW -> CONFIRMED/PAID or CANCELLED
 ```
 
 To verify in later review: exact terminal transitions, capacity-holding
-statuses, non-member hold expiry, admin force-confirm behavior, school group
-`CONFIRMED` semantics, and payment-failure back paths.
+statuses, non-member hold expiry, school group `CONFIRMED` semantics, and
+payment-failure back paths.
 
 ### BookingEvent Scope
 
@@ -34,6 +34,12 @@ expiries use booking waitlist fields plus waitlist/audit records, admin review
 and force-confirm actions use booking status/admin review fields plus AuditLog,
 scheduled completion uses booking status plus CronJobRun, and money/provider
 work uses payment, transaction, refund, recovery, and Xero outbox ledgers.
+
+Admin force-confirm records are written in the same transaction as the booking
+status change. Explicit overbook overrides use the
+`waitlist.force_confirmed_overbook` action with critical severity, preserved
+retention, overbooked date-only nights, and an admin waitlist completion report
+linking directly to the filtered audit record.
 
 ## Booking Modification Lifecycle
 
