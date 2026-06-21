@@ -141,6 +141,39 @@ describe("payment intent routes", () => {
     expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
   });
 
+  it("does not disclose an existing payment intent client secret to a non-owner", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-2", role: "MEMBER" } });
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "CONFIRMED",
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      payment: {
+        stripePaymentIntentId: "pi_existing",
+        status: "FAILED",
+      },
+    });
+
+    const req = new NextRequest("http://localhost/api/payments/create-payment-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createPaymentIntentRoute(req);
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "Forbidden" });
+    expect(mockGetPaymentIntent).not.toHaveBeenCalled();
+    expect(mockStripeCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
   it("reconciles a succeeded Stripe payment before asking for another card", async () => {
     mockPrisma.booking.findUnique.mockResolvedValue({
       id: "booking-1",
@@ -219,6 +252,39 @@ describe("payment intent routes", () => {
 
     expect(res.status).toBe(200);
     expect(data.clientSecret).toBe("seti_secret");
+    expect(mockStripeCreateSetupIntent).not.toHaveBeenCalled();
+  });
+
+  it("does not disclose an existing setup intent client secret to a non-owner", async () => {
+    mockAuth.mockResolvedValue({ user: { id: "member-2", role: "MEMBER" } });
+    mockPrisma.booking.findUnique.mockResolvedValue({
+      id: "booking-1",
+      memberId: "member-1",
+      status: "PENDING",
+      hasNonMembers: true,
+      finalPriceCents: 12500,
+      member: {
+        id: "member-1",
+        email: "member@example.com",
+        firstName: "Test",
+        lastName: "Member",
+      },
+      payment: {
+        stripeSetupIntentId: "seti_existing",
+      },
+    });
+
+    const req = new NextRequest("http://localhost/api/payments/create-setup-intent", {
+      method: "POST",
+      body: JSON.stringify({ bookingId: "booking-1" }),
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const res = await createSetupIntentRoute(req);
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "Forbidden" });
+    expect(mockGetSetupIntent).not.toHaveBeenCalled();
     expect(mockStripeCreateSetupIntent).not.toHaveBeenCalled();
   });
 
