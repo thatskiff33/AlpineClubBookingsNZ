@@ -1,4 +1,4 @@
-FROM node:24.15-alpine AS base
+FROM node:24.17-alpine AS base
 RUN npm install -g npm@11.14.0 && npm cache clean --force
 
 # Install dependencies only when needed
@@ -32,7 +32,7 @@ RUN npx prisma generate
 RUN npm run build
 
 # Production image
-FROM base AS runner
+FROM node:24.17-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -40,6 +40,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV TZ=Pacific/Auckland
 
 RUN apk add --no-cache aws-cli postgresql16-client
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+  /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
