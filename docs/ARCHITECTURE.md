@@ -296,7 +296,7 @@ disable cron with `CRON_ENABLED=false`.
 | `xero-membership` | Daily | Sync membership invoice state |
 | `data-pruning` | Daily | Prune expired tokens/logs and run audit retention |
 | `draft-cleanup` | Daily | Delete expired draft bookings |
-| `credit-reconciliation` | Daily | Reconcile account-credit ledger state |
+| `credit-reconciliation` | Daily | Reconcile account-credit ledger state and alert on refunded Stripe payments missing Xero credit notes |
 | `hut-leader-auto-assign` | Daily | Suggest hut leaders |
 | `age-up` | Daily | Process age-tier/member transitions |
 | `capacity-warnings` | Daily | Alert when lodge occupancy approaches limits |

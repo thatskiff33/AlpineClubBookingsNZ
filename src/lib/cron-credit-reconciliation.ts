@@ -1,6 +1,10 @@
 import { prisma } from "./prisma";
 import { isXeroConnected } from "./xero";
 import logger from "@/lib/logger";
+import {
+  REFUND_CREDIT_NOTE_GRACE_HOURS,
+  getRefundsMissingXeroCreditNotes,
+} from "@/lib/xero-admin-health";
 
 /**
  * Daily reconciliation of account credit balances.
@@ -15,6 +19,7 @@ export async function reconcileCreditBalances(): Promise<{
   membersWithCredit: number;
   totalCreditCents: number;
   discrepancies: number;
+  refundsMissingXeroCreditNotes: number;
 }> {
   // Get per-member credit balances from local ledger
   const balances = await prisma.memberCredit.groupBy({
@@ -37,6 +42,28 @@ export async function reconcileCreditBalances(): Promise<{
   );
 
   const discrepancies = negativeBalances.length;
+
+  const refundsMissingCreditNotes = await getRefundsMissingXeroCreditNotes({
+    limit: 10,
+  });
+
+  if (refundsMissingCreditNotes.count > 0) {
+    logger.error(
+      {
+        alert: "REFUNDS_MISSING_XERO_CREDIT_NOTES",
+        count: refundsMissingCreditNotes.count,
+        graceHours: REFUND_CREDIT_NOTE_GRACE_HOURS,
+        samplePayments: refundsMissingCreditNotes.payments.map((payment) => ({
+          paymentId: payment.paymentId,
+          bookingId: payment.bookingId,
+          refundedAmountCents: payment.refundedAmountCents,
+          refundedAt: payment.refundedAt,
+        })),
+        href: "/admin/xero",
+      },
+      `${refundsMissingCreditNotes.count} refunded Stripe payment(s) are missing Xero refund credit notes`
+    );
+  }
 
   if (negativeBalances.length > 0) {
     logger.error(
@@ -83,9 +110,19 @@ export async function reconcileCreditBalances(): Promise<{
   }
 
   logger.info(
-    { membersWithCredit, totalCreditCents, discrepancies },
+    {
+      membersWithCredit,
+      totalCreditCents,
+      discrepancies,
+      refundsMissingXeroCreditNotes: refundsMissingCreditNotes.count,
+    },
     "Credit reconciliation complete"
   );
 
-  return { membersWithCredit, totalCreditCents, discrepancies };
+  return {
+    membersWithCredit,
+    totalCreditCents,
+    discrepancies,
+    refundsMissingXeroCreditNotes: refundsMissingCreditNotes.count,
+  };
 }
