@@ -52,6 +52,7 @@ export const XERO_BOOKING_REPAIR_FINDING_CODES = [
   "LATE_CAPTURE_AFTER_CANCELLATION",
   "BLOCKED_BY_XERO_OPERATION",
   "XERO_LINK_MISMATCH",
+  "XERO_AMOUNT_MISMATCH",
   "MANUAL_REVIEW_REQUIRED",
 ] as const;
 
@@ -552,6 +553,13 @@ interface BlockingOperationMatch {
   retryMeta: XeroOperationRetryMeta;
 }
 
+interface XeroAmountEvidence {
+  source: "link" | "operation-request" | "operation-response";
+  amountCents: number;
+  linkId?: string;
+  operationId?: string;
+}
+
 interface BookingClassificationContext {
   booking: BookingRepairRecord;
   paymentLinks: XeroObjectLinkRecord[];
@@ -600,6 +608,88 @@ function readJsonRecord(value: unknown): Record<string, unknown> | null {
 
 function readJsonString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readJsonNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readJsonArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function dollarsToCents(value: unknown): number | null {
+  const amount = readJsonNumber(value);
+  return amount === null ? null : Math.round(amount * 100);
+}
+
+function readLineItemTotalCents(lineItems: unknown): number | null {
+  const items = readJsonArray(lineItems);
+  if (items.length === 0) {
+    return null;
+  }
+
+  let totalCents = 0;
+  let foundAmount = false;
+  for (const item of items) {
+    const record = readJsonRecord(item);
+    if (!record) {
+      continue;
+    }
+    const unitAmountCents = dollarsToCents(record.unitAmount);
+    if (unitAmountCents === null) {
+      continue;
+    }
+    const quantity = readJsonNumber(record.quantity) ?? 1;
+    totalCents += Math.round(unitAmountCents * quantity);
+    foundAmount = true;
+  }
+
+  return foundAmount ? totalCents : null;
+}
+
+function readDocumentAmountCents(document: unknown): number | null {
+  const record = readJsonRecord(document);
+  if (!record) {
+    return null;
+  }
+
+  return dollarsToCents(record.total) ?? readLineItemTotalCents(record.lineItems);
+}
+
+function readFirstDocumentAmountCents(documents: unknown): number | null {
+  const firstDocument = readJsonArray(documents)[0];
+  return firstDocument ? readDocumentAmountCents(firstDocument) : null;
+}
+
+function readStoredXeroAmountCents(payload: unknown): number | null {
+  const record = readJsonRecord(payload);
+  if (!record) {
+    return null;
+  }
+
+  const directAmount = readJsonNumber(record.amountCents);
+  if (directAmount !== null) {
+    return directAmount;
+  }
+
+  const refundAmount = readJsonNumber(record.refundAmountCents);
+  if (refundAmount !== null) {
+    return refundAmount;
+  }
+
+  const priceDiffCents = readJsonNumber(record.priceDiffCents);
+  const changeFeeCents = readJsonNumber(record.changeFeeCents);
+  if (priceDiffCents !== null || changeFeeCents !== null) {
+    return (priceDiffCents ?? 0) + (changeFeeCents ?? 0);
+  }
+
+  return (
+    readFirstDocumentAmountCents(record.invoices) ??
+    readFirstDocumentAmountCents(record.creditNotes) ??
+    readDocumentAmountCents(record.invoice) ??
+    readDocumentAmountCents(record.creditNote)
+  );
 }
 
 function startOfDay(value: Date) {
@@ -1109,6 +1199,122 @@ function buildManualReviewAction(bookingId: string, reason: string) {
   };
 }
 
+function collectXeroAmountEvidence(params: {
+  resolved: ResolvedLocalObject;
+  links: XeroObjectLinkRecord[];
+  operations: XeroOperationRecord[];
+  xeroObjectType: string;
+  role: string;
+  entityType: string;
+  operationType: string;
+}): XeroAmountEvidence[] {
+  const evidence: XeroAmountEvidence[] = [];
+
+  for (const link of params.links) {
+    if (
+      link.xeroObjectType !== params.xeroObjectType ||
+      link.role !== params.role ||
+      link.xeroObjectId !== params.resolved.objectId
+    ) {
+      continue;
+    }
+
+    const amountCents = readStoredXeroAmountCents(link.metadata);
+    if (amountCents !== null) {
+      evidence.push({
+        source: "link",
+        amountCents,
+        linkId: link.id,
+      });
+    }
+  }
+
+  for (const operation of params.operations) {
+    if (
+      operation.entityType !== params.entityType ||
+      operation.operationType !== params.operationType ||
+      !["SUCCEEDED", "PARTIAL"].includes(operation.status) ||
+      (operation.xeroObjectId && operation.xeroObjectId !== params.resolved.objectId)
+    ) {
+      continue;
+    }
+
+    const requestAmountCents = readStoredXeroAmountCents(operation.requestPayload);
+    if (requestAmountCents !== null) {
+      evidence.push({
+        source: "operation-request",
+        amountCents: requestAmountCents,
+        operationId: operation.id,
+      });
+    }
+
+    const responseAmountCents = readStoredXeroAmountCents(operation.responsePayload);
+    if (responseAmountCents !== null) {
+      evidence.push({
+        source: "operation-response",
+        amountCents: responseAmountCents,
+        operationId: operation.id,
+      });
+    }
+  }
+
+  return evidence;
+}
+
+function addXeroAmountMismatchFinding(params: {
+  findings: MutableFinding[];
+  actionMap: Map<string, BookingXeroRepairAction>;
+  bookingId: string;
+  expectedAmountCents: number;
+  resolved: ResolvedLocalObject;
+  links: XeroObjectLinkRecord[];
+  operations: XeroOperationRecord[];
+  xeroObjectType: string;
+  role: string;
+  entityType: string;
+  operationType: string;
+  summary: string;
+  details: Record<string, unknown>;
+}) {
+  const evidence = collectXeroAmountEvidence({
+    resolved: params.resolved,
+    links: params.links,
+    operations: params.operations,
+    xeroObjectType: params.xeroObjectType,
+    role: params.role,
+    entityType: params.entityType,
+    operationType: params.operationType,
+  });
+  const mismatches = evidence.filter(
+    (item) => item.amountCents !== params.expectedAmountCents
+  );
+
+  if (mismatches.length === 0) {
+    return;
+  }
+
+  const action = addAction(
+    params.actionMap,
+    buildManualReviewAction(params.bookingId, params.summary)
+  );
+
+  addFinding(params.findings, {
+    code: "XERO_AMOUNT_MISMATCH",
+    severity: "manual_review",
+    summary: params.summary,
+    safeToAutoApply: false,
+    details: {
+      ...params.details,
+      xeroObjectType: params.xeroObjectType,
+      xeroObjectId: params.resolved.objectId,
+      expectedAmountCents: params.expectedAmountCents,
+      evidence,
+      mismatches,
+    },
+    actionKeys: [action.key],
+  });
+}
+
 function buildLinkRepairAction(params: {
   bookingId: string;
   localModel: "Payment" | "Booking" | "BookingModification";
@@ -1507,33 +1713,57 @@ function classifyBookingContext(
             actionKeys: [action.key],
           });
         }
-      } else if (!supplementaryInvoice.link && supplementaryInvoice.operation) {
-        const action = addAction(
+      } else {
+        addXeroAmountMismatchFinding({
+          findings,
           actionMap,
-          buildLinkRepairAction({
-            bookingId: booking.id,
-            localModel: "BookingModification",
-            localId: modification.id,
-            xeroObjectType: "INVOICE",
-            xeroObjectId: supplementaryInvoice.objectId,
-            xeroObjectNumber: supplementaryInvoice.objectNumber,
-            xeroObjectUrl: supplementaryInvoice.objectUrl,
-            role: "SUPPLEMENTARY_INVOICE",
-            description:
-              "Backfill the SUPPLEMENTARY_INVOICE link from a completed Xero operation.",
-          })
-        );
-        addFinding(findings, {
-          code: "XERO_LINK_MISMATCH",
-          severity: "warning",
-          summary: "A supplementary invoice exists in operation history, but its booking-modification link is missing.",
-          safeToAutoApply: true,
+          bookingId: booking.id,
+          expectedAmountCents: netAmountCents,
+          resolved: supplementaryInvoice,
+          links: modificationLinks,
+          operations: modificationOperations,
+          xeroObjectType: "INVOICE",
+          role: "SUPPLEMENTARY_INVOICE",
+          entityType: "INVOICE",
+          operationType: "CREATE",
+          summary:
+            "The supplementary invoice amount evidence does not match the local booking modification amount.",
           details: {
             modificationId: modification.id,
-            xeroInvoiceId: supplementaryInvoice.objectId,
+            netAmountCents,
+            priceDiffCents: modification.priceDiffCents,
+            changeFeeCents: modification.changeFeeCents,
           },
-          actionKeys: [action.key],
         });
+
+        if (!supplementaryInvoice.link && supplementaryInvoice.operation) {
+          const action = addAction(
+            actionMap,
+            buildLinkRepairAction({
+              bookingId: booking.id,
+              localModel: "BookingModification",
+              localId: modification.id,
+              xeroObjectType: "INVOICE",
+              xeroObjectId: supplementaryInvoice.objectId,
+              xeroObjectNumber: supplementaryInvoice.objectNumber,
+              xeroObjectUrl: supplementaryInvoice.objectUrl,
+              role: "SUPPLEMENTARY_INVOICE",
+              description:
+                "Backfill the SUPPLEMENTARY_INVOICE link from a completed Xero operation.",
+            })
+          );
+          addFinding(findings, {
+            code: "XERO_LINK_MISMATCH",
+            severity: "warning",
+            summary: "A supplementary invoice exists in operation history, but its booking-modification link is missing.",
+            safeToAutoApply: true,
+            details: {
+              modificationId: modification.id,
+              xeroInvoiceId: supplementaryInvoice.objectId,
+            },
+            actionKeys: [action.key],
+          });
+        }
       }
     }
 
@@ -1599,6 +1829,28 @@ function classifyBookingContext(
           });
         }
       } else {
+        addXeroAmountMismatchFinding({
+          findings,
+          actionMap,
+          bookingId: booking.id,
+          expectedAmountCents: Math.abs(netAmountCents),
+          resolved: modificationCreditNote,
+          links: modificationLinks,
+          operations: modificationOperations,
+          xeroObjectType: "CREDIT_NOTE",
+          role: "MODIFICATION_CREDIT_NOTE",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          summary:
+            "The modification credit-note amount evidence does not match the local booking modification refund amount.",
+          details: {
+            modificationId: modification.id,
+            refundAmountCents: Math.abs(netAmountCents),
+            priceDiffCents: modification.priceDiffCents,
+            changeFeeCents: modification.changeFeeCents,
+          },
+        });
+
         if (!modificationCreditNote.link && modificationCreditNote.operation) {
           const action = addAction(
             actionMap,
@@ -1693,33 +1945,57 @@ function classifyBookingContext(
               actionKeys: [action.key],
             });
           }
-        } else if (!allocation.link && allocation.operation) {
-          const action = addAction(
+        } else {
+          addXeroAmountMismatchFinding({
+            findings,
             actionMap,
-            buildLinkRepairAction({
-              bookingId: booking.id,
-              localModel: "BookingModification",
-              localId: modification.id,
-              xeroObjectType: "ALLOCATION",
-              xeroObjectId: allocation.objectId,
-              xeroObjectNumber: allocation.objectNumber,
-              xeroObjectUrl: allocation.objectUrl,
-              role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
-              description:
-                "Backfill the missing MODIFICATION_CREDIT_NOTE_ALLOCATION link from a completed Xero allocation operation.",
-            })
-          );
-          addFinding(findings, {
-            code: "XERO_LINK_MISMATCH",
-            severity: "warning",
-            summary: "A modification credit-note allocation exists in operation history, but its link is missing.",
-            safeToAutoApply: true,
+            bookingId: booking.id,
+            expectedAmountCents: Math.abs(netAmountCents),
+            resolved: allocation,
+            links: modificationLinks,
+            operations: modificationOperations,
+            xeroObjectType: "ALLOCATION",
+            role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+            entityType: "ALLOCATION",
+            operationType: "ALLOCATE",
+            summary:
+              "The modification credit-note allocation amount evidence does not match the local booking modification refund amount.",
             details: {
               modificationId: modification.id,
-              allocationId: allocation.objectId,
+              creditNoteId: modificationCreditNote.objectId,
+              invoiceId: primaryInvoice.objectId,
+              amountCents: Math.abs(netAmountCents),
             },
-            actionKeys: [action.key],
           });
+
+          if (!allocation.link && allocation.operation) {
+            const action = addAction(
+              actionMap,
+              buildLinkRepairAction({
+                bookingId: booking.id,
+                localModel: "BookingModification",
+                localId: modification.id,
+                xeroObjectType: "ALLOCATION",
+                xeroObjectId: allocation.objectId,
+                xeroObjectNumber: allocation.objectNumber,
+                xeroObjectUrl: allocation.objectUrl,
+                role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+                description:
+                  "Backfill the missing MODIFICATION_CREDIT_NOTE_ALLOCATION link from a completed Xero allocation operation.",
+              })
+            );
+            addFinding(findings, {
+              code: "XERO_LINK_MISMATCH",
+              severity: "warning",
+              summary: "A modification credit-note allocation exists in operation history, but its link is missing.",
+              safeToAutoApply: true,
+              details: {
+                modificationId: modification.id,
+                allocationId: allocation.objectId,
+              },
+              actionKeys: [action.key],
+            });
+          }
         }
       }
     }
@@ -1783,6 +2059,32 @@ function classifyBookingContext(
       },
       actionKeys: [action.key],
     });
+  }
+
+  if (payment && refundCreditNote) {
+    const refundAmountCents = getCashCancellationRefundCandidateCents(booking);
+    if (refundAmountCents !== null && refundAmountCents > 0) {
+      addXeroAmountMismatchFinding({
+        findings,
+        actionMap,
+        bookingId: booking.id,
+        expectedAmountCents: refundAmountCents,
+        resolved: refundCreditNote,
+        links: paymentLinks,
+        operations: paymentOperations,
+        xeroObjectType: "CREDIT_NOTE",
+        role: "REFUND_CREDIT_NOTE",
+        entityType: "CREDIT_NOTE",
+        operationType: "CREATE",
+        summary:
+          "The refund credit-note amount evidence does not match the local cash refund amount.",
+        details: {
+          paymentId: payment.id,
+          refundAmountCents,
+          paymentRefundedAmountCents: payment.refundedAmountCents,
+        },
+      });
+    }
   }
 
   if (

@@ -186,6 +186,9 @@ npx tsx scripts/xero-booking-repair.ts --from <YYYY-MM-DD> --to <YYYY-MM-DD> --d
 Only use `--apply` after the dry-run report has been reviewed. Do not run it
 with live Xero, Stripe, SES, Sentry, or production database credentials during
 exploratory work; use a staging database and Xero demo tenant where possible.
+`XERO_AMOUNT_MISMATCH` findings are manual-review only: the tool reports stored
+Xero operation/link amount evidence that disagrees with local cents, but it
+does not auto-adjust financial amounts.
 
 ## Public Reference Release Checklist
 

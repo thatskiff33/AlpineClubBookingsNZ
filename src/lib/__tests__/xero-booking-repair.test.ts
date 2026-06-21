@@ -45,6 +45,35 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeOperation(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "operation_1",
+    direction: "OUTBOUND",
+    entityType: "INVOICE",
+    operationType: "CREATE",
+    localModel: "BookingModification",
+    localId: "mod_1",
+    status: "SUCCEEDED",
+    idempotencyKey: null,
+    correlationKey: null,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    requestPayload: null,
+    responsePayload: null,
+    xeroObjectType: "INVOICE",
+    xeroObjectId: "inv_1",
+    xeroObjectNumber: null,
+    xeroObjectUrl: null,
+    createdByMemberId: null,
+    startedAt: new Date("2026-05-02T00:00:00Z"),
+    completedAt: new Date("2026-05-02T00:00:00Z"),
+    createdAt: new Date("2026-05-02T00:00:00Z"),
+    updatedAt: new Date("2026-05-02T00:00:00Z"),
+    replayable: true,
+    ...overrides,
+  };
+}
+
 function isCapturedTransactionStatus(status: string) {
   return ["SUCCEEDED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(status);
 }
@@ -382,6 +411,59 @@ describe("runBookingXeroRepair", () => {
     );
   });
 
+  it("flags supplementary invoice amount evidence mismatches for manual review", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_amount_invoice",
+          bookingId: "booking_1",
+          modificationType: "GUEST_ADD",
+          priceDiffCents: 2500,
+          changeFeeCents: 500,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      links: [
+        {
+          id: "link_supplementary_amount",
+          localModel: "BookingModification",
+          localId: "mod_amount_invoice",
+          xeroObjectType: "INVOICE",
+          xeroObjectId: "inv_mod_amount",
+          xeroObjectNumber: "INV-AMOUNT",
+          xeroObjectUrl: null,
+          role: "SUPPLEMENTARY_INVOICE",
+          active: true,
+          metadata: { amountCents: 2500 },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const amountFinding = report.passes[0].bookings[0].findings.find(
+      (finding) => finding.code === "XERO_AMOUNT_MISMATCH"
+    );
+    expect(amountFinding).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+      details: {
+        modificationId: "mod_amount_invoice",
+        expectedAmountCents: 3000,
+        xeroObjectId: "inv_mod_amount",
+      },
+    });
+    expect(amountFinding?.actions[0]?.type).toBe("MARK_MANUAL_REVIEW");
+  });
+
   it("classifies stale primary invoice details after a zero-net date change", async () => {
     const booking = makeBooking({
       checkIn: new Date("2026-05-30T00:00:00Z"),
@@ -448,6 +530,94 @@ describe("runBookingXeroRepair", () => {
     expect(bookingReport.actions.map((action) => action.type)).toContain(
       "QUEUE_MODIFICATION_CREDIT_NOTE"
     );
+  });
+
+  it("flags modification credit-note operation amount mismatches for manual review", async () => {
+    const booking = makeBooking({
+      modifications: [
+        {
+          id: "mod_amount_credit",
+          bookingId: "booking_1",
+          modificationType: "GUEST_REMOVE",
+          priceDiffCents: -4000,
+          changeFeeCents: 0,
+          createdAt: new Date("2026-05-02T00:00:00Z"),
+        },
+      ],
+    });
+    const deps = createDependencies({
+      bookings: [booking],
+      links: [
+        {
+          id: "link_credit_amount",
+          localModel: "BookingModification",
+          localId: "mod_amount_credit",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_amount",
+          xeroObjectNumber: "CN-AMOUNT",
+          xeroObjectUrl: null,
+          role: "MODIFICATION_CREDIT_NOTE",
+          active: true,
+          metadata: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: "link_allocation_amount",
+          localModel: "BookingModification",
+          localId: "mod_amount_credit",
+          xeroObjectType: "ALLOCATION",
+          xeroObjectId: "alloc_amount",
+          xeroObjectNumber: null,
+          xeroObjectUrl: null,
+          role: "MODIFICATION_CREDIT_NOTE_ALLOCATION",
+          active: true,
+          metadata: {
+            creditNoteId: "cn_amount",
+            invoiceId: "inv_primary",
+            amountCents: 4000,
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ],
+      operations: [
+        makeOperation({
+          id: "operation_credit_amount",
+          entityType: "CREDIT_NOTE",
+          operationType: "CREATE",
+          localId: "mod_amount_credit",
+          xeroObjectType: "CREDIT_NOTE",
+          xeroObjectId: "cn_amount",
+          requestPayload: { refundAmountCents: 3000 },
+        }),
+      ],
+    });
+
+    const report = await runBookingXeroRepair({
+      dependencies: deps,
+      scope: { all: true },
+    });
+
+    const amountFinding = report.passes[0].bookings[0].findings.find(
+      (finding) => finding.code === "XERO_AMOUNT_MISMATCH"
+    );
+    expect(amountFinding).toMatchObject({
+      severity: "manual_review",
+      safeToAutoApply: false,
+      details: {
+        modificationId: "mod_amount_credit",
+        expectedAmountCents: 4000,
+        xeroObjectId: "cn_amount",
+      },
+    });
+    expect(amountFinding?.details.mismatches).toEqual([
+      {
+        source: "operation-request",
+        amountCents: 3000,
+        operationId: "operation_credit_amount",
+      },
+    ]);
   });
 
   it("classifies missing allocations when a modification credit note exists without one", async () => {
