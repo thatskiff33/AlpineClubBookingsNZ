@@ -418,7 +418,7 @@ describe("POST /api/group-bookings/[code]/join-request (non-member)", () => {
     );
   });
 
-  it("redirects an existing member email to the member login path (409)", async () => {
+  it("keeps existing member emails neutral so the public route cannot enumerate accounts", async () => {
     mocks.createNonMemberJoinRequest.mockRejectedValueOnce(
       new GroupBookingError(
         "This email belongs to a member account. Please log in and join from your account.",
@@ -429,8 +429,34 @@ describe("POST /api/group-bookings/[code]/join-request (non-member)", () => {
     const res = await joinRequestPOST(reqBody(), {
       params: Promise.resolve({ code: "ABCD2345" }),
     });
-    expect(res.status).toBe(409);
-    await expect(res.json()).resolves.toMatchObject({ code: "USE_MEMBER_LOGIN" });
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toEqual({ success: true });
+  });
+
+  it("keeps unknown group codes neutral on the mutation endpoint", async () => {
+    mocks.createNonMemberJoinRequest.mockRejectedValueOnce(
+      new GroupBookingError("Group booking not found", 404, {
+        code: "GROUP_NOT_FOUND",
+      })
+    );
+    const res = await joinRequestPOST(reqBody(), {
+      params: Promise.resolve({ code: "ZZZZ9999" }),
+    });
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toEqual({ success: true });
+  });
+
+  it("keeps non-joinable group state neutral on the mutation endpoint", async () => {
+    mocks.createNonMemberJoinRequest.mockRejectedValueOnce(
+      new GroupBookingError("This group is not accepting joins", 409, {
+        code: "GROUP_NOT_JOINABLE",
+      })
+    );
+    const res = await joinRequestPOST(reqBody(), {
+      params: Promise.resolve({ code: "ABCD2345" }),
+    });
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toEqual({ success: true });
   });
 });
 

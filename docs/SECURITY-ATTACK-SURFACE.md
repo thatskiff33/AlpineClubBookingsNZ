@@ -349,10 +349,11 @@ permissions, image provenance, package visibility, and deploy secret rotation.
 Reviewed the explicit public and token-bearing surfaces from this inventory:
 Auth.js login, account recovery and verification routes, membership
 applications, contact, public committee/age-tier reads, Addy autocomplete,
-health/readiness, guest chore tokens, nomination tokens, and membership
-cancellation confirmation tokens. Booking discovery, promo validation, and issue
-reports are authenticated active-member routes in the current implementation, so
-they are not anonymous public endpoints.
+health/readiness, guest chore tokens, nomination tokens, membership
+cancellation confirmation tokens, and group-booking join token flows. Booking
+discovery, promo validation, and issue reports are authenticated active-member
+routes in the current implementation, so they are not anonymous public
+endpoints.
 
 Hardening applied in #615:
 
@@ -368,8 +369,13 @@ Hardening applied in #615:
   locally before calling Addy.
 - Public committee reads are capped to 50 active records.
 - Log redaction covers token-bearing `/membership-cancellation/`, `/chores/`,
-  `/nominations/`, `/pay/`, and `/booking-requests/verify/` paths, including
-  URL-encoded `callbackUrl` values from login redirects.
+  `/nominations/`, `/pay/`, `/booking-requests/verify/`, and
+  `/group-bookings/join/verify/` paths, including URL-encoded `callbackUrl`
+  values from login redirects.
+- The group-booking join-request mutation endpoint returns the same neutral
+  success response for account-state and group-state lookup failures; the public
+  group summary endpoint remains the intentional limited join-code lookup
+  surface.
 
 Accepted residual risk:
 

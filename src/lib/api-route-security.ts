@@ -99,7 +99,7 @@ export const explicitPublicApiRoutes = {
   },
   "src/app/api/group-bookings/[code]/join-request/route.ts": {
     boundary: "public",
-    reason: "Anonymous non-member group join request submission; mirrors /api/booking-requests with strict validation, controlled JSON parsing, a neutral anti-enumeration response and rate limiting. Creates only an unverified GroupBookingJoin staging row, never a booking or payment.",
+    reason: "Anonymous non-member group join request submission; mirrors /api/booking-requests with strict validation, controlled JSON parsing, rate limiting, and a neutral success response for account-state and group-state lookup failures. Creates only an unverified GroupBookingJoin staging row, never a booking or payment.",
   },
   "src/app/api/group-bookings/join/verify/[token]/route.ts": {
     boundary: "public",

@@ -738,15 +738,20 @@ export async function createNonMemberJoinRequest(
     : null;
 
   if (!group) {
-    throw new GroupBookingError("Group booking not found", 404);
+    throw new GroupBookingError("Group booking not found", 404, {
+      code: "GROUP_NOT_FOUND",
+    });
   }
   if (!isGroupJoinable(group)) {
-    throw new GroupBookingError("This group is not accepting joins", 409);
+    throw new GroupBookingError("This group is not accepting joins", 409, {
+      code: "GROUP_NOT_JOINABLE",
+    });
   }
   if (group.paymentMode !== GroupBookingPaymentMode.EACH_PAYS_OWN) {
     throw new GroupBookingError(
       "This group is not accepting individual sign-ups",
-      409
+      409,
+      { code: "GROUP_NOT_INDIVIDUAL_SIGNUP" }
     );
   }
   if (
@@ -755,7 +760,9 @@ export async function createNonMemberJoinRequest(
       group.organiserBooking.status
     )
   ) {
-    throw new GroupBookingError("This group's booking is no longer active", 409);
+    throw new GroupBookingError("This group's booking is no longer active", 409, {
+      code: "GROUP_BOOKING_INACTIVE",
+    });
   }
 
   const contactEmail = input.contactEmail.trim().toLowerCase();

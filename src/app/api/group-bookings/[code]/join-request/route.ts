@@ -10,6 +10,15 @@ import {
 } from "@/lib/group-booking";
 import logger from "@/lib/logger";
 
+const NEUTRAL_JOIN_REQUEST_RESPONSE = { success: true } as const;
+const NEUTRAL_JOIN_REQUEST_ERROR_CODES = new Set([
+  "GROUP_NOT_FOUND",
+  "GROUP_NOT_JOINABLE",
+  "GROUP_NOT_INDIVIDUAL_SIGNUP",
+  "GROUP_BOOKING_INACTIVE",
+  "USE_MEMBER_LOGIN",
+]);
+
 const noCrlf = (value: string) => !/[\r\n]/.test(value);
 
 const joinRequestSchema = z
@@ -71,9 +80,14 @@ export async function POST(
     });
     // Always return a neutral success so the endpoint cannot be used to probe
     // which emails or codes exist.
-    return NextResponse.json({ success: true }, { status: 201 });
+    return NextResponse.json(NEUTRAL_JOIN_REQUEST_RESPONSE, { status: 201 });
   } catch (err) {
     if (err instanceof GroupBookingError) {
+      if (err.code && NEUTRAL_JOIN_REQUEST_ERROR_CODES.has(err.code)) {
+        return NextResponse.json(NEUTRAL_JOIN_REQUEST_RESPONSE, {
+          status: 201,
+        });
+      }
       return NextResponse.json(
         { error: err.message, code: err.code },
         { status: err.status }
