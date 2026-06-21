@@ -94,6 +94,16 @@ describe("rate-limit", () => {
       expect(getClientIp(req)).toBe("5.6.7.8");
     });
 
+    it("ignores a client-supplied leftmost x-forwarded-for value once Caddy appends the real peer", () => {
+      const req = new Request("http://localhost", {
+        headers: {
+          "x-forwarded-for": "203.0.113.250, 198.51.100.42",
+          "x-real-ip": "198.51.100.42",
+        },
+      });
+      expect(getClientIp(req)).toBe("198.51.100.42");
+    });
+
     it("extracts IP from x-real-ip", () => {
       const req = new Request("http://localhost", {
         headers: { "x-real-ip": "9.8.7.6" },

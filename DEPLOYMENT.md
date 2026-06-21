@@ -173,6 +173,26 @@ The internal deployment engine in the same script:
 If `APP_IMAGE` and `MIGRATE_IMAGE` are not supplied, the internal engine keeps
 the old local-build path for bootstrap, staging, and recovery work.
 
+## Public Rate Limits And Proxy Headers
+
+Public route rate limits are process-local sliding windows keyed by
+`getClientIp()` in `src/lib/rate-limit.ts`. This is acceptable for the supported
+production shape because Caddy is the only public listener and routes traffic to
+one active web slot at a time.
+
+During a blue/green deployment, the old slot can still serve requests while the
+configured drain window expires. Rate-limit counters are not shared between the
+old and new slots, so public abuse controls can be temporarily split across both
+runtimes during that drain. Do not run multiple publicly routed app replicas
+long-term unless the in-memory limiter is replaced with a shared store.
+
+The app trusts proxy-derived client IP headers only under that Caddy boundary.
+`getClientIp()` uses the rightmost `X-Forwarded-For` value, which is the peer
+Caddy appended closest to the app container, then falls back to `X-Real-IP`.
+Do not expose app containers directly to the Internet or through another proxy
+that preserves attacker-supplied `X-Forwarded-For` values without appending its
+own trusted peer address.
+
 ## Migration Safety
 
 Read `docs/BLUE_GREEN_MIGRATION_POLICY.md` before deploying schema changes.
