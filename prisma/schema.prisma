@@ -1515,13 +1515,14 @@ model MinimumStayPolicy {
 // ---------------------------------------------------------------------------
 
 model XeroToken {
-  id           String   @id @default(cuid())
-  accessToken  String
-  refreshToken String
-  expiresAt    DateTime
-  tenantId     String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                     String    @id @default(cuid())
+  accessToken            String
+  refreshToken           String
+  expiresAt              DateTime
+  tenantId               String?
+  refreshInProgressUntil DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 }
 
 // ---------------------------------------------------------------------------

@@ -25,7 +25,14 @@ import {
 } from "@/lib/xero-error-shape";
 import { getOperationalXeroConfig } from "@/lib/xero-config";
 import { createXeroClient } from "./xero-oauth";
-import { loadXeroTokens, saveXeroTokens } from "./xero-token-store";
+import {
+  XERO_TOKEN_REFRESH_LEASE_MS,
+  claimXeroTokenRefreshLease,
+  loadXeroTokens,
+  releaseXeroTokenRefreshLease,
+  saveXeroTokens,
+  type XeroTokenRecord,
+} from "./xero-token-store";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -36,6 +43,8 @@ const XERO_TRANSIENT_FAILURE_COOLDOWN_SEC = 120;
 
 // Xero tokens expire after 30 minutes; refresh 10 minutes early
 const TOKEN_REFRESH_BUFFER_MS = 10 * 60 * 1000; // 10 minutes — buffer for long-running bulk ops (contact sync, membership refresh)
+const TOKEN_REFRESH_POLL_MS = 250;
+const TOKEN_REFRESH_WAIT_GRACE_MS = 5 * 1000;
 
 // ---------------------------------------------------------------------------
 // Rate-limit / transient outage state
@@ -79,6 +88,64 @@ export class XeroTransientOutageError extends Error {
 // Simple mutex to prevent concurrent token refreshes from using the same refresh token
 let _tokenRefreshPromise: Promise<{ xero: XeroClient; tenantId: string }> | null = null;
 
+function tokenNeedsRefresh(tokens: XeroTokenRecord, now = Date.now()) {
+  return now >= tokens.expiresAt.getTime() - TOKEN_REFRESH_BUFFER_MS;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function buildAuthenticatedXeroClient(
+  tokens: XeroTokenRecord
+): Promise<{ xero: XeroClient; tenantId: string }> {
+  if (!tokens.tenantId) {
+    throw new Error("Xero tenant ID not found. Please reconnect Xero.");
+  }
+
+  const xero = createXeroClient();
+  await xero.initialize();
+  xero.setTokenSet({
+    access_token: tokens.accessToken,
+    refresh_token: tokens.refreshToken,
+    token_type: "Bearer",
+  });
+
+  return { xero, tenantId: tokens.tenantId };
+}
+
+async function waitForSharedXeroTokenRefresh(): Promise<XeroTokenRecord> {
+  const deadline = Date.now() + XERO_TOKEN_REFRESH_LEASE_MS + TOKEN_REFRESH_WAIT_GRACE_MS;
+
+  do {
+    await sleep(TOKEN_REFRESH_POLL_MS);
+    const latestTokens = await loadXeroTokens();
+    if (!latestTokens) {
+      throw new Error("Xero is not connected. Please connect via admin panel.");
+    }
+
+    if (!latestTokens.tenantId) {
+      throw new Error("Xero tenant ID not found. Please reconnect Xero.");
+    }
+
+    if (!tokenNeedsRefresh(latestTokens)) {
+      return latestTokens;
+    }
+
+    const activeLease = latestTokens.refreshInProgressUntil;
+    if (!activeLease || activeLease.getTime() <= Date.now()) {
+      return latestTokens;
+    }
+  } while (Date.now() < deadline);
+
+  const latestTokens = await loadXeroTokens();
+  if (!latestTokens) {
+    throw new Error("Xero is not connected. Please connect via admin panel.");
+  }
+
+  return latestTokens;
+}
+
 /**
  * Get an authenticated XeroClient with valid tokens.
  * Automatically refreshes if token is about to expire.
@@ -97,23 +164,30 @@ export async function getAuthenticatedXeroClient(): Promise<{
     throw new Error("Xero tenant ID not found. Please reconnect Xero.");
   }
 
-  const xero = createXeroClient();
-  await xero.initialize();
-
   // Check if token needs refresh
-  const now = Date.now();
-  const expiresAt = tokens.expiresAt.getTime();
-
-  if (now >= expiresAt - TOKEN_REFRESH_BUFFER_MS) {
+  if (tokenNeedsRefresh(tokens)) {
     // Mutex: if a refresh is already in progress, wait for it instead of double-refreshing
     if (_tokenRefreshPromise) {
       return _tokenRefreshPromise;
     }
+
+    const leaseClaim = await claimXeroTokenRefreshLease();
+    if (!leaseClaim.claimed) {
+      const refreshedOrAvailableTokens = await waitForSharedXeroTokenRefresh();
+      if (tokenNeedsRefresh(refreshedOrAvailableTokens)) {
+        return getAuthenticatedXeroClient();
+      }
+
+      return buildAuthenticatedXeroClient(refreshedOrAvailableTokens);
+    }
+
     // Token expired or about to expire - refresh it (wrapped in mutex)
     const refreshWork = (async () => {
+      const { tokens: claimedTokens, leaseUntil } = leaseClaim;
+      const { xero } = await buildAuthenticatedXeroClient(claimedTokens);
       xero.setTokenSet({
-        access_token: tokens.accessToken,
-        refresh_token: tokens.refreshToken,
+        access_token: claimedTokens.accessToken,
+        refresh_token: claimedTokens.refreshToken,
         token_type: "Bearer",
       });
       const config = getOperationalXeroConfig();
@@ -121,17 +195,26 @@ export async function getAuthenticatedXeroClient(): Promise<{
         const newTokenSet = await xero.refreshWithRefreshToken(
           config.clientId,
           config.clientSecret,
-          tokens.refreshToken
+          claimedTokens.refreshToken
         );
 
         await saveXeroTokens({
           accessToken: newTokenSet.access_token!,
           refreshToken: newTokenSet.refresh_token!,
           expiresAt: new Date(Date.now() + (newTokenSet.expires_in ?? 1800) * 1000),
-          tenantId: tokens.tenantId,
+          tenantId: claimedTokens.tenantId,
+        }, {
+          claimedTokenId: claimedTokens.id,
+          refreshLeaseUntil: leaseUntil,
         });
 
-        return { xero, tenantId: tokens.tenantId! };
+        xero.setTokenSet({
+          access_token: newTokenSet.access_token!,
+          refresh_token: newTokenSet.refresh_token!,
+          token_type: newTokenSet.token_type ?? "Bearer",
+        });
+
+        return { xero, tenantId: claimedTokens.tenantId! };
       } catch (err) {
         logger.error({ err }, "Xero token refresh failed");
         import("./xero-error-alert").then(({ notifyXeroSyncError }) =>
@@ -143,6 +226,9 @@ export async function getAuthenticatedXeroClient(): Promise<{
         ).catch(() => {});
         throw new Error("Xero token refresh failed. Please reconnect Xero via the admin panel.");
       } finally {
+        await releaseXeroTokenRefreshLease(claimedTokens.id, leaseUntil).catch((err) => {
+          logger.warn({ err }, "Failed to release Xero token refresh lease");
+        });
         _tokenRefreshPromise = null;
       }
     })();
@@ -151,13 +237,7 @@ export async function getAuthenticatedXeroClient(): Promise<{
   }
 
   // Token still valid
-  xero.setTokenSet({
-    access_token: tokens.accessToken,
-    refresh_token: tokens.refreshToken,
-    token_type: "Bearer",
-  });
-
-  return { xero, tenantId: tokens.tenantId };
+  return buildAuthenticatedXeroClient(tokens);
 }
 
 // ---------------------------------------------------------------------------

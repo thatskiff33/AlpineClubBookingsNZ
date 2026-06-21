@@ -66,7 +66,84 @@ export interface TokenData {
   tenantId?: string;
 }
 
-export async function saveXeroTokens(tokens: TokenData): Promise<void> {
+export interface XeroTokenRecord extends TokenData {
+  id: string;
+  refreshInProgressUntil: Date | null;
+}
+
+export const XERO_TOKEN_REFRESH_LEASE_MS = 2 * 60 * 1000;
+
+export type XeroTokenRefreshLeaseClaim =
+  | {
+      claimed: true;
+      tokens: XeroTokenRecord;
+      leaseUntil: Date;
+    }
+  | {
+      claimed: false;
+      tokens: XeroTokenRecord | null;
+      leaseUntil: Date | null;
+    };
+
+export interface SaveXeroTokenOptions {
+  claimedTokenId?: string;
+  refreshLeaseUntil?: Date;
+}
+
+function serializeTokenData(tokens: TokenData) {
+  return {
+    accessToken: encryptToken(tokens.accessToken),
+    refreshToken: encryptToken(tokens.refreshToken),
+    expiresAt: tokens.expiresAt,
+    tenantId: tokens.tenantId ?? null,
+    refreshInProgressUntil: null,
+  };
+}
+
+function deserializeTokenRecord(record: {
+  id: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: Date;
+  tenantId: string | null;
+  refreshInProgressUntil: Date | null;
+}): XeroTokenRecord {
+  return {
+    id: record.id,
+    accessToken: decryptToken(record.accessToken),
+    refreshToken: decryptToken(record.refreshToken),
+    expiresAt: record.expiresAt,
+    tenantId: record.tenantId ?? undefined,
+    refreshInProgressUntil: record.refreshInProgressUntil,
+  };
+}
+
+export async function saveXeroTokens(
+  tokens: TokenData,
+  options?: SaveXeroTokenOptions
+): Promise<void> {
+  const data = serializeTokenData(tokens);
+
+  if (options?.claimedTokenId && options.refreshLeaseUntil) {
+    const updated = await prisma.xeroToken.updateMany({
+      where: {
+        id: options.claimedTokenId,
+        refreshInProgressUntil: {
+          lte: options.refreshLeaseUntil,
+        },
+      },
+      data,
+    });
+
+    if (updated.count !== 1) {
+      throw new Error(
+        "Xero token refresh lease expired before refreshed tokens could be saved"
+      );
+    }
+
+    return;
+  }
+
   const encryptedAccess = encryptToken(tokens.accessToken);
   const encryptedRefresh = encryptToken(tokens.refreshToken);
 
@@ -82,6 +159,7 @@ export async function saveXeroTokens(tokens: TokenData): Promise<void> {
           refreshToken: encryptedRefresh,
           expiresAt: tokens.expiresAt,
           tenantId: tokens.tenantId ?? existing.tenantId,
+          refreshInProgressUntil: null,
         },
       });
     } else {
@@ -91,23 +169,94 @@ export async function saveXeroTokens(tokens: TokenData): Promise<void> {
           refreshToken: encryptedRefresh,
           expiresAt: tokens.expiresAt,
           tenantId: tokens.tenantId ?? null,
+          refreshInProgressUntil: null,
         },
       });
     }
   });
 }
 
-export async function loadXeroTokens(): Promise<(TokenData & { id: string }) | null> {
+export async function loadXeroTokens(): Promise<XeroTokenRecord | null> {
   const record = await prisma.xeroToken.findFirst();
   if (!record) return null;
 
-  return {
-    id: record.id,
-    accessToken: decryptToken(record.accessToken),
-    refreshToken: decryptToken(record.refreshToken),
-    expiresAt: record.expiresAt,
-    tenantId: record.tenantId ?? undefined,
-  };
+  return deserializeTokenRecord(record);
+}
+
+export async function claimXeroTokenRefreshLease(options?: {
+  now?: Date;
+  leaseMs?: number;
+}): Promise<XeroTokenRefreshLeaseClaim> {
+  const now = options?.now ?? new Date();
+  const leaseUntil = new Date(
+    now.getTime() + (options?.leaseMs ?? XERO_TOKEN_REFRESH_LEASE_MS)
+  );
+
+  return prisma.$transaction(async (tx) => {
+    const record = await tx.xeroToken.findFirst();
+    if (!record) {
+      return { claimed: false, tokens: null, leaseUntil: null };
+    }
+
+    const existingLeaseUntil = record.refreshInProgressUntil;
+    if (existingLeaseUntil && existingLeaseUntil > now) {
+      return {
+        claimed: false,
+        tokens: deserializeTokenRecord(record),
+        leaseUntil: existingLeaseUntil,
+      };
+    }
+
+    const claimed = await tx.xeroToken.updateMany({
+      where: {
+        id: record.id,
+        OR: [
+          { refreshInProgressUntil: null },
+          { refreshInProgressUntil: { lte: now } },
+        ],
+      },
+      data: {
+        refreshInProgressUntil: leaseUntil,
+      },
+    });
+
+    if (claimed.count !== 1) {
+      const latest = await tx.xeroToken.findUnique({
+        where: { id: record.id },
+      });
+      return {
+        claimed: false,
+        tokens: latest ? deserializeTokenRecord(latest) : null,
+        leaseUntil: latest?.refreshInProgressUntil ?? null,
+      };
+    }
+
+    return {
+      claimed: true,
+      tokens: deserializeTokenRecord({
+        ...record,
+        refreshInProgressUntil: leaseUntil,
+      }),
+      leaseUntil,
+    };
+  });
+}
+
+export async function releaseXeroTokenRefreshLease(
+  tokenId: string,
+  leaseUntil: Date
+): Promise<void> {
+  await prisma.xeroToken.updateMany({
+    where: {
+      id: tokenId,
+      refreshInProgressUntil: {
+        lte: leaseUntil,
+      },
+    },
+    data: {
+      refreshInProgressUntil: null,
+    },
+  });
 }
 
 /**
