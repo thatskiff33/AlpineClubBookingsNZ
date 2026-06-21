@@ -15,6 +15,7 @@ import {
   AlignLeft,
   AlignRight,
   ArrowRight,
+  CircleHelp,
   Edit3,
   FileText,
   Folder,
@@ -1268,6 +1269,7 @@ export function PageContentPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [helpDialogOpen, setHelpDialogOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
@@ -1464,18 +1466,195 @@ export function PageContentPanel() {
 
   return (
     <>
-      <div className="mb-4 flex items-center justify-end">
+      <div className="mb-4 flex items-center justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          onClick={() => setHelpDialogOpen(true)}
+          aria-label="Page Content help"
+          title="Page Content help"
+        >
+          <CircleHelp className="h-4 w-4" />
+        </Button>
         <Button type="button" onClick={() => setAddDialogOpen(true)}>
           <Plus className="h-4 w-4" />
           Add Page
         </Button>
       </div>
 
+      <Dialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Page Content help</DialogTitle>
+            <DialogDescription>
+              On this page you can create pages that will appear on the public
+              pages.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm leading-6 text-slate-700">
+            <p>
+              <i>
+                <b>Slug</b>
+              </i>{" "}
+              is a unique single id as a single word.
+            </p>
+            <p>
+              <i>
+                <b>Menu Order</b>
+              </i>{" "}
+              is the order this page will be in the menu.
+            </p>
+            <p>
+              <i>
+                <b>Caption</b>
+              </i>{" "}
+              The topic name of the page. This is displayed in the header panel.
+            </p>
+            <p>
+              <i>
+                <b>Menu Title</b>
+              </i>{" "}
+              The name to display in the menu. Leave blank if you do not want
+              this page to display in the menu.
+            </p>
+            <p>
+              <i>
+                <b>Page Title</b>
+              </i>{" "}
+              The title name of the page. This is displayed in the header panel.
+            </p>
+            <p>
+              <i>
+                <b>Header Text</b>
+              </i>{" "}
+              The text displayed under the page title in the header panel.
+            </p>
+            <p>
+              <i>
+                <b>Body</b>
+              </i>{" "}
+              The information to display in the body of the page.
+            </p>
+
+            <p>
+              <i>
+                <b>Note</b>
+              </i>{" "}
+              Any <i>Style</i> or <i>Script</i> tags will be removed apon save
+              as these can pose a security risk.
+            </p>
+            <p>
+              If you want a background image in your header panel. Goto{" "}
+              <b>Site Style</b> page and create the style for your page.
+            </p>
+            <pre className="overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
+              {`.dynamic-header[data-page-slug="home"] {
+    background: url('/api/images/uploaded/zzz.jpg') center / cover no-repeat;
+}`}
+            </pre>
+
+            <p>
+              In the content editor you can add any of the following tokens by
+              having the token name in {"{{}}"}. E.G.{" "}
+              <code>{"{{contact-form}}"}</code>
+            </p>
+            <p>
+              <i>
+                <b>committee-members-cards</b>
+              </i>
+              <br />
+              This will display cards in a grid with a committee member in each
+              one.
+            </p>
+            <p>
+              <i>
+                <b>member-application-form</b>
+              </i>
+              <br />
+              This will display the Membership application form.
+            </p>
+            <p>
+              <i>
+                <b>join-apply-form</b>
+              </i>
+              <br />
+              This will display the Membership application form.
+            </p>
+            <p>
+              <i>
+                <b>contact-form</b>
+              </i>
+              <br />
+              This will display a contact us form where a user can sent a
+              message to the committee.
+            </p>
+            <p>
+              <i>
+                <b>skifield-conditions</b>
+              </i>
+              <br />
+              This will display the Ski resort status, weather, chairlift
+              status, road status.
+              <br />
+              You will need to go to https://www.snow.nz/snow-report-widget and
+              select the skifield you want information on.
+              <br />
+              On submit you will be shown a script. On the first line, copy the
+              hash code within the quotes. e.g. data-hash=&quot;zzz&quot;.
+              <br />
+              On this editor page do the following, while replacing zzz with
+              your hashcode. <code>{"{{skifield-conditions:zzz}}"}</code>
+            </p>
+            <p>
+              <i>
+                <b>skifield-whakapapa</b>
+              </i>
+              <br />
+              This will fetch the Whakapapa report and render a parsed curlData
+              JSON object.
+              <br />
+              On this editor page do the following:{" "}
+              <code>{"{{skifield-whakapapa}}"}</code>
+            </p>
+            <p>
+              <i>
+                <b>photo-gallery</b>
+              </i>
+              <br />
+              This will display a PhotoSwipe gallery using the images already
+              inserted into the page body.
+              <br />
+              Add your images to the page body, then place the token where the
+              gallery should appear.
+              <br />
+              You can also pass a folder path, for example:
+              <code>{"{{photo-gallery:/public/images/photos/One}}"}</code>
+            </p>
+            <p>
+              <i>
+                <b>photo-slideshow</b>
+              </i>
+              <br />
+              This will display the same images in a slideshow-oriented
+              PhotoSwipe layout.
+              <br />
+              Use the same folder-path format when you want to load all photos
+              from a directory.
+              <br />
+              For example:{" "}
+              <code>{"{{photo-slideshow:/public/images/photos/One}}"}</code>
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="grid gap-4 md:grid-cols-2">
         {pages.map((page) => {
           const textPreview = stripHtml(page.contentHtml);
           const hasContent = textPreview.length > 0;
           const isSystem = isSystemPageSlug(page.slug);
+          const hasMenuTitle = page.menuTitle.trim().length > 0;
 
           return (
             <Card key={page.slug}>
@@ -1485,13 +1664,21 @@ export function PageContentPanel() {
                     <CardTitle>{page.title}</CardTitle>
                     <CardDescription>{page.path}</CardDescription>
                   </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
                     {isSystem && (
                       <Badge
                         variant="outline"
                         className="text-[10px] uppercase text-slate-500"
                       >
                         System
+                      </Badge>
+                    )}
+                    {!hasMenuTitle && (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] uppercase text-slate-500"
+                      >
+                        No menu
                       </Badge>
                     )}
                     <Badge variant={hasContent ? "default" : "secondary"}>
@@ -1733,6 +1920,45 @@ export function PageContentPanel() {
                 placeholder="Enter page HTML here"
                 editorClassName="min-h-[320px]"
               />
+
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                <p className="font-medium text-slate-700">Embed Tokens</p>
+                <p className="mt-1">
+                  Insert these in page body content using either {"{"}token{"}"}{" "}
+                  or
+                  {" {{token}}"}:
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    skifield-whakapapa
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    skifield-conditions
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    committee-members-cards
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    member-application-form
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    join-apply-form
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    contact-form
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    photo-gallery
+                  </span>
+                  <span className="rounded bg-slate-200 px-2 py-1 font-mono text-[11px] text-slate-800">
+                    photo-slideshow
+                  </span>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-500">
+                  Optional hash override:
+                  {" {{skifield-conditions:4297a04af31a54b9b4dc710057f5a492}}"}
+                </p>
+              </div>
 
               <div className="flex justify-end gap-2">
                 <Button

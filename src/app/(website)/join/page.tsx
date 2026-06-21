@@ -1,6 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { CLUB_NAME } from "@/config/club-identity";
 import {
   getSanitizedPageContentByPath,
@@ -52,19 +50,6 @@ export default async function JoinPage() {
               No content has been published for this page yet.
             </div>
           )}
-
-          <div className="mt-10 flex flex-wrap gap-3">
-            <Button asChild>
-              <Link href="/join/apply">Apply for Membership</Link>
-            </Button>
-            <Button
-              asChild
-              variant="outline"
-              className="border-brand-charcoal/20 bg-transparent text-brand-charcoal hover:bg-brand-mist/45 hover:text-brand-charcoal"
-            >
-              <Link href="/contact">Talk to the Committee</Link>
-            </Button>
-          </div>
         </div>
       </section>
     </>

@@ -5,7 +5,6 @@ import { WebsiteFooter } from "@/components/website-footer";
 import { CLUB_CONTACT_EMAIL, CLUB_NAME } from "@/config/club-identity";
 import { getWebsiteThemeRenderState } from "@/lib/club-theme";
 import { clubThemeFontVariableClassName } from "@/lib/club-theme-fonts";
-import { CSP_NONCE_HEADER } from "@/lib/csp";
 
 function resolvePageSlug(requestHeaders: Headers) {
   return requestHeaders.get("x-page-slug") ?? "home";
@@ -21,11 +20,9 @@ export default async function WebsiteLayout({
     getWebsiteThemeRenderState(),
     headers(),
   ]);
-  const nonce = requestHeaders.get(CSP_NONCE_HEADER) ?? undefined;
   const pageSlug = resolvePageSlug(requestHeaders);
   const themeStyle = (
     <style
-      nonce={nonce}
       dangerouslySetInnerHTML={{ __html: theme.css }}
       data-site-style="club-theme"
     />

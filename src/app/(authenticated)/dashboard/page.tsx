@@ -17,6 +17,7 @@ import {
   PlusCircle,
   Mountain,
   Home,
+  House,
   Shield,
   Wallet,
   CreditCard,
@@ -61,12 +62,13 @@ export default async function DashboardPage() {
   const isStayingGuest = !!stayingGuestBooking;
 
   // Check if member has an active hut leader assignment (day-before access)
-  const isHutLeaderActive = session.user.role === "MEMBER"
-    ? await isHutLeader(memberId, tomorrow).then(async (dayBefore) => {
-        if (dayBefore) return true;
-        return isHutLeader(memberId, today);
-      })
-    : false;
+  const isHutLeaderActive =
+    session.user.role === "MEMBER"
+      ? await isHutLeader(memberId, tomorrow).then(async (dayBefore) => {
+          if (dayBefore) return true;
+          return isHutLeader(memberId, today);
+        })
+      : false;
 
   const [
     upcomingBookings,
@@ -75,6 +77,7 @@ export default async function DashboardPage() {
     paymentOwedBookings,
     creditBalanceCents,
     availablePromoCodes,
+    lockers,
   ] = await Promise.all([
     prisma.booking.findMany({
       where: {
@@ -149,6 +152,11 @@ export default async function DashboardPage() {
     }),
     getMemberCreditBalance(memberId),
     getAvailablePromoCodesForMember(memberId),
+    prisma.locker.findMany({
+      where: { allocatedToMemberId: memberId },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
   ]);
 
   const nextStay = upcomingBookings[0] ?? null;
@@ -194,9 +202,7 @@ export default async function DashboardPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button asChild variant="outline">
-            <Link href="/profile">
-              View User Profile
-            </Link>
+            <Link href="/profile">View User Profile</Link>
           </Button>
           <Button asChild>
             <Link href="/book">
@@ -268,7 +274,9 @@ export default async function DashboardPage() {
                   })}
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {nextStay._count.guests} guest{nextStay._count.guests !== 1 ? "s" : ""} · {formatCents(nextStay.finalPriceCents)}
+                  {nextStay._count.guests} guest
+                  {nextStay._count.guests !== 1 ? "s" : ""} ·{" "}
+                  {formatCents(nextStay.finalPriceCents)}
                 </p>
               </>
             ) : (
@@ -290,7 +298,9 @@ export default async function DashboardPage() {
             <Wallet className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{formatCents(creditBalanceCents)}</div>
+            <div className="text-3xl font-bold">
+              {formatCents(creditBalanceCents)}
+            </div>
             <p className="text-xs text-muted-foreground mt-1">
               {creditBalanceCents > 0
                 ? "Available account credit for future bookings"
@@ -305,7 +315,9 @@ export default async function DashboardPage() {
             <CreditCard className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{formatCents(paymentOwed.totalCents)}</div>
+            <div className="text-3xl font-bold">
+              {formatCents(paymentOwed.totalCents)}
+            </div>
             <p className="text-xs text-muted-foreground mt-1">
               {paymentOwed.totalCents > 0
                 ? `${paymentOwed.bookingCount} booking${paymentOwed.bookingCount !== 1 ? "s" : ""} need payment`
@@ -316,11 +328,15 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Promo Codes Available</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Promo Codes Available
+            </CardTitle>
             <TicketPercent className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{availablePromoCodes.length}</div>
+            <div className="text-3xl font-bold">
+              {availablePromoCodes.length}
+            </div>
             <p className="text-xs text-muted-foreground mt-1">
               {availablePromoCodes.length > 0
                 ? "Assigned to your member account"
@@ -346,7 +362,9 @@ export default async function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Lodge Induction</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Lodge Induction
+            </CardTitle>
             <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -366,6 +384,28 @@ export default async function DashboardPage() {
             </Button>
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Lockers</CardTitle>
+            <House className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {lockers.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No lockers allocated.
+              </p>
+            ) : (
+              <ul className="space-y-1">
+                {lockers.map((locker) => (
+                  <li key={locker.id} className="text-sm text-slate-700">
+                    {locker.name}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Draft bookings */}
@@ -380,7 +420,10 @@ export default async function DashboardPage() {
             <CardContent className="pt-4">
               <div className="divide-y">
                 {draftBookings.map((booking) => (
-                  <div key={booking.id} className="flex items-center justify-between py-3">
+                  <div
+                    key={booking.id}
+                    className="flex items-center justify-between py-3"
+                  >
                     <div className="min-w-0">
                       <p className="font-medium text-sm">
                         {new Date(booking.checkIn).toLocaleDateString("en-NZ", {
@@ -389,23 +432,41 @@ export default async function DashboardPage() {
                           year: "numeric",
                         })}
                         {" — "}
-                        {new Date(booking.checkOut).toLocaleDateString("en-NZ", {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                        })}
+                        {new Date(booking.checkOut).toLocaleDateString(
+                          "en-NZ",
+                          {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          },
+                        )}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {booking._count.guests} guest{booking._count.guests !== 1 ? "s" : ""} · {formatCents(booking.finalPriceCents)}
+                        {booking._count.guests} guest
+                        {booking._count.guests !== 1 ? "s" : ""} ·{" "}
+                        {formatCents(booking.finalPriceCents)}
                         {booking.draftExpiresAt && (
                           <span className="text-amber-600 ml-2">
-                            Expires {new Date(booking.draftExpiresAt).toLocaleDateString("en-NZ", { day: "numeric", month: "short" })}
+                            Expires{" "}
+                            {new Date(
+                              booking.draftExpiresAt,
+                            ).toLocaleDateString("en-NZ", {
+                              day: "numeric",
+                              month: "short",
+                            })}
                           </span>
                         )}
                       </p>
                     </div>
                     <Button asChild size="sm" variant="outline">
-                      <Link href={buildHrefWithReturnTo(`/bookings/${booking.id}`, "/dashboard")}>Resume</Link>
+                      <Link
+                        href={buildHrefWithReturnTo(
+                          `/bookings/${booking.id}`,
+                          "/dashboard",
+                        )}
+                      >
+                        Resume
+                      </Link>
                     </Button>
                   </div>
                 ))}
@@ -445,7 +506,10 @@ export default async function DashboardPage() {
                 {recentBookings.map((booking) => (
                   <Link
                     key={booking.id}
-                    href={buildHrefWithReturnTo(`/bookings/${booking.id}`, "/dashboard")}
+                    href={buildHrefWithReturnTo(
+                      `/bookings/${booking.id}`,
+                      "/dashboard",
+                    )}
                     className="flex items-center justify-between py-3 hover:bg-slate-50 -mx-2 px-2 rounded"
                   >
                     <div className="min-w-0">
@@ -456,14 +520,19 @@ export default async function DashboardPage() {
                           year: "numeric",
                         })}
                         {" — "}
-                        {new Date(booking.checkOut).toLocaleDateString("en-NZ", {
-                          day: "numeric",
-                          month: "short",
-                          year: "numeric",
-                        })}
+                        {new Date(booking.checkOut).toLocaleDateString(
+                          "en-NZ",
+                          {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          },
+                        )}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {booking._count.guests} guest{booking._count.guests !== 1 ? "s" : ""} · {formatCents(booking.finalPriceCents)}
+                        {booking._count.guests} guest
+                        {booking._count.guests !== 1 ? "s" : ""} ·{" "}
+                        {formatCents(booking.finalPriceCents)}
                       </p>
                     </div>
                     <Badge

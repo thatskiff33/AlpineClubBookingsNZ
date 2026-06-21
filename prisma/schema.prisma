@@ -379,6 +379,7 @@ model Member {
   inductions                                 MemberInduction[]                          @relation("MemberInductions")
   inductionSignOffs                          MemberInductionSignOff[]                   @relation("InductionSignOffSigner")
   assignedInductionSigners                   MemberInductionAssignedSigner[]            @relation("AssignedInductionSigners")
+  lockersAllocated                           Locker[]                                   @relation("LockerAllocatedMember")
 
   @@index([email])
   @@index([xeroContactId])
@@ -1041,6 +1042,19 @@ model LodgeRoom {
 
   @@unique([name])
   @@index([active, sortOrder])
+}
+
+model Locker {
+  id                  String   @id @default(cuid())
+  name                String
+  allocatedToMemberId String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  allocatedTo Member? @relation("LockerAllocatedMember", fields: [allocatedToMemberId], references: [id], onDelete: SetNull)
+
+  @@index([allocatedToMemberId])
+  @@index([name])
 }
 
 model LodgeBed {
@@ -1738,6 +1752,19 @@ model XeroAdminCache {
 
   @@unique([cacheKey, tenantId], map: "XeroAdminCache_cacheKey_tenantId_key")
   @@index([expiresAt])
+}
+
+model WhakapapaReportCache {
+  id        String   @id @default(cuid())
+  source    String   @unique
+  payload   Json
+  fetchedAt DateTime @default(now())
+  frozenUntil DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([fetchedAt])
+  @@index([frozenUntil])
 }
 
 model XeroSyncCursor {

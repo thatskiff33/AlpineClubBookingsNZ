@@ -130,6 +130,7 @@ const navSections: NavSection[] = [
       { href: "/admin/induction", label: "Induction", icon: ClipboardCheck },
       { href: "/admin/subscriptions", label: "Subscriptions", icon: FileText },
       { href: "/admin/communications", label: "Communications", icon: Mail },
+      { href: "/admin/lockers", label: "Lockers", icon: House },
     ],
   },
   {
@@ -172,6 +173,11 @@ const navSections: NavSection[] = [
       { href: "/admin/modules", label: "Modules", icon: Puzzle },
       { href: "/admin/site-style", label: "Site Style", icon: Palette },
       { href: "/admin/page-content", label: "Page Content", icon: FilePenLine },
+      {
+        href: "/admin/mountain-conditions",
+        label: "Mountain Conditions",
+        icon: Mountain,
+      },
       { href: "/admin/image-manager", label: "Image Manager", icon: Images },
       { href: "/admin/rooms-beds", label: "Rooms & Beds", icon: BedDouble },
       {
