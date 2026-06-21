@@ -252,6 +252,38 @@ describe("API route boundary metadata", () => {
     expect(violations).toEqual([]);
   });
 
+  it("requires every method of a member-boundary route to be guarded or documented as a public mixed method", () => {
+    // Issue #812 Risk #1 blind spot: the file-level marker check passes a
+    // member-boundary file as soon as *one* exported method calls a session
+    // guard. A second exported method with no guard at all would then ride
+    // along as effectively public without appearing in the public allowlist.
+    // Enforce per method: a member-boundary handler must either carry a
+    // session guard, or be explicitly documented as a public method in
+    // mixedMethodApiRoutes (which the per-method test above validates).
+    const violations = routeFiles.flatMap((routePath) => {
+      if (expectedBoundaryFor(routePath) !== "member") return [];
+
+      const documentedMethods =
+        mixedMethodApiRoutes[routePath as keyof typeof mixedMethodApiRoutes]
+          ?.methods ?? {};
+      const bodies = extractMethodBodies(routeContents(routePath));
+
+      return Object.entries(bodies).flatMap(([method, body]) => {
+        if (hasMemberGuard(body) || /\bauth\s*\(/.test(body)) return [];
+
+        const documented =
+          documentedMethods[method as keyof typeof documentedMethods];
+        if (documented && documented.boundary === "public") return [];
+
+        return [
+          `${routePath}#${method}: member-boundary method has no active-session guard and is not documented as a public mixed-method handler`,
+        ];
+      });
+    });
+
+    expect(violations).toEqual([]);
+  });
+
   it("keeps issue #675 JSON-consuming routes on the controlled malformed JSON path", () => {
     const violations = issue675MalformedJsonRoutes.flatMap((routePath) => {
       const contents = routeContents(routePath);
