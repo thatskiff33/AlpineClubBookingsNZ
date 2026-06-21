@@ -59,6 +59,7 @@ function waitlistEntry() {
     adminReviewReason: "Booking has no adult guest",
     finalPriceCents: 12500,
     createdAt: "2026-05-01T00:00:00.000Z",
+    offerEmailDelivery: null,
   };
 }
 
@@ -108,6 +109,41 @@ describe("Admin waitlist page", () => {
     expect(bookingHref).toContain(
       "/bookings/booking-1?returnTo=/admin/waitlist?from=2026-07-01&to=2026-07-31&page=2&pageSize=10"
     );
+  });
+
+  it("surfaces failed waitlist offer email recovery state", async () => {
+    mocks.currentSearch = "";
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        entries: [
+          {
+            ...waitlistEntry(),
+            offerEmailDelivery: {
+              status: "FAILED",
+              emailLogId: "email-log-1",
+              attempts: 3,
+              lastAttemptAt: "2026-06-01T09:30:00.000Z",
+              errorMessage: "SMTP rejected recipient",
+              retryState: "exhausted",
+              needsOperatorAction: true,
+            },
+          },
+        ],
+        page: 1,
+        pageSize: 25,
+        total: 1,
+      }),
+    });
+
+    render(<AdminWaitlistPage />);
+
+    await screen.findByText("Offer email retry exhausted");
+    expect(screen.getByText("SMTP rejected recipient")).toBeTruthy();
+    const recoveryLink = screen.getByRole("link", {
+      name: /Review email recovery/i,
+    });
+    expect(recoveryLink.getAttribute("href")).toBe("/admin/email-deliverability");
   });
 
   it("keeps date filters, page size, and pagination in the URL query", async () => {

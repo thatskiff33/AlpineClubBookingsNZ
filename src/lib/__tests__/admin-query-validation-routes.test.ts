@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   deletionRequestCount: vi.fn(),
   auditLogFindMany: vi.fn(),
   auditLogCount: vi.fn(),
+  emailLogFindMany: vi.fn(),
   parseApplicationAddress: vi.fn(),
   parseApplicationFamilyMembers: vi.fn(),
 }));
@@ -53,6 +54,9 @@ vi.mock("@/lib/prisma", () => ({
     auditLog: {
       findMany: mocks.auditLogFindMany,
       count: mocks.auditLogCount,
+    },
+    emailLog: {
+      findMany: mocks.emailLogFindMany,
     },
   },
 }));
@@ -131,6 +135,7 @@ function waitlistBooking(id: string) {
     guests: [],
     status: "WAITLISTED",
     waitlistPosition: 1,
+    waitlistOfferedAt: null,
     waitlistOfferExpiresAt: null,
     finalPriceCents: 12000,
     createdAt: new Date("2026-05-01T00:00:00.000Z"),
@@ -213,6 +218,7 @@ describe("admin query validation and pagination", () => {
     mocks.deletionRequestCount.mockResolvedValue(0);
     mocks.auditLogFindMany.mockResolvedValue([]);
     mocks.auditLogCount.mockResolvedValue(0);
+    mocks.emailLogFindMany.mockResolvedValue([]);
     mocks.parseApplicationAddress.mockImplementation((value) => value);
     mocks.parseApplicationFamilyMembers.mockImplementation((value) => value);
   });
@@ -338,6 +344,51 @@ describe("admin query validation and pagination", () => {
           }),
           take: 10,
           skip: 10,
+        })
+      );
+    });
+
+    it("decorates offered bookings with waitlist offer email recovery state", async () => {
+      mocks.bookingFindMany.mockResolvedValue([
+        {
+          ...waitlistBooking("booking-1"),
+          status: "WAITLIST_OFFERED",
+          waitlistOfferedAt: new Date("2026-06-01T09:00:00.000Z"),
+          waitlistOfferExpiresAt: new Date("2026-06-03T09:00:00.000Z"),
+        },
+      ]);
+      mocks.bookingCount.mockResolvedValue(1);
+      mocks.emailLogFindMany.mockResolvedValue([
+        {
+          id: "email-log-1",
+          to: "jane@example.com",
+          status: "FAILED",
+          attempts: 3,
+          lastAttemptAt: new Date("2026-06-01T09:30:00.000Z"),
+          errorMessage: "SMTP rejected recipient",
+          createdAt: new Date("2026-06-01T09:00:05.000Z"),
+          htmlBody: "<a href=\"/bookings/booking-1/waitlist-confirm\">Confirm</a>",
+        },
+      ]);
+
+      const response = await getWaitlist(request("/api/admin/waitlist"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.entries[0].offerEmailDelivery).toMatchObject({
+        status: "FAILED",
+        emailLogId: "email-log-1",
+        attempts: 3,
+        errorMessage: "SMTP rejected recipient",
+        retryState: "exhausted",
+        needsOperatorAction: true,
+      });
+      expect(mocks.emailLogFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            templateName: "waitlist-offer",
+            to: { in: ["jane@example.com"] },
+          }),
         })
       );
     });

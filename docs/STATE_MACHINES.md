@@ -88,8 +88,10 @@ offer accepted -> confirmed or paid booking
 offer expires/declined -> WAITLISTED or CANCELLED
 ```
 
-To verify: offer expiry cron, retry count, email visibility, and admin repair
-path for stale offers.
+The admin waitlist view decorates active `WAITLIST_OFFERED` rows with the latest
+`waitlist-offer` EmailLog status. Failed, exhausted, bounced, or missing delivery
+records are surfaced beside the offer with a link to email-deliverability
+recovery, so state changes are not hidden behind best-effort email delivery.
 
 ## Bed Allocation Lifecycle
 

@@ -13,6 +13,22 @@ import { buildHrefWithReturnTo, buildPathWithSearch } from "@/lib/internal-retur
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
+interface OfferEmailDelivery {
+  status: "QUEUED" | "SENT" | "FAILED" | "BOUNCED" | "MISSING";
+  emailLogId: string | null;
+  attempts: number | null;
+  lastAttemptAt: string | null;
+  errorMessage: string | null;
+  retryState:
+    | "delivered"
+    | "queued"
+    | "retrying"
+    | "exhausted"
+    | "undeliverable"
+    | "missing";
+  needsOperatorAction: boolean;
+}
+
 interface WaitlistEntry {
   id: string;
   memberName: string;
@@ -29,6 +45,7 @@ interface WaitlistEntry {
   adminReviewReason: string | null;
   finalPriceCents: number;
   createdAt: string;
+  offerEmailDelivery: OfferEmailDelivery | null;
 }
 
 function parsePositiveInteger(value: string | null, fallback: number) {
@@ -81,6 +98,55 @@ function getWaitlistActionContext(entry: WaitlistEntry) {
   }
 
   return "Waiting for capacity";
+}
+
+function getOfferEmailSummary(delivery: OfferEmailDelivery) {
+  switch (delivery.retryState) {
+    case "delivered":
+      return "Offer email sent";
+    case "queued":
+      return "Offer email queued";
+    case "retrying":
+      return `Offer email retrying (${delivery.attempts ?? "?"}/3)`;
+    case "exhausted":
+      return "Offer email retry exhausted";
+    case "undeliverable":
+      return "Offer email undeliverable";
+    case "missing":
+      return "Offer email log missing";
+  }
+}
+
+function getOfferEmailBadgeClass(delivery: OfferEmailDelivery) {
+  if (delivery.needsOperatorAction) {
+    return "bg-red-100 text-red-800";
+  }
+
+  if (delivery.retryState === "retrying" || delivery.retryState === "queued") {
+    return "bg-amber-100 text-amber-800";
+  }
+
+  return "bg-emerald-100 text-emerald-800";
+}
+
+function formatOfferEmailDetail(delivery: OfferEmailDelivery) {
+  if (delivery.retryState === "delivered" && delivery.lastAttemptAt) {
+    return `Last delivery ${formatDateTime(delivery.lastAttemptAt)}`;
+  }
+
+  if (delivery.retryState === "queued" && delivery.lastAttemptAt) {
+    return `Queued ${formatDateTime(delivery.lastAttemptAt)}`;
+  }
+
+  if (delivery.errorMessage) {
+    return delivery.errorMessage;
+  }
+
+  if (delivery.lastAttemptAt) {
+    return `Last attempt ${formatDateTime(delivery.lastAttemptAt)}`;
+  }
+
+  return null;
 }
 
 export default function AdminWaitlistPage() {
@@ -420,6 +486,29 @@ export default function AdminWaitlistPage() {
                       <p className="mt-1 text-xs text-gray-500">
                         {getWaitlistActionContext(entry)}
                       </p>
+                      {entry.offerEmailDelivery && (
+                        <div className="mt-2 space-y-1">
+                          <Badge
+                            variant="secondary"
+                            className={getOfferEmailBadgeClass(entry.offerEmailDelivery)}
+                          >
+                            {getOfferEmailSummary(entry.offerEmailDelivery)}
+                          </Badge>
+                          {formatOfferEmailDetail(entry.offerEmailDelivery) && (
+                            <p className="max-w-xs text-xs text-gray-500">
+                              {formatOfferEmailDetail(entry.offerEmailDelivery)}
+                            </p>
+                          )}
+                          {entry.offerEmailDelivery.needsOperatorAction && (
+                            <Link
+                              href="/admin/email-deliverability"
+                              className="block text-xs text-blue-600 hover:underline"
+                            >
+                              Review email recovery
+                            </Link>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-xs">{formatDateTime(entry.createdAt)}</td>
                     <td className="px-3 py-2">

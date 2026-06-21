@@ -8,6 +8,7 @@ import {
   MAX_FINANCE_BOOKING_METRICS_WINDOW_DAYS,
 } from "@/lib/finance-booking-metrics";
 import { formatDateOnly, isDateOnlyString, parseDateOnly } from "@/lib/date-only";
+import { getWaitlistOfferEmailDeliveries } from "@/lib/waitlist-offer-email-visibility";
 
 const isoDateParam = z.string().refine(isDateOnlyString, {
   message: "Date must be YYYY-MM-DD",
@@ -98,6 +99,8 @@ export async function GET(request: NextRequest) {
     prisma.booking.count({ where }),
   ]);
 
+  const offerEmailDeliveries = await getWaitlistOfferEmailDeliveries(bookings);
+
   const entries = bookings.map((b) => ({
     id: b.id,
     memberName: `${b.member.firstName} ${b.member.lastName}`,
@@ -115,6 +118,7 @@ export async function GET(request: NextRequest) {
     adminReviewReason: b.adminReviewReason,
     finalPriceCents: b.finalPriceCents,
     createdAt: b.createdAt.toISOString(),
+    offerEmailDelivery: offerEmailDeliveries.get(b.id) ?? null,
   }));
 
   return NextResponse.json({ data: entries, entries, page, pageSize, total });
