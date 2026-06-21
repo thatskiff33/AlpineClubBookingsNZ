@@ -33,6 +33,7 @@ vi.mock("@/lib/booking-request", async () => {
 vi.mock("@/lib/payment-link", () => ({
   getPaymentLinkContext: vi.fn(),
   createPaymentIntentForPaymentLink: vi.fn(),
+  reissuePaymentLinkForToken: vi.fn(),
   PaymentLinkError: class PaymentLinkError extends Error {
     status: number;
     constructor(message: string, status: number) {
@@ -72,6 +73,7 @@ import {
 import {
   getPaymentLinkContext,
   createPaymentIntentForPaymentLink,
+  reissuePaymentLinkForToken,
   PaymentLinkError,
 } from "@/lib/payment-link";
 import { POST as submitBookingRequest } from "@/app/api/booking-requests/route";
@@ -80,6 +82,7 @@ import { POST as quoteBookingRequest } from "@/app/api/booking-requests/quote/ro
 import { GET as getBookingRequestSettingsRoute } from "@/app/api/booking-requests/settings/route";
 import { GET as getPayLink } from "@/app/api/pay/[token]/route";
 import { POST as createPayPaymentIntent } from "@/app/api/pay/[token]/payment-intent/route";
+import { POST as refreshPayLink } from "@/app/api/pay/[token]/refresh/route";
 
 const mockedCreateBookingRequest = vi.mocked(createBookingRequest);
 const mockedVerifyBookingRequest = vi.mocked(verifyBookingRequest);
@@ -87,6 +90,7 @@ const mockedGetSettings = vi.mocked(getBookingRequestSettings);
 const mockedCalculateIndicative = vi.mocked(calculateIndicativeNonMemberPriceCents);
 const mockedGetPaymentLinkContext = vi.mocked(getPaymentLinkContext);
 const mockedCreatePaymentIntentForLink = vi.mocked(createPaymentIntentForPaymentLink);
+const mockedReissuePaymentLinkForToken = vi.mocked(reissuePaymentLinkForToken);
 
 const VALID_GUEST = { firstName: "Tara", lastName: "Tester", ageTier: "ADULT" };
 const VALID_TOKEN = "a".repeat(64);
@@ -519,5 +523,49 @@ describe("POST /api/pay/[token]/payment-intent", () => {
 
     expect(res.status).toBe(200);
     expect(body).toEqual({ clientSecret: "secret_abc", paymentIntentId: "pi_456" });
+  });
+});
+
+describe("POST /api/pay/[token]/refresh", () => {
+  function refreshRequest(token: string) {
+    return refreshPayLink(
+      new NextRequest(`http://localhost/api/pay/${token}/refresh`, { method: "POST" }),
+      { params: Promise.resolve({ token }) }
+    );
+  }
+
+  it("returns the rate-limit response without reissuing a payment link", async () => {
+    const limited = NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    mockApplyRateLimit.mockReturnValue(limited);
+
+    const res = await refreshRequest(VALID_TOKEN);
+
+    expect(res.status).toBe(429);
+    expect(mockedReissuePaymentLinkForToken).not.toHaveBeenCalled();
+  });
+
+  it("reissues a fresh link for the matching token and returns the email status only", async () => {
+    mockedReissuePaymentLinkForToken.mockResolvedValue({ emailed: true });
+
+    const res = await refreshRequest(VALID_TOKEN);
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ emailed: true });
+    expect(mockedReissuePaymentLinkForToken).toHaveBeenCalledWith(VALID_TOKEN);
+  });
+
+  it("maps payment-link refresh failures to polite public errors", async () => {
+    mockedReissuePaymentLinkForToken.mockRejectedValue(
+      new PaymentLinkError("These dates have already passed, so a new payment link can't be issued.", 410)
+    );
+
+    const res = await refreshRequest(VALID_TOKEN);
+    const body = await res.json();
+
+    expect(res.status).toBe(410);
+    expect(body).toEqual({
+      error: "These dates have already passed, so a new payment link can't be issued.",
+    });
   });
 });
