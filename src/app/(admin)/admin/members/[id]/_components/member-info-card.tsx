@@ -1,36 +1,60 @@
-"use client"
+"use client";
 
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ExternalLink } from "lucide-react"
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ExternalLink } from "lucide-react";
 import {
   financeAccessBadgeClass,
   financeAccessLongLabels as financeAccessLabels,
   getLoginBadge,
-} from "@/lib/admin-member-badges"
-import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers"
-import type { MemberDetail } from "../_types"
+} from "@/lib/admin-member-badges";
+import { formatMemberDateNz } from "@/lib/admin-member-detail-helpers";
+import { formatGenderLabel, formatTitleLabel } from "@/lib/member-enums";
+import type { MemberDetail } from "../_types";
 
 interface MemberInfoCardProps {
-  member: MemberDetail
-  onEditFamilyGroup: (familyGroupId: string) => void
+  member: MemberDetail;
+  onEditFamilyGroup: (familyGroupId: string) => void;
 }
 
-export function MemberInfoCard({ member, onEditFamilyGroup }: MemberInfoCardProps) {
-  const loginBadge = getLoginBadge(member.canLogin)
+export function MemberInfoCard({
+  member,
+  onEditFamilyGroup,
+}: MemberInfoCardProps) {
+  const loginBadge = getLoginBadge(member.canLogin);
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base font-medium">Member Information</CardTitle>
+        <CardTitle className="text-base font-medium">
+          Member Information
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
           <div>
+            <dt className="text-slate-500">Title</dt>
+            <dd className="font-medium">
+              {formatTitleLabel(member.title) || "Not set"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Gender</dt>
+            <dd className="font-medium">
+              {formatGenderLabel(member.gender) || "Not set"}
+            </dd>
+          </div>
+          <div>
             <dt className="text-slate-500">Phone</dt>
             <dd className="font-medium">
               {member.phoneNumber
-                ? [member.phoneCountryCode ? `+${member.phoneCountryCode}` : null, member.phoneAreaCode, member.phoneNumber]
+                ? [
+                    member.phoneCountryCode
+                      ? `+${member.phoneCountryCode}`
+                      : null,
+                    member.phoneAreaCode,
+                    member.phoneNumber,
+                  ]
                     .filter(Boolean)
                     .join(" ")
                 : "Not provided"}
@@ -40,13 +64,42 @@ export function MemberInfoCard({ member, onEditFamilyGroup }: MemberInfoCardProp
             <dt className="text-slate-500">Member Since</dt>
             <dd className="font-medium">
               {formatMemberDateNz(member.joinedDate || member.createdAt)}
-              {member.joinedDate && <span className="text-xs text-slate-400 ml-1">(from Xero)</span>}
+              {member.joinedDate && (
+                <span className="text-xs text-slate-400 ml-1">(from Xero)</span>
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Life Member Date</dt>
+            <dd className="font-medium">
+              {member.lifeMemberDate
+                ? formatMemberDateNz(member.lifeMemberDate)
+                : "Not set"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Committee Role</dt>
+            <dd className="font-medium">{member.committeeRole || "Not set"}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Associate Member</dt>
+            <dd className="font-medium">
+              {member.associateMember ? "Yes" : "No"}
+            </dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="text-slate-500">Comments</dt>
+            <dd className="font-medium whitespace-pre-wrap">
+              {member.comments || "None"}
             </dd>
           </div>
           <div>
             <dt className="text-slate-500">Finance Access</dt>
             <dd className="font-medium">
-              <Badge variant="secondary" className={financeAccessBadgeClass[member.financeAccessLevel]}>
+              <Badge
+                variant="secondary"
+                className={financeAccessBadgeClass[member.financeAccessLevel]}
+              >
                 {financeAccessLabels[member.financeAccessLevel]}
               </Badge>
             </dd>
@@ -64,8 +117,11 @@ export function MemberInfoCard({ member, onEditFamilyGroup }: MemberInfoCardProp
             <dd className="font-medium">
               {member.inheritEmailFrom ? (
                 <span className="text-xs">
-                  {member.inheritEmailFrom.firstName} {member.inheritEmailFrom.lastName}{" "}
-                  <span className="text-slate-400">({member.inheritEmailFrom.email})</span>
+                  {member.inheritEmailFrom.firstName}{" "}
+                  {member.inheritEmailFrom.lastName}{" "}
+                  <span className="text-slate-400">
+                    ({member.inheritEmailFrom.email})
+                  </span>
                 </span>
               ) : (
                 <span className="text-xs text-slate-500">Own email</span>
@@ -115,25 +171,33 @@ export function MemberInfoCard({ member, onEditFamilyGroup }: MemberInfoCardProp
               </div>
               {!member.xeroContactId && (
                 <p className="text-xs text-amber-700">
-                  Membership refresh skips unlinked members. Link or create a Xero contact before expecting subscription status to update automatically.
+                  Membership refresh skips unlinked members. Link or create a
+                  Xero contact before expecting subscription status to update
+                  automatically.
                 </p>
               )}
               {member.xeroContactGroups.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {member.xeroContactGroups.map((group) => (
-                    <Badge key={group.id} variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                    <Badge
+                      key={group.id}
+                      variant="secondary"
+                      className="bg-emerald-50 text-emerald-700 border-emerald-200"
+                    >
                       {group.name}
                     </Badge>
                   ))}
                 </div>
               )}
               {member.xeroContactId && !member.xeroContactGroupsLoaded && (
-                <p className="text-xs text-slate-500">Cached contact groups have not been refreshed yet.</p>
+                <p className="text-xs text-slate-500">
+                  Cached contact groups have not been refreshed yet.
+                </p>
               )}
             </dd>
           </div>
         </dl>
       </CardContent>
     </Card>
-  )
+  );
 }

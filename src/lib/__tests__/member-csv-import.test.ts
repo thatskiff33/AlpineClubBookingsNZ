@@ -12,7 +12,7 @@ import {
 describe("member CSV import parser", () => {
   it("parses quoted fields with commas and escaped quotes", () => {
     const parsed = parseMemberImportCsv(
-      'First Name,Last Name,Email\n"Alice, A","O""Brien",alice@example.com'
+      'First Name,Last Name,Email\n"Alice, A","O""Brien",alice@example.com',
     );
 
     expect(parsed.ok).toBe(true);
@@ -27,7 +27,7 @@ describe("member CSV import parser", () => {
 
   it("skips blank lines while preserving data line numbers", () => {
     const parsed = parseMemberImportCsv(
-      "\nFirst Name,Last Name,Email\n\nAlice,Anderson,alice@example.com\n\nBob,Brown,bob@example.com\n"
+      "\nFirst Name,Last Name,Email\n\nAlice,Anderson,alice@example.com\n\nBob,Brown,bob@example.com\n",
     );
 
     expect(parsed.ok).toBe(true);
@@ -39,7 +39,7 @@ describe("member CSV import parser", () => {
 
   it("supports multiline quoted field values", () => {
     const parsed = parseMemberImportCsv(
-      'First Name,Last Name,Email,Phone\n"Alice\nA.",Anderson,alice@example.com,"021\n555"'
+      'First Name,Last Name,Email,Phone\n"Alice\nA.",Anderson,alice@example.com,"021\n555"',
     );
 
     expect(parsed.ok).toBe(true);
@@ -53,7 +53,9 @@ describe("member CSV import parser", () => {
   });
 
   it("reports malformed unterminated quoted fields", () => {
-    const parsed = parseCsv('First Name,Last Name,Email\n"Alice,Anderson,alice@example.com');
+    const parsed = parseCsv(
+      'First Name,Last Name,Email\n"Alice,Anderson,alice@example.com',
+    );
 
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
@@ -62,7 +64,9 @@ describe("member CSV import parser", () => {
   });
 
   it("reports malformed characters after a closing quote", () => {
-    const parsed = parseCsv('First Name,Last Name,Email\n"Alice"x,Anderson,alice@example.com');
+    const parsed = parseCsv(
+      'First Name,Last Name,Email\n"Alice"x,Anderson,alice@example.com',
+    );
 
     expect(parsed.ok).toBe(false);
     if (parsed.ok) return;
@@ -76,7 +80,7 @@ describe("member CSV import parser", () => {
       return `First${number},Last${number},member${number}@example.com`;
     });
     const parsed = parseMemberImportCsv(
-      ["First Name,Last Name,Email", ...dataRows].join("\n")
+      ["First Name,Last Name,Email", ...dataRows].join("\n"),
     );
 
     expect(parsed.ok).toBe(true);
@@ -101,7 +105,7 @@ describe("member CSV import parser", () => {
       [
         "Name,Email,DOB,Membership Start,Phone Number",
         "Alice Anderson,alice@example.com,15/01/1990,5 Jan 2024,021555123",
-      ].join("\n")
+      ].join("\n"),
     );
 
     expect(parsed.ok).toBe(true);
@@ -113,7 +117,7 @@ describe("member CSV import parser", () => {
       {
         dateOfBirth: "dd/MM/yyyy",
         joinedDate: "d MMM yyyy",
-      }
+      },
     );
 
     expect(preview.hasErrors).toBe(false);
@@ -133,7 +137,7 @@ describe("member CSV import parser", () => {
 
   it("reports invalid mapped dates with line and column context", () => {
     const parsed = parseMemberImportCsv(
-      "First Name,Last Name,Email,DOB\nAlice,Anderson,alice@example.com,31/02/1990"
+      "First Name,Last Name,Email,DOB\nAlice,Anderson,alice@example.com,31/02/1990",
     );
 
     expect(parsed.ok).toBe(true);
@@ -145,7 +149,7 @@ describe("member CSV import parser", () => {
       {
         ...createDefaultMemberImportDateFormatMapping(),
         dateOfBirth: "dd/MM/yyyy",
-      }
+      },
     );
 
     expect(preview.hasErrors).toBe(true);
@@ -156,7 +160,7 @@ describe("member CSV import parser", () => {
 
   it("does not prepare commit rows when preview validation fails", () => {
     const parsed = parseMemberImportCsv(
-      "First Name,Last Name,Email,DOB\nAlice,Anderson,alice@example.com,31/02/1990"
+      "First Name,Last Name,Email,DOB\nAlice,Anderson,alice@example.com,31/02/1990",
     );
 
     expect(parsed.ok).toBe(true);
@@ -168,7 +172,7 @@ describe("member CSV import parser", () => {
       {
         ...createDefaultMemberImportDateFormatMapping(),
         dateOfBirth: "dd/MM/yyyy",
-      }
+      },
     );
 
     expect(preview.hasErrors).toBe(true);
@@ -207,32 +211,43 @@ describe("member CSV import parser", () => {
   });
 
   it("accepts exact month names but rejects month-name prefix matches", () => {
-    expect(normalizeMemberImportDateValue("5 January 1990", "d MMM yyyy")).toEqual({
+    expect(
+      normalizeMemberImportDateValue("5 January 1990", "d MMM yyyy"),
+    ).toEqual({
       ok: true,
       value: "1990-01-05",
     });
-    expect(normalizeMemberImportDateValue("January 5 1990", "MMM d yyyy")).toEqual({
+    expect(
+      normalizeMemberImportDateValue("January 5 1990", "MMM d yyyy"),
+    ).toEqual({
       ok: true,
       value: "1990-01-05",
     });
 
-    expect(normalizeMemberImportDateValue("5 Januaryx 1990", "d MMM yyyy")).toEqual({
+    expect(
+      normalizeMemberImportDateValue("5 Januaryx 1990", "d MMM yyyy"),
+    ).toEqual({
       ok: false,
       error: "contains an unknown month for d MMM yyyy",
     });
-    expect(normalizeMemberImportDateValue("Januaryx 5 1990", "MMM d yyyy")).toEqual({
+    expect(
+      normalizeMemberImportDateValue("Januaryx 5 1990", "MMM d yyyy"),
+    ).toEqual({
       ok: false,
       error: "contains an unknown month for MMM d yyyy",
     });
   });
 
   it("enforces the API import ceiling in validation preview", () => {
-    const dataRows = Array.from({ length: MEMBER_IMPORT_MAX_ROWS + 1 }, (_, index) => {
-      const number = index + 1;
-      return `First${number},Last${number},member${number}@example.com`;
-    });
+    const dataRows = Array.from(
+      { length: MEMBER_IMPORT_MAX_ROWS + 1 },
+      (_, index) => {
+        const number = index + 1;
+        return `First${number},Last${number},member${number}@example.com`;
+      },
+    );
     const parsed = parseMemberImportCsv(
-      ["First Name,Last Name,Email", ...dataRows].join("\n")
+      ["First Name,Last Name,Email", ...dataRows].join("\n"),
     );
 
     expect(parsed.ok).toBe(true);
@@ -240,10 +255,112 @@ describe("member CSV import parser", () => {
 
     const preview = buildMemberImportPreview(
       parsed.data,
-      inferMemberImportColumnMapping(parsed.data.headers)
+      inferMemberImportColumnMapping(parsed.data.headers),
     );
 
     expect(preview.hasErrors).toBe(true);
-    expect(preview.fileErrors).toContain(`Maximum ${MEMBER_IMPORT_MAX_ROWS} rows per import`);
+    expect(preview.fileErrors).toContain(
+      `Maximum ${MEMBER_IMPORT_MAX_ROWS} rows per import`,
+    );
+  });
+
+  it("maps structured street address, life member date, associate member, and comments", () => {
+    const parsed = parseMemberImportCsv(
+      [
+        "First Name,Last Name,Email,Street Address Line 1,Street Address Line 2,City,Region,Country,Postal Code,Life Member Date,Associate Member,Comments",
+        "Alice,Anderson,alice@example.com,12 Hill Rd,Unit 2,Wellington,Wellington,New Zealand,6011,2024-05-01,Yes,Prefers email",
+      ].join("\n"),
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const mapping = inferMemberImportColumnMapping(parsed.data.headers);
+    const preview = buildMemberImportPreview(parsed.data, mapping);
+
+    expect(preview.hasErrors).toBe(false);
+    expect(preview.rows[0].values).toMatchObject({
+      streetAddressLine1: "12 Hill Rd",
+      streetAddressLine2: "Unit 2",
+      streetCity: "Wellington",
+      streetRegion: "Wellington",
+      streetCountry: "New Zealand",
+      streetPostalCode: "6011",
+      lifeMemberDate: "2024-05-01",
+      associateMember: "Yes",
+      comments: "Prefers email",
+    });
+    expect(preview.rows[0].normalizedDateValues).toMatchObject({
+      lifeMemberDate: "2024-05-01",
+    });
+  });
+
+  it("flags an unrecognised associate member value", () => {
+    const parsed = parseMemberImportCsv(
+      [
+        "First Name,Last Name,Email,Associate Member",
+        "Alice,Anderson,alice@example.com,maybe",
+      ].join("\n"),
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const preview = buildMemberImportPreview(
+      parsed.data,
+      inferMemberImportColumnMapping(parsed.data.headers),
+    );
+
+    expect(preview.hasErrors).toBe(true);
+    expect(
+      preview.rows[0].errors.some((error) =>
+        error.includes("Associate Member"),
+      ),
+    ).toBe(true);
+  });
+
+  it("maps title and gender from display labels", () => {
+    const parsed = parseMemberImportCsv(
+      [
+        "Title,First Name,Last Name,Gender,Email",
+        "Mrs,Alice,Anderson,Female,alice@example.com",
+      ].join("\n"),
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const preview = buildMemberImportPreview(
+      parsed.data,
+      inferMemberImportColumnMapping(parsed.data.headers),
+    );
+
+    expect(preview.hasErrors).toBe(false);
+    expect(preview.rows[0].values).toMatchObject({
+      title: "Mrs",
+      gender: "Female",
+    });
+  });
+
+  it("flags an unrecognised gender value", () => {
+    const parsed = parseMemberImportCsv(
+      [
+        "First Name,Last Name,Gender,Email",
+        "Alice,Anderson,unknown,alice@example.com",
+      ].join("\n"),
+    );
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const preview = buildMemberImportPreview(
+      parsed.data,
+      inferMemberImportColumnMapping(parsed.data.headers),
+    );
+
+    expect(preview.hasErrors).toBe(true);
+    expect(
+      preview.rows[0].errors.some((error) => error.includes("Gender")),
+    ).toBe(true);
   });
 });

@@ -5,9 +5,15 @@ import { getSeasonYear } from "@/lib/utils";
 import { AgeTier } from "@prisma/client";
 import logger from "@/lib/logger";
 import { getAgeTierSettings } from "@/lib/age-tier";
+import { formatGenderLabel, formatTitleLabel } from "@/lib/member-enums";
 
 const AGE_TIER_VALUES = Object.values(AgeTier);
-const SUBSCRIPTION_STATUS_FILTERS = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"] as const;
+const SUBSCRIPTION_STATUS_FILTERS = [
+  "PAID",
+  "UNPAID",
+  "OVERDUE",
+  "NOT_INVOICED",
+] as const;
 const MEMBER_LIFECYCLE_STATUS_FILTERS = [
   "active",
   "inactive",
@@ -21,7 +27,12 @@ const MEMBER_LIFECYCLE_STATUS_FILTERS = [
  * Wraps in double-quotes if value contains comma, quote, or newline.
  */
 function csvEscape(value: string): string {
-  if (value.includes('"') || value.includes(",") || value.includes("\n") || value.includes("\r")) {
+  if (
+    value.includes('"') ||
+    value.includes(",") ||
+    value.includes("\n") ||
+    value.includes("\r")
+  ) {
     return '"' + value.replace(/"/g, '""') + '"';
   }
   return value;
@@ -43,7 +54,7 @@ export async function GET(req: NextRequest) {
   const notRequiredAgeTiers = new Set(
     ageTierSettings
       .filter((setting) => setting.subscriptionRequiredForBooking === false)
-      .map((setting) => setting.tier)
+      .map((setting) => setting.tier),
   );
   const notRequiredSubscriptionConditions = [
     { role: "ADMIN" },
@@ -73,12 +84,13 @@ export async function GET(req: NextRequest) {
   }
 
   const lifecycleStatusFilter = sp.get("lifecycleStatus");
-  const lifecycleStatus = (
+  const lifecycleStatus =
     lifecycleStatusFilter &&
-    (MEMBER_LIFECYCLE_STATUS_FILTERS as readonly string[]).includes(lifecycleStatusFilter)
-  )
-    ? lifecycleStatusFilter
-    : null;
+    (MEMBER_LIFECYCLE_STATUS_FILTERS as readonly string[]).includes(
+      lifecycleStatusFilter,
+    )
+      ? lifecycleStatusFilter
+      : null;
   const includeArchived = sp.get("includeArchived") === "true";
 
   if (lifecycleStatus === "archived") {
@@ -167,7 +179,9 @@ export async function GET(req: NextRequest) {
     );
   } else if (
     subscriptionFilter &&
-    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(subscriptionFilter)
+    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(
+      subscriptionFilter,
+    )
   ) {
     andConditions.push(
       { role: { not: "ADMIN" } },
@@ -199,8 +213,10 @@ export async function GET(req: NextRequest) {
       where,
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       select: {
+        title: true,
         firstName: true,
         lastName: true,
+        gender: true,
         email: true,
         phoneCountryCode: true,
         phoneAreaCode: true,
@@ -214,6 +230,15 @@ export async function GET(req: NextRequest) {
         archivedAt: true,
         xeroContactId: true,
         createdAt: true,
+        streetAddressLine1: true,
+        streetAddressLine2: true,
+        streetCity: true,
+        streetRegion: true,
+        streetCountry: true,
+        streetPostalCode: true,
+        lifeMemberDate: true,
+        associateMember: true,
+        comments: true,
         subscriptions: {
           where: { seasonYear: currentSeasonYear },
           select: { status: true },
@@ -223,33 +248,56 @@ export async function GET(req: NextRequest) {
     });
 
     const headers = [
+      "Title",
       "First Name",
       "Last Name",
+      "Gender",
       "Email",
       "Phone Country Code",
       "Phone Area Code",
       "Phone Number",
+      "Street Address Line 1",
+      "Street Address Line 2",
+      "City",
+      "Region",
+      "Country",
+      "Postal Code",
       "Date of Birth",
+      "Life Member Date",
       "Role",
       "Age Tier",
+      "Associate Member",
       "Active",
       "Cancelled At",
       "Archived At",
       "Xero Contact ID",
       "Subscription Status",
+      "Comments",
       "Created At",
     ];
 
     const rows = members.map((m) => [
+      csvEscape(formatTitleLabel(m.title)),
       csvEscape(m.firstName),
       csvEscape(m.lastName),
+      csvEscape(formatGenderLabel(m.gender)),
       csvEscape(m.email),
       csvEscape(m.phoneCountryCode || ""),
       csvEscape(m.phoneAreaCode || ""),
       csvEscape(m.phoneNumber || ""),
+      csvEscape(m.streetAddressLine1 || ""),
+      csvEscape(m.streetAddressLine2 || ""),
+      csvEscape(m.streetCity || ""),
+      csvEscape(m.streetRegion || ""),
+      csvEscape(m.streetCountry || ""),
+      csvEscape(m.streetPostalCode || ""),
       m.dateOfBirth ? new Date(m.dateOfBirth).toISOString().split("T")[0] : "",
+      m.lifeMemberDate
+        ? new Date(m.lifeMemberDate).toISOString().split("T")[0]
+        : "",
       m.role,
       m.ageTier,
+      m.associateMember ? "Yes" : "No",
       m.active ? "Yes" : "No",
       m.cancelledAt ? new Date(m.cancelledAt).toISOString() : "",
       m.archivedAt ? new Date(m.archivedAt).toISOString() : "",
@@ -257,10 +305,13 @@ export async function GET(req: NextRequest) {
       m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
         ? "NOT_REQUIRED"
         : m.subscriptions[0]?.status || "NONE",
+      csvEscape(m.comments || ""),
       new Date(m.createdAt).toISOString(),
     ]);
 
-    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
+    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join(
+      "\r\n",
+    );
     const today = new Date().toISOString().split("T")[0];
 
     return new Response(csv, {
@@ -272,6 +323,9 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     logger.error({ err: error }, "Failed to export members CSV");
-    return NextResponse.json({ error: "Failed to export members" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to export members" },
+      { status: 500 },
+    );
   }
 }

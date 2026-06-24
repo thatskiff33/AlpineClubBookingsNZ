@@ -1,10 +1,15 @@
 import { z } from "zod";
 import { AGE_TIER_VALUES, ageTierEnum } from "@/lib/age-tier-schema";
+import { genderEnum, titleEnum } from "@/lib/member-enums";
 import type { AgeTier } from "@prisma/client";
 import { hash } from "bcryptjs";
 import { randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
-import { computeAgeTier, getAgeTierSettings, getSeasonStartDate } from "@/lib/age-tier";
+import {
+  computeAgeTier,
+  getAgeTierSettings,
+  getSeasonStartDate,
+} from "@/lib/age-tier";
 import {
   getXeroContactGroupMemberships,
   getXeroContactIdsForGroup,
@@ -37,15 +42,22 @@ function jsonResult(body: unknown, init?: ResponseInit): JsonRouteResult {
 
 const optionalSearchParam = z.string().optional();
 
-function parseClampedInt(value: string | undefined, fallback: number, min: number, max: number) {
+function parseClampedInt(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+) {
   const parsed = parseInt(value || String(fallback), 10) || fallback;
   return Math.min(max, Math.max(min, parsed));
 }
 
 export const createMemberSchema = z.object({
   email: z.string().email("Invalid email address"),
+  title: titleEnum.optional().nullable(),
   firstName: nameField({ required: "First name is required" }),
   lastName: nameField({ required: "Last name is required" }),
+  gender: genderEnum.optional().nullable(),
   phoneCountryCode: z.string().max(5).optional().nullable(),
   phoneAreaCode: z.string().max(5).optional().nullable(),
   phoneNumber: z.string().max(15).optional().nullable(),
@@ -70,6 +82,15 @@ export const createMemberSchema = z.object({
     .optional()
     .nullable()
     .or(z.literal("")),
+  lifeMemberDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date format")
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+  committeeRole: z.string().max(100).optional().nullable().or(z.literal("")),
+  associateMember: z.boolean().optional(),
+  comments: z.string().max(4000).optional().nullable().or(z.literal("")),
   streetAddressLine1: maxStr(200),
   streetAddressLine2: maxStr(200),
   streetCity: maxStr(200),
@@ -85,8 +106,20 @@ export const createMemberSchema = z.object({
   postalSameAsPhysical: z.boolean().optional(),
 });
 
-const SORT_BY_WHITELIST = ["name", "email", "role", "ageTier", "active", "createdAt"] as const;
-const SUBSCRIPTION_STATUS_FILTERS = ["PAID", "UNPAID", "OVERDUE", "NOT_INVOICED"] as const;
+const SORT_BY_WHITELIST = [
+  "name",
+  "email",
+  "role",
+  "ageTier",
+  "active",
+  "createdAt",
+] as const;
+const SUBSCRIPTION_STATUS_FILTERS = [
+  "PAID",
+  "UNPAID",
+  "OVERDUE",
+  "NOT_INVOICED",
+] as const;
 const MEMBER_LIFECYCLE_STATUS_FILTERS = [
   "active",
   "inactive",
@@ -95,51 +128,55 @@ const MEMBER_LIFECYCLE_STATUS_FILTERS = [
   "all",
 ] as const;
 
-export const adminMembersQuerySchema = z.object({
-  q: optionalSearchParam,
-  search: optionalSearchParam,
-  page: optionalSearchParam,
-  pageSize: optionalSearchParam,
-  sortBy: optionalSearchParam,
-  sortDir: optionalSearchParam,
-  inheritEmailEligible: optionalSearchParam,
-  excludeId: optionalSearchParam,
-  dependentLinkEligibleFor: optionalSearchParam,
-  parentLinkEligibleFor: optionalSearchParam,
-  role: optionalSearchParam,
-  financeAccess: optionalSearchParam,
-  lifecycleStatus: optionalSearchParam,
-  includeArchived: optionalSearchParam,
-  active: optionalSearchParam,
-  ageTier: optionalSearchParam,
-  ageTierIn: optionalSearchParam,
-  xeroLinked: optionalSearchParam,
-  inviteStatus: optionalSearchParam,
-  subscription: optionalSearchParam,
-  familyGroup: optionalSearchParam,
-  xeroContactGroup: optionalSearchParam,
-}).transform((value) => {
-  const q = value.q || value.search || undefined;
-  const sortByRaw = value.sortBy || "name";
-  return {
-    ...value,
-    trimmedQuery: q?.trim(),
-    page: parseClampedInt(value.page, 1, 1, Number.MAX_SAFE_INTEGER),
-    pageSize: parseClampedInt(value.pageSize, 25, 1, 100),
-    sortBy: (SORT_BY_WHITELIST as readonly string[]).includes(sortByRaw)
-      ? sortByRaw
-      : "name",
-    sortDir: value.sortDir === "desc" ? "desc" : "asc",
-    inheritEmailEligible: value.inheritEmailEligible === "true",
-    includeArchived: value.includeArchived === "true",
-  };
-});
+export const adminMembersQuerySchema = z
+  .object({
+    q: optionalSearchParam,
+    search: optionalSearchParam,
+    page: optionalSearchParam,
+    pageSize: optionalSearchParam,
+    sortBy: optionalSearchParam,
+    sortDir: optionalSearchParam,
+    inheritEmailEligible: optionalSearchParam,
+    excludeId: optionalSearchParam,
+    dependentLinkEligibleFor: optionalSearchParam,
+    parentLinkEligibleFor: optionalSearchParam,
+    role: optionalSearchParam,
+    financeAccess: optionalSearchParam,
+    lifecycleStatus: optionalSearchParam,
+    includeArchived: optionalSearchParam,
+    active: optionalSearchParam,
+    ageTier: optionalSearchParam,
+    ageTierIn: optionalSearchParam,
+    xeroLinked: optionalSearchParam,
+    inviteStatus: optionalSearchParam,
+    subscription: optionalSearchParam,
+    familyGroup: optionalSearchParam,
+    xeroContactGroup: optionalSearchParam,
+  })
+  .transform((value) => {
+    const q = value.q || value.search || undefined;
+    const sortByRaw = value.sortBy || "name";
+    return {
+      ...value,
+      trimmedQuery: q?.trim(),
+      page: parseClampedInt(value.page, 1, 1, Number.MAX_SAFE_INTEGER),
+      pageSize: parseClampedInt(value.pageSize, 25, 1, 100),
+      sortBy: (SORT_BY_WHITELIST as readonly string[]).includes(sortByRaw)
+        ? sortByRaw
+        : "name",
+      sortDir: value.sortDir === "desc" ? "desc" : "asc",
+      inheritEmailEligible: value.inheritEmailEligible === "true",
+      includeArchived: value.includeArchived === "true",
+    };
+  });
 
 export type AdminMembersQuery = z.infer<typeof adminMembersQuerySchema>;
 
 export type CreateMemberInput = z.infer<typeof createMemberSchema>;
 
-export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRouteResult> {
+export async function listAdminMembers(
+  query: AdminMembersQuery,
+): Promise<JsonRouteResult> {
   const {
     trimmedQuery,
     page,
@@ -195,7 +232,7 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
   const notRequiredAgeTiers = new Set(
     ageTierSettings
       .filter((setting) => setting.subscriptionRequiredForBooking === false)
-      .map((setting) => setting.tier)
+      .map((setting) => setting.tier),
   );
   const notRequiredSubscriptionConditions = [
     { role: "ADMIN" },
@@ -287,12 +324,13 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
     andConditions.push({ financeAccessLevel: financeAccessFilter });
   }
 
-  const lifecycleStatus = (
+  const lifecycleStatus =
     lifecycleStatusFilter &&
-    (MEMBER_LIFECYCLE_STATUS_FILTERS as readonly string[]).includes(lifecycleStatusFilter)
-  )
-    ? lifecycleStatusFilter
-    : null;
+    (MEMBER_LIFECYCLE_STATUS_FILTERS as readonly string[]).includes(
+      lifecycleStatusFilter,
+    )
+      ? lifecycleStatusFilter
+      : null;
   if (lifecycleStatus === "archived") {
     where.archivedAt = { not: null };
   } else if (lifecycleStatus !== "all" && !includeArchived) {
@@ -327,7 +365,7 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
       ?.split(",")
       .map((tier) => tier.trim())
       .filter((tier): tier is (typeof AGE_TIER_VALUES)[number] =>
-        AGE_TIER_VALUES.includes(tier as (typeof AGE_TIER_VALUES)[number])
+        AGE_TIER_VALUES.includes(tier as (typeof AGE_TIER_VALUES)[number]),
       );
 
     if (ageTierIn && ageTierIn.length > 0) {
@@ -385,7 +423,9 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
     );
   } else if (
     subscriptionFilter &&
-    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(subscriptionFilter)
+    (SUBSCRIPTION_STATUS_FILTERS as readonly string[]).includes(
+      subscriptionFilter,
+    )
   ) {
     andConditions.push(
       { role: { not: "ADMIN" } },
@@ -416,7 +456,9 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
     xeroContactGroupFilter !== "all"
   ) {
     try {
-      const groupContactIds = await getXeroContactIdsForGroup(xeroContactGroupFilter);
+      const groupContactIds = await getXeroContactIdsForGroup(
+        xeroContactGroupFilter,
+      );
       if (groupContactIds.length > 0) {
         andConditions.push({ xeroContactId: { in: groupContactIds } });
       } else {
@@ -424,7 +466,10 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
         andConditions.push({ xeroContactId: { in: [] } });
       }
     } catch (error) {
-      logger.error({ err: error, groupId: xeroContactGroupFilter }, "Failed to fetch Xero contact group members for filter");
+      logger.error(
+        { err: error, groupId: xeroContactGroupFilter },
+        "Failed to fetch Xero contact group members for filter",
+      );
       // Fall through — don't apply this filter if Xero call fails
     }
   }
@@ -435,8 +480,10 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
 
   const select = {
     id: true,
+    title: true,
     firstName: true,
     lastName: true,
+    gender: true,
     email: true,
     phoneCountryCode: true,
     phoneAreaCode: true,
@@ -524,7 +571,10 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
     prisma.member.count({ where }),
   ]);
 
-  let xeroContactGroups: Record<string, Array<{ id: string; name: string }>> = {};
+  let xeroContactGroups: Record<
+    string,
+    Array<{ id: string; name: string }>
+  > = {};
   const linkedContactIds = members
     .map((member) => member.xeroContactId)
     .filter(Boolean) as string[];
@@ -532,14 +582,21 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
 
   if (linkedContactIds.length > 0) {
     try {
-      xeroContactGroups = await getXeroContactGroupMemberships(linkedContactIds);
+      xeroContactGroups =
+        await getXeroContactGroupMemberships(linkedContactIds);
       xeroContactGroupsLoaded = linkedContactIds.every((contactId) =>
-        Object.prototype.hasOwnProperty.call(xeroContactGroups, contactId)
+        Object.prototype.hasOwnProperty.call(xeroContactGroups, contactId),
       );
     } catch (error) {
-      const xeroError = getXeroApiErrorInfo(error, "Failed to fetch Xero contact groups for members list");
+      const xeroError = getXeroApiErrorInfo(
+        error,
+        "Failed to fetch Xero contact groups for members list",
+      );
       if (!xeroError.handled) {
-        logger.error({ err: error }, "Failed to fetch Xero contact groups for members list");
+        logger.error(
+          { err: error },
+          "Failed to fetch Xero contact groups for members list",
+        );
       }
     }
   }
@@ -560,11 +617,11 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
       subscriptionStatus:
         m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
           ? "NOT_REQUIRED"
-          : m.subscriptions[0]?.status ?? null,
+          : (m.subscriptions[0]?.status ?? null),
       subscriptionXeroInvoiceId:
         m.role === "ADMIN" || notRequiredAgeTiers.has(m.ageTier)
           ? null
-          : m.subscriptions[0]?.xeroInvoiceId ?? null,
+          : (m.subscriptions[0]?.xeroInvoiceId ?? null),
       familyGroups: m.familyGroupMemberships.map((fg) => ({
         id: fg.familyGroup.id,
         name: fg.familyGroup.name,
@@ -577,7 +634,7 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
       lastLoginAt: undefined,
       xeroContactGroupsLoaded,
       xeroContactGroups: m.xeroContactId
-        ? xeroContactGroups[m.xeroContactId] ?? []
+        ? (xeroContactGroups[m.xeroContactId] ?? [])
         : [],
       hasCompletedAccountSetup,
       pendingInviteExpiresAt,
@@ -593,12 +650,18 @@ export async function listAdminMembers(query: AdminMembersQuery): Promise<JsonRo
   });
 }
 
-export async function createAdminMember(data: CreateMemberInput): Promise<JsonRouteResult> {
+export async function createAdminMember(
+  data: CreateMemberInput,
+): Promise<JsonRouteResult> {
   const email = data.email.toLowerCase().trim();
   const requestedInheritEmailFromId = data.inheritEmailFromId?.trim() || null;
-  let parentMember:
-    | { id: string; ageTier: AgeTier; active: boolean; inheritEmailFromId: string | null; archivedAt: Date | null }
-    | null = null;
+  let parentMember: {
+    id: string;
+    ageTier: AgeTier;
+    active: boolean;
+    inheritEmailFromId: string | null;
+    archivedAt: Date | null;
+  } | null = null;
 
   // Validate family group assignments
   if (data.familyGroupIds && data.familyGroupIds.length > 0) {
@@ -607,31 +670,44 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
       select: { id: true },
     });
     if (groups.length !== data.familyGroupIds.length) {
-      return jsonResult({ error: "One or more family groups not found" }, { status: 404 });
+      return jsonResult(
+        { error: "One or more family groups not found" },
+        { status: 404 },
+      );
     }
   }
 
   if (data.inheritParentEmail && !data.parentMemberId) {
     return jsonResult(
       { error: "inheritParentEmail requires parentMemberId" },
-      { status: 422 }
+      { status: 422 },
     );
   }
 
   if (data.parentMemberId) {
     parentMember = await prisma.member.findUnique({
       where: { id: data.parentMemberId },
-      select: { id: true, ageTier: true, active: true, inheritEmailFromId: true, archivedAt: true },
+      select: {
+        id: true,
+        ageTier: true,
+        active: true,
+        inheritEmailFromId: true,
+        archivedAt: true,
+      },
     });
 
     if (!parentMember) {
       return jsonResult({ error: "Parent member not found" }, { status: 404 });
     }
 
-    if (parentMember.ageTier !== "ADULT" || !parentMember.active || parentMember.archivedAt) {
+    if (
+      parentMember.ageTier !== "ADULT" ||
+      !parentMember.active ||
+      parentMember.archivedAt
+    ) {
       return jsonResult(
         { error: "Dependents can only be created under active adult members" },
-        { status: 422 }
+        { status: 422 },
       );
     }
   }
@@ -649,7 +725,7 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
     if (!validation.ok) {
       return jsonResult(
         { error: validation.error },
-        { status: validation.status }
+        { status: validation.status },
       );
     }
   }
@@ -663,7 +739,10 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
     if (isNaN(dateOfBirth.getTime())) {
       return jsonResult({ error: "Invalid date of birth" }, { status: 422 });
     }
-    ageTier = await computeAgeTier(dateOfBirth, getSeasonStartDate(getSeasonYear()));
+    ageTier = await computeAgeTier(
+      dateOfBirth,
+      getSeasonStartDate(getSeasonYear()),
+    );
   }
   if (data.joinedDate && data.joinedDate !== "") {
     joinedDate = new Date(data.joinedDate);
@@ -671,6 +750,14 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
       return jsonResult({ error: "Invalid joined date" }, { status: 422 });
     }
   }
+  let lifeMemberDate: Date | null = null;
+  if (data.lifeMemberDate && data.lifeMemberDate !== "") {
+    lifeMemberDate = new Date(data.lifeMemberDate);
+    if (isNaN(lifeMemberDate.getTime())) {
+      return jsonResult({ error: "Invalid life member date" }, { status: 422 });
+    }
+  }
+  const committeeRole = data.committeeRole ?? null;
 
   // Determine canLogin: explicit if provided, otherwise adult members without a parent can log in
   const canLogin =
@@ -683,17 +770,19 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
   if (data.sendInvite && !canLogin) {
     return jsonResult(
       { error: "Setup invites can only be sent to members who can log in" },
-      { status: 422 }
+      { status: 422 },
     );
   }
 
   // Check for existing member with same email that can login
   if (canLogin) {
-    const existing = await prisma.member.findFirst({ where: { email, canLogin: true } });
+    const existing = await prisma.member.findFirst({
+      where: { email, canLogin: true },
+    });
     if (existing) {
       return jsonResult(
         { error: "A member with this email already exists" },
-        { status: 409 }
+        { status: 409 },
       );
     }
   }
@@ -724,8 +813,10 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
       const created = await tx.member.create({
         data: {
           email,
+          title: data.title ?? null,
           firstName: data.firstName.trim(),
           lastName: data.lastName.trim(),
+          gender: data.gender ?? null,
           phoneCountryCode: data.phoneCountryCode?.trim() || null,
           phoneAreaCode: data.phoneAreaCode?.trim() || null,
           phoneNumber: data.phoneNumber?.trim() || null,
@@ -736,11 +827,16 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
           active: data.active,
           canLogin,
           parentMemberId: data.parentMemberId?.trim() || null,
-          inheritParentEmail: data.inheritParentEmail ?? Boolean(data.parentMemberId),
+          inheritParentEmail:
+            data.inheritParentEmail ?? Boolean(data.parentMemberId),
           inheritEmailFromId: resolvedInheritEmailFromId,
           passwordHash: placeholderHash,
           emailVerified: !canLogin, // Non-login members don't need verification
           joinedDate,
+          lifeMemberDate,
+          committeeRole,
+          associateMember: data.associateMember ?? false,
+          comments: data.comments?.trim() || null,
           streetAddressLine1: data.streetAddressLine1?.trim() || null,
           streetAddressLine2: data.streetAddressLine2?.trim() || null,
           streetCity: data.streetCity?.trim() || null,
@@ -758,6 +854,8 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
           id: true,
           firstName: true,
           lastName: true,
+          title: true,
+          gender: true,
           email: true,
           phoneCountryCode: true,
           phoneAreaCode: true,
@@ -773,6 +871,11 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
           inheritEmailFromId: true,
           xeroContactId: true,
           joinedDate: true,
+          lifeMemberDate: true,
+          committeeRole: true,
+          associateMember: true,
+          cancelledAt: true,
+          comments: true,
           createdAt: true,
         },
       });
@@ -809,21 +912,27 @@ export async function createAdminMember(data: CreateMemberInput): Promise<JsonRo
         });
         await sendMemberSetupInviteEmail(member.email, member.firstName, token);
       } catch (emailErr) {
-        logger.error({ err: emailErr, memberId: member.id }, "Failed to send invite email");
+        logger.error(
+          { err: emailErr, memberId: member.id },
+          "Failed to send invite email",
+        );
         inviteWarning = `Member created but invite email failed to send: ${emailErr instanceof Error ? emailErr.message : String(emailErr)}`;
       }
     }
 
     const warnings = [inviteWarning].filter(Boolean);
     return jsonResult(
-      { ...member, ...(warnings.length > 0 ? { warning: warnings.join("; ") } : {}) },
+      {
+        ...member,
+        ...(warnings.length > 0 ? { warning: warnings.join("; ") } : {}),
+      },
       { status: 201 },
     );
   } catch (error) {
     if (isPrismaUniqueConstraintError(error)) {
       return jsonResult(
         { error: "A member with this email already exists" },
-        { status: 409 }
+        { status: 409 },
       );
     }
 

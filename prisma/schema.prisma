@@ -57,6 +57,22 @@ enum AgeTier {
   ADULT
 }
 
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum Title {
+  MR
+  MS
+  MRS
+  MISS
+  MASTER
+  DR
+  REV
+}
+
 enum ApplicationStatus {
   PENDING_NOMINATORS
   PENDING_ADMIN
@@ -260,8 +276,10 @@ model Member {
   // Email verification: new registrations start as false.
   // Existing members should be bulk-updated: UPDATE "Member" SET "emailVerified" = true;
   emailVerified       Boolean   @default(false)
+  title               Title?
   firstName           String
   lastName            String
+  gender              Gender?
   dateOfBirth         DateTime?
 
   // Structured phone (matches Xero's countryCode/areaCode/number format)
@@ -296,10 +314,14 @@ model Member {
   detailsConfirmedByMemberId          String?
   onboardingConfirmedAt               DateTime?
   joinedDate                          DateTime? // Membership start date, sourced from Xero first invoice
+  lifeMemberDate                      DateTime?
+  committeeRole                       String?
+  associateMember                     Boolean            @default(false)
   requiresInduction                   Boolean            @default(false) // Admin-set flag: member must complete a lodge induction
   cancelledAt                         DateTime?
   cancelledReason                     String?
   cancelledViaRequestId               String?
+  comments                            String?            @db.Text
   archivedAt                          DateTime?
   archivedReason                      String?
   archivedViaLifecycleActionRequestId String?

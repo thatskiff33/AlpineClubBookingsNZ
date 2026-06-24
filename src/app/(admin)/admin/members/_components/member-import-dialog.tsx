@@ -1,17 +1,17 @@
-"use client"
+"use client";
 
-import type { ChangeEvent } from "react"
-import { useEffect, useMemo, useState } from "react"
+import type { ChangeEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
   LoaderCircle,
-} from "lucide-react"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -19,16 +19,16 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -36,7 +36,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "@/components/ui/table";
 import {
   buildMemberImportPreview,
   createDefaultMemberImportDateFormatMapping,
@@ -54,15 +54,15 @@ import {
   type MemberImportDateFormatMapping,
   type MemberImportFieldKey,
   type MemberImportPreview,
-} from "@/lib/member-csv-import"
-import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite"
-import type { ImportResult } from "../_types"
+} from "@/lib/member-csv-import";
+import { MEMBER_SETUP_INVITE_TTL_DAYS } from "@/lib/member-setup-invite";
+import type { ImportResult } from "../_types";
 
 interface MemberImportDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onImported: (result: ImportResult) => void
-  onError: (message: string) => void
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onImported: (result: ImportResult) => void;
+  onError: (message: string) => void;
 }
 
 const WIZARD_STEPS = [
@@ -71,42 +71,45 @@ const WIZARD_STEPS = [
   { key: "mapping", label: "Mapping" },
   { key: "validation", label: "Validation" },
   { key: "import", label: "Import" },
-] as const
+] as const;
 
-type WizardStep = (typeof WIZARD_STEPS)[number]["key"]
+type WizardStep = (typeof WIZARD_STEPS)[number]["key"];
 
-const UNMAPPED_VALUE = "unmapped"
+const UNMAPPED_VALUE = "unmapped";
 
 function formatParseError(error: string, lineNumber?: number) {
-  return lineNumber ? `Line ${lineNumber}: ${error}` : error
+  return lineNumber ? `Line ${lineNumber}: ${error}` : error;
 }
 
 function getStepIndex(step: WizardStep) {
-  return WIZARD_STEPS.findIndex((wizardStep) => wizardStep.key === step)
+  return WIZARD_STEPS.findIndex((wizardStep) => wizardStep.key === step);
 }
 
 function getColumnCount(headers: string[], rows: CsvRecord[]) {
-  return Math.max(headers.length, ...rows.map((row) => row.values.length), 1)
+  return Math.max(headers.length, ...rows.map((row) => row.values.length), 1);
 }
 
 function CsvTablePreview({
   headers,
   rows,
 }: {
-  headers: string[]
-  rows: CsvRecord[]
+  headers: string[];
+  rows: CsvRecord[];
 }) {
-  const columnCount = getColumnCount(headers, rows)
-  const displayHeaders = Array.from({ length: columnCount }, (_, index) =>
-    headers[index]?.trim() || `Column ${index + 1}`
-  )
+  const columnCount = getColumnCount(headers, rows);
+  const displayHeaders = Array.from(
+    { length: columnCount },
+    (_, index) => headers[index]?.trim() || `Column ${index + 1}`,
+  );
 
   return (
     <div className="max-h-72 overflow-auto rounded-md border text-xs">
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="sticky top-0 z-10 w-16 bg-background">Line</TableHead>
+            <TableHead className="sticky top-0 z-10 w-16 bg-background">
+              Line
+            </TableHead>
             {displayHeaders.map((header, index) => (
               <TableHead
                 key={`${header}-${index}`}
@@ -134,17 +137,17 @@ function CsvTablePreview({
         </TableBody>
       </Table>
     </div>
-  )
+  );
 }
 
 function WizardStepList({ step }: { step: WizardStep }) {
-  const currentStepIndex = getStepIndex(step)
+  const currentStepIndex = getStepIndex(step);
 
   return (
     <div className="grid grid-cols-5 gap-2">
       {WIZARD_STEPS.map((wizardStep, index) => {
-        const active = wizardStep.key === step
-        const complete = index < currentStepIndex
+        const active = wizardStep.key === step;
+        const complete = index < currentStepIndex;
         return (
           <div
             key={wizardStep.key}
@@ -160,10 +163,10 @@ function WizardStepList({ step }: { step: WizardStep }) {
             </span>
             <span className="truncate">{wizardStep.label}</span>
           </div>
-        )
+        );
       })}
     </div>
-  )
+  );
 }
 
 function MappingSelect({
@@ -172,12 +175,15 @@ function MappingSelect({
   headers,
   onChange,
 }: {
-  fieldKey: MemberImportFieldKey
-  mapping: MemberImportColumnMapping
-  headers: string[]
-  onChange: (fieldKey: MemberImportFieldKey, columnIndex: number | null) => void
+  fieldKey: MemberImportFieldKey;
+  mapping: MemberImportColumnMapping;
+  headers: string[];
+  onChange: (
+    fieldKey: MemberImportFieldKey,
+    columnIndex: number | null,
+  ) => void;
 }) {
-  const selected = mapping[fieldKey]
+  const selected = mapping[fieldKey];
   return (
     <Select
       value={selected === null ? UNMAPPED_VALUE : String(selected)}
@@ -197,7 +203,7 @@ function MappingSelect({
         ))}
       </SelectContent>
     </Select>
-  )
+  );
 }
 
 function DateFormatSelect({
@@ -205,14 +211,19 @@ function DateFormatSelect({
   dateFormats,
   onChange,
 }: {
-  fieldKey: MemberImportDateFieldKey
-  dateFormats: MemberImportDateFormatMapping
-  onChange: (fieldKey: MemberImportDateFieldKey, format: MemberImportDateFormat) => void
+  fieldKey: MemberImportDateFieldKey;
+  dateFormats: MemberImportDateFormatMapping;
+  onChange: (
+    fieldKey: MemberImportDateFieldKey,
+    format: MemberImportDateFormat,
+  ) => void;
 }) {
   return (
     <Select
       value={dateFormats[fieldKey]}
-      onValueChange={(value) => onChange(fieldKey, value as MemberImportDateFormat)}
+      onValueChange={(value) =>
+        onChange(fieldKey, value as MemberImportDateFormat)
+      }
     >
       <SelectTrigger>
         <SelectValue />
@@ -225,7 +236,7 @@ function DateFormatSelect({
         ))}
       </SelectContent>
     </Select>
-  )
+  );
 }
 
 function ValidationTable({ preview }: { preview: MemberImportPreview }) {
@@ -234,15 +245,42 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="sticky top-0 z-10 w-16 bg-background">Line</TableHead>
-            <TableHead className="sticky top-0 z-10 bg-background">Status</TableHead>
-            <TableHead className="sticky top-0 z-10 bg-background">First Name</TableHead>
-            <TableHead className="sticky top-0 z-10 bg-background">Last Name</TableHead>
-            <TableHead className="sticky top-0 z-10 bg-background">Email</TableHead>
-            <TableHead className="sticky top-0 z-10 bg-background">DOB</TableHead>
-            <TableHead className="sticky top-0 z-10 bg-background">Joined</TableHead>
-            <TableHead className="sticky top-0 z-10 bg-background">Role</TableHead>
-            <TableHead className="sticky top-0 z-10 min-w-56 bg-background">Issues</TableHead>
+            <TableHead className="sticky top-0 z-10 w-16 bg-background">
+              Line
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
+              Status
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
+              Title
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
+              First Name
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
+              Last Name
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
+              Gender
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
+              Email
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
+              DOB
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
+              Joined
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
+              Life Member
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 bg-background">
+              Role
+            </TableHead>
+            <TableHead className="sticky top-0 z-10 min-w-56 bg-background">
+              Issues
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -256,11 +294,26 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
                   <Badge variant="success">Ready</Badge>
                 )}
               </TableCell>
+              <TableCell>{row.values.title}</TableCell>
               <TableCell>{row.values.firstName}</TableCell>
               <TableCell>{row.values.lastName}</TableCell>
+              <TableCell>{row.values.gender}</TableCell>
               <TableCell className="break-all">{row.values.email}</TableCell>
-              <TableCell>{row.normalizedDateValues.dateOfBirth || row.values.dateOfBirth || ""}</TableCell>
-              <TableCell>{row.normalizedDateValues.joinedDate || row.values.joinedDate || ""}</TableCell>
+              <TableCell>
+                {row.normalizedDateValues.dateOfBirth ||
+                  row.values.dateOfBirth ||
+                  ""}
+              </TableCell>
+              <TableCell>
+                {row.normalizedDateValues.joinedDate ||
+                  row.values.joinedDate ||
+                  ""}
+              </TableCell>
+              <TableCell>
+                {row.normalizedDateValues.lifeMemberDate ||
+                  row.values.lifeMemberDate ||
+                  ""}
+              </TableCell>
               <TableCell>{row.values.role || "MEMBER"}</TableCell>
               <TableCell className="text-red-700">
                 {row.errors.length > 0 ? row.errors.join(", ") : ""}
@@ -270,7 +323,7 @@ function ValidationTable({ preview }: { preview: MemberImportPreview }) {
         </TableBody>
       </Table>
     </div>
-  )
+  );
 }
 
 export function MemberImportDialog({
@@ -279,103 +332,109 @@ export function MemberImportDialog({
   onImported,
   onError,
 }: MemberImportDialogProps) {
-  const [wizardStep, setWizardStep] = useState<WizardStep>("upload")
-  const [csvFileName, setCsvFileName] = useState("")
-  const [csvData, setCsvData] = useState<MemberImportCsvData | null>(null)
+  const [wizardStep, setWizardStep] = useState<WizardStep>("upload");
+  const [csvFileName, setCsvFileName] = useState("");
+  const [csvData, setCsvData] = useState<MemberImportCsvData | null>(null);
   const [columnMapping, setColumnMapping] = useState<MemberImportColumnMapping>(
-    inferMemberImportColumnMapping([])
-  )
+    inferMemberImportColumnMapping([]),
+  );
   const [dateFormats, setDateFormats] = useState<MemberImportDateFormatMapping>(
-    createDefaultMemberImportDateFormatMapping()
-  )
-  const [parseError, setParseError] = useState<string | null>(null)
-  const [importSendInvites, setImportSendInvites] = useState(false)
-  const [importLoading, setImportLoading] = useState(false)
-  const [importResult, setImportResult] = useState<ImportResult | null>(null)
+    createDefaultMemberImportDateFormatMapping(),
+  );
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [importSendInvites, setImportSendInvites] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
   const preview = useMemo(
-    () => (csvData ? buildMemberImportPreview(csvData, columnMapping, dateFormats) : null),
-    [columnMapping, csvData, dateFormats]
-  )
+    () =>
+      csvData
+        ? buildMemberImportPreview(csvData, columnMapping, dateFormats)
+        : null,
+    [columnMapping, csvData, dateFormats],
+  );
 
   useEffect(() => {
-    if (!open) return
-    setWizardStep("upload")
-    setCsvFileName("")
-    setCsvData(null)
-    setColumnMapping(inferMemberImportColumnMapping([]))
-    setDateFormats(createDefaultMemberImportDateFormatMapping())
-    setParseError(null)
-    setImportSendInvites(false)
-    setImportLoading(false)
-    setImportResult(null)
-  }, [open])
+    if (!open) return;
+    setWizardStep("upload");
+    setCsvFileName("");
+    setCsvData(null);
+    setColumnMapping(inferMemberImportColumnMapping([]));
+    setDateFormats(createDefaultMemberImportDateFormatMapping());
+    setParseError(null);
+    setImportSendInvites(false);
+    setImportLoading(false);
+    setImportResult(null);
+  }, [open]);
 
   const handleFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
+    const file = event.target.files?.[0];
+    if (!file) return;
 
-    setCsvFileName(file.name)
-    setParseError(null)
-    setImportResult(null)
+    setCsvFileName(file.name);
+    setParseError(null);
+    setImportResult(null);
 
-    const reader = new FileReader()
+    const reader = new FileReader();
     reader.onload = (loadEvent) => {
-      const text = loadEvent.target?.result
+      const text = loadEvent.target?.result;
       if (typeof text !== "string" || text.length === 0) {
-        const message = "CSV file is empty"
-        setParseError(message)
-        onError(message)
-        return
+        const message = "CSV file is empty";
+        setParseError(message);
+        onError(message);
+        return;
       }
 
-      const parsed = parseMemberImportCsv(text)
+      const parsed = parseMemberImportCsv(text);
       if (!parsed.ok) {
-        const message = formatParseError(parsed.error, parsed.lineNumber)
-        setCsvData(null)
-        setColumnMapping(inferMemberImportColumnMapping([]))
-        setDateFormats(createDefaultMemberImportDateFormatMapping())
-        setParseError(message)
-        setWizardStep("upload")
-        onError(message)
-        return
+        const message = formatParseError(parsed.error, parsed.lineNumber);
+        setCsvData(null);
+        setColumnMapping(inferMemberImportColumnMapping([]));
+        setDateFormats(createDefaultMemberImportDateFormatMapping());
+        setParseError(message);
+        setWizardStep("upload");
+        onError(message);
+        return;
       }
 
-      setCsvData(parsed.data)
-      setColumnMapping(inferMemberImportColumnMapping(parsed.data.headers))
-      setWizardStep("parse")
-    }
+      setCsvData(parsed.data);
+      setColumnMapping(inferMemberImportColumnMapping(parsed.data.headers));
+      setWizardStep("parse");
+    };
     reader.onerror = () => {
-      const message = "Unable to read CSV file"
-      setParseError(message)
-      onError(message)
-    }
-    reader.readAsText(file)
-  }
+      const message = "Unable to read CSV file";
+      setParseError(message);
+      onError(message);
+    };
+    reader.readAsText(file);
+  };
 
-  const handleMappingChange = (fieldKey: MemberImportFieldKey, columnIndex: number | null) => {
+  const handleMappingChange = (
+    fieldKey: MemberImportFieldKey,
+    columnIndex: number | null,
+  ) => {
     setColumnMapping((currentMapping) => ({
       ...currentMapping,
       [fieldKey]: columnIndex,
-    }))
-  }
+    }));
+  };
 
   const handleDateFormatChange = (
     fieldKey: MemberImportDateFieldKey,
-    format: MemberImportDateFormat
+    format: MemberImportDateFormat,
   ) => {
     setDateFormats((currentFormats) => ({
       ...currentFormats,
       [fieldKey]: format,
-    }))
-  }
+    }));
+  };
 
   const handleImport = async () => {
-    if (!preview || preview.hasErrors) return
+    if (!preview || preview.hasErrors) return;
 
-    setImportLoading(true)
-    setImportResult(null)
-    setWizardStep("import")
+    setImportLoading(true);
+    setImportResult(null);
+    setWizardStep("import");
     try {
       const res = await fetch("/api/admin/members/import", {
         method: "POST",
@@ -386,44 +445,58 @@ export function MemberImportDialog({
           sendInvites: importSendInvites,
           autoLinkXero: false,
         }),
-      })
-      const data = (await res.json().catch(() => ({}))) as ImportResult & { error?: string }
-      if (!res.ok) throw new Error(data.error || "Import failed")
-      setImportResult(data)
+      });
+      const data = (await res.json().catch(() => ({}))) as ImportResult & {
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "Import failed");
+      setImportResult(data);
       if (data.errors.length > 0) {
-        onError("No members were created")
+        onError("No members were created");
       } else if (data.created > 0) {
-        onImported(data)
+        onImported(data);
       }
     } catch (err) {
-      setWizardStep("validation")
-      onError(err instanceof Error ? err.message : "Import failed")
+      setWizardStep("validation");
+      onError(err instanceof Error ? err.message : "Import failed");
     } finally {
-      setImportLoading(false)
+      setImportLoading(false);
     }
-  }
+  };
 
-  const currentStepIndex = getStepIndex(wizardStep)
-  const canGoBack = currentStepIndex > 0 && wizardStep !== "import" && !importLoading
-  const canContinueFromParse = wizardStep === "parse" && Boolean(csvData)
-  const canContinueFromMapping = wizardStep === "mapping" && Boolean(csvData)
+  const currentStepIndex = getStepIndex(wizardStep);
+  const canGoBack =
+    currentStepIndex > 0 && wizardStep !== "import" && !importLoading;
+  const canContinueFromParse = wizardStep === "parse" && Boolean(csvData);
+  const canContinueFromMapping = wizardStep === "mapping" && Boolean(csvData);
   const canImport =
-    wizardStep === "validation" && Boolean(preview) && !preview?.hasErrors && !importLoading
+    wizardStep === "validation" &&
+    Boolean(preview) &&
+    !preview?.hasErrors &&
+    !importLoading;
 
   const sampleValueForField = (fieldKey: MemberImportFieldKey) => {
-    if (!csvData) return ""
-    const columnIndex = columnMapping[fieldKey]
-    if (columnIndex === null) return ""
-    return csvData.rows[0]?.values[columnIndex]?.trim() || ""
-  }
+    if (!csvData) return "";
+    const columnIndex = columnMapping[fieldKey];
+    if (columnIndex === null) return "";
+    return csvData.rows[0]?.values[columnIndex]?.trim() || "";
+  };
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => !importLoading && onOpenChange(nextOpen)}>
-      <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-5xl">
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => !importLoading && onOpenChange(nextOpen)}
+    >
+      <DialogContent
+        className="flex max-h-[90vh] flex-col sm:max-w-5xl"
+        onInteractOutside={(event) => event.preventDefault()}
+        onEscapeKeyDown={(event) => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>Import Members from CSV</DialogTitle>
           <DialogDescription>
-            Upload a CSV with member details, confirm the column mapping, then import.
+            Upload a CSV with member details, confirm the column mapping, then
+            import.
           </DialogDescription>
         </DialogHeader>
 
@@ -456,7 +529,9 @@ export function MemberImportDialog({
               <div className="grid gap-3 md:grid-cols-4">
                 <div className="rounded-md border p-3">
                   <p className="text-xs uppercase text-slate-500">File</p>
-                  <p className="truncate text-sm font-medium">{csvFileName || "Selected CSV"}</p>
+                  <p className="truncate text-sm font-medium">
+                    {csvFileName || "Selected CSV"}
+                  </p>
                 </div>
                 <div className="rounded-md border p-3">
                   <p className="text-xs uppercase text-slate-500">Rows</p>
@@ -464,17 +539,25 @@ export function MemberImportDialog({
                 </div>
                 <div className="rounded-md border p-3">
                   <p className="text-xs uppercase text-slate-500">Columns</p>
-                  <p className="text-sm font-medium">{csvData.headers.length}</p>
+                  <p className="text-sm font-medium">
+                    {csvData.headers.length}
+                  </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs uppercase text-slate-500">Blank Lines</p>
-                  <p className="text-sm font-medium">{csvData.blankLineCount}</p>
+                  <p className="text-xs uppercase text-slate-500">
+                    Blank Lines
+                  </p>
+                  <p className="text-sm font-medium">
+                    {csvData.blankLineCount}
+                  </p>
                 </div>
               </div>
               {csvData.rows.length > MEMBER_IMPORT_MAX_ROWS && (
                 <div className="flex gap-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <p>Imports are limited to {MEMBER_IMPORT_MAX_ROWS} data rows.</p>
+                  <p>
+                    Imports are limited to {MEMBER_IMPORT_MAX_ROWS} data rows.
+                  </p>
                 </div>
               )}
               <CsvTablePreview headers={csvData.headers} rows={csvData.rows} />
@@ -482,14 +565,23 @@ export function MemberImportDialog({
           )}
 
           {wizardStep === "mapping" && csvData && (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {MEMBER_IMPORT_FIELD_DEFINITIONS.map((definition) => {
-                const mapped = columnMapping[definition.key] !== null
+                const mapped = columnMapping[definition.key] !== null;
                 return (
-                  <div key={definition.key} className="rounded-md border p-3">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <Label className="text-sm">{definition.label}</Label>
-                      {definition.required && <Badge variant="secondary">Required</Badge>}
+                  <div key={definition.key} className="rounded-md border p-2">
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <Label className="text-xs font-medium">
+                        {definition.label}
+                      </Label>
+                      {definition.required && (
+                        <Badge
+                          variant="secondary"
+                          className="px-1.5 py-0 text-[10px]"
+                        >
+                          Required
+                        </Badge>
+                      )}
                     </div>
                     <MappingSelect
                       fieldKey={definition.key}
@@ -498,8 +590,10 @@ export function MemberImportDialog({
                       onChange={handleMappingChange}
                     />
                     {isMemberImportDateField(definition.key) && mapped && (
-                      <div className="mt-2 space-y-1">
-                        <Label className="text-xs">Date format</Label>
+                      <div className="mt-1.5 space-y-1">
+                        <Label className="text-[10px] uppercase text-slate-500">
+                          Date format
+                        </Label>
                         <DateFormatSelect
                           fieldKey={definition.key}
                           dateFormats={dateFormats}
@@ -507,11 +601,14 @@ export function MemberImportDialog({
                         />
                       </div>
                     )}
-                    <p className="mt-2 min-h-4 truncate text-xs text-slate-500">
-                      {mapped ? sampleValueForField(definition.key) || "Blank in first row" : ""}
+                    <p className="mt-1.5 min-h-4 truncate text-[11px] text-slate-500">
+                      {mapped
+                        ? sampleValueForField(definition.key) ||
+                          "Blank in first row"
+                        : ""}
                     </p>
                   </div>
-                )
+                );
               })}
             </div>
           )}
@@ -522,18 +619,25 @@ export function MemberImportDialog({
                 <div className="rounded-md border p-3">
                   <p className="text-xs uppercase text-slate-500">Rows Ready</p>
                   <p className="text-sm font-medium">
-                    {preview.rows.filter((row) => row.errors.length === 0).length}
+                    {
+                      preview.rows.filter((row) => row.errors.length === 0)
+                        .length
+                    }
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs uppercase text-slate-500">Rows Blocked</p>
+                  <p className="text-xs uppercase text-slate-500">
+                    Rows Blocked
+                  </p>
                   <p className="text-sm font-medium">
                     {preview.rows.filter((row) => row.errors.length > 0).length}
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
                   <p className="text-xs uppercase text-slate-500">API Limit</p>
-                  <p className="text-sm font-medium">{MEMBER_IMPORT_MAX_ROWS} rows</p>
+                  <p className="text-sm font-medium">
+                    {MEMBER_IMPORT_MAX_ROWS} rows
+                  </p>
                 </div>
               </div>
               {preview.fileErrors.length > 0 && (
@@ -547,10 +651,13 @@ export function MemberImportDialog({
                 <Checkbox
                   id="sendInvites"
                   checked={importSendInvites}
-                  onCheckedChange={(checked) => setImportSendInvites(checked === true)}
+                  onCheckedChange={(checked) =>
+                    setImportSendInvites(checked === true)
+                  }
                 />
                 <Label htmlFor="sendInvites" className="text-sm">
-                  Send account setup invites ({MEMBER_SETUP_INVITE_TTL_DAYS}-day links)
+                  Send account setup invites ({MEMBER_SETUP_INVITE_TTL_DAYS}-day
+                  links)
                 </Label>
               </div>
               <ValidationTable preview={preview} />
@@ -570,28 +677,45 @@ export function MemberImportDialog({
                   {importResult.errors.length > 0 && (
                     <div className="flex gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                      <p>No members were created. Fix the row errors and try again.</p>
+                      <p>
+                        No members were created. Fix the row errors and try
+                        again.
+                      </p>
                     </div>
                   )}
-                  {importResult.errors.length === 0 && importResult.created === 0 && (
-                    <div className="flex gap-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                      <p>No members were imported. Review the skipped rows below.</p>
-                    </div>
-                  )}
-                  {importResult.errors.length === 0 && importResult.created > 0 && (
-                    <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
-                      Imported {importResult.created} member(s), skipped {importResult.skipped}.
-                    </div>
-                  )}
+                  {importResult.errors.length === 0 &&
+                    importResult.created === 0 && (
+                      <div className="flex gap-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-800">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                        <p>
+                          No members were imported. Review the skipped rows
+                          below.
+                        </p>
+                      </div>
+                    )}
+                  {importResult.errors.length === 0 &&
+                    importResult.created > 0 && (
+                      <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+                        Imported {importResult.created} member(s), skipped{" "}
+                        {importResult.skipped}.
+                      </div>
+                    )}
                   <div className="grid gap-3 md:grid-cols-3">
                     <div className="rounded-md border p-3">
-                      <p className="text-xs uppercase text-slate-500">Created</p>
-                      <p className="text-sm font-medium text-green-700">{importResult.created}</p>
+                      <p className="text-xs uppercase text-slate-500">
+                        Created
+                      </p>
+                      <p className="text-sm font-medium text-green-700">
+                        {importResult.created}
+                      </p>
                     </div>
                     <div className="rounded-md border p-3">
-                      <p className="text-xs uppercase text-slate-500">Skipped</p>
-                      <p className="text-sm font-medium text-yellow-700">{importResult.skipped}</p>
+                      <p className="text-xs uppercase text-slate-500">
+                        Skipped
+                      </p>
+                      <p className="text-sm font-medium text-yellow-700">
+                        {importResult.skipped}
+                      </p>
                     </div>
                     <div className="rounded-md border p-3">
                       <p className="text-xs uppercase text-slate-500">Errors</p>
@@ -609,15 +733,17 @@ export function MemberImportDialog({
                       ))}
                     </div>
                   )}
-                  {importResult.skippedRows && importResult.skippedRows.length > 0 && (
-                    <div className="max-h-40 overflow-y-auto rounded-md border border-yellow-200 p-3 text-xs text-yellow-800">
-                      {importResult.skippedRows.map((skipped, index) => (
-                        <p key={`${skipped.row}-${index}`}>
-                          Row {skipped.row}: {skipped.reason} ({skipped.email})
-                        </p>
-                      ))}
-                    </div>
-                  )}
+                  {importResult.skippedRows &&
+                    importResult.skippedRows.length > 0 && (
+                      <div className="max-h-40 overflow-y-auto rounded-md border border-yellow-200 p-3 text-xs text-yellow-800">
+                        {importResult.skippedRows.map((skipped, index) => (
+                          <p key={`${skipped.row}-${index}`}>
+                            Row {skipped.row}: {skipped.reason} ({skipped.email}
+                            )
+                          </p>
+                        ))}
+                      </div>
+                    )}
                 </div>
               )}
             </div>
@@ -625,13 +751,19 @@ export function MemberImportDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={importLoading}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={importLoading}
+          >
             Close
           </Button>
           {canGoBack && (
             <Button
               variant="outline"
-              onClick={() => setWizardStep(WIZARD_STEPS[currentStepIndex - 1].key)}
+              onClick={() =>
+                setWizardStep(WIZARD_STEPS[currentStepIndex - 1].key)
+              }
             >
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back
@@ -658,5 +790,5 @@ export function MemberImportDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
