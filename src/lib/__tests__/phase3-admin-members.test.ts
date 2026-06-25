@@ -634,7 +634,7 @@ describe("Phase 3: Admin Member Management", () => {
 
       const csv = await res.text();
       const lines = csv.split("\r\n");
-      expect(lines[0]).toBe("First Name,Last Name,Email,Phone Country Code,Phone Area Code,Phone Number,Date of Birth,Role,Age Tier,Active,Cancelled At,Archived At,Xero Contact ID,Subscription Status,Created At");
+      expect(lines[0]).toBe("Title,First Name,Last Name,Gender,Email,Phone Country Code,Phone Area Code,Phone Number,Street Address Line 1,Street Address Line 2,City,Region,Country,Postal Code,Date of Birth,Life Member Date,Role,Age Tier,Associate Member,Active,Cancelled At,Archived At,Xero Contact ID,Subscription Status,Comments,Created At");
       expect(lines[1]).toContain("Alice");
       expect(lines[1]).toContain("PAID");
     });
