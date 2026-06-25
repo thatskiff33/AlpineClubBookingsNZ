@@ -105,6 +105,8 @@ const defaultEditForm: EditForm = {
 };
 
 const defaultDependentForm: DependentForm = {
+  title: "",
+  gender: "",
   firstName: "",
   lastName: "",
   email: "",
@@ -918,6 +920,8 @@ export default function MemberDetailPage({
       member.inheritEmailFrom?.email || member.email;
 
     setDependentForm({
+      title: "",
+      gender: "",
       firstName: "",
       lastName: member.lastName,
       email: inheritedEmailAddress,
@@ -1063,6 +1067,8 @@ export default function MemberDetailPage({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          title: dependentForm.title || null,
+          gender: dependentForm.gender || null,
           firstName: dependentForm.firstName,
           lastName: dependentForm.lastName,
           email: dependentForm.email,

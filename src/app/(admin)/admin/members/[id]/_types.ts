@@ -228,6 +228,8 @@ export interface EditForm {
 }
 
 export interface DependentForm extends MemberAddressValues {
+  title: Title | "";
+  gender: Gender | "";
   firstName: string;
   lastName: string;
   email: string;

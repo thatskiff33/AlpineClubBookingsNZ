@@ -1,8 +1,8 @@
-"use client"
+"use client";
 
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -10,55 +10,65 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Search } from "lucide-react"
-import { MemberAddressFields } from "@/components/member-address-fields"
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Search } from "lucide-react";
+import { MemberAddressFields } from "@/components/member-address-fields";
+import { GENDER_OPTIONS, TITLE_OPTIONS } from "@/lib/member-enums";
 import {
   dedupeParentOptions,
   formatMemberDateNz,
   parentLinkTypeLabel,
-} from "@/lib/admin-member-detail-helpers"
-import type { MemberAddressValues } from "@/lib/member-address"
+} from "@/lib/admin-member-detail-helpers";
+import type { MemberAddressValues } from "@/lib/member-address";
 import type {
   DependentDialogMode,
   DependentForm,
   LinkDependentSearchResult,
   MemberDetail,
-} from "../_types"
+} from "../_types";
 
 interface MemberDependentDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  member: MemberDetail
-  mode: DependentDialogMode
-  onChangeMode: (value: DependentDialogMode) => void
-  error: string
-  saving: boolean
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  member: MemberDetail;
+  mode: DependentDialogMode;
+  onChangeMode: (value: DependentDialogMode) => void;
+  error: string;
+  saving: boolean;
   // create tab
-  createForm: DependentForm
-  createPostalSameAsPhysical: boolean
-  onChangeCreateForm: (next: DependentForm | ((prev: DependentForm) => DependentForm)) => void
-  onChangeCreatePostalSameAsPhysical: (value: boolean) => void
-  onChangeCreateAddressFields: (patch: Partial<MemberAddressValues>) => void
-  onSubmitCreate: () => void
+  createForm: DependentForm;
+  createPostalSameAsPhysical: boolean;
+  onChangeCreateForm: (
+    next: DependentForm | ((prev: DependentForm) => DependentForm),
+  ) => void;
+  onChangeCreatePostalSameAsPhysical: (value: boolean) => void;
+  onChangeCreateAddressFields: (patch: Partial<MemberAddressValues>) => void;
+  onSubmitCreate: () => void;
   // link tab
-  linkSearch: string
-  linkSearching: boolean
-  linkSearchResults: LinkDependentSearchResult[]
-  linkSelected: LinkDependentSearchResult | null
-  linkNotificationParentId: string
-  linkDisableLogin: boolean
-  linkFamilyGroupIds: string[]
-  onChangeLinkSearch: (value: string) => void
-  onSelectLinkCandidate: (candidate: LinkDependentSearchResult) => void
-  onClearLinkSelection: () => void
-  onChangeLinkNotificationParentId: (value: string) => void
-  onChangeLinkDisableLogin: (value: boolean) => void
-  onToggleLinkFamilyGroup: (familyGroupId: string, checked: boolean) => void
-  onSubmitLink: () => void
+  linkSearch: string;
+  linkSearching: boolean;
+  linkSearchResults: LinkDependentSearchResult[];
+  linkSelected: LinkDependentSearchResult | null;
+  linkNotificationParentId: string;
+  linkDisableLogin: boolean;
+  linkFamilyGroupIds: string[];
+  onChangeLinkSearch: (value: string) => void;
+  onSelectLinkCandidate: (candidate: LinkDependentSearchResult) => void;
+  onClearLinkSelection: () => void;
+  onChangeLinkNotificationParentId: (value: string) => void;
+  onChangeLinkDisableLogin: (value: boolean) => void;
+  onToggleLinkFamilyGroup: (familyGroupId: string, checked: boolean) => void;
+  onSubmitLink: () => void;
 }
 
 export function MemberDependentDialog({
@@ -96,11 +106,19 @@ export function MemberDependentDialog({
         <DialogHeader>
           <DialogTitle>Add Dependent</DialogTitle>
           <DialogDescription>
-            Create a new dependent or link an existing member under {member.firstName} {member.lastName}.
+            Create a new dependent or link an existing member under{" "}
+            {member.firstName} {member.lastName}.
           </DialogDescription>
         </DialogHeader>
-        {error && <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{error}</div>}
-        <Tabs value={mode} onValueChange={(value) => onChangeMode(value as DependentDialogMode)}>
+        {error && (
+          <div className="p-2 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+            {error}
+          </div>
+        )}
+        <Tabs
+          value={mode}
+          onValueChange={(value) => onChangeMode(value as DependentDialogMode)}
+        >
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="create">Create new</TabsTrigger>
             <TabsTrigger value="link">Link existing</TabsTrigger>
@@ -108,7 +126,65 @@ export function MemberDependentDialog({
           <TabsContent value="create" className="mt-4">
             <div className="grid gap-4 py-2">
               <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                This dependent will be created as a non-login member and inherit notifications from the parent email.
+                This dependent will be created as a non-login member and inherit
+                notifications from the parent email.
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="dependent-title">Title</Label>
+                  <Select
+                    value={createForm.title || "__none__"}
+                    onValueChange={(value) =>
+                      onChangeCreateForm((f) => ({
+                        ...f,
+                        title:
+                          value === "__none__"
+                            ? ""
+                            : (value as DependentForm["title"]),
+                      }))
+                    }
+                  >
+                    <SelectTrigger id="dependent-title">
+                      <SelectValue placeholder="Select title" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">None</SelectItem>
+                      {TITLE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="dependent-gender">Gender</Label>
+                  <Select
+                    value={createForm.gender || "__none__"}
+                    onValueChange={(value) =>
+                      onChangeCreateForm((f) => ({
+                        ...f,
+                        gender:
+                          value === "__none__"
+                            ? ""
+                            : (value as DependentForm["gender"]),
+                      }))
+                    }
+                  >
+                    <SelectTrigger id="dependent-gender">
+                      <SelectValue placeholder="Select gender" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">None</SelectItem>
+                      {GENDER_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -117,7 +193,12 @@ export function MemberDependentDialog({
                   <Input
                     id="dependent-firstName"
                     value={createForm.firstName}
-                    onChange={(e) => onChangeCreateForm((f) => ({ ...f, firstName: e.target.value }))}
+                    onChange={(e) =>
+                      onChangeCreateForm((f) => ({
+                        ...f,
+                        firstName: e.target.value,
+                      }))
+                    }
                   />
                 </div>
                 <div className="space-y-2">
@@ -125,7 +206,12 @@ export function MemberDependentDialog({
                   <Input
                     id="dependent-lastName"
                     value={createForm.lastName}
-                    onChange={(e) => onChangeCreateForm((f) => ({ ...f, lastName: e.target.value }))}
+                    onChange={(e) =>
+                      onChangeCreateForm((f) => ({
+                        ...f,
+                        lastName: e.target.value,
+                      }))
+                    }
                   />
                 </div>
               </div>
@@ -136,10 +222,13 @@ export function MemberDependentDialog({
                   id="dependent-email"
                   type="email"
                   value={createForm.email}
-                  onChange={(e) => onChangeCreateForm((f) => ({ ...f, email: e.target.value }))}
+                  onChange={(e) =>
+                    onChangeCreateForm((f) => ({ ...f, email: e.target.value }))
+                  }
                 />
                 <p className="text-xs text-muted-foreground">
-                  This can match the parent email. Delivery will still be controlled by the inherited-email settings.
+                  This can match the parent email. Delivery will still be
+                  controlled by the inherited-email settings.
                 </p>
               </div>
 
@@ -149,9 +238,16 @@ export function MemberDependentDialog({
                   id="dependent-dateOfBirth"
                   type="date"
                   value={createForm.dateOfBirth}
-                  onChange={(e) => onChangeCreateForm((f) => ({ ...f, dateOfBirth: e.target.value }))}
+                  onChange={(e) =>
+                    onChangeCreateForm((f) => ({
+                      ...f,
+                      dateOfBirth: e.target.value,
+                    }))
+                  }
                 />
-                <p className="text-xs text-muted-foreground">Age tier will be calculated from date of birth.</p>
+                <p className="text-xs text-muted-foreground">
+                  Age tier will be calculated from date of birth.
+                </p>
               </div>
 
               <div className="space-y-2">
@@ -162,7 +258,10 @@ export function MemberDependentDialog({
                     placeholder="64"
                     value={createForm.phoneCountryCode}
                     onChange={(e) =>
-                      onChangeCreateForm((f) => ({ ...f, phoneCountryCode: e.target.value }))
+                      onChangeCreateForm((f) => ({
+                        ...f,
+                        phoneCountryCode: e.target.value,
+                      }))
                     }
                     maxLength={5}
                     aria-label="Country code"
@@ -171,7 +270,12 @@ export function MemberDependentDialog({
                     className="w-20"
                     placeholder="27"
                     value={createForm.phoneAreaCode}
-                    onChange={(e) => onChangeCreateForm((f) => ({ ...f, phoneAreaCode: e.target.value }))}
+                    onChange={(e) =>
+                      onChangeCreateForm((f) => ({
+                        ...f,
+                        phoneAreaCode: e.target.value,
+                      }))
+                    }
                     maxLength={5}
                     aria-label="Area code"
                   />
@@ -179,7 +283,12 @@ export function MemberDependentDialog({
                     className="flex-1"
                     placeholder="123 4567"
                     value={createForm.phoneNumber}
-                    onChange={(e) => onChangeCreateForm((f) => ({ ...f, phoneNumber: e.target.value }))}
+                    onChange={(e) =>
+                      onChangeCreateForm((f) => ({
+                        ...f,
+                        phoneNumber: e.target.value,
+                      }))
+                    }
                     maxLength={15}
                     aria-label="Phone number"
                   />
@@ -209,7 +318,9 @@ export function MemberDependentDialog({
                     className="pl-9"
                   />
                   {linkSearching && (
-                    <div className="absolute right-3 top-2.5 text-xs text-slate-400">Searching...</div>
+                    <div className="absolute right-3 top-2.5 text-xs text-slate-400">
+                      Searching...
+                    </div>
                   )}
                 </div>
               </div>
@@ -222,14 +333,21 @@ export function MemberDependentDialog({
                         <p className="text-sm font-medium text-slate-900">
                           {linkSelected.firstName} {linkSelected.lastName}
                         </p>
-                        <Badge variant="secondary">{linkSelected.ageTier}</Badge>
+                        <Badge variant="secondary">
+                          {linkSelected.ageTier}
+                        </Badge>
                         {!linkSelected.active && (
-                          <Badge variant="secondary" className="bg-slate-100 text-slate-600 border-slate-200">
+                          <Badge
+                            variant="secondary"
+                            className="bg-slate-100 text-slate-600 border-slate-200"
+                          >
                             Inactive
                           </Badge>
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-slate-500">{linkSelected.email}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {linkSelected.email}
+                      </p>
                       <p className="mt-1 text-xs text-slate-500">
                         {linkSelected.canLogin ? "Can login" : "Non-login"}
                         {linkSelected.dateOfBirth
@@ -248,7 +366,8 @@ export function MemberDependentDialog({
                     </Button>
                   </div>
                 </div>
-              ) : linkSearch.trim().length >= 2 && linkSearchResults.length > 0 ? (
+              ) : linkSearch.trim().length >= 2 &&
+                linkSearchResults.length > 0 ? (
                 <div className="max-h-56 overflow-y-auto rounded-md border border-slate-200">
                   {linkSearchResults.map((candidate) => (
                     <button
@@ -260,30 +379,44 @@ export function MemberDependentDialog({
                       <span className="font-medium">
                         {candidate.firstName} {candidate.lastName}
                       </span>
-                      <span className="ml-2 text-slate-500">{candidate.email}</span>
-                      <span className="ml-2 text-xs text-slate-400">{candidate.ageTier}</span>
+                      <span className="ml-2 text-slate-500">
+                        {candidate.email}
+                      </span>
+                      <span className="ml-2 text-xs text-slate-400">
+                        {candidate.ageTier}
+                      </span>
                     </button>
                   ))}
                 </div>
               ) : linkSearch.trim().length >= 2 && !linkSearching ? (
-                <p className="text-sm text-slate-500">No eligible members found.</p>
+                <p className="text-sm text-slate-500">
+                  No eligible members found.
+                </p>
               ) : (
-                <p className="text-sm text-slate-500">Start typing at least 2 characters to search.</p>
+                <p className="text-sm text-slate-500">
+                  Start typing at least 2 characters to search.
+                </p>
               )}
 
               {linkSelected && (
                 <div className="space-y-4">
                   <div className="space-y-3 rounded-md border border-slate-200 p-3">
                     <div className="space-y-2">
-                      <Label htmlFor="link-dependent-notification-source">Notification email recipient</Label>
+                      <Label htmlFor="link-dependent-notification-source">
+                        Notification email recipient
+                      </Label>
                       <select
                         id="link-dependent-notification-source"
                         value={linkNotificationParentId}
-                        onChange={(event) => onChangeLinkNotificationParentId(event.target.value)}
+                        onChange={(event) =>
+                          onChangeLinkNotificationParentId(event.target.value)
+                        }
                         disabled={saving}
                         className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
                       >
-                        <option value="">Use {linkSelected.firstName}&apos;s own email</option>
+                        <option value="">
+                          Use {linkSelected.firstName}&apos;s own email
+                        </option>
                         {dedupeParentOptions([
                           ...(linkSelected.parentLinks ?? []),
                           {
@@ -295,13 +428,15 @@ export function MemberDependentDialog({
                             active: member.active,
                             canLogin: member.canLogin,
                             inheritEmailFromId: member.inheritEmailFromId,
-                            parentLinkType: ((linkSelected.parentLinks?.length ?? 0) === 0
+                            parentLinkType: ((linkSelected.parentLinks
+                              ?.length ?? 0) === 0
                               ? "PRIMARY"
                               : "SECONDARY") as "PRIMARY" | "SECONDARY",
                           },
                         ]).map((parent) => (
                           <option key={parent.id} value={parent.id}>
-                            {parent.firstName} {parent.lastName} ({parentLinkTypeLabel(parent.parentLinkType)})
+                            {parent.firstName} {parent.lastName} (
+                            {parentLinkTypeLabel(parent.parentLinkType)})
                           </option>
                         ))}
                       </select>
@@ -310,10 +445,15 @@ export function MemberDependentDialog({
                       <Checkbox
                         id="link-dependent-disable-login"
                         checked={linkDisableLogin}
-                        onCheckedChange={(checked) => onChangeLinkDisableLogin(checked === true)}
+                        onCheckedChange={(checked) =>
+                          onChangeLinkDisableLogin(checked === true)
+                        }
                         disabled={saving}
                       />
-                      <Label htmlFor="link-dependent-disable-login" className="text-sm font-normal">
+                      <Label
+                        htmlFor="link-dependent-disable-login"
+                        className="text-sm font-normal"
+                      >
                         Disable login
                       </Label>
                     </div>
@@ -324,12 +464,18 @@ export function MemberDependentDialog({
                     {member.familyGroups.length > 0 ? (
                       <div className="space-y-2 rounded-md border border-slate-200 p-3">
                         {member.familyGroups.map((group) => (
-                          <div key={group.id} className="flex items-center gap-2">
+                          <div
+                            key={group.id}
+                            className="flex items-center gap-2"
+                          >
                             <Checkbox
                               id={`link-dependent-family-group-${group.id}`}
                               checked={linkFamilyGroupIds.includes(group.id)}
                               onCheckedChange={(checked) =>
-                                onToggleLinkFamilyGroup(group.id, checked === true)
+                                onToggleLinkFamilyGroup(
+                                  group.id,
+                                  checked === true,
+                                )
                               }
                               disabled={saving}
                             />
@@ -343,7 +489,9 @@ export function MemberDependentDialog({
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-slate-500">This parent is not in any family groups.</p>
+                      <p className="text-sm text-slate-500">
+                        This parent is not in any family groups.
+                      </p>
                     )}
                   </div>
                 </div>
@@ -352,7 +500,11 @@ export function MemberDependentDialog({
           </TabsContent>
         </Tabs>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={saving}
+          >
             Cancel
           </Button>
           <Button
@@ -370,5 +522,5 @@ export function MemberDependentDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
